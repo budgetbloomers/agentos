@@ -607,7 +607,7 @@ const DEFAULT_KPIS = [
  {id:'outbound_calls',name:'Outbound Calls',domain:'Sales',icon:'phone',src:'CALLX_CALL_RECORDS',type:'count',num:[{f:'call_type',op:'ne',v:'inbound'}],format:'int',dir:'higher',green:null,amber:null,owner:'Leon',
   interp:'Agent-driven dial attempts. Inbound rows carry no agent, so per-agent maths uses outbound only.',red:'If outbound collapsed, check campaign loading in the dialler.'},
  {id:'activations',name:'Sales (Unique Accounts)',domain:'Sales',icon:'cart',src:'BI_ACTIVE_CASES',type:'distinct',field:'account_number',format:'int',dir:'higher',green:null,amber:null,owner:'Nick',
-  interp:'F-MONEY-04 — distinct Account Numbers carrying at least one Power BI charge row in the window, dated per row by Contract Create Date. One customer, one sale, however many charge lines it carries. Attribution is cbOfOwner(Owner). Supersedes the old Activated-Services count, which is now session-only.',red:'Cross-check the Power BI Active Cases export covers the right period — it is snapshot+windowed, so a re-upload replaces every prior row.'},
+  interp:'F-MONEY-04 — distinct Account Numbers carrying at least one Power BI charge row in the window, dated per row by Contract Create Date. One customer, one sale, however many charge lines it carries. Attribution is cbOfOwner(Owner). Supersedes the old Activated-Services count, which is now session-only.',red:'Cross-check the Power BI Active Cases export covers the right period — monthly uploads ACCUMULATE, and a re-upload supersedes only its own Contract-Create-Date span; other months are kept.'},
  {id:'lead_conversion',name:'Sales Conversion',domain:'Sales',icon:'target',src:'SF_CLOSED_CASES',type:'ratio',special:'leadConv',format:'pct',dir:'higher',green:10,amber:8,owner:'Nick',
   interp:'Sales ÷ unique leads. A lead is a case, counted once by Case Number across open and closed cases — a case sitting in both exports is one lead, not two. Sales are unique activated accounts on the 1-sale-1-premium basis, each dated by its linked case. Identical maths to the agent-level Conversion score, so this tile and the scorecard can never disagree. NOTE: the RAG bands here are this tile own green/amber, while the agent score reads the NBA convTarget rule (default 10%) — change one and change the other.',red:'Leads are being burned rather than worked. Check attempts-per-lead against the 3–5 band and the Closed - No Feedback rate before asking for more leads.'},
  {id:'total_gwp',name:'Total GWP (incl VAT)',domain:'Sales',icon:'star',src:'BI_ACTIVE_CASES',type:'count',special:'gwpTotal',format:'zar',dir:'higher',green:null,amber:null,owner:'Mekaeel',
@@ -764,7 +764,11 @@ function fmtVal(v,f){
   }
 }
 const ragPill=(v,g,a)=>v==null?'—':'<span class="pill '+(v>=g?'g':v>=a?'a':'r')+'">'+fmtVal(v,'pct')+'</span>';
-function maskName(n){if(!n)return '—';if(state.unmasked)return n;const parts=String(n).trim().split(/\s+/);return parts.map((p,i)=>i===0?p[0]+'.':p.slice(0,2)+'•••').join(' ')}
+/* maskNameText = raw masking for TEXT sinks (canvas chart labels, plain-text digests);
+   maskName = HTML-escaped wrapper for innerHTML sinks — unmasked names are user-supplied
+   upload data and must never reach markup unescaped. */
+function maskNameText(n){if(!n)return '—';if(state.unmasked)return String(n);const parts=String(n).trim().split(/\s+/);return parts.map((p,i)=>i===0?p[0]+'.':p.slice(0,2)+'•••').join(' ')}
+function maskName(n){return esc(maskNameText(n))}
 function ragOf(k,v){
   if(v==null||k.green==null)return 'n';
   if(k.dir==='higher'){if(v>=k.green)return 'g';if(k.amber!=null&&v>=k.amber)return 'a';return 'r'}
@@ -2051,10 +2055,10 @@ function pageSales(win){
   const closed=rowsFor('SF_CLOSED_CASES',win);
   const byCamp=groupCount(calls,'campaign').slice(0,8);
   const byType=groupCount(calls,'call_type');
-  const byAgent=groupCount(calls.filter(c=>c.agent),'agent').slice(0,10).map(([n,v])=>[maskName(n),v]);
+  const byAgent=groupCount(calls.filter(c=>c.agent),'agent').slice(0,10).map(([n,v])=>[maskNameText(n),v]);
   const prodMix=groupCount(acts,'product_bundle').slice(0,8);
   const dispMix=groupCount(closed,'disposition').slice(0,8);
-  const ownerLoad=groupCount(open,'case_owner').slice(0,8).map(([n,v])=>[maskName(n),v]);
+  const ownerLoad=groupCount(open,'case_owner').slice(0,8).map(([n,v])=>[maskNameText(n),v]);
   const ds=dailySeries(calls,win,rs=>rs.length);
   const dsClosed=dailySeries(closed,win,rs=>rs.length);
   const prem=accountPremiums(win);
@@ -2116,7 +2120,7 @@ function pageSales(win){
     doughnut('chS11',bandMix.filter(e=>e[1]>0));
     doughnut('chS12',closureMix);
     hbar('chS9',Object.entries(gwpByProd).sort((a,b)=>b[1]-a[1]).slice(0,8),'#158A4C');
-    hbar('chS10',Object.entries(gwpByAgent).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n,v])=>[maskName(n),Math.round(v)]),'#2563EB');
+    hbar('chS10',Object.entries(gwpByAgent).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n,v])=>[maskNameText(n),Math.round(v)]),'#2563EB');
   },0);
   if(state.salesTab==='bi')return salesTabs()+pageBIMoney(win);
   return salesTabs()+cyclePanel(win)
@@ -2275,7 +2279,7 @@ function pageQAPerf(win){
    +'<div class="card"><div class="card-h"><span class="t">Evaluations share</span></div><div style="height:260px"><canvas id="chQP1"></canvas></div></div>'
    +'</div>'
    +setTimeoutChart();
-  function setTimeoutChart(){setTimeout(()=>{doughnut('chQP1',list.slice(0,8).map(a=>[maskName(a.name),a.n]))},0);return ''}
+  function setTimeoutChart(){setTimeout(()=>{doughnut('chQP1',list.slice(0,8).map(a=>[maskNameText(a.name),a.n]))},0);return ''}
 }
 function pageWF(win){
   if(!hasData())return emptyState('Workforce needs the attendance export');
@@ -3035,9 +3039,9 @@ function pageBrain(win){
     nodes.push({id,label,type,color,r,meta:meta||{},deg:0,x:0,y:0,vx:0,vy:0});return idx[id]};
   const link=(a,b)=>{edges.push([a,b]);nodes[a].deg++;nodes[b].deg++};
   stats.forEach(st=>{
-    const a=addNode('A:'+st.cb,maskName(st.name),'agent',lvlHex(st.nba.lvl),4+Math.max(0,Math.min(100,st.comp.adj))/18,
+    const a=addNode('A:'+st.cb,maskNameText(st.name),'agent',lvlHex(st.nba.lvl),4+Math.max(0,Math.min(100,st.comp.adj))/18,
       {cb:st.cb,sub:st.nba.code+' '+st.nba.label+' · Adj '+Math.round(st.comp.adj)});
-    link(a,addNode('T:'+st.tl,maskName(st.tl),'tl','#E7EEFA',8,{sub:'Team leader'}));
+    link(a,addNode('T:'+st.tl,maskNameText(st.tl),'tl','#E7EEFA',8,{sub:'Team leader'}));
     link(a,addNode('Q:'+st.queue,String(st.queue),'campaign','#38BDF8',7,{sub:'Campaign'}));
     link(a,addNode('R:'+st.nba.code,st.nba.code,'rule',lvlHex(st.nba.lvl),6,{sub:st.nba.label}));
   });
@@ -3192,7 +3196,7 @@ function cbxContext(){
         out.push("");out.push("== Agent scorecard — ALL uploaded data, NBA v3.0 engine ("+stats.length+" roster agents; sorted by composite) ==");
         out.push("Every agent below, one line each, all fields labelled (talk time, calls, sales, GWP, QA, attendance, conversion, composite, NBA). Answer any single-agent question from this.");
         stats.forEach(function(st){
-          out.push("- "+maskName(st.name)+" ["+st.cb+"] · TL "+st.tl+" · "+(st.group||st.tenure||"?")
+          out.push("- "+maskNameText(st.name)+" ["+st.cb+"] · TL "+st.tl+" · "+(st.group||st.tenure||"?")
             +" · sales "+st.sales
             +" · GWP R"+Math.round(st.gwp)
             +" · GWP/sale "+(st.gwpSale!=null?"R"+Math.round(st.gwpSale):"-")

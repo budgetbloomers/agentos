@@ -21,7 +21,7 @@ Per-agent output of `/nba-analyst score`. One card per agent — never more than
 | Review | {review-date} |
 | Status | {new / open / carried-forward} |
 
-**Compliance flag:** [R2A-1 note if applicable — "1 critical fail, CFR {cfr}%, −2 composite, Elite retained, log in weekly 1:1" — otherwise omit this line]
+**Compliance flag:** [R2A-1 note if applicable — "1 critical fail, CFR {cfr}%, {tier-1-penalty} composite (nbaThresholds pen1), Elite retained, log in weekly 1:1" — otherwise omit this line]
 
 **Composite:** {raw-composite} → Adj {adjusted-composite} ({r2a-tier})
 ```

@@ -107,7 +107,7 @@ Phases 0–3 and 5 are live (2026-07-15): suite deployed behind app-managed logi
 
 ## 9b. The Suite (unchanged)
 
-Ops Analytics (`/`) + VAS Analytics (`/pulse/`), one Access login, app-switcher toggle, identical branding. Not code-merged — Phase 2's Supabase schema (date-keyed, Pulse-shaped) becomes the shared backbone feeding both. **Reconciliation register** (resolve before executive/external use): S1 sales definition (unique accounts vs unique opportunities — Finance decides), S2 GWP price source (uploaded table vs hardcoded list → single `gwp_prices` table), S3 call source schema (CallX vs 3CX → one canonical call table), S4 coaching systems (NBA ladder is the prioritisation authority; Pulse plans = evidence layer), S5 attendance semantics (status codes vs shifts → unified attendance table).
+Ops Analytics (`/`) + VAS Analytics (`/pulse/`), one Access login, app-switcher toggle, identical branding. Not code-merged — Phase 2's Supabase schema (date-keyed, Pulse-shaped) becomes the shared backbone feeding both. **Reconciliation register** (resolve before executive/external use): S1 sales definition (unique accounts vs unique opportunities — Finance decides), S2 GWP price source — RESOLVED 2026-07: Power BI `BI_ACTIVE_CASES` charge amounts are the only money source; the uploaded/hardcoded price tables were retired, S3 call source schema (CallX vs 3CX → one canonical call table), S4 coaching systems (NBA ladder is the prioritisation authority; Pulse plans = evidence layer), S5 attendance semantics (status codes vs shifts → unified attendance table).
 
 ## 10. Free-Tier Test Week (G3 gate before any spend)
 

@@ -28,7 +28,9 @@ try {
 // Surface any session-ingested overrides so stale pack facts are never used blindly.
 try {
   const state = fs.readFileSync(kbState, 'utf8');
-  const hasEntries = !/\[None recorded\][\s\S]*\[None recorded\][\s\S]*\[None recorded\][\s\S]*\[None recorded\]/.test(state);
+  const empty = /Nothing recorded yet/.test(state) ||
+    /\[None recorded\][\s\S]*\[None recorded\][\s\S]*\[None recorded\][\s\S]*\[None recorded\]/.test(state);
+  const hasEntries = !empty;
   if (hasEntries) {
     console.log('\n## KB state overlay has recorded entries — check chatterbox-kb/context/kb-state.md before quoting pack facts.');
   }
