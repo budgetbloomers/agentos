@@ -2736,6 +2736,7 @@ function acNBA(st){
 }
 function agentOpen(cb){
   cb=normCB(cb);if(!state.cbInfo[cb]){toast('No roster entry for this agent');return}
+  if(!cbInScope(cb)){toast('That agent is outside your team.');return}   // scoped TLs can't drill other teams
   const win=periodWindow();const C=acCtx(win);
   const st=acStats(cb,win,C);
   const T=k=>nbaVal(k,0);
@@ -2841,24 +2842,29 @@ function pageTL(win){
   const CCP=cycleCalc();
   const GF=state.filters;
   const C=acCtx(win);
-  const cbs=Object.keys(state.cbInfo).filter(cb=>{const i=state.cbInfo[cb];
-    if(!cbInScope(cb))return false;
+  /* Percentile base = the fleet (GF-filtered but NOT permission-scoped) so the GWP
+     percentile and composite stay tenure-relative across the whole floor: a scoped
+     team leader sees the SAME composite for an agent as exec/admin (non-negotiables
+     #4/#5). Only the DISPLAY set (stats) is narrowed to what the user may see. */
+  const cbsBase=Object.keys(state.cbInfo).filter(cb=>{const i=state.cbInfo[cb];
     if(GF.tenure&&i.tenure!==GF.tenure)return false;
     if(GF.team&&i.tl!==GF.team)return false;
     if(GF.campaign&&campBucket(i.queue)!==GF.campaign)return false;
     if(GF.agent&&cb!==normCB(GF.agent))return false;
     return true});
-  if(!cbs.length)return emptyState('No roster agents match the current filters');
+  if(!cbsBase.length)return emptyState('No roster agents match the current filters');
   const wd=workDays(win);
   const gwpFloor=nbaVal('gwpFloor',99);
-  const stats=cbs.map(cb=>{const st=acStats(cb,win,C);st.tierInfo=cfTier(st);st.nba=acNBA(st);
+  const statsAll=cbsBase.map(cb=>{const st=acStats(cb,win,C);st.tierInfo=cfTier(st);st.nba=acNBA(st);
     st.gwpTgtP=st.target>0?gwpFloor*st.target*wd:null;
     st.onTgt=st.gwpTgtP!=null?st.gwp>=st.gwpTgtP:null;
     return st});
-  const byGroup={};stats.forEach(st=>{(byGroup[st.group]=byGroup[st.group]||[]).push(st)});
+  const byGroup={};statsAll.forEach(st=>{(byGroup[st.group]=byGroup[st.group]||[]).push(st)});
   Object.values(byGroup).forEach(g=>{const sorted=g.map(x=>x.gwp).sort((a,b)=>a-b);
     g.forEach(st=>{const below=sorted.filter(x=>x<st.gwp).length;st.pctile=g.length<2?100:below/(g.length-1)*100;
       st.comp=acComposite(st,st.pctile)})});
+  const stats=statsAll.filter(st=>cbInScope(st.cb));   // display/rollups: only agents the user may see
+  if(!stats.length)return emptyState('No roster agents match the current filters');
   const fleet={gwp:0,sales:0,p1:0,p2:0,bothPass:0,onTgt:0,alSum:0,alN:0};
   stats.forEach(st=>{fleet.gwp+=st.gwp;fleet.sales+=st.sales;
     if(st.nba.lvl===1)fleet.p1++;if(st.nba.lvl===2)fleet.p2++;
@@ -3065,6 +3071,7 @@ function pageLeads(win){
   const A={};
   const mk=cb=>A[cb]=A[cb]||{cb,name:(state.cbInfo[cb]?.name)||cb,tl:(state.cbInfo[cb]?.tl)||'(unassigned)',ds:(state.cbInfo[cb]?.queue)||'—',ten:(state.cbInfo[cb]?.tenure)||'—',sts:{},open:0,cl:0,nofb:0,tc:0,sales:0,canc:0,leads:mkLeads(),seenO:new Set(),seenC:new Set(),dialDays:new Set()};
   roster.forEach(a=>{if(!a.cb_norm)return;
+    if(!cbInScope(a.cb_norm))return;
     if(GF.tenure&&a.tenure!==GF.tenure)return;
     if(GF.team&&a.team_leader!==GF.team)return;
     if(GF.campaign&&campBucket(a.queue)!==GF.campaign)return;
@@ -3311,18 +3318,21 @@ function pageBrain(win){
   if(!hasData())return emptyState('The Brain needs data — upload the Agent List plus the activity sources');
   const GF=state.filters;
   const C=acCtx(win);
-  const cbs=Object.keys(state.cbInfo).filter(cb=>{const i=state.cbInfo[cb];
-    if(!cbInScope(cb))return false;
+  /* Percentile base = fleet (GF-filtered, not permission-scoped) so composites stay
+     tenure-relative across the floor; only the rendered node set is scoped. */
+  const cbsBase=Object.keys(state.cbInfo).filter(cb=>{const i=state.cbInfo[cb];
     if(GF.tenure&&i.tenure!==GF.tenure)return false;
     if(GF.team&&i.tl!==GF.team)return false;
     if(GF.campaign&&campBucket(i.queue)!==GF.campaign)return false;
     if(GF.agent&&cb!==normCB(GF.agent))return false;
     return true});
-  if(!cbs.length)return emptyState('No roster agents match the current filters');
-  const stats=cbs.map(cb=>{const st=acStats(cb,win,C);st.tierInfo=cfTier(st);st.nba=acNBA(st);return st});
-  const byGroup={};stats.forEach(st=>{(byGroup[st.group]=byGroup[st.group]||[]).push(st)});
+  if(!cbsBase.length)return emptyState('No roster agents match the current filters');
+  const statsAll=cbsBase.map(cb=>{const st=acStats(cb,win,C);st.tierInfo=cfTier(st);st.nba=acNBA(st);return st});
+  const byGroup={};statsAll.forEach(st=>{(byGroup[st.group]=byGroup[st.group]||[]).push(st)});
   Object.values(byGroup).forEach(g=>{const sorted=g.map(x=>x.gwp).sort((a,b)=>a-b);
     g.forEach(st=>{const below=sorted.filter(x=>x<st.gwp).length;const pct=g.length<2?100:below/(g.length-1)*100;st.comp=acComposite(st,pct)})});
+  const stats=statsAll.filter(st=>cbInScope(st.cb));
+  if(!stats.length)return emptyState('No roster agents match the current filters');
   const lvlHex=l=>l===1?'#C42D2D':l===2?'#B45309':l===3?'#2563EB':'#158A4C';
   const nodes=[],edges=[],idx={};
   const addNode=(id,label,type,color,r,meta)=>{if(idx[id]!=null)return idx[id];idx[id]=nodes.length;
