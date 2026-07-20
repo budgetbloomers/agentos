@@ -1353,6 +1353,15 @@ function userScopeTeam(){
   _scopeVer=_dataVer;_scopeCache={team,matched:!!team};
   return _scopeCache;
 }
+/* Is this agent visible to the signed-in user? rowsForRaw scopes ROW data, but the
+   per-agent DISPLAY path (acCtx→acStats over the roster) and the AI context enumerate
+   state.cbInfo directly — they must gate each agent through here so a scoped team
+   leader's leaderboards, graphs and Ask answers never include another team. */
+function cbInScope(cb){const sc=userScopeTeam();return !sc||(state.cbInfo[cb]?.tl===sc.team);}
+/* Admin / data surfaces a scoped team leader must not reach (not team-attributable) —
+   defence in depth on top of the Worker's per-user tab permissions. */
+const TL_BLOCK=['uploads','sess_uploads','dict'];
+function pageBlockedForUser(id){return ((((typeof window!=='undefined'&&window.CBX_USER)||{}).role)==='tl')&&TL_BLOCK.includes(id);}
 function rowsFor(src,win){
   const sc=(_fleetCtx||src==='AGENT_LIST')?null:userScopeTeam();
   const key=src+'|'+(win?win.from+'~'+win.to:'∅')+'|'+JSON.stringify(state.filters)+'|'+_dataVer+(sc?'|@'+(sc.team||'∅'):'');
@@ -1687,6 +1696,7 @@ const PAGES=[
 function renderNav(){
   let html='<div class="nav-label">Command</div>';let lastSect='';
   PAGES.forEach(p=>{
+    if(pageBlockedForUser(p.id))return;   // scoped team leaders don't see admin/data tabs
     if(p.sect&&p.sect!==lastSect){html+='<div class="nav-label">'+p.sect+'</div>';lastSect=p.sect}
     html+='<button class="nav-item '+(state.route===p.id?'active':'')+(p.soon?' soon':'')+'" onclick="go(\''+p.id+'\')">'+icon(p.icon)+p.label+(p.soon?'<span class="soon-tag">SOON</span>':'')+'</button>';
   });
@@ -1694,6 +1704,7 @@ function renderNav(){
 }
 function go(id){
   if(id==='vas'){location.href='pulse/index.html';return}
+  if(pageBlockedForUser(id))id='exec';   // hard stop — a scoped TL cannot open admin/data pages
   state.route=id;document.getElementById('sidebar').classList.remove('open');render();window.scrollTo({top:0})}
 
 /* %-to-target foot for KPI tiles. "now" = current value ÷ target (the KPI's green
@@ -2831,6 +2842,7 @@ function pageTL(win){
   const GF=state.filters;
   const C=acCtx(win);
   const cbs=Object.keys(state.cbInfo).filter(cb=>{const i=state.cbInfo[cb];
+    if(!cbInScope(cb))return false;
     if(GF.tenure&&i.tenure!==GF.tenure)return false;
     if(GF.team&&i.tl!==GF.team)return false;
     if(GF.campaign&&campBucket(i.queue)!==GF.campaign)return false;
@@ -3189,6 +3201,7 @@ function pageScorecard(win){
   const roster=state.facts.AGENT_LIST||[];
   const GF=state.filters;
   roster.forEach(a=>{if(!a.cb_norm)return;
+    if(!cbInScope(a.cb_norm))return;
     if(GF.tenure&&a.tenure!==GF.tenure)return;
     if(GF.team&&a.team_leader!==GF.team)return;
     if(GF.campaign&&campBucket(a.queue)!==GF.campaign)return;
@@ -3299,6 +3312,7 @@ function pageBrain(win){
   const GF=state.filters;
   const C=acCtx(win);
   const cbs=Object.keys(state.cbInfo).filter(cb=>{const i=state.cbInfo[cb];
+    if(!cbInScope(cb))return false;
     if(GF.tenure&&i.tenure!==GF.tenure)return false;
     if(GF.team&&i.tl!==GF.team)return false;
     if(GF.campaign&&campBucket(i.queue)!==GF.campaign)return false;
@@ -3443,7 +3457,8 @@ function cbxContext(){
   var out=[];var NL=String.fromCharCode(10);
   try{
     var win=periodWindow();
-    out.push("On-screen date range: "+winFrom(win)+" to "+win.to+" · "+"live data"+". The KPIs below reflect THIS range/filter; the agent scorecard and FULL DATASET sections further down cover ALL uploaded data.");
+    var _sc0=userScopeTeam();
+    out.push("On-screen date range: "+winFrom(win)+" to "+win.to+" · live data. The KPIs below reflect THIS range/filter; the agent scorecard section further down covers ALL uploaded data"+(_sc0?" for your team only (team-leader access — other teams and floor-wide totals are not available to you).":" (plus a full-dataset summary)."));
     var ks=(state.kpis||[]).filter(function(k){return k.show});
     if(ks.length){
       out.push("");out.push("== KPIs — current on-screen view (all domains: sales, quality, attendance, leads, cancellations) ==");
@@ -3468,10 +3483,13 @@ function cbxContext(){
         var byGroup={};stats.forEach(function(st){(byGroup[st.group]=byGroup[st.group]||[]).push(st)});
         Object.keys(byGroup).forEach(function(gk){var g=byGroup[gk];var sorted=g.map(function(x){return x.gwp}).sort(function(a,b){return a-b});
           g.forEach(function(st){var below=sorted.filter(function(x){return x<st.gwp}).length;var pct=g.length<2?100:below/(g.length-1)*100;st.comp=acComposite(st,pct)})});
-        stats.sort(function(a,b){return (b.comp?b.comp.adj:0)-(a.comp?a.comp.adj:0)});
-        out.push("");out.push("== Agent scorecard — ALL uploaded data, NBA v3.0 engine ("+stats.length+" roster agents; sorted by composite) ==");
+        /* Percentiles above are computed over the WHOLE fleet (correct, tenure-relative);
+           but a scoped team leader may only SEE their own team, so output is filtered here. */
+        var vis=stats.filter(function(st){return cbInScope(st.cb)});
+        vis.sort(function(a,b){return (b.comp?b.comp.adj:0)-(a.comp?a.comp.adj:0)});
+        out.push("");out.push("== Agent scorecard — ALL uploaded data, NBA v3.0 engine ("+vis.length+" roster agents; sorted by composite) ==");
         out.push("Every agent below, one line each, all fields labelled (talk time, calls, sales, GWP, QA, attendance, conversion, composite, NBA). Answer any single-agent question from this.");
-        stats.forEach(function(st){
+        vis.forEach(function(st){
           out.push("- "+maskNameText(st.name)+" ["+st.cb+"] · TL "+maskNameText(st.tl)+" · "+(st.group||st.tenure||"?")
             +" · sales "+st.sales
             +" · GWP R"+Math.round(st.gwp)
@@ -3486,9 +3504,9 @@ function cbxContext(){
             +" · primary NBA "+(st.nba?st.nba.code+" "+st.nba.label:"-"));
         });
         var lvl={1:0,2:0,3:0,4:0};var tg=0,ts=0;
-        stats.forEach(function(st){lvl[st.nba.lvl]=(lvl[st.nba.lvl]||0)+1;tg+=st.gwp;ts+=st.sales});
-        out.push("Fleet: total GWP R"+Math.round(tg)+", total sales "+ts+", NBA levels: L1 protect-business "+lvl[1]+", L2 protect-revenue "+lvl[2]+", L3 improve-skill "+lvl[3]+", L4 develop-recognise "+lvl[4]+".");
-        var tls={};stats.forEach(function(st){var t=tls[st.tl]=tls[st.tl]||{n:0,gwp:0,sales:0};t.n++;t.gwp+=st.gwp;t.sales+=st.sales});
+        vis.forEach(function(st){lvl[st.nba.lvl]=(lvl[st.nba.lvl]||0)+1;tg+=st.gwp;ts+=st.sales});
+        out.push((userScopeTeam()?"Your team":"Fleet")+": total GWP R"+Math.round(tg)+", total sales "+ts+", NBA levels: L1 protect-business "+lvl[1]+", L2 protect-revenue "+lvl[2]+", L3 improve-skill "+lvl[3]+", L4 develop-recognise "+lvl[4]+".");
+        var tls={};vis.forEach(function(st){var t=tls[st.tl]=tls[st.tl]||{n:0,gwp:0,sales:0};t.n++;t.gwp+=st.gwp;t.sales+=st.sales});
         out.push("");out.push("== Team leaders ==");
         Object.keys(tls).forEach(function(k){var t=tls[k];out.push("- "+k+": "+t.n+" agents, "+t.sales+" sales, R"+Math.round(t.gwp)+" GWP")});
       }
@@ -3496,7 +3514,9 @@ function cbxContext(){
     // FULL DATASET summary — every source, all rows, ignoring the on-screen filter/date
     // range, so the assistant always knows the complete scope and can answer aggregate
     // questions about any source (statuses, campaigns, products, totals, date ranges).
-    try{
+    // SKIPPED for a scoped team leader: these are whole-floor aggregates over raw rows
+    // that cannot be attributed to one team, so surfacing them would leak other teams.
+    if(!userScopeTeam())try{
       out.push("");out.push("== FULL DATASET (all uploaded rows — ignores the on-screen date range & filters) ==");
       var cnt=function(arr,f){var m={};arr.forEach(function(r){var k=f(r)||'(blank)';m[k]=(m[k]||0)+1});return m};
       var top=function(m,n){return Object.keys(m).sort(function(a,b){return m[b]-m[a]}).slice(0,n||6).map(function(k){return k+" "+m[k]}).join(", ")};
@@ -3513,13 +3533,14 @@ function cbxContext(){
       var rf=F.REFERRALS||[]; if(rf.length)out.push("Referrals: "+rf.length+" rows");
       out.push("(For an individual raw record — one specific call, case or account — open the matching tab or Upload Station; the assistant holds every count, total and per-agent metric above but not the tens of thousands of individual rows.)");
     }catch(e){ out.push("(full-data summary unavailable: "+(e&&e.message||e)+")"); }
-    try{ var n=Object.keys(state.cbInfo||{}).length; if(n) out.push(NL+"Roster loaded: "+n+" agents."); }catch(e){}
-    // Upload history — who loaded what, when, with how many rejects
-    try{ var bs=(state.batches||[]).slice(0,10);
+    var _scoped=!!userScopeTeam();
+    try{ var n=_scoped?null:Object.keys(state.cbInfo||{}).length; if(n) out.push(NL+"Roster loaded: "+n+" agents."); }catch(e){}
+    // Upload history & exceptions are admin/data surfaces (whole-floor, not team-scoped) —
+    // omitted for a scoped team leader.
+    if(!_scoped)try{ var bs=(state.batches||[]).slice(0,10);
       if(bs.length){ out.push("");out.push("== Upload history (latest batches) ==");
         bs.forEach(function(b){ out.push("- "+(b.uploaded_at||"?").slice(0,16).replace("T"," ")+" · "+(b.source_type||"?")+" \""+(b.original_file_name||"")+"\" · "+(b.loaded_row_count||0)+" loaded, "+(b.rejected_row_count||0)+" rejected ["+(b.validation_status||"?")+"] by "+(b.uploaded_by||"?")); }); } }catch(e){}
-    // Exceptions — WHY rows were rejected, not just how many
-    try{ var exs=state.exceptions||[];
+    if(!_scoped)try{ var exs=state.exceptions||[];
       if(exs.length){ var rm={};exs.forEach(function(e2){rm[e2.reason]=(rm[e2.reason]||0)+1});
         out.push("");out.push("== Data exceptions ("+exs.length+" rejected rows, by reason) ==");
         Object.keys(rm).sort(function(a,b){return rm[b]-rm[a]}).slice(0,6).forEach(function(r){out.push("- "+r+" ×"+rm[r])}); } }catch(e){}
@@ -3847,6 +3868,7 @@ function render(){
   // PERF: identity/date maps depend only on the fact data — rebuild them only
   // when the data version changes, not on every render (they scan 25k+ rows).
   if(window.__memoVer!==_dataVer){_cbd=null;_mind=null;window.__memoVer=_dataVer;}
+  if(pageBlockedForUser(state.route))state.route='exec';   // scoped TL cannot land on admin/data pages
   killCharts();filtCountBadge();renderNav();renderTrustbar();
   const p=PAGES.find(x=>x.id===state.route)||PAGES[0];
   $('#pgTitle').textContent=p.title;$('#pgSub').textContent=p.sub;
