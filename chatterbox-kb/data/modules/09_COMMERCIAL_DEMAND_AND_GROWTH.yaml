@@ -1,0 +1,100 @@
+domain: commercial_demand_growth
+
+client_acquisition_pack:
+  purpose: make Chatterbox credible, commercially clear and easy to onboard
+  assets:
+    - company profile and strategic narrative
+    - why Chatterbox / why now
+    - service catalogue and target use cases
+    - Clean Sales OS and compliance trust explanation
+    - ROI/economics story with assumptions clearly labelled
+    - case study template and proof library
+    - campaign launch and onboarding journey
+    - pricing model options
+    - weekly client reporting example
+    - objection-handling and risk-control sheet
+  proof_rule: no client names, results, conversion rates or revenue claims without approved evidence
+
+content_and_demand_system:
+  owner: P07
+  supporting: {data: P08, CRM: P09, architecture: P02, recruitment_execution: P06, commercial: P01}
+  pillars: [recruitment, culture, client acquisition, leadership authority, performance proof, compliance trust, technology and AI]
+  planning_output_per_week:
+    recruitment_posts: 2
+    culture_posts: 2
+    client_acquisition_posts: 1
+    leadership_posts: 1
+    performance_proof_posts: 1
+    short_video: 1
+    dashboard_or_proof_visual: 1
+  status: planning minimum, not confirmed live cadence
+  metrics: [reach, engagement, clicks, applications/enquiries, qualified rate, cost, source attribution, retained productive agents or commercial opportunities]
+
+lead_asset_model:
+  minimum_fields: [lead_id, source, supplier, batch_id, acquisition_date, consent_status/evidence, duplicate_status, current_stage, reason_code, attempt_history, next_action, nurture_status, suppression, campaign, financial_return]
+  lifecycle: acquire -> validate -> test -> convert -> keep/recycle/cross-sell/suppress/reactivate
+  ownership:
+    scorecard_and_test: P08
+    workflow: P09
+    conversion: Operations/P10/P18
+    compliance: P04
+    economics: P03
+  test_protocol: hypothesis, batch, audience, script/offer, success metric, duration, stop rule, result, decision
+  decisions: scale, fix, merge, pause, stop, recycle
+
+lead_supplier_control:
+  principles:
+    - no campaign schedule, consent evidence or approved source means no payable lead
+    - reject fake, duplicate, recycled, scraped or brokered leads unless explicitly approved
+    - supplier must prove source, capture time, consent wording and subcontractors
+    - screen opt-outs/suppression and comply with POPIA/CPA and campaign-specific rules
+    - Chatterbox may reject, hold, set off or claw back poor/non-compliant leads
+    - supplier cannot make unapproved product/regulatory claims
+    - immediate suspension/termination for fraud, missing evidence, customer/regulatory or reputation risk
+  legal_status: template requires South African attorney review, especially regulated campaigns
+
+client_campaign_lifecycle:
+  stages:
+    - opportunity qualification
+    - commercial viability and risk review
+    - contract/SOW and data/consent approval
+    - product/script/disclosure design
+    - capacity, recruitment and training plan
+    - CRM/dialler/QA/reporting setup
+    - readiness gate and pilot
+    - daily production/control cadence
+    - weekly client reporting and optimisation
+    - renewal, cross-sell, pause or exit
+  launch_gate: no launch without demand, people, systems, leads, scripts, QA, reporting, risk, finance and owner readiness
+
+commercial_models:
+  per_seat: '[INPUT REQUIRED: approved rates and inclusions]'
+  per_sale_or_activation: '[INPUT REQUIRED]'
+  hybrid_fixed_plus_performance: '[INPUT REQUIRED]'
+  pilot: '[INPUT REQUIRED]'
+  annuity: potential where product/partner supports recurring revenue
+
+strategic_product_initiatives:
+  Bosch_Service_Protect:
+    status: proposal/product development, not assumed live
+    concept: ring-fenced Bosch motor warranty and service-plan ecosystem, co-branded with Bosch and RMS Group
+    priority: increase Bosch workshop/parts pull-through, recurring relationships and used-vehicle presence
+    Chatterbox_role: acquisition, outbound conversion, reminders, renewals, support, reporting and lifecycle campaigns
+    compliance: approved insurer/administrator/FSP structure, needs analysis/disclosures, scripts, consent, recordings and records
+  Dealer_Tracking_Revenue_Partnership:
+    status: proposed commercial model
+    model: dealer retains 90% of upfront commission; Chatterbox retains 10% upfront and 100% recurring annuity; 90-day review proposed
+    Chatterbox_role: supplier workflow, activation support, reporting, escalation and annuity administration
+    rule: commission only on live valid activations; cancellations/duplicates/invalids excluded and clawbacks may apply
+  ValueBox:
+    status: adjacent strategic concept; ownership/live status requires confirmation
+    role: consumer interface for vehicle ownership decisions, valuations, warranty/service-plan education, quote routing and retention
+  AutoScore_or_My_AutoScore:
+    status: adjacent lead-generation/product concept; confirm formal relationship to Chatterbox
+    concept: consumer vehicle intelligence, trade/retail value via controlled CSV backend, understandable score and savings, consent-led lead capture
+    risk: values/savings need methodology, date/source, disclaimers, confidence and customer-challenge process
+
+client_and_investor_reporting:
+  client_weekly: production, clean sales, lead/source, QA, complaints, capacity, actions, risks and forecast
+  investor: seat economics, campaign economics, capacity, people funnel, clean-sales control, cash, technology, risks and growth assumptions
+  decision_language: scale, fix, pause, stop, test or retire; never merely 'noted'

@@ -1,0 +1,219 @@
+domain: platforms_systems
+as_of: '2026-07-10'
+
+system_gate_model:
+  G0: idea/backlog; no build approval
+  G1: design approved or unverified artefact; business case/owner/data/control not fully accepted
+  G2: built/prototype; requires operational acceptance
+  G3: operational acceptance/pilot with signed process, controls, testing and fallback
+  G4: live and controlled; adopted, monitored, resilient and evidenced
+  G5: optimised/scaled with verified benefits
+  G6: merged/retired with retention, continuity and decommission evidence
+
+portfolio_health:
+  canonical_13_system_snapshot:
+    source: Chatterbox Operating System Governance v1.1, 2026-07-02
+    total: 13
+    red: 10
+    amber: 2
+    grey: 1
+    G4_live_controlled: 0
+    open_actions: 27
+  conflict_note: AI-Native Transformation OS v2 reports 9 red/4 amber; reconcile scope and assessment before external reporting.
+  rule: a link proves deployment only, not control, adoption, resilience or benefit.
+
+systems:
+  SYS-001:
+    name: Recruitment Automation Engine
+    department: People and Recruitment
+    gate: G2
+    health: red
+    criticality: critical
+    outcome: move candidates from application to interview-ready with reduced admin and visible exceptions
+    owners: {executive: P05, process: P06, system: P09, data: P08, control: P04, backup: P11}
+    platforms: [GoHighLevel]
+    links:
+      CRM: https://crm.throughballs.com/
+      AD_form: https://link.apisystem.tech/widget/form/NrerFviMzy4RLfTdYXX8
+      prequalification_form: https://link.apisystem.tech/widget/form/l6faWodQft0KvG5dKfUQ
+      recruitment_form: https://link.apisystem.tech/widget/form/iaRIcMo1nrcYBoHQc8Rd
+    gaps: [no signed acceptance, no canonical funnel, adoption KPI absent, exceptions/SLA not fully controlled, access/privacy/backup evidence incomplete]
+    next: stabilise, merge canonical forms, define SLA and exception queue, acceptance, adoption and recovery evidence
+  SYS-002:
+    name: Salesforce Simulation
+    department: Sales Enablement and Training
+    gate: G2
+    health: amber
+    criticality: medium
+    outcome: repeatable pre-live practice and evidence of sales-process competence
+    owners: {executive: P05, process: P15/P16, system: P11, data: P08, control: P04}
+    link: https://salesforce-sim.vercel.app/
+    gaps: [curriculum map, pass mark, retest rule, learner record, linkage to go-live, usage and effectiveness evidence]
+    next: pilot, define certification and measure post-training clean performance
+  SYS-003:
+    name: Commission Calculator
+    department: Finance and Sales Performance
+    gate: G1
+    health: red
+    criticality: critical
+    owners: {executive: P03, process: P17, system: P09, data: P03, control: P03, backup: Finance_Accountant}
+    link: null
+    gaps: [logic/version unverified, no signed rules, test cases, source reconciliation or approval matrix]
+    next: validate or rebuild; CFO sign-off before production use
+  SYS-004:
+    name: GHL Recruitment Forms
+    department: People and Recruitment
+    gate: G2
+    health: amber
+    criticality: high
+    owners: {executive: P05, process: P06, system: P09, data: P08, control: P04, backup: P11}
+    link: https://crm.throughballs.com/
+    decision: merge into SYS-001; maintain one canonical form register and retire parallel forms
+  SYS-005:
+    name: Marketing RAG
+    department: Marketing and Knowledge
+    gate: G1
+    health: red
+    criticality: high
+    owners: {executive: P02, process: P07, system: P09, data: P07, control: P04, backup: P11}
+    artefact: hard-coded Claude test file
+    gaps: [no controlled source register, version/approval state, traceability, stale-content control, claim-risk workflow or feedback loop]
+    next: productise as governed knowledge/RAG service with citations and public-claim approval
+  SYS-006:
+    name: KPI and Coaching Hub
+    department: Operations and Performance
+    gate: G2
+    health: red
+    criticality: critical
+    owners: {executive: P05_or_P18, process: P10, system: P09, data: P08, control: P04, backup: P11}
+    links:
+      KPI_flow: https://chatterbox-kpi-flow.lovable.app/
+      coaching_hub: https://chatterbox-coaching-hub.lovable.app
+    gaps: [two possible front ends, KPI definitions not signed, source/identity integration unclear, coaching SLA/adoption/closure not evidenced]
+    next: integrate, enforce manager usage and prove uplift/repeat-defect reduction
+  SYS-007:
+    name: Purchase Order System
+    department: Finance and Procurement
+    gate: G2
+    health: red
+    criticality: critical
+    owners: {executive: P03, process: Finance_Accountant/P17, system: P11, data: P03, control: P03, backup: P09}
+    link: https://chatterbox-po.lovable.app
+    gaps: [delegation of authority, budget check, vendor master, segregation, three-way control and recovery evidence]
+    next: finance control acceptance before live classification
+  SYS-008:
+    name: HR Operating System
+    department: People and HR
+    gate: G2
+    health: red
+    criticality: critical
+    owners: {executive: P05, process: P13, system: P11, data: P05, control: P04, backup: P09}
+    link: https://hr-ops-gamma.vercel.app/dashboard
+    gaps: [employee-master source, role access, retention, audit, integration, backup and privacy controls]
+    next: control sensitive data and joiner-mover-leaver process before G4
+  SYS-009:
+    name: QA System
+    department: Risk QA and Compliance
+    gate: G2
+    health: red
+    criticality: critical
+    owners: {executive: P04, process: P12, system: P09, data: P08, control: P04, backup: P11}
+    link: https://qa-ops-one.vercel.app/
+    gaps: [approved scorecards, calibration, critical-fail logic, retention, complaint linkage, CAPA and audit requirements]
+    next: sign methodology and closed-loop remediation; retain risk stop authority
+  SYS-010:
+    name: Analytics Reports
+    department: Data and Analytics
+    gate: G3_manual
+    health: red
+    criticality: critical
+    owners: {executive: P02, process: P08, system: P08, data: P08, control: P03, backup: P09}
+    platform: manual hard files
+    gaps: [key-person dependency, fragmented storage, unclear definitions/lineage/refresh/version]
+    next: temporary control only; consolidate into governed analytics layer
+  SYS-011:
+    name: Analytics Dashboard
+    department: Data and Analytics
+    gate: G2
+    health: red
+    criticality: critical
+    owners: {executive: P02, process: P08, system: P09, data: P08, control: P03, backup: P11}
+    link: https://analytics-dashboard-omega-fawn.vercel.app/
+    gaps: [metric dictionary, mappings, refresh SLA, reconciliation, access, adoption and incident route]
+    next: controlled MVP; CFO signs finance metrics, Risk signs QA/risk metrics
+  SYS-012:
+    name: Analytics Agent
+    department: Data and Analytics
+    gate: G0
+    health: grey
+    criticality: medium
+    owners: {executive: P02, process: P08, system: P09, data: P08, control: P04, backup: P11}
+    decision: hold until dashboard reaches G4, data quality >=95%, use cases and permissions approved
+    risk: AI would amplify fragmented data and disputed definitions
+  SYS-013:
+    name: Agent Contract Automation
+    department: People and HR
+    gate: G2
+    health: red
+    criticality: critical
+    owners: {executive: P05, process: P13, system: P09, data: P05, control: P04, backup: P11}
+    link: https://emp-pro.lovable.app
+    gaps: [approved templates, version/legal approval, authority, signature evidence, immutable audit, retention, employee-master/payroll linkage]
+    next: control before live; contracts remain People-owned with Risk control
+
+additional_platforms_and_systems_of_record:
+  GoHighLevel:
+    role: CRM/workflow engine for B2B pipeline, recruitment candidates, forms, nurturing and routing
+    technical_owner: P09
+    business_owners: Commercial/People/Operations by process
+  Make:
+    role: automation/integration layer
+    owner: P09
+  Salesforce_client_exports:
+    role: source for cases and activations; no direct connection allowed in current client context
+  CallX:
+    role: current dialler/call records, queues, attempts and recordings
+    owners: Operations/P14/P11
+  Vici:
+    role: future/return dialler; must map to same canonical call table as CallX
+  Power_BI:
+    role: executive reporting layer; reports truth but does not replace transactional systems
+    owner: P08 under P02 governance
+  Excel_PowerQuery:
+    role: controlled analysis/reconciliation and interim ingestion; not permanent shadow operating system
+  SQL:
+    role: governed reporting/data layer where available
+  Payscale:
+    role: payroll system of record
+    owner: P03/P17
+  Xero:
+    role: accounting system of record
+    owner: P03/Finance_Accountant
+  Blue:
+    role: projects, tasks and actions unless another platform is formally approved
+    owners: P02 + functional executives
+  LMS:
+    role: training/certification system with AgentOS linkage
+    owners: P15/P16/P05
+  Controlled_Knowledge_Repository:
+    role: policies, SOPs, scripts, disclosures and approved content
+    owners: functional owner with P04 control
+  Google_Drive_Evidence_Vault:
+    role: interim evidence/record repository where approved; requires access/retention controls
+  WhatsApp_and_Email_Automation:
+    role: candidate/customer reminders and nurture subject to consent, approved content, suppression and audit
+  OpenAI_and_frontier_models:
+    role: drafting, summarisation, recommendation and controlled agent workflows
+    governance: AI register, evaluation, cost, access, prompt/version and kill switch
+  Vercel_and_Lovable:
+    role: hosting/build platforms for current applications; not systems of record by themselves
+  Fable_Claude_Gamma:
+    role: design/build/analysis tools; outputs require business acceptance and governance before operational use
+
+platform_rationalisation_rules:
+  - CIP governs/connects existing systems; it must not become another disconnected front end.
+  - Build API-first adapters but support manual files where direct access is prohibited.
+  - One system of record per business object.
+  - Duplicates are merged or retired with G6 evidence.
+  - Every critical system needs executive, process, system, data, control and backup owners.
+  - Every production system needs access, incident, change, release, rollback, recovery, manual fallback and audit controls.

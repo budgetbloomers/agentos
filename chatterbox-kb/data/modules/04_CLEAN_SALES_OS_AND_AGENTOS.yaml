@@ -1,0 +1,132 @@
+domain: clean_sales_os_agentos
+
+clean_sales_os:
+  purpose: convert demand, people, calls and controls into profitable clean sales
+  metric_tree: applicants/leads -> candidates/campaigns -> training -> sales-ready agents -> attendance -> logged-in/productive time -> contacts -> pitches -> sales -> QA pass -> clean sales -> GWP/revenue -> margin -> client trust -> investor confidence
+  engines:
+    demand:
+      question: Are we creating enough quality demand?
+      scope: [recruitment demand, client demand, lead acquisition, marketing, activation/landing pages, QR/source attribution, supplier and campaign demand]
+      primary_output: qualified opportunities and sales-ready capacity
+    production:
+      question: Are we converting demand into profitable sales?
+      scope: [agents, team leaders, attendance, adherence, talk time, contacts, pitches, conversion, sales, GWP, coaching, campaign delivery]
+      primary_output: clean sales per productive agent/day
+    control:
+      question: Are sales clean, defensible and repeatable?
+      scope: [QA, POPIA, disclosure, complaints, call recordings, clean-sale rules, compliance exceptions, risk, audit, financial controls]
+      primary_output: risk-adjusted clean contribution
+    command_centre:
+      question: Can leadership see and act quickly enough?
+      scope: [recruitment, production, QA, risk, finance, capacity, clients, technology, actions and investor readiness]
+
+command_centre_core_views:
+  - Executive Health: clean sales, GWP/revenue, QA, attendance, margin and top risks
+  - Agent Heat Map: value/performance score, risk, readiness and next action
+  - Campaign Heat Map: scale/fix/pause/stop recommendation and economics
+  - Demand View: applicants, interviews, starters, sales-ready agents and client leads
+  - Money View: cost per clean sale, commission, revenue, contribution and margin
+sixty_second_test: show what works, what is broken, owner, active action and escalation
+
+operating_cadence:
+  '08:15': technology and platform readiness
+  '08:30': executive/floor readiness and capacity check
+  '10:00': first performance check and same-day intervention
+  '12:00': recovery checkpoint
+  '15:00': final push and risk recovery
+  EOD: result, unresolved exception, owner and next-day setup
+  weekly: campaign economics, recruitment funnel, QA trends, source performance and strategic improvement
+
+hot_stove:
+  flow: trigger -> alert -> owner -> action -> deadline -> follow-up -> escalation -> consequence -> evidence
+  illustrative_triggers:
+    talk_time_below_pace_10am: Team Leader same-day recovery and EOD evidence
+    QA_below_approved_threshold: QA lead review, compliance coaching and sale review
+    campaign_below_target_3_days: Operations review lead quality, script, agent mix and commercial viability
+    margin_below_target: Finance and executive commercial review
+  thresholds: configurable and require signed KPI dictionary
+
+clean_sale:
+  definition_status: input_required/needs approved rulebook by campaign
+  principle: a sale has value only if it survives QA, compliance review, client scrutiny and customer challenge
+  minimum_controls:
+    - approved script, product terms and disclosures
+    - lawful lead source/consent and suppression handling
+    - complete recording and evidence retention
+    - QA scorecard and critical-fail logic
+    - customer and product data validation
+    - complaint linkage and remediation
+    - revenue recognition/clawback rule
+
+recruitment_demand_engine:
+  strategic_target_status: planning target
+  target: 20 sales-ready agents/week in current Clean Sales OS planning layer
+  funnel_model:
+    candidate_enquiries: 350-400/week
+    completed_GHL_applications: 180/week
+    pre_screen_calls: 110/week
+    interviews_booked: 85/week
+    interviews_attended: 60/week
+    offers_made: 33/week
+    offers_accepted: 28/week
+    training_starters: 25/week
+    sales_ready: 20/week
+  note: funnel is a proposed workback, not actual performance; update from live conversion data
+  ownership:
+    execution: P06
+    demand_content: P07
+    source_performance: P08
+    CRM_automation: P09
+    executive_people_outcome: P05
+  KPIs:
+    - applications and qualified rate by source
+    - speed to first contact and interview
+    - interview booked/show rate
+    - training start/pass rate
+    - sales-ready agents/week
+    - cost per sales-ready and cost per retained productive agent
+    - 30/60/90-day retention by source/recruiter/trainer/team/campaign
+    - time to productivity and clean-sale quality
+
+agentos:
+  rule: One agent. One file. One truth.
+  lifecycle: source -> application -> consent -> screening -> interview booking -> interview -> selection -> offer -> contract -> equipment/access -> training -> assessment -> floor-ready certification -> campaign allocation -> live production -> QA/coaching -> performance/retention -> movement or exit -> access removal/archive
+  non_negotiables:
+    - no candidate outside approved CRM/AgentOS
+    - no applicant without source tag and POPIA consent
+    - no interview without application record
+    - no offer without scorecard and approval
+    - no start without signed contract and onboarding checklist
+    - no go-live without training pass and floor-ready certification
+    - no undocumented coaching or PIP
+    - no exit without access removal, reason and archive
+  agent_passport_minimum:
+    identifiers: [candidate_id, employee_code, agent_id]
+    identity: [full_name, masked_contact_details]
+    acquisition: [source, campaign_source, consent_status, application_date]
+    workflow: [current_stage, recruiter, cohort, training_group, readiness_status]
+    deployment: [campaign, team_leader, system_access, go_live_date]
+    performance: [attendance, productive_time, contacts, pitches, conversion, sales, clean_sales, QA]
+    risk: [critical_flags, coaching, PIP, complaints, attrition_risk]
+    exit: [status, reason, date, access_removed, archive_reference]
+  readiness_gate:
+    checks: [contract, payroll/employee master, device, credentials, dialler/CRM, leads, team leader, training, assessment, compliance, QA support]
+  decisions: [coach, retain, move_campaign, retrain, suppress, PIP, exit]
+
+sales_scorecards:
+  agent: [attendance, adherence, talk_time, contacts, pitches, conversion, sales, QA_pass, clean_sales, coaching_action]
+  team_leader: [team_attendance, productive_hours, team_sales, conversion, QA_trend, coaching_completion, action_closure, attrition_risk]
+  campaign: [lead_supply, contactability, conversion, clean_sales, revenue/GWP, cost, contribution, QA/risk, capacity, client_health, decision]
+  executive: [sales_by_campaign, sales_per_agent, clean_sales, GWP/revenue, contribution, red_flags and owners]
+
+workforce_management:
+  definitions:
+    employed_HC: all employed agents
+    scheduled_HC: planned for shift/campaign
+    present_HC: attended
+    logged_in_HC: technically available
+    productive_HC: meeting approved productive criteria
+    shrinkage: paid time unavailable for production
+    adherence: actual activity vs schedule
+    lead_to_seat_coverage: usable lead inventory per productive seat
+  gate: no recruitment wave without seat, schedule, leader, system, training, lead supply, QA and cash plan

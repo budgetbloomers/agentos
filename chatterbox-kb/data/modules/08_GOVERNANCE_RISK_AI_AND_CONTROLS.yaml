@@ -1,0 +1,119 @@
+domain: governance_risk_ai_controls
+
+governance_objective: turn systems and data into accountable decisions, controlled action, evidence, learning and verified benefit
+
+six_owner_model:
+  executive_outcome_owner: accepts business outcome, adoption and benefit
+  process_owner: operates workflow and closes exceptions
+  system_owner: technical service, releases, availability and recovery
+  data_owner: definitions, quality, lineage and access
+  control_owner: independent risk/compliance/financial control
+  backup_owner: continuity, alternate access and recovery
+
+non_negotiable_controls:
+  - no unlogged production change
+  - every change has request, business approval, test, release, rollback and evidence
+  - no critical system without backup admin and tested manual fallback/recovery
+  - evidence, not meetings or verbal updates, closes actions
+  - no build advances without gate acceptance
+  - no privileged access without approval and periodic review
+  - segregate request, approval, execution and reconciliation for finance/payroll/PO controls
+  - preserve audit history and immutable evidence for contracts, QA, complaints, decisions and AI actions
+  - data minimisation, role-based access, retention and masking for POPIA-sensitive records
+
+risk_model:
+  categories: [customer_harm, compliance, data/privacy, financial, operational, technology, people, client/reputation, fraud, model/AI]
+  fields: [risk_id, event, cause, consequence, likelihood, impact, inherent_score, controls, owner, action, residual_score, due, evidence, escalation]
+  independent_authority: P04 may pause production for material customer/compliance harm
+
+incident_and_escalation_examples:
+  critical_customer_harm: immediate -> P04 and P01
+  unauthorised_spend: immediate -> P03
+  incorrect_executive_data: within 2 hours -> P08 and P02
+  recruitment_data_or_privacy_incident: within 4 hours -> P06, P05, P04, P11
+  P1_production_system_incident: immediate -> P11 and relevant executive
+  repeated_overdue_action: accountable executive then P01
+  missing_owner_or_control: block gate progression
+  note: thresholds are configurable and must be approved
+
+action_object:
+  fields: [action_id, trigger, system/process, issue, owner, support, priority, due, required_evidence, dependency, escalation, status, closed_date]
+  closure: evidence accepted by escalation/control owner
+
+decision_object:
+  fields: [decision_id, trigger, domain, issue, facts, options, recommendation, accountable_decider, consultees, decision, rationale, effective_date, review_date, evidence]
+  rule: a red number without a Decision/Action object is not governed
+
+benefit_object:
+  fields: [benefit_id, initiative, baseline, expected_value, metric, method, owner, verifier, realised_value, date, confidence, old_process_retired]
+  rule: tool deployment, user count or claimed hours saved are not benefits without baseline and validation
+
+AI_native_maturity:
+  current_overall_context: approximately 1.3/5
+  twelve_month_target: approximately 4.2/5
+  status: planning assessment, not external assurance
+  dimensions:
+    strategy_governance: 1.5 -> 4.2
+    process_standardisation: 2.0 -> 4.2
+    data_foundation: 1.2 -> 4.2
+    integration_automation: 2.3 -> 4.3
+    AI_workflows: 1.4 -> 4.2
+    agentic_orchestration: 0.5 -> 3.8
+    human_accountability: 1.4 -> 4.4
+    security_privacy_resilience: 1.0 -> 4.2
+    adoption_AI_skills: 1.1 -> 4.1
+    benefits_learning: 0.6 -> 4.1
+
+AI_autonomy:
+  A0: manual/no AI
+  A1: AI drafts or summarises; human decides
+  A2: AI recommends next action; human approves
+  A3: AI executes low-risk reversible action with oversight
+  A4: AI executes controlled workflow within strict rules and monitoring
+  A5: full autonomy; not appropriate for high-risk Chatterbox workflows
+  default_now: A1-A3
+
+AI_control_plane:
+  agent_register_fields: [agent_id, use_case, owner, process, model, prompt/version, autonomy, data_sources, tools, allowed_actions, prohibited_actions, tests, quality_threshold, cost, access, logs, incidents, kill_switch]
+  release_requirements:
+    - approved use case and owner
+    - trusted source data and access design
+    - benchmark/evaluation set and acceptance threshold
+    - human review and exception route
+    - cost and latency monitoring
+    - prompt/model/version tracking
+    - rollback and kill switch
+    - privacy, legal and control review for high-risk use
+  prohibited_uncontrolled_actions:
+    - make regulated advice or compliance decisions
+    - approve payroll/commission/payment
+    - launch or change production workflows without approval
+    - make hiring, disciplinary or dismissal decisions alone
+    - publish unsupported client/public claims
+    - expose or infer sensitive personal data without approved purpose
+
+priority_AI_agents:
+  Executive_Briefing_Agent: summarise business health, exceptions, decisions and evidence; A1-A2
+  PMO_Action_Agent: track owners, dates, dependencies and overdue escalation; A2-A3 for reminders
+  Recruitment_Copilot: candidate summaries, follow-up suggestions, orphan detection and source insight; A1-A3
+  Readiness_Agent: check missing contract/device/access/training gates; A2-A3
+  Sales_NBA_Agent: recommend coaching or recovery action from approved rules; A2
+  QA_Copilot: screen calls/text, identify risk and queue human review; A1-A2
+  Coaching_Agent: draft evidence-based coaching plans and follow-up; A1-A2
+  Data_Quality_Agent: validate uploads, detect mapping/quality exceptions; A2-A3 reversible
+  Campaign_Economics_Agent: explain variance and recommend scale/fix/pause; A2
+  Finance_Risk_Agent: detect commission/PO/cash anomalies; A1-A2
+  Knowledge_RAG_Agent: answer only from approved controlled content with citations; A1-A2
+  Content_Agent: draft recruitment/client/leadership content using approved claims; A1
+  System_Governance_Agent: monitor gates, controls, evidence and benefits; A2-A3 reminders
+
+agent_output_template:
+  required_sections: [role, objective, context, inputs, assumptions, tasks, deliverables, acceptance_criteria, risks, dependencies, decisions_required, output_format]
+  issue_format: issue | impact | evidence | owner | action | due | escalation
+
+90_day_control_outcomes:
+  systems: 100% registered with six owners and explicit scale/fix/merge/pause/retire decision
+  data: proposed >=95% freshness on controlled enterprise metrics and signed metric dictionary
+  adoption: proposed >=85% in active workflows; managers close actions without Nick chasing
+  AI: at least three controlled use cases in pilot/production with evaluation, approval and benefit baseline
+  resilience: 100% critical systems have incident route, backup, fallback and recovery test

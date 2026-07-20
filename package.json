@@ -1,0 +1,6 @@
+{
+  "name": "chatterbox-agentos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chatterbox AgentOS — analytics suite (Cloudflare Pages + Worker + Supabase). No npm deps; this file only marks the package root for tooling."
+}

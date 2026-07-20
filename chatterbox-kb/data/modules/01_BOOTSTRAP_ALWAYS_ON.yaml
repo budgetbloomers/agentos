@@ -1,0 +1,73 @@
+kb:
+  id: TCB-KB-V3
+  entity: The Chatterbox
+  version: '3.0'
+  compiled: '2026-07-10'
+  locale: South Africa
+  timezone: Africa/Johannesburg
+  confidentiality: internal
+
+identity:
+  legal_name: '[INPUT REQUIRED: confirmed legal entity name and registration number]'
+  trading_name: The Chatterbox
+  head_office: 1 Holwood Park, 5 Canegate Road, uMhlanga Ridge, Durban
+  business_type: compliance-first outsourced sales, contact-centre and revenue-execution business
+  external_positioning: AI-enabled Revenue Execution Platform combining people, process, technology, data and governance to turn conversations into measurable growth
+  core_promise: measurable, compliant, repeatable revenue growth
+  not_just: call centre
+
+strategy:
+  destination: AI-native, compliance-first, dashboard-managed, investor-ready, client-ready, scalable and less founder-dependent
+  one_line: Every lead, candidate, agent, campaign, sale, exception, risk, cost, action, decision and benefit must be visible, owned and governed.
+  thesis: Scale the revenue floor, not the support floor; fill productive seats while protecting clean-sale quality, management spans, cash, compliance and cost per active agent.
+  diagnosis: digitally active and point-solution-heavy, but control, adoption, trusted data and accountable execution are not yet consistently proven
+
+architecture:
+  CIP: enterprise governance, orchestration, systems, decisions, actions, controls, AI, audit and benefit layer
+  CleanSalesOS: demand-to-clean-sale operating system
+  AgentOS: candidate-to-employee-to-agent lifecycle and Agent Passport
+  AnalyticsUpload: manual controlled ingestion layer where client systems prohibit direct integration
+  hierarchy: CIP runs the business; Clean Sales OS runs the sales machine; AgentOS runs the agent lifecycle; Analytics Upload feeds trusted reporting.
+
+canonical_rules:
+  - Nick designs; management accepts; managers operate; data measures; risk audits; the CEO enforces.
+  - AI detects; manager responds; executive owns; data validates; risk controls; CEO enforces; CTTO redesigns only when the system is defective.
+  - If a metric turns red and no owned action follows, the system has failed.
+  - If it is not in the approved system of record, it did not happen.
+  - Deployment is not a benefit; benefits require verified revenue, cost, capacity, time, risk, cycle-time or adoption evidence.
+  - Technology owns platform reliability and integration; functional management owns business outcomes and adoption.
+  - Recruitment is an internal People Engine capability, not a client-facing service unless EXCO explicitly approves one.
+  - AI may assist at A1-A3 by default; high-risk sales, compliance, payroll, financial or customer-impact decisions remain human-accountable.
+  - Never call seat contribution EBITDA until reconciled to full management accounts.
+  - Never invent operating numbers, performance proof, client claims or legal approval.
+
+names_and_corrections:
+  Nicholas_Pillay: Chief Technology and Transformation Officer; never Chief Growth and Transformation Officer
+  Claudell_Panday: correct spelling
+  Abigail: owns Recruitment and Workforce Operations execution
+  Tiara: superseded for current recruitment ownership; do not assign live work to her unless explicitly reactivated
+  COO: unresolved/vacant unless later signed evidence confirms appointment
+
+agent_response_contract:
+  must:
+    - distinguish actual, target, forecast, proposed, historical and assumption
+    - cite or name the supporting internal source when making material claims
+    - state owner, action, deadline, evidence and escalation for any red issue
+    - use [INPUT REQUIRED] for missing facts
+    - flag conflicts instead of silently choosing
+    - produce usable operating assets, not generic advice
+    - keep language executive, direct, simple and operational
+  never:
+    - treat a URL or deployed app as proof of adoption, control or value
+    - make Nicholas the daily administrator for every workflow
+    - create parallel sources of truth without an expiry and reconciliation control
+    - automate unstable processes or bad data
+    - expose PII unnecessarily
+
+status_taxonomy:
+  fact: confirmed
+  model: planning/economic model, not necessarily actual
+  proposed: recommended design awaiting approval
+  historical: superseded context retained for traceability
+  conflict: materially inconsistent sources require decision
+  input_required: missing or unverified

@@ -1,0 +1,123 @@
+domain: finance_economics_scale
+warning: Values below combine user inputs, models and management-account proxies. Preserve labels and reconcile before investor use.
+
+seat_economics_stretch_model:
+  status: model/user-input based
+  mature_revenue_per_experienced_agent: 42500 ZAR/month
+  current_active_agents: 110
+  target_agents: 330
+  current_all_in_cost_per_agent: 25000 ZAR/month
+  target_all_in_cost_per_agent: 16000 ZAR/month
+  current_monthly_revenue: 4675000 ZAR
+  current_monthly_seat_contribution: 1925000 ZAR
+  current_contribution_margin: 41.2%
+  target_monthly_revenue_330: 14025000 ZAR
+  target_monthly_cost_330: 5280000 ZAR
+  target_monthly_seat_contribution_330: 8745000 ZAR
+  target_contribution_margin_330: 62.4%
+  expansion_500: {revenue: 21250000, cost: 8000000, contribution: 13250000}
+  runway_1000: {revenue: 42500000, cost: 16000000, contribution: 26500000}
+
+incremental_110_to_330:
+  added_agents: 220
+  incremental_monthly_revenue: 9350000 ZAR
+  incremental_monthly_cost: 3520000 ZAR
+  incremental_monthly_contribution: 6820000 ZAR
+  interpretation: funding is primarily timing/working-capital to recruit, train and carry payroll before billing and collections mature
+
+ramp_assumption:
+  M1: 50% of mature revenue
+  M2: 75%
+  M3_plus: 100%
+  status: conservative planning assumption; replace with cohort actuals
+
+sensitivity_330:
+  base: {revenue_per_agent: 42500, cost_per_agent: 16000, contribution: 8745000}
+  mild_stress: {revenue_per_agent: 40000, cost_per_agent: 18000, contribution: 7260000}
+  hard_stress: {revenue_per_agent: 38250, cost_per_agent: 20000, contribution: 6022500}
+
+cost_structure_330_model:
+  agent_basic: {monthly: 1650000, per_agent: 5000, pct_of_16000: 31.25%}
+  team_leader_basic: {monthly: 330000, per_agent: 1000, pct: 6.25%}
+  support_layer: {monthly: 524250, per_agent: 1588.64, pct: 9.93%}
+  residual_variable_operating: {monthly: 2775750, per_agent: 8411.36, pct: 52.57%}
+  total: {monthly: 5280000, per_agent: 16000}
+  TL_salary_model: 15000 ZAR/month
+  TL_ratio: 1:15
+  TL_required_at_330: 22
+
+support_costs:
+  Apr_2026: {employees: 17, monthly: 366423, per_110: 3331, per_330: 1110}
+  May_2026: {employees: 21, monthly: 491500, per_110: 4468, per_330: 1489}
+  Jun_2026_onward: {employees: 24, monthly: 524250, per_110: 4766, per_330: 1589}
+  thesis: fixed/step-fixed support absorption creates operating leverage; do not scale support linearly
+
+management_account_conservative_case:
+  status: proxy/model requiring correction
+  April_2026_actual:
+    headcount_or_seat_proxy: 65.6
+    monthly_revenue: 1970000 ZAR
+    revenue_per_HC: 30048 ZAR
+    all_in_cost_per_HC: 27037 ZAR
+    contribution_or_EBITDA_per_HC: 3006 ZAR
+    margin: 10.0%
+  mature_proxy:
+    revenue_per_HC: 34762 ZAR
+    cost_per_HC: 17205 ZAR
+    contribution_per_HC: 17558 ZAR
+    margin: about 50.5%
+  base_330:
+    monthly_revenue: about 11470000 ZAR
+    monthly_contribution_before_corrections: about 5790000 ZAR
+  rule: use conservative base for diligence until finance reconciles stretch assumptions
+
+facility_economics:
+  monthly_facility_envelope_from_Jul_2026: about 734256 ZAR
+  low_occupancy_example_88_agents_per_agent: about 8344 ZAR
+  full_330_productive_per_agent: about 2225 ZAR
+  reduction: about 73%
+  implication: productive utilisation is urgent; separate physical, active and productive seats
+
+funding_options_model:
+  recommended_structure: hybrid/non-dilutive first, subject to contracts, cash forecast and lender terms
+  R3m: {asset_funding: 2000000, working_capital: 1000000, use: lean ramp/tight buffer}
+  R4m: {asset_funding: 2000000, working_capital: 2000000, use: balanced/preferred planning case}
+  R5m: {asset_funding: 2000000, working_capital: 3000000, use: larger payroll/training/collection buffer}
+  input_required: funding instrument, security, pricing, drawdown, repayment and investor/lender terms
+
+known_reconciliation_issues:
+  - 110 active-agent investor input vs 65.6 April actual headcount/seat proxy; definitions and dates differ
+  - R42,500 mature revenue/agent stretch vs R34,762 conservative proxy
+  - agent basic R5,000 in latest actuals-matched model vs R5,250 in prior summary
+  - forecast headcount can exceed physical 330-seat capacity unless support seating, shifts or second site are separated
+  - team-leader forecast gap: model needs 22 TLs at 330; known correction about R391k/month versus prior run-rate
+  - EXCO salaries appear zero in part of forecast and must be located or reinstated
+  - COO and Operations Manager costs not fully visible
+  - finance vacancy/control capacity must be added
+  - QA should use automated screening/risk-based sampling rather than linear evaluator growth
+
+north_star_economics:
+  - revenue per productive agent/seat
+  - clean contribution per productive agent/seat
+  - cost per clean sale
+  - support cost per productive agent
+  - facility cost per productive agent
+  - agents per support FTE
+  - clean contribution per support FTE
+  - technology cost and verified capacity avoided per active agent
+  - lead cost, contactability, conversion and return by source/batch
+  - campaign-level revenue, cost, margin, clawback and cash conversion
+
+finance_required_outputs:
+  - reconciled seat/economic definitions
+  - campaign P&L and client profitability
+  - 13-week cash forecast
+  - monthly management accounts tied to investor dashboard
+  - commission rule/version/reconciliation
+  - PO and delegation controls
+  - debtor days, collections and working-capital gap
+  - actual technology, dialler, licence, payroll, facility and central overhead costs
+
+commercial_language_rule:
+  allowed: seat-level contribution or modelled contribution
+  prohibited_without_tie_out: EBITDA, proven profitability at target scale, guaranteed revenue or investor return

@@ -1,0 +1,119 @@
+domain: data_analytics_dashboards
+
+data_strategy:
+  objective: trusted canonical records and one signed metric dictionary that turn source activity into decisions and actions
+  principles:
+    - source systems create truth; analytics reports it
+    - every metric displays source, refresh time, owner, threshold and actual/target/forecast status
+    - PII masked by default in executive views
+    - data-quality exceptions are visible and owned
+    - experimental results cannot alter production dashboards until approved
+    - no spreadsheet becomes a permanent parallel operating system
+
+canonical_business_objects:
+  candidate: candidate_id, source, consent, stage, recruiter, timestamps, outcomes
+  employee_agent: employee_code, agent_id, team, campaign, readiness, status, lifecycle events
+  lead_customer: lead_id, source, batch_id, consent, acquisition_date, stage, attempt_history, reason, next_action, nurture, financial_return
+  client: client_id, contract/campaign relationship, commercial terms, owner, health
+  campaign: campaign_id, client, product, target, lead sources, capacity, QA rules, economics, status
+  interaction: call_id, agent, campaign, lead/customer, timestamp, outcome, duration, recording reference
+  sale: sale_id, product, agent, campaign, date, value/GWP, QA status, clean status, revenue status, clawback
+  QA_evaluation: evaluation_id, sale/call, score, critical fail, defect category, coach action, closure
+  attendance: employee/date/schedule/presence/login/productive status and reason
+  action: action_id, trigger, owner, due, evidence, escalation and closure
+  decision: decision_id, issue, options, accountable owner, decision, rationale and evidence
+  system: system_id, gate, owners, controls, health, change and benefit history
+  AI_agent: agent_id, use case, model, autonomy, owner, data, evaluations, cost, incidents and kill switch
+  benefit: baseline, expected, verified, method, owner, approver and old-process retirement
+
+analytics_upload_system:
+  constraint: manual upload only for current client sources; no direct Salesforce/CallX/Vici integration
+  workflow: select source -> upload CSV/XLS/XLSX -> validate headers -> preview -> map -> create UploadBatch -> raw load -> canonical transform -> validate -> exception table -> dashboard refresh -> freshness log
+  controls:
+    - every upload creates unique batch ID
+    - record raw/loaded/rejected row counts
+    - rejected rows store reason and remediation status
+    - preserve raw file and mapping/version reference
+    - show source freshness and failed/stale status
+    - mask/hide PII by role
+    - reconcile row counts and critical totals to source
+  source_adapters:
+    SF_OPEN_CASES: {system: Salesforce, purpose: backlog, ageing, owner workload, sample_original_rows: 23676}
+    SF_CLOSED_CASES: {system: Salesforce, purpose: throughput, closure ageing, dispositions, sample_original_rows: 1397}
+    SF_ACTIVATED_SERVICES: {system: Salesforce, purpose: activations, product mix, account/device linkage, sample_original_rows: 863}
+    CALLX_CALL_RECORDS: {system: CallX, purpose: calls, answer rate, duration, billable seconds, campaign/agent activity, sample_original_rows: 12156}
+    QA_EVALUATIONS: {system: QA export, purpose: score, critical fails, coaching/risk and quality, sample_original_rows: 1305}
+    ATTENDANCE_LONG: {system: attendance export, purpose: long-range availability/absence, sample_original_rows: 1000}
+    ATTENDANCE_MONTHLY: {system: attendance export, purpose: monthly operations and productivity denominator, sample_original_rows: 1000}
+    VICI_CALL_RECORDS: {system: Vici future, purpose: same canonical call model as CallX}
+  non_negotiable: dashboards read canonical call table, never directly from CallX-specific schema
+
+analytics_pages:
+  - Executive Overview
+  - Upload Control Centre
+  - Data Mapping and Upload
+  - Salesforce Cases
+  - Activations and Services
+  - Dialler Performance
+  - QA and Compliance
+  - Attendance and Workforce
+  - Agent 360
+  - Team Leader View
+  - Campaign Performance
+  - Data Quality
+  - Special Projects
+
+special_projects:
+  purpose: controlled experiments separated from production reporting
+  fields: [project_id, hypothesis, owner, dataset, method, output, decision, approval, promote_or_archive]
+  examples:
+    - CallX to Vici migration comparison
+    - QA score vs call duration
+    - attendance vs dialler productivity
+    - team-leader coaching impact
+    - Salesforce case ageing and workload
+    - activation attribution
+    - agent risk scoring
+    - recording coverage audit
+    - disposition cleanup
+
+required_dashboard_stack:
+  D01: {name: CEO Enterprise Scorecard, users: [P01, EXCO], purpose: strategy, health, exceptions, decisions}
+  D02: {name: Investor Dashboard, users: [investors, EXCO], purpose: seat economics, profitability, capacity, growth and risk}
+  D03: {name: CFO Financial and Campaign Economics, users: [P03], purpose: revenue, margin, cash, cost, commission and profitability}
+  D04: {name: CTTO Transformation and System Portfolio, users: [P02], purpose: systems, gates, adoption, AI, benefits and maturity}
+  D05: {name: Delivery Operations Control Tower, users: [P18, P10, OMs], purpose: capacity, production, recovery and campaign outcomes}
+  D06: {name: People and Capacity, users: [P05, P06], purpose: recruitment, workforce, retention and readiness}
+  D07: {name: Recruitment Funnel, users: [P05, P06, P07, P08], purpose: source-to-sales-ready conversion and leakage}
+  D08: {name: HR Lifecycle, users: [P05, P13], purpose: employee master, onboarding, movement, exits and access closure}
+  D09: {name: AgentOS/Agent 360, users: [People, Ops, Data], purpose: Agent Passport, readiness, performance, quality and risk}
+  D10: {name: Sales Performance and Coaching, users: [P10, TLs], purpose: agent/team performance and action closure}
+  D11: {name: QA Compliance and Complaints, users: [P04, P12], purpose: clean-sale control, defects, complaints and remediation}
+  D12: {name: Technology Health, users: [P11, P02], purpose: uptime, incidents, access, release and recovery}
+  D13: {name: Data Quality, users: [P08], purpose: freshness, completeness, duplicates, reconciliation and exceptions}
+  D14: {name: AI Adoption and Control, users: [P02, P04, P09], purpose: agents, autonomy, evaluations, cost, incidents and kill switches}
+  D15: {name: Benefits Realisation, users: [EXCO], purpose: expected vs verified benefit and retired work}
+  D16: {name: Action and Decision, users: [EXCO/MANCO], purpose: owner, due, evidence, escalation and closure}
+  D17: {name: System Lifecycle Heatmap, users: [EXCO], purpose: G0-G6 gate, health, owner and next decision}
+  D18: {name: AI-Native Maturity Heatmap, users: [EXCO], purpose: current vs target maturity and gaps}
+
+investor_dashboard_minimum:
+  executive_summary: [revenue, gross_margin, reconciled_EBITDA, cash, capacity, growth, top_risks]
+  seat_economics: [physical_seats, employed, scheduled, present, logged_in, productive, revenue_per_productive_seat, cost_per_seat, clean_contribution]
+  campaign_profitability: [revenue/GWP, conversion, costs, clean_sales, margin, client_health, clawbacks]
+  sales_productivity: [attendance, talk_time, contact_rate, pitch_rate, conversion, sales_per_agent, team_leader_output]
+  recruitment: [applications, qualified, interviews, training, sales_ready, cost, retention]
+  quality_risk: [QA_pass, critical_fail, clean_sales, complaints, repeat_defects, coaching_closure]
+  technology: [uptime, incidents, workflow_failures, CRM_hygiene, adoption]
+  risk_register: [risk, owner, impact, likelihood, mitigation, escalation]
+  growth_assumptions: [required_agents, seats, recruitment_capacity, revenue_runway, cash_need]
+
+data_quality_targets:
+  proposed_90_day:
+    controlled_metric_freshness: '>=95%'
+    active_workflow_adoption: '>=85%'
+    critical_system_owner_coverage: '100%'
+  status: proposed targets from transformation planning, not current actuals
+
+metric_definition_contract:
+  fields: [metric_id, name, business_question, formula, unit, grain, source, owner, threshold, refresh, exclusions, actual_target_forecast_flag, reconciliation, action_route]

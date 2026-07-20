@@ -1,0 +1,64 @@
+# Chatterbox AgentOS — Project Context
+
+Agentic OS for The Chatterbox call centre (Durban, ZA). Three parts: a single-file analytics dashboard (deployed to Cloudflare Pages), Claude Code skills that carry the business frameworks, and the TCB-KB-V3 knowledge base.
+
+## Layout
+
+| Path | What it is |
+|------|------------|
+| `Chatterbox_AgentOS_Analytics.html` | THE PRODUCT — single-file analytics app (~5k lines: parsers, KPI engine, NBA v3.0 engine, 18 pages). Source of truth for all dashboard logic. |
+| `site/` | Cloudflare Pages deploy root. `site/index.html` is GENERATED from the file above by `node tools/prepare-site.js` — never edit `site/index.html` directly. |
+| `nba-analyst/` | Skill: NBA Scoring Framework v3.0. Rationale + output templates only — every number lives in the dashboard Dictionary (single source; prose copies were deduplicated away 2026-07). |
+| `chatterbox-kb/` | Skill: RAG knowledge base. `data/modules/01..10_*.yaml` = TCB-KB-V3 corpus (read-only). `context/kb-state.md` = mutable overlay. |
+| `AGENTIC-OS-PLAN.md` | Architecture plan v0.2 — ZERO-LOCAL: everything cloud (Workers AI Hermes, D1/R2/KV, Cron Triggers, Access). Nothing runs on the user's PC. |
+| `uploads/` | Drop zone for raw exports when scoring outside the dashboard (CSV/XLS). |
+| `reports/` | Output of /weekly-report runs. |
+| `brain/` | THE MEMORY — LLM-wiki vault (Karpathy pattern): `hot.md` is the session cache (printed by the session-start hook, read by the Worker's `/api/ask`), `log.md` the append-only audit trail. The vault is small — Glob is the index. Opens in Obsidian, syncing from the Supabase `brain` bucket via Remotely-Save (brain/OBSIDIAN-SYNC.md). Schema in brain/CLAUDE.md. |
+| `nicks_code/` | PULSE — second app of the suite (VAS Performance Platform, dark glass UI, workbook-verified calcs, `window.__mtd` test API, Playwright harness in diagnostics/). Deployed at `/pulse/` by prepare-site. Different data model to AgentOS by design — see the reconciliation register in AGENTIC-OS-PLAN.md §9b before "fixing" any numbers mismatch between the two apps. |
+| `specs/` | AgentOS v3.8 upload-framework digest (source contracts S1–S12, quirk catalogue, money model, Copilot skills). Read before touching upload parsing or GWP logic. The S5 Power BI money source IS this dashboard's money model since 2026-07 (BI_ACTIVE_CASES). |
+
+## Non-negotiables (violating these is a bug)
+
+1. **NBA math is deterministic code, never LLM arithmetic.** The dashboard's `acStats`/`cfTier`/`acNBA`/`acComposite` functions are the engine. Agents may EXPLAIN scores; only code COMPUTES them. When scoring outside the dashboard, write and run a script.
+2. **One primary NBA per agent** — ladder walked in fixed order P1·R1 → P4·R10, first trigger wins. R2A-1 is a flag/footnote, never a primary NBA.
+3. **R2A tier = HIGHER of count band and rate band.** One capped penalty per tier (`pen1`/`pen2`/`pen3` in the `nbaThresholds` rule — live-editable; the cap is `pen3`). Never the retired −3-per-*fail* v2.5 logic: the penalty is a tier value, never accumulated per fail.
+4. **Composite is the `compositeWeights` rule** — Value/Volume/QA/GWP %ile/Conversion/Talk/Attendance, in that priority order (value first, then volume, then quality); weights are live-editable and renormalise across the metrics an agent actually has. Penalty applied AFTER the sum ('Adj'). Cancellations and attempts-per-lead are diagnostics — never scored.
+5. **Tenure-relative everything.** Never compare agents across tenure groups (M1/M2/EXP–Courtesy/EXP–Cuddle). GWP percentile within group only.
+6. **One money model: Power BI - Active Cases** (specs/AgentOS-v3.8-upload-frameworks.md §2). GWP = Σ Charge Amount per account, charges are EX-VAT, grossed up ×(1+vatRate rule, default 15%, zero-safe) to inclusive; sale dated per row's Contract Create Date; agent matched on Owner. Monthly uploads ACCUMULATE — a re-upload replaces only its own date span (deliberate deviation from pack R-ING-BI-06). There is NO legacy fallback: with no BI file loaded, money reads blank and says so. The old Activated-Services + GWP-table pricing was removed 2026-07; never reintroduce it silently.
+7. **CB codes normalise**: `CB-15` = `CB15` = `cb 15` (see `normCB`). The daily Agent List is the identity base — every cross-source join resolves through it. Unmapped rows are FLAGGED, never silently dropped or invented.
+8. **KB response contract**: label every figure actual/model/proposed/historical; `[INPUT REQUIRED]` for missing facts, never invent; flag conflicts (330 vs 370 agents, R42,500 vs R34,762 rev/agent, etc.) per module 10 treatments; never call seat contribution "EBITDA" before management-account tie-out.
+9. **Names**: Nicholas Pillay = CTTO (never "Chief Growth..."); Claudell Panday (spelling); Abigail owns recruitment execution; COO unresolved unless kb-state.md records signed evidence.
+10. **PII**: masking defaults ON. The suite sits behind its own login (worker/src/auth.mjs — PBKDF2 + sessions + lockout; auth-gate.js on every page). Cloudflare Access remains an optional outer wall, not the only lock.
+
+## Dashboard conventions (when editing the HTML)
+
+- Everything configurable lives in `DEFAULT_RULES` / `DEFAULT_KPIS` and is user-editable at runtime — never hardcode a threshold that belongs in a rule. Reference rules from KPI filters as `$ruleName`.
+- Snapshot sources (`snapshot:true`) REPLACE on upload; time-series sources APPEND and window by `_d`. Two supersede exceptions in confirmLoad: ATTENDANCE (new file wins per employee-day) and BI_ACTIVE_CASES (new file wins for its own Contract-Create-Date span — months accumulate).
+- All user strings through `esc()`; names through `maskName()`; money through `fmtVal(v,'zar')`/`zarStack()`.
+- New data sources = new entry in `SOURCES` (header contract) + `TRANSFORM` (canonical mapping) + optionally KPIs. Rejected rows must land in exceptions with a reason.
+- Persistence goes through `store()`/`load()` (async `window.storage`). On Cloudflare a localStorage shim is injected by `tools/prepare-site.js`; the target backend is a Worker API over D1/R2 (plan Phase 2) — don't scatter new persistence paths.
+- ZERO-LOCAL constraint (user requirement): no local LLM, no local watcher/daemon, no local database. Compute/AI/cron/login = Cloudflare (Worker, Workers AI Hermes 2 Pro, Cron Triggers, Access); data = Supabase (Postgres SQL + Storage; brain vault syncs to Obsidian via Remotely-Save S3). The Worker is the ONLY thing that talks to Supabase — service-role key is a Worker secret, never in browser code, and CSP connect-src stays 'self'.
+- Session snapshot slots (SES_*) never mix into daily analytics.
+
+## Deployment (Cloudflare)
+
+- `node tools/prepare-site.js` → regenerates `site/index.html` (injects storage shim).
+- `/deploy` skill runs the full flow: prepare → verify → `npx wrangler pages deploy site`.
+- **Before real data goes live: Cloudflare Access (Zero Trust) in front of the Pages domain.** Public URL + agent PII + campaign economics = POPIA incident.
+- `site/_headers` carries the CSP — cdnjs.cloudflare.com must stay allowed (XLSX/Papa/Chart.js CDN) and `'unsafe-inline'` is required (inline script + onclick handlers).
+
+## Workflows
+
+- `/weekly-report` — score latest uploads → Monday TL brief into `reports/`
+- `/upload-check <file>` — validate an export against source contracts before upload
+- `/dashboard-fix` — conventions-aware editing of the dashboard
+- `/deploy [prod]` — prepare + deploy to Cloudflare Pages
+- `/nba-analyst …`, `/chatterbox-kb …` — global skills (installed in ~/.claude/commands)
+
+## Subagents — delegate, keep main context clean
+
+- `kb-agent` — Chatterbox KB questions (loads modules in its own context)
+- `nba-scorer` — scoring/explain runs over data files (writes+runs scripts, returns results only)
+- `dashboard-reviewer` — reviews HTML changes against the conventions above
+
+The dashboard file alone fills most of a context window — never read it whole into the main session; Grep for the section you need or delegate to dashboard-reviewer.

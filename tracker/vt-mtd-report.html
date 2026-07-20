@@ -1,0 +1,1047 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vehicle Tracking — MTD Report · Chatterbox AgentOS</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,3 29,10 16,17 3,10' fill='%234aa8f5'/%3E%3Cpolygon points='3,10 16,17 16,31 3,24' fill='%230d1526'/%3E%3Cpolygon points='29,10 16,17 16,31 29,24' fill='%231f6fd0'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#0a1424; --bg-deep:#070f1d; --panel:#0f1c31; --panel-2:#13233d;
+    --line:#20334f; --line-soft:#182a44;
+    --text:#e9f0fa; --text-2:#aabdd6; --muted:#7089a6;
+    --accent:#3aa1f7; --accent-deep:#2b8fef; --accent-soft:rgba(58,161,247,.14);
+    --series:#3987e5; /* data marks (bars, meters) — validated vs panel surface */
+    --grad:linear-gradient(90deg,#2b8fef,#54b2f9);
+    --good:#0ca30c; --good-bg:rgba(12,163,12,.13);
+    --warn:#fab219; --warn-bg:rgba(250,178,25,.12);
+    --crit:#d03b3b; --crit-bg:rgba(208,59,59,.13);
+    --meter-track:#173556;
+    --shadow:0 10px 30px rgba(0,0,0,.35);
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:"Segoe UI",system-ui,-apple-system,sans-serif;
+    font-size:14.5px; line-height:1.5;
+  }
+  button,input,select{font:inherit}
+  ::placeholder{color:var(--muted)}
+
+  .app{display:flex; min-height:100vh}
+
+  /* ================= Sidebar ================= */
+  .sidebar{
+    width:280px; flex:0 0 280px; background:var(--bg-deep);
+    border-right:1px solid var(--line-soft);
+    padding:14px 14px 22px; display:flex; flex-direction:column; gap:6px;
+    position:sticky; top:0; height:100vh; overflow-y:auto;
+  }
+  .nav-label{
+    font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--muted); padding:12px 12px 6px;
+  }
+  .nav-btn{
+    display:flex; align-items:center; gap:12px; width:100%;
+    border:0; background:transparent; color:var(--text-2);
+    font-size:14.5px; font-weight:600; text-align:left;
+    padding:11px 14px; border-radius:12px; cursor:pointer;
+  }
+  .nav-btn svg{flex:0 0 auto; opacity:.85}
+  .nav-btn:hover{background:rgba(58,161,247,.08); color:var(--text)}
+  .nav-btn.active{background:var(--grad); color:#fff; box-shadow:0 6px 18px rgba(43,143,239,.35)}
+  .nav-btn.active svg{opacity:1}
+  .nav-btn:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+  /* ================= Main ================= */
+  .main{flex:1; min-width:0; display:flex; flex-direction:column}
+  .topbar{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:14px 22px; border-bottom:1px solid var(--line-soft);
+  }
+  .search{
+    display:flex; align-items:center; gap:8px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:9px 13px; width:250px;
+  }
+  .search svg{flex:0 0 auto; color:var(--muted)}
+  .search input{border:0; background:transparent; color:var(--text); width:100%; outline:none}
+  .ctl{
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    color:var(--text); padding:9px 12px; cursor:pointer;
+  }
+  select.ctl{appearance:none; padding-right:30px;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237089a6' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 12px center;}
+  .ctl:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  input.ctl[type=month]{color-scheme:dark}
+  .ctl-label{
+    display:flex; align-items:center; gap:8px; background:var(--panel);
+    border:1px solid var(--line); border-radius:12px; padding:0 0 0 12px;
+  }
+  .ctl-label span{font-size:11px; font-weight:700; letter-spacing:.1em; color:var(--muted); text-transform:uppercase}
+  .ctl-label select{border:0; background-color:transparent; margin:0; border-radius:12px}
+  .btn-primary{
+    display:inline-flex; align-items:center; gap:9px;
+    background:var(--grad); color:#fff; border:0; border-radius:12px;
+    font-weight:700; padding:10px 18px; cursor:pointer;
+    box-shadow:0 6px 18px rgba(43,143,239,.35);
+  }
+  .btn-primary:hover{filter:brightness(1.07)}
+  .btn-ghost{
+    display:inline-flex; align-items:center; gap:8px;
+    background:transparent; color:var(--text-2); border:1px solid var(--line);
+    border-radius:10px; font-weight:600; font-size:13px; padding:8px 14px; cursor:pointer;
+  }
+  .btn-ghost:hover{color:var(--text); border-color:var(--accent)}
+  .push{margin-left:auto}
+
+  /* ================= Data trust strip ================= */
+  .trustbar{
+    display:flex; align-items:center; gap:14px;
+    background:#0c1a33; border-bottom:1px solid var(--line-soft);
+    padding:10px 22px;
+  }
+  .trust-label{font-size:12px; font-weight:700; letter-spacing:.14em; color:var(--muted); text-transform:uppercase}
+  .trust-pill{
+    display:inline-flex; align-items:center; gap:8px; border-radius:999px;
+    font-size:12.5px; font-weight:600; padding:5px 14px; cursor:pointer; border:1px solid transparent;
+  }
+  .trust-pill .dot{width:7px; height:7px; border-radius:50%}
+  .trust-pill.warn{background:var(--warn-bg); color:var(--warn); border-color:rgba(250,178,25,.3)}
+  .trust-pill.warn .dot{background:var(--warn)}
+  .trust-pill.good{background:var(--good-bg); color:#35c435; border-color:rgba(12,163,12,.3)}
+  .trust-pill.good .dot{background:#35c435}
+
+  /* ================= Content ================= */
+  .content{padding:22px; max-width:1500px; width:100%}
+  .panel{display:none}
+  .panel.active{display:block}
+  .page-head{margin:2px 2px 16px}
+  .page-title{font-size:20px; font-weight:700; margin:0}
+  .page-sub{color:var(--muted); font-size:13px; margin:2px 0 0}
+
+  .tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:18px}
+  .tile{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:15px 17px 14px; box-shadow:var(--shadow);
+  }
+  .tile .t-label{font-size:12px; color:var(--muted); font-weight:600}
+  .tile .t-value{font-size:29px; font-weight:650; line-height:1.25; margin-top:2px}
+  .tile .t-sub{font-size:12px; color:var(--text-2); margin-top:2px}
+  .meter{height:8px; background:var(--meter-track); border-radius:999px; margin-top:10px; overflow:hidden}
+  .meter i{display:block; height:100%; background:var(--series); border-radius:999px}
+
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:18px 20px; box-shadow:var(--shadow); margin-bottom:18px;
+  }
+  .card-head{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:12px}
+  .card-title{font-size:12px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; color:var(--muted); margin:0}
+  .card-hint{font-size:12px; color:var(--muted)}
+  .footnote{font-size:12px; color:var(--muted); margin:10px 2px 0}
+  .footnote b{color:var(--warn); font-weight:600}
+  .grid-2{display:grid; grid-template-columns:2fr 1fr; gap:18px; align-items:start}
+  @media (max-width:1100px){.grid-2{grid-template-columns:1fr}}
+  .grid-2 > *, .slots > *{min-width:0}
+
+  .tscroll{overflow-x:auto}
+  table{border-collapse:collapse; width:100%; font-size:13.5px}
+  th{
+    font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted); text-align:right; padding:9px 12px; white-space:nowrap;
+    background:var(--panel-2); position:sticky; top:0;
+  }
+  th:first-child{text-align:left; border-radius:8px 0 0 8px}
+  th:last-child{border-radius:0 8px 8px 0}
+  td{
+    padding:8px 12px; border-bottom:1px solid var(--line-soft); text-align:right;
+    font-variant-numeric:tabular-nums; white-space:nowrap; color:var(--text-2);
+  }
+  td:first-child{text-align:left; color:var(--text)}
+  tbody tr:hover td{background:rgba(58,161,247,.05)}
+  tr.subtotal td{background:rgba(58,161,247,.07); font-weight:600; color:var(--text)}
+  tr.grand td{border-top:2px solid var(--line); border-bottom:0; font-weight:700; color:var(--text); background:rgba(58,161,247,.05)}
+  .pct{color:var(--muted)}
+  .scrollbox{max-height:430px; overflow:auto; border:1px solid var(--line-soft); border-radius:10px}
+  .scrollbox table{font-size:13px}
+
+  /* horizontal bars */
+  .bars{display:grid; gap:12px; margin-top:4px}
+  .bar-row{display:grid; grid-template-columns:110px 1fr; gap:12px; align-items:center}
+  .bar-name{font-size:13px; color:var(--text-2); text-align:right}
+  .bar-track{display:flex; align-items:center; gap:9px}
+  .bar-fill{height:18px; background:var(--series); border-radius:0 4px 4px 0; min-width:2px}
+  .bar-row:hover .bar-fill{filter:brightness(1.15)}
+  .bar-val{font-size:13px; font-weight:600; color:var(--text); font-variant-numeric:tabular-nums}
+
+  /* empty state */
+  .empty{
+    min-height:290px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; gap:8px; padding:30px;
+  }
+  .empty h3{font-size:19px; margin:0; font-weight:700}
+  .empty p{margin:0; color:var(--text-2); max-width:640px}
+  .empty a{color:var(--accent); font-weight:600; cursor:pointer; text-decoration:underline}
+
+  /* ================= Upload center ================= */
+  .slots{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+  @media (max-width:1100px){.slots{grid-template-columns:1fr}}
+  .badge{
+    display:inline-flex; align-items:center; gap:7px; border-radius:999px;
+    font-size:12px; font-weight:600; padding:4px 12px;
+  }
+  .badge .dot{width:7px; height:7px; border-radius:50%}
+  .badge.warn{background:var(--warn-bg); color:var(--warn)}
+  .badge.warn .dot{background:var(--warn)}
+  .badge.good{background:var(--good-bg); color:#35c435}
+  .badge.good .dot{background:#35c435}
+  .dropzone{
+    border:2px dashed var(--line); border-radius:12px; padding:26px 18px;
+    text-align:center; color:var(--muted); cursor:pointer; margin-top:12px;
+    transition:border-color .15s, background .15s;
+  }
+  .dropzone:hover,.dropzone.drag{border-color:var(--accent); background:var(--accent-soft); color:var(--text-2)}
+  .dropzone .dz-title{font-weight:600; color:var(--text-2)}
+  .dropzone .dz-sub{font-size:12px; margin-top:2px}
+  .filechip{
+    display:flex; align-items:center; gap:11px; background:var(--panel-2);
+    border:1px solid var(--line-soft); border-radius:10px; padding:9px 13px; margin-top:10px;
+  }
+  .filechip svg{color:var(--accent); flex:0 0 auto}
+  .fc-name{font-weight:600; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .fc-meta{font-size:11.5px; color:var(--muted)}
+  .fc-x{
+    margin-left:auto; border:0; background:transparent; color:var(--muted);
+    font-size:16px; cursor:pointer; padding:2px 7px; border-radius:7px;
+  }
+  .fc-x:hover{color:var(--crit); background:var(--crit-bg)}
+  .chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px}
+  .chip{font-size:11.5px; color:var(--text-2); background:var(--panel-2); border:1px solid var(--line-soft); border-radius:999px; padding:3px 10px}
+  .rules li{margin-bottom:9px; color:var(--text-2)}
+  .rules b{color:var(--text); font-weight:600}
+  .paste-slot{border:1px solid var(--line-soft); border-radius:12px; padding:12px 14px; margin-top:12px; background:rgba(19,35,61,.35)}
+  .paste-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .paste-head .slot-tag{font-size:11px; font-weight:700; letter-spacing:.1em; color:var(--muted); text-transform:uppercase}
+  .paste-head input{background:var(--panel-2); border:1px solid var(--line); border-radius:8px; color:var(--text); padding:5px 10px; width:130px; font-weight:600}
+  .paste-head input:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  textarea.paste{
+    width:100%; min-height:132px; margin-top:10px; resize:vertical; display:block;
+    background:var(--panel-2); border:1px solid var(--line); border-radius:10px;
+    color:var(--text); padding:10px 12px; font:12.5px/1.55 Consolas,"Cascadia Mono",monospace;
+    white-space:pre; overflow-x:auto;
+  }
+  textarea.paste:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  .paste-actions{display:flex; gap:8px; margin-top:9px; align-items:center; flex-wrap:wrap}
+  .warnlist{margin:8px 0 0; padding-left:18px; font-size:12px; color:var(--warn)}
+  .warnlist li{margin-bottom:3px}
+  .stat-chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px}
+  .inputs-grid{display:grid; grid-template-columns:1fr 92px; gap:9px 12px; align-items:center}
+  .inputs-grid label{font-size:13px; color:var(--text-2)}
+  .inputs-grid input{
+    background:var(--panel-2); border:1px solid var(--line); border-radius:9px;
+    color:var(--text); padding:7px 10px; text-align:right; width:100%;
+    font-variant-numeric:tabular-nums;
+  }
+  .inputs-grid input:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ Sidebar ============ -->
+  <aside class="sidebar">
+    <!-- Logo card + Ops/VT mode toggle removed: this report is embedded in the Tracker
+         app, whose own top-right switcher already handles Ops ⇄ VT/VAS navigation. -->
+    <div class="nav-label">Analytics</div>
+    <button class="nav-btn active" data-tab="projection">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>
+      Projection
+    </button>
+    <button class="nav-btn" data-tab="vt">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11l1.8-4.2A2 2 0 0 1 8.6 5.5h6.8a2 2 0 0 1 1.8 1.3L19 11"/><path d="M4 11h16a1 1 0 0 1 1 1v4h-2"/><path d="M3 16v-4a1 1 0 0 1 1-1"/><circle cx="7.5" cy="16.5" r="1.8"/><circle cx="16.5" cy="16.5" r="1.8"/><path d="M9.3 16.5h5.4"/></svg>
+      Vehicle Tracker
+    </button>
+    <button class="nav-btn" data-tab="leads">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18l-7 8v6l-4 2v-8L3 4z"/></svg>
+      Lead Tracker
+    </button>
+
+    <div class="nav-label">Data</div>
+    <button class="nav-btn" data-tab="uploads">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+      Data &amp; Uploads
+    </button>
+  </aside>
+
+  <!-- ============ Main ============ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="search">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="search" type="search" placeholder="Search case, agent, date..." aria-label="Search tables">
+      </div>
+      <select id="viewMode" class="ctl" aria-label="Period basis">
+        <option value="fitment" selected>Fitment month (26th – 25th)</option>
+        <option value="calendar">Calendar month</option>
+      </select>
+      <input id="month" type="month" class="ctl" value="2026-07" aria-label="Report month">
+      <div class="ctl-label"><span>Campaign</span>
+        <select id="fCampaign" class="ctl" aria-label="Campaign filter"><option value="">All</option></select>
+      </div>
+      <div class="ctl-label"><span>Scheduler</span>
+        <select id="fScheduler" class="ctl" aria-label="Scheduler filter"><option value="">All</option></select>
+      </div>
+      <button id="exportBtn" class="btn-primary push">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>
+        Export report
+      </button>
+    </header>
+
+    <div class="trustbar">
+      <span class="trust-label">Data Trust</span>
+      <button id="trustPill" class="trust-pill warn" type="button">
+        <span class="dot"></span><span id="trustText">Sources need attention · 0/2 sources</span><span aria-hidden="true">›</span>
+      </button>
+      <button id="manageUploads" class="btn-ghost push" type="button">Manage uploads →</button>
+    </div>
+
+    <section class="content" id="content">
+
+      <!-- ========== PROJECTION ========== -->
+      <div class="panel active" id="panel-projection">
+        <div class="page-head">
+          <h1 class="page-title">Projection</h1>
+          <p class="page-sub" id="projPeriodSub"></p>
+        </div>
+        <div class="tiles" id="projTiles"></div>
+        <div class="grid-2">
+          <div>
+            <div class="card">
+              <div class="card-head"><h2 class="card-title">Internal target — fitment projection</h2><span class="card-hint" id="projPeriodHint"></span></div>
+              <div class="tscroll"><table id="projTable"></table></div>
+              <p class="footnote" id="projFoot"></p>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2 class="card-title">Matrix target &amp; incentive</h2></div>
+              <div class="tscroll"><table id="matrixTable"></table></div>
+              <p class="footnote" id="matrixFoot"></p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2 class="card-title">Report inputs</h2></div>
+            <div class="inputs-grid" id="projInputs"></div>
+            <p class="footnote">These inputs will be fed automatically by the upload sources once the ingestion rules are wired. Edits recalculate the projection live and are saved on this device.</p>
+            <button id="resetInputs" class="btn-ghost" style="margin-top:8px">Reset to July workbook</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== VEHICLE TRACKER ========== -->
+      <div class="panel" id="panel-vt">
+        <div class="page-head">
+          <h1 class="page-title">Vehicle Tracker</h1>
+          <p class="page-sub">Month-to-date sales, scheduling and fitment performance</p>
+        </div>
+        <div class="tiles" id="vtTiles"></div>
+        <div class="card">
+          <div class="card-head"><h2 class="card-title">VT tracker — Power BI</h2><span class="card-hint">Counts with share of the month-to-date position</span></div>
+          <div class="tscroll"><table id="vtTable"></table></div>
+          <p class="footnote">¹ share of Sales &nbsp;·&nbsp; ² share of Total fitments. <b>Rule to confirm:</b> the July workbook computes Sales as Scheduled + Panimax + Afrileads + JAGLeads + Total fitments + Missed (=SUM of the six columns).</p>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h2 class="card-title">Scheduler tracker</h2><span class="card-hint">26 June – 9 July 2026</span></div>
+            <div class="tscroll"><table id="schedTable"></table></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2 class="card-title">Fitments by source</h2><span class="card-hint" id="fitMixHint"></span></div>
+            <div class="bars" id="sourceBars"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h2 class="card-title">Sales &amp; scheduling detail</h2>
+            <span class="card-hint" id="detailCount"></span>
+          </div>
+          <div class="scrollbox tscroll"><table id="detailTable"></table></div>
+          <p class="footnote">Currently showing the July workbook consolidation; this table switches to the live feed from the two scheduler paste slots once the mapping rules are wired. Customer names and contact numbers are excluded from the seeded demo data. Search, Campaign and Scheduler filters apply to this table.</p>
+        </div>
+      </div>
+
+      <!-- ========== LEAD TRACKER ========== -->
+      <div class="panel" id="panel-leads">
+        <div class="page-head">
+          <h1 class="page-title">Lead Tracker</h1>
+          <p class="page-sub">Afrilead &amp; JAG lead performance by day, week and month-to-date</p>
+        </div>
+        <div class="tiles" id="leadTiles"></div>
+        <div class="card">
+          <div class="card-head"><h2 class="card-title">Afri leads — daily tracker</h2></div>
+          <div class="tscroll"><table id="afriTable"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2 class="card-title">JAG leads — daily tracker</h2></div>
+          <div class="tscroll"><table id="jagTable"></table></div>
+          <p class="footnote"><b>Rule to confirm:</b> conversion here is Vehicle (or Account) sales ÷ Dialed, shown as 0% on days with no dials. The July workbook divides by Created instead of Dialed on a few days (e.g. JAG 07–09 July).</p>
+        </div>
+      </div>
+
+      <!-- ========== DATA & UPLOADS ========== -->
+      <div class="panel" id="panel-uploads">
+        <div class="page-head">
+          <h1 class="page-title">Data &amp; Uploads</h1>
+          <p class="page-sub">Two sources feed this report. Data Trust turns green when both are in for the day.</p>
+        </div>
+        <div class="slots">
+          <div class="card">
+            <div class="card-head">
+              <h2 class="card-title">1 · Salesforce — Scheduled &amp; Missed report</h2>
+              <span class="badge warn push" id="sfBadge"><span class="dot"></span>Awaiting file</span>
+            </div>
+            <p style="margin:0;color:var(--text-2);font-size:13px">Single export, e.g. <i>Detail Summary Scheduled and Missed – 13.07.2026.xlsx</i>. Feeds Scheduled / Missed fitment counts.</p>
+            <div class="chips">
+              <span class="chip">Case Number</span><span class="chip">Product Type</span><span class="chip">Status</span>
+              <span class="chip">Fitment Partner</span><span class="chip">Fitment Date</span><span class="chip">MissedAndScheduledFitment</span>
+            </div>
+            <div class="dropzone" id="dzSF" tabindex="0" role="button" aria-label="Upload Salesforce Scheduled and Missed report">
+              <div class="dz-title">Drag &amp; drop the export here</div>
+              <div class="dz-sub">or click to browse · .xlsx / .csv · 1 file</div>
+            </div>
+            <input type="file" id="fileSF" accept=".xlsx,.xls,.csv" hidden>
+            <div id="sfFiles"></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h2 class="card-title">2 · Scheduler manual report</h2>
+              <span class="badge warn push" id="smBadge"><span class="dot"></span>Awaiting 2 pastes</span>
+            </div>
+            <p style="margin:0;color:var(--text-2);font-size:13px">Two slots — each scheduler pastes their sheet straight from Excel (tab-separated, columns below). Both pastes are consolidated into a single Schedulers dataset.</p>
+            <div class="chips">
+              <span class="chip">Date</span><span class="chip">Agent Name</span><span class="chip">Case Number</span>
+              <span class="chip">Customer Cellphone</span><span class="chip">Source Partner</span><span class="chip">GWP</span>
+            </div>
+            <div id="pasteSlots"></div>
+          </div>
+        </div>
+        <div class="card" id="smPreviewCard" hidden>
+          <div class="card-head">
+            <h2 class="card-title">Consolidated schedulers dataset</h2>
+            <span class="card-hint" id="smPreviewHint"></span>
+          </div>
+          <div class="stat-chips" id="smSourceChips"></div>
+          <div class="scrollbox tscroll" style="margin-top:12px"><table id="smPreview"></table></div>
+          <ul class="warnlist" id="smWarnings"></ul>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h2 class="card-title">Wiring plan — rules &amp; formulae to build next</h2>
+            <button id="clearUploads" class="btn-ghost push" type="button">Clear registered files</button>
+          </div>
+          <ul class="rules" style="margin:4px 0 0;padding-left:20px">
+            <li><b>Salesforce S&amp;M → Vehicle Tracker.</b> De-duplicate by Case Number (BEAME + MXV rows are one fitment), then count Scheduled Fitment / Missed Fitment into the VT tracker row.</li>
+            <li><b>Scheduler consolidation — live above.</b> The two paste slots parse and merge into one Schedulers dataset. Next: map the Source Partner labels (Own Lead / Ref / Dialer–Dialler / Afri Lead / Jag Lead) to the VT tracker campaign columns, validate case numbers against Salesforce, and feed the detail table + projection.</li>
+            <li><b>Projection feed.</b> Fitments MTD, Panimax fitments and Days passed roll up from the consolidated data; targets stay manual inputs.</li>
+            <li><b>Lead Tracker feed.</b> Daily Afrilead / JAG rows from the dialler &amp; lead exports; confirm the conversion denominator (Dialed vs Created).</li>
+            <li><b>Open questions.</b> Sales definition on the VT tracker (=SUM of six columns), Required fitments p/d (÷22 hardcoded vs Working days = 21), incentive target for July (currently 0).</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- empty state (swapped in when month has no data) -->
+      <div class="panel" id="panel-empty">
+        <div class="card empty">
+          <h3 id="emptyTitle">No data yet</h3>
+          <p>Upload the day's exports in <a id="emptyLink">Data &amp; Uploads</a> — the Salesforce <b>Scheduled &amp; Missed</b> report and the two <b>Scheduler manual</b> files.</p>
+        </div>
+      </div>
+
+    </section>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   Vehicle Tracking MTD — seeded with the July 2026 workbook
+   (July 2026 - VT Report.xlsx · Detail Summary Scheduled and Missed 13.07)
+   Uploads currently register files only — ingestion rules are next build.
+   ===================================================================== */
+
+const SEED_MONTH = "2026-07";
+const SEED = {
+  periodFitment: "26.06.2026 – 11.07.2026 (July 2026)",
+  periodCalendar: "01.07.2026 – 11.07.2026 (July 2026)",
+  projection: {
+    fitments: 116, target: 350, workingDays: 21, daysPassed: 11,
+    panimaxFitments: 79, matrixTarget: 300, matrixIncentiveTarget: 0
+  },
+  vt: {
+    scheduled: 39, panimax: 79, afrileads: 33, jagleads: 4,
+    totalFitments: 116, missed: 32, rebooked: 0, cancelled: 0,
+    predictive: 15, referrals: 66, afrilead: 26, jaglead: 2
+  },
+  schedulers: [
+    { name: "Chireshi", sales: 59, scheduled: 24, missed: 3, fitted: 30, unaccounted: 2, rollover: 23 },
+    { name: "Vanessa",  sales: 40, scheduled: 8,  missed: 3, fitted: 27, unaccounted: 2, rollover: 12 }
+  ],
+  // lead day rows: [created, dialed, vehSales, accSales, noContact, wip, finalOutcome, invalid, ccFailed, language]
+  afri: [
+    { d: "28.05.2026", w: 1, v: [9, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { d: "29.06.2026", w: 2, v: [38, 47, 5, 4, 29, 4, 10, 0, 0, 0] },
+    { d: "30.06.2026", w: 2, v: [18, 20, 6, 6, 10, 1, 2, 1, 0, 0] },
+    { d: "01.07.2026", w: 2, v: [12, 6, 0, 0, 2, 1, 2, 1, 0, 0] },
+    { d: "02.07.2026", w: 2, v: [5, 3, 1, 1, 1, 1, 0, 0, 0, 0] },
+    { d: "03.07.2026", w: 2, v: [0, 1, 0, 0, 1, 0, 0, 0, 0, 0] },
+    { d: "06.07.2026", w: 3, v: [4, 3, 1, 1, 1, 1, 0, 0, 0, 0] },
+    { d: "07.07.2026", w: 3, v: [35, 10, 5, 5, 2, 2, 0, 1, 0, 0] },
+    { d: "08.07.2026", w: 3, v: [15, 15, 3, 3, 5, 6, 1, 0, 0, 0] },
+    { d: "09.07.2026", w: 3, v: [13, 13, 4, 4, 2, 1, 3, 3, 0, 0] },
+    { d: "10.07.2026", w: 3, v: [31, 24, 0, 0, 9, 8, 4, 3, 0, 0] }
+  ],
+  jag: [
+    { d: "26.05.2026", w: 1, v: [27, 19, 1, 1, 10, 5, 2, 0, 0, 1] },
+    { d: "29.06.2026", w: 2, v: [13, 15, 0, 0, 11, 0, 2, 2, 0, 0] },
+    { d: "30.06.2026", w: 2, v: [37, 12, 0, 0, 10, 0, 0, 2, 0, 0] },
+    { d: "01.07.2026", w: 2, v: [32, 15, 0, 0, 6, 1, 3, 5, 0, 0] },
+    { d: "02.07.2026", w: 2, v: [5, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { d: "03.07.2026", w: 2, v: [3, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { d: "06.07.2026", w: 3, v: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { d: "07.07.2026", w: 3, v: [8, 3, 1, 1, 1, 1, 0, 0, 0, 0] },
+    { d: "08.07.2026", w: 3, v: [4, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { d: "09.07.2026", w: 3, v: [2, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { d: "10.07.2026", w: 3, v: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }
+  ],
+  detail: [{"d":"26.06.2026","a":"Thokozile","c":"Referral Own","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"20953435"},{"d":"26.06.2026","a":"Avesh","c":"Jag Lead","s":"Jag","sch":"Chireshi","n":1,"g":209,"case":"20953429"},{"d":"26.06.2026","a":"Thokozile","c":"Referral Own","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"20954164"},{"d":"26.06.2026","a":"Thokozile","c":"Referral Own","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"20954263"},{"d":"26.06.2026","a":"Neesha","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"20955466"},{"d":"26.06.2026","a":"Neesha","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"20955708"},{"d":"26.06.2026","a":"Thokozile","c":"Referral Own","s":"Panimax","sch":"Chireshi","n":1,"g":209,"case":"20955868"},{"d":"26.06.2026","a":"Avesh","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"20955946"},{"d":"26.06.2026","a":"Avelucia","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"20956166"},{"d":"26.06.2026","a":"Thokozile","c":"Referral Own","s":"Panimax","sch":"Chireshi","n":1,"g":99,"case":"20957746"},{"d":"26.06.2026","a":"Neesha","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"20958235"},{"d":"29.06.2026","a":"Annie","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"20964728"},{"d":"29.06.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Vanessa","n":1,"g":199,"case":"20967187"},{"d":"29.06.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":99,"case":"20962523"},{"d":"29.06.2026","a":"Neesha","c":"Predictive","s":"Panimax","sch":"Chireshi","n":1,"g":99,"case":"20962876"},{"d":"29.06.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":99,"case":"20964738"},{"d":"29.06.2026","a":"Princess","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"20965011"},{"d":"29.06.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"20965645"},{"d":"29.06.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"20967154"},{"d":"29.06.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":219,"case":"20968480"},{"d":"29.06.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":219,"case":"20968483"},{"d":"30.06.2026","a":"Annie","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"20969916"},{"d":"30.06.2026","a":"Lesley","c":"Predictive","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"20970478"},{"d":"30.06.2026","a":"Annie","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"20971688"},{"d":"30.06.2026","a":"Lesley","c":"Predictive","s":"Panimax","sch":"Vanessa","n":1,"g":449,"case":"20972069"},{"d":"30.06.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"20969603"},{"d":"30.06.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"20970677"},{"d":"30.06.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"20970584"},{"d":"30.06.2026","a":"Avelucia","c":"Predictive","s":"Panimax","sch":"Chireshi","n":1,"g":99,"case":"20971841"},{"d":"30.06.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"20972493"},{"d":"30.06.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"20973027"},{"d":"30.06.2026","a":"Fabian","c":"Afri Lead","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"20973331"},{"d":"01.07.2026","a":"Annie","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":219,"case":"20976304"},{"d":"01.07.2026","a":"Fabian","c":"Afri Lead","s":"Panimax","sch":"Vanessa","n":1,"g":449,"case":"20976338"},{"d":"01.07.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"20977067"},{"d":"01.07.2026","a":"Avelucia","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":219,"case":"20977635"},{"d":"01.07.2026","a":"Nonhle","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":99,"case":"20980605"},{"d":"01.07.2026","a":"Annie","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":449,"case":"20981306"},{"d":"01.07.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":219,"case":"20981370"},{"d":"02.07.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Vanessa","n":1,"g":199,"case":"20984463"},{"d":"02.07.2026","a":"Fabian","c":"Predictive","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"20986986"},{"d":"02.07.2026","a":"Philile","c":"Predictive","s":"Panimax","sch":"Vanessa","n":1,"g":219,"case":"20986599"},{"d":"02.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":399,"case":"20987746"},{"d":"02.07.2026","a":"Annie","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":399,"case":"20988101"},{"d":"02.07.2026","a":"Annie","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":219,"case":"20988508"},{"d":"02.07.2026","a":"Avelucia","c":"Predictive","s":"Panimax","sch":"Vanessa","n":1,"g":399,"case":"20989055"},{"d":"02.07.2026","a":"Annie","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"20989497"},{"d":"03.07.2026","a":"Thokozile","c":"Referral Own","s":"Panimax","sch":"Vanessa","n":1,"g":219,"case":"20994294"},{"d":"03.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":399,"case":"20968695"},{"d":"03.07.2026","a":"Philile","c":"Predictive","s":"Panimax","sch":"Vanessa","n":1,"g":219,"case":"20996160"},{"d":"06.07.2026","a":"Annie","c":"Referral Own","s":"Panimax","sch":"Vanessa","n":1,"g":99,"case":"21009400"},{"d":"06.07.2026","a":"Annie","c":"Referral Own","s":"Panimax","sch":"Vanessa","n":1,"g":99,"case":"21009401"},{"d":"06.07.2026","a":"Annie","c":"Referral Own","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"21015507"},{"d":"06.07.2026","a":"Annie","c":"Referral Own","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"21015508"},{"d":"06.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":399,"case":"21009387"},{"d":"06.07.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"21009541"},{"d":"06.07.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":399,"case":"21010225"},{"d":"06.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":99,"case":"21011221"},{"d":"06.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":99,"case":"21011222"},{"d":"06.07.2026","a":"Nonhle","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":399,"case":"21012674"},{"d":"06.07.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":99,"case":"21014588"},{"d":"06.07.2026","a":"Nonhle","c":"Predictive","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21016109"},{"d":"07.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":219,"case":"21018215"},{"d":"07.07.2026","a":"Avesh","c":"Afri Lead","s":"Afri","sch":"Vanessa","n":1,"g":99,"case":"21021321"},{"d":"07.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"21035864"},{"d":"07.07.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"21018095"},{"d":"07.07.2026","a":"Avesh","c":"Jag Lead","s":"jag","sch":"Chireshi","n":1,"g":99,"case":"21019133"},{"d":"07.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21019812"},{"d":"07.07.2026","a":"Princess","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"21021393"},{"d":"07.07.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":99,"case":"21025163"},{"d":"07.07.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":99,"case":"21025660"},{"d":"07.07.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"21028937"},{"d":"07.07.2026","a":"Nonhle","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21030429"},{"d":"07.07.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"21037229"},{"d":"08.07.2026","a":"Avesh","c":"Afri Lead","s":"Afri","sch":"Vanessa","n":1,"g":199,"case":"21047318"},{"d":"08.07.2026","a":"Nonhle","c":"Predictive","s":"Panimax","sch":"Vanessa","n":1,"g":219,"case":"21047653"},{"d":"08.07.2026","a":"Fabian","c":"Afri Lead","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"21047454"},{"d":"08.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"21051074"},{"d":"08.07.2026","a":"Princess","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":219,"case":"21046070"},{"d":"08.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21047106"},{"d":"08.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21047107"},{"d":"08.07.2026","a":"Nonhle","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":499,"case":"21049923"},{"d":"08.07.2026","a":"Nonhle","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":399,"case":"21050036"},{"d":"08.07.2026","a":"Fabian","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21050968"},{"d":"08.07.2026","a":"Fabian","c":"Predictive","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21051594"},{"d":"09.07.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"21053625"},{"d":"09.07.2026","a":"Annie","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21054311"},{"d":"09.07.2026","a":"Avesh","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":99,"case":"21054823"},{"d":"09.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":99,"case":"21055318"},{"d":"09.07.2026","a":"Nonhle","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21056481"},{"d":"09.07.2026","a":"Nonhle","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21058156"},{"d":"09.07.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Chireshi","n":1,"g":199,"case":"21058118"},{"d":"09.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":219,"case":"21059516"},{"d":"09.07.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":399,"case":"21059627"},{"d":"09.07.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":399,"case":"21054462"},{"d":"09.07.2026","a":"Annie","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"21055644"},{"d":"09.07.2026","a":"Fabian","c":"Afri Lead","s":"Afri","sch":"Vanessa","n":1,"g":199,"case":"21056899"},{"d":"09.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":219,"case":"21057074"},{"d":"09.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"21058545"},{"d":"10.07.2026","a":"Thokozile","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":219,"case":"21062366"},{"d":"10.07.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":99,"case":"21062986"},{"d":"10.07.2026","a":"Lesley","c":"Predictive","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21064579"},{"d":"10.07.2026","a":"Lesley","c":"Predictive","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21064573"},{"d":"10.07.2026","a":"Lesley","c":"Predictive","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21064571"},{"d":"10.07.2026","a":"Lesley","c":"Predictive","s":"Panimax","sch":"Chireshi","n":1,"g":199,"case":"21064570"},{"d":"10.07.2026","a":"Selvi","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":189,"case":"21066709"},{"d":"10.07.2026","a":"Avelucia","c":"Referral Agent","s":"Panimax","sch":"Chireshi","n":1,"g":399,"case":"21067035"},{"d":"10.07.2026","a":"Nonhle","c":"Referral Agent","s":"Panimax","sch":"Vanessa","n":1,"g":199,"case":"21061630"},{"d":"10.07.2026","a":"Philile","c":"Referral Own","s":"Panimax","sch":"Vanessa","n":1,"g":449,"case":"21062300"}]
+};
+
+/* ---------------- state ---------------- */
+const LS = { inputs: "vtmtd.projInputs", uploads: "vtmtd.uploads", month: "vtmtd.month" };
+function loadLS(k, fb) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fb : v; } catch { return fb; } }
+function saveLS(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+
+function freshSlot(name) { return { name, raw: "", rows: null, stats: null, warnings: [], at: null }; }
+function migrateUploads(u) {
+  const base = { sf: [], slots: { A: freshSlot("Chireshi"), B: freshSlot("Vanessa") } };
+  if (!u || typeof u !== "object") return base;
+  if (Array.isArray(u.sf)) base.sf = u.sf;
+  if (u.slots) for (const k of ["A", "B"]) if (u.slots[k]) base.slots[k] = Object.assign(base.slots[k], u.slots[k]);
+  return base; // pre-paste registries (u.sm file lists) are dropped
+}
+
+const state = {
+  tab: "projection",
+  month: loadLS(LS.month, SEED_MONTH),
+  view: "fitment",
+  search: "",
+  campaign: "",
+  scheduler: "",
+  inputs: Object.assign({}, SEED.projection, loadLS(LS.inputs, {})),
+  uploads: migrateUploads(loadLS(LS.uploads, null))
+};
+
+/* ---------------- helpers ---------------- */
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtInt = (n) => Math.round(n).toLocaleString("en-GB");
+const fmt1 = (n) => (Math.round(n * 10) / 10).toLocaleString("en-GB", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const fmtPct = (x) => Number.isFinite(x) ? fmt1(x * 100) + "%" : "—";
+const monthName = (ym) => {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+};
+
+/* ---------------- projection maths ---------------- */
+function calcProjection(i) {
+  const balance = i.target - i.fitments;
+  const pct = i.target > 0 ? i.fitments / i.target : NaN;
+  const reqPD = i.workingDays > 0 ? i.target / i.workingDays : NaN;
+  const curPD = i.daysPassed > 0 ? i.fitments / i.daysPassed : NaN;
+  const projected = Number.isFinite(curPD) ? i.workingDays * curPD : NaN;
+  const projPct = i.target > 0 && Number.isFinite(projected) ? projected / i.target : NaN;
+  const matrixPct = i.matrixTarget > 0 ? i.panimaxFitments / i.matrixTarget : NaN;
+  const incPct = i.matrixIncentiveTarget > 0 ? i.panimaxFitments / i.matrixIncentiveTarget : NaN;
+  return { balance, pct, reqPD, curPD, projected, projPct, matrixPct, incPct };
+}
+
+/* ---------------- renderers ---------------- */
+function tile(label, value, sub, meterPct) {
+  return `<div class="tile"><div class="t-label">${label}</div><div class="t-value">${value}</div>` +
+    (sub ? `<div class="t-sub">${sub}</div>` : "") +
+    (meterPct != null ? `<div class="meter" role="img" aria-label="${label} ${value}"><i style="width:${Math.max(0, Math.min(100, meterPct * 100))}%"></i></div>` : "") +
+    `</div>`;
+}
+
+function renderProjection() {
+  const i = state.inputs, c = calcProjection(i);
+  const period = state.view === "fitment" ? SEED.periodFitment : SEED.periodCalendar;
+  $("#projPeriodSub").textContent = "Fitment projection · " + period;
+  $("#projPeriodHint").textContent = period;
+
+  $("#projTiles").innerHTML =
+    tile("Fitments (MTD)", fmtInt(i.fitments), `of ${fmtInt(i.target)} target`) +
+    tile("Balance to target", fmtInt(c.balance), `${fmtInt(i.workingDays - i.daysPassed)} working days left`) +
+    tile("% to target", fmtPct(c.pct), null, c.pct) +
+    tile("Required p/d", Number.isFinite(c.reqPD) ? fmt1(c.reqPD) : "—", `current ${Number.isFinite(c.curPD) ? fmt1(c.curPD) : "—"} p/d`) +
+    tile("Projected fitments", Number.isFinite(c.projected) ? fmtInt(c.projected) : "—", "at current run-rate") +
+    tile("Projected % to target", fmtPct(c.projPct), null, c.projPct);
+
+  $("#projTable").innerHTML =
+    `<thead><tr><th>Fitment projection</th><th>Fitments</th><th>Fitment target</th><th>Fitment balance</th><th>% to target</th><th>Required fitments p/d</th><th>Current fitments p/d</th><th>Working days</th><th>Days passed</th><th>Projected fitments</th><th>Projected % to target</th></tr></thead>` +
+    `<tbody><tr><td>${esc(period)}</td><td>${fmtInt(i.fitments)}</td><td>${fmtInt(i.target)}</td><td>${fmtInt(c.balance)}</td>` +
+    `<td class="pct">${fmtPct(c.pct)}</td><td>${Number.isFinite(c.reqPD) ? fmt1(c.reqPD) : "—"}</td><td>${Number.isFinite(c.curPD) ? fmt1(c.curPD) : "—"}</td>` +
+    `<td>${fmtInt(i.workingDays)}</td><td>${fmtInt(i.daysPassed)}</td><td>${Number.isFinite(c.projected) ? fmt1(c.projected) : "—"}</td><td class="pct">${fmtPct(c.projPct)}</td></tr></tbody>`;
+  $("#projFoot").innerHTML = `<b>Rule to confirm:</b> the July workbook computes Required fitments p/d as Target ÷ 22 (hardcoded); this build uses Target ÷ Working days (${fmtInt(i.workingDays)}).`;
+
+  $("#matrixTable").innerHTML =
+    `<thead><tr><th>Panimax fitments</th><th>Matrix target</th><th>% to Matrix target</th><th>Matrix incentive target</th><th>% to incentive target</th></tr></thead>` +
+    `<tbody><tr><td style="text-align:right">${fmtInt(i.panimaxFitments)}</td><td>${fmtInt(i.matrixTarget)}</td><td class="pct">${fmtPct(c.matrixPct)}</td>` +
+    `<td>${fmtInt(i.matrixIncentiveTarget)}</td><td class="pct">${fmtPct(c.incPct)}</td></tr></tbody>`;
+  $("#matrixFoot").innerHTML = i.matrixIncentiveTarget > 0 ? "" : `<b>Note:</b> the Matrix incentive target is not set for July (0 in the workbook), so % to incentive shows “—”.`;
+}
+
+function buildProjInputs() {
+  const defs = [
+    ["fitments", "Fitments (MTD)"], ["target", "Fitment target"], ["workingDays", "Working days"],
+    ["daysPassed", "Days passed"], ["panimaxFitments", "Panimax fitments"],
+    ["matrixTarget", "Matrix target"], ["matrixIncentiveTarget", "Matrix incentive target"]
+  ];
+  $("#projInputs").innerHTML = defs.map(([k, lbl]) =>
+    `<label for="in-${k}">${lbl}</label><input id="in-${k}" data-k="${k}" type="number" min="0" step="1" value="${state.inputs[k]}">`
+  ).join("");
+  $("#projInputs").querySelectorAll("input").forEach((el) => {
+    el.addEventListener("input", () => {
+      state.inputs[el.dataset.k] = Number(el.value) || 0;
+      saveLS(LS.inputs, state.inputs);
+      renderProjection(); // outputs only — the inputs grid is not rebuilt, so focus stays put
+    });
+  });
+}
+
+function renderVT() {
+  const v = SEED.vt;
+  // Sales per the July workbook: =SUM(Scheduled..Missed) i.e. the six count columns
+  const sales = v.scheduled + v.panimax + v.afrileads + v.jagleads + v.totalFitments + v.missed;
+  const fit = v.totalFitments;
+
+  $("#vtTiles").innerHTML =
+    tile("Sales (MTD)", fmtInt(sales), "per workbook definition¹") +
+    tile("Total fitments", fmtInt(fit), `${fmtPct(fit / sales)} of sales`) +
+    tile("Scheduled", fmtInt(v.scheduled), `${fmtPct(v.scheduled / sales)} of sales`) +
+    tile("Missed", fmtInt(v.missed), `${fmtPct(v.missed / sales)} of sales`) +
+    tile("Panimax share", fmtPct(v.panimax / fit), "of total fitments", v.panimax / fit);
+
+  const cols = [
+    ["Sales", sales, null],
+    ["Scheduled", v.scheduled, v.scheduled / sales, 1],
+    ["Panimax", v.panimax, v.panimax / fit, 2],
+    ["Afrileads", v.afrileads, v.afrileads / fit, 2],
+    ["JAGLeads", v.jagleads, v.jagleads / fit, 2],
+    ["Total fitments", fit, fit / sales, 1],
+    ["Missed", v.missed, v.missed / sales, 1],
+    ["Rebooked", v.rebooked, v.rebooked / sales, 1],
+    ["Cancelled", v.cancelled, v.cancelled / sales, 1],
+    ["Predictive", v.predictive, v.predictive / sales, 1],
+    ["Referrals", v.referrals, v.referrals / sales, 1],
+    ["Afrilead", v.afrilead, v.afrilead / sales, 1],
+    ["Jag lead", v.jaglead, v.jaglead / sales, 1]
+  ];
+  $("#vtTable").innerHTML =
+    `<thead><tr><th>Report</th>${cols.map((c) => `<th>${c[0]}${c[3] ? `<sup>${c[3] === 1 ? "¹" : "²"}</sup>` : ""}</th>`).join("")}</tr></thead>` +
+    `<tbody><tr><td>Power BI — count</td>${cols.map((c) => `<td>${fmtInt(c[1])}</td>`).join("")}</tr>` +
+    `<tr><td>Share</td>${cols.map((c) => `<td class="pct">${c[2] == null ? "" : fmtPct(c[2])}</td>`).join("")}</tr></tbody>`;
+
+  // scheduler tracker
+  const s = SEED.schedulers;
+  const tot = (k) => s.reduce((a, r) => a + r[k], 0);
+  const row = (r) => `<tr><td>${esc(r.name)}</td><td>${fmtInt(r.sales)}</td><td>${fmtInt(r.scheduled)}</td><td>${fmtInt(r.missed)}</td><td>${fmtInt(r.fitted)}</td><td>${fmtInt(r.unaccounted)}</td><td>${fmtInt(r.rollover)}</td><td class="pct">${fmtPct(r.fitted / r.sales)}</td></tr>`;
+  $("#schedTable").innerHTML =
+    `<thead><tr><th>Scheduler</th><th>Total sales</th><th>Scheduled</th><th>Missed</th><th>Fitted</th><th>Unaccounted</th><th>June roll-over fitted</th><th>% fitted to sales</th></tr></thead>` +
+    `<tbody>${s.map(row).join("")}` +
+    `<tr class="grand"><td>Total</td><td>${fmtInt(tot("sales"))}</td><td>${fmtInt(tot("scheduled"))}</td><td>${fmtInt(tot("missed"))}</td><td>${fmtInt(tot("fitted"))}</td><td>${fmtInt(tot("unaccounted"))}</td><td>${fmtInt(tot("rollover"))}</td><td class="pct">${fmtPct(tot("fitted") / tot("sales"))}</td></tr></tbody>`;
+
+  // source bars
+  const mix = [["Panimax", v.panimax], ["Afrileads", v.afrileads], ["JAGLeads", v.jagleads]];
+  const max = Math.max(...mix.map((m) => m[1]));
+  $("#fitMixHint").textContent = `${fmtInt(fit)} total fitments`;
+  $("#sourceBars").innerHTML = mix.map(([n, x]) =>
+    `<div class="bar-row" title="${n}: ${fmtInt(x)} fitments (${fmtPct(x / fit)})"><div class="bar-name">${n}</div>` +
+    `<div class="bar-track"><div class="bar-fill" style="width:${(x / max) * 82}%"></div><div class="bar-val">${fmtInt(x)} <span class="pct">· ${fmtPct(x / fit)}</span></div></div></div>`
+  ).join("");
+
+  renderDetail();
+}
+
+function renderDetail() {
+  const q = state.search.trim().toLowerCase();
+  const rows = SEED.detail.filter((r) =>
+    (!state.campaign || r.c === state.campaign) &&
+    (!state.scheduler || r.sch === state.scheduler) &&
+    (!q || [r.d, r.a, r.c, r.s, r.sch, r.case].join(" ").toLowerCase().includes(q))
+  );
+  const gwp = rows.reduce((a, r) => a + (Number(r.g) || 0), 0);
+  const n = rows.reduce((a, r) => a + (Number(r.n) || 0), 0);
+  $("#detailCount").textContent = `${rows.length} of ${SEED.detail.length} rows · ${fmtInt(n)} sales · GWP ${fmtInt(gwp)}`;
+  $("#detailTable").innerHTML =
+    `<thead><tr><th>Date</th><th>Agent</th><th>Campaign</th><th>Source partner</th><th>Scheduler</th><th>Sale count</th><th>GWP</th><th>Case number</th></tr></thead>` +
+    `<tbody>${rows.map((r) =>
+      `<tr><td>${esc(r.d)}</td><td>${esc(r.a)}</td><td>${esc(r.c)}</td><td>${esc(r.s)}</td><td>${esc(r.sch)}</td><td>${fmtInt(r.n)}</td><td>${fmtInt(r.g)}</td><td>${esc(r.case)}</td></tr>`
+    ).join("") || `<tr><td colspan="8" style="text-align:center;color:var(--muted)">No rows match the current filters</td></tr>`}</tbody>`;
+}
+
+const LEAD_COLS = ["Created", "Dialed", "Total vehicle sales", "Total account sales", "No contact", "WIP", "Final outcome", "Invalid", "Credit check failed", "Language"];
+function leadTable(rows, createdLabel) {
+  const q = state.search.trim().toLowerCase();
+  const sum = (list) => list.reduce((a, r) => a.map((x, i) => x + r.v[i]), new Array(10).fill(0));
+  const conv = (v) => v[1] > 0 ? [v[2] / v[1], v[3] / v[1]] : [0, 0];
+  const cells = (v, cls) => v.map((x) => `<td${cls ? ` class="${cls}"` : ""}>${fmtInt(x)}</td>`).join("");
+  const convCells = (v, zeroDash) => {
+    const [cv, ca] = conv(v);
+    const f = (x) => (zeroDash && v[1] === 0 ? "—" : fmtPct(x));
+    return `<td class="pct">${f(cv)}</td><td class="pct">${f(ca)}</td>`;
+  };
+  let body = "";
+  for (let w = 1; w <= 5; w++) {
+    const wk = rows.filter((r) => r.w === w);
+    for (const r of wk) {
+      if (q && !r.d.toLowerCase().includes(q)) continue;
+      body += `<tr><td>${esc(r.d)}</td>${cells(r.v)}${convCells(r.v)}</tr>`;
+    }
+    const t = sum(wk);
+    body += `<tr class="subtotal"><td>Week ${w}</td>${cells(t)}${convCells(t, true)}</tr>`;
+  }
+  const mtd = sum(rows);
+  body += `<tr class="grand"><td>MTD</td>${cells(mtd)}${convCells(mtd)}</tr>`;
+  return `<thead><tr><th>Date</th>${LEAD_COLS.map((c, i) => `<th>${i === 0 ? createdLabel : c}</th>`).join("")}<th>Total vehicle conversion</th><th>Total account conversion</th></tr></thead><tbody>${body}</tbody>`;
+}
+
+function renderLeads() {
+  const sum = (list) => list.reduce((a, r) => a.map((x, i) => x + r.v[i]), new Array(10).fill(0));
+  const A = sum(SEED.afri), J = sum(SEED.jag);
+  $("#leadTiles").innerHTML =
+    tile("Afrileads created (MTD)", fmtInt(A[0]), `${fmtInt(A[1])} dialed`) +
+    tile("Afrilead vehicle conversion", fmtPct(A[1] ? A[2] / A[1] : 0), `${fmtInt(A[2])} vehicle sales`, A[1] ? A[2] / A[1] : 0) +
+    tile("JAG leads created (MTD)", fmtInt(J[0]), `${fmtInt(J[1])} dialed`) +
+    tile("JAG vehicle conversion", fmtPct(J[1] ? J[2] / J[1] : 0), `${fmtInt(J[2])} vehicle sales`, J[1] ? J[2] / J[1] : 0);
+  $("#afriTable").innerHTML = leadTable(SEED.afri, "Afrilead created");
+  $("#jagTable").innerHTML = leadTable(SEED.jag, "JAGLEAD created");
+}
+
+/* ---------------- uploads ---------------- */
+function fileMeta(f) {
+  return { name: f.name, size: f.size, at: new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) };
+}
+const kb = (b) => (b / 1024).toFixed(0) + " KB";
+function chip(f, slot, idx) {
+  return `<div class="filechip">` +
+    `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>` +
+    `<div style="min-width:0"><div class="fc-name">${esc(f.name)}</div><div class="fc-meta">${kb(f.size)} · received ${esc(f.at)}</div></div>` +
+    `<button class="fc-x" data-slot="${slot}" data-idx="${idx}" title="Remove" aria-label="Remove ${esc(f.name)}">×</button></div>`;
+}
+function renderUploads() {
+  const u = state.uploads;
+  $("#sfFiles").innerHTML = u.sf.map((f, i) => chip(f, "sf", i)).join("");
+  const sfB = $("#sfBadge");
+  if (u.sf.length) { sfB.className = "badge good push"; sfB.innerHTML = `<span class="dot"></span>Received`; }
+  else { sfB.className = "badge warn push"; sfB.innerHTML = `<span class="dot"></span>Awaiting file`; }
+  document.querySelectorAll("#sfFiles .fc-x").forEach((b) => b.addEventListener("click", () => {
+    state.uploads[b.dataset.slot].splice(Number(b.dataset.idx), 1);
+    saveLS(LS.uploads, state.uploads);
+    renderUploads();
+  }));
+  renderSlotBodies();
+}
+function renderTrust() {
+  const s = state.uploads.slots;
+  const ready = (state.uploads.sf.length ? 1 : 0) + (s.A.rows && s.B.rows ? 1 : 0);
+  const pill = $("#trustPill");
+  if (ready === 2) { pill.className = "trust-pill good"; $("#trustText").textContent = "All sources healthy · 2/2 sources"; }
+  else { pill.className = "trust-pill warn"; $("#trustText").textContent = `Sources need attention · ${ready}/2 sources`; }
+}
+
+/* ---------------- scheduler paste slots ---------------- */
+function parseDateYMD(s) {
+  const m = String(s || "").trim().match(/^(\d{2}|\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+  if (!m) return null;
+  let y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  if (m[1].length === 2) y += 2000;
+  // form is YY/MM/DD; recover a DD/MM/YY paste (year lands implausibly early)
+  if ((mo > 12 || y < 2020) && Number(m[2]) <= 12 && Number(m[3]) >= 20) {
+    d = Number(m[1].slice(-2)); mo = Number(m[2]); y = 2000 + Number(String(m[3]).slice(-2));
+  }
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(y, mo - 1, d);
+  return (dt.getMonth() === mo - 1 && dt.getDate() === d) ? dt : null;
+}
+const fmtDMY = (dt) => String(dt.getDate()).padStart(2, "0") + "." + String(dt.getMonth() + 1).padStart(2, "0") + "." + dt.getFullYear();
+function parseGWP(s) {
+  const t = String(s == null ? "" : s).replace(/[Rr\s,]/g, "");
+  if (!t) return null;               // blank — allowed, counted
+  const v = Number(t);
+  return Number.isFinite(v) ? v : NaN; // NaN — unparseable, warned
+}
+function parseSchedulerPaste(text) {
+  const out = { rows: [], warnings: [], skippedEmpty: 0, headerSkipped: false, missingGwp: 0 };
+  String(text || "").replace(/\r/g, "").split("\n").forEach((line, idx) => {
+    if (!line.trim()) return;
+    const n = idx + 1;
+    const cells = line.split("\t").map((c) => c.trim());
+    if (!out.rows.length && !out.headerSkipped && /^date\b/i.test(cells[0])) { out.headerSkipped = true; return; }
+    const [d, agent, caseNo, cell, source, gwpRaw] = cells;
+    if (!agent && !caseNo) { out.skippedEmpty++; return; } // trailing date-only filler rows
+    const dt = parseDateYMD(d);
+    if (!dt) out.warnings.push(`Line ${n}: date “${d || "blank"}” not recognised — expected YY/MM/DD`);
+    if (!/^\d{6,10}$/.test(caseNo || "")) out.warnings.push(`Line ${n}: case number “${caseNo || "blank"}” looks wrong`);
+    const g = parseGWP(gwpRaw);
+    if (g === null) out.missingGwp++;
+    else if (Number.isNaN(g)) out.warnings.push(`Line ${n}: GWP “${gwpRaw}” not recognised`);
+    out.rows.push({
+      d: dt ? fmtDMY(dt) : (d || "—"), ts: dt ? dt.getTime() : null,
+      a: agent || "—", case: caseNo || "", cell: cell || "",
+      s: (source || "").trim() || "(blank)", g: g === null || Number.isNaN(g) ? null : g
+    });
+  });
+  return out;
+}
+function slotStats(p) {
+  const gwp = p.rows.reduce((a, r) => a + (r.g || 0), 0);
+  const ts = p.rows.map((r) => r.ts).filter(Boolean);
+  const range = ts.length ? fmtDMY(new Date(Math.min(...ts))) + " – " + fmtDMY(new Date(Math.max(...ts))) : "no valid dates";
+  return { count: p.rows.length, gwp, range, missingGwp: p.missingGwp, skippedEmpty: p.skippedEmpty };
+}
+function buildPasteSlots() {
+  $("#pasteSlots").innerHTML = ["A", "B"].map((k) => {
+    const s = state.uploads.slots[k];
+    return `<div class="paste-slot">
+      <div class="paste-head">
+        <span class="slot-tag">Slot ${k}</span>
+        <input id="name${k}" value="${esc(s.name)}" aria-label="Scheduler name for slot ${k}">
+        <span class="push" id="status${k}"></span>
+      </div>
+      <div id="body${k}"></div>
+    </div>`;
+  }).join("");
+  ["A", "B"].forEach((k) => $(`#name${k}`).addEventListener("input", (e) => {
+    state.uploads.slots[k].name = e.target.value.trim() || "Slot " + k;
+    saveLS(LS.uploads, state.uploads);
+    renderConsolidated();
+  }));
+  renderSlotBodies();
+}
+function renderSlotBody(k) {
+  const s = state.uploads.slots[k];
+  const body = $(`#body${k}`);
+  if (s.rows) {
+    const st = s.stats;
+    body.innerHTML = `<div class="filechip">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2"/><path d="M9 11h6M9 15h6"/></svg>
+      <div style="min-width:0"><div class="fc-name">${esc(s.name)} — ${st.count} rows · GWP R ${fmtInt(st.gwp)}</div>
+      <div class="fc-meta">${esc(st.range)} · pasted ${esc(s.at)}${st.missingGwp ? ` · ${st.missingGwp} rows without GWP` : ""}${st.skippedEmpty ? ` · ${st.skippedEmpty} empty rows skipped` : ""}</div></div>
+      <button class="btn-ghost" data-edit="${k}" style="margin-left:auto;padding:5px 11px">Edit</button>
+      <button class="fc-x" data-clear="${k}" title="Clear slot" aria-label="Clear slot ${k}">×</button></div>` +
+      (s.warnings.length ? `<ul class="warnlist">${s.warnings.slice(0, 6).map((w) => `<li>${esc(w)}</li>`).join("")}${s.warnings.length > 6 ? `<li>… ${s.warnings.length - 6} more</li>` : ""}</ul>` : "");
+    $(`#status${k}`).innerHTML = `<span class="badge good"><span class="dot"></span>Registered</span>`;
+  } else {
+    body.innerHTML = `<textarea class="paste" id="paste${k}" spellcheck="false" placeholder="Paste from Excel (tab-separated):
+Date	Agent Name	Case Number	Customer Cellphone	Source Partner	GWP
+26/06/26	Thokozile	20953435	0815299319	Own Lead	R 199.00">${esc(s.raw || "")}</textarea>
+      <div class="paste-actions">
+        <button class="btn-primary" data-parse="${k}" style="box-shadow:none;padding:8px 16px">Parse &amp; register</button>
+        <span class="card-hint" id="parseMsg${k}"></span>
+      </div>`;
+    $(`#status${k}`).innerHTML = `<span class="badge warn"><span class="dot"></span>Awaiting paste</span>`;
+  }
+}
+function renderSlotBodies() { ["A", "B"].forEach(renderSlotBody); renderConsolidated(); }
+function doParse(k) {
+  const s = state.uploads.slots[k];
+  const raw = $(`#paste${k}`).value;
+  if (!raw.trim()) { $(`#parseMsg${k}`).textContent = "Nothing to parse — paste the sheet first."; return; }
+  const p = parseSchedulerPaste(raw);
+  if (!p.rows.length) { $(`#parseMsg${k}`).textContent = "No data rows found — expecting tab-separated columns (paste straight from Excel)."; return; }
+  Object.assign(s, {
+    raw, rows: p.rows, warnings: p.warnings, stats: slotStats(p),
+    at: new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
+  });
+  saveLS(LS.uploads, state.uploads);
+  renderSlotBody(k);
+  renderConsolidated();
+}
+function consolidatedRows() {
+  const out = [];
+  for (const k of ["A", "B"]) {
+    const s = state.uploads.slots[k];
+    if (s.rows) for (const r of s.rows) out.push(Object.assign({ sch: s.name }, r));
+  }
+  return out;
+}
+function renderConsolidated() {
+  const rows = consolidatedRows();
+  const slots = state.uploads.slots;
+  const got = (slots.A.rows ? 1 : 0) + (slots.B.rows ? 1 : 0);
+  $("#smPreviewCard").hidden = rows.length === 0;
+  if (rows.length) {
+    rows.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    const gwp = rows.reduce((a, r) => a + (r.g || 0), 0);
+    $("#smPreviewHint").textContent = `${rows.length} rows = ${rows.length} sales · GWP R ${fmtInt(gwp)}` + (got < 2 ? " · waiting for the second slot" : "");
+    const bySource = {};
+    rows.forEach((r) => { bySource[r.s] = (bySource[r.s] || 0) + 1; });
+    $("#smSourceChips").innerHTML = Object.entries(bySource).sort((a, b) => b[1] - a[1])
+      .map(([s, n]) => `<span class="chip">${esc(s)} · ${n}</span>`).join("");
+    $("#smPreview").innerHTML =
+      `<thead><tr><th>Date</th><th>Scheduler</th><th>Agent</th><th>Case number</th><th>Customer cellphone</th><th>Source partner</th><th>GWP</th></tr></thead>` +
+      `<tbody>${rows.map((r) =>
+        `<tr><td>${esc(r.d)}</td><td>${esc(r.sch)}</td><td>${esc(r.a)}</td><td>${esc(r.case)}</td><td>${esc(r.cell)}</td><td>${esc(r.s)}</td><td>${r.g == null ? "—" : fmtInt(r.g)}</td></tr>`
+      ).join("")}</tbody>`;
+    const warn = [];
+    const seen = {};
+    rows.forEach((r) => { if (r.case) seen[r.case] = (seen[r.case] || 0) + 1; });
+    const dups = Object.entries(seen).filter(([, n]) => n > 1);
+    if (dups.length) warn.push(`Duplicate case numbers across the pastes: ${dups.slice(0, 5).map(([c, n]) => `${c} ×${n}`).join(", ")}${dups.length > 5 ? ` … ${dups.length - 5} more` : ""}`);
+    const lower = Object.keys(bySource).map((s) => s.toLowerCase());
+    if (lower.includes("dialer") && lower.includes("dialler")) warn.push("Both “Dialer” and “Dialler” appear — confirm one label for the mapping rules.");
+    const caseVariants = Object.keys(bySource).filter((s, i, arr) => arr.findIndex((o) => o.toLowerCase() === s.toLowerCase()) !== i);
+    if (caseVariants.length) warn.push(`Source labels differing only by case: ${caseVariants.join(", ")}`);
+    $("#smWarnings").innerHTML = warn.map((w) => `<li>${esc(w)}</li>`).join("");
+  }
+  const smB = $("#smBadge");
+  if (got === 2) { smB.className = "badge good push"; smB.innerHTML = `<span class="dot"></span>Consolidated · 2 slots → 1 dataset`; }
+  else if (got === 1) { smB.className = "badge warn push"; smB.innerHTML = `<span class="dot"></span>1 of 2 — consolidation pending`; }
+  else { smB.className = "badge warn push"; smB.innerHTML = `<span class="dot"></span>Awaiting 2 pastes`; }
+  renderTrust();
+}
+function bindDrop(zoneId, inputId, slot, max) {
+  const zone = $(zoneId), input = $(inputId);
+  const add = (files) => {
+    for (const f of files) {
+      if (state.uploads[slot].length >= max) break;
+      state.uploads[slot].push(fileMeta(f));
+    }
+    saveLS(LS.uploads, state.uploads);
+    renderUploads();
+  };
+  zone.addEventListener("click", () => input.click());
+  zone.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
+  input.addEventListener("change", () => { add(input.files); input.value = ""; });
+  ["dragenter", "dragover"].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.add("drag"); }));
+  ["dragleave", "drop"].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.remove("drag"); }));
+  zone.addEventListener("drop", (e) => add(e.dataTransfer.files));
+}
+
+/* ---------------- export ---------------- */
+function csvCell(v) { const s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+function tableToCSV(sel, title) {
+  const t = $(sel);
+  if (!t) return "";
+  let out = title + "\r\n";
+  t.querySelectorAll("tr").forEach((tr) => {
+    out += [...tr.children].map((c) => csvCell(c.textContent.trim())).join(",") + "\r\n";
+  });
+  return out + "\r\n";
+}
+function exportReport() {
+  const m = monthName(state.month);
+  let csv = `Chatterbox — Vehicle Tracking MTD report,${m}\r\n\r\n`;
+  if (state.month !== SEED_MONTH && state.tab !== "uploads") csv += `No data for ${m} yet — upload the day's exports in Data & Uploads.\r\n`;
+  else if (state.tab === "projection") csv += tableToCSV("#projTable", "Internal target — fitment projection") + tableToCSV("#matrixTable", "Matrix target & incentive");
+  else if (state.tab === "vt") csv += tableToCSV("#vtTable", "VT tracker — Power BI") + tableToCSV("#schedTable", "Scheduler tracker") + tableToCSV("#detailTable", "Sales & scheduling detail (filtered)");
+  else if (state.tab === "leads") csv += tableToCSV("#afriTable", "Afri leads — daily tracker") + tableToCSV("#jagTable", "JAG leads — daily tracker");
+  else {
+    csv += "Data & uploads register\r\nSlot,Item,Detail,Received\r\n";
+    state.uploads.sf.forEach((f) => csv += `Salesforce S&M,${csvCell(f.name)},${kb(f.size)},${csvCell(f.at)}\r\n`);
+    ["A", "B"].forEach((k) => {
+      const s = state.uploads.slots[k];
+      if (s.rows) csv += `Scheduler paste ${k},${csvCell(s.name)},${s.stats.count} rows · GWP R ${fmtInt(s.stats.gwp)},${csvCell(s.at)}\r\n`;
+    });
+    const rows = consolidatedRows();
+    if (rows.length) {
+      csv += "\r\nConsolidated schedulers dataset\r\nDate,Scheduler,Agent,Case number,Customer cellphone,Source partner,GWP\r\n";
+      rows.forEach((r) => csv += [r.d, r.sch, r.a, r.case, r.cell, r.s, r.g == null ? "" : r.g].map(csvCell).join(",") + "\r\n");
+    }
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `VT-MTD_${state.tab}_${state.month}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ---------------- tabs / month / filters ---------------- */
+function showTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  const hasData = state.month === SEED_MONTH;
+  document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+  if (!hasData && tab !== "uploads") {
+    $("#emptyTitle").textContent = `No data for ${monthName(state.month)} yet`;
+    $("#panel-empty").classList.add("active");
+  } else {
+    $("#panel-" + tab).classList.add("active");
+  }
+}
+function rerenderActive() {
+  if (state.tab === "projection") renderProjection();
+  else if (state.tab === "vt") renderVT();
+  else if (state.tab === "leads") renderLeads();
+}
+
+document.querySelectorAll(".nav-btn").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+$("#manageUploads").addEventListener("click", () => showTab("uploads"));
+$("#trustPill").addEventListener("click", () => showTab("uploads"));
+$("#emptyLink").addEventListener("click", () => showTab("uploads"));
+$("#exportBtn").addEventListener("click", exportReport);
+$("#month").value = state.month;
+$("#month").addEventListener("change", (e) => {
+  state.month = e.target.value || SEED_MONTH;
+  saveLS(LS.month, state.month);
+  showTab(state.tab);
+});
+$("#viewMode").addEventListener("change", (e) => { state.view = e.target.value; renderProjection(); });
+$("#search").addEventListener("input", (e) => { state.search = e.target.value; renderDetail(); renderLeads(); });
+$("#fCampaign").addEventListener("change", (e) => { state.campaign = e.target.value; renderDetail(); });
+$("#fScheduler").addEventListener("change", (e) => { state.scheduler = e.target.value; renderDetail(); });
+$("#resetInputs").addEventListener("click", () => {
+  state.inputs = Object.assign({}, SEED.projection);
+  saveLS(LS.inputs, state.inputs);
+  buildProjInputs();
+  renderProjection();
+});
+$("#clearUploads").addEventListener("click", () => {
+  state.uploads = migrateUploads(null);
+  saveLS(LS.uploads, state.uploads);
+  buildPasteSlots();
+  renderUploads();
+});
+$("#pasteSlots").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  const k = b.dataset.parse || b.dataset.edit || b.dataset.clear;
+  if (!k) return;
+  const s = state.uploads.slots[k];
+  if (b.dataset.parse) { doParse(k); return; }
+  s.rows = null; s.stats = null; s.warnings = [];
+  if (b.dataset.clear) { s.raw = ""; s.at = null; }
+  saveLS(LS.uploads, state.uploads);
+  renderSlotBody(k);
+  renderConsolidated();
+});
+
+/* filter options from data */
+[...new Set(SEED.detail.map((r) => r.c))].sort().forEach((c) => $("#fCampaign").insertAdjacentHTML("beforeend", `<option>${esc(c)}</option>`));
+[...new Set(SEED.detail.map((r) => r.sch))].sort().forEach((s) => $("#fScheduler").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
+
+bindDrop("#dzSF", "#fileSF", "sf", 1);
+
+/* ---------------- boot ---------------- */
+buildProjInputs();
+renderProjection();
+renderVT();
+renderLeads();
+buildPasteSlots();
+renderUploads();
+showTab("projection");
+</script>
+</body>
+</html>

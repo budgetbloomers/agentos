@@ -1,0 +1,18 @@
+# Chatterbox AgentOS — API Worker (Phase 2+)
+# Deploy:  cd worker && npx wrangler deploy
+# Secrets (typed interactively, NEVER in files/chat):
+#   npx wrangler secret put SUPABASE_SECRET_KEY
+name = "chatterbox-agentos-api"
+main = "src/index.mjs"
+compatibility_date = "2026-07-01"
+
+# Serve under the Pages domain via routes after first deploy, or use
+# Pages Functions binding later. For the test week, the Worker's own
+# workers.dev URL also works — set rules.askEndpoint accordingly.
+
+[ai]
+binding = "AI"                    # Workers AI — Hermes 2 Pro (Phase 3)
+
+[vars]
+SUPABASE_URL = "https://fxvnjhfdenycxxuklord.supabase.co"
+

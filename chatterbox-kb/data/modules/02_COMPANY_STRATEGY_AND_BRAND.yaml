@@ -1,0 +1,103 @@
+domain: company_strategy_brand
+
+company:
+  name: The Chatterbox
+  location: Durban/uMhlanga, South Africa
+  head_office: 1 Holwood Park, 5 Canegate Road, uMhlanga Ridge, Durban
+  purpose: convert conversations into measurable, compliant and repeatable revenue
+  strategic_shift:
+    from: traditional outbound call-centre operation and disconnected point solutions
+    to: controlled AI-native revenue execution platform
+
+value_proposition:
+  external: The Chatterbox combines trained people, structured processes, data, technology, automation, QA, compliance and controlled AI to deliver measurable clean-sales growth.
+  internal: Data becomes decisions; decisions become owned action; action becomes evidence; evidence becomes repeatable performance and verified benefit.
+  investor: A compliance-first revenue execution platform with scalable seat economics, strong operational leverage and line of sight from recruitment to clean sale to margin.
+  client_questions_to_answer:
+    - Why Chatterbox?
+    - Why now?
+    - Why trust the operating and compliance model?
+    - What measurable outcome will be delivered?
+    - How quickly can a campaign launch?
+    - How are customers and client reputation protected?
+    - How will performance, economics and exceptions be reported?
+
+strategic_outcomes:
+  - demand is traceable
+  - people are ready
+  - productive capacity is visible
+  - sales are clean and defensible
+  - campaigns are profitable
+  - managers own outcomes
+  - data validates reality
+  - risk independently audits controls
+  - finance proves economics
+  - AI supports decisions inside guardrails
+  - investors can understand health in under five minutes
+  - Nicholas is not the human operating system
+
+operating_principles:
+  - one metric, one definition, one owner, one action route
+  - one business owner and one process owner per system
+  - data first, dashboard second, triggers third, behaviour fourth, automation last
+  - eliminate, simplify, standardise, automate, use variable specialist capacity, then hire
+  - no reporting theatre or decorative dashboards
+  - no system self-declares success
+  - no initiative without outcome, owner, source, control, KPI and benefit baseline
+  - scale/fix/merge/pause/retire decisions must be explicit
+
+strategic_lenses:
+  Elon_Musk: question requirements, delete clutter, simplify, accelerate, automate only after stability
+  Alex_Hormozi: make value measurable; increase outcome certainty and speed; reduce effort and risk
+  Rory_Sutherland: use behavioural insight, salience, trust and reframing rather than only rational claims
+  David_Ogilvy: clear proposition, proof, disciplined messaging and conversion-focused creative
+  Robert_Cialdini: ethical authority, proof, consistency, reciprocity and social validation
+  Ray_Dalio: radical truth, issue logs, learning loops and principles-based decisions
+  Simon_Sinek: lead with purpose and a credible why
+  Chris_Voss: tactical empathy, calibrated questions and objection diagnosis
+
+brand:
+  personality: sharp, confident, modern, operational, human, compliant, performance-led
+  visual:
+    primary: [Chatterbox blue, deep navy, white]
+    support: [black/charcoal, soft grey, steel grey]
+    status_only: [red, amber, green]
+    rules:
+      - strong contrast and clean executive typography
+      - dashboard-led layouts, rounded panels where useful, minimal clutter
+      - status colours only where status has management meaning
+      - no decorative graphs
+      - do not invent or redesign the logo
+  writing:
+    tone: direct, executive, simple enough for a non-technical executive to understand quickly
+    avoid: generic innovation language, inflated claims, jargon without decisions, unsupported proof
+
+services_and_capabilities:
+  current_core:
+    - outsourced outbound sales and campaign execution
+    - contact-centre operations
+    - lead and campaign management
+    - agent recruitment/readiness as an internal capability
+    - training and simulation
+    - sales-floor performance management and coaching
+    - QA, clean-sale validation, compliance and complaints control
+    - CRM, workflow and nurture automation
+    - analytics, executive and client reporting
+  target_capability:
+    - managed end-to-end revenue execution with transparent economics, controlled data and AI-supported management
+  target_client_types:
+    - insurers and regulated financial-services partners
+    - automotive and mobility businesses
+    - retail and service brands
+    - businesses requiring compliant outbound conversion and customer lifecycle execution
+  pricing_models_status:
+    per_seat: input_required
+    per_sale: input_required
+    hybrid: input_required
+    pilot: input_required
+
+success_definition:
+  operational: predictable clean sales with early detection and corrective action
+  financial: rising clean contribution per productive seat and declining support/facility cost per productive seat
+  client: transparent launch, performance, compliance and reporting journey
+  investor: economics, capacity, risks and controls understandable in five minutes

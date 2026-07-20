@@ -1,0 +1,112 @@
+domain: open_decisions_source_rules
+
+source_priority:
+  1: later signed/approved EXCO, legal, finance or client document
+  2: Chatterbox Operating System Governance workbook and signed registers
+  3: current management accounts, payroll, contracts and source-system extracts
+  4: latest complete dated Chatterbox knowledge base/economic model
+  5: department frameworks, SOPs, meeting notes and operating-model documents
+  6: platform links and artefacts (deployment evidence only)
+  7: conversation context supplied by Nicholas
+  8: explicit configurable assumption
+  rule: when sources conflict, record conflict and use safest configurable assumption; never silently blend
+
+known_conflicts:
+  capacity_target:
+    issue: 330-agent near-term economic/investor target vs 370-agent organisation design
+    treatment: use 330 for current economics and 370 only as separate target-state organisation scenario
+  active_headcount:
+    issue: 110 active agents input vs April 2026 65.6 headcount/seat proxy
+    treatment: label date and definition; reconcile employed/scheduled/present/logged-in/productive and physical seats
+  revenue_per_agent:
+    issue: R42,500 mature stretch vs R34,762 conservative proxy
+    treatment: use conservative for diligence; show stretch separately
+  agent_salary:
+    issue: R5,000 latest model vs R5,250 prior summary
+    treatment: finance/payroll confirmation required
+  system_health:
+    issue: governance snapshot 10 red/2 amber/1 grey vs AI maturity workbook 9 red/4 amber
+    treatment: use 13-system governance register as canonical until assessment scope is reconciled
+  COO:
+    issue: daily delivery accountability is unresolved
+    treatment: retain vacancy/decision-required flag; do not invent owner
+  recruitment_owner:
+    issue: historical documents assign Tiara
+    treatment: current model assigns Abigail to recruitment/workforce, Keshav to demand content, Ryan data, Aarav workflow, Claudell executive oversight
+  EBITDA_language:
+    issue: seat contribution sometimes called EBITDA
+    treatment: call it contribution until tied to full P&L including leadership, support, facilities, finance cost and tax
+
+critical_inputs_required:
+  corporate:
+    - legal entity name, registration, VAT and approved company description
+    - current approved vision, mission and strategic outcomes
+  capacity:
+    - physical seats, support seats, shifts, sites
+    - employed, scheduled, present, logged-in and productive headcount
+  campaigns:
+    - live client/campaign/product list
+    - contract term, pricing, billing, revenue recognition and clawback rules
+    - target, actual conversion, clean-sales and capacity
+  finance:
+    - current monthly revenue and campaign revenue
+    - full payroll/support/tech/facility/central overhead
+    - gross margin, reconciled EBITDA, cash, debtor days and 13-week forecast
+    - approved commission rules, PO limits and delegation matrix
+  recruitment_people:
+    - actual weekly funnel and cost by source
+    - cohort pass, time-to-productivity and 30/60/90 retention
+    - current staff list, vacancies and reporting lines
+  operations:
+    - approved productive criteria, talk-time/contact/pitch/close targets
+    - team-leader and OM structure, campaign shifts and WFM rules
+  quality_risk:
+    - clean-sale definition by campaign
+    - QA scorecards, thresholds, critical fails, calibration and complaint process
+    - POPIA/consent/retention and suppression rules
+  technology:
+    - licence/cost inventory, users, access owners, uptime and incident history
+    - current GoHighLevel pipelines, Make scenarios and platform data flows
+    - system recovery, backup, manual fallback and release evidence
+  data:
+    - signed KPI dictionary, source mappings and refresh SLA
+    - identity keys and reconciliation rules
+  commercial:
+    - approved service catalogue, pricing, target sectors, proof/case studies and onboarding SLA
+  investor:
+    - funding ask/instrument/terms, use of funds, security and reporting requirements
+
+current_priority_backlog:
+  1: Investor Dashboard V1 with reconciled definitions and conservative/base/stretch separation
+  2: seat economics and management-account tie-out
+  3: signed leadership ownership matrix and COO decision
+  4: central action, decision and risk registers
+  5: Analytics Upload System controlled MVP
+  6: AgentOS data model and Agent Passport
+  7: Recruitment Demand Engine using live funnel data
+  8: Client Acquisition Pack V1 with approved proof
+  9: clean-sale rulebook, QA methodology and exception workflow
+  10: 13-week cash forecast
+  11: critical system G3 acceptance packs and recovery tests
+  12: canonical data/metric dictionary and AI control plane
+
+agent_validation_checklist:
+  before_answering:
+    - identify task domain and retrieve only required modules
+    - check whether requested fact is current, model, proposed, historical, conflict or input_required
+    - check source priority and effective date
+    - preserve owner boundaries and corrected names
+    - identify regulated, financial, HR or customer-impact risk
+  before_recommending:
+    - connect recommendation to business outcome and KPI
+    - name accountable owner and dependencies
+    - define evidence and acceptance criteria
+    - include manual fallback/controls for workflows
+    - define scale/fix/pause/stop decision
+  before_publishing_or_external_use:
+    - remove unsupported claims and internal confidential economics unless approved
+    - verify legal entity, client permission, brand assets and financial tie-out
+    - obtain Risk approval for compliance claims and Finance approval for economics
+
+completion_standard:
+  statement: Chatterbox has not transformed because more apps exist. Transformation is complete only when demand is traceable, people are ready, clean sales and economics are visible, managers close actions, systems are controlled, AI is governed, benefits are verified and Nicholas is no longer the manual integration layer.

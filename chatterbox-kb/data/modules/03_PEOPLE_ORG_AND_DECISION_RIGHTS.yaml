@@ -1,0 +1,157 @@
+domain: people_org_decision_rights
+
+people_ids:
+  P01: {name: Sunjveer, role: CEO, status: baseline}
+  P02: {name: Nicholas Pillay, role: Chief Technology and Transformation Officer, status: confirmed}
+  P03: {name: Mekaeel, role: CFO, status: baseline}
+  P04: {name: Jared, role: Risk and Compliance Executive, status: baseline}
+  P05: {name: Claudell Panday, role: People Executive, status: confirmed_spelling}
+  P06: {name: Abigail, role: Recruitment and Workforce Operations Lead, status: current_model}
+  P07: {name: Keshav, role: Marketing Operations Lead, status: current_model}
+  P08: {name: Ryan, role: Data Analytics and Lead Intelligence Lead, status: current_model}
+  P09: {name: Aarav, role: AI CRM and Automation Lead, status: current_model}
+  P10: {name: Leon, role: Sales Operations Lead, status: baseline}
+  P11: {name: Rishae, role: Technology Operations Lead, status: current_model}
+  P12: {name: Stephanie, role: Quality Operations Lead, status: baseline}
+  P13: {name: Keshree, role: HR Operations, status: baseline}
+  P14: {name: Rogen, role: Dialler Operations, status: baseline}
+  P15: {name: Jojo, role: Training Operations, status: baseline}
+  P16: {name: Pamela, role: Training Operations, status: baseline}
+  P17: {name: Romona, role: Finance Administration and Commission Reconciliation, status: baseline}
+  P18: {name: COO/Delivery Executive, role: enterprise delivery owner, status: vacant_or_unresolved}
+  P19: {name: Ashton, role: Sales Optimisation/Commercial support, status: context_only}
+  P20: {name: Dalwin, role: Sales Optimisation/Commercial support, status: context_only}
+
+executive_accountability:
+  P01:
+    owns: [enterprise strategy, material client commitments, growth decisions, executive accountability, final enforcement]
+    metrics: [revenue, client trust, strategic delivery, action closure]
+  P02:
+    owns: [technology architecture, transformation portfolio, data strategy, AI control plane, marketing/lead technology, CRM and automation architecture, benefit design]
+    boundary: designs and governs mechanism; not daily process administrator
+    metrics: [system adoption, data quality, workflow health, benefits, maturity, reduced founder dependency]
+  P03:
+    owns: [cash, pricing control, campaign profitability, management accounts, commission/PO financial controls]
+    metrics: [revenue, margin, cost per seat, cash, debtor days, reconciled EBITDA]
+  P04:
+    owns: [risk, QA governance, sales conduct, customer protection, compliance standards, complaints and independent stop authority]
+    metrics: [QA pass, critical fails, complaints, repeat defects, exception closure]
+  P05:
+    owns: [People Engine, recruitment oversight, HR lifecycle, engagement, retention, training governance]
+    metrics: [sales-ready throughput, readiness, attrition, retention, employee lifecycle compliance]
+  P18:
+    owns: [daily campaign delivery, capacity deployment, production recovery, operations managers, WFM, client operational outcomes]
+    status_note: do not assume appointed; current accountability gap must remain visible
+
+functional_accountability:
+  P06:
+    owns: [candidate pipeline execution, follow-up, interviews, recruitment exceptions, staffing forecasts, scheduling, attendance/shrinkage visibility, capacity planning, four-week readiness plan]
+    reports_to: P05
+  P07:
+    owns: [brand operations, recruitment demand, client demand content, websites/landing pages, social distribution, partner collateral]
+    rule: output is measurable demand, not artwork volume
+  P08:
+    owns: [metric dictionary, dashboards, reporting, lead/source testing, attribution, data quality, source ROI, analytics uploads]
+    rule: measures outcomes but does not own operations
+  P09:
+    owns: [GoHighLevel, Make workflows, AgentOS workflow layer, nurture, routing, AI use cases, next-best-action logic]
+    rule: platform owner/support; functional managers own business results
+  P10:
+    owns: [team-leader discipline, floor execution, attendance/talk-time recovery, coaching completion, daily production]
+  P11:
+    owns: [technology readiness, access, assets, incidents, recovery, platform availability, approved release support]
+  P12:
+    owns: [QA evaluators, calibration, findings, critical-fail escalation, corrective actions, repeat-defect monitoring]
+  P13:
+    owns: [employee master, onboarding/offboarding, employee records, joiner-mover-leaver completion]
+  P14:
+    owns: [CallX access/configuration, queues, recordings, approved dialler change log and support]
+  P15_P16:
+    owns: [training delivery, simulation, assessment administration, readiness evidence]
+  P17:
+    owns: [commission reconciliation, PO/finance administration and delegated control evidence]
+
+ctto_directorate:
+  hub: P02
+  capabilities:
+    technology_operations: P11
+    marketing_operations: P07
+    data_analytics_lead_intelligence: P08
+    ai_crm_automation: P09
+    virtual_transformation_office: P02
+  flow: generate demand -> capture activity -> create intelligence -> automate action -> verify benefit -> scale/fix/pause
+
+lean_scale_design:
+  near_term_economic_target: 330 productive agents
+  alternate_org_design_baseline: 370 productive agents
+  rules:
+    team_leader_span: 12-15 agents; default model 1:15, tighter for new/complex/high-risk teams
+    operations_manager_span: about 75-110 agents through team leaders
+    vacancies:
+      - COO/Delivery Executive: immediate governance gap
+      - Operations Managers: phased by agent capacity
+      - WFM Lead: trigger around 120-150 agents or demonstrated planning overload
+      - Intraday Analyst: trigger-based for multi-shift/site or sustained adherence workload
+      - Finance Operations Accountant: required after finance vacancy/control assessment
+      - BI/MI Analyst and Content Coordinator: only when backlog/benefit proves need
+      - Compliance/Complaints Officer and Nesting Coach: trigger-based
+  zero_based_hiring_gate: eliminate -> simplify -> standardise -> automate -> outsource/variable specialist -> hire
+
+decision_rights:
+  technology_or_AI_priority:
+    recommend: P02 + functional_owner
+    decide: EXCO for material investment; P02 inside approved portfolio
+    evidence: G1 business case and portfolio impact
+  production_launch:
+    recommend: system_owner + process_owner
+    decide: executive_outcome_owner
+    controls: P04 for critical controls; P08 for data; P11 for recovery
+    evidence: signed G3 acceptance pack
+  workflow_or_system_change:
+    recommend: P09 or P11
+    decide: process_owner for business rule and system_owner for release
+    evidence: change request, tests and rollback
+  KPI_definition:
+    recommend: P08
+    decide: named domain executive
+    evidence: metric dictionary and reconciliation
+  privileged_access:
+    recommend: P11
+    decide: system_owner with functional approval
+    evidence: access request and review entry
+  compliance_pause:
+    recommend: P12 or Operations
+    decide: P04
+    escalate: P01/EXCO for material customer harm
+  spend_or_PO:
+    recommend: budget_owner
+    decide: P03 within delegation; EXCO above threshold
+  commission_rule:
+    decide: P03
+    consult: [P01, P05, P08]
+    evidence: signed rule and test cases
+  system_benefit_acceptance:
+    decide: P03 for cost/revenue; P04 for risk; EXCO for strategic claim
+    evidence: baseline, attribution and verification method
+  merge_or_retire_system:
+    recommend: P02 + functional_owner
+    decide: functional_executive; EXCO if material
+    evidence: G6 checklist, retention and continuity plan
+
+meeting_rhythm:
+  EXCO: strategy, economics, risk, decisions and unresolved cross-functional constraints
+  MANCO: daily/weekly delivery, capacity, campaign recovery and action closure
+  weekly_strategy_block:
+    - business model and revenue/cost drivers
+    - Client Acquisition Pack
+    - Investor Dashboard
+    - content/demand priorities
+    - one permanent strategic improvement
+  specialised_forums:
+    - Technology Productivity Council
+    - Demand and Lead Council
+    - Agent Lifecycle Council
+    - Clean Sales and Quality Council
+    - Recruitment and Training Review
+    - Platform and Transformation Sprint
+  rule: start with exceptions and decisions; every action has owner, deadline, KPI/benefit, escalation and closure evidence
