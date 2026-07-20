@@ -570,6 +570,7 @@ const SRC_KEYS = Object.keys(SOURCES).filter(k=>!SOURCES[k].session);
 /* ---------------- DEFAULT INTERPRETATION RULES (editable in Dictionary → Rules) ---------------- */
 const DEFAULT_RULES = {
   callTypes:{label:'Call type bands (billable seconds → type)',vals:['0:No Answer','30:Customer Service','180:Pitch','360:Closing'],help:'Format threshold:Label. A call gets the label of the highest threshold at or below its billable seconds — the shipped bands are <30 No Answer, 30–179 Customer Service, 180–359 Pitch, 360+ Closing. Edit a boundary and every count, tile, chart and per-agent pivot recomputes instantly.'},
+  callPhases:{label:'Call phase bands (billable seconds → phase reached)',vals:['0:Not connected','20:Introduction','75:Body','180:Pitch','300:Close'],help:'Format threshold:Phase. The phase a connected call REACHED before it ended — where the agent got cut off. A call gets the phase of the highest threshold at or below its billable seconds. This is the coaching lens the client asked for, replacing the fixed 30-second no-answer assumption. NOTE: until the dialler emits a real per-call phase marker (Wiki-dialer transition, open thread), phase is DERIVED from call length — a proxy for reached-phase, not a measured one. Edit a boundary and the drop-off view recomputes instantly.'},
   qaPass:{label:'QA decisions that count as PASS',vals:['Pass'],help:'Values of "Escalation Decision" counted as a pass / clean outcome.'},
   qaCoaching:{label:'QA decisions that count as COACHING',vals:['Coaching'],help:'Escalation Decisions that trigger a coaching action.'},
   qaCritical:{label:'QA decisions that count as CRITICAL FAIL',vals:['Critical Fail'],help:'Escalation Decisions treated as compliance-critical.'},
@@ -2255,6 +2256,48 @@ function agingTable(open){
    +'</tbody></table></div>';
 }
 
+/* ===================== QA CLIENT VIEWS (2026-07-20) ===================== */
+/* Phase a connected call reached before ending — reads the callPhases rule, same
+   band logic as callBandFor. Duration-derived proxy (see rule help). */
+function phaseBandFor(sec){
+  const rungs=(state.rules.callPhases?.vals||[]).map(v=>{const i=String(v).indexOf(':');return{n:parseFloat(String(v).slice(0,i)),label:String(v).slice(i+1).trim()}}).filter(r=>!isNaN(r.n)).sort((a,b)=>a.n-b.n);
+  let cur=rungs.length?rungs[0].label:'(no phases)';
+  rungs.forEach(r=>{if((sec||0)>=r.n)cur=r.label});
+  return cur;
+}
+function phaseLabels(){return (state.rules.callPhases?.vals||[]).map(v=>String(v).slice(String(v).indexOf(':')+1).trim())}
+/* Drop-off by call phase: of OUTBOUND dial attempts, how many ended in each phase
+   (= where the agent was cut off). Optionally scoped to one campaign bucket. */
+function callPhaseDropoff(win,campFilter){
+  const calls=rowsFor('CALLX_CALL_RECORDS',win).filter(c=>c.agent&&c.call_type!=='inbound');
+  const labels=phaseLabels();const dist={};labels.forEach(l=>dist[l]=0);let total=0;
+  calls.forEach(c=>{if(campFilter){const cb=cbOf(c.agent);const cc=cb?campBucket(state.cbInfo[cb]?.queue):null;if(cc!==campFilter)return}
+    const ph=phaseBandFor(c.billable_seconds);dist[ph]=(dist[ph]||0)+1;total++});
+  return{labels,dist,total};
+}
+/* QA rolled up by Matrix campaign: evaluations, pass rate, avg score, % sales
+   (BI sales for the campaign ÷ QA'd calls), critical-fail rate. campBucket folds the
+   raw campaign/queue spelling; unbucketed evals aggregate under '(other)'. Sales come
+   from accountPremiums — the single money model — bucketed by the owning agent's queue. */
+function qaByCampaign(qa,win){
+  const B={};const bump=k=>(B[k]=B[k]||{n:0,pass:0,crit:0,s:0,sn:0,sale:0});
+  qa.forEach(r=>{const c=campBucket(r.campaign)||'(other)';const o=bump(c);o.n++;
+    if(resolveRule('$qaPass').includes(r.escalation_decision))o.pass++;
+    if(resolveRule('$qaCritical').includes(r.escalation_decision))o.crit++;
+    if(r.score_percent!=null){o.s+=r.score_percent;o.sn++}});
+  (function(){const f=state.filters;try{accountPremiums(win).forEach(e=>{if(!e.cb)return;
+    const c=campBucket(state.cbInfo[e.cb]?.queue)||'(other)';bump(c).sale++})}finally{state.filters=f}})();
+  return B;
+}
+/* Live QA pipeline: evaluations not yet closed out (qa_status has no "closed"),
+   the items still pending action. Ordered most-severe first. */
+function qaPipeline(qa){
+  const open=qa.filter(r=>!/closed/i.test(r.qa_status||''));
+  const rank=r=>resolveRule('$qaCritical').includes(r.escalation_decision)?0
+    :resolveRule('$qaCoaching').includes(r.escalation_decision)?1:2;
+  return open.map(r=>({r,rk:rank(r)})).sort((a,b)=>a.rk-b.rk||String(a.r.call_date||'').localeCompare(String(b.r.call_date||''))).map(x=>x.r);
+}
+
 /* ---------------- PAGE: QA ---------------- */
 function pageQA(win){
   if(!hasData())return emptyState('QA & Compliance needs the evaluations export');
@@ -2270,7 +2313,7 @@ function pageQA(win){
   const QP={};qa.forEach(r=>{const cb=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];const key=cb||('RAW::'+normName(r.sales_agent||'(blank)'));
     const p=QP[key]=QP[key]||{__cb:cb,__t:0,__name:cb?((state.cbInfo[cb]?.name)||r.sales_agent):(r.sales_agent||'(blank)'),__unmapped:!cb,__s:0,__sn:0,__d:{},__pe:0,__disp:0};
     p.__t++;if(r.score_percent!=null){p.__s+=r.score_percent;p.__sn++}
-    if(r.sm_flag===1||String(r.sm_escalation_reason||'').trim())p.__pe++;
+    if(r.sm_flag===1||String(r.sm_reason||'').trim())p.__pe++;
     if(resolveRule('$qaDisputeStatuses').includes(r.status))p.__disp++;
     const d=decCols.includes(r.escalation_decision)?r.escalation_decision:'Other';p.__d[d]=(p.__d[d]||0)+1});
   const qpSales={};(function(){const f=state.filters;try{accountPremiums(win).forEach(e=>{if(e.cb)qpSales[e.cb]=(qpSales[e.cb]||0)+1})}finally{state.filters=f}})();
@@ -2295,8 +2338,53 @@ function pageQA(win){
     if(r.score_percent!=null){byTL[t].s+=r.score_percent;byTL[t].sn++}});
   const tlRows=Object.entries(byTL).map(([t,v])=>({t,n:v.n,pass:v.p/v.n*100,crit:v.c,score:v.sn?v.s/v.sn:null})).sort((a,b)=>b.n-a.n);
   const openCrit=qa.filter(r=>resolveRule('$qaCritical').includes(r.escalation_decision)&&!/closed/i.test(r.qa_status||''));
+  /* --- client views 2026-07-20: QA-by-campaign, escalation/dispute, pending pipeline, phase drop-off --- */
+  const qaStd=nbaVal('qaStd',85);
+  const campQA=qaByCampaign(qa,win);
+  const smN=qa.filter(r=>r.sm_flag===1||String(r.sm_reason||'').trim()).length;
+  const dispN=qa.filter(r=>resolveRule('$qaDisputeStatuses').includes(r.status)).length;
+  const pipe=qaPipeline(qa);
+  const anc=isoDay(anchorDate());
+  const daysOpen=r=>{const d=r.call_date||r._d;return d?Math.max(0,Math.round((new Date(anc+'T12:00:00')-new Date(d+'T12:00:00'))/864e5)):null};
+  const drop=callPhaseDropoff(win);
+  const campOrder=['Courtesy','Cuddle','VT','(other)'].filter(c=>campQA[c]);
+  const campTile=c=>{const o=campQA[c];const avg=o.sn?o.s/o.sn:null;const pass=o.n?o.pass/o.n*100:null;
+    const cfr=o.n?o.crit/o.n*100:null;const psale=o.n?o.sale/o.n*100:null;
+    const line=(l,v)=>'<div style="display:flex;justify-content:space-between;font-size:11.5px;padding:2px 0"><span style="color:var(--muted)">'+l+'</span><span style="font-weight:700">'+v+'</span></div>';
+    return '<div class="card" style="min-width:200px"><div style="background:var(--navy);color:#fff;text-align:center;font-weight:800;padding:7px;border-radius:8px 8px 0 0;margin:-14px -14px 8px">'+esc(c==='VT'?'Matrix Tracker':'Matrix '+c)+'</div>'
+     +'<div style="text-align:center;margin-bottom:6px"><div style="font-size:26px;font-weight:800;color:'+(avg==null?'inherit':avg>=qaStd?'#158A4C':'#B45309')+'">'+(avg==null?'—':fmtVal(avg,'pct'))+'</div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">avg score</div></div>'
+     +line('Evaluations',o.n.toLocaleString())
+     +line('Pass rate',pass==null?'—':fmtVal(pass,'pct'))
+     +line('% sales / QA&#39;d',psale==null?'—':fmtVal(psale,'pct'))
+     +line('Critical-fail rate','<span style="color:'+(cfr>0?'var(--red)':'#158A4C')+'">'+(cfr==null?'—':fmtVal(cfr,'pct'))+'</span>')
+     +'</div>'};
   setTimeout(()=>{doughnut('chQ1',prio.length?prio:[['No priority flags',1]])},0);
   return kpiRow('QA',win)
+   +'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">QA by campaign</span><span class="info" title="Every QA metric rolled up per Matrix campaign (campaign folded to Courtesy / Cuddle / Tracker). Avg score is the headline; pass rate and critical-fail rate use the Dictionary QA rules; % sales/QA&#39;d = BI sales for the campaign ÷ evaluations. Evaluations whose campaign does not fold to a known bucket appear under (other).">i</span><span class="s">high-level scorecard — one tile per campaign</span></div>'
+   +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px">'+campOrder.map(campTile).join('')+'</div></div>'
+   +'<div class="grid g21"><div class="card"><div class="card-h"><span class="t">Escalations &amp; disputes — live pipeline</span><span class="info" title="Pending = evaluations whose Status is not closed out. Partner escalations = an SM Escalation Reason / flag; Disputed = Status in the QA dispute rule (Dictionary). This is the not-closed-out queue the client asked for; it clears as QA closes each item.">i</span><span class="s">'+pipe.length+' pending</span></div>'
+   +'<div class="ac-tiles" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr));margin-bottom:10px">'
+   +'<div class="ac-tile"><div class="ac-big">'+pipe.length+'</div><div class="ac-sub">PENDING (not closed)</div></div>'
+   +'<div class="ac-tile"><div class="ac-big" style="color:var(--red)">'+openCrit.length+'</div><div class="ac-sub">OPEN CRITICAL</div></div>'
+   +'<div class="ac-tile"><div class="ac-big" style="color:#B45309">'+smN+'</div><div class="ac-sub">PARTNER ESC.</div></div>'
+   +'<div class="ac-tile"><div class="ac-big" style="color:#B45309">'+dispN+'</div><div class="ac-sub">DISPUTED</div></div></div>'
+   +(pipe.length?'<div style="overflow-x:auto;max-height:340px;overflow-y:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Pri</th><th class="noclick">Agent</th><th class="noclick">Decision</th><th class="noclick">Category</th><th class="noclick">Status</th><th class="noclick">Flags</th><th class="noclick">Days open</th></tr></thead><tbody>'
+     +pipe.slice(0,60).map(r=>{const dop=daysOpen(r);const dec=r.escalation_decision||'(none)';
+       const decCls=resolveRule('$qaCritical').includes(dec)?'r':resolveRule('$qaCoaching').includes(dec)?'a':'g';
+       const flags=[r.sm_flag||String(r.sm_reason||'').trim()?'SM':'',resolveRule('$qaDisputeStatuses').includes(r.status)?'DISP':'',r.tl1_flag?'TL1':'',r.tl2_flag?'TL2':''].filter(Boolean).join(' ');
+       return '<tr><td><span class="pill '+(String(r.priority||'').match(/1/)?'r':'a')+'" style="padding:1px 6px">'+esc(r.priority||'—')+'</span></td>'
+        +'<td><b>'+maskName(r.sales_agent)+'</b></td><td><span class="pill '+decCls+'" style="padding:1px 6px">'+esc(dec)+'</span></td>'
+        +'<td style="font-size:10.5px">'+esc(r.critical_fail_category||r.coaching_category||'—')+'</td>'
+        +'<td style="font-size:10.5px">'+esc(r.qa_status||r.status||'—')+'</td><td style="font-size:10px;color:var(--muted)">'+esc(flags||'·')+'</td>'
+        +'<td class="num"'+(dop!=null&&dop>7?' style="color:var(--red);font-weight:800"':'')+'>'+(dop==null?'—':dop)+'</td></tr>'}).join('')
+     +'</tbody></table></div>'+(pipe.length>60?'<div style="font-size:11px;color:var(--muted);margin-top:6px">Showing 60 of '+pipe.length+' — narrow with the top-bar Agent/date filters.</div>':''):'<div class="empty">Nothing pending — every evaluation is closed out.</div>')
+   +'</div>'
+   +'<div class="card"><div class="card-h"><span class="t">Call phase drop-off</span><span class="info" title="Where OUTBOUND dial attempts ended — the phase reached before the call dropped. Phase bands are a live rule (Dictionary → Rules → Call phase bands: Introduction / Body / Pitch / Close), replacing the fixed 30-second no-answer assumption. DERIVED from call length until the dialler emits a real per-call phase marker (Wiki-dialer transition).">i</span><span class="s">'+drop.total.toLocaleString()+' attempts</span></div>'
+   +(drop.total?'<table class="tbl"><tbody>'+drop.labels.map((l,i)=>{const n=drop.dist[l]||0;const pct=drop.total?Math.round(n/drop.total*100):0;
+       const col=i===0?'var(--red)':i===1?'#B45309':i>=drop.labels.length-1?'#158A4C':'var(--blue)';
+       return '<tr><td style="width:120px"><b>'+esc(l)+'</b></td><td><div class="bar-track" style="background:#EEF2F8;border-radius:4px;height:15px"><div style="width:'+Math.max(pct,2)+'%;background:'+col+';height:15px;border-radius:4px"></div></div></td><td class="num" style="width:70px;font-weight:800">'+n.toLocaleString()+'</td><td class="num" style="width:44px;color:var(--muted)">'+pct+'%</td></tr>'}).join('')
+     +'</tbody></table><div style="font-size:11px;color:var(--muted);margin-top:8px">Earliest phases first — a heavy Introduction/Body bar means calls are being cut off before the pitch. Tune the phase boundaries in the Dictionary.</div>':'<div class="empty">Upload CallX call records to see phase drop-off.</div>')
+   +'</div></div>'
    +'<div class="grid g21">'
    +'<div class="card"><div class="card-h"><span class="t">QA by agent</span><span class="info" title="Sales Agent CB is normalised (CB-97 = CB97) and matched to the roster; blank codes fall back to the agent name via the Agent List.">i</span><span class="s">score · decisions · total QA&#39;d — top 15</span></div>'
    +(qpRows.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Agent</th><th class="noclick">Avg score</th>'+decCols.map(d=>'<th class="noclick">'+esc(d)+'</th>').join('')+'<th class="noclick">Total QA&#39;d</th><th class="noclick" title="As specified: Total Sales ÷ QA&#39;d calls for the window. If the intent was coverage (QA&#39;d ÷ Sales), say the word — it is a one-line flip.">% sales / QA&#39;d</th><th class="noclick" title="Evaluations with an SM Escalation Reason (or SM flag). The column is in the export but blank so far — this lights up the day QA starts using it.">Partner esc.</th><th class="noclick" title="Evaluations whose Status is in the QA dispute rule (closed_retracted + qa_review by default — editable in Dictionary → Rules).">Disputed</th></tr></thead><tbody>'
