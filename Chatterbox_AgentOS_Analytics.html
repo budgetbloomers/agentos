@@ -1334,17 +1334,36 @@ const GFMAP={ // global filter field per source
    data version). Results are read-only by convention (verified: no caller sorts
    or mutates the returned array), so sharing the cached array is safe. */
 let _dataVer=0;const _rfCache=new Map();
-function bumpDataVer(){_dataVer++;_rfCache.clear();}
+function bumpDataVer(){_dataVer++;_rfCache.clear();_scopeVer=-1;}
+/* ---- Permission-driven data scoping (client 2026-07-20) ----
+   A signed-in team leader (role 'tl') sees ONLY their own team; admin/exec/qa/viewer
+   are unrestricted here. The TL is matched to the team_leader field by their profile
+   name; if no team matches, the scope FAILS CLOSED (team=null matches no row) rather
+   than leaking the floor. Enforced at rowsForRaw — the single data choke point — so
+   every page, tile and export obeys it and the user cannot bypass it by clearing the
+   team filter. The peer-context builder (acCtx, via _fleetCtx) is exempt, so
+   tenure-relative scores/percentiles are still computed against the WHOLE fleet. */
+let _fleetCtx=0,_scopeCache=null,_scopeVer=-1;
+function userScopeTeam(){
+  const u=(typeof window!=='undefined'&&window.CBX_USER)||{};
+  if(u.role!=='tl')return null;                 // only team leaders are data-scoped
+  if(_scopeVer===_dataVer)return _scopeCache;
+  const fn=normName(u.full_name||u.username||'');let team=null;
+  for(const cb in state.cbInfo){const tl=state.cbInfo[cb]?.tl;if(tl&&normName(tl)===fn){team=tl;break}}
+  _scopeVer=_dataVer;_scopeCache={team,matched:!!team};
+  return _scopeCache;
+}
 function rowsFor(src,win){
-  const key=src+'|'+(win?win.from+'~'+win.to:'∅')+'|'+JSON.stringify(state.filters)+'|'+_dataVer;
+  const sc=(_fleetCtx||src==='AGENT_LIST')?null:userScopeTeam();
+  const key=src+'|'+(win?win.from+'~'+win.to:'∅')+'|'+JSON.stringify(state.filters)+'|'+_dataVer+(sc?'|@'+(sc.team||'∅'):'');
   let hit=_rfCache.get(key);
   if(hit)return hit;
-  hit=rowsForRaw(src,win);
+  hit=rowsForRaw(src,win,sc);
   if(_rfCache.size>6000)_rfCache.clear();
   _rfCache.set(key,hit);
   return hit;
 }
-function rowsForRaw(src,win){
+function rowsForRaw(src,win,sc){
   const spec=SOURCES[src];let rows=state.facts[src]||[];
   if(!spec)return [];   // a retired/unknown source has no rows — never crash a page over it
   if(spec.snapshot){
@@ -1376,6 +1395,9 @@ function rowsForRaw(src,win){
     if(gf==='dept'){rows=rows.filter(r=>{if(field)return String(r[field]??'')===v;const c=cbRow(r);return !!c&&cbDept()[c]===v});continue}
     if(field)rows=rows.filter(r=>String(r[field]??'')===v);
   }
+  /* Mandatory permission scope — applied AFTER the user filters and independent of
+     them, so a scoped team leader cannot widen past their own team. */
+  if(sc&&!noGF)rows=rows.filter(r=>{const c=cbRow(r);return !!c&&state.cbInfo[c]?.tl===sc.team});
   if(src==='CALLX_CALL_RECORDS'||spec.session?.base==='CALLX_CALL_RECORDS')rows=rows.map(r=>({...r,call_band:callBandFor(r.billable_seconds)}));
   if(src==='ATTENDANCE'){
     const U=a=>a.map(x=>String(x).toUpperCase());
@@ -1568,13 +1590,27 @@ function renderTrustbar(){
 function distinct(src,field){const s=new Set();(state.facts[src]||[]).forEach(r=>{const v=r[field];if(v&&v!=='(none)')s.add(v)});return[...s].sort()}
 function toggleFilters(){const p=$('#filterPanel');p.style.display=p.style.display==='none'?'block':'none';if(p.style.display==='block')drawFilters()}
 function drawFilters(){
+  const scope=userScopeTeam();
   const rosterVals=f=>Object.values(state.cbInfo||{}).map(i=>i&&i[f]).filter(Boolean);
   const camps=CAMP_OPTS;
-  const teams=[...new Set([...distinct('QA_EVALUATIONS','team_leader'),...distinct('ATTENDANCE','reports_to'),...rosterVals('tl')])].sort();
+  let teams=[...new Set([...distinct('QA_EVALUATIONS','team_leader'),...distinct('ATTENDANCE','reports_to'),...rosterVals('tl')])].sort();
   const tenures=[...new Set(rosterVals('tenure'))].sort();
   const agents=distinct('ATTENDANCE','employee_code');
   const depts=distinct('ATTENDANCE','department');
   const sel=(id,label,opts,cur)=>'<div class="field" style="margin:0"><label>'+label+'</label><select onchange="setFilter(\''+id+'\',this.value)"><option value="">All</option>'+opts.map(o=>{const val=Array.isArray(o)?o[0]:o,lab=Array.isArray(o)?o[1]:o;return '<option '+(cur===val?'selected':'')+' value="'+esc(val)+'">'+esc(lab)+'</option>'}).join('')+'</select></div>';
+  /* Scoped team leader: the team control is locked to their own team and the dropdowns
+     only offer values within it — the data itself is enforced in rowsForRaw regardless. */
+  if(scope){
+    const banner='<div class="stale-banner" style="background:rgba(46,124,246,.12);border-color:rgba(46,124,246,.35);color:var(--blue);margin-bottom:10px">'
+      +(scope.matched?'🔒 Team-leader access — showing only <b>'+esc(scope.team)+'</b>&#39;s team. Fleet-wide figures and other teams are hidden.'
+        :'🔒 Team-leader access — your profile is not linked to a team, so no agent data is shown. Ask an admin to match your name to your team leader record.')+'</div>';
+    $('#filterPanel').innerHTML=banner+'<div class="frow3" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:11px">'
+      +'<div class="field" style="margin:0"><label>Team leader</label><select disabled><option>'+esc(scope.matched?scope.team:'(no team)')+'</option></select></div>'
+      +sel('tenure','Tenure',tenures,state.filters.tenure)
+      +sel('campaign','Campaign',camps,state.filters.campaign)
+      +'</div><div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Your view is locked to your team. Tenure and campaign narrow within it.</div>';
+    return;
+  }
   $('#filterPanel').innerHTML='<div class="frow3" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:11px">'
     +sel('team','Team leader',teams,state.filters.team)
     +sel('tenure','Tenure',tenures,state.filters.tenure)
@@ -2593,6 +2629,9 @@ function groupOf(cb){const i=state.cbInfo[cb]||{};const t=String(i.tenure||'').t
   if(/^exp/i.test(t))return 'EXP - '+String(i.queue||'?').toUpperCase().split(' ')[0];
   return (t||'UNGROUPED').toUpperCase()}
 function acCtx(win){
+  _fleetCtx++;try{return acCtxBuild(win)}finally{_fleetCtx--}
+}
+function acCtxBuild(win){
   const C={open:{},closed:{},qa:{},att:{},call:{},sale:{},canc:{},ref:{},lead:{}};
   const LD=cb=>C.lead[cb]=C.lead[cb]||mkLeads();
   rowsNF('SF_OPEN_CASES',win).forEach(r=>{const cb=cbOfOwner(r.case_owner);if(!cb||!openInWin(r,win))return;
