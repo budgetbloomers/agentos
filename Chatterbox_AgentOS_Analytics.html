@@ -458,8 +458,10 @@ kbd{background:rgba(148,182,255,.12);border-color:rgba(148,182,255,.20);color:va
       <div class="topbar-right">
         <div class="ctrl">📅 <select id="rangeSel" onchange="onRangeChange()">
           <option value="7">Last 7 days</option>
+          <option value="10">Last 10 days</option>
           <option value="30" selected>Last 30 days</option>
           <option value="90">Last 90 days</option>
+          <option value="mtd">Month to date</option>
           <option value="custom">Custom range</option>
           <option value="all">All data</option>
         </select></div>
@@ -633,14 +635,14 @@ const DEFAULT_KPIS = [
  /* ---- QA & Compliance ---- */
  {id:'qa_evals',name:'QA Evaluations',domain:'QA',icon:'shield',src:'QA_EVALUATIONS',type:'count',format:'int',dir:'higher',green:null,amber:null,owner:'Jared',
   interp:'Assessments completed in the period. Coverage first: pass rates mean little on thin samples.',red:'If volume dropped, confirm the QA export was uploaded and assessors are on plan.'},
- {id:'qa_pass_rate',name:'QA Pass Rate',domain:'QA',icon:'shield',src:'QA_EVALUATIONS',type:'ratio',num:[{f:'escalation_decision',op:'in',v:'$qaPass'}],format:'pct',dir:'higher',green:90,amber:80,owner:'Jared',
-  interp:'Pass decisions ÷ all evaluations, using the Rules definition of "pass". The headline quality control.',red:'Open the QA page: which categories and which team leaders are driving fails?'},
+ {id:'qa_pass_rate',name:'QA Pass Rate (retired headline)',domain:'QA',icon:'shield',src:'QA_EVALUATIONS',type:'ratio',num:[{f:'escalation_decision',op:'in',v:'$qaPass'}],format:'pct',dir:'higher',green:90,amber:80,owner:'Jared',
+  interp:'Pass decisions ÷ all evaluations, using the Rules definition of "pass". RETIRED as the headline quality metric 2026-07-20 at client request (inaccurate/confusing) — Avg QA Score is the headline; this stays defined for reference and audits.',red:'Open the QA page: which categories and which team leaders are driving fails?'},
  {id:'critical_rate',name:'Critical Fail Rate',domain:'QA',icon:'alert',src:'QA_EVALUATIONS',type:'ratio',num:[{f:'escalation_decision',op:'in',v:'$qaCritical'}],format:'pct',dir:'lower',green:2,amber:5,owner:'Jared',
   interp:'Compliance-critical failures ÷ all evaluations. Any P1 is a same-day conversation.',red:'Every critical fail needs a coaching/compliance action with an owner and due date — check the action queue.'},
  {id:'coaching_rate',name:'Coaching Rate',domain:'QA',icon:'flag',src:'QA_EVALUATIONS',type:'ratio',num:[{f:'escalation_decision',op:'in',v:'$qaCoaching'}],format:'pct',dir:'lower',green:10,amber:20,owner:'Jared',
   interp:'Share of evaluations that triggered coaching. Rising = skill gaps; falling with stable pass rate = coaching is landing.',red:'Check the top coaching categories — group coaching beats 1:1 when one theme dominates.'},
  {id:'avg_qa_score',name:'Avg QA Score',domain:'QA',icon:'star',src:'QA_EVALUATIONS',type:'avg',field:'score_percent',format:'pct',dir:'higher',green:90,amber:80,owner:'Jared',
-  interp:'Mean Score % across evaluations. Read with pass rate — a high average can hide a tail of critical fails.',red:'Segment by team leader on the QA page to find where the tail lives.'},
+  interp:'Mean Score % across evaluations. THE headline quality metric (client 2026-07-20, replacing pass rate). Read with the Critical Fail Rate — a high average can hide a tail of critical fails.',red:'Segment by team leader on the QA page to find where the tail lives.'},
  {id:'clean_sale_rate',name:'Clean-Sale Rate',domain:'QA',icon:'shield',src:'QA_EVALUATIONS',type:'ratio',
   num:[{f:'assessment_type',op:'in',v:'$saleAssess'},{f:'escalation_decision',op:'in',v:'$qaPass'}],den:[{f:'assessment_type',op:'in',v:'$saleAssess'}],format:'pct',dir:'higher',green:92,amber:85,owner:'Jared',
   interp:'Of sales that QA evaluated, the share that passed clean. This is the metric that stops volume being rewarded over quality. Definition of a clean sale is editable in Rules.',red:'Dirty sales cost more than missed sales — pull the failing agents into the coaching queue today.'},
@@ -1256,6 +1258,7 @@ function periodWindow(){
   const a=anchorDate();
   if(state.range.mode==='custom')return(state.range.from&&state.range.to)?{from:state.range.from,to:state.range.to}:{from:'1900-01-01',to:isoDay(a)};
   if(state.range.mode==='all')return{from:'1900-01-01',to:isoDay(a)};
+  if(state.range.mode==='mtd')return{from:isoDay(a).slice(0,8)+'01',to:isoDay(a)};
   const days=parseInt(state.range.mode,10);
   const f=new Date(a);f.setDate(f.getDate()-(days-1));
   return{from:isoDay(f),to:isoDay(a)};
@@ -1409,6 +1412,26 @@ function addLead(o,r){const k=String(r.case_number||'').trim();if(k)o.set.add(k)
 function openInWin(r,win){
   if((state.rules.leadWindow?.vals?.[0]||'snapshot')!=='opened')return true;
   const d=r._d||r.opened_at;return !win||!d||(d>=win.from&&d<=win.to);
+}
+/* Sales conversion split by Matrix campaign (client 2026-07-20): Courtesy / Cuddle /
+   overall. IDENTICAL maths to the lead_conversion KPI (sales ÷ unique leads), just
+   bucketed by the owning agent's roster queue. Leads or sales whose agent is unmapped
+   (or whose queue folds to no campaign) count in overall only — flagged, never spread,
+   so the campaign figures always reconcile to overall minus the flagged remainder. */
+function convSplit(win){
+  const camps={Courtesy:{L:mkLeads(),s:0},Cuddle:{L:mkLeads(),s:0}};
+  const all=mkLeads(),unSet=mkLeads();let sAll=0,unS=0;
+  const campOfCase=r=>{const cb=cbOfOwner(r.case_owner)||cbOf(r.case_owner);
+    return cb?campBucket(state.cbInfo[cb]?.queue):null};
+  const take=r=>{addLead(all,r);const c=campOfCase(r);if(camps[c])addLead(camps[c].L,r);else addLead(unSet,r)};
+  rowsFor('SF_OPEN_CASES',win).forEach(r=>{if(openInWin(r,win))take(r)});
+  rowsFor('SF_CLOSED_CASES',win).forEach(take);
+  accountPremiums(win).forEach(e=>{sAll++;
+    const c=e.cb?campBucket(state.cbInfo[e.cb]?.queue):null;
+    if(camps[c])camps[c].s++;else unS++});
+  const mk=(s,l)=>({sales:s,leads:l,pct:l>0?s/l*100:null});
+  return{Courtesy:mk(camps.Courtesy.s,camps.Courtesy.L.n),Cuddle:mk(camps.Cuddle.s,camps.Cuddle.L.n),
+    overall:mk(sAll,all.n),unLeads:unSet.n,unSales:unS};
 }
 function cancelRows(win){return rowsFor('SF_INACTIVE',win).map(r=>Object.assign({},r,{_cb:cbOfOwner(r.owner)}))}
 function biLoaded(){return (state.facts.BI_ACTIVE_CASES||[]).length>0}
@@ -1728,7 +1751,7 @@ function nutshell(win){
    {dom:'Sales',label:'Sales Production',icon:'phone',page:'sales',
     sent:nf('total_calls',win)+' calls at '+nf('answer_rate',win)+' answered → '+nf('activations',win)+' sales · '+nf('total_gwp',win)+' GWP · '+nf('cancellations',win)+' cancels'},
    {dom:'QA',label:'Quality & Compliance',icon:'shield',page:'qa',
-    sent:nf('qa_evals',win)+' evaluations · '+nf('qa_pass_rate',win)+' pass · clean-sale '+nf('clean_sale_rate',win)+' · '+nf('critical_rate',win)+' critical'},
+    sent:nf('qa_evals',win)+' evaluations · '+nf('avg_qa_score',win)+' avg score · clean-sale '+nf('clean_sale_rate',win)+' · '+nf('critical_rate',win)+' critical'},
    {dom:'Workforce',label:'Workforce',icon:'users',page:'workforce',
     sent:'Attendance '+nf('attendance_rate',win)+' · unplanned absence '+nf('absenteeism',win)+' · '+nf('leave_days',win)+' leave days'},
    {dom:'Discipline',label:'Conduct & Discipline',icon:'flag',page:'discipline',
@@ -1755,14 +1778,15 @@ function pageExec(win){
   const coachOpen=qaRows.filter(r=>resolveRule('$qaCoaching').includes(r.escalation_decision)&&!/closed/i.test(r.qa_status||''));
   const stale=SRC_KEYS.filter(k=>['a','r','n'].includes(freshness(k).state));
   const actions=[
-    ...critOpen.slice(0,5).map(r=>({p:'r',t:'Critical fail ('+esc(r.priority||'P1')+') — '+maskName(r.sales_agent),d:esc(r.critical_fail_category||'Compliance'),own:esc(r.team_leader),date:r.call_date})),
-    ...coachOpen.slice(0,3).map(r=>({p:'a',t:'Coaching pending — '+maskName(r.sales_agent),d:esc(r.coaching_category||'Coaching'),own:esc(r.team_leader),date:r.call_date})),
+    ...critOpen.slice(0,5).map(r=>({p:'r',t:'Critical fail ('+esc(r.priority||'P1')+') — '+maskName(r.sales_agent),d:esc(r.critical_fail_category||'Compliance'),own:r.team_leader,date:r.call_date})),
+    ...coachOpen.slice(0,3).map(r=>({p:'a',t:'Coaching pending — '+maskName(r.sales_agent),d:esc(r.coaching_category||'Coaching'),own:r.team_leader,date:r.call_date})),
     ...stale.map(k=>({p:'a',t:'Upload needed — '+esc(SOURCES[k].label),d:'Source is stale or missing',own:'Ryan',date:''}))
   ];
   const callRows=rowsFor('CALLX_CALL_RECORDS',win);
   const ds=dailySeries(callRows,win,rs=>rs.length);
   const dsAns=dailySeries(callRows,win,rs=>rs.filter(r=>r.call_band!=='No Answer').length);
-  const qaTrend=dailySeries(qaRows,win,rs=>{const d=rs.length;return d?rs.filter(r=>resolveRule('$qaPass').includes(r.escalation_decision)).length/d*100:null});
+  /* Client 2026-07-20: headline QA metric is the AVERAGE SCORE, not pass rate. */
+  const qaTrend=dailySeries(qaRows,win,rs=>{const v=rs.map(r=>parseFloat(r.score_percent)).filter(x=>!isNaN(x));return v.length?v.reduce((a,b)=>a+b,0)/v.length:null});
   /* ---- command wall: gauge rings (same KPIs, evalKPI unchanged) ---- */
   const ring=id=>{const k=state.kpis.find(x=>x.id===id);if(!k)return '';const v=evalKPI(k,win);const rag=ragOf(k,v);
     const c=rag==='g'?'var(--green)':rag==='a'?'var(--amber)':rag==='r'?'var(--red)':'var(--blue)';
@@ -1793,32 +1817,32 @@ function pageExec(win){
     return '<span class="hm'+(n?'':' z')+'"'+(n?' style="opacity:'+(0.25+0.75*n/hmMax).toFixed(2)+'"':'')+' title="'+k+' · '+n.toLocaleString()+' calls"></span>'}).join('');
   /* ---- team status grid (same per-TL formulas as Workforce & QA pages) ---- */
   const TS={};
-  rowsFor('ATTENDANCE',win).forEach(r=>{if(r.excluded_flag)return;const t=r.reports_to||'(unassigned)';const o=TS[t]=TS[t]||{n:0,p:0,ev:0,pass:0,crit:0};o.n++;if(r.present_flag)o.p++});
-  qaRows.forEach(r=>{const t=r.team_leader||'(unassigned)';const o=TS[t]=TS[t]||{n:0,p:0,ev:0,pass:0,crit:0};o.ev++;
-    if(resolveRule('$qaPass').includes(r.escalation_decision))o.pass++;
+  rowsFor('ATTENDANCE',win).forEach(r=>{if(r.excluded_flag)return;const t=r.reports_to||'(unassigned)';const o=TS[t]=TS[t]||{n:0,p:0,ev:0,s:0,sn:0,crit:0};o.n++;if(r.present_flag)o.p++});
+  qaRows.forEach(r=>{const t=r.team_leader||'(unassigned)';const o=TS[t]=TS[t]||{n:0,p:0,ev:0,s:0,sn:0,crit:0};o.ev++;
+    if(r.score_percent!=null){o.s+=r.score_percent;o.sn++}
     if(resolveRule('$qaCritical').includes(r.escalation_decision))o.crit++});
   const sgDot=(v,g,a,tip)=>'<span class="sg-dot '+(v==null?'n':v>=g?'g':v>=a?'a':'r')+'" title="'+tip+'"></span>';
-  const tg=Object.entries(TS).map(([t,o])=>({t,att:o.n?o.p/o.n*100:null,pass:o.ev?o.pass/o.ev*100:null,crit:o.crit,ev:o.ev}))
+  const tg=Object.entries(TS).map(([t,o])=>({t,att:o.n?o.p/o.n*100:null,pass:o.sn?o.s/o.sn:null,crit:o.crit,ev:o.ev}))
     .sort((a,b)=>(a.att==null?101:a.att)-(b.att==null?101:b.att)).slice(0,12);
   const sg=tg.map(r=>'<div class="sg-row"><b style="flex:1">'+maskName(r.t)+'</b>'
     +sgDot(r.att,92,85,'Attendance '+fmtVal(r.att,'pct'))
-    +sgDot(r.pass,90,80,'QA pass '+fmtVal(r.pass,'pct'))
+    +sgDot(r.pass,90,80,'QA avg score '+fmtVal(r.pass,'pct'))
     +'<span class="sg-dot '+(r.crit?'r':'g')+'" title="'+r.crit+' critical fail(s)"></span>'
     +'<span class="num" style="width:48px;text-align:right;color:var(--muted);font-size:11px">'+r.ev+' ev</span></div>').join('');
   return '<div class="wall">'
-   +['attendance_rate','qa_pass_rate','answer_rate','clean_sale_rate'].map(ring).join('')
+   +['attendance_rate','avg_qa_score','answer_rate','clean_sale_rate'].map(ring).join('')
    +'<div class="card hm-wrap"><div class="card-h"><span class="t">Daily activity heatmap</span><span class="s">'+(hmTotal?hmTotal.toLocaleString()+' calls · '+esc(hmDays[0])+' → '+esc(hmDays[hmDays.length-1])+' · darker = busier':'no call records in this period — upload CallX or widen the date range')+'</span></div><div class="hm-grid">'+hm+'</div></div>'
    +'<div class="card sg-wrap"><div class="card-h"><span class="t">Team status grid</span><span class="s">ATT · QA · CRIT — worst first</span></div>'
    +(tg.length?sg:'<div class="empty">No team data in this window.</div>')+'</div>'
    +'</div>'
-   +kpiRow(null,win,['total_calls','answer_rate','activations','lead_conversion','clean_sale_rate','qa_pass_rate','attendance_rate','open_backlog','critical_rate'])
+   +kpiRow(null,win,['total_calls','answer_rate','activations','lead_conversion','clean_sale_rate','avg_qa_score','attendance_rate','open_backlog','critical_rate'])
    +'<div class="grid g21">'
    +'<div class="card"><div class="card-h"><span class="t">Activity & connection trend</span><span class="info" title="Daily calls vs answered. Uses the Rules definition of answered.">i</span></div><div class="chart-wrap"><canvas id="chExec1"></canvas></div></div>'
    +'<div class="card"><div class="card-h"><span class="t">Action queue</span><span class="s">'+actions.length+' open</span></div>'
-   +(actions.length?'<table class="tbl"><tbody>'+actions.slice(0,8).map(a=>'<tr><td style="width:8px;padding-right:0"><span class="pill '+a.p+'" style="padding:3px 6px">'+(a.p==='r'?'P1':'!')+'</span></td><td><b>'+a.t+'</b><div style="font-size:11px;color:var(--muted)">'+a.d+'</div></td><td style="text-align:right;font-size:11px;color:var(--muted)">'+esc(a.own)+'<br>'+esc(a.date||'')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No open actions — clean board.</div>')
+   +(actions.length?'<table class="tbl"><tbody>'+actions.slice(0,8).map(a=>'<tr><td style="width:8px;padding-right:0"><span class="pill '+a.p+'" style="padding:3px 6px">'+(a.p==='r'?'P1':'!')+'</span></td><td><b>'+a.t+'</b><div style="font-size:11px;color:var(--muted)">'+a.d+'</div></td><td style="text-align:right;font-size:11px;color:var(--muted)">'+maskName(a.own)+'<br>'+esc(a.date||'')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No open actions — clean board.</div>')
    +'</div></div>'
    +'<div class="grid g2">'
-   +'<div class="card"><div class="card-h"><span class="t">QA pass rate trend</span><span class="info" title="Daily pass rate. Thin days show as gaps — read weekly.">i</span></div><div class="chart-wrap short"><canvas id="chExec2"></canvas></div></div>'
+   +'<div class="card"><div class="card-h"><span class="t">QA average score trend</span><span class="info" title="Daily mean Score % across evaluations. Thin days show as gaps — read weekly.">i</span></div><div class="chart-wrap short"><canvas id="chExec2"></canvas></div></div>'
    +'<div class="card"><div class="card-h"><span class="t">Where value is leaking</span></div>'+leakTable(win)+'</div>'
    +'</div>'
    +nutshell(win)
@@ -1827,7 +1851,7 @@ function pageExec(win){
         {label:'Calls',data:ds.data,borderColor:'#2563EB',backgroundColor:'rgba(37,99,235,.08)',fill:true,tension:.35,pointRadius:0,borderWidth:2},
         {label:'Answered',data:dsAns.data,borderColor:'#158A4C',tension:.35,pointRadius:0,borderWidth:2}]},
         options:{plugins:{legend:{position:'top',align:'end',labels:{boxWidth:9,boxHeight:9}}},scales:{x:{grid:{display:false},ticks:{maxTicksLimit:10}},y:{grid:{color:'rgba(148,182,255,.10)'}}},maintainAspectRatio:false}});
-      mkChart('chExec2',{type:'line',data:{labels:qaTrend.labels,datasets:[{label:'Pass %',data:qaTrend.data,borderColor:'#B45309',tension:.3,pointRadius:0,borderWidth:2,spanGaps:true}]},
+      mkChart('chExec2',{type:'line',data:{labels:qaTrend.labels,datasets:[{label:'Avg score %',data:qaTrend.data,borderColor:'#B45309',tension:.3,pointRadius:0,borderWidth:2,spanGaps:true}]},
         options:{plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{maxTicksLimit:10}},y:{grid:{color:'rgba(148,182,255,.10)'},suggestedMin:60,suggestedMax:100}},maintainAspectRatio:false}});
      },0);return ''})();
 }
@@ -1854,20 +1878,33 @@ function vatPct(){const p=parseFloat((state.rules.vatRate?.vals||[])[0]);return 
 function exVat(v){return v/(1+vatPct())}
 function zarStack(v){return fmtVal(v,'zar')+'<div class="exv">'+fmtVal(exVat(v),'zar')+' ex VAT</div>'}
 function zar2Stack(v){return zar2(v)+'<div class="exv">'+zar2(exVat(v))+' ex VAT</div>'}
-function cycleCalc(){
-  const start=String((state.rules.cycleStart?.vals||[])[0]||'').trim();
-  if(!start)return null;
-  const totD=parseFloat((state.rules.cycleDialingDays?.vals||[])[0])||21;
+function cycleCalc(mode){
+  /* mode: 'cycle' (default, 26th-anchored VAS cycle) · 'month' (calendar-month backup
+     view, client 2026-07-20) · 'win' (linked to the main dashboard range filter). All
+     three share one maths path — only the window and day-count denominator change. */
+  mode=mode||'cycle';
   const vat=vatPct();
   const targets=[];(state.rules.cycleTargets?.vals||[]).forEach(v=>{const i=String(v).lastIndexOf(':');const t=parseFloat(String(v).slice(i+1));if(!isNaN(t))targets.push([String(v).slice(0,i).trim(),t])});
-  const cw={from:start,to:'2099-12-31'};
+  let start,cw,totD;
+  if(mode==='month'){
+    const a=isoDay(anchorDate());start=a.slice(0,8)+'01';
+    const e=new Date(a.slice(0,7)+'-01T12:00:00');e.setMonth(e.getMonth()+1);e.setDate(0);
+    cw={from:start,to:isoDay(e)};totD=workDays(cw);
+  }else if(mode==='win'){
+    const w=periodWindow();start=winFrom(w);cw={from:start,to:w.to};totD=workDays(cw);
+  }else{
+    start=String((state.rules.cycleStart?.vals||[])[0]||'').trim();
+    if(!start)return null;
+    totD=parseFloat((state.rules.cycleDialingDays?.vals||[])[0])||21;
+    cw={from:start,to:'2099-12-31'};
+  }
   const prem=(function(){const f=state.filters;try{return accountPremiums(cw)}finally{state.filters=f}})();
   const dial=rowsFor('CALLX_CALL_RECORDS',cw);
-  const byCamp={},dialDays={},moneyDays={},tlAgg={},campOfAcc={};let unatt=0;
+  const byCamp={},campSales={},dialDays={},moneyDays={},tlAgg={},campOfAcc={};let unatt=0;
   prem.forEach(e=>{if(!e.cb){unatt+=e.gwp||0;return}
-    const q=(state.cbInfo[e.cb]?.queue)||'(no queue)';byCamp[q]=(byCamp[q]||0)+(e.gwp||0);
+    const q=(state.cbInfo[e.cb]?.queue)||'(no queue)';byCamp[q]=(byCamp[q]||0)+(e.gwp||0);campSales[q]=(campSales[q]||0)+1;
     campOfAcc[e.acc]=q;                                  // where this account's money landed
-    const tl=(state.cbInfo[e.cb]?.tl)||'(unassigned)';const T=tlAgg[tl]=tlAgg[tl]||{gwp:0,q:{}};T.gwp+=(e.gwp||0);T.q[q]=(T.q[q]||0)+1});
+    const tl=(state.cbInfo[e.cb]?.tl)||'(unassigned)';const T=tlAgg[tl]=tlAgg[tl]||{gwp:0,sales:0,q:{}};T.gwp+=(e.gwp||0);T.sales++;T.q[q]=(T.q[q]||0)+1});
   /* Days Past follows the MONEY, not the dialler. This panel projects GWP, so its
      denominator has to be the days the campaign actually banked money. Counting dialler
      days alone divided a whole cycle's premium by 1 whenever the call-record export
@@ -1876,10 +1913,18 @@ function cycleCalc(){
      account -> cb -> queue path the premium split above uses, so a day can never be
      counted against a campaign its money was not. Unattributed accounts (no cb) are
      excluded from both, exactly as they are from byCamp. */
-  rowsFor('BI_ACTIVE_CASES',cw).forEach(r=>{const q=campOfAcc[r.account_number];if(!q||!r._d)return;
+  /* Week-on-week rollup (Mon-anchored ISO weeks) — the calendar-month view reports on a
+     week-on-week basis; harmless and available in the other modes too. */
+  const WK={};
+  rowsFor('BI_ACTIVE_CASES',cw).forEach(r=>{
+    if(r._d){const d=new Date(r._d+'T12:00:00');d.setDate(d.getDate()-((d.getDay()+6)%7));const k=isoDay(d);
+      const o=WK[k]=WK[k]||{ex:0,acc:new Set()};o.ex+=r.charge_amount||0;o.acc.add(r.account_number)}
+    const q=campOfAcc[r.account_number];if(!q||!r._d)return;
     (moneyDays[q]=moneyDays[q]||new Set()).add(r._d)});
+  const weeks=Object.keys(WK).sort().map(k=>({wk:k,gwp:WK[k].ex*(1+vat),sales:WK[k].acc.size}));
   dial.forEach(r=>{const cb=cbOf(r.agent);if(!cb||!r._d)return;const q=(state.cbInfo[cb]?.queue);if(!q)return;(dialDays[q]=dialDays[q]||new Set()).add(r._d)});
-  const wdFallback=workDays({from:start,to:isoDay(anchorDate())});
+  const anc=isoDay(anchorDate());
+  const wdFallback=workDays({from:start,to:cw.to<anc?cw.to:anc});
   /* A campaign worked a day if it banked money OR dialled on it — the union, so neither a
      sparse dialler export nor a legitimate no-sale day can shrink the run-rate denominator. */
   const pastOf=camp=>{const d=new Set(moneyDays[camp]||[]);(dialDays[camp]||[]).forEach(x=>d.add(x));
@@ -1888,48 +1933,73 @@ function cycleCalc(){
     const camp=Object.entries(T.q).sort((a,b)=>b[1]-a[1])[0][0];
     const past=pastOf(camp);const rem=Math.max(0,totD-past);
     const perDay=past>0?T.gwp/past:0;
-    return{tl,camp,gwp:T.gwp,perDay,rem,proj:perDay*rem,total:T.gwp+perDay*rem}})
+    const salesDay=past>0?T.sales/past:0;
+    return{tl,camp,gwp:T.gwp,sales:T.sales,salesDay,projSales:T.sales+salesDay*rem,perDay,rem,proj:perDay*rem,total:T.gwp+perDay*rem}})
    .sort((a,b)=>b.total-a.total);
   const byTL={};tlRows.forEach(r=>byTL[r.tl]=r);
-  return{start,totD,vat,targets,byCamp,dialDays,unatt,wdFallback,pastOf,tlRows,byTL};
+  return{mode,start,to:cw.to,totD,vat,targets,byCamp,campSales,dialDays,unatt,wdFallback,pastOf,tlRows,byTL,weeks};
 }
 function cyclePanel(win){
-  const CC=cycleCalc();
-  if(!CC||!CC.targets.length)return '';
-  const{start,totD,vat,targets,byCamp,unatt,pastOf,tlRows}=CC;
+  const mode=state.cycleView||'cycle';
+  const CC=cycleCalc(mode);
+  const chips='<span class="right">'+[['cycle','Cycle'],['month','Calendar month'],['win','Main filter']]
+    .map(([m,l])=>'<button class="btn small'+(m===mode?' primary':'')+'" onclick="state.cycleView=\''+m+'\';render()">'+l+'</button>').join(' ')+'</span>';
+  if(!CC)return '<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Matrix VAS — Operational Performance Overview</span>'+chips+'</div>'
+    +'<div class="empty">Set the cycleStart rule (Dictionary → Rules) for the cycle view — or switch to Calendar month / Main filter above.</div></div>';
+  if(!CC.targets.length)return '';
+  const{start,to,totD,vat,targets,byCamp,campSales,unatt,pastOf,tlRows,weeks}=CC;
+  const showTgt=mode!=='win';   // cycle targets only make sense over a full cycle/month
   const panel=([camp,tgt])=>{
     const cur=byCamp[camp]||0;
+    const salesN=campSales[camp]||0;
     const past=pastOf(camp);
     const rem=Math.max(0,totD-past);
     const perDay=past>0?cur/past:0;
     const proj=perDay*totD;
+    const projSales=past>0?salesN/past*totD:salesN;
     const pct=tgt>0?proj/tgt*100:null;
     const reqIncl=rem>0?Math.max(0,tgt-cur)/rem:null;   // targets & premiums are VAT-inclusive, so this figure is too
     const row=(l,v,b)=>'<tr><td'+(b?' style="font-weight:700"':'')+'>'+l+'</td><td class="num" style="font-weight:'+(b?'800':'600')+'">'+v+'</td></tr>';
     return '<div class="card" style="min-width:280px"><div style="background:var(--navy);color:#fff;text-align:center;font-weight:800;padding:8px;border-radius:8px 8px 0 0;margin:-14px -14px 0">Matrix VAS - '+esc(camp)+'</div>'
      +'<div style="text-align:center;font-size:11.5px;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--line)">Assuming Current Run Rate</div>'
      +'<table class="tbl" style="font-size:12.5px">'
-     +row('Dialing Days',totD)
+     +row(mode==='cycle'?'Dialing Days':'Working Days',totD)
      +row('Days Past',past)
      +row('Days Remaining',rem)
+     +row('Current Sales',salesN.toLocaleString())
+     +row('Projected Sales',Math.round(projSales).toLocaleString())
      +row('Current Premium',zar2Stack(cur))
      +row('Projected premium',zar2Stack(proj))
-     +row('Target',zar2Stack(tgt))
-     +row('% to target',pct==null?'—':'<span class="pill '+(pct>=100?'g':pct>=75?'a':'r')+'">'+(Math.round(pct*100)/100).toLocaleString('en-ZA',{minimumFractionDigits:2})+'%</span>',true)
-     +row('Required per Day ex vat',reqIncl==null?'—':zar2(reqIncl/(1+vat)))
-     +row('Required per Day Incl vat',reqIncl==null?'—':zar2(reqIncl),true)
+     +(showTgt?row('Target',zar2Stack(tgt))
+       +row('% to target',pct==null?'—':'<span class="pill '+(pct>=100?'g':pct>=75?'a':'r')+'">'+(Math.round(pct*100)/100).toLocaleString('en-ZA',{minimumFractionDigits:2})+'%</span>',true)
+       +row('Required per Day ex vat',reqIncl==null?'—':zar2(reqIncl/(1+vat)))
+       +row('Required per Day Incl vat',reqIncl==null?'—':zar2(reqIncl),true):'')
      +'</table></div>'};
-  return '<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Matrix VAS Cycle — Operational Performance Overview</span>'
-   +'<span class="info" title="Cycle from '+esc(start)+' over '+totD+' dialing days (Dictionary → Rules). Days Past = distinct cycle days the campaign banked BI money or dialled (union), capped at '+totD+'; Projected = current ÷ days past × '+totD+'; Required/day = (target − current) ÷ remaining; VAT '+Math.round(vat*100)+'%. Campaigns come from each agent&#39;s roster queue; unattributed money is excluded from both the premium and the day count.">i</span>'
-   +'<span class="s">cycle '+esc(start)+' → '+totD+' dialing days · money attributed through the base table</span></div>'
+  const title=mode==='month'?'Matrix VAS Calendar Month — Operational Performance Overview'
+    :mode==='win'?'Matrix VAS — Operational Performance (main dashboard filter)'
+    :'Matrix VAS Cycle — Operational Performance Overview';
+  const subLab=mode==='month'?'calendar month '+esc(start.slice(0,7))+' · '+totD+' working days'
+    :mode==='win'?esc(start)+' → '+esc(to)+' · '+totD+' working days · set 7 / 10 days or Month-to-date in the top-right range picker'
+    :'cycle '+esc(start)+' → '+totD+' dialing days';
+  /* week-on-week strip — the calendar-month backup view reports week on week */
+  const wow=weeks.length>1?'<div style="margin-top:14px"><div class="ac-sec">WEEK-ON-WEEK — sales &amp; GWP by week (Mon-anchored)</div>'
+   +'<div style="overflow-x:auto"><table class="tbl" style="font-size:12px"><thead><tr><th class="noclick">Week of</th><th class="noclick">Sales</th><th class="noclick">GWP (incl VAT)</th><th class="noclick">Δ GWP vs prior week</th></tr></thead><tbody>'
+   +weeks.map((w,i)=>{const pv=i>0?weeks[i-1].gwp:null;const d=pv?((w.gwp-pv)/pv*100):null;
+     return '<tr><td>'+esc(w.wk)+'</td><td class="num">'+w.sales.toLocaleString()+'</td><td class="num" style="font-weight:800">'+zar2Stack(w.gwp)+'</td>'
+      +'<td class="num">'+(d==null?'—':'<span class="pill '+(d>=0?'g':'r')+'">'+(d>=0?'+':'')+(Math.round(d*10)/10)+'%</span>')+'</td></tr>'}).join('')
+   +'</tbody></table></div></div>':'';
+  return '<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">'+title+'</span>'
+   +'<span class="info" title="Window '+esc(start)+' over '+totD+' days. Days Past = distinct window days the campaign banked BI money or dialled (union), capped at '+totD+'; Projected = current ÷ days past × '+totD+'; Required/day = (target − current) ÷ remaining; VAT '+Math.round(vat*100)+'%. Campaigns come from each agent&#39;s roster queue; unattributed money is excluded from both the premium and the day count.">i</span>'
+   +'<span class="s">'+subLab+' · money attributed through the base table</span>'+chips+'</div>'
    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px">'+targets.map(panel).join('')+'</div>'
-   +(unatt>0?'<div class="stale-banner" style="margin-top:10px">'+zar2(unatt)+' of cycle GWP is unattributed to any roster agent and sits outside the campaign panels.</div>':'')
-   +'<div style="margin-top:14px"><div class="ac-sec">TEAM LEADER PROJECTIONS — avg GWP per day × remaining dialing days</div>'
-   +'<div style="overflow-x:auto"><table class="tbl" style="font-size:12px"><thead><tr><th class="noclick">Team Leader</th><th class="noclick">Campaign</th><th class="noclick">Current GWP</th><th class="noclick">GWP / day</th><th class="noclick">Remaining days</th><th class="noclick">Projection (remaining)</th><th class="noclick">Cycle total (current + projection)</th></tr></thead><tbody>'
+   +(unatt>0?'<div class="stale-banner" style="margin-top:10px">'+zar2(unatt)+' of window GWP is unattributed to any roster agent and sits outside the campaign panels.</div>':'')
+   +'<div style="margin-top:14px"><div class="ac-sec">TEAM LEADER PROJECTIONS — avg GWP per day × remaining days</div>'
+   +'<div style="overflow-x:auto"><table class="tbl" style="font-size:12px"><thead><tr><th class="noclick">Team Leader</th><th class="noclick">Campaign</th><th class="noclick">Sales</th><th class="noclick">Proj. sales</th><th class="noclick">Current GWP</th><th class="noclick">GWP / day</th><th class="noclick">Remaining days</th><th class="noclick">Projection (remaining)</th><th class="noclick">Total (current + projection)</th></tr></thead><tbody>'
    +(tlRows.length?tlRows.map(r=>'<tr><td><b>'+maskName(r.tl)+'</b></td><td style="font-size:11px">'+esc(r.camp)+'</td>'
+     +'<td class="num">'+r.sales.toLocaleString()+'</td><td class="num">'+Math.round(r.projSales).toLocaleString()+'</td>'
      +'<td class="num" style="font-weight:800">'+zar2Stack(r.gwp)+'</td><td class="num">'+zar2(r.perDay)+'</td><td class="num">'+r.rem+'</td>'
-     +'<td class="num">'+zar2(r.proj)+'</td><td class="num" style="font-weight:800">'+zar2Stack(r.total)+'</td></tr>').join(''):'<tr><td colspan="7" class="empty">No attributed cycle GWP yet.</td></tr>')
-   +'</tbody></table></div></div></div>';
+     +'<td class="num">'+zar2(r.proj)+'</td><td class="num" style="font-weight:800">'+zar2Stack(r.total)+'</td></tr>').join(''):'<tr><td colspan="9" class="empty">No attributed window GWP yet.</td></tr>')
+   +'</tbody></table></div></div>'+wow+'</div>';
 }
 /* ---------------- SALES SUB-TAB: BI MONEY (rules pack §5) ----------------
    The money explorer for the Power BI Active Cases source, plus the ingestion
@@ -2126,6 +2196,15 @@ function pageSales(win){
   return salesTabs()+cyclePanel(win)
    +(biLoaded()?'':'<div class="stale-banner">⚠ No Power BI Active Cases file loaded — Sales, GWP and Conversion are the BI money model and read blank without it. Upload it in the Upload Station. Figures here do NOT fall back to the old Activated-Services pricing: the two money models are never mixed.</div>')
    +kpiRow('Sales',win)
+   +(function(){const cs=convSplit(win);const lk=state.kpis.find(k=>k.id==='lead_conversion')||{green:10,amber:8};
+     const tile=(lab,o)=>'<div class="ac-tile"><div class="ac-big">'+(o.pct==null?'—':ragPill(o.pct,lk.green,lk.amber))+'</div>'
+      +'<div class="ac-sub" style="margin:2px 0 0">'+lab+'</div><div style="font-size:10.5px;color:var(--muted)">'+o.sales.toLocaleString()+' sales / '+o.leads.toLocaleString()+' leads</div></div>';
+     return '<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Sales conversion by campaign</span>'
+      +'<span class="info" title="Same maths as the Sales Conversion KPI (unique sales accounts ÷ unique lead cases), bucketed by the owning agent&#39;s roster campaign. Leads/sales that cannot be attributed to a campaign count in Overall only — they are flagged below, never spread.">i</span></div>'
+      +'<div class="ac-tiles" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">'
+      +tile('SALES CONVERSION — COURTESY',cs.Courtesy)+tile('SALES CONVERSION — CUDDLE',cs.Cuddle)+tile('OVERALL SALES CONVERSION',cs.overall)+'</div>'
+      +((cs.unLeads>0||cs.unSales>0)?'<div style="font-size:11px;color:var(--muted);margin-top:6px">'+cs.unLeads.toLocaleString()+' lead(s) and '+cs.unSales.toLocaleString()+' sale(s) not attributable to Courtesy/Cuddle (unmapped agent or other queue) — in Overall only.</div>':'')
+      +'</div>'})()
    +'<div class="grid g21"><div class="card"><div class="card-h"><span class="t">Calls & closures over time</span></div><div class="chart-wrap"><canvas id="chS1"></canvas></div></div>'
    +'<div class="card"><div class="card-h"><span class="t">Inbound vs outbound</span><span class="info" title="Inbound rows carry no agent — per-agent maths uses outbound only.">i</span></div><div class="chart-wrap"><canvas id="chS2"></canvas></div></div></div>'
    +'<div class="grid g2"><div class="card"><div class="card-h"><span class="t">Calls by campaign</span></div><div class="chart-wrap short"><canvas id="chS4"></canvas></div></div>'
@@ -2236,8 +2315,8 @@ function pageQA(win){
    +nestCard('Critical fails — categories & sub-categories',critNest,'#C42D2D',qa.length)
    +'</div>'
    +'<div class="grid g21">'
-   +'<div class="card"><div class="card-h"><span class="t">Quality by team leader</span></div><table class="tbl"><thead><tr><th class="noclick">Team leader</th><th class="noclick">Evals</th><th class="noclick">Pass rate</th><th class="noclick">Avg score</th><th class="noclick">Critical fails</th></tr></thead><tbody>'
-   +tlRows.map(r=>'<tr><td><b>'+maskName(r.t)+'</b></td><td class="num">'+r.n+'</td><td>'+ragPill(r.pass,90,80)+'</td><td class="num">'+fmtVal(r.score,'pct')+'</td><td>'+(r.crit?'<span class="pill r">'+r.crit+'</span>':'<span class="pill g">0</span>')+'</td></tr>').join('')
+   +'<div class="card"><div class="card-h"><span class="t">Quality by team leader</span></div><table class="tbl"><thead><tr><th class="noclick">Team leader</th><th class="noclick">Evals</th><th class="noclick">Avg score</th><th class="noclick">Critical fails</th></tr></thead><tbody>'
+   +tlRows.map(r=>'<tr><td><b>'+maskName(r.t)+'</b></td><td class="num">'+r.n+'</td><td>'+ragPill(r.score,90,80)+'</td><td>'+(r.crit?'<span class="pill r">'+r.crit+'</span>':'<span class="pill g">0</span>')+'</td></tr>').join('')
    +'</tbody></table></div>'
    +'<div class="card"><div class="card-h"><span class="t">Open critical fails</span><span class="s">'+openCrit.length+' pending</span></div>'
    +(openCrit.length?'<table class="tbl"><tbody>'+openCrit.slice(0,9).map(r=>'<tr><td><span class="pill r">'+esc(r.priority||'P1')+'</span></td><td><b>'+maskName(r.sales_agent)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(r.critical_fail_category||'')+'</div></td><td style="text-align:right;font-size:11px;color:var(--muted)">'+esc(r.call_date||'')+'<br>'+maskName(r.team_leader)+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">Nothing pending — all criticals closed out.</div>')
@@ -2647,8 +2726,10 @@ function pageTL(win){
     const c1=st.gwpSale!=null&&st.gwpSale>=gwpFloor,c2=st.ta!=null&&st.ta>=100;
     st.c1=c1;st.c2=c2;if(c1&&c2)fleet.bothPass++;if(st.onTgt)fleet.onTgt++;
     if(st.attLead!=null){fleet.alSum+=st.attLead;fleet.alN++}});
-  const T={};stats.forEach(st=>{const t=T[st.tl]=T[st.tl]||{tl:st.tl,ag:[],gwp:0,sales:0,comp:0,qaS:0,qaN:0,gs:0,gsN:0,al:0,alN:0,p1:0,p2:0,both:0,r2a3:0,r2a2:0,r2a1:0,canc:0,onTgt:0,tgt:0,mix:{}};
+  const T={};stats.forEach(st=>{const t=T[st.tl]=T[st.tl]||{tl:st.tl,ag:[],gwp:0,sales:0,comp:0,qaS:0,qaN:0,gs:0,gsN:0,al:0,alN:0,p1:0,p2:0,both:0,r2a3:0,r2a2:0,r2a1:0,canc:0,onTgt:0,tgt:0,mix:{},pd:0,sched:0,cf:0,talk:0,talkN:0};
     t.ag.push(st);t.gwp+=st.gwp;t.sales+=st.sales;t.comp+=st.comp.raw;
+    t.pd+=st.p||0;t.sched+=st.sched||0;t.cf+=st.crit||0;
+    if(st.talkDay!=null){t.talk+=st.talkDay;t.talkN++}
     if(st.qaS!=null){t.qaS+=st.qaS;t.qaN++}
     if(st.gwpSale!=null){t.gs+=st.gwpSale;t.gsN++}
     if(st.attLead!=null){t.al+=st.attLead;t.alN++}
@@ -2662,6 +2743,74 @@ function pageTL(win){
   const P=T[pick];
   const lvlColor=l=>l===1?'var(--red)':l===2?'#B45309':l===3?'var(--blue)':'#158A4C';
   const box=(v,l,c)=>'<div class="ac-tile" style="min-width:120px"><div class="ac-big" style="color:'+(c||'inherit')+'">'+v+'</div><div class="ac-sub" style="margin:2px 0 0">'+l+'</div></div>';
+  /* --- CORE VIEW (default; client 2026-07-20): head count, attendance, talk time, SPD,
+     sales + projection, GWP, avg GWP, QA score, outstanding CFs, Mon–Fri strip, and a
+     cancellation watch to spot the agents driving the rate. Full NBA machinery lives in
+     the NBA detail tab, unchanged. --- */
+  const tlTab=state.tlTab||'core';
+  const tabs='<div class="tabs">'+[['core','Core view'],['nba','NBA detail']].map(([id,l])=>'<button class="tab '+(tlTab===id?'active':'')+'" onclick="state.tlTab=\''+id+'\';render()">'+l+'</button>').join('')+'</div>';
+  if(tlTab==='core'){
+    const F={pd:0,sched:0,talk:0,talkN:0,qaS:0,qaN:0,cf:0,canc:0};
+    stats.forEach(st=>{F.pd+=st.p||0;F.sched+=st.sched||0;if(st.talkDay!=null){F.talk+=st.talkDay;F.talkN++}
+      if(st.qaS!=null){F.qaS+=st.qaS;F.qaN++}F.cf+=st.crit||0;F.canc+=st.canc||0});
+    const attF=F.sched>0?F.pd/F.sched*100:null;
+    let c='<div class="ac-tiles" style="grid-template-columns:repeat(auto-fit,minmax(118px,1fr))">'
+     +box(String(stats.length),'HEAD COUNT')
+     +box(attF==null?'—':fmtVal(attF,'pct'),'ATTENDANCE',attF!=null&&attF>=nbaVal('attTarget',90)?'#158A4C':'#B45309')
+     +box(F.talkN?Math.round(F.talk/F.talkN)+'m':'—','TALK TIME/DAY')
+     +box(wd?(Math.round(fleet.sales/wd*10)/10).toFixed(1):'—','SPD (SALES/DAY)')
+     +box(fleet.sales.toLocaleString(),'TOTAL SALES')
+     +box(zarStack(fleet.gwp),'TOTAL GWP')
+     +box(fleet.sales?'R'+Math.round(fleet.gwp/fleet.sales):'—','AVG GWP/SALE',fleet.sales&&fleet.gwp/fleet.sales>=gwpFloor?'#158A4C':'var(--red)')
+     +box(F.qaN?fmtVal(F.qaS/F.qaN,'pct'):'—','QA SCORE')
+     +box(String(F.cf),'OUTSTANDING CFs',F.cf?'var(--red)':'#158A4C')
+     +box(String(F.canc),'CANCELLATIONS',F.canc?'#B45309':'#158A4C')
+     +'</div>';
+    /* per-TL core table */
+    c+='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Team leaders — core metrics</span><span class="s">'+wd+' working days · projections use the cycle run rate (same maths as Sales Production)</span></div>'
+     +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Team Leader</th><th class="noclick">Head count</th><th class="noclick">Attend.</th><th class="noclick">Talk/day</th><th class="noclick">SPD</th><th class="noclick">Sales</th><th class="noclick">Proj. sales</th><th class="noclick">Total GWP</th><th class="noclick">Avg GWP/sale</th><th class="noclick">QA score</th><th class="noclick">CFs</th><th class="noclick">Canc</th><th class="noclick">Canc%</th><th class="noclick">GWP projection</th></tr></thead><tbody>'
+     +tls.map(t=>{const att=t.sched>0?t.pd/t.sched*100:null;const cp=CCP&&CCP.byTL[t.tl];
+       const cancP=t.sales>0?t.canc/t.sales*100:(t.canc>0?null:0);
+       return '<tr><td><b>'+maskName(t.tl)+'</b></td><td class="num">'+t.ag.length+'</td>'
+        +'<td class="num">'+(att==null?'—':fmtVal(att,'pct'))+'</td>'
+        +'<td class="num">'+(t.talkN?Math.round(t.talk/t.talkN)+'m':'—')+'</td>'
+        +'<td class="num">'+(wd?(Math.round(t.sales/wd*10)/10).toFixed(1):'—')+'</td>'
+        +'<td class="num" style="font-weight:700">'+t.sales.toLocaleString()+'</td>'
+        +'<td class="num">'+(cp?Math.round(cp.projSales).toLocaleString():'—')+'</td>'
+        +'<td class="num" style="font-weight:800">'+zarStack(t.gwp)+'</td>'
+        +'<td class="num">'+(t.sales?'R'+Math.round(t.gwp/t.sales):'—')+'</td>'
+        +'<td class="num">'+(t.qaN?fmtVal(t.qaS/t.qaN,'pct'):'—')+'</td>'
+        +'<td class="num" style="color:'+(t.cf?'var(--red)':'#158A4C')+';font-weight:800">'+t.cf+'</td>'
+        +'<td class="num">'+t.canc+'</td><td class="num">'+(cancP==null?'—':fmtVal(cancP,'pct'))+'</td>'
+        +'<td class="num" style="font-weight:800">'+(cp?zar2Stack(cp.total):'—')+'</td></tr>'}).join('')
+     +'</tbody></table></div></div>';
+    /* Monday-to-Friday strip — the latest Mon–Fri week up to the data anchor */
+    const anc=new Date(isoDay(anchorDate())+'T12:00:00');
+    const mon=new Date(anc);mon.setDate(mon.getDate()-((mon.getDay()+6)%7));
+    const days=[0,1,2,3,4].map(i=>{const d=new Date(mon);d.setDate(d.getDate()+i);return isoDay(d)});
+    const vatM=1+vatPct();
+    const MF={};rowsFor('BI_ACTIVE_CASES',{from:days[0],to:days[4]}).forEach(r=>{
+      if(!r._d)return;const cb=cbOfOwner(r.owner);const tl=cb?(state.cbInfo[cb]?.tl||'(unassigned)'):'(unattributed)';
+      const m=MF[tl]=MF[tl]||{};const o=m[r._d]=m[r._d]||{ex:0,acc:new Set()};o.ex+=r.charge_amount||0;o.acc.add(r.account_number)});
+    const DN=['Mon','Tue','Wed','Thu','Fri'];
+    c+='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Monday-to-Friday — sales · GWP by team leader</span><span class="s">week of '+esc(days[0])+'</span></div>'
+     +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Team Leader</th>'+DN.map((n,i)=>'<th class="noclick">'+n+'<div style="font-size:9.5px;color:var(--muted)">'+days[i].slice(5)+'</div></th>').join('')+'<th class="noclick">Week total</th></tr></thead><tbody>'
+     +tls.map(t=>{const m=MF[t.tl]||{};let ws=0,wg=0;
+       const cells=days.map(d=>{const o=m[d];if(!o)return '<td class="num" style="color:var(--muted)">—</td>';
+         const g=o.ex*vatM;ws+=o.acc.size;wg+=g;
+         return '<td class="num">'+o.acc.size+' · '+zar2(g)+'</td>'}).join('');
+       return '<tr><td><b>'+maskName(t.tl)+'</b></td>'+cells+'<td class="num" style="font-weight:800">'+ws+' · '+zar2(wg)+'</td></tr>'}).join('')
+     +'</tbody></table></div>'
+     +(MF['(unattributed)']?'<div style="font-size:11px;color:var(--muted);margin-top:6px">Some week GWP is unattributed to a roster agent and is excluded from the rows above.</div>':'')+'</div>';
+    /* cancellation watch — spot the agents driving the rate */
+    const cw=stats.filter(st=>st.canc>0).sort((a,b)=>b.cancPct-a.cancPct||b.canc-a.canc).slice(0,10);
+    c+='<div class="card"><div class="card-h"><span class="t">Cancellation watch</span><span class="info" title="Agents ranked by cancellation % (cancellations ÷ sales in the window; 999% = cancellations with zero sales). Diagnostic only — cancellations are never scored into the composite.">i</span><span class="s">top '+cw.length+' by rate</span></div>'
+     +(cw.length?'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Agent</th><th class="noclick">Team Leader</th><th class="noclick">Sales</th><th class="noclick">Cancellations</th><th class="noclick">Canc%</th></tr></thead><tbody>'
+      +cw.map(st=>'<tr><td><b>'+aName(st.cb,maskName(st.name))+'</b></td><td>'+maskName(st.tl)+'</td><td class="num">'+st.sales+'</td>'
+       +'<td class="num" style="color:var(--red);font-weight:800">'+st.canc+'</td><td class="num">'+(st.cancPct>=999?'<span class="pill r">no sales</span>':fmtVal(st.cancPct,'pct'))+'</td></tr>').join('')
+      +'</tbody></table></div>':'<div class="empty">No cancellations in the window.</div>')+'</div>';
+    return tabs+c;
+  }
   /* --- exec strip + leaderboard --- */
   let h='<div class="ac-tiles" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">'
    +box(zarStack(fleet.gwp),'TOTAL GWP')
@@ -2766,7 +2915,7 @@ function pageTL(win){
    +wl('ON TARGET — GWP ≥ period target (R'+gwpFloor+' × daily target × '+wd+'d) — '+onT.length+' agents',onT,['Agent','TL','GWP Written','Target','Attain'],st=>'<tr><td>'+aName(st.cb,maskName(st.name))+'</td><td style="font-size:10px">'+maskName(st.tl)+'</td><td class="num" style="font-weight:800">'+fmtVal(st.gwp,'zar')+'</td><td class="num">'+fmtVal(st.gwpTgtP,'zar')+'</td><td class="num" style="color:#158A4C;font-weight:800">'+Math.round(st.gwp/st.gwpTgtP*100)+'%</td></tr>')
    +'</div>'
    +'<div class="card" style="margin-top:14px;font-size:11.5px;color:var(--muted)"><b style="color:var(--ink)">Methodology (NBA v3.0)</b> — Period GWP target = R'+gwpFloor+' × daily sales target × '+wd+' working days. Dual-Check value-first: Check 1 GWP/sale ≥ R'+gwpFloor+', Check 2 daily sales ÷ roster target ≥ 100%. Graduated critical-fail: CFR = fails ÷ audited calls; R2A-3 (≥'+nbaVal('r2a3Count',4)+' or ≥'+nbaVal('r2a3Rate',30)+'%) P1 −'+nbaVal('pen3',10)+' · R2A-2 ('+nbaVal('r2a2Count',2)+'–'+(nbaVal('r2a3Count',4)-1)+' or '+nbaVal('r2a2Rate',10)+'–&lt;'+nbaVal('r2a3Rate',30)+'%) P2 −'+nbaVal('pen2',5)+' · R2A-1 (1 fail, &lt;'+nbaVal('r2a2Rate',10)+'%) note −'+nbaVal('pen1',2)+', never surfaced. Penalty capped. QA is weighted by audited calls with critical-fail calls scored zero. Att/Lead = total dials ÷ unique leads, band '+nbaVal('attemptsMin',3)+'–'+nbaVal('attemptsMax',5)+', diagnostic only. <b>All GWP figures are VAT-inclusive</b> — the BI money model sums each account&#39;s ex-VAT Charge Amounts and grosses up ×'+(1+vatPct()).toFixed(2)+', so ex VAT = the raw charge sum; split shown on the headline figures, compact tables stay inclusive. Every value here is a rule in the Dictionary.</div>';
-  return h;
+  return tabs+h;
 }
 
 /* ---------------- PAGE: LEAD MANAGEMENT ---------------- */
@@ -3196,7 +3345,7 @@ function cbxContext(){
         out.push("");out.push("== Agent scorecard — ALL uploaded data, NBA v3.0 engine ("+stats.length+" roster agents; sorted by composite) ==");
         out.push("Every agent below, one line each, all fields labelled (talk time, calls, sales, GWP, QA, attendance, conversion, composite, NBA). Answer any single-agent question from this.");
         stats.forEach(function(st){
-          out.push("- "+maskNameText(st.name)+" ["+st.cb+"] · TL "+st.tl+" · "+(st.group||st.tenure||"?")
+          out.push("- "+maskNameText(st.name)+" ["+st.cb+"] · TL "+maskNameText(st.tl)+" · "+(st.group||st.tenure||"?")
             +" · sales "+st.sales
             +" · GWP R"+Math.round(st.gwp)
             +" · GWP/sale "+(st.gwpSale!=null?"R"+Math.round(st.gwpSale):"-")
