@@ -2888,6 +2888,11 @@ function pageTL(win){
   if(!cbsBase.length)return emptyState('No roster agents match the current filters');
   const wd=workDays(win);
   const statsAll=cbsBase.map(cb=>{const st=acStats(cb,win,C);st.tierInfo=cfTier(st);st.nba=acNBA(st);return st});
+  // Composite /100 per agent — tenure-relative GWP percentile within group (same as Visual Brain).
+  const byGroup={};statsAll.forEach(st=>{(byGroup[st.group]=byGroup[st.group]||[]).push(st)});
+  Object.values(byGroup).forEach(g=>{const sorted=g.map(x=>x.gwp).sort((a,b)=>a-b);
+    g.forEach(st=>{const below=sorted.filter(x=>x<st.gwp).length;const pct=g.length<2?100:below/(g.length-1)*100;st.comp=acComposite(st,pct)})});
+  const lvlHex=l=>l===1?'#C42D2D':l===2?'#B45309':l===3?'#2563EB':'#158A4C';
   const stats=statsAll.filter(st=>cbInScope(st.cb));   // display: only agents the user may see
   if(!stats.length)return emptyState('No roster agents match the current filters');
   /* Lean TL view (client 2026-07-20): show ONLY talk time, unique calls/day, GWP,
@@ -2929,6 +2934,12 @@ function pageTL(win){
       +'<td class="num">'+(cv==null?'—':fmtVal(cv,'pct'))+'</td></tr>'}).join('')
    +'</tbody></table></div></div>';
   if(P){const ag=[...P.ag].sort((a,b)=>b.gwp-a.gwp);
+    // Agent-scores graph for the picked TL only — filtering by team leader narrows stats to one
+    // team, so this shows exactly that team's agents. Coloured by NBA priority level.
+    const gag=[...P.ag].sort((a,b)=>((b.comp&&b.comp.adj)||0)-((a.comp&&a.comp.adj)||0)),gid='chTLscores';
+    setTimeout(()=>hbar(gid,gag.map(st=>[maskNameText(st.name),Math.round((st.comp&&st.comp.adj)||0)]),gag.map(st=>lvlHex(st.nba.lvl))),0);
+    h+='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">'+maskName(pick)+' — Agent Scores</span><span class="s">composite /100 · coloured by NBA priority (red P1 · amber P2 · blue P3 · green clear)</span></div>'
+     +'<div class="chart-wrap" style="height:'+Math.max(160,gag.length*24+40)+'px"><canvas id="'+gid+'"></canvas></div></div>';
     h+='<div class="card"><div class="card-h"><span class="t">'+maskName(pick)+' — agents</span><span class="s">'+P.ag.length+' agents · click a name for the full agent card</span>'
      +'<span class="right">'+tls.map(t=>'<button class="btn small'+(t.tl===pick?' primary':'')+'" onclick="state.tlPick=&#39;'+esc(t.tl).replace(/&#39;/g,"").replace(/'/g,'&#39;')+'&#39;;render()">'+maskName(t.tl)+'</button>').join(' ')+'</span></div>'
      +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Agent</th><th class="noclick">Talk time</th><th class="noclick">Unique calls/day</th><th class="noclick">GWP</th><th class="noclick">Referrals</th><th class="noclick">Critical fails</th><th class="noclick">Conversion</th></tr></thead><tbody>'
@@ -2959,12 +2970,16 @@ function pageLeads(win){
     if(GF.campaign&&campBucket(a.queue)!==GF.campaign)return;
     if(GF.agent&&normCB(a.cb_code)!==normCB(GF.agent))return;
     mk(a.cb_norm)});
+  const CANON=['1st attempt','2nd attempt','3rd attempt','4th attempt','5th attempt','New','In Progress','Escalated'];
+  // Fold status variants (case/whitespace) into the canonical name so "4th Attempt" counts into
+  // the canonical 4th column instead of a duplicate appended after Escalated.
+  const canonSt=s=>{const n=String(s==null?'':s).replace(/\s+/g,' ').trim();return CANON.find(c=>c.toLowerCase()===n.toLowerCase())||(n||'(blank)')};
   let unOpen=0,unClosed=0;
   rowsFor('SF_OPEN_CASES',win).forEach(r=>{const cb=cbOfOwner(r.case_owner);if(!cb||!A[cb]){if(!cb)unOpen++;return}
     if(!openInWin(r,win))return;                                    // snapshot: rowsFor can't window it
     const a=A[cb];const k=String(r.case_number||'').trim();
     if(k){if(a.seenO.has(k))return;a.seenO.add(k)}                  // one row per case
-    a.open++;addLead(a.leads,r);a.sts[r.status||'(blank)']=(a.sts[r.status||'(blank)']||0)+1});
+    const st=canonSt(r.status);a.open++;addLead(a.leads,r);a.sts[st]=(a.sts[st]||0)+1});
   rowsFor('SF_CLOSED_CASES',win).forEach(r=>{const cb=cbOfOwner(r.case_owner);if(!cb||!A[cb]){if(!cb)unClosed++;return}
     const a=A[cb];const k=String(r.case_number||'').trim();
     if(k){if(a.seenC.has(k))return;a.seenC.add(k)}
@@ -2974,9 +2989,8 @@ function pageLeads(win){
   cancelPremiums(win).forEach(e=>{if(e.cb&&A[e.cb])A[e.cb].canc++});
   rowsFor('CALLX_CALL_RECORDS',win).forEach(r=>{const cb=cbOf(r.agent);if(cb&&A[cb]&&r._d)A[cb].dialDays.add(r._d)});
   const wd=workDays(win);
-  const CANON=['1st attempt','2nd attempt','3rd attempt','4th attempt','5th attempt','In Progress','New','Escalated'];
   const present=new Set();Object.values(A).forEach(a=>Object.keys(a.sts).forEach(k=>present.add(k)));
-  const stCols=[...CANON.filter(c=>present.has(c)),...[...present].filter(c=>!CANON.includes(c)).sort()].slice(0,10);
+  const stCols=[...CANON,...[...present].filter(c=>!CANON.includes(c)).sort()].slice(0,10);
   const rows=Object.values(A).sort((x,y)=>String(x.tl).localeCompare(String(y.tl))||y.tc-x.tc||String(x.name).localeCompare(String(y.name)));
   const G={open:0,cl:0,nofb:0,tc:0,sales:0,canc:0,sts:{},leads:mkLeads()};
   rows.forEach(a=>{G.open+=a.open;G.cl+=a.cl;G.nofb+=a.nofb;G.tc+=a.tc;G.sales+=a.sales;G.canc+=a.canc;
@@ -3517,15 +3531,18 @@ function pageSession(){
   }
   /* consolidated matrix: agent rows × (attempt status × every session time) — the July LM sheet, live */
   const SES_HLBL={'0800':'8am','1000':'10am','1200':'12pm','1500':'3pm','1630':'4:30pm'};
-  const CANONS=['1st attempt','2nd attempt','3rd attempt','4th attempt','5th attempt','In Progress','New','Escalated'];
+  const CANONS=['1st attempt','2nd attempt','3rd attempt','4th attempt','5th attempt','New','In Progress','Escalated'];
+  // Fold status variants (case/whitespace) into their canonical name so "4th Attempt" doesn't
+  // become a duplicate column appended after Escalated — it lands in the canonical 4th column.
+  const canonSt=s=>{const n=String(s==null?'':s).replace(/\s+/g,' ').trim();return CANONS.find(c=>c.toLowerCase()===n.toLowerCase())||(n||'(blank)')};
   const openBy={};SES_TIMES.forEach(t=>openBy[t]=rowsFor('SES_OPEN_'+t,null));
-  const present2=new Set();Object.values(openBy).forEach(rows=>rows.forEach(r=>present2.add(r.status||'(blank)')));
-  const stGroups=[...CANONS.filter(c=>present2.has(c)),...[...present2].filter(c=>!CANONS.includes(c)).sort()];
+  const present2=new Set();Object.values(openBy).forEach(rows=>rows.forEach(r=>present2.add(canonSt(r.status))));
+  const stGroups=[...CANONS,...[...present2].filter(c=>!CANONS.includes(c)).sort()];
   const MX={};let unowned2=0;
   SES_TIMES.forEach(t=>openBy[t].forEach(r=>{const raw=r.case_owner||'';if(!raw){unowned2++;return}
     const cb=cbOfOwner(raw);const key=cb||('RAW::'+normName(raw));
     const m=MX[key]=MX[key]||{name:cb?((state.cbInfo[cb]?.name)||raw):raw,tl:cb?((state.cbInfo[cb]?.tl)||'(unassigned)'):'—',un:!cb,c:{}};
-    const st=r.status||'(blank)';(m.c[st]=m.c[st]||{})[t]=((m.c[st]||{})[t]||0)+1}));
+    const st=canonSt(r.status);(m.c[st]=m.c[st]||{})[t]=((m.c[st]||{})[t]||0)+1}));
   const mxRows=Object.values(MX).sort((a,b)=>String(a.tl).localeCompare(String(b.tl))||String(a.name).localeCompare(String(b.name)));
   const unMx=mxRows.filter(m=>m.un).length;
   let pivotHtml='<div class="empty">No open-cases session uploaded yet.</div>';

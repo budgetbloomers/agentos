@@ -2540,34 +2540,45 @@ function downloadText(filename, text){
 }
 function exportReport(){
   if(!M){ toast('Nothing to export'); return; }
-  const L=[];
-  const cellsOf=(cols,r)=>cols.map(c=>{ const s=String((c.csv?c.csv(r):c.f(r))??'').replace(/<[^>]*>/g,''); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }).join(',');
-  const sheet=(name,cols,rows)=>{ L.push('### Sheet: '+name+' ###'); L.push(cols.map(c=>c.h).join(',')); rows.forEach(r=>L.push(cellsOf(cols,r))); L.push(''); };
+  if(typeof XLSX==='undefined'||!XLSX.writeFile){ toast('Spreadsheet library not loaded — refresh and retry'); return; }
+  const wb=XLSX.utils.book_new();
+  const clean=v=>typeof v==='number'?v:String(v??'').replace(/<[^>]*>/g,'');
+  const used={};
+  const sheet=(name,cols,rows)=>{
+    const aoa=[cols.map(c=>c.h)]; rows.forEach(r=>aoa.push(cols.map(c=>clean(c.csv?c.csv(r):c.f(r)))));
+    let nm=name.replace(/[:\\/?*\[\]]/g,'-').slice(0,31),i=1; while(used[nm]) nm=(name.slice(0,27)+' ~'+(i++)).slice(0,31); used[nm]=1;
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),nm);
+  };
   const dCols=[{h:'Week',f:r=>'Week '+r.week},{h:'Date',f:r=>r.date},{h:'Team Leader',f:r=>r.tl},{h:'Campaign',f:r=>r.campaign},
     {h:'Agent',f:r=>r.agent},{h:'Emp Code',f:r=>r.code},{h:'Tenure',f:r=>r.tenure},{h:'Employed Shifts',f:r=>r.emp},
     {h:'Actual Shifts',f:r=>r.act},{h:'Sales Target',f:r=>r.target},{h:'Sales Achieved',f:r=>r.sales},
     {h:'Talk Time',f:r=>fmtDur(r.talk)},{h:'GWP Target',f:r=>r.gwpT},{h:'GWP Achieved',f:r=>r.gwp},
     {h:'Insurance Opt In',f:r=>r.opt},{h:'Referrals',f:r=>r.ref||0}];
-  sheet('Daily',dCols,M.facts);
-  for(const camp of ['Cuddle','Courtesy']){
+  // Export honours the on-screen filters: campaign (S.ui.camp) and team leader (S.ui.team) —
+  // the same gFilter every view uses, so you extract exactly what you're looking at.
+  const teamOK=r=>!S.ui.team||r.tl===S.ui.team;
+  sheet('Daily',dCols,M.facts.filter(gFilter));
+  const camps=S.ui.camp?[S.ui.camp]:['Cuddle','Courtesy'];
+  for(const camp of camps){
     for(const w of M.weeks){
-      const rows=agentRows(camp,w.num); if(!rows.length) continue;
+      const rows=agentRows(camp,w.num).filter(teamOK); if(!rows.length) continue;
       sheet(`WTD - ${camp} - Week ${w.num}`,aggCols({}),[...rows,totalRow(rows,'Grand Total')]);
     }
-    const rows=agentRows(camp,null);
+    const rows=agentRows(camp,null).filter(teamOK);
     if(rows.length) sheet('MTD - '+camp,aggCols({canc:true}),[...rows,totalRow(rows,'Grand Total')]);
   }
-  const tlKeys=Object.keys(M.tlAgg);
+  const tlKeys=Object.keys(M.tlAgg).filter(k=>{const p=k.split('|');return (!S.ui.camp||p[0]===S.ui.camp)&&(!S.ui.team||p[1]===S.ui.team)});
   const metricList=[['Employed HC','hc'],['Total Employed Shifts','emp'],['Total Actual Shifts','act'],['% Of Attendance','att'],
     ['Sales Target','target'],['Sales Achieved','sales'],['% To Sales Target','pctT'],['SPD','spd'],['Cancellations','canc'],
     ['GWP Target','gwpT'],['GWP Achieved','gwp'],['% To GWP Target','pctG'],['Ave GWP','aveG'],
     ['Insurance Opt-Ins','opt'],['Referrals','ref'],['Agents on Target','onT']];
-  L.push('### Sheet: TL MTD ###');
-  L.push('Metric,'+tlKeys.map(k=>k.replace('|',' — ')).join(','));
+  const tlAoa=[['Metric',...tlKeys.map(k=>k.replace('|',' — '))]];
   for(const [lab,key] of metricList)
-    L.push(lab+','+tlKeys.map(k=>{ const v=M.tlAgg[k][key]; return v==null?'':(typeof v==='number'?(key.startsWith('pct')||key==='att'?(v*100).toFixed(1)+'%':Math.round(v*100)/100):v); }).join(','));
-  downloadText(`VAS_MTD_${S.ui.month}_${S.ui.mode}.csv`, L.join('\n'));
-  toast('Report exported');
+    tlAoa.push([lab,...tlKeys.map(k=>{ const v=M.tlAgg[k][key]; return v==null?'':(typeof v==='number'?(key.startsWith('pct')||key==='att'?(v*100).toFixed(1)+'%':Math.round(v*100)/100):v); })]);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(tlAoa),'TL MTD');
+  const tag=(S.ui.camp||'All')+(S.ui.team?'_'+S.ui.team.replace(/[^A-Za-z0-9]+/g,''):'');
+  XLSX.writeFile(wb,`VAS_${tag}_${S.ui.month}_${S.ui.mode}.xlsx`);
+  toast('Workbook exported (.xlsx)');
 }
 
 /* ================= boot ================= */
