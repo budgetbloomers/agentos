@@ -556,7 +556,7 @@ const SOURCES = {
 /* ---- Session snapshot slots: 5 times × dialler / open cases ---- */
 const SES_TIMES=['0800','1000','1200','1500','1630'];
 const SES_LBL={'0800':'08:00','1000':'10:00','1200':'12:00','1500':'15:00','1630':'16:30'};
-const SES_TAGS={DIAL:{base:'CALLX_CALL_RECORDS',name:'Dialler',color:'violet',icon:'phone'},OPEN:{base:'SF_OPEN_CASES',name:'Open Cases',color:'blue',icon:'inbox'}};
+const SES_TAGS={DIAL:{base:'CALLX_CALL_RECORDS',name:'Dialler',color:'violet',icon:'phone'},OPEN:{base:'SF_OPEN_CASES',name:'Open Cases',color:'blue',icon:'inbox'},CLOSED:{base:'SF_CLOSED_CASES',name:'Closed Cases',color:'green',icon:'inbox'}};
 for(const tag in SES_TAGS)for(const t of SES_TIMES){
   const cfg=SES_TAGS[tag], b=SOURCES[cfg.base];
   SOURCES['SES_'+tag+'_'+t]={label:SES_LBL[t]+' · '+cfg.name,system:b.system,fmt:b.fmt,color:cfg.color,
@@ -571,6 +571,8 @@ const SRC_KEYS = Object.keys(SOURCES).filter(k=>!SOURCES[k].session);
 const DEFAULT_RULES = {
   callTypes:{label:'Call type bands (billable seconds → type)',vals:['0:No Answer','30:Customer Service','180:Pitch','360:Closing'],help:'Format threshold:Label. A call gets the label of the highest threshold at or below its billable seconds — the shipped bands are <30 No Answer, 30–179 Customer Service, 180–359 Pitch, 360+ Closing. Edit a boundary and every count, tile, chart and per-agent pivot recomputes instantly.'},
   callPhases:{label:'Call phase bands (billable seconds → phase reached)',vals:['0:Not connected','20:Introduction','75:Body','180:Pitch','300:Close'],help:'Format threshold:Phase. The phase a connected call REACHED before it ended — where the agent got cut off. A call gets the phase of the highest threshold at or below its billable seconds. This is the coaching lens the client asked for, replacing the fixed 30-second no-answer assumption. NOTE: until the dialler emits a real per-call phase marker (Wiki-dialer transition, open thread), phase is DERIVED from call length — a proxy for reached-phase, not a measured one. Edit a boundary and the drop-off view recomputes instantly.'},
+  noAnswerDispositions:{label:'Lead Dispositions that count as NO ANSWER',vals:['No Answer','Ring No Answer','RNA','No Response','Voicemail','Voice Mail','Engaged','Busy','Abandoned','Not Connected','Failed'],help:'Client 2026-07-20: a call is "no answer" based on the ACTUAL agent/destination Lead Disposition, NOT its duration. Any dialler row whose Lead Disposition is listed here counts as No Answer; everything else with a disposition is answered. A row with a BLANK disposition falls back to the old duration band (<'+'30s = No Answer) so nothing breaks pre-disposition. Edit to match the dialler\'s exact wording — every answer-rate figure, call-type table and session count recomputes instantly.'},
+  saleDispositions:{label:'Lead Dispositions that count as a SALE',vals:['Sale','Sale Made','Sale - Activated','Activated','Sold'],help:'Dialler Lead Disposition values that mean a sale was made on the call. Powers "sales per session" on the Session Dashboard — a per-session COUNT of sale-disposition calls, never a money figure (GWP stays the Power BI - Active Cases model). Edit to match the dialler wording.'},
   qaPass:{label:'QA decisions that count as PASS',vals:['Pass'],help:'Values of "Escalation Decision" counted as a pass / clean outcome.'},
   qaCoaching:{label:'QA decisions that count as COACHING',vals:['Coaching'],help:'Escalation Decisions that trigger a coaching action.'},
   qaCritical:{label:'QA decisions that count as CRITICAL FAIL',vals:['Critical Fail'],help:'Escalation Decisions treated as compliance-critical.'},
@@ -602,7 +604,7 @@ const DEFAULT_KPIS = [
  {id:'total_calls',name:'Total Calls',domain:'Sales',icon:'phone',src:'CALLX_CALL_RECORDS',type:'count',format:'int',dir:'higher',green:null,amber:null,owner:'Leon',
   interp:'All dialler call records in the period (inbound + outbound). Activity volume, not quality.',red:'Check dialler uptime and that the latest CallX file was uploaded.'},
  {id:'answer_rate',name:'Answer Rate',domain:'Sales',icon:'phone',src:'CALLX_CALL_RECORDS',type:'ratio',num:[{f:'call_band',op:'ne',v:'No Answer'}],format:'pct',dir:'higher',green:60,amber:45,owner:'Leon',
-  interp:'Connected calls ÷ all calls. Uses the Rules definition of "answered" (Bridge = ANSWERED by default). Low = lead-list or dialling-window problem.',red:'Review lead list quality, dialling windows and CLI reputation with Ryan.'},
+  interp:'Connected calls ÷ all calls, where "answered" now reads the actual Lead Disposition (Dictionary → Rules → No-Answer dispositions), NOT call duration (client 2026-07-20). A blank disposition falls back to the legacy <30s rule. Low = lead-list or dialling-window problem.',red:'Review lead list quality, dialling windows and CLI reputation with Ryan.'},
  {id:'unique_calls',name:'Unique Calls',domain:'Sales',icon:'target',src:'CALLX_CALL_RECORDS',type:'distinct',field:'destination_number',num:[{f:'destination_number',op:'ne',v:'s'},{f:'destination_number',op:'notEmpty',v:''}],format:'int',dir:'higher',green:null,amber:null,owner:'Leon',
   interp:'Distinct numbers dialled (the Destination field). Inbound queue legs — destination "s" — are excluded, so this reads as unique customers reached for, not phone-system events.',red:'Unique calls flat while total calls climb = redial churn on the same numbers.'},
  {id:'talk_time',name:'Talk Time (Billable)',domain:'Sales',icon:'clock',src:'CALLX_CALL_RECORDS',type:'sum',field:'billable_seconds',format:'hours',dir:'higher',green:null,amber:null,owner:'Leon',
@@ -1282,6 +1284,23 @@ function callBandFor(sec){
   return cur;
 }
 function bandLabels(){return (state.rules.callTypes?.vals||[]).map(v=>String(v).slice(String(v).indexOf(':')+1).trim())}
+/* Disposition-accurate answer test (client 2026-07-20): use the actual Lead Disposition,
+   not call duration. Blank disposition falls back to the legacy duration band. */
+function callAnswered(r){
+  const d=String(r&&r.lead_disposition||'').trim();
+  if(d){const na=resolveRule('$noAnswerDispositions').map(x=>String(x).toLowerCase());
+    return !na.includes(d.toLowerCase());}
+  return (r&&r.billable_seconds||0)>=(function(){const v=(state.rules.callTypes?.vals||[])[1];return v?parseFloat(v):30})();  // no disposition → legacy threshold
+}
+function isSaleDisp(r){const d=String(r&&r.lead_disposition||'').trim();if(!d)return false;
+  return resolveRule('$saleDispositions').map(x=>String(x).toLowerCase()).includes(d.toLowerCase());}
+/* Call band for a ROW: 'No Answer' comes from the disposition; answered calls take their
+   duration band but are never mislabelled 'No Answer' just for being short. */
+function callBandForRow(r){
+  if(!callAnswered(r))return (bandLabels()[0]||'No Answer');
+  const b=callBandFor(r.billable_seconds);
+  return b===(bandLabels()[0])?(bandLabels()[1]||b):b;   // answered-but-short → next band up, not No Answer
+}
 let _mind=null;
 function minDataDay(){if(_mind)return _mind;let m=null;
   // BI carries the money and its own Contract Create Date — it MUST widen the all-data
@@ -1407,7 +1426,7 @@ function rowsForRaw(src,win,sc){
   /* Mandatory permission scope — applied AFTER the user filters and independent of
      them, so a scoped team leader cannot widen past their own team. */
   if(sc&&!noGF)rows=rows.filter(r=>{const c=cbRow(r);return !!c&&state.cbInfo[c]?.tl===sc.team});
-  if(src==='CALLX_CALL_RECORDS'||spec.session?.base==='CALLX_CALL_RECORDS')rows=rows.map(r=>({...r,call_band:callBandFor(r.billable_seconds)}));
+  if(src==='CALLX_CALL_RECORDS'||spec.session?.base==='CALLX_CALL_RECORDS')rows=rows.map(r=>({...r,call_band:callBandForRow(r),answered:callAnswered(r)?1:0,is_sale_disp:isSaleDisp(r)?1:0}));
   if(src==='ATTENDANCE'){
     const U=a=>a.map(x=>String(x).toUpperCase());
     const P=U(resolveRule('$presentCodes')),L=U(resolveRule('$leaveCodes')),X=U(resolveRule('$excludeCodes')),S=state.rules.salesDepts.vals;
@@ -1686,10 +1705,9 @@ const PAGES=[
  {id:'discipline',label:'Agent Discipline',icon:'flag',title:'Agent Disciplinary Status',sub:'Conduct control: offenses, stage ladder, SLA breaches and escalation paths'},
  {id:'tl',label:'Team Leader View',icon:'users',sect:'People',title:'Team Leader Performance',sub:'The TL report, live: leaderboard, dual-check fleet, per-team coaching tables and watch lists — NBA v3.0'},
  {id:'workforce',label:'Workforce',icon:'users',title:'Workforce & Attendance',sub:'Availability — the denominator behind every productivity number'},
- {id:'scorecard',label:'Agent Performance',icon:'badge',title:'Agent Performance',sub:'Productivity × quality × attendance, per agent and team leader'},
  {id:'manual',label:'Manual',icon:'book',title:'Manual — How to Read the Analytics',sub:'The rules behind the scores and how to use this software'},
  {id:'uploads',label:'Upload Station',icon:'upload',title:'Upload Station',sub:'Manual source uploads, validation, batch audit and exceptions',sect:'Data'},
- {id:'sess_uploads',label:'Session Uploads',icon:'clock',title:'Session Uploads',sub:'Intraday snapshot slots — 08:00 · 10:00 · 12:00 · 15:00 · 16:30 for dialler, open cases and activated sales'},
+ {id:'sess_uploads',label:'Session Uploads',icon:'clock',title:'Session Uploads',sub:'Intraday snapshot slots — 08:00 · 10:00 · 12:00 · 15:00 · 16:30 for dialler, open cases and closed cases'},
  {id:'dict',label:'Dictionary, Rules & Thresholds',icon:'dict',title:'KPI Dictionary, Rules & Threshold Control Centre',sub:'The analytics team control room — definitions, RAG thresholds and interpretation rules, all live-editable',sect:'Data'},
 
 ];
@@ -2394,6 +2412,18 @@ function pageQA(win){
   const anc=isoDay(anchorDate());
   const daysOpen=r=>{const d=r.call_date||r._d;return d?Math.max(0,Math.round((new Date(anc+'T12:00:00')-new Date(d+'T12:00:00'))/864e5)):null};
   const drop=callPhaseDropoff(win);
+  /* Protect-the-business (P1) — moved here from the Team Leader view (client 2026-07-20).
+     Level-1 NBA agents: the compliance/urgent tier. Scoped to what the user may see. */
+  const pbCtx=acCtx(win);
+  const pbAg=Object.keys(state.cbInfo).filter(cbInScope).map(cb=>{const st=acStats(cb,win,pbCtx);st.tierInfo=cfTier(st);st.nba=acNBA(st);return st})
+    .filter(st=>st.nba&&st.nba.lvl===1).sort((a,b)=>String(a.nba.code).localeCompare(String(b.nba.code)));
+  const pbCard='<div class="card" style="margin-bottom:16px;border-left:4px solid var(--red)"><div class="card-h"><span class="t">Protect the business — P1 (Level 1)</span><span class="info" title="The urgent/compliance tier of the NBA ladder (moved off the Team Leader view). One primary NBA per agent; a P1 is a 24–48h owned action. Critical-fail tiers and zero-attendance / QA-critical rules drive Level 1.">i</span><span class="s">'+pbAg.length+' agent(s) at P1</span></div>'
+   +(pbAg.length?'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Agent</th><th class="noclick">Team Leader</th><th class="noclick">NBA</th><th class="noclick">Why</th><th class="noclick">CF·CFR</th></tr></thead><tbody>'
+     +pbAg.map(st=>'<tr><td><b>'+aName(st.cb,maskName(st.name))+'</b></td><td>'+maskName(st.tl)+'</td>'
+       +'<td><span class="pill r" style="padding:1px 6px">'+esc(st.nba.code)+'</span> '+esc(st.nba.label)+'</td>'
+       +'<td style="font-size:10.5px">'+esc(st.nba.detail||'')+'</td>'
+       +'<td class="num">'+(st.tierInfo.cf||0)+' · '+fmtVal(st.tierInfo.cfr,'pct')+'</td></tr>').join('')
+     +'</tbody></table></div>':'<div class="empty" style="padding:14px">No P1 agents this period — the floor is clear of Level-1 actions.</div>')+'</div>';
   const campOrder=['Courtesy','Cuddle','VT','(other)'].filter(c=>campQA[c]);
   const campTile=c=>{const o=campQA[c];const avg=o.sn?o.s/o.sn:null;const pass=o.n?o.pass/o.n*100:null;
     const cfr=o.n?o.crit/o.n*100:null;const psale=o.n?o.sale/o.n*100:null;
@@ -2407,6 +2437,7 @@ function pageQA(win){
      +'</div>'};
   setTimeout(()=>{doughnut('chQ1',prio.length?prio:[['No priority flags',1]])},0);
   return kpiRow('QA',win)
+   +pbCard
    +'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">QA by campaign</span><span class="info" title="Every QA metric rolled up per Matrix campaign (campaign folded to Courtesy / Cuddle / Tracker). Avg score is the headline; pass rate and critical-fail rate use the Dictionary QA rules; % sales/QA&#39;d = BI sales for the campaign ÷ evaluations. Evaluations whose campaign does not fold to a known bucket appear under (other).">i</span><span class="s">high-level scorecard — one tile per campaign</span></div>'
    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px">'+campOrder.map(campTile).join('')+'</div></div>'
    +'<div class="grid g21"><div class="card"><div class="card-h"><span class="t">Escalations &amp; disputes — live pipeline</span><span class="info" title="Pending = evaluations whose Status is not closed out. Partner escalations = an SM Escalation Reason / flag; Disputed = Status in the QA dispute rule (Dictionary). This is the not-closed-out queue the client asked for; it clears as QA closes each item.">i</span><span class="s">'+pipe.length+' pending</span></div>'
@@ -2658,7 +2689,7 @@ function acCtxBuild(win){
   const _CRIT=resolveRule('$qaCritical');
   rowsNF('QA_EVALUATIONS',win).forEach(r=>{const cb=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];if(!cb)return;const o=C.qa[cb]=C.qa[cb]||{n:0,s:0,s0:0,sn:0,crit:0};o.n++;const isC=_CRIT.includes(r.escalation_decision);if(isC)o.crit++;if(r.score_percent!=null){o.s+=r.score_percent;o.sn++;o.s0+=isC?0:r.score_percent}else if(isC){/* crit with no score still counts as zero in the n denominator */}});
   rowsNF('ATTENDANCE',win).forEach(r=>{const cb=normCB(r.employee_code);if(!cb||r.excluded_flag)return;const o=C.att[cb]=C.att[cb]||{sched:0,p:0};o.sched++;if(r.present_flag)o.p++});
-  rowsNF('CALLX_CALL_RECORDS',win).forEach(r=>{const cb=cbOf(r.agent);if(!cb)return;const o=C.call[cb]=C.call[cb]||{n:0,sec:0,bands:{},days:new Set()};o.n++;o.sec+=r.billable_seconds||0;o.bands[r.call_band]=(o.bands[r.call_band]||0)+1;if(r._d)o.days.add(r._d)});
+  rowsNF('CALLX_CALL_RECORDS',win).forEach(r=>{const cb=cbOf(r.agent);if(!cb)return;const o=C.call[cb]=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};o.n++;o.sec+=r.billable_seconds||0;o.bands[r.call_band]=(o.bands[r.call_band]||0)+1;if(r._d)o.days.add(r._d);const d=String(r.destination_number||'').trim();if(d&&d!=='s')o.uniq.add(d)});
   rowsNF('REFERRALS',win).forEach(r=>{const cb=normCB(r.employee_code)||cbOf(r.agent);if(!cb)return;const o=C.ref[cb]=C.ref[cb]||{n:0};o.n+=(r.referral_count??1)});
   (function(){const f=state.filters;state.filters={};try{
     accountPremiums(win).forEach(e=>{if(!e.cb)return;const o=C.sale[e.cb]=C.sale[e.cb]||{n:0,gwp:0};o.n++;o.gwp+=e.gwp||0});
@@ -2669,7 +2700,7 @@ function acCtxBuild(win){
 function acStats(cb,win,C){
   const i=state.cbInfo[cb]||{};const T=k=>nbaVal(k,0);
   const sale=C.sale[cb]||{n:0,gwp:0},cl=C.closed[cb]||{tc:0},op=C.open[cb]||{n:0,aSum:0,aN:0};
-  const qa=C.qa[cb]||{n:0,s:0,sn:0,crit:0},at=C.att[cb]||{sched:0,p:0},ca=C.call[cb]||{n:0,sec:0,bands:{},days:new Set()};
+  const qa=C.qa[cb]||{n:0,s:0,sn:0,crit:0},at=C.att[cb]||{sched:0,p:0},ca=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};
   const canc=(C.canc[cb]||{n:0}).n;const refs=(C.ref[cb]||{n:0}).n;
   const p=at.p, sched=at.sched;
   const target=i.target??null;
@@ -2684,6 +2715,10 @@ function acStats(cb,win,C){
   const att=sched>0?p/sched*100:null;
   const attempts=op.aN?op.aSum/op.aN:null;
   const attLead=leads>0&&ca.n>0?ca.n/leads:null;   // v3.0 diagnostic: total dials ÷ unique leads
+  const uniqCalls=ca.uniq?ca.uniq.size:0;          // distinct destinations reached
+  const uniqPerDay=p>0?uniqCalls/p:(uniqCalls||null);
+  const closedCases=cl.tc;                          // closed cases owned by this agent in the window
+  const convClosed=sale.n>0?closedCases/sale.n*100:null;   // client 2026-07-20: conversion = closed cases ÷ sales
   const cancPct=sale.n>0?canc/sale.n*100:(canc>0?999:0);
   const sc={};
   sc['GWP/Sale']=gwpSale==null?null:Math.min(100,gwpSale/T('gwpFloor')*100);
@@ -2694,7 +2729,7 @@ function acStats(cb,win,C){
   sc['Attendance']=att==null?null:Math.min(100,att/T('attTarget')*100);
   return{cb,name:i.name||cb,code:i.code||cb,tl:i.tl||'—',queue:i.queue||'—',tenure:i.tenure||'—',group:groupOf(cb),
     target,sales:sale.n,gwp:sale.gwp,gwpSale,spd,ta,leads,conv,qaN:qa.n,qaS,crit:qa.crit,
-    calls:ca.n,bands:ca.bands,talkMin,talkDay,dialDays:ca.days.size,p,sched,att,canc,cancPct,attempts,attLead,refs,sc};
+    calls:ca.n,uniqCalls,uniqPerDay,closedCases,convClosed,bands:ca.bands,talkMin,talkDay,dialDays:ca.days.size,p,sched,att,canc,cancPct,attempts,attLead,refs,sc};
 }
 function cfTier(st){ // v3.0 graduated critical-fail rule: tier = highest of count or rate
   const T=k=>nbaVal(k,0);const cf=st.crit||0;const audited=st.qaN||0;
@@ -2839,13 +2874,11 @@ function aName(cb,label){cb=cb?normCB(cb):null;return (cb&&state.cbInfo[cb])?'<s
 /* ---------------- PAGE: TEAM LEADER VIEW (NBA v3.0 report) ---------------- */
 function pageTL(win){
   if(!hasData())return emptyState('The Team Leader view needs the Agent List plus the activity sources');
-  const CCP=cycleCalc();
   const GF=state.filters;
   const C=acCtx(win);
-  /* Percentile base = the fleet (GF-filtered but NOT permission-scoped) so the GWP
-     percentile and composite stay tenure-relative across the whole floor: a scoped
-     team leader sees the SAME composite for an agent as exec/admin (non-negotiables
-     #4/#5). Only the DISPLAY set (stats) is narrowed to what the user may see. */
+  /* cbsBase = the fleet (GF-filtered but NOT permission-scoped); the display set
+     (stats) is narrowed to what the signed-in user may see. Critical-fail counts on
+     this view come straight from each agent's own QA rows, so scoping is display-only. */
   const cbsBase=Object.keys(state.cbInfo).filter(cb=>{const i=state.cbInfo[cb];
     if(GF.tenure&&i.tenure!==GF.tenure)return false;
     if(GF.team&&i.tl!==GF.team)return false;
@@ -2854,213 +2887,62 @@ function pageTL(win){
     return true});
   if(!cbsBase.length)return emptyState('No roster agents match the current filters');
   const wd=workDays(win);
-  const gwpFloor=nbaVal('gwpFloor',99);
-  const statsAll=cbsBase.map(cb=>{const st=acStats(cb,win,C);st.tierInfo=cfTier(st);st.nba=acNBA(st);
-    st.gwpTgtP=st.target>0?gwpFloor*st.target*wd:null;
-    st.onTgt=st.gwpTgtP!=null?st.gwp>=st.gwpTgtP:null;
-    return st});
-  const byGroup={};statsAll.forEach(st=>{(byGroup[st.group]=byGroup[st.group]||[]).push(st)});
-  Object.values(byGroup).forEach(g=>{const sorted=g.map(x=>x.gwp).sort((a,b)=>a-b);
-    g.forEach(st=>{const below=sorted.filter(x=>x<st.gwp).length;st.pctile=g.length<2?100:below/(g.length-1)*100;
-      st.comp=acComposite(st,st.pctile)})});
-  const stats=statsAll.filter(st=>cbInScope(st.cb));   // display/rollups: only agents the user may see
+  const statsAll=cbsBase.map(cb=>{const st=acStats(cb,win,C);st.tierInfo=cfTier(st);st.nba=acNBA(st);return st});
+  const stats=statsAll.filter(st=>cbInScope(st.cb));   // display: only agents the user may see
   if(!stats.length)return emptyState('No roster agents match the current filters');
-  const fleet={gwp:0,sales:0,p1:0,p2:0,bothPass:0,onTgt:0,alSum:0,alN:0};
-  stats.forEach(st=>{fleet.gwp+=st.gwp;fleet.sales+=st.sales;
-    if(st.nba.lvl===1)fleet.p1++;if(st.nba.lvl===2)fleet.p2++;
-    const c1=st.gwpSale!=null&&st.gwpSale>=gwpFloor,c2=st.ta!=null&&st.ta>=100;
-    st.c1=c1;st.c2=c2;if(c1&&c2)fleet.bothPass++;if(st.onTgt)fleet.onTgt++;
-    if(st.attLead!=null){fleet.alSum+=st.attLead;fleet.alN++}});
-  const T={};stats.forEach(st=>{const t=T[st.tl]=T[st.tl]||{tl:st.tl,ag:[],gwp:0,sales:0,comp:0,qaS:0,qaN:0,gs:0,gsN:0,al:0,alN:0,p1:0,p2:0,both:0,r2a3:0,r2a2:0,r2a1:0,canc:0,onTgt:0,tgt:0,mix:{},pd:0,sched:0,cf:0,talk:0,talkN:0};
-    t.ag.push(st);t.gwp+=st.gwp;t.sales+=st.sales;t.comp+=st.comp.raw;
-    t.pd+=st.p||0;t.sched+=st.sched||0;t.cf+=st.crit||0;
-    if(st.talkDay!=null){t.talk+=st.talkDay;t.talkN++}
-    if(st.qaS!=null){t.qaS+=st.qaS;t.qaN++}
-    if(st.gwpSale!=null){t.gs+=st.gwpSale;t.gsN++}
-    if(st.attLead!=null){t.al+=st.attLead;t.alN++}
-    if(st.nba.lvl===1)t.p1++;if(st.nba.lvl===2)t.p2++;
-    if(st.c1&&st.c2)t.both++;
-    if(st.tierInfo.tier==='R2A-3')t.r2a3++;if(st.tierInfo.tier==='R2A-2')t.r2a2++;if(st.tierInfo.tier==='R2A-1')t.r2a1++;
-    t.canc+=st.canc;if(st.onTgt)t.onTgt++;if(st.gwpTgtP)t.tgt+=st.gwpTgtP;
-    t.mix[st.group]=(t.mix[st.group]||0)+1});
+  /* Lean TL view (client 2026-07-20): show ONLY talk time, unique calls/day, GWP,
+     referrals, critical fails, and conversion (closed cases ÷ sales). Protect-the-
+     business (P1) moved to QA & Compliance; open/closed/unique leads, sales targets,
+     dual-check, NBA distribution, Mon-Fri and cancellation watch removed from this view.
+     Click an agent name for the full deep-dive (agentOpen) — no duplicate standalone tab. */
+  const T={};stats.forEach(st=>{const t=T[st.tl]=T[st.tl]||{tl:st.tl,ag:[],gwp:0,sales:0,refs:0,cf:0,closed:0,talkDay:0,talkN:0,uniqDay:0,uniqN:0};
+    t.ag.push(st);t.gwp+=st.gwp;t.sales+=st.sales;t.refs+=st.refs||0;t.cf+=st.crit||0;t.closed+=st.closedCases||0;
+    if(st.talkDay!=null){t.talkDay+=st.talkDay;t.talkN++}
+    if(st.uniqPerDay!=null){t.uniqDay+=st.uniqPerDay;t.uniqN++}});
   const tls=Object.values(T).sort((a,b)=>b.gwp-a.gwp);
-  const pick=state.tlPick&&T[state.tlPick]?state.tlPick:tls[0].tl;
-  const P=T[pick];
-  const lvlColor=l=>l===1?'var(--red)':l===2?'#B45309':l===3?'var(--blue)':'#158A4C';
-  const box=(v,l,c)=>'<div class="ac-tile" style="min-width:120px"><div class="ac-big" style="color:'+(c||'inherit')+'">'+v+'</div><div class="ac-sub" style="margin:2px 0 0">'+l+'</div></div>';
-  /* --- CORE VIEW (default; client 2026-07-20): head count, attendance, talk time, SPD,
-     sales + projection, GWP, avg GWP, QA score, outstanding CFs, Mon–Fri strip, and a
-     cancellation watch to spot the agents driving the rate. Full NBA machinery lives in
-     the NBA detail tab, unchanged. --- */
-  const tlTab=state.tlTab||'core';
-  const tabs='<div class="tabs">'+[['core','Core view'],['nba','NBA detail']].map(([id,l])=>'<button class="tab '+(tlTab===id?'active':'')+'" onclick="state.tlTab=\''+id+'\';render()">'+l+'</button>').join('')+'</div>';
-  if(tlTab==='core'){
-    const F={pd:0,sched:0,talk:0,talkN:0,qaS:0,qaN:0,cf:0,canc:0};
-    stats.forEach(st=>{F.pd+=st.p||0;F.sched+=st.sched||0;if(st.talkDay!=null){F.talk+=st.talkDay;F.talkN++}
-      if(st.qaS!=null){F.qaS+=st.qaS;F.qaN++}F.cf+=st.crit||0;F.canc+=st.canc||0});
-    const attF=F.sched>0?F.pd/F.sched*100:null;
-    let c='<div class="ac-tiles" style="grid-template-columns:repeat(auto-fit,minmax(118px,1fr))">'
-     +box(String(stats.length),'HEAD COUNT')
-     +box(attF==null?'—':fmtVal(attF,'pct'),'ATTENDANCE',attF!=null&&attF>=nbaVal('attTarget',90)?'#158A4C':'#B45309')
-     +box(F.talkN?Math.round(F.talk/F.talkN)+'m':'—','TALK TIME/DAY')
-     +box(wd?(Math.round(fleet.sales/wd*10)/10).toFixed(1):'—','SPD (SALES/DAY)')
-     +box(fleet.sales.toLocaleString(),'TOTAL SALES')
-     +box(zarStack(fleet.gwp),'TOTAL GWP')
-     +box(fleet.sales?'R'+Math.round(fleet.gwp/fleet.sales):'—','AVG GWP/SALE',fleet.sales&&fleet.gwp/fleet.sales>=gwpFloor?'#158A4C':'var(--red)')
-     +box(F.qaN?fmtVal(F.qaS/F.qaN,'pct'):'—','QA SCORE')
-     +box(String(F.cf),'OUTSTANDING CFs',F.cf?'var(--red)':'#158A4C')
-     +box(String(F.canc),'CANCELLATIONS',F.canc?'#B45309':'#158A4C')
-     +'</div>';
-    /* per-TL core table */
-    c+='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Team leaders — core metrics</span><span class="s">'+wd+' working days · projections use the cycle run rate (same maths as Sales Production)</span></div>'
-     +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Team Leader</th><th class="noclick">Head count</th><th class="noclick">Attend.</th><th class="noclick">Talk/day</th><th class="noclick">SPD</th><th class="noclick">Sales</th><th class="noclick">Proj. sales</th><th class="noclick">Total GWP</th><th class="noclick">Avg GWP/sale</th><th class="noclick">QA score</th><th class="noclick">CFs</th><th class="noclick">Canc</th><th class="noclick">Canc%</th><th class="noclick">GWP projection</th></tr></thead><tbody>'
-     +tls.map(t=>{const att=t.sched>0?t.pd/t.sched*100:null;const cp=CCP&&CCP.byTL[t.tl];
-       const cancP=t.sales>0?t.canc/t.sales*100:(t.canc>0?null:0);
-       return '<tr><td><b>'+maskName(t.tl)+'</b></td><td class="num">'+t.ag.length+'</td>'
-        +'<td class="num">'+(att==null?'—':fmtVal(att,'pct'))+'</td>'
-        +'<td class="num">'+(t.talkN?Math.round(t.talk/t.talkN)+'m':'—')+'</td>'
-        +'<td class="num">'+(wd?(Math.round(t.sales/wd*10)/10).toFixed(1):'—')+'</td>'
-        +'<td class="num" style="font-weight:700">'+t.sales.toLocaleString()+'</td>'
-        +'<td class="num">'+(cp?Math.round(cp.projSales).toLocaleString():'—')+'</td>'
-        +'<td class="num" style="font-weight:800">'+zarStack(t.gwp)+'</td>'
-        +'<td class="num">'+(t.sales?'R'+Math.round(t.gwp/t.sales):'—')+'</td>'
-        +'<td class="num">'+(t.qaN?fmtVal(t.qaS/t.qaN,'pct'):'—')+'</td>'
-        +'<td class="num" style="color:'+(t.cf?'var(--red)':'#158A4C')+';font-weight:800">'+t.cf+'</td>'
-        +'<td class="num">'+t.canc+'</td><td class="num">'+(cancP==null?'—':fmtVal(cancP,'pct'))+'</td>'
-        +'<td class="num" style="font-weight:800">'+(cp?zar2Stack(cp.total):'—')+'</td></tr>'}).join('')
-     +'</tbody></table></div></div>';
-    /* Monday-to-Friday strip — the latest Mon–Fri week up to the data anchor */
-    const anc=new Date(isoDay(anchorDate())+'T12:00:00');
-    const mon=new Date(anc);mon.setDate(mon.getDate()-((mon.getDay()+6)%7));
-    const days=[0,1,2,3,4].map(i=>{const d=new Date(mon);d.setDate(d.getDate()+i);return isoDay(d)});
-    const vatM=1+vatPct();
-    const MF={};rowsFor('BI_ACTIVE_CASES',{from:days[0],to:days[4]}).forEach(r=>{
-      if(!r._d)return;const cb=cbOfOwner(r.owner);const tl=cb?(state.cbInfo[cb]?.tl||'(unassigned)'):'(unattributed)';
-      const m=MF[tl]=MF[tl]||{};const o=m[r._d]=m[r._d]||{ex:0,acc:new Set()};o.ex+=r.charge_amount||0;o.acc.add(r.account_number)});
-    const DN=['Mon','Tue','Wed','Thu','Fri'];
-    c+='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Monday-to-Friday — sales · GWP by team leader</span><span class="s">week of '+esc(days[0])+'</span></div>'
-     +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Team Leader</th>'+DN.map((n,i)=>'<th class="noclick">'+n+'<div style="font-size:9.5px;color:var(--muted)">'+days[i].slice(5)+'</div></th>').join('')+'<th class="noclick">Week total</th></tr></thead><tbody>'
-     +tls.map(t=>{const m=MF[t.tl]||{};let ws=0,wg=0;
-       const cells=days.map(d=>{const o=m[d];if(!o)return '<td class="num" style="color:var(--muted)">—</td>';
-         const g=o.ex*vatM;ws+=o.acc.size;wg+=g;
-         return '<td class="num">'+o.acc.size+' · '+zar2(g)+'</td>'}).join('');
-       return '<tr><td><b>'+maskName(t.tl)+'</b></td>'+cells+'<td class="num" style="font-weight:800">'+ws+' · '+zar2(wg)+'</td></tr>'}).join('')
-     +'</tbody></table></div>'
-     +(MF['(unattributed)']?'<div style="font-size:11px;color:var(--muted);margin-top:6px">Some week GWP is unattributed to a roster agent and is excluded from the rows above.</div>':'')+'</div>';
-    /* cancellation watch — spot the agents driving the rate */
-    const cw=stats.filter(st=>st.canc>0).sort((a,b)=>b.cancPct-a.cancPct||b.canc-a.canc).slice(0,10);
-    c+='<div class="card"><div class="card-h"><span class="t">Cancellation watch</span><span class="info" title="Agents ranked by cancellation % (cancellations ÷ sales in the window; 999% = cancellations with zero sales). Diagnostic only — cancellations are never scored into the composite.">i</span><span class="s">top '+cw.length+' by rate</span></div>'
-     +(cw.length?'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Agent</th><th class="noclick">Team Leader</th><th class="noclick">Sales</th><th class="noclick">Cancellations</th><th class="noclick">Canc%</th></tr></thead><tbody>'
-      +cw.map(st=>'<tr><td><b>'+aName(st.cb,maskName(st.name))+'</b></td><td>'+maskName(st.tl)+'</td><td class="num">'+st.sales+'</td>'
-       +'<td class="num" style="color:var(--red);font-weight:800">'+st.canc+'</td><td class="num">'+(st.cancPct>=999?'<span class="pill r">no sales</span>':fmtVal(st.cancPct,'pct'))+'</td></tr>').join('')
-      +'</tbody></table></div>':'<div class="empty">No cancellations in the window.</div>')+'</div>';
-    return tabs+c;
-  }
-  /* --- exec strip + leaderboard --- */
-  let h='<div class="ac-tiles" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">'
-   +box(zarStack(fleet.gwp),'TOTAL GWP')
-   +box(fleet.sales.toLocaleString(),'TOTAL SALES')
-   +box(fleet.sales?'R'+Math.round(fleet.gwp/fleet.sales):'—','AVG GWP/SALE (TGT R'+gwpFloor+')',fleet.sales&&fleet.gwp/fleet.sales>=gwpFloor?'#158A4C':'var(--red)')
-   +box(stats.length?Math.round(fleet.bothPass/stats.length*100)+'%':'—','BOTH CHECKS PASS')
-   +box(String(fleet.p1),'P1 (URGENT)','var(--red)')
-   +box(fleet.alN?(Math.round(fleet.alSum/fleet.alN*100)/100).toFixed(2):'—','AVG ATTEMPTS/LEAD','var(--blue)')
-   +'</div>'
-   +'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Team Leader Leaderboard</span><span class="s">'+stats.length+' agents · '+tls.length+' TL groups · '+wd+' working days</span></div>'
-   +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Rank</th><th class="noclick">Team Leader</th><th class="noclick">Agents</th><th class="noclick">Tenure Mix</th><th class="noclick">Total GWP</th><th class="noclick">Avg Comp.</th><th class="noclick">Avg QA</th><th class="noclick">GWP/Sale</th><th class="noclick">Att/Lead</th><th class="noclick">P1</th><th class="noclick">P2</th><th class="noclick">Both Pass</th><th class="noclick" title="Cycle total = current cycle GWP + (avg GWP/day × remaining dialing days) — same maths as Sales Production.">Cycle Projection</th></tr></thead><tbody>'
-   +tls.map((t,i)=>'<tr><td class="num">'+(i+1)+'</td><td><b>'+maskName(t.tl)+'</b></td><td class="num">'+t.ag.length+'</td><td style="font-size:10.5px">'+Object.entries(t.mix).map(([g,n])=>n+' '+esc(g)).join(' · ')+'</td>'
-    +'<td class="num" style="font-weight:800">'+zarStack(t.gwp)+'</td><td class="num">'+(Math.round(t.comp/t.ag.length*10)/10).toFixed(1)+'</td>'
-    +'<td class="num">'+(t.qaN?fmtVal(t.qaS/t.qaN,'pct'):'—')+'</td><td class="num">'+(t.gsN?'R'+Math.round(t.gs/t.gsN):'—')+'</td>'
-    +'<td class="num">'+(t.alN?(Math.round(t.al/t.alN*100)/100).toFixed(2):'—')+'</td>'
-    +'<td class="num" style="color:var(--red);font-weight:800">'+t.p1+'</td><td class="num" style="color:#B45309;font-weight:800">'+t.p2+'</td>'
-    +'<td class="num">'+t.both+'/'+t.ag.length+'</td>'
-    +'<td class="num" style="font-weight:800">'+(CCP&&CCP.byTL[t.tl]?zar2Stack(CCP.byTL[t.tl].total):'—')+'</td></tr>').join('')
+  const pick=state.tlPick&&T[state.tlPick]?state.tlPick:(tls[0]&&tls[0].tl);
+  const P=pick?T[pick]:null;
+  const convOf=(closed,sales)=>sales>0?closed/sales*100:null;
+  const talkFmt=m=>{m=Math.round(m||0);return m>=60?(Math.floor(m/60)+'h '+(m%60)+'m'):(m+'m')};
+  const p1Total=stats.filter(st=>st.nba&&st.nba.lvl===1).length;
+  const F={gwp:0,sales:0,refs:0,cf:0,closed:0,talk:0,talkN:0,uniq:0,uniqN:0};
+  stats.forEach(st=>{F.gwp+=st.gwp;F.sales+=st.sales;F.refs+=st.refs||0;F.cf+=st.crit||0;F.closed+=st.closedCases||0;
+    if(st.talkDay!=null){F.talk+=st.talkDay;F.talkN++}if(st.uniqPerDay!=null){F.uniq+=st.uniqPerDay;F.uniqN++}});
+  const box=(v,l,c)=>'<div class="ac-tile" style="min-width:112px"><div class="ac-big" style="color:'+(c||'inherit')+'">'+v+'</div><div class="ac-sub" style="margin:2px 0 0">'+l+'</div></div>';
+  const fConv=convOf(F.closed,F.sales);
+  let h='<div class="ac-tiles" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr))">'
+   +box(F.talkN?Math.round(F.talk/F.talkN)+'m':'—','TALK TIME / DAY')
+   +box(F.uniqN?(Math.round(F.uniq/F.uniqN*10)/10).toFixed(1):'—','UNIQUE CALLS / DAY')
+   +box(zarStack(F.gwp),'GWP')
+   +box(String(F.refs),'REFERRALS')
+   +box(String(F.cf),'CRITICAL FAILS',F.cf?'var(--red)':'#158A4C')
+   +box(fConv==null?'—':fmtVal(fConv,'pct'),'CONVERSION')
+   +'</div>';
+  h+='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Team leaders</span><span class="info" title="The six team-leader metrics (client 2026-07-20): talk time per day, unique calls per day, GWP (VAT-incl), referrals, outstanding critical fails, and conversion = closed cases ÷ sales. Protect-the-business / compliance detail lives on QA & Compliance.">i</span><span class="s">'+stats.length+' agents · '+tls.length+' teams · '+wd+' working days · click a team to focus</span></div>'
+   +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Team Leader</th><th class="noclick">Agents</th><th class="noclick">Talk/day</th><th class="noclick">Unique calls/day</th><th class="noclick">GWP</th><th class="noclick">Referrals</th><th class="noclick">Critical fails</th><th class="noclick">Conversion</th></tr></thead><tbody>'
+   +tls.map(t=>{const cv=convOf(t.closed,t.sales);
+     return '<tr class="rowlink" onclick="state.tlPick=&#39;'+esc(t.tl).replace(/&#39;/g,"").replace(/'/g,'&#39;')+'&#39;;render()"><td><b>'+maskName(t.tl)+'</b></td><td class="num">'+t.ag.length+'</td>'
+      +'<td class="num">'+(t.talkN?Math.round(t.talkDay/t.talkN)+'m':'—')+'</td>'
+      +'<td class="num">'+(t.uniqN?(Math.round(t.uniqDay/t.uniqN*10)/10).toFixed(1):'—')+'</td>'
+      +'<td class="num" style="font-weight:800">'+zarStack(t.gwp)+'</td><td class="num">'+t.refs+'</td>'
+      +'<td class="num" style="color:'+(t.cf?'var(--red)':'#158A4C')+';font-weight:800">'+t.cf+'</td>'
+      +'<td class="num">'+(cv==null?'—':fmtVal(cv,'pct'))+'</td></tr>'}).join('')
    +'</tbody></table></div></div>';
-  /* --- dual-check + rule distribution --- */
-  const vFail=stats.filter(st=>st.gwpSale!=null&&!st.c1).length;
-  const vPassVolFail=stats.filter(st=>st.c1&&!st.c2).length;
-  const RD={};stats.forEach(st=>{RD[st.nba.code]=(RD[st.nba.code]||0)+1});
-  const RORDER=['R1','R2','R2A-3','R3','R2A-2','R4','R4A','R5','R6','R7','R8','R9','R10'];
-  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:16px">'
-   +'<div class="card"><div class="card-h"><span class="t">Dual-Check fleet analysis</span><span class="s">value first, then volume</span></div><table class="tbl">'
-   +'<tr><td><b style="color:#158A4C">BOTH PASS (value+volume)</b></td><td class="num" style="font-weight:800">'+fleet.bothPass+'</td><td class="num">'+(stats.length?Math.round(fleet.bothPass/stats.length*100):0)+'%</td><td style="font-size:11px">R9 / R10 — sustain, stretch, mentor</td></tr>'
-   +'<tr><td><b style="color:var(--red)">VALUE FAIL (Check 1)</b></td><td class="num" style="font-weight:800">'+vFail+'</td><td class="num">'+(stats.length?Math.round(vFail/stats.length*100):0)+'%</td><td style="font-size:11px">R4 — value coaching: mix, upsell, premium</td></tr>'
-   +'<tr><td><b style="color:#B45309">VALUE PASS, VOLUME FAIL</b></td><td class="num" style="font-weight:800">'+vPassVolFail+'</td><td class="num">'+(stats.length?Math.round(vPassVolFail/stats.length*100):0)+'%</td><td style="font-size:11px">R4A / R6 — volume coaching: activity, closing, pipeline</td></tr>'
-   +'</table><div style="font-size:11px;color:var(--muted);margin-top:8px">Check 1 Value = GWP/sale ≥ R'+gwpFloor+'. Check 2 Volume = daily sales ≥ 100% of the roster target. Compliance tiers and QA<'+nbaVal('qaCritical',80)+'% override as P1/P2.</div></div>'
-   +'<div class="card"><div class="card-h"><span class="t">NBA rule distribution</span><span class="s">one rule per agent, most serious first</span></div><table class="tbl">'
-   +RORDER.filter(c=>RD[c]).map(c=>{const lv=c==='R1'||c==='R2'||c==='R2A-3'||c==='R3'?1:c==='R2A-2'||c==='R4'||c==='R4A'||c==='R5'||c==='R6'?2:c==='R7'||c==='R8'?3:4;
-     const n=RD[c];const w=Math.round(n/stats.length*100);
-     return '<tr><td style="width:70px"><b style="color:'+lvlColor(lv)+'">'+c+'</b></td><td><div style="background:#EEF2F8;border-radius:4px;height:14px"><div style="width:'+Math.max(w,3)+'%;background:'+lvlColor(lv)+';height:14px;border-radius:4px"></div></div></td><td class="num" style="font-weight:800;width:50px">'+n+'</td></tr>'}).join('')
-   +'</table><div style="font-size:11px;color:var(--muted);margin-top:8px">This fleet: '+stats.filter(x=>x.nba.lvl===1).length+' Level 1 · '+stats.filter(x=>x.nba.lvl===2).length+' Level 2 · '+stats.filter(x=>x.nba.lvl===3).length+' Level 3 · '+stats.filter(x=>x.nba.lvl===4).length+' Level 4</div></div>'
-   +'</div>';
-  /* --- per-TL panel --- */
-  const need={};P.ag.forEach(st=>{if(st.nba.lvl===1)(need.p1=need.p1||[]).push(st.name)});
-  const r2a3N=P.ag.filter(st=>st.tierInfo.tier==='R2A-3').map(st=>st.name);
-  const r2a2N=P.ag.filter(st=>st.tierInfo.tier==='R2A-2').map(st=>st.name);
-  const r2a1N=P.ag.filter(st=>st.tierInfo.tier==='R2A-1').map(st=>st.name);
-  const topAg=[...P.ag].sort((a,b)=>b.comp.raw-a.comp.raw)[0];
-  const talkAvg=(()=>{const v=P.ag.map(a=>a.talkDay).filter(x=>x!=null);return v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length):null})();
-  const noAns=(()=>{let na=0,tot=0;P.ag.forEach(a=>{tot+=a.calls||0;na+=(a.bands&&a.bands['No Answer'])||0});return tot?Math.round(na/tot*1000)/10:null})();
-  const agSorted=[...P.ag].sort((a,b)=>b.comp.raw-a.comp.raw);
-  h+='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">TL: '+maskName(pick)+'</span><span class="s">'+P.ag.length+' agents · '+Object.entries(P.mix).map(([g,n])=>n+' '+esc(g)).join(' · ')+'</span>'
-   +'<span class="right">'+tls.map(t=>'<button class="btn small'+(t.tl===pick?' primary':'')+'" onclick="state.tlPick=&#39;'+esc(t.tl).replace(/'/g,'&#39;')+'&#39;;render()">'+maskName(t.tl)+'</button>').join(' ')+'</span></div>'
-   +'<div class="ac-tiles" style="grid-template-columns:repeat(auto-fit,minmax(105px,1fr))">'
-   +box((Math.round(P.comp/P.ag.length*10)/10).toFixed(1),'AVG COMP.')+box(zarStack(P.gwp),'TOTAL GWP')+box(P.sales.toLocaleString(),'SALES')
-   +box(P.qaN?fmtVal(P.qaS/P.qaN,'pct'):'—','AVG QA',P.qaN&&P.qaS/P.qaN>=nbaVal('qaStd',85)?'#158A4C':'#B45309')
-   +box(P.alN?(Math.round(P.al/P.alN*100)/100).toFixed(2):'—','ATT/LEAD','var(--blue)')
-   +box(P.r2a3+'+'+P.r2a2,'R2A-3+R2A-2','var(--red)')+box(String(P.p1),'P1 URGENT','var(--red)')+box(P.both+'/'+P.ag.length,'BOTH PASS','#158A4C')
-   +box(CCP&&CCP.byTL[pick]?zar2Stack(CCP.byTL[pick].total):'—','CYCLE PROJ.','#158A4C')
-   +'</div>'
-   +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:6px">'
-   +'<div><div class="ac-sec">AGENT COMPOSITE — coloured by NBA level</div>'
-   +agSorted.map(st=>'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="width:150px;font-size:11px;text-align:right">'+aName(st.cb,maskName(st.name))+'</span>'
-     +'<div style="flex:1;background:#EEF2F8;border-radius:4px;height:14px"><div style="width:'+Math.round(st.comp.raw)+'%;background:'+lvlColor(st.nba.lvl)+';height:14px;border-radius:4px"></div></div>'
-     +'<b style="width:30px;font-size:11.5px">'+Math.round(st.comp.raw)+'</b></div>').join('')+'</div>'
-   +'<div><div class="ac-sec">WHAT NEEDS ACTION</div>'
-   +(need.p1?'<div class="card" style="border-left:4px solid var(--red);margin-bottom:8px"><b style="color:var(--red)">[LEVEL 1 · PROTECT THE BUSINESS — '+need.p1.length+' urgent (P1)]</b><div style="font-size:11.5px;margin-top:3px">'+need.p1.map(maskName).join(', ')+'. 24–48h action.</div></div>':'')
-   +'<div class="card" style="margin-bottom:8px;font-size:11.5px"><b style="color:var(--red)">[R2A-3 Critical Compliance — '+r2a3N.length+']</b> '+(r2a3N.length?r2a3N.map(maskName).join(', ')+'. 48h review, daily monitoring, Elite blocked.':'none.')+'</div>'
-   +'<div class="card" style="margin-bottom:8px;font-size:11.5px"><b style="color:#B45309">[R2A-2 Compliance Risk — '+r2a2N.length+']</b> '+(r2a2N.length?r2a2N.map(maskName).join(', ')+'. 5-day structured coaching, Elite blocked.':'none.')+'</div>'
-   +'<div class="card" style="margin-bottom:8px;font-size:11.5px"><b style="color:var(--blue)">[R2A-1 Compliance Note — '+r2a1N.length+']</b> '+(r2a1N.length?r2a1N.map(maskName).join(', ')+'. Logged in 1:1, Elite retained.':'none.')+'</div>'
-   +(talkAvg!=null?'<div class="card" style="margin-bottom:8px;font-size:11.5px"><b>[R8 / Talk Time]</b> Team avg '+talkAvg+' min/day vs '+nbaVal('talkTargetMin',210)+'.'+(noAns!=null?' No-Answer '+noAns+'% — dialler review with Operations.':'')+'</div>':'')
-   +'<div class="ac-sec" style="background:#F0B429;color:#111;margin-top:10px">WHAT IS WORKING</div><ul style="font-size:11.5px;padding-left:18px">'
-   +(topAg?'<li>Top performer: '+maskName(topAg.name)+' ('+esc(topAg.group)+', comp '+Math.round(topAg.comp.raw)+')'+(topAg.ta!=null?' — Vol '+Math.round(topAg.ta)+'%':'')+(topAg.gwpSale!=null?', GWP/sale R'+Math.round(topAg.gwpSale):'')+'</li>':'')
-   +'<li>'+P.both+'/'+P.ag.length+' agents pass BOTH checks (value + volume)</li>'
-   +'<li>'+P.onTgt+'/'+P.ag.length+' on GWP target'+(P.tgt?' — attainment '+fmtVal(P.gwp/P.tgt*100,'pct'):'')+'</li>'
-   +(P.alN?'<li>Team avg attempts/lead '+(Math.round(P.al/P.alN*100)/100).toFixed(2)+' ('+((P.al/P.alN)>=nbaVal('attemptsMin',3)&&(P.al/P.alN)<=nbaVal('attemptsMax',5)?'in':'outside')+' 3–5 band)</li>':'')
-   +(P.qaN?'<li>Team QA '+fmtVal(P.qaS/P.qaN,'pct')+' '+(P.qaS/P.qaN>=nbaVal('qaStd',85)?'meets':'below')+' '+nbaVal('qaStd',85)+'% standard'+(P.gsN?' · GWP/sale R'+Math.round(P.gs/P.gsN)+(P.gs/P.gsN>=gwpFloor?' ≥':' <')+' R'+gwpFloor:'')+'</li>':'')
-   +'</ul></div></div>'
-   /* coaching table */
-   +'<div style="overflow-x:auto;margin-top:10px"><div class="ac-sec">'+maskName(pick)+' — AGENT COACHING TABLE · NBA v3.0 DUAL-CHECK + GRADUATED COMPLIANCE</div>'
-   +'<table class="tbl" style="font-size:11px"><thead><tr><th class="noclick">Agent</th><th class="noclick">Ten.</th><th class="noclick">Comp</th><th class="noclick">Adj</th><th class="noclick">C1</th><th class="noclick">GWP/Sale</th><th class="noclick">C2</th><th class="noclick">Vol%</th><th class="noclick">QA</th><th class="noclick">Conv</th><th class="noclick">Att/Ld</th><th class="noclick">Talk</th><th class="noclick">CF·CFR</th><th class="noclick">Canc%</th><th class="noclick">OnTgt</th><th class="noclick">NBA Action</th></tr></thead><tbody>'
-   +agSorted.map(st=>{const al=st.attLead;const alOut=al!=null&&(al<nbaVal('attemptsMin',3)||al>nbaVal('attemptsMax',5));
-     return '<tr style="border-left:4px solid '+lvlColor(st.nba.lvl)+'"><td><b>'+aName(st.cb,maskName(st.name))+'</b>'+(st.tierInfo.tier==='R2A-1'?' <span class="pill b" style="padding:1px 5px">●note</span>':'')+'</td>'
-      +'<td style="font-size:10px">'+esc(st.group)+'</td>'
-      +'<td class="num">'+Math.round(st.comp.raw)+'</td><td class="num" style="font-weight:800">'+Math.round(st.comp.adj)+'</td>'
-      +'<td>'+(st.gwpSale==null?'—':st.c1?'✓':'<span style="color:var(--red)">✗</span>')+'</td><td class="num">'+(st.gwpSale==null?'—':'R'+Math.round(st.gwpSale))+'</td>'
-      +'<td>'+(st.ta==null?'—':st.c2?'✓':'<span style="color:var(--red)">✗</span>')+'</td><td class="num">'+(st.ta==null?'—':Math.round(st.ta)+'%')+'</td>'
-      +'<td class="num">'+(st.qaS==null?'—':fmtVal(st.qaS,'pct'))+'</td><td class="num">'+(st.conv==null?'—':fmtVal(st.conv,'pct'))+'</td>'
-      +'<td class="num" style="color:'+(alOut?'var(--red)':'inherit')+'">'+(al==null?'—':(Math.round(al*100)/100).toFixed(2))+'</td>'
-      +'<td class="num">'+(st.talkDay==null?'—':Math.round(st.talkDay))+'</td>'
-      +'<td class="num">'+(st.tierInfo.cf?st.tierInfo.cf+'·'+fmtVal(st.tierInfo.cfr,'pct'):'0')+'</td>'
-      +'<td class="num">'+(st.sales?fmtVal(st.cancPct,'pct'):'—')+'</td>'
-      +'<td>'+(st.onTgt==null?'—':st.onTgt?'<b style="color:#158A4C">Yes</b>':'No')+'</td>'
-      +'<td style="font-size:10.5px;min-width:220px"><b>'+st.nba.code+' '+esc(st.nba.label)+'</b> — '+esc(st.nba.action)+'</td></tr>'}).join('')
-   +'</tbody></table><div style="font-size:10.5px;color:var(--muted);margin-top:6px">✓/✗ = check pass/fail · Comp = base composite · Adj = after capped tier penalty (−2/−5/−10) · CF·CFR = fails · fail-rate of audited calls · Att/Ld red if outside '+nbaVal('attemptsMin',3)+'–'+nbaVal('attemptsMax',5)+' · row colour = NBA level</div></div>'
-   +'</div>';
-  /* --- watch lists --- */
-  const vw=stats.filter(st=>st.gwpSale!=null&&st.gwpSale<gwpFloor).sort((a,b)=>a.gwpSale-b.gwpSale);
-  const cw=stats.filter(st=>st.tierInfo.cf>0).sort((a,b)=>b.tierInfo.pen-a.tierInfo.pen||b.tierInfo.cfr-a.tierInfo.cfr);
-  const canW=stats.filter(st=>st.sales>0&&st.cancPct>nbaVal('cancelPctOK',10)).sort((a,b)=>b.cancPct-a.cancPct);
-  const onT=stats.filter(st=>st.onTgt).sort((a,b)=>(b.gwp/b.gwpTgtP)-(a.gwp/a.gwpTgtP));
-  const wl=(title,rows,cols,mapper)=>'<div class="card"><div class="ac-sec">'+title+'</div>'
-    +(rows.length?'<div style="overflow-x:auto"><table class="tbl" style="font-size:11px"><thead><tr>'+cols.map(c=>'<th class="noclick">'+c+'</th>').join('')+'</tr></thead><tbody>'+rows.slice(0,15).map(mapper).join('')+'</tbody></table></div>'+(rows.length>15?'<div style="font-size:10.5px;color:var(--muted);margin-top:4px">Top 15 of '+rows.length+'.</div>':''):'<div class="empty" style="padding:14px">none in this window</div>')+'</div>';
-  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">'
-   +wl('GWP VALUE WATCH — CHECK 1 FAIL (&lt; R'+gwpFloor+') — '+vw.length+' agents',vw,['Agent','Tenure','Vol%','R/Sale','NBA'],st=>'<tr><td>'+aName(st.cb,maskName(st.name))+'</td><td style="font-size:10px">'+esc(st.group)+'</td><td class="num">'+(st.ta==null?'—':Math.round(st.ta)+'%')+'</td><td class="num" style="color:var(--red);font-weight:800">R'+Math.round(st.gwpSale)+'</td><td>'+st.nba.code+'</td></tr>')
-   +wl('CRITICAL-FAIL TIER WATCH — '+cw.length+' agents',cw,['Agent','TL','CF','CFR','Tier','−pts','Elite'],st=>'<tr><td>'+aName(st.cb,maskName(st.name))+'</td><td style="font-size:10px">'+maskName(st.tl)+'</td><td class="num">'+st.tierInfo.cf+'</td><td class="num">'+fmtVal(st.tierInfo.cfr,'pct')+'</td><td><b>'+st.tierInfo.tier+'</b></td><td class="num" style="color:var(--red)">−'+st.tierInfo.pen+'</td><td>'+st.tierInfo.elite+'</td></tr>')
-   +wl('CANCELLATION WATCH — over '+nbaVal('cancelPctOK',10)+'% of sales — '+canW.length+' agents',canW,['Agent','TL','Cancels','Sales','Cancel %'],st=>'<tr><td>'+aName(st.cb,maskName(st.name))+'</td><td style="font-size:10px">'+maskName(st.tl)+'</td><td class="num">'+st.canc+'</td><td class="num">'+st.sales+'</td><td class="num" style="color:#B45309;font-weight:800">'+fmtVal(st.cancPct,'pct')+'</td></tr>')
-   +wl('ON TARGET — GWP ≥ period target (R'+gwpFloor+' × daily target × '+wd+'d) — '+onT.length+' agents',onT,['Agent','TL','GWP Written','Target','Attain'],st=>'<tr><td>'+aName(st.cb,maskName(st.name))+'</td><td style="font-size:10px">'+maskName(st.tl)+'</td><td class="num" style="font-weight:800">'+fmtVal(st.gwp,'zar')+'</td><td class="num">'+fmtVal(st.gwpTgtP,'zar')+'</td><td class="num" style="color:#158A4C;font-weight:800">'+Math.round(st.gwp/st.gwpTgtP*100)+'%</td></tr>')
-   +'</div>'
-   +'<div class="card" style="margin-top:14px;font-size:11.5px;color:var(--muted)"><b style="color:var(--ink)">Methodology (NBA v3.0)</b> — Period GWP target = R'+gwpFloor+' × daily sales target × '+wd+' working days. Dual-Check value-first: Check 1 GWP/sale ≥ R'+gwpFloor+', Check 2 daily sales ÷ roster target ≥ 100%. Graduated critical-fail: CFR = fails ÷ audited calls; R2A-3 (≥'+nbaVal('r2a3Count',4)+' or ≥'+nbaVal('r2a3Rate',30)+'%) P1 −'+nbaVal('pen3',10)+' · R2A-2 ('+nbaVal('r2a2Count',2)+'–'+(nbaVal('r2a3Count',4)-1)+' or '+nbaVal('r2a2Rate',10)+'–&lt;'+nbaVal('r2a3Rate',30)+'%) P2 −'+nbaVal('pen2',5)+' · R2A-1 (1 fail, &lt;'+nbaVal('r2a2Rate',10)+'%) note −'+nbaVal('pen1',2)+', never surfaced. Penalty capped. QA is weighted by audited calls with critical-fail calls scored zero. Att/Lead = total dials ÷ unique leads, band '+nbaVal('attemptsMin',3)+'–'+nbaVal('attemptsMax',5)+', diagnostic only. <b>All GWP figures are VAT-inclusive</b> — the BI money model sums each account&#39;s ex-VAT Charge Amounts and grosses up ×'+(1+vatPct()).toFixed(2)+', so ex VAT = the raw charge sum; split shown on the headline figures, compact tables stay inclusive. Every value here is a rule in the Dictionary.</div>';
-  return tabs+h;
+  if(P){const ag=[...P.ag].sort((a,b)=>b.gwp-a.gwp);
+    h+='<div class="card"><div class="card-h"><span class="t">'+maskName(pick)+' — agents</span><span class="s">'+P.ag.length+' agents · click a name for the full agent card</span>'
+     +'<span class="right">'+tls.map(t=>'<button class="btn small'+(t.tl===pick?' primary':'')+'" onclick="state.tlPick=&#39;'+esc(t.tl).replace(/&#39;/g,"").replace(/'/g,'&#39;')+'&#39;;render()">'+maskName(t.tl)+'</button>').join(' ')+'</span></div>'
+     +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Agent</th><th class="noclick">Talk time</th><th class="noclick">Unique calls/day</th><th class="noclick">GWP</th><th class="noclick">Referrals</th><th class="noclick">Critical fails</th><th class="noclick">Conversion</th></tr></thead><tbody>'
+     +ag.map(st=>{const cv=st.convClosed;
+       return '<tr><td><b>'+aName(st.cb,maskName(st.name))+'</b></td>'
+        +'<td class="num">'+talkFmt(st.talkMin)+'<div class="exv">'+(st.talkDay!=null?Math.round(st.talkDay)+'m/day':'')+'</div></td>'
+        +'<td class="num">'+(st.uniqPerDay!=null?(Math.round(st.uniqPerDay*10)/10).toFixed(1):'—')+'<div class="exv">'+st.uniqCalls+' total</div></td>'
+        +'<td class="num" style="font-weight:800">'+zarStack(st.gwp)+'</td><td class="num">'+st.refs+'</td>'
+        +'<td class="num" style="color:'+(st.crit?'var(--red)':'#158A4C')+';font-weight:800">'+st.crit+'</td>'
+        +'<td class="num">'+(cv==null?'—':fmtVal(cv,'pct'))+'</td></tr>'}).join('')
+     +'</tbody></table></div>'
+     +'<div style="font-size:11px;color:var(--muted);margin-top:8px">Conversion = closed cases ÷ sales. Protect-the-business (P1) compliance now lives on the QA &amp; Compliance page.'+(p1Total?' <b style="color:var(--red)">'+p1Total+' agent(s) sit at P1 this period</b> — see QA &amp; Compliance.':'')+'</div></div>';
+  }
+  return h;
 }
 
 /* ---------------- PAGE: LEAD MANAGEMENT ---------------- */
@@ -3606,13 +3488,14 @@ function pageSession(){
   const stat=t=>{
     const dial=rowsFor('SES_DIAL_'+t,null);
     const hasD=(state.facts['SES_DIAL_'+t]||[]).length>0;
-    const uniq=new Set();dial.forEach(r=>{const d=String(r.destination_number||'').trim();if(d&&d!=='s')uniq.add(d)});
-    const bD=sesBatchOf('SES_DIAL_'+t),bO=sesBatchOf('SES_OPEN_'+t);
-    const last=[bD,bO].filter(Boolean).map(b=>b.uploaded_at).sort().pop();
-    return{t,hasD,calls:dial.length,uniq:uniq.size,last,hasO:(state.facts['SES_OPEN_'+t]||[]).length>0};
+    const uniq=new Set();let sales=0;dial.forEach(r=>{const d=String(r.destination_number||'').trim();if(d&&d!=='s')uniq.add(d);if(r.is_sale_disp)sales++});
+    const closed=rowsFor('SES_CLOSED_'+t,null);
+    const bD=sesBatchOf('SES_DIAL_'+t),bO=sesBatchOf('SES_OPEN_'+t),bC=sesBatchOf('SES_CLOSED_'+t);
+    const last=[bD,bO,bC].filter(Boolean).map(b=>b.uploaded_at).sort().pop();
+    return{t,hasD,calls:dial.length,uniq:uniq.size,sales,closed:closed.length,last,hasO:(state.facts['SES_OPEN_'+t]||[]).length>0,hasC:(state.facts['SES_CLOSED_'+t]||[]).length>0};
   };
   const rows=SES_TIMES.map(stat);
-  const anyTimes=SES_TIMES.filter(t=>['DIAL','OPEN'].some(tag=>(state.facts['SES_'+tag+'_'+t]||[]).length));
+  const anyTimes=SES_TIMES.filter(t=>['DIAL','OPEN','CLOSED'].some(tag=>(state.facts['SES_'+tag+'_'+t]||[]).length));
   const pick=anyTimes.includes(state.sesPick)?state.sesPick:anyTimes[anyTimes.length-1]||'';
   /* per-agent statistics for the picked session (filter-aware via rowsFor) */
   let agentHtml='<div class="empty">Upload a dialler file for this session.</div>';
@@ -3620,14 +3503,16 @@ function pageSession(){
     const dialP=rowsFor('SES_DIAL_'+pick,null);
     const AG={};const key=(cb,raw)=>cb||('RAW::'+normName(raw||'(blank)'));
     dialP.forEach(r=>{const cb=cbOf(r.agent);const k=key(cb,r.agent);
-      const a=AG[k]=AG[k]||{name:cb?((state.cbInfo[cb]?.name)||r.agent):(r.agent||'(blank)'),un:!cb,calls:0,uniq:new Set()};
-      a.calls++;const d=String(r.destination_number||'').trim();if(d&&d!=='s')a.uniq.add(d)});
+      const a=AG[k]=AG[k]||{name:cb?((state.cbInfo[cb]?.name)||r.agent):(r.agent||'(blank)'),cb,un:!cb,calls:0,sales:0,uniq:new Set()};
+      a.calls++;if(r.is_sale_disp)a.sales++;const d=String(r.destination_number||'').trim();if(d&&d!=='s')a.uniq.add(d)});
     const ar=Object.values(AG).sort((x,y)=>y.calls-x.calls).slice(0,25);
     const unm=Object.values(AG).filter(a=>a.un).length;
-    if(ar.length)agentHtml='<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Agent</th><th class="noclick">Calls</th><th class="noclick">Unique calls</th></tr></thead><tbody>'
-     +ar.map(a=>'<tr><td><b>'+maskName(a.name)+'</b>'+(a.un?' <span class="pill a" style="padding:1px 6px">unmapped</span>':'')+'</td>'
+    if(ar.length)agentHtml='<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Agent</th><th class="noclick">Calls</th><th class="noclick">Unique calls</th><th class="noclick" title="Sales from the dialler Lead Disposition (Dictionary → Rules → Sale dispositions), not the money model.">Sales</th><th class="noclick" title="Unique destinations reached per sale made in this session — a dialling-efficiency read.">Unique / sale</th></tr></thead><tbody>'
+     +ar.map(a=>'<tr><td><b>'+aName(a.cb,maskName(a.name))+'</b>'+(a.un?' <span class="pill a" style="padding:1px 6px">unmapped</span>':'')+'</td>'
        +'<td class="num" style="font-weight:800">'+a.calls.toLocaleString()+'</td>'
-       +'<td class="num">'+a.uniq.size.toLocaleString()+'</td></tr>').join('')
+       +'<td class="num">'+a.uniq.size.toLocaleString()+'</td>'
+       +'<td class="num" style="font-weight:800;color:'+(a.sales?'#158A4C':'inherit')+'">'+a.sales+'</td>'
+       +'<td class="num">'+(a.sales?(Math.round(a.uniq.size/a.sales*10)/10).toFixed(1):'—')+'</td></tr>').join('')
      +'</tbody></table></div>'+(unm?'<div class="stale-banner" style="margin-top:8px">⚠ '+unm+' agent(s)/owner(s) not matched to the roster.</div>':'');
   }
   /* consolidated matrix: agent rows × (attempt status × every session time) — the July LM sheet, live */
@@ -3656,19 +3541,40 @@ function pageSession(){
      +'<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Blank columns: that session has no open-cases upload yet · dots: uploaded, zero for this agent.</div>'
      +((unMx||unowned2)?'<div class="stale-banner" style="margin-top:8px">⚠ '+(unMx?unMx+' owner(s) not on the roster. ':'')+(unowned2?unowned2+' unowned.':'')+'</div>':'');
   }
+  /* Monthly closed leads per agent — from the DAILY closed-cases file (not the session
+     snapshots), rolled up by calendar month. One row per agent, one column per month. */
+  const mclRows=rowsFor('SF_CLOSED_CASES',null);
+  const MCL={};const mSet=new Set();
+  mclRows.forEach(r=>{const cb=cbOfOwner(r.case_owner);if(!cb)return;const d=r.closed_at||r._d;if(!d)return;const mo=String(d).slice(0,7);mSet.add(mo);
+    const a=MCL[cb]=MCL[cb]||{cb,name:(state.cbInfo[cb]?.name)||cb,tl:(state.cbInfo[cb]?.tl)||'(unassigned)',m:{},tot:0};a.m[mo]=(a.m[mo]||0)+1;a.tot++});
+  const months=[...mSet].sort();
+  const mclList=Object.values(MCL).sort((a,b)=>b.tot-a.tot);
+  let mclHtml='<div class="empty">Upload the daily Closed Cases file to see the monthly view.</div>';
+  if(mclList.length&&months.length){
+    mclHtml='<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Team Leader</th><th class="noclick">Agent</th>'+months.map(m=>'<th class="noclick">'+esc(m)+'</th>').join('')+'<th class="noclick">Total</th></tr></thead><tbody>'
+     +mclList.slice(0,40).map(a=>'<tr><td style="font-size:10.5px">'+maskName(a.tl)+'</td><td><b>'+aName(a.cb,maskName(a.name))+'</b></td>'
+       +months.map(m=>'<td class="num">'+(a.m[m]||'·')+'</td>').join('')
+       +'<td class="num" style="font-weight:800">'+a.tot.toLocaleString()+'</td></tr>').join('')
+     +'</tbody></table></div>'+(mclList.length>40?'<div style="font-size:10.5px;color:var(--muted);margin-top:4px">Top 40 of '+mclList.length+' agents.</div>':'');
+  }
   return '<div class="card" style="margin-bottom:14px">Session files ignore the <b>date range</b> (each is a moment-in-time snapshot) but honour the <b>Team leader, Tenure, Campaign and Department</b> filters through the base table — every dialler and Salesforce row resolves to its CB and filters on the roster. Nothing here touches the daily analytics.</div>'
-   +'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Session statistics</span><span class="s">calls & unique reach from the dialler files</span></div>'
-   +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Session</th><th class="noclick">Calls</th><th class="noclick">Unique calls</th><th class="noclick">Last upload</th></tr></thead><tbody>'
+   +'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Session statistics</span><span class="info" title="Calls & unique reach from the dialler snapshot; Sales = dialler rows with a sale Lead Disposition (Dictionary → Rules → Sale dispositions), a per-session COUNT — not the Power BI money model; Closed = closed-case rows in the session snapshot (upload the closed-cases slot in Session Uploads).">i</span><span class="s">calls, unique reach, sales &amp; closed per session</span></div>'
+   +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Session</th><th class="noclick">Calls</th><th class="noclick">Unique calls</th><th class="noclick">Sales</th><th class="noclick">Unique / sale</th><th class="noclick">Closed cases</th><th class="noclick">Last upload</th></tr></thead><tbody>'
    +rows.map(r=>'<tr><td><b>'+SES_LBL[r.t]+'</b></td>'
      +'<td class="num" style="font-weight:800">'+(r.hasD?r.calls.toLocaleString():'—')+'</td>'
      +'<td class="num">'+(r.hasD?r.uniq.toLocaleString():'—')+'</td>'
+     +'<td class="num" style="font-weight:800;color:'+(r.sales?'#158A4C':'inherit')+'">'+(r.hasD?r.sales.toLocaleString():'—')+'</td>'
+     +'<td class="num">'+(r.hasD&&r.sales?(Math.round(r.uniq/r.sales*10)/10).toFixed(1):'—')+'</td>'
+     +'<td class="num">'+(r.hasC?r.closed.toLocaleString():'—')+'</td>'
      +'<td>'+(r.last?'<span class="chip g"><span class="dot"></span>'+new Date(r.last).toTimeString().slice(0,5)+'</span>':'<span class="chip n"><span class="dot"></span>not uploaded</span>')+'</td></tr>').join('')
    +'</tbody></table></div></div>'
    +'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Session statistics by agent</span><span class="info" title="Dialler rows join via the Call x alias or embedded CB code. Global roster filters apply.">i</span>'
-   +'<span class="right">'+SES_TIMES.map(t=>{const has=['DIAL','OPEN'].some(tag=>(state.facts['SES_'+tag+'_'+t]||[]).length);return '<button class="btn small'+(pick===t?' primary':'')+'" '+(has?'onclick="state.sesPick=&#39;'+t+'&#39;;render()"':'disabled style="opacity:.4"')+'>'+SES_LBL[t]+'</button>'}).join(' ')+'</span></div>'
+   +'<span class="right">'+SES_TIMES.map(t=>{const has=['DIAL','OPEN','CLOSED'].some(tag=>(state.facts['SES_'+tag+'_'+t]||[]).length);return '<button class="btn small'+(pick===t?' primary':'')+'" '+(has?'onclick="state.sesPick=&#39;'+t+'&#39;;render()"':'disabled style="opacity:.4"')+'>'+SES_LBL[t]+'</button>'}).join(' ')+'</span></div>'
    +agentHtml+'</div>'
-   +'<div class="card"><div class="card-h"><span class="t">Open leads by attempt × session</span><span class="s">every uploaded session side by side — 1st attempt 8am → 4:30pm, then 2nd, and so on</span></div>'
-   +pivotHtml+'</div>';
+   +'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Open leads by attempt × session</span><span class="s">every uploaded session side by side — 1st attempt 8am → 4:30pm, then 2nd, and so on</span></div>'
+   +pivotHtml+'</div>'
+   +'<div class="card"><div class="card-h"><span class="t">Closed leads per agent — monthly</span><span class="info" title="From the DAILY Closed Cases file (not the session snapshots), one column per calendar month by close date. Scoped to your team where team-leader access applies.">i</span><span class="s">closed cases by month</span></div>'
+   +mclHtml+'</div>';
 }
 function pageUploads(){
   const slots=SRC_KEYS.map(k=>{
