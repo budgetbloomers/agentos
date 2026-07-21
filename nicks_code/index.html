@@ -1004,6 +1004,16 @@ function buildModel(range, periodKey){
     }
   }
 
+  // Global topbar scope (Campaign / Team selects) narrows the MODEL itself, so every
+  // aggregate, page, drawer and export downstream reads the same filtered universe.
+  // '' = All. With no campaign selected VT rows stay in the model (they feed the
+  // tracker tabs); the VAS-headline rule — grand excludes VT unless VT is explicitly
+  // selected — is applied where `grand` is built below.
+  const scopeCamp=S.ui.camp||'', scopeTeam=S.ui.team||'';
+  const scoped=!!(scopeCamp||scopeTeam);
+  const allTls=[...new Set(facts.map(f=>f.tl).filter(Boolean))].sort();
+  const sfacts=scoped?facts.filter(f=>(!scopeCamp||f.campaign===scopeCamp)&&(!scopeTeam||f.tl===scopeTeam)):facts;
+
   // per-agent QA over a date range
   const qaFor=(code,from,to)=>{
     let s=0,n=0;
@@ -1025,18 +1035,18 @@ function buildModel(range, periodKey){
     return o;
   }
 
-  const byAgentDay={}; facts.forEach(f=>{ (byAgentDay[f.code]=byAgentDay[f.code]||[]).push(f); });
+  const byAgentDay={}; sfacts.forEach(f=>{ (byAgentDay[f.code]=byAgentDay[f.code]||[]).push(f); });
 
   // agent identity list (roster order, then tracker-only codes) — for pivot & adjustments
   const seen=new Set(), agents=[];
   for(const a of S.roster) if(byAgentDay[a.code]){ agents.push(a); seen.add(a.code); }
-  for(const f of facts) if(!seen.has(f.code)){ seen.add(f.code);
+  for(const f of sfacts) if(!seen.has(f.code)){ seen.add(f.code);
     agents.push({code:f.code,name:f.agent,tl:f.tl,campaign:f.campaign,tenure:f.tenure,target:0,start:''}); }
 
   // aggregate by agent × campaign (an agent can appear in both tabs, like the workbook)
   const meta=rows=>{ const l=rows[rows.length-1]; return {tl:l.tl,tenure:l.tenure,agent:l.agent,code:l.code}; };
   const byCC={Cuddle:{},Courtesy:{},VT:{}};
-  facts.forEach(f=>{ (byCC[f.campaign][f.code]=byCC[f.campaign][f.code]||[]).push(f); });
+  sfacts.forEach(f=>{ (byCC[f.campaign][f.code]=byCC[f.campaign][f.code]||[]).push(f); });
   // adjustments (cancellations/referrals) attach to the agent's primary campaign
   const primaryCamp={};
   for(const code of seen){
@@ -1065,7 +1075,7 @@ function buildModel(range, periodKey){
   // team-leader and campaign rollups
   const tlAgg={}, campAgg={};
   for(const camp of ['Courtesy','Cuddle','VT']){
-    const campRows=facts.filter(f=>f.campaign===camp);
+    const campRows=sfacts.filter(f=>f.campaign===camp);
     if(campRows.length){
       const tls=[...new Set(campRows.map(f=>f.tl))];
       for(const tl of tls){
@@ -1087,18 +1097,20 @@ function buildModel(range, periodKey){
       campAgg[camp]=o;
     }
   }
-  // headline totals stay VAS — tracker-unit sales are a different product with no GWP
-  const grand=agg(facts.filter(f=>f.campaign!=='VT'),null);
-  for(const c in adj){ grand.canc+=adj[c].c||0; grand.ref+=adj[c].r||0; }
+  // headline totals stay VAS — tracker-unit sales are a different product with no GWP.
+  // With a campaign explicitly selected, grand IS that campaign (incl. VT if chosen).
+  const grand=agg(scopeCamp?sfacts:sfacts.filter(f=>f.campaign!=='VT'),null);
+  for(const c in adj){ if(scoped&&!seen.has(c)) continue; grand.canc+=adj[c].c||0; grand.ref+=adj[c].r||0; }
   grand.cancPct=grand.sales?grand.canc/grand.sales:null; grand.refPct=grand.sales?grand.ref/grand.sales:null;
 
-  // QA period average
+  // QA period average (scoped to the filtered agents when a topbar filter is active)
   let qs=0,qn=0; for(const d in S.evals){ if(d<range.from||d>range.to) continue;
-    for(const c in S.evals[d]) for(const v of S.evals[d][c]){qs+=(typeof v==='number'?v:v.s);qn++;} }
+    for(const c in S.evals[d]){ if(scoped&&!seen.has(c)) continue;
+      for(const v of S.evals[d][c]){qs+=(typeof v==='number'?v:v.s);qn++;} } }
 
-  return {range,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
+  return {range,dates,weeks,facts:sfacts,allTls,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
      qaAvg:qn?qs/qn/100:null,qaN:qn,periodKey,
-     dailyByDate:(()=>{ const o={}; facts.forEach(f=>{ const t=o[f.date]=o[f.date]||{Cuddle:0,Courtesy:0,VT:0}; t[f.campaign]+=f.sales; }); return o; })()};
+     dailyByDate:(()=>{ const o={}; sfacts.forEach(f=>{ const t=o[f.date]=o[f.date]||{Cuddle:0,Courtesy:0,VT:0}; t[f.campaign]+=f.sales; }); return o; })()};
 }
 
 
@@ -1577,7 +1589,10 @@ function renderSide(){
   $('#collapseBtn').onclick=()=>{ document.getElementById('app').classList.toggle('collapsed'); };
 }
 function renderTop(){
-  const tls=[...new Set(S.roster.map(a=>a.tl))].sort();
+  // roster ∪ every TL seen in this period's data (M.allTls is built pre-scope, so the
+  // list never collapses to the currently selected team); a stale selection stays visible
+  const tls=[...new Set([...S.roster.map(a=>a.tl),...((M&&M.allTls)||[])].filter(Boolean))].sort();
+  if(S.ui.team&&!tls.includes(S.ui.team)) tls.unshift(S.ui.team);
   const preset=S.ui.preset||(S.ui.mode==='cycle'?'cycle':'month');
   $('#topbar').innerHTML=`
     <button class="btn ghost" id="burger" style="display:none">${I.menu}</button>
@@ -1601,8 +1616,10 @@ function renderTop(){
   const pf=$('#pFrom'), pt=$('#pTo');
   if(pf) pf.onchange=e=>{ S.ui.from=e.target.value; save(); rebuild(); renderAll(); };
   if(pt) pt.onchange=e=>{ S.ui.to=e.target.value; save(); rebuild(); renderAll(); };
-  $('#fCampG').onchange=e=>{ S.ui.camp=e.target.value; save(); renderPage(); };
-  $('#fTeamG').onchange=e=>{ S.ui.team=e.target.value; save(); renderPage(); };
+  // the campaign/team scope lives in the MODEL (buildModel narrows the facts),
+  // so changing either must rebuild — renderPage alone would show stale aggregates
+  $('#fCampG').onchange=e=>{ S.ui.camp=e.target.value; save(); rebuild(); renderAll(); };
+  $('#fTeamG').onchange=e=>{ S.ui.team=e.target.value; save(); rebuild(); renderAll(); };
   $('#btnExportAll').onclick=exportReport;
   
   // global search
@@ -1637,6 +1654,13 @@ function filteredAgents(){
     const rows=M.byAgentDay[a.code]||[];
     return rows.some(gFilter);
   });
+}
+// page-head suffix naming the active topbar scope, so a filtered view is unmistakable
+function scopeNote(){
+  const bits=[];
+  if(S.ui.camp) bits.push(CAMPLAB[S.ui.camp]||S.ui.camp);
+  if(S.ui.team) bits.push('Team: '+S.ui.team);
+  return bits.length?' · <b>'+esc(bits.join(' · '))+'</b>':'';
 }
 
 /* ================= pages ================= */
@@ -1764,7 +1788,7 @@ PAGES.dashboard=()=>{
      cmp:gp?deltaChip(g.att,gp.att):'',sub:'',
      s:ratioSeries(f=>f.act,f=>f.emp),tip:fmtNum(g.act)+' of '+fmtNum(g.emp)+' employed shifts worked.'},
     {lab:'Open Cases',val:S.opencases?fmtNum(S.opencases.total):'–',icon:I.case,color:'var(--muted)',
-     sub:S.opencases?'backlog snapshot':'upload the SF report',s:null,tip:'Open welcome/courtesy cases from the latest Salesforce snapshot.'},
+     sub:S.opencases?((S.ui.camp||S.ui.team)?'company-wide snapshot':'backlog snapshot'):'upload the SF report',s:null,tip:'Open welcome/courtesy cases from the latest Salesforce snapshot. This snapshot has no team split, so it is not narrowed by the topbar filters.'},
     {lab:'Answer Rate',val:fmtPct(g.ansPct,1),icon:I.target,color:'var(--violet)',
      cmp:gp?deltaChip(g.ansPct,gp.ansPct):'',sub:'',
      s:ratioSeries(f=>f.ans,f=>f.calls),tip:'Answered calls as a share of all dials.'},
@@ -1805,7 +1829,7 @@ PAGES.dashboard=()=>{
   const qa=qaSeries(null);
 
   return `
-  <div class="page-head"><h2>Dashboard</h2><div class="sub">${M.range.from} → ${M.range.to} · ${days} dialing day${days===1?'':'s'}</div></div>
+  <div class="page-head"><h2>Dashboard</h2><div class="sub">${M.range.from} → ${M.range.to} · ${days} dialing day${days===1?'':'s'}${scopeNote()}</div></div>
   <div class="kpirow">${row1.map(k=>kpiCard(k)).join('')}</div>
   <div class="midgrid">
     <div class="card"><div class="cardhead"><div><h3>Revenue trend</h3><div class="sub">daily GWP performance</div></div></div>
@@ -1823,7 +1847,7 @@ PAGES.dashboard=()=>{
     <div class="card"><div class="cardhead"><div><h3>QA trend</h3><div class="sub">daily average score</div></div></div>
       ${qa.dates.length>1?lineChart(null,{dates:qa.dates,series:[{name:'QA',color:'var(--good)',values:qa.values}],pct:true,h:250}):'<div class="empty">Upload QA evaluations to see the trend</div>'}</div>
   </div>
-  ${hist.length>1?`<div class="card" style="margin-bottom:14px"><div class="cardhead"><div><h3>Monthly history</h3>
+  ${!(S.ui.camp||S.ui.team)&&hist.length>1?`<div class="card" style="margin-bottom:14px"><div class="cardhead"><div><h3>Monthly history</h3>
     <div class="sub">GWP per month — snapshots and daily data combined</div></div></div>
     ${hbarChart(hist.map(h=>({label:h.month+'  ('+fmtNum(h.sales)+' sales'+(h.src==='snapshot'?' · snapshot':'')+')',v:h.gwp,color:h.month===M.range.from.slice(0,7)?'var(--accent)':'var(--cuddle)'})),{pct:false,money:true})}</div>`:''}
   ${dashTable(ranked)}`;
@@ -1895,7 +1919,7 @@ PAGES.agents=()=>{
     {h:'SPD',f:x=>fmtNum(x.g.spd,2)},{h:'QA',f:x=>x.g.qa?(x.g.qa.avg*100).toFixed(1)+'%':''},{h:'Att %',f:x=>fmtPct(x.g.att,1)},
     {h:'Calls',f:x=>x.g.calls||0},{h:'AHT',f:x=>x.g.aht?fmtDur(x.g.aht):''},{h:'Score',f:x=>Math.round(x.sc*100)},{h:'Risk',f:x=>x.r.level}],rows};
   return `
-  <div class="page-head"><h2>Agent performance</h2><div class="sub">${rows.length} agents · ${M.range.from} → ${M.range.to}</div>
+  <div class="page-head"><h2>Agent performance</h2><div class="sub">${rows.length} agents · ${M.range.from} → ${M.range.to}${scopeNote()}</div>
     <div class="spacer"></div><button class="btn small" onclick="exportCSV('agents_${S.ui.month}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
   <div class="filters">
     <input type="search" placeholder="Search name, code, team…" value="${esc(S.ui.agentQ||'')}" oninput="agentQ(this.value)">
@@ -1937,7 +1961,7 @@ PAGES.leaderboard=()=>{
     .filter(x=>x.g.emp>0).sort((x,y)=>fn(y)-fn(x));
   const max=fn(rows[0]||{g:{}})||1;
   return `
-  <div class="page-head"><h2>Leaderboard</h2><div class="sub">${lab} · ${M.range.from} → ${M.range.to}</div></div>
+  <div class="page-head"><h2>Leaderboard</h2><div class="sub">${lab} · ${M.range.from} → ${M.range.to}${scopeNote()}</div></div>
   <div class="chiprow" style="margin-bottom:16px">${Object.entries(defs).map(([k,d])=>`<button class="chip ${metric===k?'on':''}" onclick="S.ui.lbMetric='${k}';save();renderPage()">${d[0]}</button>`).join('')}</div>
   <div class="podium">${rows.slice(0,3).map((x,i)=>`
     <div class="card lift pod" onclick="openDrawer('${x.a.code}')" style="cursor:pointer">
@@ -2113,7 +2137,11 @@ function campSection(camp,week,opts){
 
 PAGES.mtd=()=>{
   if(!M||!M.dates.length) return emptyState();
-  const sub=['Courtesy','Cuddle','VT','Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle';
+  // a global campaign filter narrows the tabs to that campaign (+ Team Leaders view)
+  const subTabs=[['Courtesy','Matrix Courtesy'],['Cuddle','Matrix Cuddle'],['VT','Matrix Tracker'],['Team Leaders','Team Leaders']]
+    .filter(([t])=>!S.ui.camp||t===S.ui.camp||t==='Team Leaders');
+  let sub=['Courtesy','Cuddle','VT','Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle';
+  if(!subTabs.some(([t])=>t===sub)) sub=subTabs[0][0];
   const tlBlock=camp=>{
     const keys=Object.keys(M.tlAgg).filter(k=>k.startsWith(camp+'|'));
     if(!keys.length) return '';
@@ -2133,10 +2161,10 @@ PAGES.mtd=()=>{
     return `<div class="card mt"><div class="cardhead"><div><h3>${CAMPLAB[camp]||camp} — team leaders</h3></div></div>${tableHTML(cols,metricRows)}</div>`;
   };
   return `
-  <div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · sorted by SPD</div>
+  <div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · sorted by SPD${scopeNote()}</div>
     <div class="spacer"></div><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
   <div class="chiprow" style="margin-bottom:14px">
-    ${[['Courtesy','Matrix Courtesy'],['Cuddle','Matrix Cuddle'],['VT','Matrix Tracker'],['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';save();renderPage()">${l}</button>`).join('')}</div>
+    ${subTabs.map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';save();renderPage()">${l}</button>`).join('')}</div>
   ${sub==='Team Leaders'?tlBlock('Courtesy')+tlBlock('Cuddle')+tlBlock('VT')
     :`<div class="card">${campSection(sub,null,{canc:true})||'<div class="empty">No '+(CAMPLAB[sub]||sub)+' data in this period — upload the call records covering it</div>'}
       <p class="note" style="margin:10px 0 0">Cancellations and referrals come from the Adjustments page. QA is the average CallBi score for calls dated in the period.</p></div>`}`;
@@ -2144,11 +2172,14 @@ PAGES.mtd=()=>{
 
 PAGES.weekly=()=>{
   if(!M||!M.weeks.length) return emptyState();
-  const camp=['Courtesy','Cuddle','VT'].includes(S.ui.wtdCamp)?S.ui.wtdCamp:'Cuddle';
+  const wkTabs=[['Courtesy','Matrix Courtesy'],['Cuddle','Matrix Cuddle'],['VT','Matrix Tracker']]
+    .filter(([c])=>!S.ui.camp||c===S.ui.camp);
+  let camp=['Courtesy','Cuddle','VT'].includes(S.ui.wtdCamp)?S.ui.wtdCamp:'Cuddle';
+  if(S.ui.camp) camp=S.ui.camp;
   return `
-  <div class="page-head"><h2>Weekly reports</h2><div class="sub">weeks run Monday–Sunday inside the period</div></div>
+  <div class="page-head"><h2>Weekly reports</h2><div class="sub">weeks run Monday–Sunday inside the period${scopeNote()}</div></div>
   <div class="chiprow" style="margin-bottom:14px">
-    ${[['Courtesy','Matrix Courtesy'],['Cuddle','Matrix Cuddle'],['VT','Matrix Tracker']].map(([c,l])=>`<button class="chip ${camp===c?'on':''}" onclick="S.ui.wtdCamp='${c}';save();renderPage()">${l}</button>`).join('')}</div>
+    ${wkTabs.map(([c,l])=>`<button class="chip ${camp===c?'on':''}" onclick="S.ui.wtdCamp='${c}';save();renderPage()">${l}</button>`).join('')}</div>
   ${[...M.weeks].reverse().map(w=>{
     const sec=campSection(camp,w.num);
     return sec?`<div class="card mt" style="margin-top:12px"><div class="cardhead"><div><h3>${CAMPLAB[camp]||camp} — Week ${w.num}</h3>
@@ -2158,7 +2189,8 @@ PAGES.weekly=()=>{
 
 PAGES.daily=()=>{
   if(!M||!M.facts.length) return emptyState();
-  const f=S.ui.dailyFilter||{};
+  const f={...(S.ui.dailyFilter||{})};
+  if(S.ui.team&&f.tl&&f.tl!==S.ui.team) f.tl='';   // global Team scope overrides a stale local pick
   const tls=[...new Set(M.agents.map(a=>a.tl))].sort();
   let rows=M.facts.filter(r=>gFilter(r)&&
     (!f.date||r.date===f.date)&&(!f.tl||r.tl===f.tl)&&
@@ -2554,8 +2586,10 @@ function exportReport(){
     {h:'Actual Shifts',f:r=>r.act},{h:'Sales Target',f:r=>r.target},{h:'Sales Achieved',f:r=>r.sales},
     {h:'Talk Time',f:r=>fmtDur(r.talk)},{h:'GWP Target',f:r=>r.gwpT},{h:'GWP Achieved',f:r=>r.gwp},
     {h:'Insurance Opt In',f:r=>r.opt},{h:'Referrals',f:r=>r.ref||0}];
-  // Export honours the on-screen filters: campaign (S.ui.camp) and team leader (S.ui.team) —
-  // the same gFilter every view uses, so you extract exactly what you're looking at.
+  // The model itself is scoped by the topbar filters (buildModel narrows the facts by
+  // S.ui.camp / S.ui.team), so every sheet below already contains only what's on screen.
+  // The row filters here are belt-and-braces so the workbook stays exact even if a
+  // future change widens M again.
   const teamOK=r=>!S.ui.team||r.tl===S.ui.team;
   sheet('Daily',dCols,M.facts.filter(gFilter));
   const camps=S.ui.camp?[S.ui.camp]:['Cuddle','Courtesy'];
@@ -2657,6 +2691,7 @@ window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
   setPeriod:(m,mode)=>{ S.ui.month=m; S.ui.preset=(mode==='cycle')?'cycle':'month'; if(mode)S.ui.mode=mode; save(); rebuild(); renderAll(); },
   setRange:(from,to)=>{ S.ui.preset='custom'; S.ui.from=from; S.ui.to=to; save(); rebuild(); renderAll(); },
   setPreset:p=>{ S.ui.preset=p; save(); rebuild(); renderAll(); },
+  setFilter:(camp,team)=>{ S.ui.camp=camp||''; S.ui.team=team||''; save(); rebuild(); renderAll(); },
   rebuild:()=>{rebuild();renderAll();}, openDrawer, go };
 </script>
 
