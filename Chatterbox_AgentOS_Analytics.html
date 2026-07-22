@@ -1184,10 +1184,11 @@ async function confirmLoad(){
   autoMapAgents(); render();
 }
 
-/* Rebuild identity maps from the uploaded Agent List (all systems -> CB) */
+/* Rebuild identity maps from the uploaded Agent List (all systems -> CB).
+   Runs on load AND on clearSource: with no roster rows the maps rebuild EMPTY,
+   so deleting the Agent List opens the roster gate instead of leaving stale maps. */
 function buildIdentity(){
   const list=state.facts.AGENT_LIST||[];
-  if(!list.length)return;
   state.agentMap={};state.sfOwnerMap={};state.cbInfo={};
   list.forEach(a=>{if(!a.cb_norm)return;
     state.cbInfo[a.cb_norm]={code:a.cb_code,name:a.agent_name,tl:a.team_leader,target:a.target,queue:a.queue,tenure:a.tenure};
@@ -1201,14 +1202,26 @@ function buildIdentity(){
 function extractCB(str){const m=String(str||'').match(/CB[\s._-]*0*(\d{1,4})/i);return m?('CB'+m[1]):null}
 function cbOf(v){
   if(v==null||String(v).trim()==='')return null;
-  if(state.agentMap[v]!=null)return normCB(state.agentMap[v]);
+  if(state.agentMap[v]!=null)return rosterCB(state.agentMap[v]);   // manual/alias map still roster-gated
   const ex=extractCB(v);
   if(ex&&state.cbInfo[ex])return ex;
   const n=normName(v);
   if(state.sfOwnerMap&&state.sfOwnerMap[n])return state.sfOwnerMap[n];
-  return ex;
+  return rosterCB(ex);   // an extracted CB that is not on the list is NOT an agent
 }
 function cbOfOwner(name){const n=normName(name);return state.sfOwnerMap?.[n]||null}
+/* ---- ROSTER GATE (user rule 2026-07-22): the daily Agent List decides who exists as an
+   agent. A code arriving from any OTHER source (attendance register, QA export's own CB
+   column, a CB extracted from a dialler string, a manual mapping) only resolves if that
+   code is ON the loaded list — otherwise it resolves to null and the row lands in the
+   existing unmapped/unattributed surfaces: flagged and reported, never silently dropped,
+   never spread (F-MONEY-05). With no Agent List loaded the gate stands open so a fresh
+   install still renders. Whole-floor Workforce maths is untouched — it keys on register
+   rows, and the salesDepts rule already scopes its sales views. */
+function rosterLoaded(){return Object.keys(state.cbInfo||{}).length>0}
+function rosterCB(v){const n=normCB(v);if(!n)return null;if(!rosterLoaded())return n;return state.cbInfo[n]?n:null}
+/* QA rows: the export's own CB column first (gated), then the roster name maps */
+function qaCB(r){return rosterCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)]||null}
 /* Auto-suggest dialler agent -> CB code by name match against attendance */
 function autoMapAgents(){
   const att=state.facts.ATTENDANCE||[];const byName={};
@@ -1401,13 +1414,13 @@ function rowsForRaw(src,win,sc){
   const noGF=(src==='AGENT_LIST');   // the roster is never filtered; sessions honour roster filters (not the date range)
   const rbase=spec.session?spec.session.base:src;
   const resolveCB=r=>{switch(rbase){
-    case 'ATTENDANCE':return normCB(r.employee_code)||null;
-    case 'QA_EVALUATIONS':return normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)]||null;
+    case 'ATTENDANCE':return rosterCB(r.employee_code);            // roster gate: register code must be on the Agent List
+    case 'QA_EVALUATIONS':return qaCB(r);
     case 'CALLX_CALL_RECORDS':return cbOf(r.agent);
     case 'BI_ACTIVE_CASES':return cbOfOwner(r.owner);
     case 'SF_OPEN_CASES':case 'SF_CLOSED_CASES':return cbOfOwner(r.case_owner);
     case 'SF_INACTIVE':return cbOfOwner(r.owner);
-    case 'REFERRALS':return normCB(r.employee_code)||cbOf(r.agent);
+    case 'REFERRALS':return rosterCB(r.employee_code)||cbOf(r.agent);
     default:return null}};
   /* Resolve each row's agent (CB) + campaign bucket once per data version, cached on the row.
      campaign/tenure/team/dept reuse it (no per-row alias re-walk = no filter lag), and every
@@ -2375,7 +2388,7 @@ function pageQA(win){
   const decNames=decFreq.map(e=>e[0]);
   const decOrder=[...resolveRule('$qaPass'),...resolveRule('$qaCoaching'),...resolveRule('$qaCritical')].filter(d=>decNames.includes(d));
   const decCols=[...decOrder,...decNames.filter(d=>!decOrder.includes(d)).slice(0,2)];
-  const QP={};qa.forEach(r=>{const cb=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];const key=cb||('RAW::'+normName(r.sales_agent||'(blank)'));
+  const QP={};qa.forEach(r=>{const cb=qaCB(r);const key=cb||('RAW::'+normName(r.sales_agent||'(blank)'));
     const p=QP[key]=QP[key]||{__cb:cb,__t:0,__name:cb?((state.cbInfo[cb]?.name)||r.sales_agent):(r.sales_agent||'(blank)'),__unmapped:!cb,__s:0,__sn:0,__d:{},__pe:0,__disp:0};
     p.__t++;if(r.score_percent!=null){p.__s+=r.score_percent;p.__sn++}
     if(r.sm_flag===1||String(r.sm_reason||'').trim())p.__pe++;
@@ -2620,8 +2633,8 @@ function pageDisc(win){
   const qa=rowsFor('QA_EVALUATIONS',win);
   const anchor=isoDay(anchorDate());
   const A={};
-  qa.forEach(r=>{const key=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)]||('N'+normName(r.sales_agent));if(!key)return;
-    const a=A[key]=A[key]||{cb:key,code:(state.cbInfo[key]?.code)||r.sales_agent_code||'—',name:(state.cbInfo[key]?.name)||r.sales_agent,tl:(state.cbInfo[key]?.tl)||r.team_leader,off:0,open:0,openCrit:0,sla:0,tl1:0,tl2:0,sm:0,last:null};
+  qa.forEach(r=>{const cb=qaCB(r);const key=cb||('N'+normName(r.sales_agent));if(!key)return;
+    const a=A[key]=A[key]||{cb:key,unmapped:!cb,code:(state.cbInfo[key]?.code)||r.sales_agent_code||'—',name:(state.cbInfo[key]?.name)||r.sales_agent,tl:(state.cbInfo[key]?.tl)||r.team_leader,off:0,open:0,openCrit:0,sla:0,tl1:0,tl2:0,sm:0,last:null};
     a.off=Math.max(a.off,r.offense_number||0);
     const open=!/closed/i.test(r.qa_status||'');
     const isC=resolveRule('$qaCritical').includes(r.escalation_decision);
@@ -2646,7 +2659,7 @@ function pageDisc(win){
    +'<div class="grid g21">'
    +'<div class="card"><div class="card-h"><span class="t">Disciplinary register</span><span class="s">'+reg.length+' agents with open items or offenses · worst first</span></div>'
    +(reg.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Agent</th><th class="noclick">Team leader</th><th class="noclick">Offense #</th><th class="noclick">Current stage</th><th class="noclick">Open items</th><th class="noclick">Open criticals</th><th class="noclick">SLA</th><th class="noclick">Path</th><th class="noclick">Last incident</th></tr></thead><tbody>'
-    +reg.map(a=>'<tr><td><b>'+aName(a.cb,maskName(a.name))+'</b><div style="font-size:10.5px;color:var(--muted)">'+esc(a.code)+'</div></td>'
+    +reg.map(a=>'<tr><td><b>'+aName(a.unmapped?null:a.cb,maskName(a.name))+'</b>'+(a.unmapped?' <span class="pill a" style="padding:1px 6px">unmapped</span>':'')+'<div style="font-size:10.5px;color:var(--muted)">'+esc(a.code)+'</div></td>'
      +'<td>'+maskName(a.tl)+'</td>'
      +'<td class="num" style="font-weight:800">'+a.off+'</td>'
      +'<td>'+stagePill(stageFor(a.off))+'</td>'
@@ -2687,10 +2700,10 @@ function acCtxBuild(win){
     if(k){if(o.seen.has(k))return;o.seen.add(k)}
     o.tc++;addLead(LD(cb),r)});
   const _CRIT=resolveRule('$qaCritical');
-  rowsNF('QA_EVALUATIONS',win).forEach(r=>{const cb=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];if(!cb)return;const o=C.qa[cb]=C.qa[cb]||{n:0,s:0,s0:0,sn:0,crit:0};o.n++;const isC=_CRIT.includes(r.escalation_decision);if(isC)o.crit++;if(r.score_percent!=null){o.s+=r.score_percent;o.sn++;o.s0+=isC?0:r.score_percent}else if(isC){/* crit with no score still counts as zero in the n denominator */}});
-  rowsNF('ATTENDANCE',win).forEach(r=>{const cb=normCB(r.employee_code);if(!cb||r.excluded_flag)return;const o=C.att[cb]=C.att[cb]||{sched:0,p:0};o.sched++;if(r.present_flag)o.p++});
+  rowsNF('QA_EVALUATIONS',win).forEach(r=>{const cb=qaCB(r);if(!cb)return;const o=C.qa[cb]=C.qa[cb]||{n:0,s:0,s0:0,sn:0,crit:0};o.n++;const isC=_CRIT.includes(r.escalation_decision);if(isC)o.crit++;if(r.score_percent!=null){o.s+=r.score_percent;o.sn++;o.s0+=isC?0:r.score_percent}else if(isC){/* crit with no score still counts as zero in the n denominator */}});
+  rowsNF('ATTENDANCE',win).forEach(r=>{const cb=rosterCB(r.employee_code);if(!cb||r.excluded_flag)return;const o=C.att[cb]=C.att[cb]||{sched:0,p:0};o.sched++;if(r.present_flag)o.p++});
   rowsNF('CALLX_CALL_RECORDS',win).forEach(r=>{const cb=cbOf(r.agent);if(!cb)return;const o=C.call[cb]=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};o.n++;o.sec+=r.billable_seconds||0;o.bands[r.call_band]=(o.bands[r.call_band]||0)+1;if(r._d)o.days.add(r._d);const d=String(r.destination_number||'').trim();if(d&&d!=='s')o.uniq.add(d)});
-  rowsNF('REFERRALS',win).forEach(r=>{const cb=normCB(r.employee_code)||cbOf(r.agent);if(!cb)return;const o=C.ref[cb]=C.ref[cb]||{n:0};o.n+=(r.referral_count??1)});
+  rowsNF('REFERRALS',win).forEach(r=>{const cb=rosterCB(r.employee_code)||cbOf(r.agent);if(!cb)return;const o=C.ref[cb]=C.ref[cb]||{n:0};o.n+=(r.referral_count??1)});
   (function(){const f=state.filters;state.filters={};try{
     accountPremiums(win).forEach(e=>{if(!e.cb)return;const o=C.sale[e.cb]=C.sale[e.cb]||{n:0,gwp:0};o.n++;o.gwp+=e.gwp||0});
     cancelPremiums(win).forEach(e=>{if(!e.cb)return;const o=C.canc[e.cb]=C.canc[e.cb]||{n:0};o.n++});
@@ -3110,7 +3123,8 @@ function pageScorecard(win){
     if(GF.campaign&&campBucket(a.queue)!==GF.campaign)return;
     if(GF.agent&&normCB(a.cb_code)!==normCB(GF.agent))return;
     const r=mk(a.cb_norm,a.agent_name,a.team_leader);r.joins.list=true});
-  att.forEach(r=>{const c=normCB(r.employee_code);if(!c)return;const a=mk(c,r.employee_name,r.reports_to);a.joins.att=true;
+  const offList=new Set();   // identities with activity that failed the roster gate — reported, never rowed
+  att.forEach(r=>{const c=rosterCB(r.employee_code);if(!c){const oc=normCB(r.employee_code);if(oc)offList.add(oc);return}const a=mk(c,r.employee_name,r.reports_to);a.joins.att=true;
     if(r.excluded_flag)return;a.days++;if(r.present_flag)a.present++;if(r.absence_flag)a.abs++});
   const _osn={};   // open cases: snapshot, so windowed here by opened date, and one row per case
   openCases.forEach(r=>{const cb=cbOfOwner(r.case_owner);if(!cb||!openInWin(r,win))return;
@@ -3125,8 +3139,8 @@ function pageScorecard(win){
   accountPremiums(win).forEach(e=>{if(!e.cb)return;const a=mk(e.cb,e.owner,'');a.joins.sf=true;
     a.sales.add(e.acc);a.gwp+=e.gwp||0});
   cancelPremiums(win).forEach(e=>{if(!e.cb)return;const a=mk(e.cb,e.owner,'');a.cancels.add(e.acc)});
-  rowsFor('REFERRALS',win).forEach(r=>{const cb=normCB(r.employee_code)||cbOf(r.agent);if(!cb)return;const a=mk(cb,r.agent,'');a.refs+=(r.referral_count??1)});
-  qa.forEach(r=>{const c=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];if(!c)return;const a=mk(c,r.sales_agent,r.team_leader);
+  rowsFor('REFERRALS',win).forEach(r=>{const cb=rosterCB(r.employee_code)||cbOf(r.agent);if(!cb)return;const a=mk(cb,r.agent,'');a.refs+=(r.referral_count??1)});
+  qa.forEach(r=>{const c=qaCB(r);if(!c){const oc=normCB(r.sales_agent_code);if(oc)offList.add(oc);return}const a=mk(c,r.sales_agent,r.team_leader);
     a.joins.qa=true;a.ev++;
     if(resolveRule('$qaCoaching').includes(r.escalation_decision))a.coach=(a.coach||0)+1;
     if(resolveRule('$qaPass').includes(r.escalation_decision))a.pass++;
@@ -3149,8 +3163,8 @@ function pageScorecard(win){
   rows.sort((x,y)=>{const a=x[sort.k]??-1,b=y[sort.k]??-1;return sort.asc?(a>b?1:-1):(a<b?1:-1)});
   const th=(label,key)=>'<th onclick="sortBy(\'scorecard\',\''+key+'\',\'crit\')">'+label+(sort.k===key?(sort.asc?' ↑':' ↓'):'')+'</th>';
   const unmappedAgents=[...new Set(calls.filter(c=>c.agent&&!state.agentMap[c.agent]).map(c=>c.agent))];
-  const offRoster=roster.length?rows.filter(r=>!r.joins.list):[];
-  const refUn=rowsFor('REFERRALS',win).filter(r=>!(normCB(r.employee_code)||cbOf(r.agent))).length;
+  const offRoster=roster.length?[...offList]:[];
+  const refUn=rowsFor('REFERRALS',win).filter(r=>!(rosterCB(r.employee_code)||cbOf(r.agent))).length;
   const offNote=(offRoster.length?' · <span style="color:var(--red)">'+offRoster.length+' with activity but not on the list</span>':'')
     +(refUn?' · <span style="color:var(--red)">'+refUn+' referral(s) with an Agent name that matches no one on the list</span>':'');
   // TL rollup
