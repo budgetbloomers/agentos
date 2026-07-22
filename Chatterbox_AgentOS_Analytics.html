@@ -3162,7 +3162,7 @@ function pageScorecard(win){
   const sort=state.sort.scorecard||{k:'crit',asc:false};
   rows.sort((x,y)=>{const a=x[sort.k]??-1,b=y[sort.k]??-1;return sort.asc?(a>b?1:-1):(a<b?1:-1)});
   const th=(label,key)=>'<th onclick="sortBy(\'scorecard\',\''+key+'\',\'crit\')">'+label+(sort.k===key?(sort.asc?' ↑':' ↓'):'')+'</th>';
-  const unmappedAgents=[...new Set(calls.filter(c=>c.agent&&!state.agentMap[c.agent]).map(c=>c.agent))];
+  const unmappedAgents=[...new Set(calls.filter(c=>c.agent&&!cbOf(c.agent)).map(c=>c.agent))];   // gate-exact: counts strings whose mapping points off-roster too
   const offRoster=roster.length?[...offList]:[];
   const refUn=rowsFor('REFERRALS',win).filter(r=>!(rosterCB(r.employee_code)||cbOf(r.agent))).length;
   const offNote=(offRoster.length?' · <span style="color:var(--red)">'+offRoster.length+' with activity but not on the list</span>':'')
