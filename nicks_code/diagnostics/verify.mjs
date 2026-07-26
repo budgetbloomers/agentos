@@ -1,3 +1,10 @@
+/* ⚠ STALE (2026-07-26): this harness predates the BI money migration — it ingests
+   SF_Activated_Services files (retired; detectType no longer recognises them), expects
+   a `snapshots` state key that no longer exists, and points at upload files that are
+   gitignored. It CANNOT pass against the current build. The living conformance suite
+   is /diagnostics/pulse_golden.js (synthetic BI fixtures through window.__mtd, run via
+   `npm run pulse` in /diagnostics). Keep this file only as the recipe for re-verifying
+   against the ORIGINAL workbook exports if those CSVs are ever restored. */
 import { chromium } from 'playwright';
 import fs from 'fs';
 const UP = '/root/.claude/uploads/bb74fb1d-2bec-5cbb-9a06-3c8a2bee5fc3';

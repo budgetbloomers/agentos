@@ -15,6 +15,7 @@ Agentic OS for The Chatterbox call centre (Durban, ZA). Three parts: a single-fi
 | `reports/` | Output of /weekly-report runs. |
 | `brain/` | THE MEMORY — LLM-wiki vault (Karpathy pattern): `hot.md` is the session cache (printed by the session-start hook, read by the Worker's `/api/ask`), `log.md` the append-only audit trail. The vault is small — Glob is the index. Opens in Obsidian, syncing from the Supabase `brain` bucket via Remotely-Save (brain/OBSIDIAN-SYNC.md). Schema in brain/CLAUDE.md. |
 | `nicks_code/` | PULSE — second app of the suite (VAS Performance Platform, dark glass UI, workbook-verified calcs, `window.__mtd` test API, Playwright harness in diagnostics/). Deployed at `/pulse/` by prepare-site. Different data model to AgentOS by design — see the reconciliation register in AGENTIC-OS-PLAN.md §9b before "fixing" any numbers mismatch between the two apps. |
+| `diagnostics/` | Browser verification suites for the WHOLE suite (`npm run all`): Ops rules/calcs golden (95 asserts), upload-merge harness (33), Ask-widget rendering, PULSE golden via `__mtd`, Tracker save-path smoke. Run after any app change, before /deploy. |
 | `specs/` | AgentOS v3.8 upload-framework digest (source contracts S1–S12, quirk catalogue, money model, Copilot skills). Read before touching upload parsing or GWP logic. The S5 Power BI money source IS this dashboard's money model since 2026-07 (BI_ACTIVE_CASES). |
 
 ## Non-negotiables (violating these is a bug)
