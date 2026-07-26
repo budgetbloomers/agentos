@@ -1098,6 +1098,15 @@ function rowValid(srcKey,raw){
    never duplicates rows and never silently destroys data. The whole comparison happens
    BEFORE the confirm button, so the modal states exactly what will change. */
 let pendingUpload=null,_upGen=0;
+/* Sources this session has merged or cleared since boot began. Progressive boot means
+   the page is interactive WHILE fact blobs stream in — without this, a source's late
+   cloud read would silently overwrite rows the user just uploaded (or resurrect ones
+   they just deleted). Cleared at the start of every init() run, so a deliberate
+   re-init (re-auth, cbx-fresh) still refreshes everything from the cloud. */
+const _locallyDirty=new Set();
+/* Cloud saves in flight — warn before the tab closes underneath one. */
+let _persistBusy=0;
+window.addEventListener('beforeunload',e=>{if(_persistBusy>0){e.preventDefault();e.returnValue='An upload is still saving to the cloud — leaving now may lose it.'}});
 function cancelUpload(){_upGen++;pendingUpload=null;closeModal()}
 function findPrevSame(srcKey,parsed){
   return state.batches.find(b=>b.source_type===srcKey&&b.validation_status!=='failed'
@@ -1116,7 +1125,11 @@ function rowFp(r){
     const v=r[k];if(v===undefined)continue;
     mix(k);mix('\u001F'+String(v instanceof Date?v.toISOString():v)+'\u001E');
   }
-  return r._fp=h1.toString(36)+'.'+h2.toString(36);
+  const fp=h1.toString(36)+'.'+h2.toString(36);
+  // non-enumerable: the cache must never serialise into the cloud fact blobs
+  // (~25 bytes/row × 100k rows would bloat every save and every boot download)
+  try{Object.defineProperty(r,'_fp',{value:fp,configurable:true})}catch(e){}
+  return fp;
 }
 function mergeKeyOf(spec,r){ // record key for keyed sources (SOURCES[..].merge.key) — null when any part is blank
   const mk=spec.merge&&spec.merge.key;if(!mk)return null;
@@ -1296,15 +1309,20 @@ async function _pushBI(batch,file,ep,t){
 }
 async function confirmLoad(){
   const pu=pendingUpload;if(!pu||!pu.hv.ok)return;
+  const gen=_upGen;pendingUpload=null;   // claim the flow: a double-click can't apply twice
   const {srcKey,file,parsed}=pu;const spec=SOURCES[srcKey];
   // SAME FILE RE-UPLOADED = UPDATE, not a second copy — matched on content bytes (any
   // filename) or the legacy name+size hash for batches stored before content hashing.
   const prevSame=findPrevSame(srcKey,parsed);
   // The merge plan was computed while the modal was open. If the data changed underneath
-  // it (another tab synced via cbx-fresh), the plan is stale — recompute against what is
-  // actually loaded now rather than applying yesterday's comparison.
+  // it (another tab synced via cbx-fresh, or boot hydration), the plan is stale —
+  // recompute against what is actually loaded now. The recompute yields on big files,
+  // so re-check the flow generation afterwards: Esc/Cancel during it must win.
   let plan=pu.plan;
-  if(!plan||plan.ver!==_dataVer)plan=await computeMergePlan(srcKey,parsed,prevSame,null);
+  if(!plan||plan.ver!==_dataVer){
+    plan=await computeMergePlan(srcKey,parsed,prevSame,null);
+    if(gen!==_upGen)return;
+  }
   const batch_id=plan.batch_id;
   const dates=[];plan.rows.forEach(r=>{if(r._d)dates.push(r._d)});dates.sort();
   const batch={batch_id,source_type:srcKey,source_system:spec.system,uploaded_by:state.user,
@@ -1335,6 +1353,7 @@ async function confirmLoad(){
     }
     state.facts[srcKey]=keep.concat(plan.fresh);
   }
+  _locallyDirty.add(srcKey);   // boot hydration must not clobber this merge with a late cloud read
   if(prevSame){
     state.batches=state.batches.filter(b=>b.batch_id!==prevSame.batch_id);
     batch.updated_at=batch.uploaded_at;batch.first_uploaded_at=prevSame.first_uploaded_at||prevSame.uploaded_at;
@@ -1360,11 +1379,13 @@ async function confirmLoad(){
   // so it has to finish before saveAudit writes the batch record. The initial yield lets
   // the toast + page paint before the big JSON serialise takes the thread.
   (async()=>{
+    _persistBusy++;   // beforeunload warns while this save is in flight
     try{
       await new Promise(r=>setTimeout(r,80));
       if(srcKey==='BI_ACTIVE_CASES')await pushBI(batch,file);  // real rows + raw archive
       await Promise.all([saveFacts(srcKey),saveAudit()]);
     }catch(e){toast('Saved on screen, but the cloud save failed: '+esc(e.message||e),'err')}
+    finally{_persistBusy--}
   })();
   autoMapAgents(); render();
 }
@@ -1417,6 +1438,7 @@ function dropStore(k){return (window.storage&&window.storage.delete)?Promise.res
 async function clearSource(k){
   if(!confirm('Delete '+(SOURCES[k]?.label||k)+'?\n\nThis removes the file from this device AND from the database. It cannot be undone.'))return;
   delete state.facts[k];
+  _locallyDirty.add(k);   // an in-flight boot read must not resurrect the deleted source
   state.batches=state.batches.filter(b=>b.source_type!==k);
   state.exceptions=(state.exceptions||[]).filter(e=>e.source!==k);
   if(k==='AGENT_LIST')buildIdentity();
@@ -1428,6 +1450,7 @@ async function clearSource(k){
 }
 async function clearAll(){
   const keys=Object.keys(state.facts);
+  [...SRC_KEYS,...SES_KEYS].forEach(k=>_locallyDirty.add(k));   // block boot-hydration resurrection of anything
   state.facts={};state.batches=[];state.exceptions=[];bumpDataVer();
   const jobs=[saveAudit(),deleteBIRows(),...keys.map(dropStore)];
   await Promise.all(jobs);
@@ -3740,7 +3763,7 @@ async function askSend(){
 
 /* ---------------- PAGE: UPLOAD CENTER ---------------- */
 function sesBatchOf(k){return state.batches.find(b=>b.source_type===k&&b.loaded_row_count>0)}
-function clearSession(k){delete state.facts[k];bumpDataVer();storage.delete('cb-facts-'+k).catch(()=>{});state.batches=state.batches.filter(b=>b.source_type!==k);saveAudit();render();toast(SOURCES[k].label+' cleared')}
+function clearSession(k){delete state.facts[k];_locallyDirty.add(k);bumpDataVer();storage.delete('cb-facts-'+k).catch(()=>{});state.batches=state.batches.filter(b=>b.source_type!==k);saveAudit();render();toast(SOURCES[k].label+' cleared')}
 function pageSesUploads(){
   const group=tag=>{const cfg=SES_TAGS[tag];
     return '<div class="card" style="margin-bottom:14px"><div class="card-h"><span class="t">'+cfg.name+' — session snapshots</span><span class="s">same file format as the daily '+cfg.name.toLowerCase()+' upload</span></div>'
@@ -3867,7 +3890,7 @@ function pageUploads(){
      +(rows?'<button class="btn small danger" onclick="clearSource(\''+k+'\')">Delete file</button>':'<span class="file-note">or drag & drop here</span>')
      +'</div></div>';
   }).join('');
-  const bt=state.batches.slice(0,25).map(b=>'<tr><td><b>'+esc(b.batch_id)+'</b></td><td>'+esc(SOURCES[b.source_type]?.label||b.source_type)+'</td><td style="font-size:11px">'+esc(b.original_file_name)+'</td><td class="num">'+b.loaded_row_count.toLocaleString()+'</td><td class="num">'+b.rejected_row_count+'</td><td>'+esc(b.period_start||'—')+' → '+esc(b.period_end||'—')+'</td><td><span class="pill '+(b.validation_status==='passed'?'g':b.validation_status==='warning'?'a':'r')+'">'+b.validation_status+'</span></td><td style="font-size:11px;color:var(--muted)">'+new Date(b.uploaded_at).toLocaleString()+'<br>'+esc(b.uploaded_by)+'</td></tr>').join('');
+  const bt=state.batches.slice(0,25).map(b=>'<tr><td><b>'+esc(b.batch_id)+'</b></td><td>'+esc(SOURCES[b.source_type]?.label||b.source_type)+'</td><td style="font-size:11px">'+esc(b.original_file_name)+'</td><td class="num">'+b.loaded_row_count.toLocaleString()+((b.duplicate_row_count||0)?'<div style="font-size:10px;color:var(--muted)">+'+b.duplicate_row_count.toLocaleString()+' already loaded — skipped</div>':'')+'</td><td class="num">'+b.rejected_row_count+'</td><td>'+esc(b.period_start||'—')+' → '+esc(b.period_end||'—')+'</td><td><span class="pill '+(b.validation_status==='passed'?'g':b.validation_status==='warning'?'a':'r')+'">'+b.validation_status+'</span></td><td style="font-size:11px;color:var(--muted)">'+new Date(b.uploaded_at).toLocaleString()+'<br>'+esc(b.uploaded_by)+'</td></tr>').join('');
   const ex=state.exceptions.slice(0,25).map(e=>'<tr><td>'+esc(e.batch_id)+'</td><td>'+esc(SOURCES[e.source]?.label||e.source)+'</td><td class="num">'+e.row+'</td><td>'+esc(e.reason)+'</td><td style="font-size:11px;color:var(--muted)">'+e.sample+'</td></tr>').join('');
   return '<div class="card" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>Weekly rhythm:</b><span class="pill b">Mon — Ryan uploads all sources</span><span class="pill a">Wed — Jared uploads QA</span><span class="pill v">Fri — Nick reviews Executive view</span>'
    +'<span style="margin-left:auto;display:flex;gap:8px"><button class="btn danger" onclick="if(confirm(\'Clear all uploaded data? KPI dictionary and rules are kept.\'))clearAll()">Clear all data</button></span></div>'
@@ -4055,8 +4078,8 @@ function exportPage(){
   toast('KPI export downloaded','ok');
 }
 function exportBatches(){
-  let csv='batch_id,source_type,source_system,uploaded_by,uploaded_at,period_start,period_end,file,raw,loaded,rejected,status,notes\n';
-  state.batches.forEach(b=>{csv+=[b.batch_id,b.source_type,b.source_system,b.uploaded_by,b.uploaded_at,b.period_start,b.period_end,'"'+b.original_file_name+'"',b.raw_row_count,b.loaded_row_count,b.rejected_row_count,b.validation_status,'"'+(b.notes||'')+'"'].join(',')+'\n'});
+  let csv='batch_id,source_type,source_system,uploaded_by,uploaded_at,period_start,period_end,file,raw,loaded,rejected,duplicates_skipped,superseded_prev_rows,status,notes\n';
+  state.batches.forEach(b=>{csv+=[b.batch_id,b.source_type,b.source_system,b.uploaded_by,b.uploaded_at,b.period_start,b.period_end,'"'+b.original_file_name+'"',b.raw_row_count,b.loaded_row_count,b.rejected_row_count,b.duplicate_row_count||0,b.superseded_prev_rows||0,b.validation_status,'"'+(b.notes||'')+'"'].join(',')+'\n'});
   dl('chatterbox_upload_audit.csv',csv);
 }
 function dl(name,text){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/csv'}));a.download=name;a.click()}
@@ -4168,6 +4191,7 @@ function migrateKpis(saved){
 }
 async function init(){
   const gen=++__initGen;
+  _locallyDirty.clear();   // a fresh init run deliberately refreshes everything from the cloud
   state.kpis=structuredClone(DEFAULT_KPIS);
   state.rules=structuredClone(DEFAULT_RULES);
   const [cfg,audit]=await Promise.all([load('cb-config'),load('cb-audit')]); // PERF: parallel boot reads
@@ -4186,7 +4210,9 @@ async function init(){
   // Parallel + resilient: 15 multi-MB sources load at once; one slow or failed
   // source never blocks or serialises behind the others.
   await Promise.all([...SRC_KEYS,...SES_KEYS].map(async k=>{try{const f=await load('cb-facts-'+k);
-    if(gen===__initGen&&f&&f.length){state.facts[k]=f;hydTick()}}catch(e){}}));
+    // _locallyDirty guard: if the user uploaded or deleted this source while its blob
+    // was still in flight, the local state is NEWER than the read — never clobber it.
+    if(gen===__initGen&&f&&f.length&&!_locallyDirty.has(k)){state.facts[k]=f;hydTick()}}catch(e){}}));
   if(gen!==__initGen)return;
   if(hydT){clearTimeout(hydT);hydT=null}
   state.hydrating=false;
