@@ -314,7 +314,8 @@ export default {
         const context = String(b.context || '').slice(0, 40000);
         const kb = retrieveKB(question);
         let sys = 'You are Ask AgentOS, the DATA ANALYST for The Chatterbox call centre. You have the entire software in front of you: all three analytics apps (Ops Analytics, VAS Analytics, Tracker Analytics), their full stored datasets, the live daily-EOD table, the live rules Dictionary, the operator notes, the NBA scoring framework and the company knowledge base. ANY question about agents, teams, sales, GWP, QA, attendance, leads, cancellations, campaigns, uploads, trends, or any tab of any app is IN SCOPE.\n'
-          + 'WORK LIKE AN ANALYST: (1) answer with the number first, then the insight — compare against targets, previous days and peers when the data is present; compute differences and percentages from figures given in context; (2) cite where each figure comes from (which app/section of the context and the date window) so the reader can verify it; (3) name metric twins explicitly — "conversion" has two definitions (Card = sales ÷ total leads; Lead-Mgmt = sales ÷ total closed) — say which one you are using; (4) if a figure is not in the context, do not refuse: answer what you can and name exactly which tab or upload would hold the missing figure; (5) never invent a number — every figure you state must appear in, or be arithmetically derived from, the context below; (6) flag data-quality caveats you can see (stale digests, missing uploads, unmapped agents) like an analyst would. Only decline questions clearly unrelated to The Chatterbox or its operations (general trivia, news, personal advice, coding help). Be direct and executive; use short paragraphs or tight bullet lists.\n\n'
+          + 'WORK LIKE AN ANALYST: (1) answer with the number first, then the insight — compare against targets, previous days and peers when the data is present; compute differences and percentages from figures given in context; (2) cite where each figure comes from (which app/section of the context and the date window) so the reader can verify it; (3) name metric twins explicitly — "conversion" has two definitions (Card = sales ÷ total leads; Lead-Mgmt = sales ÷ total closed) — say which one you are using; (4) if a figure is not in the context, do not refuse: answer what you can and name exactly which tab or upload would hold the missing figure; (5) never invent a number — every figure you state must appear in, or be arithmetically derived from, the context below; (6) flag data-quality caveats you can see (stale digests, missing uploads, unmapped agents) like an analyst would. Only decline questions clearly unrelated to The Chatterbox or its operations (general trivia, news, personal advice, coding help). Be direct and executive.\n'
+          + 'FORMAT FOR THE CHAT PANEL (it renders this exact markdown subset): **bold** every key figure and label; "- " bullets for lists; short paragraphs separated by one blank line; "### " for a small heading when the answer has sections; a simple | pipe | table | when comparing 2+ items across 2+ columns (always include the |---| separator row). Nothing else — no links, images, code fences or nested lists. Lead with the answer in the first line. Keep it under ~220 words unless the user asks for detail.\n\n'
           + '=== THE SOFTWARE (apps, tabs, manual) ===\n' + SOFTWARE_GUIDE + '\n\n'
           + '=== NBA SCORING FRAMEWORK ===\n' + KB + '\n\n'
           + '=== COMPANY KNOWLEDGE BASE (TCB-KB-V3) ===\n' + kb + '\n=== end knowledge base ===\n\n'
@@ -442,9 +443,22 @@ export default {
         try {
           ai = await env.AI.run(model, { messages: [{ role: 'system', content: sys }, { role: 'user', content: question }], max_tokens: 900 });
         } catch (e) {
-          // model unavailable / context error → fall back to the smaller model with tighter context
+          // model unavailable / context error → smaller model with a REBUILT compact
+          // prompt. The old sys.slice(0,90000) cut the TAIL — which is exactly where
+          // the LIVE data blocks sit — so the fallback answered from instructions
+          // with no numbers. Keep: instructions+framework+KB (head), the current
+          // app's digest (trimmed), and the END of the cloud block (the LIVE
+          // database reads come last, so slicing from the tail keeps them).
           model = FALLBACK_MODEL;
-          ai = await env.AI.run(model, { messages: [{ role: 'system', content: sys.slice(0, 90000) }, { role: 'user', content: question }], max_tokens: 900 });
+          let sysFB = sys;
+          if (sys.length > 88000) {
+            const headEnd = sys.indexOf('=== LIVE DASHBOARD DIGEST');
+            const head = headEnd > 0 ? sys.slice(0, headEnd) : sys.slice(0, 34000);
+            const dig = context ? '\n=== LIVE DASHBOARD DIGEST (current app, trimmed) ===\n' + context.slice(0, 9000) + '\n=== end digest ===\n' : '';
+            const live = cloud ? '\n=== CLOUD DATA (live database reads — authoritative) ===\n' + cloud.slice(-26000) + '\n=== end cloud data ===\n' : '';
+            sysFB = head.slice(0, 34000) + dig + live;
+          }
+          ai = await env.AI.run(model, { messages: [{ role: 'system', content: sysFB }, { role: 'user', content: question }], max_tokens: 900 });
         }
         const answer = (ai && (ai.response || ai.result || '')) || '[no response]';
         ctx.waitUntil(DB.insert('ask_log', [{ asked_by: user.username, question, answer, model }]));

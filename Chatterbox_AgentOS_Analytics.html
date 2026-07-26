@@ -3169,7 +3169,7 @@ function agentOpen(cb){
     ctx+="\nComposite (Adj): "+Math.round(comp.adj)+"/100. Current NBA: "+nba.code+" "+nba.label+".";
     var ep=(state.rules.askEndpoint&&state.rules.askEndpoint.vals[0])||"/api/ask";
     fetch(ep,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+(sessionStorage.getItem("cbx_token")||"")},body:JSON.stringify({question:"Coach this agent. In 2 short bullets say what is working, then 3 bullets on what could be better and the specific action, using the NBA v3.0 framework. Keep it under 90 words.",context:ctx})})
-      .then(function(r){return r.json()}).then(function(j){var el=document.getElementById("acAI");if(el)el.innerHTML=(j.answer?String(j.answer):"(AI unavailable)").replace(/\n/g,"<br>")})
+      .then(function(r){return r.json()}).then(function(j){var el=document.getElementById("acAI");if(el)el.innerHTML=askFmt(j.answer?String(j.answer):"(AI unavailable)")})
       .catch(function(){var el=document.getElementById("acAI");if(el)el.textContent="AI analysis unavailable right now."});
   },50);
   $('#modalBox').classList.add('xl');
@@ -3664,6 +3664,50 @@ function askToggle(){
   if(state.askOpen){renderAskLog();setTimeout(()=>{const i=$('#askIn');if(i)i.focus()},0)}
 }
 function askFill(t){const i=$('#askIn');if(i){i.value=t;i.focus()}}
+/* askFmt — safe markdown-lite for AI answers, shared verbatim by the Ops inline
+   widget and site/ask-widget.js (kept duplicated on purpose — see the widget's
+   footer note). ESCAPES FIRST, then adds only its own tags, so model output can
+   never inject markup. Supports: **bold**, *italic*, `code`, # headings,
+   -/•/1. lists, | tables, paragraph spacing. Styled for the dark chat bubbles. */
+function askFmt(t){
+  t=String(t==null?'':t).replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]});
+  var lines=t.replace(/\r\n?/g,'\n').split('\n');
+  var out=[],list=null;
+  var flush=function(){if(!list)return;out.push('<'+list.t+' style="margin:4px 0 4px 17px;padding:0">'+list.items.map(function(i){return '<li style="margin:2px 0">'+i+'</li>'}).join('')+'</'+list.t+'>');list=null};
+  var inline=function(s){return s
+    .replace(/`([^`]+)`/g,'<code style="background:rgba(148,182,255,.16);border-radius:4px;padding:0 4px;font-size:11.5px">$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g,'$1<i>$2</i>')};
+  var isRow=function(s){return /^\s*\|.*\|\s*$/.test(s)};
+  var i=0;
+  while(i<lines.length){
+    var ln=lines[i];
+    if(isRow(ln)&&i+1<lines.length&&isRow(lines[i+1])){
+      flush();var rows=[];
+      while(i<lines.length&&isRow(lines[i])){rows.push(lines[i]);i++}
+      var cells=function(r){return r.replace(/^\s*\|/,'').replace(/\|\s*$/,'').split('|').map(function(c){return inline(c.trim())})};
+      var body=rows.filter(function(r){return !/^\s*\|[\s\-:|]+\|\s*$/.test(r)});
+      if(body.length){
+        var head=cells(body[0]);
+        out.push('<div style="overflow-x:auto"><table style="border-collapse:collapse;margin:6px 0;font-size:11.5px;min-width:60%">'
+          +'<tr>'+head.map(function(c){return '<th style="text-align:left;padding:3px 8px;border-bottom:1.5px solid rgba(148,182,255,.4)">'+c+'</th>'}).join('')+'</tr>'
+          +body.slice(1).map(function(r){return '<tr>'+cells(r).map(function(c){return '<td style="padding:3px 8px;border-bottom:1px solid rgba(148,182,255,.14)">'+c+'</td>'}).join('')+'</tr>'}).join('')
+          +'</table></div>');
+      }
+      continue;
+    }
+    var mUl=ln.match(/^\s*[-•*]\s+(.*)/),mOl=ln.match(/^\s*\d+[.)]\s+(.*)/);
+    if(mUl){if(!list||list.t!=='ul'){flush();list={t:'ul',items:[]}}list.items.push(inline(mUl[1]));i++;continue}
+    if(mOl){if(!list||list.t!=='ol'){flush();list={t:'ol',items:[]}}list.items.push(inline(mOl[1]));i++;continue}
+    flush();
+    var mH=ln.match(/^\s*#{1,4}\s+(.*)/);
+    if(mH){out.push('<div style="font-weight:800;margin:7px 0 3px">'+inline(mH[1])+'</div>');i++;continue}
+    if(!ln.trim()){if(out.length&&out[out.length-1]!=='<div style="height:6px"></div>')out.push('<div style="height:6px"></div>');i++;continue}
+    out.push('<div style="margin:2px 0">'+inline(ln)+'</div>');i++;
+  }
+  flush();
+  return out.join('');
+}
 function renderAskLog(){
   const l=$('#askLogBox');if(!l)return;
   if(state.askOnline==null)state.askOnline=!!sessionStorage.getItem('cbx_token');const st=$('#askStatus');if(st){st.className='chip '+(state.askOnline?'g':'a');st.innerHTML='<span class="dot"></span>'+(state.askOnline?'AI online':'AI offline')}
@@ -3784,7 +3828,7 @@ async function askSend(){
     const r=await fetch(ep,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(sessionStorage.getItem('cbx_token')||'')},body:JSON.stringify({question:q,context:cbxContext()})});
     if(!r.ok)throw new Error('HTTP '+r.status);
     const j=await r.json();state.askOnline=true;
-    html=esc(j.answer||'(empty reply)').replace(/\n/g,'<br>');
+    html=askFmt(j.answer||'(empty reply)');   // markdown-lite: bold, lists, tables — escape-first, injection-safe
   }catch(e){
     state.askOnline=false;
     html='Could not reach the AI just now — please try again in a moment.';
