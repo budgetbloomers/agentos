@@ -136,6 +136,7 @@
 
   main#view{padding:22px;max-width:1720px;width:100%;margin:0 auto;animation:pagein .3s ease}
   @keyframes pagein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  main#view.no-anim *{animation:none!important}  /* sort/search/filter re-renders paint instantly; the draw replays only on a tab change */
   .page-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:16px}
   .page-head h2{font-size:20px;font-weight:800;letter-spacing:-.02em}
   .page-head .sub{color:var(--muted);font-size:13px}
@@ -649,8 +650,19 @@ function ingestText(name, text, expected){
     const type=detectType(header, sn);
     if(!type) continue;
     if(type==='trackerDaily'&&dailyDone) continue;
-    const res=INGEST[type](recs, name, sn);
-    if(res){ ingested.push(res); if(type==='trackerDaily')dailyDone=true; }
+    let res=null;
+    try{ res=INGEST[type](recs, name, sn); }
+    catch(err){ toast('Error reading "'+name+'" as '+type+': '+(err&&err.message||err)); continue; }   // a bad row set must fail LOUDLY, not as an unhandled rejection
+    if(res){
+      // per-date stores REPLACE whole days (workbook semantics): a partial export for a
+      // day another file already covers silently drops that file's rows — say so.
+      const pre2=(res.type||type).split(' ')[0];
+      if(['bi','calls','evals'].includes(pre2)){
+        const cov=new Set(S.files.filter(x=>x.name!==name&&x.type.split(' ')[0]===pre2).flatMap(x=>x.dates||[]));
+        const shared=(res.dates||[]).filter(d=>cov.has(d));
+        if(shared.length) toast('Heads up: "'+name+'" replaced '+shared.length+' day(s) another '+pre2+' file covered — days load whole-file, so use full-day exports');
+      }
+      ingested.push(res); if(type==='trackerDaily')dailyDone=true; }
   }
   if(!ingested.length && expected && INGEST[expected]){
     // slot upload with unrecognised headers: try the slot's own parser as a last resort
@@ -813,8 +825,16 @@ function removeFile(idx){
   if(!confirm('Remove "'+f.name+'"?\n\nIts data leaves the dashboard and the change is saved to the cloud database.')) return;
   const storeOf={bi:'sales',calls:'calls',attendance:'att',evals:'evals'};
   const st=storeOf[f.type.split(' ')[0]];
-  if(st && f.dates) for(const d of f.dates) delete S[st][d];
-  if(f.type.startsWith('tracker')) for(const d of f.dates||[]) delete S.tracker[d];
+  // Only delete dates NO OTHER surviving file of the same type also covers — removing
+  // an older overlapping export must not destroy days the surviving file loaded.
+  // (The store holds the latest ingest per date; if the removed file had overwritten a
+  // shared date, re-upload the surviving file to restore its numbers.)
+  const pre=f.type.split(' ')[0];
+  const others=new Set(S.files.filter((x,i2)=>i2!==idx&&x.type.split(' ')[0]===pre).flatMap(x=>x.dates||[]));
+  let keptShared=0;
+  if(st && f.dates) for(const d of f.dates){ if(others.has(d)){keptShared++;continue;} delete S[st][d]; }
+  if(f.type.startsWith('tracker')) for(const d of f.dates||[]){ if(others.has(d)){keptShared++;continue;} delete S.tracker[d]; }
+  if(keptShared) toast(keptShared+' day(s) kept — another '+pre+' file also covers them (re-upload it if this file had replaced those days)');
   if(f.type==='open cases') S.opencases=null;
   S.files.splice(idx,1);
   save(); rebuild(); render();
@@ -1116,7 +1136,9 @@ function buildModel(range, periodKey){
     for(const c in S.evals[d]){ if(scoped&&!seen.has(c)) continue;
       for(const v of S.evals[d][c]){qs+=(typeof v==='number'?v:v.s);qn++;} } }
 
-  return {range,dates,weeks,facts:sfacts,allTls,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
+  // facts:sfacts = the model is already scoped; agg is exported so the dashboard can
+  // re-aggregate through the SAME frozen function (re-applying gFilter is idempotent).
+  return {range,dates,weeks,facts:sfacts,allTls,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,agg,
      qaAvg:qn?qs/qn/100:null,qaN:qn,periodKey,
      dailyByDate:(()=>{ const o={}; sfacts.forEach(f=>{ const t=o[f.date]=o[f.date]||{Cuddle:0,Courtesy:0,VT:0}; t[f.campaign]+=f.sales; }); return o; })()};
 }
@@ -1186,7 +1208,7 @@ function pctPill(x,warnAt=0.75){
   const cls=x>=S.settings.onTarget?'pgood':(x>=warnAt?'pwarn':'pcrit');
   return `<span class="pill ${cls}">${fmtPct(x)}</span>`;
 }
-const campChip=c=>`<span class="campchip"><i style="background:var(--${(c||'').toLowerCase()})"></i>${c}</span>`;
+const campChip=c=>c?`<span class="campchip"><i style="background:var(--${String(c).toLowerCase()})"></i>${c}</span>`:`<span class="campchip"><i style="background:var(--muted)"></i>—</span>`;
 const CAMPC={Cuddle:'var(--cuddle)',Courtesy:'var(--courtesy)',VT:'var(--vt)'};
 
 /* ---------- daily series builders ---------- */
@@ -1314,12 +1336,15 @@ function wireLine(id,cfg){
   hit.addEventListener('mouseleave',()=>{tip.style.display='none';cross.style.display='none';});
 }
 // stacked daily bars (two campaigns)
-function stackChart(box){
+function stackChart(box,valsBy){
   const days=M.dates;
   if(!days.length) return '<div class="empty">No data</div>';
   const W=640,h=250,P={l:40,r:12,t:12,b:30};
-  const vals=days.map(d=>M.dailyByDate[d]||{Cuddle:0,Courtesy:0,VT:0});
-  const max=Math.max(10,...vals.map(v=>v.Cuddle+v.Courtesy+(v.VT||0)))*1.05;
+  const src=valsBy||M.dailyByDate;
+  const vals=days.map(d=>src[d]||{Cuddle:0,Courtesy:0,VT:0});
+  // y-max over the DRAWN campaigns only — VT is not stacked here, and including it
+  // squashed the visible bars against invisible headroom on VT-heavy days
+  const max=Math.max(10,...vals.map(v=>v.Cuddle+v.Courtesy))*1.05;
   const bw=Math.min(26,(W-P.l-P.r)/days.length-3);
   const x=i=>P.l+(W-P.l-P.r)*(i+0.5)/days.length;
   const y=v=>P.t+(h-P.t-P.b)*(1-v/max);
@@ -1649,7 +1674,9 @@ function renderTop(){
     burger.onclick=()=>document.getElementById('app').classList.toggle('sideopen'); }
 }
 function go(page){ S.ui.tab=page; save(); renderSide(); renderPage(); }
-function renderAll(){ renderSide(); renderTop(); renderPage(); }
+function renderAll(){ renderSide(); renderTop(); renderPage();
+  // an open drawer must not keep showing pre-hydrate numbers after a background sync
+  if(drawerCode){ const dr=$('#drawer'); if(dr&&dr.classList.contains('open')){ const html=drawerHTML(drawerCode); if(html){ dr.innerHTML=html; window.__vasCoach(drawerCode); } else closeDrawer(); } } }
 
 /* global filter helpers */
 function gFilter(f){
@@ -1679,16 +1706,20 @@ function renderPage(){
   const el=$('#view');
   const fn=PAGES[S.ui.tab]||PAGES.dashboard;
   // skeleton flash for perceived smoothness
+  const again=window.__lastTab===S.ui.tab; window.__lastTab=S.ui.tab;
+  el.classList.toggle('no-anim',again);   // sort/filter/search re-renders repaint instantly — the 1.1s chart draw replays only on a real tab change
   el.innerHTML=`<div class="grid kpis">${Array(4).fill('<div class="skel" style="height:118px"></div>').join('')}</div>
     <div class="grid cols2 mt"><div class="skel" style="height:300px"></div><div class="skel" style="height:300px"></div></div>`;
   requestAnimationFrame(()=>requestAnimationFrame(()=>{
-    el.style.animation='none'; el.offsetHeight; el.style.animation='';
+    if(!again){ el.style.animation='none'; el.offsetHeight; el.style.animation=''; }
     el.innerHTML=fn();
     if(PAGES['_wire_'+S.ui.tab]) PAGES['_wire_'+S.ui.tab]();
   }));
 }
+function periodLabel(){ try{ if(M&&M.range&&M.range.from) return M.range.from===M.range.to?M.range.from:(M.range.from+' → '+M.range.to); }catch(e){} return S.ui.month||'this period'; }
+function periodTag(){ return periodLabel().replace(/[^0-9A-Za-z_-]+/g,'_'); }
 function emptyState(){
-  return `<div class="card"><div class="empty"><div class="big">No data for ${S.ui.month} yet</div>
+  return `<div class="card"><div class="empty"><div class="big">No data for ${esc(periodLabel())} yet</div>
     Upload the day's exports in <a class="linky" onclick="go('data')">Data &amp; Uploads</a> — money (Power BI - Active Cases), call records, attendance and QA evaluations.</div></div>`;
 }
 
@@ -1705,7 +1736,7 @@ PAGES.manual=()=>`<div class="card vasguide" style="max-width:900px" id="manualC
 <p>Each KPI shows its <b>value</b>, its <b>target</b> (e.g. "target ≥ 90%"), a trend arrow versus the previous period, and a mini-sparkline. Click any KPI for its full definition and what to do when it turns red.</p>
 
 <h2>2 · The rules behind the scores (NBA v3.0)</h2>
-<p>Agents are scored by The Chatterbox NBA Scoring Framework. You do not calculate anything — the system does — but knowing the rules tells you <i>why</i> an agent is flagged.</p>
+<p>The NBA Scoring Framework below is the company standard. It is scored live in <b>Ops Analytics</b> — open any agent's card there for the primary NBA and the composite. Pulse shows its own operational <b>Score</b> (a quick 4-factor sort: target 45% · QA 25% · attendance 20% · opt-ins 10%) — it is <i>not</i> the NBA composite. Knowing the framework still tells you <i>why</i> an agent is flagged.</p>
 
 <h3>The Two-Check Sales Rule</h3>
 <p><b>Value is always checked before Volume.</b> Check 1 (Value): GWP per sale ≥ R99. Check 2 (Volume): daily sales vs the agent's tenure target. A high sales count at low value still fails — because it costs the business on every policy.</p>
@@ -1740,7 +1771,7 @@ PAGES.manual=()=>`<div class="card vasguide" style="max-width:900px" id="manualC
 <h2>3 · How to use the software</h2>
 <ol>
 <li><b>Check Data Trust first.</b> The bar at the top of the page shows every source's freshness — green is fresh, amber/red is stale. A beautiful chart on stale data is a confident wrong answer, so always read the trust bar before the numbers.</li>
-<li><b>Upload your exports</b> in the Upload Station. The type is detected from the headers; rejected rows are logged with reasons, never silently dropped.</li>
+<li><b>Upload your exports</b> in the Upload Station. The type is detected from the headers; unrecognised files are refused with a message, and identities that don't match the roster appear under Data → Unmatched agents for remapping.</li>
 <li><b>Filter and set the date range</b> in the top bar — every KPI, chart and table re-window to your selection.</li>
 <li><b>Click any agent's name</b> (on any table or chart) to open their full card — framework score, the primary NBA, the composite breakdown, graphs, peer comparison, and an AI coaching analysis of what to improve.</li>
 <li><b>Ask AgentOS</b> — the chat bubble in the bottom-right answers questions about the numbers on screen, the framework, and the business. It never invents figures.</li>
@@ -1751,8 +1782,13 @@ PAGES.manual=()=>`<div class="card vasguide" style="max-width:900px" id="manualC
 </div>`;
 PAGES.dashboard=()=>{
   if(!M||!M.dates.length) return emptyState();
-  const g=M.grand;
-  const gp=(MP&&MP.dates.length)?MP.grand:null;
+  // The global Campaign/Team filters drive every other tab — now this one too.
+  // Aggregate the filtered facts through the SAME frozen agg(): with no filter set,
+  // gFilter's default (exclude VT) makes this byte-identical to M.grand, so the
+  // workbook-verified totals are untouched.
+  const FILT=!!(S.ui.camp||S.ui.team);
+  const g=FILT?M.agg(M.facts.filter(gFilter),null):M.grand;
+  const gp=(MP&&MP.dates.length)?(FILT?MP.agg(MP.facts.filter(gFilter),null):MP.grand):null;
   const days=M.dates.length, pdays=(MP&&MP.dates.length)?MP.dates.length:0;
   const rate=(v,dd)=>dd?v/dd:null;
   const vsLab='vs last period';
@@ -1768,10 +1804,10 @@ PAGES.dashboard=()=>{
   const row1=[
     {lab:'Total GWP',val:fmtR(g.gwp),icon:I.money,color:'var(--accent)',
      cmp:gp?deltaChip(rate(g.gwp,days),rate(gp.gwp,pdays)):'',sub:`${fmtPct(g.pctG)} of target`,
-     s:seriesBy(f=>f.gwp),tip:'Gross written premium from activated sales — '+fmtPct(g.pctG)+' of the '+fmtR(g.gwpT)+' target.'},
+     s:seriesBy(f=>f.gwp,gFilter),tip:'Gross written premium from activated sales — '+fmtPct(g.pctG)+' of the '+fmtR(g.gwpT)+' target.'},
     {lab:'Policies Sold',val:fmtNum(g.sales),icon:I.tag,color:'var(--cuddle)',
      cmp:gp?deltaChip(rate(g.sales,days),rate(gp.sales,pdays)):'',sub:`${fmtPct(g.pctT)} of target`,
-     s:seriesBy(f=>f.sales),tip:'Unique activated opportunities — '+fmtPct(g.pctT)+' of the '+fmtNum(g.target)+' target.'},
+     s:seriesBy(f=>f.sales,gFilter),tip:'Unique activated opportunities — '+fmtPct(g.pctT)+' of the '+fmtNum(g.target)+' target.'},
     {lab:'Ave GWP / Sale',val:fmtR(g.aveG,2),icon:I.target,color:'var(--violet)',
      cmp:gp?deltaChip(g.aveG,gp.aveG):'',s:ratioSeries(f=>f.gwp,f=>f.sales),tip:'GWP achieved ÷ sales achieved.'},
     {lab:'SPD',val:fmtNum(g.spd,2),icon:I.up,color:'var(--courtesy)',
@@ -1818,7 +1854,7 @@ PAGES.dashboard=()=>{
     raw:{pctT:g.pctT,qa:M.qaAvg,att:g.att,optPct:g.optPct,pctG:g.pctG,ans:g.ansPct}}],268);
 
   // top performing agents with deltas
-  const ranked=M.agents.filter(a=>!vtHidden(a.code)).map(a=>({a,g:primaryAgg(a.code)})).filter(x=>x.g&&(x.g.sales>0||x.g.emp>0))
+  const ranked=M.agents.filter(a=>(S.ui.camp?M.primaryCamp[a.code]===S.ui.camp:!vtHidden(a.code))&&(!S.ui.team||a.tl===S.ui.team)).map(a=>({a,g:primaryAgg(a.code)})).filter(x=>x.g&&(x.g.sales>0||x.g.emp>0))
     .sort((x,y)=>(y.g.gwp||0)-(x.g.gwp||0));
   const prevOf=code=>{
     if(MP&&MP.dates.length){ const p=(MP.mtdCC.Cuddle||{})[code]||(MP.mtdCC.Courtesy||{})[code];
@@ -1832,33 +1868,34 @@ PAGES.dashboard=()=>{
     </div>`; }).join('');
 
   const ins=genInsights();
-  const tlEntries=Object.entries(M.tlAgg).map(([k,o])=>{const [camp,tl]=k.split('|');
+  const tlEntries=Object.entries(M.tlAgg).filter(([k])=>{const [camp,tl]=k.split('|');return (!S.ui.camp||camp===S.ui.camp)&&(!S.ui.team||tl===S.ui.team)}).map(([k,o])=>{const [camp,tl]=k.split('|');
     return {label:(tl||'—')+(Object.keys(M.tlAgg).filter(x=>x.endsWith('|'+tl)).length>1?' · '+camp:''),v:o.pctT||0,color:CAMPC[camp]};})
     .sort((a,b)=>b.v-a.v);
   const hist=monthlyHistory();
-  const qa=qaSeries(null);
+  const qa=qaSeries(null);   // period QA trend (floor-wide; per-agent QA lives in the drawer)
 
   return `
   <div class="page-head"><h2>Dashboard</h2><div class="sub">${M.range.from} → ${M.range.to} · ${days} dialing day${days===1?'':'s'}${scopeNote()}</div></div>
   <div class="kpirow">${row1.map(k=>kpiCard(k)).join('')}</div>
   <div class="midgrid">
     <div class="card"><div class="cardhead"><div><h3>Revenue trend</h3><div class="sub">daily GWP performance</div></div></div>
-      ${lineChart(null,{dates:M.dates,series:[{name:'GWP',color:'var(--accent)',values:seriesBy(f=>f.gwp).values}],money:true,h:262})}</div>
+      ${lineChart(null,{dates:M.dates,series:[{name:'GWP',color:'var(--accent)',values:seriesBy(f=>f.gwp,gFilter).values}],money:true,h:262})}</div>
     <div class="card"><div class="cardhead"><div><h3>Performance by metric</h3><div class="sub">period breakdown</div></div></div>
       <div style="display:grid;place-items:center">${radar}</div></div>
     <div class="card"><div class="cardhead"><div><h3>Top performing agents</h3><div class="sub">by total GWP</div></div>
       <div class="spacer"></div><button class="btn small ghost" onclick="go('leaderboard')">View all</button></div>${topList}</div>
   </div>
   <div class="kpirow">${row2.map(k=>kpiCard(k,true)).join('')}</div>
-  ${ins.length?`<div class="insights">${ins.map(x=>`<div class="insight tone-${x.tone}"><span class="ic">${x.icon}</span><span><b>${esc(x.title)}</b><p>${x.text}</p></span></div>`).join('')}</div>`:''}
+  ${FILT?`<div class="card" style="margin-bottom:14px"><div class="sub" style="padding:4px 2px">Insights and the monthly history are floor-wide — clear the Campaign/Team filter to see them.</div></div>`:(ins.length?`<div class="insights">${ins.map(x=>`<div class="insight tone-${x.tone}"><span class="ic">${x.icon}</span><span><b>${esc(x.title)}</b><p>${x.text}</p></span></div>`).join('')}</div>`:'')}
   <div class="cols3d">
-    <div class="card"><div class="cardhead"><div><h3>Daily sales by campaign</h3><div class="sub">stacked activations</div></div></div>${stackChart()}</div>
+    <div class="card"><div class="cardhead"><div><h3>Daily sales by campaign</h3><div class="sub">stacked activations${FILT?' · filtered':''}</div></div></div>${S.ui.camp==='VT'?'<div class="empty">Tracker (VT) units are not stacked here — see MTD → VT for the daily view.</div>':stackChart(null,FILT?(()=>{const o={};M.facts.filter(gFilter).forEach(f=>{const t=o[f.date]=o[f.date]||{Cuddle:0,Courtesy:0,VT:0};t[f.campaign]+=f.sales});return o})():null)}</div>
     <div class="card"><div class="cardhead"><div><h3>Teams — % to sales target</h3></div></div>${hbarChart(tlEntries,{target:1})}</div>
     <div class="card"><div class="cardhead"><div><h3>QA trend</h3><div class="sub">daily average score</div></div></div>
       ${qa.dates.length>1?lineChart(null,{dates:qa.dates,series:[{name:'QA',color:'var(--good)',values:qa.values}],pct:true,h:250}):'<div class="empty">Upload QA evaluations to see the trend</div>'}</div>
   </div>
-  ${!(S.ui.camp||S.ui.team)&&hist.length>1?`<div class="card" style="margin-bottom:14px"><div class="cardhead"><div><h3>Monthly history</h3>
-    <div class="sub">GWP per month — snapshots and daily data combined</div></div></div>
+  ${(hist.length>1&&!FILT)?`<div class="card" style="margin-bottom:14px"><div class="cardhead"><div><h3>Monthly history</h3>
+    <div class="sub">GWP per month · floor-wide (filters don't apply)</div></div></div>
+
     ${hbarChart(hist.map(h=>({label:h.month+'  ('+fmtNum(h.sales)+' sales'+(h.src==='snapshot'?' · snapshot':'')+')',v:h.gwp,color:h.month===M.range.from.slice(0,7)?'var(--accent)':'var(--cuddle)'})),{pct:false,money:true})}</div>`:''}
   ${dashTable(ranked)}`;
 };
@@ -1902,7 +1939,7 @@ function dashTable(ranked){
 window.dashGo=p=>{ S.ui.dashPage=p; save(); renderPage(); };
 let dashQT=null;
 window.dashQ=v=>{ clearTimeout(dashQT); dashQT=setTimeout(()=>{ S.ui.dashQ=v; S.ui.dashPage=1; save(); renderPage();
-  const inp=document.querySelector('.cardhead input[type=search]'); if(inp){ inp.focus(); inp.setSelectionRange(v.length,v.length);} },320); };
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ const inp=document.querySelector('.cardhead input[type=search]'); if(inp){ inp.focus(); inp.setSelectionRange(v.length,v.length);} })); },320); };
 
 /* ---------- agents table ---------- */
 let agentSort={key:'gwp',dir:-1};
@@ -1930,7 +1967,7 @@ PAGES.agents=()=>{
     {h:'Calls',f:x=>x.g.calls||0},{h:'AHT',f:x=>x.g.aht?fmtDur(x.g.aht):''},{h:'Score',f:x=>Math.round(x.sc*100)},{h:'Risk',f:x=>x.r.level}],rows};
   return `
   <div class="page-head"><h2>Agent performance</h2><div class="sub">${rows.length} agents · ${M.range.from} → ${M.range.to}${scopeNote()}</div>
-    <div class="spacer"></div><button class="btn small" onclick="exportCSV('agents_${S.ui.month}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
+    <div class="spacer"></div><button class="btn small" onclick="exportCSV('agents_${periodTag()}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
   <div class="filters">
     <input type="search" placeholder="Search name, code, team…" value="${esc(S.ui.agentQ||'')}" oninput="agentQ(this.value)">
     <div class="chiprow">${['','Low','Watch','Medium','High'].map(r=>`<button class="chip ${S.ui.risk===r||(!S.ui.risk&&!r)?'on':''}" onclick="S.ui.risk='${r}';save();renderPage()">${r||'All risk'}</button>`).join('')}</div>
@@ -1957,7 +1994,7 @@ PAGES.agents=()=>{
 window.setSort=k=>{ agentSort=agentSort.key===k?{key:k,dir:-agentSort.dir}:{key:k,dir:k==='name'||k==='team'?1:-1}; renderPage(); };
 let agentQT=null;
 window.agentQ=v=>{ clearTimeout(agentQT); agentQT=setTimeout(()=>{ S.ui.agentQ=v; save(); renderPage();
-  const inp=$('#view input[type=search]'); if(inp){ inp.focus(); inp.setSelectionRange(v.length,v.length);} },320); };
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ const inp=$('#view input[type=search]'); if(inp){ inp.focus(); inp.setSelectionRange(v.length,v.length);} })); },320); };
 
 /* ---------- leaderboard ---------- */
 PAGES.leaderboard=()=>{
@@ -2116,7 +2153,8 @@ function agentRows(camp, week){
   if(!M) return [];
   const src=week?((M.wtdCC[week]||{})[camp]||{}):M.mtdCC[camp];
   const roleOf={}; S.roster.forEach(a=>roleOf[a.code]=a.role||'');
-  const rows=Object.values(src||{}).map(g=>({...g, prov:g.prov>0, role:roleOf[g.code]||''}));
+  let rows=Object.values(src||{}).map(g=>({...g, prov:g.prov>0, role:roleOf[g.code]||''}));
+  if(S.ui.team) rows=rows.filter(r=>r.tl===S.ui.team);   // screen now matches the export, which already applies the team filter
   rows.sort((x,y)=>(y.spd||0)-(x.spd||0));
   return rows;
 }
@@ -2220,7 +2258,7 @@ PAGES.daily=()=>{
   window.__exp={name:'daily',cols,rows};
   return `
   <div class="page-head"><h2>Daily detail</h2><div class="sub">${rows.length} agent-day rows</div>
-    <div class="spacer"></div><button class="btn small" onclick="exportCSV('daily_${S.ui.month}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
+    <div class="spacer"></div><button class="btn small" onclick="exportCSV('daily_${periodTag()}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
   <div class="filters">
     <button class="btn small" title="Previous day" onclick="dailyStep(-1)">‹</button>
     <select onchange="dailyF('date',this.value)"><option value="">All days</option>${M.dates.map(d=>`<option ${f.date===d?'selected':''} value="${d}">${fmtDay(d)}</option>`).join('')}</select>
@@ -2252,7 +2290,7 @@ PAGES.pivot=()=>{
     (M.byAgentDay[a.code]||[]).forEach(f=>{ if(!gFilter(f))return; per[f.date]=(per[f.date]||0)+f.sales; tot+=f.sales; });
     return {a,per,tot};
   }).sort((x,y)=>y.tot-x.tot);
-  const maxCell=Math.max(1,...rows.flatMap(r=>days.map(d=>r.per[d]||0)));
+  const maxCell=rows.reduce((m,r)=>{for(const d of days){const v=r.per[d]||0;if(v>m)m=v}return m},1);
   const heat=v=>{ if(!v) return ''; const t=Math.min(1,v/maxCell);
     return `background:color-mix(in srgb, var(--accent) ${Math.round(10+t*55)}%, transparent);border-radius:6px;`; };
   const head='<th class="l">Agent</th>'+days.map(d=>`<th>${d.slice(8)}/${d.slice(5,7)}</th>`).join('')+'<th>Total</th>';
@@ -2262,7 +2300,7 @@ PAGES.pivot=()=>{
   const foot=`<tr class="total"><td class="l">Grand Total</td>${colTot.map(v=>`<td>${v}</td>`).join('')}<td>${colTot.reduce((a,b)=>a+b,0)}</td></tr>`;
   window.__exp={name:'pivot',cols:[{h:'Agent',f:r=>r.a.name},{h:'Code',f:r=>r.a.code},...days.map(d=>({h:d,f:r=>r.per[d]||0})),{h:'Total',f:r=>r.tot}],rows};
   return `<div class="page-head"><h2>Sales heatmap</h2><div class="sub">sales per agent per day — darker is more</div>
-    <div class="spacer"></div><button class="btn small" onclick="exportCSV('pivot_${S.ui.month}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
+    <div class="spacer"></div><button class="btn small" onclick="exportCSV('pivot_${periodTag()}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
     <div class="tablewrap"><table class="data"><thead><tr>${head}</tr></thead><tbody>${body}${foot}</tbody></table></div>`;
 };
 
@@ -2288,7 +2326,7 @@ PAGES.attend=()=>{
   window.__exp={name:'attendance',cols:[{h:'Agent',f:r=>r.a.name},{h:'Code',f:r=>r.a.code},{h:'Team',f:r=>r.a.tl},
     ...days.map(d=>({h:d,f:r=>r.per[d]?r.per[d].act:''})),{h:'Att %',f:r=>r.att!=null?(r.att*100).toFixed(1)+'%':''}],rows};
   return `<div class="page-head"><h2>Attendance</h2><div class="sub">shift register per agent per day — sorted worst first · ✓ full · ½ half · ✕ absent</div>
-    <div class="spacer"></div><button class="btn small" onclick="exportCSV('attendance_${S.ui.month}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
+    <div class="spacer"></div><button class="btn small" onclick="exportCSV('attendance_${periodTag()}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
   ${attCov<days.length?`<div class="warnbox">Attendance files cover ${attCov} of ${days.length} dialing days — on uncovered days agents with activity are assumed present.</div>`:''}
   <div class="tablewrap"><table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 };
@@ -2388,7 +2426,7 @@ PAGES.adjust=()=>{
   const adj=S.adjust[M.periodKey]||{};
   const rows=filteredAgents().map(a=>({a,c:(adj[a.code]||{}).c||0,r:(adj[a.code]||{}).r||0}));
   return `<div class="page-head"><h2>Adjustments</h2>
-    <div class="sub">cancellations &amp; referrals for ${S.ui.month} — no upload carries these, so key them here</div></div>
+    <div class="sub">cancellations &amp; referrals for ${esc(periodLabel())} — no upload carries these, so key them here</div></div>
   <div class="card" style="padding:0;overflow:hidden"><div class="tablewrap" style="border:none"><table class="data"><thead><tr>
     <th class="l">Team Leader</th><th class="l">Agent</th><th class="l">Campaign</th><th>Cancellations</th><th>Referrals</th></tr></thead><tbody>
   ${rows.map(r=>`<tr><td class="l">${esc(r.a.tl)}</td>
@@ -2401,7 +2439,7 @@ PAGES.adjust=()=>{
 window.setAdj=(code,k,v)=>{
   const adj=S.adjust[M.periodKey]=S.adjust[M.periodKey]||{};
   (adj[code]=adj[code]||{c:0,r:0})[k]=Math.max(0,parseInt(v,10)||0);
-  save(); rebuild();
+  save(); rebuild(); renderPage();   // the edit fires onchange (commit), so repainting Canc %/grand here can't steal focus mid-typing
 };
 
 PAGES.settings=()=>{
@@ -2446,15 +2484,18 @@ PAGES.settings=()=>{
 
 /* ================= agent profile drawer ================= */
 let drawerCode=null;
+window.__vasCoachCache={};
 window.__vasCoach=function(code){try{
   var el=document.getElementById("vasAI"); if(!el) return;
+  var ckey=code+"|"+(S.ui.preset||"")+(S.ui.month||"")+(S.ui.from||"")+(S.ui.to||"");
+  if(window.__vasCoachCache[ckey]){ el.innerHTML=window.__vasCoachCache[ckey]; return; }   // switching drawer chart tabs must not re-fire the LLM
   var dr=document.getElementById("drawer");
   var name=(dr.querySelector(".dhead h2")||{}).textContent||code;
   var sub=(dr.querySelector(".dhead .sub")||{}).textContent||"";
   var kpis=[]; dr.querySelectorAll(".minikpi").forEach(function(m){var l=(m.querySelector(".lab")||{}).textContent||"";var v=(m.querySelector(".val")||{}).textContent||"";if(l)kpis.push(l+": "+v)});
   var ctx="VAS agent "+name.trim()+" — "+sub.trim()+".\nMetrics this period: "+kpis.join(", ")+".";
   fetch("https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/ask",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+(sessionStorage.getItem("cbx_token")||"")},body:JSON.stringify({question:"Coach this VAS sales agent. 2 short bullets on what is working, then 3 bullets on what could be better with specific actions. Under 90 words.",context:ctx})})
-    .then(function(r){return r.json()}).then(function(j){var e2=document.getElementById("vasAI");if(e2)e2.innerHTML=(j.answer?String(j.answer):"(AI unavailable)").replace(/\n/g,"<br>")})
+    .then(function(r){return r.json()}).then(function(j){var e2=document.getElementById("vasAI");if(!e2)return;var html=(window.askFmt?window.askFmt(j.answer?String(j.answer):"(AI unavailable)"):String(j.answer||"(AI unavailable)").replace(/[&<>]/g,function(c){return({"&":"&amp;","<":"&lt;",">":"&gt;"})[c]}).replace(/\n/g,"<br>"));e2.innerHTML=html;window.__vasCoachCache[ckey]=html;})
     .catch(function(){var e2=document.getElementById("vasAI");if(e2)e2.textContent="AI analysis unavailable right now."});
 }catch(e){}};
 window.openDrawer=code=>{
@@ -2479,8 +2520,8 @@ function drawerHTML(code){
   // ranks
   const rankAll=M.agents.map(x=>({c:x.code,g:(primaryAgg(x.code)||{}).gwp||0})).sort((x,y)=>y.g-x.g);
   const rankCo=rankAll.findIndex(x=>x.c===code)+1;
-  const teamCodes=M.agents.filter(x=>x.tl===a.tl).map(x=>x.code);
-  const rankTeam=rankAll.filter(x=>teamCodes.includes(x.c)).findIndex(x=>x.c===code)+1;
+  const teamCodes=new Set(M.agents.filter(x=>x.tl===a.tl).map(x=>x.code));
+  const rankTeam=rankAll.filter(x=>teamCodes.has(x.c)).findIndex(x=>x.c===code)+1;
   // badges
   const badges=[];
   if(rankCo===1) badges.push(['🏆','Top earner company-wide']);
@@ -2621,7 +2662,7 @@ function exportReport(){
     tlAoa.push([lab,...tlKeys.map(k=>{ const v=M.tlAgg[k][key]; return v==null?'':(typeof v==='number'?(key.startsWith('pct')||key==='att'?(v*100).toFixed(1)+'%':Math.round(v*100)/100):v); })]);
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(tlAoa),'TL MTD');
   const tag=(S.ui.camp||'All')+(S.ui.team?'_'+S.ui.team.replace(/[^A-Za-z0-9]+/g,''):'');
-  XLSX.writeFile(wb,`VAS_${tag}_${S.ui.month}_${S.ui.mode}.xlsx`);
+  XLSX.writeFile(wb,`VAS_${tag}_${periodTag()}_${S.ui.mode}.xlsx`);
   toast('Workbook exported (.xlsx)');
 }
 
@@ -2667,7 +2708,9 @@ async function fileToText(f){
 }
 async function handleFiles(list, expected){
   let ok=0;
+  if(list&&list.length)toast('Parsing '+list.length+' file'+(list.length>1?'s':'')+'…');
   for(const f of list){
+    await new Promise(r=>requestAnimationFrame(r));   // let the toast/paint land between files
     let text=null;
     try{ text=await fileToText(f); }catch(e){ toast('Could not read '+f.name+' — '+(e.message||e)); }
     if(text==null) continue;
@@ -2728,6 +2771,7 @@ function cbxVasContext(){try{
   if(g.ans!=null)p.push("Answered: "+g.ans);
   if(M.qaAvg!=null)p.push("Avg QA: "+(Math.round(M.qaAvg*1000)/10)+"%");
   if(M.qaN!=null)p.push("QA evals: "+M.qaN);
+  try{p.push("Period: "+(M.range?M.range.from+" to "+M.range.to:"?")+" · "+((M.dates||[]).length)+" dialing day(s). All figures below cover THIS period.")}catch(e){}
   try{var MP=window.__mtd.prevModel&&window.__mtd.prevModel();if(MP&&MP.grand&&MP.grand.sales!=null)p.push("Previous period: "+MP.grand.sales+" sales, R"+Math.round(MP.grand.gwp||0)+" GWP.")}catch(e){}
   try{var codes=Object.keys(M.primaryCamp||{});if(codes.length){
     p.push("");p.push("== Every agent, one line, all fields labelled (talk time, calls, sales, GWP, QA, attendance, opt-ins, SPD). Answer any single-agent question from this. ==");
@@ -2746,8 +2790,13 @@ function cbxVasContext(){try{
       +" · SPD "+(a.spd!=null?(Math.round(a.spd*100)/100):"-"));
     });
   }}catch(e){p.push("(per-agent unavailable: "+(e&&e.message||e)+")")}
+  try{var tl9=M.tlAgg||{};var tk9=Object.keys(tl9);if(tk9.length){p.push("");p.push("== Team-leader rollup (campaign|TL) ==");tk9.sort().forEach(function(k){var o=tl9[k]||{};p.push("- "+k+": sales "+(o.sales||0)+" · GWP R"+Math.round(o.gwp||0)+" · %target "+(o.pctT!=null?Math.round(o.pctT*100)+"%":"-")+" · attendance "+(o.att!=null?Math.round(o.att*100)+"%":"-")+" · headcount "+(o.hc||0))})}}catch(e){}
+  try{var ca9=M.campAgg||{};var ck9=Object.keys(ca9);if(ck9.length){p.push("== Campaign totals ==");ck9.forEach(function(k){var o=ca9[k]||{};p.push("- "+k+": sales "+(o.sales||0)+" · GWP R"+Math.round(o.gwp||0)+" · %target "+(o.pctT!=null?Math.round(o.pctT*100)+"%":"-"))})}}catch(e){}
+  try{var db9=M.dailyByDate||{};var dk9=Object.keys(db9).sort();if(dk9.length){p.push("== Daily sales by campaign (date: Cuddle/Courtesy/VT) ==");dk9.forEach(function(d){var v=db9[d]||{};p.push("- "+d+": "+(v.Cuddle||0)+"/"+(v.Courtesy||0)+"/"+(v.VT||0))})}}catch(e){}
   try{var S9=window.__mtd.state&&window.__mtd.state();var fl=(S9&&S9.files)||[];if(fl.length){p.push("");p.push("== FULL DATASET — files uploaded (all data) ==");fl.forEach(function(f){p.push("- "+f.type+" · "+(f.rows||"?")+" rows"+(f.dates&&f.dates.length?" · "+f.dates[0]+" to "+f.dates[f.dates.length-1]:""))})}}catch(e){}
-  return p.join(NL).slice(0,30000)
+  var s9=p.join(NL);
+  if(s9.length>30000)s9=s9.slice(0,29880)+NL+"[digest truncated at 30k — lowest-GWP agent lines were cut; ask for a specific agent or team for their detail]";
+  return s9
 }catch(e){return ""}}
 </script>
 <script>(function(){/* Keys MUST match what regFile() writes as the file type — the matcher is

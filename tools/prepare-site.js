@@ -69,7 +69,11 @@ if (!window.storage) {
             if (r.ok) {
               var data = await r.text();
               mem[k] = data;
-              try { localStorage.setItem('cbx:' + k, data); } catch (e) { /* quota — mem cache still holds it */ }
+              // localStorage is a SYNCHRONOUS main-thread write hard-capped ~5 MB total:
+              // caching a multi-MB source blob blocks the UI just to throw QuotaExceeded.
+              // Big blobs live in mem + the cloud; drop any stale small copy.
+              if (data.length < 2000000) { try { localStorage.setItem('cbx:' + k, data); } catch (e) { /* quota — mem cache still holds it */ } }
+              else { try { localStorage.removeItem('cbx:' + k); } catch (e) {} }
               return { value: data };
             }
             // 401/5xx etc: don't treat as authoritative-empty; fall through to cache (no push)
@@ -82,7 +86,10 @@ if (!window.storage) {
         // user-initiated write: cache locally + push to the cloud (the truth)
         window.__cbxLastWrite = Date.now(); // freshness watcher: skip self-triggered re-inits
         mem[k] = v;
-        try { localStorage.setItem('cbx:' + k, v); } catch (e) { /* quota — cloud still saves below */ }
+        // same size guard as get(): don't burn a synchronous main-thread write on a
+        // blob that cannot fit — the cloud save below is the one that matters.
+        if (v.length < 2000000) { try { localStorage.setItem('cbx:' + k, v); } catch (e) { /* quota — cloud still saves below */ } }
+        else { try { localStorage.removeItem('cbx:' + k); } catch (e) {} }
         var h = authHdr();
         if (!h) { cbxSaveWarn('Not signed in — this data was NOT saved to the database.'); return; }
         try {
@@ -148,7 +155,9 @@ for (const [srcDir, urlDir, label] of [['nicks_code', 'pulse', 'VAS'], ['tracker
 
 // Extra self-contained pages served alongside a companion app (e.g. the VT MTD report
 // embedded as the Tracker's third tab via <iframe src="vt-mtd-report.html">). Copied
-// verbatim — no shim, no gate; access is controlled by the parent (already-gated) tab.
+// verbatim — no storage shim needed. The page now carries its OWN auth-gate include:
+// it is a directly reachable URL, so "the parent tab is gated" was never a boundary.
+// Inside the gated parent it passes through silently (same-origin sessionStorage).
 const VT_REL = 'tracker/vt-mtd-report.html';
 fs.mkdirSync(path.join(outDir, 'tracker'), { recursive: true });
 fs.copyFileSync(path.join(root, VT_REL), path.join(outDir, VT_REL));

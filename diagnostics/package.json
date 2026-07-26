@@ -1,0 +1,19 @@
+{
+  "name": "agentos-diagnostics",
+  "private": true,
+  "description": "Browser verification suites for the AgentOS suite (Ops, PULSE/VAS, Tracker, Ask widget). See README.md.",
+  "scripts": {
+    "prep": "node prep.js",
+    "ops-golden": "node prep.js && node golden.js",
+    "merge": "node prep.js && node harness.js current",
+    "pulse": "node pulse_golden.js",
+    "tracker": "node tracker_test.js",
+    "widget": "node prep.js && node widget_test.js",
+    "all": "node run-all.js"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.49.0",
+    "papaparse": "5.4.1",
+    "chart.js": "4.4.1"
+  }
+}
