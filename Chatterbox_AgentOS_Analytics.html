@@ -282,6 +282,9 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(37,99,235,.12)
 /* upload slots */
 .slot{transition:border-color .2s var(--ease),background-color .2s var(--ease),box-shadow .2s var(--ease)}
 .slot:hover{border-color:#9FB6DC;box-shadow:var(--shadow)}
+/* upload progress bar (parse + merge phases) */
+.upbar{height:9px;background:var(--blue-soft);border-radius:7px;overflow:hidden;margin-bottom:14px}
+.upbar-fill{height:100%;width:0;background:linear-gradient(90deg,var(--blue),var(--sky));border-radius:7px;transition:width .18s var(--ease)}
 /* refined scrollbars */
 *{scrollbar-width:thin;scrollbar-color:#C7D2E4 transparent}
 ::-webkit-scrollbar{width:9px;height:9px}
@@ -528,6 +531,7 @@ const SOURCES = {
   SF_CLOSED_CASES:{label:'Salesforce · Closed Cases',system:'Salesforce',fmt:'HTML .xls',color:'blue',
     headers:['Case ID','Case Number','Subject','Date/Time Opened','Date/Time Closed','Closed','Disposition','Age (Hours)','Account Name','Account Number','Account Mobile from Person Account','Person Account: Email','Case Record Type','Case Owner','Status'],
     required:['Case Number','Date/Time Closed'],snapshot:false,dateH:'Date/Time Closed',
+    merge:{key:['case_number']},   // a case closed twice across exports is ONE record — the newer export wins per Case Number; identical rows are never duplicated
     purpose:'Closure throughput, dispositions, owner performance.'},
   CALLX_CALL_RECORDS:{label:'CallX · Call Records',system:'CallX (dialler)',fmt:'.xlsx',color:'violet',
     headers:['Date & Time','Caller ID','Source','Destination','Outbound CLI','Call Type','Campaign','Agent','Bridge','Lead Disposition','Reporting classification','Wrap-up','Duration','Billable Seconds','Branch','Recording link','Channel','Destination Channel','Application'],
@@ -547,6 +551,7 @@ const SOURCES = {
   QA_EVALUATIONS:{label:'QA · Evaluations Export',system:'QA / Callbi',fmt:'.csv',color:'amber',
     headers:['Record ID','Submitted At','Status','Offense Number','SLA Deadline','QA Close Decision','Date of Call','Week','Date of Assessment','Campaign','QA Agent','Sales Agent','Sales Agent CB','Sales Team Leader','Sales Agent Tenure','Call ID','Call Duration','Score %','Assessment Type','Escalation Decision','Priority','Coaching Category','Coaching Sub-Category','Critical Fail Category','Critical Fail Sub-Category','Evaluation Reference','Client Callback Required','Recommendation','QA Agent Feedback','TL Stage 1 Notes','TL Stage 2 Notes','SM Escalation Reason','GHL Opportunity ID','GHL Stage ID','GHL Stage Name'],
     required:['Record ID','Sales Agent','Score %'],snapshot:false,dateH:'Date of Call',
+    merge:{key:['record_id']},   // one evaluation = one Record ID: a re-export updates the record (status moves, disputes close) instead of double-counting it; identical rows are never duplicated
     purpose:'Quality & compliance: pass rate, critical fails, coaching.'},
   ATTENDANCE:{label:'Attendance Export',system:'Attendance / HR',fmt:'.xlsx',color:'sky',
     headers:['Date','Employee Code','Employee Name','Title','Employee Type','Department','Reports To','Status Code','Status'],
@@ -691,7 +696,9 @@ const state = {
   filters:{campaign:'',team:'',agent:'',dept:'',tenure:''},
   range:{mode:'all',from:null,to:null},   // show ALL loaded data by default so uploads are never hidden by a recent-only window; narrow via the date picker
   unmasked:false, persistOk:true, user:'Admin User',
-  sort:{}, dictTab:'kpis', threshDomain:'', sesPick:'', tlPick:'', salesTab:'prod'
+  sort:{}, dictTab:'kpis', threshDomain:'', sesPick:'', tlPick:'', salesTab:'prod',
+  showAll:{},        // per-table "Show all" expansions (large tables render capped by default)
+  hydrating:false    // true while cloud fact blobs are still streaming in at boot
 };
 window.state=state;   // inline on* handlers resolve identifiers via window
 let charts=[];
@@ -828,64 +835,124 @@ const saveAudit =()=>store('cb-audit',{batches:state.batches,exceptions:state.ex
 const saveFacts =src=>store('cb-facts-'+src,state.facts[src]||[]);
 
 /* =====================================================================
-   FILE READING — Salesforce .xls files are HTML tables; .xlsx via SheetJS
+   FILE READING — Salesforce .xls files are HTML tables; .xlsx via SheetJS.
+   Heavy parsing (SheetJS / Papa) runs in a Blob Worker when the browser
+   allows it, so a multi-MB export no longer freezes the page mid-read;
+   any worker failure (file://, CSP, load error, timeout) falls back
+   silently to the same parse on the main thread. Needs worker-src blob:
+   in the CSP (site/_headers) — degrades cleanly without it.
    ===================================================================== */
-function readUpload(file,srcKey){
-  const spec=srcKey?SOURCES[srcKey]:null;
+let _xWorker=null,_xWorkerDead=false,_xSeq=0;const _xPend=new Map();
+function parseWorker(){
+  if(_xWorkerDead||typeof Worker==='undefined')return null;
+  if(_xWorker)return _xWorker;
+  try{
+    const src="importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js','https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js');"
+     +"self.onmessage=function(e){var m=e.data;try{var out;"
+     +"if(m.kind==='wb'){var wb=XLSX.read(m.buf,{type:'array',cellDates:true});"
+     +"var names=m.scan?wb.SheetNames:wb.SheetNames.slice(0,1);"
+     +"out={sheets:names.map(function(sn){return{name:sn,rows:XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:''})}})};}"
+     +"else{out={rows:Papa.parse(m.text.replace(/^\\uFEFF/,''),{skipEmptyLines:'greedy'}).data};}"
+     +"self.postMessage({id:m.id,ok:true,out:out});}catch(err){self.postMessage({id:m.id,ok:false,error:String(err&&err.message||err)})}}";
+    _xWorker=new Worker(URL.createObjectURL(new Blob([src],{type:'text/javascript'})));
+    _xWorker.onmessage=e=>{const p=_xPend.get(e.data.id);if(!p)return;_xPend.delete(e.data.id);clearTimeout(p.t);
+      e.data.ok?p.res(e.data.out):p.rej(new Error(e.data.error))};
+    _xWorker.onerror=()=>{_xWorkerDead=true;try{_xWorker&&_xWorker.terminate()}catch(e){}_xWorker=null;
+      _xPend.forEach(p=>{clearTimeout(p.t);p.rej(new Error('worker-unavailable'))});_xPend.clear()};
+    return _xWorker;
+  }catch(e){_xWorkerDead=true;return null}
+}
+function workerParse(msg){
+  const w=parseWorker();if(!w)return Promise.reject(new Error('worker-unavailable'));
+  return new Promise((res,rej)=>{
+    const id=++_xSeq;
+    const t=setTimeout(()=>{if(_xPend.has(id)){_xPend.delete(id);_xWorkerDead=true;try{w.terminate()}catch(e){}_xWorker=null;rej(new Error('worker-timeout'))}},120000);
+    _xPend.set(id,{res,rej,t});
+    w.postMessage(Object.assign({id},msg));   // buffers are structured-clone copies, so the fallback path still owns the original
+  });
+}
+function readFileBuf(file,onPct){
   return new Promise((resolve,reject)=>{
     const rd=new FileReader();
     rd.onerror=()=>reject(new Error('Could not read the file.'));
-    rd.onload=()=>{
-      try{
-        const buf=rd.result; const bytes=new Uint8Array(buf.slice(0,8));
-        const isZip=bytes[0]===0x50&&bytes[1]===0x4B, isCFB=bytes[0]===0xD0&&bytes[1]===0xCF;
-        let rows=[];
-        const viaSheetJS=()=>{const wb=XLSX.read(buf,{type:'array',cellDates:true});
-          if(spec&&spec.sheetScan){
-            const norm=h=>String(h||'').toLowerCase().replace(/\s+/g,' ').trim();
-            const req=spec.required.map(norm);
-            let all=null;
-            for(const sn of wb.SheetNames){
-              const rws=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:''});
-              if(!rws.length)continue;
-              // The header row is not always row 1 — monthly tabs often carry a title/blank row
-              // above it. Scan the first rows for the row that actually holds the required headers,
-              // so those tabs load instead of being silently skipped (attendance stopping mid-year).
-              let hi=-1;for(let k=0;k<Math.min(rws.length,15);k++){const hs=rws[k].map(norm);if(req.every(r=>hs.includes(r))){hi=k;break}}
-              if(hi<0)continue;
-              const sheet=rws.slice(hi);
-              if(!all){all=sheet}
-              else{const map=sheet[0].map(h=>all[0].findIndex(x=>norm(x)===norm(h)));
-                sheet.slice(1).forEach(r=>{const nr=new Array(all[0].length).fill('');r.forEach((v,i)=>{if(map[i]>=0)nr[map[i]]=v});all.push(nr)})}
-            }
-            if(all)return all;
-          }
-          const ws=wb.Sheets[wb.SheetNames[0]];
-          return XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''})};
-        if(isZip||isCFB){ rows=viaSheetJS(); }                                              // xlsx / legacy xls
-        else{
-          const text=new TextDecoder('utf-8').decode(buf);
-          if(text.includes('\u0000')){ rows=viaSheetJS(); }                                 // binary that dodged the sniff
-          else if(/^\s*</.test(text)){                                                          // Salesforce HTML .xls
-            const doc=new DOMParser().parseFromString(text,'text/html');
-            const table=doc.querySelector('table');
-            if(!table)throw new Error('No table found — is this a Salesforce report export?');
-            rows=[...table.querySelectorAll('tr')].map(tr=>[...tr.querySelectorAll('th,td')].map(c=>c.textContent.trim()));
-          }else{                                                                            // CSV
-            const p=Papa.parse(text.replace(/^\uFEFF/,''),{skipEmptyLines:'greedy'});
-            rows=p.data;
-          }
-        }
-        rows=rows.filter(r=>r&&r.some(c=>String(c??'').trim()!==''));
-        if(rows.length<1)throw new Error('The file appears to be empty.');
-        const headers=rows[0].map(h=>String(h??'').trim());
-        const seen={};const keyFor=headers.map(h=>{seen[h]=(seen[h]||0)+1;return seen[h]>1?h+' #'+seen[h]:h});
-        const data=rows.slice(1).map(r=>{const o={};keyFor.forEach((k,i)=>o[k]=r[i]!==undefined?r[i]:'');return o});
-        resolve({headers,data,rowsRaw:rows,textHash:hashStr(headers.join('|')+'|'+rows.length+'|'+file.size+'|'+(file.name||''))});
-      }catch(e){reject(e)}
-    };
+    if(onPct)rd.onprogress=e=>{if(e.lengthComputable&&e.total)onPct(e.loaded/e.total)};
+    rd.onload=()=>resolve(rd.result);
     rd.readAsArrayBuffer(file);
   });
+}
+/* Content identity of the exact bytes: two independent 32-bit rolls + length. This is
+   what recognises "the same file, downloaded again under a different name" — the old
+   name+size formula (kept below as textHash so already-stored batches keep matching)
+   could not. */
+function bufHash(buf){
+  const u=new Uint8Array(buf);let h1=5381,h2=52711;
+  for(let i=0;i<u.length;i++){const b=u[i];h1=((h1<<5)+h1+b)>>>0;h2=(Math.imul(h2,127)+b)>>>0}
+  return 'c'+h1.toString(36)+'-'+h2.toString(36)+'-'+u.length.toString(36);
+}
+/* sheetScan selection over parsed sheets — logic unchanged from the inline original:
+   the header row is not always row 1 (monthly tabs carry title/blank rows above it),
+   so hunt it in the first rows of each tab, load every matching tab, and align later
+   tabs onto the first tab's column order. */
+function pickSheetRows(spec,sheets){
+  if(spec&&spec.sheetScan){
+    const norm=h=>String(h||'').toLowerCase().replace(/\s+/g,' ').trim();
+    const req=spec.required.map(norm);
+    let all=null;
+    for(const sh of sheets){
+      const rws=sh.rows;
+      if(!rws.length)continue;
+      let hi=-1;for(let k=0;k<Math.min(rws.length,15);k++){const hs=rws[k].map(norm);if(req.every(r=>hs.includes(r))){hi=k;break}}
+      if(hi<0)continue;
+      const sheet=rws.slice(hi);
+      if(!all){all=sheet}
+      else{const map=sheet[0].map(h=>all[0].findIndex(x=>norm(x)===norm(h)));
+        sheet.slice(1).forEach(r=>{const nr=new Array(all[0].length).fill('');r.forEach((v,i)=>{if(map[i]>=0)nr[map[i]]=v});all.push(nr)})}
+    }
+    if(all)return all;
+  }
+  return (sheets[0]&&sheets[0].rows)||[];
+}
+async function readUpload(file,srcKey,onProg){
+  const spec=srcKey?SOURCES[srcKey]:null;
+  const P=(pct,label)=>{if(onProg)onProg(pct,label)};
+  const buf=await readFileBuf(file,p=>P(p*0.22,'Reading file…'));
+  const contentHash=bufHash(buf);
+  const bytes=new Uint8Array(buf.slice(0,8));
+  const isZip=bytes[0]===0x50&&bytes[1]===0x4B, isCFB=bytes[0]===0xD0&&bytes[1]===0xCF;
+  const scan=!!(spec&&spec.sheetScan);
+  const wbMain=()=>{const wb=XLSX.read(buf,{type:'array',cellDates:true});
+    const names=scan?wb.SheetNames:wb.SheetNames.slice(0,1);
+    return pickSheetRows(spec,names.map(sn=>({name:sn,rows:XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:''})})))};
+  const viaWB=async()=>{try{const out=await workerParse({kind:'wb',buf,scan});return pickSheetRows(spec,out.sheets)}
+    catch(e){return wbMain()}};                                                       // worker refused → same parse, main thread
+  P(0.26,'Parsing…');
+  let rows=[];
+  if(isZip||isCFB){ rows=await viaWB(); }                                             // xlsx / legacy xls
+  else{
+    const text=new TextDecoder('utf-8').decode(buf);
+    if(text.includes('\u0000')){ rows=await viaWB(); }                                // binary that dodged the sniff
+    else if(/^\s*</.test(text)){                                                          // Salesforce HTML .xls — DOMParser only exists on the main thread
+      const doc=new DOMParser().parseFromString(text,'text/html');
+      const table=doc.querySelector('table');
+      if(!table)throw new Error('No table found — is this a Salesforce report export?');
+      rows=[...table.querySelectorAll('tr')].map(tr=>[...tr.querySelectorAll('th,td')].map(c=>c.textContent.trim()));
+    }else{                                                                            // CSV
+      try{rows=(await workerParse({kind:'csv',text})).rows}
+      catch(e){rows=Papa.parse(text.replace(/^\uFEFF/,''),{skipEmptyLines:'greedy'}).data}
+    }
+  }
+  P(0.6,'Preparing rows…');
+  rows=rows.filter(r=>r&&r.some(c=>String(c??'').trim()!==''));
+  if(rows.length<1)throw new Error('The file appears to be empty.');
+  const headers=rows[0].map(h=>String(h??'').trim());
+  const seen={};const keyFor=headers.map(h=>{seen[h]=(seen[h]||0)+1;return seen[h]>1?h+' #'+seen[h]:h});
+  const data=new Array(rows.length-1);
+  for(let i=1;i<rows.length;i++){                                    // chunked so the bar moves and Cancel stays live on 100k-row files
+    const r=rows[i];const o={};keyFor.forEach((k,j)=>o[k]=r[j]!==undefined?r[j]:'');data[i-1]=o;
+    if(i%4000===0){P(0.6+(i/rows.length)*0.4,'Preparing rows… '+i.toLocaleString()+' / '+(rows.length-1).toLocaleString());await new Promise(rz=>setTimeout(rz,0))}
+  }
+  P(1);
+  return {headers,data,textHash:hashStr(headers.join('|')+'|'+rows.length+'|'+file.size+'|'+(file.name||'')),contentHash};
 }
 
 /* ---------------- HEADER + ROW VALIDATION ---------------- */
@@ -1016,18 +1083,128 @@ function rowValid(srcKey,raw){
 }
 
 /* ---------------- UPLOAD PIPELINE ---------------- */
-let pendingUpload=null;
+/* Upload doctrine — additive, idempotent, never destructive:
+   1. SAME FILE again (byte-identical, any filename) → updates its own batch in place.
+   2. Snapshot sources (roster, open cases, session slots) → the new file IS the current
+      state and replaces the previous snapshot, by design.
+   3. Time-series sources MERGE: the incoming file is compared row-by-row against what
+      is already loaded — identical rows are SKIPPED (the originals stay untouched),
+      genuinely new rows APPEND, and where a source declares an authority rule the newer
+      export wins only over the region/records it actually covers:
+        · BI_ACTIVE_CASES — its own Contract-Create-Date span (months accumulate — §6 money rule, unchanged)
+        · ATTENDANCE      — per employee-day (unchanged)
+        · QA_EVALUATIONS  — per Record ID · SF_CLOSED_CASES — per Case Number
+   Net effect: re-uploading any file — same, renamed, or overlapping a previous export —
+   never duplicates rows and never silently destroys data. The whole comparison happens
+   BEFORE the confirm button, so the modal states exactly what will change. */
+let pendingUpload=null,_upGen=0;
+function cancelUpload(){_upGen++;pendingUpload=null;closeModal()}
+function findPrevSame(srcKey,parsed){
+  return state.batches.find(b=>b.source_type===srcKey&&b.validation_status!=='failed'
+    &&(b.file_hash===parsed.textHash||(b.content_hash&&parsed.contentHash&&b.content_hash===parsed.contentHash)));
+}
+/* Row identity = every non-underscore field plus _d (the fact's day — BI rows carry their
+   date only there), keys sorted, Dates folded to ISO so a fresh parse matches a storage
+   round-trip. Two independent 32-bit hashes; cached on the row (_fp never participates). */
+function rowFp(r){
+  if(r._fp)return r._fp;
+  let h1=5381,h2=52711;
+  const mix=s=>{for(let i=0;i<s.length;i++){const c=s.charCodeAt(i);h1=((h1<<5)+h1+c)>>>0;h2=(Math.imul(h2,127)+c)>>>0}};
+  const ks=Object.keys(r).sort();
+  for(const k of ks){
+    if(k.charCodeAt(0)===95&&k!=='_d')continue;
+    const v=r[k];if(v===undefined)continue;
+    mix(k);mix('\u001F'+String(v instanceof Date?v.toISOString():v)+'\u001E');
+  }
+  return r._fp=h1.toString(36)+'.'+h2.toString(36);
+}
+function mergeKeyOf(spec,r){ // record key for keyed sources (SOURCES[..].merge.key) — null when any part is blank
+  const mk=spec.merge&&spec.merge.key;if(!mk)return null;
+  let v='';
+  for(const f of mk){const x=r[f];const s=String(x instanceof Date?x.toISOString():(x??'')).trim();if(!s)return null;v+=(v?'|':'')+s}
+  return v;
+}
+function attDayKey(r){const c=normCB(r.employee_code);return c?c+'|'+r._d:null}
+/* The merge plan: validate + transform + compare BEFORE anything is applied. Chunked so
+   the progress bar moves and Cancel stays live; confirmLoad only applies the result. */
+async function computeMergePlan(srcKey,parsed,prevSame,onProg){
+  const spec=SOURCES[srcKey];
+  const P=(p,l)=>{if(onProg)onProg(p,l)};
+  const batch_id=prevSame?prevSame.batch_id:('B'+String(state.batches.length+1).padStart(4,'0'));
+  const rows=[],rejects=[];
+  const data=parsed.data;
+  for(let i=0;i<data.length;i++){
+    const raw=data[i];
+    const why=rowValid(srcKey,raw);
+    if(why){rejects.push({batch_id,source:srcKey,row:i+2,reason:why,sample:esc(String(Object.values(raw)[1]||Object.values(raw)[0]||'').slice(0,40))})}
+    else{const fact=TRANSFORM[srcKey](raw);fact._batch=batch_id;rows.push(fact)}
+    if((i+1)%3000===0){P(((i+1)/data.length)*0.5,'Validating rows… '+(i+1).toLocaleString()+' / '+data.length.toLocaleString());await new Promise(r=>setTimeout(r,0))}
+  }
+  const plan={ver:_dataVer,batch_id,rows,rejects,fresh:rows,dup:0,supDay:null,supSpan:null,supKeys:null,keyReplacePreview:0,snapshot:!!spec.snapshot};
+  if(spec.snapshot){P(1,'Ready');return plan}
+  const prevAll=state.facts[srcKey]||[];
+  let prev=prevSame?prevAll.filter(r=>r._batch!==prevSame.batch_id):prevAll;
+  /* (1) authority regions — semantics unchanged from the original supersede exceptions */
+  if(srcKey==='ATTENDANCE'&&rows.length){
+    const nk=new Set();rows.forEach(r=>{const k=attDayKey(r);if(k)nk.add(k)});
+    if(nk.size){plan.supDay=nk;prev=prev.filter(r=>{const k=attDayKey(r);return !k||!nk.has(k)})}
+  }
+  if(srcKey==='BI_ACTIVE_CASES'&&rows.length){
+    let mn=null,mx=null;
+    rows.forEach(r=>{if(!r._d)return;if(!mn||r._d<mn)mn=r._d;if(!mx||r._d>mx)mx=r._d});
+    if(mn&&mx){plan.supSpan=[mn,mx];prev=prev.filter(r=>!(r._d&&r._d>=mn&&r._d<=mx))}
+  }
+  /* (2) row identity — an incoming row identical to a surviving loaded row is skipped, so
+     the original (and its batch tag) stays untouched. Multiset counts keep legitimate
+     in-file duplicates intact. BI is exempt: its span above already owns every incoming
+     row's region, and the Worker's delete-range-then-insert push must mirror ALL of them. */
+  if(srcKey!=='BI_ACTIVE_CASES'&&rows.length&&prev.length){
+    const ms=new Map();
+    for(let i=0;i<prev.length;i++){const f=rowFp(prev[i]);ms.set(f,(ms.get(f)||0)+1);
+      if((i+1)%4000===0){P(0.5+((i+1)/prev.length)*0.25,'Indexing '+prev.length.toLocaleString()+' loaded rows…');await new Promise(r=>setTimeout(r,0))}}
+    const fresh=[];
+    for(let i=0;i<rows.length;i++){const r=rows[i];const f=rowFp(r);const c=ms.get(f);
+      if(c){ms.set(f,c-1);plan.dup++}else fresh.push(r);
+      if((i+1)%4000===0){P(0.75+((i+1)/rows.length)*0.24,'Comparing against loaded data…');await new Promise(r=>setTimeout(r,0))}}
+    plan.fresh=fresh;
+  }
+  /* (3) keyed records — the rows that ARE different update their existing record: the
+     newer export wins per Record ID / Case Number, never wholesale. */
+  if(spec.merge&&spec.merge.key&&plan.fresh.length){
+    const nk=new Set();plan.fresh.forEach(r=>{const k=mergeKeyOf(spec,r);if(k)nk.add(k)});
+    if(nk.size){plan.supKeys=nk;let n=0;prev.forEach(r=>{const k=mergeKeyOf(spec,r);if(k&&nk.has(k))n++});plan.keyReplacePreview=n}
+  }
+  P(1,'Ready');
+  return plan;
+}
+function uploadProgressModal(spec,file){
+  modal('<div class="modal-h"><div class="t">Checking — '+esc(spec.label)+'</div><button class="modal-x" onclick="cancelUpload()">✕</button></div>'
+   +'<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px"><b>'+esc(file.name)+'</b> · '+(file.size/1024).toFixed(1)+' KB</div>'
+   +'<div id="upPhase" style="font-size:12.5px;margin-bottom:8px">Reading file…</div>'
+   +'<div class="upbar"><div class="upbar-fill" id="upBar" style="width:2%"></div></div>'
+   +'<div class="modal-foot"><button class="btn" onclick="cancelUpload()">Cancel</button></div>');
+}
+function upProg(pct,label){
+  const b=document.getElementById('upBar');if(b)b.style.width=(2+Math.max(0,Math.min(1,pct))*98).toFixed(1)+'%';
+  if(label){const p=document.getElementById('upPhase');if(p)p.textContent=label}
+}
 async function handleFile(srcKey,file){
+  const gen=++_upGen;const spec=SOURCES[srcKey];
+  uploadProgressModal(spec,file);   // feedback is INSTANT — parsing happens behind a live bar, not a frozen page
   try{
-    const parsed=await readUpload(file,srcKey);
+    const parsed=await readUpload(file,srcKey,(p,l)=>{if(gen===_upGen)upProg(p*0.55,l)});
+    if(gen!==_upGen)return;         // cancelled mid-parse
     const hv=validateHeaders(srcKey,parsed.headers);
-    const dupe=state.batches.find(b=>b.file_hash===parsed.textHash&&b.source_type===srcKey&&b.validation_status!=='failed');
-    pendingUpload={srcKey,file,parsed,hv,dupe};
+    const dupe=findPrevSame(srcKey,parsed);
+    let plan=null;
+    if(hv.ok)plan=await computeMergePlan(srcKey,parsed,dupe,(p,l)=>{if(gen===_upGen)upProg(0.55+p*0.45,l)});
+    if(gen!==_upGen)return;
+    pendingUpload={srcKey,file,parsed,hv,dupe,plan};
     openUploadModal();
-  }catch(e){toast('Upload failed: '+e.message,'err')}
+  }catch(e){if(gen===_upGen){closeModal();toast('Upload failed: '+e.message,'err')}}
 }
 function openUploadModal(){
-  const {srcKey,file,parsed,hv,dupe}=pendingUpload;const spec=SOURCES[srcKey];
+  const {srcKey,file,parsed,hv,dupe,plan}=pendingUpload;const spec=SOURCES[srcKey];
   const prevHead=parsed.headers.slice(0,10);
   const prevRows=parsed.data.slice(0,5);
   const chips=[
@@ -1037,10 +1214,24 @@ function openUploadModal(){
     dupe?'<span class="chip a"><span class="dot"></span>Same file as batch '+esc(dupe.batch_id)+' — loading UPDATES it in place, no duplicate rows</span>':'',
     '<span class="chip n"><span class="dot"></span>'+parsed.data.length.toLocaleString()+' data rows detected</span>'
   ].filter(Boolean).join('');
+  /* The merge plan is already computed — say exactly what confirming will do. */
+  const planChips=plan?[
+    '<span class="chip g"><span class="dot"></span>'+plan.fresh.length.toLocaleString()+' new row'+(plan.fresh.length===1?'':'s')+' will load</span>',
+    plan.dup?'<span class="chip n"><span class="dot"></span>'+plan.dup.toLocaleString()+' identical row(s) already loaded — left untouched</span>':'',
+    plan.keyReplacePreview?'<span class="chip a"><span class="dot"></span>'+plan.keyReplacePreview.toLocaleString()+' existing record(s) updated — this export is newer</span>':'',
+    plan.supSpan?'<span class="chip a"><span class="dot"></span>authoritative for '+esc(plan.supSpan[0])+' → '+esc(plan.supSpan[1])+' — other months kept</span>':'',
+    (plan.snapshot&&!dupe)?'<span class="chip n"><span class="dot"></span>snapshot source — replaces the previous upload (by design)</span>':'',
+    plan.rejects.length?'<span class="chip r"><span class="dot"></span>'+plan.rejects.length+' row(s) will be rejected → exceptions</span>':''
+  ].filter(Boolean).join(''):'';
+  const confirmLabel=!hv.ok?'Fix headers to load'
+    :plan&&!plan.snapshot&&plan.fresh.length===0&&plan.dup>0?'Nothing new — confirm anyway'
+    :plan?('Load '+plan.fresh.length.toLocaleString()+' row'+(plan.fresh.length===1?'':'s')+(dupe?' (update in place)':''))
+    :(dupe?'Validate rows & update':'Validate rows & load');
   modal(`
-    <div class="modal-h"><div class="t">Confirm upload — ${esc(spec.label)}</div><button class="modal-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-h"><div class="t">Confirm upload — ${esc(spec.label)}</div><button class="modal-x" onclick="cancelUpload()">✕</button></div>
     <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px"><b>${esc(file.name)}</b> · ${(file.size/1024).toFixed(1)} KB · detected as ${esc(spec.fmt)}</div>
     <div class="vh">${chips}</div>
+    ${planChips?'<div style="font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:8px 0 5px">What confirming will do</div><div class="vh">'+planChips+'</div>':''}
     ${hv.missing.length?'<div style="font-size:12px;color:var(--amber);margin-bottom:8px"><b>Absent columns:</b> '+esc(hv.missing.join(', '))+'</div>':''}
     <div style="font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:5px">Preview — first 5 rows</div>
     <div class="prev-wrap"><table><thead><tr>${prevHead.map(h=>'<th>'+esc(h)+'</th>').join('')}${parsed.headers.length>10?'<th>… +'+(parsed.headers.length-10)+' cols</th>':''}</tr></thead>
@@ -1048,8 +1239,8 @@ function openUploadModal(){
     <div class="field"><label>Upload notes (optional)</label><input type="text" id="upNotes" placeholder="e.g. Week 27 export, downloaded by Ryan"></div>
     ${dupe?'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">This exact file is already loaded as <b>'+esc(dupe.batch_id)+'</b> ('+esc(dupe.original_file_name)+'). Loading it again <b>replaces that batch\'s rows</b> with this copy — the row count will not double. Any other file stays untouched.</div>':''}
     <div class="modal-foot">
-      <button class="btn" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" id="confirmLoad" ${hv.ok?'':'disabled'} onclick="confirmLoad()">${hv.ok?(dupe?'Validate rows & update':'Validate rows & load'):'Fix headers to load'}</button>
+      <button class="btn" onclick="cancelUpload()">Cancel</button>
+      <button class="btn primary" id="confirmLoad" ${hv.ok?'':'disabled'} onclick="confirmLoad()">${confirmLabel}</button>
     </div>`);
 }
 /* The kv blob keeps this app working; it cannot be filtered in SQL. So the month's
@@ -1104,79 +1295,73 @@ async function _pushBI(batch,file,ep,t){
   }catch(e){toast('BI rows not written to the database: '+esc(e.message)+' — on-screen figures are unaffected.','err')}
 }
 async function confirmLoad(){
-  const {srcKey,file,parsed}=pendingUpload;const spec=SOURCES[srcKey];
-  // SAME FILE RE-UPLOADED = UPDATE, not a second copy. The file hash identifies the file;
-  // if this exact file was loaded before, we reuse its batch id and drop its previous rows
-  // (below) so a re-pull or correction REFRESHES it in place. A DIFFERENT file never
-  // updates anything — it lands as its own new batch alongside what is already loaded.
-  const prevSame=state.batches.find(b=>b.file_hash===parsed.textHash&&b.source_type===srcKey&&b.validation_status!=='failed');
-  const batch_id=prevSame?prevSame.batch_id:('B'+String(state.batches.length+1).padStart(4,'0'));
-  let loaded=[],rejects=[];
-  parsed.data.forEach((raw,i)=>{
-    const why=rowValid(srcKey,raw);
-    if(why){rejects.push({batch_id,source:srcKey,row:i+2,reason:why,sample:esc(String(Object.values(raw)[1]||Object.values(raw)[0]||'').slice(0,40))});return}
-    const fact=TRANSFORM[srcKey](raw);fact._batch=batch_id;loaded.push(fact);
-  });
-  const dates=loaded.map(r=>r._d).filter(Boolean).sort();
+  const pu=pendingUpload;if(!pu||!pu.hv.ok)return;
+  const {srcKey,file,parsed}=pu;const spec=SOURCES[srcKey];
+  // SAME FILE RE-UPLOADED = UPDATE, not a second copy — matched on content bytes (any
+  // filename) or the legacy name+size hash for batches stored before content hashing.
+  const prevSame=findPrevSame(srcKey,parsed);
+  // The merge plan was computed while the modal was open. If the data changed underneath
+  // it (another tab synced via cbx-fresh), the plan is stale — recompute against what is
+  // actually loaded now rather than applying yesterday's comparison.
+  let plan=pu.plan;
+  if(!plan||plan.ver!==_dataVer)plan=await computeMergePlan(srcKey,parsed,prevSame,null);
+  const batch_id=plan.batch_id;
+  const dates=[];plan.rows.forEach(r=>{if(r._d)dates.push(r._d)});dates.sort();
   const batch={batch_id,source_type:srcKey,source_system:spec.system,uploaded_by:state.user,
     uploaded_at:new Date().toISOString(),period_start:dates[0]||null,period_end:dates[dates.length-1]||null,
-    original_file_name:file.name,file_hash:parsed.textHash,raw_row_count:parsed.data.length,
-    loaded_row_count:loaded.length,rejected_row_count:rejects.length,
-    validation_status:rejects.length===0?'passed':(loaded.length?'warning':'failed'),
-    parser_version:'v1.0',notes:($('#upNotes')?.value||'').trim()};
-  let replaced=0,refreshed=0;
+    original_file_name:file.name,file_hash:parsed.textHash,content_hash:parsed.contentHash,
+    raw_row_count:parsed.data.length,
+    loaded_row_count:plan.fresh.length,rejected_row_count:plan.rejects.length,
+    validation_status:plan.rejects.length===0?'passed':(plan.rows.length?'warning':'failed'),
+    parser_version:'v1.1',notes:($('#upNotes')?.value||'').trim()};
+  if(plan.dup)batch.duplicate_row_count=plan.dup;
+  /* Apply the plan in ONE pass over the loaded rows. Every existing row survives unless a
+     specific rule claims it: it belongs to this same file's previous batch (refresh), an
+     authority region covers it (BI span / attendance employee-day — semantics unchanged),
+     or a keyed record in this newer export replaces it. Identical incoming rows were
+     already dropped from plan.fresh, so untouched originals stay byte-for-byte intact. */
+  let refreshed=0,superseded=0,keyReplaced=0;
+  if(spec.snapshot){
+    if(prevSame)(state.facts[srcKey]||[]).forEach(r=>{if(r._batch===prevSame.batch_id)refreshed++});
+    state.facts[srcKey]=plan.rows;                                   // snapshots replace — the new file IS the state
+  }else{
+    const keep=[];
+    for(const r of (state.facts[srcKey]||[])){
+      if(prevSame&&r._batch===prevSame.batch_id){refreshed++;continue}
+      if(plan.supDay){const k=attDayKey(r);if(k&&plan.supDay.has(k)){superseded++;continue}}
+      if(plan.supSpan&&r._d&&r._d>=plan.supSpan[0]&&r._d<=plan.supSpan[1]){superseded++;continue}
+      if(plan.supKeys){const k=mergeKeyOf(spec,r);if(k&&plan.supKeys.has(k)){keyReplaced++;continue}}
+      keep.push(r);
+    }
+    state.facts[srcKey]=keep.concat(plan.fresh);
+  }
   if(prevSame){
-    // drop this file's OWN previous rows (tagged with its batch id) and retire the old
-    // batch record — everything else stays exactly where it is. This is the update.
-    const before=(state.facts[srcKey]||[]).length;
-    state.facts[srcKey]=(state.facts[srcKey]||[]).filter(r=>r._batch!==prevSame.batch_id);
-    refreshed=before-(state.facts[srcKey]||[]).length;
     state.batches=state.batches.filter(b=>b.batch_id!==prevSame.batch_id);
     batch.updated_at=batch.uploaded_at;batch.first_uploaded_at=prevSame.first_uploaded_at||prevSame.uploaded_at;
   }
-  if(spec.snapshot){state.facts[srcKey]=loaded}                       // snapshots replace
-  else{let prev=state.facts[srcKey]||[];
-    if(srcKey==='ATTENDANCE'&&loaded.length){
-      // Monthly register uploads: append across months, but the NEW file wins per
-      // employee-day — a corrected or overlapping export (e.g. month-to-date then
-      // full month) must never double-count days in the attendance denominators.
-      const akey=r=>{const c=normCB(r.employee_code);return c?c+'|'+r._d:null};
-      const nk=new Set(loaded.map(akey).filter(Boolean));
-      const keep=prev.filter(r=>{const k=akey(r);return !k||!nk.has(k)});
-      replaced=prev.length-keep.length;prev=keep;
-      if(replaced)batch.superseded_prev_rows=replaced}
-    if(srcKey==='BI_ACTIVE_CASES'&&loaded.length){
-      // Monthly money export: months ACCUMULATE, so July survives when August lands.
-      // The new file is authoritative only for the span of Contract Create Dates it
-      // actually covers — re-uploading July replaces July alone and leaves June/August
-      // untouched. Rows outside that span are kept, so nothing is silently destroyed.
-      let mn=null,mx=null;
-      loaded.forEach(r=>{if(!r._d)return;if(!mn||r._d<mn)mn=r._d;if(!mx||r._d>mx)mx=r._d});
-      if(mn&&mx){
-        const keep=prev.filter(r=>!(r._d&&r._d>=mn&&r._d<=mx));
-        replaced=prev.length-keep.length;prev=keep;
-        batch.superseded_range=mn+' → '+mx;
-        if(replaced)batch.superseded_prev_rows=replaced}}
-    state.facts[srcKey]=prev.concat(loaded)}                          // time-series append
+  if(plan.supSpan)batch.superseded_range=plan.supSpan[0]+' → '+plan.supSpan[1];
+  if(superseded+keyReplaced)batch.superseded_prev_rows=superseded+keyReplaced;
   state.batches.unshift(batch);
   bumpDataVer();
-  state.exceptions=rejects.concat(state.exceptions).slice(0,600);
+  state.exceptions=plan.rejects.concat(state.exceptions).slice(0,600);
   if(srcKey==='AGENT_LIST')buildIdentity();
-  // SPEED: the rows are already parsed, transformed and in state — the screen is correct
-  // NOW, so confirm now. Persisting used to be awaited here first: the cloud state blob
-  // plus, for BI, a raw-file archive (several MB) and the rows POST. That left the modal
-  // sitting open and the confirmation silent for seconds on a big export. The cloud work
-  // continues below in the background and reports its own outcome when it lands.
-  closeModal();
-  toast(batch_id+(prevSame?' updated: ':' loaded: ')+loaded.length.toLocaleString()+' rows'
-   +(refreshed?' · same file re-uploaded — refreshed its '+refreshed.toLocaleString()+' previous row(s) in place':'')
-   +(replaced?' · '+replaced.toLocaleString()+(srcKey==='BI_ACTIVE_CASES'?' row(s) replaced for '+(batch.superseded_range||'this period')+' — other months kept':' overlapping day-row(s) superseded by this file'):'')
-   +(rejects.length?' · '+rejects.length+' rejected → exceptions':''),rejects.length&&!loaded.length?'err':'ok');
+  // SPEED: the merge is already applied — the screen is correct NOW, so confirm now.
+  // The cloud work continues below in the background and reports its own outcome.
+  closeModal();pendingUpload=null;
+  const bits=[batch_id+(prevSame?' updated: ':' loaded: ')+plan.fresh.length.toLocaleString()+' new row'+(plan.fresh.length===1?'':'s')];
+  if(refreshed)bits.push('same file re-uploaded — refreshed its '+refreshed.toLocaleString()+' previous row(s) in place');
+  if(plan.dup)bits.push(plan.dup.toLocaleString()+' row(s) already loaded — left untouched');
+  if(superseded)bits.push(superseded.toLocaleString()+(srcKey==='BI_ACTIVE_CASES'?' row(s) replaced for '+(batch.superseded_range||'this period')+' — other months kept':' overlapping day-row(s) superseded by this file'));
+  if(keyReplaced)bits.push(keyReplaced.toLocaleString()+' existing record(s) updated by this newer export');
+  if(plan.rejects.length)bits.push(plan.rejects.length+' rejected → exceptions');
+  toast(bits.join(' · '),plan.rejects.length&&!plan.rows.length?'err':'ok');
   // Kick off persistence BEFORE re-rendering: a throw anywhere in render() must never be
   // able to skip the cloud save. Order inside matters — pushBI stamps batch.storage_path,
-  // so it has to finish before saveAudit writes the batch record.
+  // so it has to finish before saveAudit writes the batch record. The initial yield lets
+  // the toast + page paint before the big JSON serialise takes the thread.
   (async()=>{
     try{
+      await new Promise(r=>setTimeout(r,80));
       if(srcKey==='BI_ACTIVE_CASES')await pushBI(batch,file);  // real rows + raw archive
       await Promise.all([saveFacts(srcKey),saveAudit()]);
     }catch(e){toast('Saved on screen, but the cloud save failed: '+esc(e.message||e),'err')}
@@ -1252,10 +1437,18 @@ async function clearAll(){
 /* =====================================================================
    KPI ENGINE — periods, filters, $rule resolution, deltas, sparklines
    ===================================================================== */
+/* PERF: called 10+ times per render (periodWindow, footers, sparkline ranges, the
+   slaBreach special) and it used to scan EVERY row of EVERY source each time — the
+   single biggest per-render cost after charts. The max-_d only moves with the data,
+   so cache it per data version (reset in bumpDataVer). */
+let _anchD;
 function anchorDate(){
-  let mx=null;
-  SRC_KEYS.forEach(k=>(state.facts[k]||[]).forEach(r=>{if(r._d&&(!mx||r._d>mx))mx=r._d}));
-  return mx?new Date(mx+'T12:00:00'):new Date();
+  if(_anchD===undefined){
+    let mx=null;
+    SRC_KEYS.forEach(k=>{const a=state.facts[k]||[];for(let i=0;i<a.length;i++){const d=a[i]._d;if(d&&(!mx||d>mx))mx=d}});
+    _anchD=mx;
+  }
+  return _anchD?new Date(_anchD+'T12:00:00'):new Date();
 }
 function periodWindow(){
   const a=anchorDate();
@@ -1277,29 +1470,46 @@ function resolveRule(v){
   if(typeof v==='string'&&v.startsWith('$')){const r=state.rules[v.slice(1)];return r?r.vals:[]}
   return v;
 }
+/* PERF: these helpers run once per CALL ROW (100k+ per pass) and every one of them
+   used to re-split, re-lowercase and re-sort the rule arrays on each call. Parse the
+   rules ONCE per data version (rule edits bump _dataVer via saveConfig) — behaviour
+   is unchanged, live-editability included. */
+let _crV=-1,_cr=null;
+function callRules(){
+  if(_crV===_dataVer)return _cr;
+  const parseRungs=vals=>(vals||[]).map(v=>{const i=String(v).indexOf(':');return{n:parseFloat(String(v).slice(0,i)),label:String(v).slice(i+1).trim()}}).filter(r=>!isNaN(r.n)).sort((a,b)=>a.n-b.n);
+  const rungs=parseRungs(state.rules.callTypes?.vals);
+  const labels=(state.rules.callTypes?.vals||[]).map(v=>String(v).slice(String(v).indexOf(':')+1).trim());
+  const na=new Set(resolveRule('$noAnswerDispositions').map(x=>String(x).toLowerCase()));
+  const sale=new Set(resolveRule('$saleDispositions').map(x=>String(x).toLowerCase()));
+  const legacyV=(state.rules.callTypes?.vals||[])[1];
+  _cr={rungs,labels,na,sale,legacy:legacyV?parseFloat(legacyV):30,phases:parseRungs(state.rules.callPhases?.vals)};
+  _crV=_dataVer;
+  return _cr;
+}
 function callBandFor(sec){
-  const rungs=(state.rules.callTypes?.vals||[]).map(v=>{const i=String(v).indexOf(':');return{n:parseFloat(String(v).slice(0,i)),label:String(v).slice(i+1).trim()}}).filter(r=>!isNaN(r.n)).sort((a,b)=>a.n-b.n);
+  const rungs=callRules().rungs;
   let cur=rungs.length?rungs[0].label:'(no bands)';
   rungs.forEach(r=>{if((sec||0)>=r.n)cur=r.label});
   return cur;
 }
-function bandLabels(){return (state.rules.callTypes?.vals||[]).map(v=>String(v).slice(String(v).indexOf(':')+1).trim())}
+function bandLabels(){return callRules().labels}
 /* Disposition-accurate answer test (client 2026-07-20): use the actual Lead Disposition,
    not call duration. Blank disposition falls back to the legacy duration band. */
 function callAnswered(r){
   const d=String(r&&r.lead_disposition||'').trim();
-  if(d){const na=resolveRule('$noAnswerDispositions').map(x=>String(x).toLowerCase());
-    return !na.includes(d.toLowerCase());}
-  return (r&&r.billable_seconds||0)>=(function(){const v=(state.rules.callTypes?.vals||[])[1];return v?parseFloat(v):30})();  // no disposition → legacy threshold
+  if(d)return !callRules().na.has(d.toLowerCase());
+  return (r&&r.billable_seconds||0)>=callRules().legacy;  // no disposition → legacy threshold
 }
 function isSaleDisp(r){const d=String(r&&r.lead_disposition||'').trim();if(!d)return false;
-  return resolveRule('$saleDispositions').map(x=>String(x).toLowerCase()).includes(d.toLowerCase());}
+  return callRules().sale.has(d.toLowerCase());}
 /* Call band for a ROW: 'No Answer' comes from the disposition; answered calls take their
    duration band but are never mislabelled 'No Answer' just for being short. */
 function callBandForRow(r){
-  if(!callAnswered(r))return (bandLabels()[0]||'No Answer');
+  const L=callRules().labels;
+  if(!callAnswered(r))return (L[0]||'No Answer');
   const b=callBandFor(r.billable_seconds);
-  return b===(bandLabels()[0])?(bandLabels()[1]||b):b;   // answered-but-short → next band up, not No Answer
+  return b===L[0]?(L[1]||b):b;   // answered-but-short → next band up, not No Answer
 }
 let _mind=null;
 function minDataDay(){if(_mind)return _mind;let m=null;
@@ -1352,8 +1562,20 @@ const GFMAP={ // global filter field per source
    thousands of rows). Memoise results keyed by (source, window, global filters,
    data version). Results are read-only by convention (verified: no caller sorts
    or mutates the returned array), so sharing the cached array is safe. */
-let _dataVer=0;const _rfCache=new Map();
-function bumpDataVer(){_dataVer++;_rfCache.clear();_scopeVer=-1;}
+let _dataVer=0;const _rfCache=new Map();let _rfRows=0;
+/* Per-source day → rows index. Sparklines ask for 90-120 SINGLE-DAY windows per KPI;
+   before this index each one filtered the entire fact array (90 × 100k row visits per
+   call-based KPI). Built lazily once per data version, shares row references. */
+let _dayIdx={};
+function dayRowsIdx(src){
+  let m=_dayIdx[src];
+  if(!m){m=new Map();const a=state.facts[src]||[];
+    for(let i=0;i<a.length;i++){const d=a[i]._d;if(!d)continue;let l=m.get(d);if(!l){l=[];m.set(d,l)}l.push(a[i])}
+    _dayIdx[src]=m}
+  return m;
+}
+const _acCache=new Map();   // acCtx results — see acCtx()
+function bumpDataVer(){_dataVer++;_rfCache.clear();_rfRows=0;_dayIdx={};_acCache.clear();_anchD=undefined;_scopeVer=-1;}
 /* ---- Permission-driven data scoping (client 2026-07-20) ----
    A signed-in team leader (role 'tl') sees ONLY their own team; admin/exec/qa/viewer
    are unrestricted here. The TL is matched to the team_leader field by their profile
@@ -1387,8 +1609,13 @@ function rowsFor(src,win){
   let hit=_rfCache.get(key);
   if(hit)return hit;
   hit=rowsForRaw(src,win,sc);
-  if(_rfCache.size>6000)_rfCache.clear();
-  _rfCache.set(key,hit);
+  // Evict by TOTAL cached rows as well as entry count — 6000 entries of large cloned
+  // arrays could hold hundreds of MB before the old size-only check ever fired. The
+  // budget is deliberately roomy: a normal multi-page browse must fit entirely, or
+  // eviction mid-render costs more than it saves (most entries are references, not
+  // copies — only the CALLX/ATTENDANCE decorations clone).
+  if(_rfCache.size>6000||_rfRows>2500000){_rfCache.clear();_rfRows=0}
+  _rfCache.set(key,hit);_rfRows+=hit.length||0;
   return hit;
 }
 function rowsForRaw(src,win,sc){
@@ -1397,7 +1624,10 @@ function rowsForRaw(src,win,sc){
   if(spec.snapshot){
     const latest=state.batches.find(b=>b.source_type===src&&b.loaded_row_count>0);
     if(latest)rows=rows.filter(r=>r._batch===latest.batch_id);
-  }else if(win){rows=rows.filter(r=>r._d&&r._d>=win.from&&r._d<=win.to)}
+  }else if(win){
+    rows=(win.from===win.to)?(dayRowsIdx(src).get(win.from)||[])          // single-day window (sparklines) → indexed lookup, no full scan
+      :rows.filter(r=>r._d&&r._d>=win.from&&r._d<=win.to);
+  }
   const noGF=(src==='AGENT_LIST');   // the roster is never filtered; sessions honour roster filters (not the date range)
   const rbase=spec.session?spec.session.base:src;
   const resolveCB=r=>{switch(rbase){
@@ -1653,8 +1883,18 @@ function filtCountBadge(){const n=Object.values(state.filters).filter(Boolean).l
 
 /* ---------------- CHART HELPERS ---------------- */
 function killCharts(){charts.forEach(c=>{try{c.destroy()}catch(e){}});charts=[]}
-function mkChart(id,cfg){const el=document.getElementById(id);if(!el)return;const c=new Chart(el.getContext('2d'),cfg);charts.push(c);return c}
+function mkChart(id,cfg){const el=document.getElementById(id);if(!el)return;
+  // Chart builds run on a setTimeout AFTER render(); if another render landed in
+  // between, a queued build may already have claimed this (fresh) canvas — destroy it
+  // first or Chart.js throws "Canvas is already in use" (latent race, now impossible).
+  const prev=Chart.getChart&&Chart.getChart(el);if(prev){try{prev.destroy()}catch(e){}}
+  const c=new Chart(el.getContext('2d'),cfg);charts.push(c);return c}
 Chart.defaults.font.family="'Inter','Segoe UI',sans-serif";Chart.defaults.color='#A9BAD4';Chart.defaults.font.size=11;
+/* Charts are destroyed and recreated on EVERY render (filter change, sort click, tab
+   switch) — the default 1s animate-in made each of those feel like a reload, with up
+   to 12 charts easing in at once on Sales Production. Instant data, no re-animation;
+   the page-level CSS transition supplies the motion instead. */
+Chart.defaults.animation=false;
 const PALETTE=['#2563EB','#38BDF8','#6D4AE0','#158A4C','#F59E0B','#DC2626','#0EA5E9','#94A3B8','#10B981','#E879F9'];
 function groupCount(rows,field,filt){const m={};rows.forEach(r=>{if(filt&&!passFilter(r,filt))return;const k=r[field]||'(none)';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1])}
 /* Trend / sparkline x-axis range. The default "all data" window uses a 1900-01-01
@@ -2185,6 +2425,9 @@ function pageBIMoney(win){
 }
 function pageSales(win){
   if(!hasData())return emptyState('Sales Production needs its first upload');
+  // BI tab first: it renders its own page — the production tab's 12-chart data prep
+  // below used to run (and schedule chart builds) just to be thrown away.
+  if(state.salesTab==='bi')return salesTabs()+pageBIMoney(win);
   const calls=rowsFor('CALLX_CALL_RECORDS',win);
   const acts=rowsFor('BI_ACTIVE_CASES',win);   // product mix reads the money source, not the retired activations
   const open=rowsFor('SF_OPEN_CASES',win);
@@ -2258,7 +2501,6 @@ function pageSales(win){
     hbar('chS9',Object.entries(gwpByProd).sort((a,b)=>b[1]-a[1]).slice(0,8),'#158A4C');
     hbar('chS10',Object.entries(gwpByAgent).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n,v])=>[maskNameText(n),Math.round(v)]),'#2563EB');
   },0);
-  if(state.salesTab==='bi')return salesTabs()+pageBIMoney(win);
   return salesTabs()+cyclePanel(win)
    +(biLoaded()?'':'<div class="stale-banner">⚠ No Power BI Active Cases file loaded — Sales, GWP and Conversion are the BI money model and read blank without it. Upload it in the Upload Station. Figures here do NOT fall back to the old Activated-Services pricing: the two money models are never mixed.</div>')
    +kpiRow('Sales',win)
@@ -2325,7 +2567,7 @@ function agingTable(open){
 /* Phase a connected call reached before ending — reads the callPhases rule, same
    band logic as callBandFor. Duration-derived proxy (see rule help). */
 function phaseBandFor(sec){
-  const rungs=(state.rules.callPhases?.vals||[]).map(v=>{const i=String(v).indexOf(':');return{n:parseFloat(String(v).slice(0,i)),label:String(v).slice(i+1).trim()}}).filter(r=>!isNaN(r.n)).sort((a,b)=>a.n-b.n);
+  const rungs=callRules().phases;   // parsed once per data version — this runs per call row
   let cur=rungs.length?rungs[0].label:'(no phases)';
   rungs.forEach(r=>{if((sec||0)>=r.n)cur=r.label});
   return cur;
@@ -2641,12 +2883,13 @@ function pageDisc(win){
   const stagePill=st=>{if(!st)return '<span class="pill n">—</span>';
     const frac=st.total>1?st.idx/(st.total-1):1;
     return '<span class="pill '+(frac>=0.75?'r':frac>=0.4?'a':'b')+'">'+esc(st.label)+'</span>'};
+  const DR=capTable(reg,'discReg');
   return kpiRow('Discipline',win)
    +'<div class="stale-banner" style="background:var(--blue-soft);border-color:#D4E2FB;color:#1D4FD8">Stage ladder in force: '+esc(ladder)+' — this is a live rule (Dictionary → Interpretation rules). CONFIGURATION REQUIRED: confirm the ladder with Claudell / HR before disciplinary use. Derived from the QA export today; a dedicated HR/IR source can be added as a new upload slot later.</div>'
    +'<div class="grid g21">'
    +'<div class="card"><div class="card-h"><span class="t">Disciplinary register</span><span class="s">'+reg.length+' agents with open items or offenses · worst first</span></div>'
    +(reg.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Agent</th><th class="noclick">Team leader</th><th class="noclick">Offense #</th><th class="noclick">Current stage</th><th class="noclick">Open items</th><th class="noclick">Open criticals</th><th class="noclick">SLA</th><th class="noclick">Path</th><th class="noclick">Last incident</th></tr></thead><tbody>'
-    +reg.map(a=>'<tr><td><b>'+aName(a.cb,maskName(a.name))+'</b><div style="font-size:10.5px;color:var(--muted)">'+esc(a.code)+'</div></td>'
+    +DR.rows.map(a=>'<tr><td><b>'+aName(a.cb,maskName(a.name))+'</b><div style="font-size:10.5px;color:var(--muted)">'+esc(a.code)+'</div></td>'
      +'<td>'+maskName(a.tl)+'</td>'
      +'<td class="num" style="font-weight:800">'+a.off+'</td>'
      +'<td>'+stagePill(stageFor(a.off))+'</td>'
@@ -2655,7 +2898,7 @@ function pageDisc(win){
      +'<td>'+(a.sla?'<span class="pill r">Breached ×'+a.sla+'</span>':'<span class="pill g">OK</span>')+'</td>'
      +'<td>'+['tl1','tl2','sm'].map(f=>'<span class="pill '+(a[f]?'v':'n')+'" style="padding:2px 6px;margin-right:3px">'+f.toUpperCase()+'</span>').join('')+'</td>'
      +'<td style="font-size:11.5px;color:var(--muted)">'+esc(a.last||'—')+'</td></tr>').join('')
-    +'</tbody></table></div>':'<div class="empty"><div class="big">Clean sheet</div><p>No agents with open offenses in this window.</p></div>')
+    +'</tbody></table>'+DR.foot+'</div>':'<div class="empty"><div class="big">Clean sheet</div><p>No agents with open offenses in this window.</p></div>')
    +'</div>'
    +'<div><div class="card" style="margin-bottom:14px"><div class="card-h"><span class="t">Stage distribution</span></div><div class="chart-wrap short"><canvas id="chD1"></canvas></div></div>'
    +'<div class="card"><div class="card-h"><span class="t">Open SM escalations</span><span class="s">'+escal.length+'</span></div>'
@@ -2671,7 +2914,16 @@ function groupOf(cb){const i=state.cbInfo[cb]||{};const t=String(i.tenure||'').t
   if(/^exp/i.test(t))return 'EXP - '+String(i.queue||'?').toUpperCase().split(' ')[0];
   return (t||'UNGROUPED').toUpperCase()}
 function acCtx(win){
-  _fleetCtx++;try{return acCtxBuild(win)}finally{_fleetCtx--}
+  // PERF: 8 full source passes per build, and one render can ask several times
+  // (page + agentOpen + Ask context). Filters/scope don't apply inside (fleet
+  // context by design), so the result is pure (window, dataVer) — cache it.
+  const key=(win?win.from+'~'+win.to:'∅')+'|'+_dataVer;
+  let c=_acCache.get(key);
+  if(c)return c;
+  _fleetCtx++;try{c=acCtxBuild(win)}finally{_fleetCtx--}
+  if(_acCache.size>12)_acCache.clear();
+  _acCache.set(key,c);
+  return c;
 }
 function acCtxBuild(win){
   const C={open:{},closed:{},qa:{},att:{},call:{},sale:{},canc:{},ref:{},lead:{}};
@@ -3070,6 +3322,7 @@ function pageLeads(win){
     G2.a+=a;G2.c+=c;G2.s+=sl;if(at){G2.atSum+=at;G2.atN++}});
   flushWk();
   dailyRows+=dRow('Period Totals',G2.a,G2.c,G2.s,G2.atN?f1(G2.atSum/G2.atN):0,true);
+  const LM=capTable(rows,'leads');   // ~30 columns per agent — cap the DOM; totals row still covers ALL rows
   const dailyCard='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Daily lead movement</span>'
    +'<span class="info" title="Leads Assigned counts cases (open + closed) by the day they were opened. Total Closed by close date; Total Sales by contract create date, one per account. Conv % (assigned) = Sales ÷ Leads Assigned that day (F-MOVE-01) — turns amber above 100%, which means sales that day came from the existing open backlog rather than fresh lead intake (BI sales and Salesforce leads are different populations). Attendance is the headcount of present agents that day. SPD = sales ÷ present agents; Closure p/day = closed ÷ present agents. Week rows show attendance as the average present headcount.">i</span>'
    +'<span class="s">'+(over?'last 70 of '+dd.length+' days — narrow the date range for the rest · ':'')+'all global filters apply</span></div>'
@@ -3087,9 +3340,9 @@ function pageLeads(win){
    +head('Ave Closed p/d')+head('Ave Wasted p/d')+head('Sales')+head('Payroll SPD')+head('Dialing SPD')
    +head('Conv % (leads)')+head('Conv % (closed)')+head('Conv % wasted')+head('Cancelled')+head('Canc to Sales %')
    +'</tr></thead><tbody>'
-   +rows.map(a=>cell(a,false)).join('')
+   +LM.rows.map(a=>cell(a,false)).join('')
    +cell(G,true)
-   +'</tbody></table></div>'
+   +'</tbody></table>'+LM.foot+'</div>'
    +((unOpen||unClosed)?'<div class="stale-banner" style="margin-top:10px">⚠ Not attributed to any roster agent (excluded here, still counted in totals on the Sales page): '+(unOpen?unOpen.toLocaleString()+' open case(s)':'')+(unOpen&&unClosed?' · ':'')+(unClosed?unClosed.toLocaleString()+' closed case(s)':'')+'.</div>':'')
    +'</div>';
 }
@@ -3159,11 +3412,12 @@ function pageScorecard(win){
     if(r.attRate!=null){g.att+=r.attRate;g.attN++}
     if(r.passRate!=null){g.pass+=r.passRate;g.passN++}
     g.crit+=r.crit;g.calls+=r.calls;g.present+=r.present});
+  const SC=capTable(rows,'scorecard');   // 26 columns per agent — cap the DOM; sorting + TL rollup still use every row
   return '<div class="card" style="margin-bottom:14px"><div class="card-h"><span class="t">Agent scorecard</span><span class="s">'+rows.length+' agents'+(roster.length?' · Agent List is the base — '+rows.filter(r=>Object.keys(r.joins).some(j=>j!=='list')).length+' active this window':' · joined on CB employee code (upload the Agent List to make it the base)')+offNote+'</span>'
    +'<span class="right"><span style="font-size:11px;color:var(--muted)">Click headers to sort</span></span></div>'
    +'<div style="overflow-x:auto"><table class="tbl"><thead><tr>'
    +'<th class="noclick">Agent</th><th class="noclick">Team leader</th><th class="noclick">Tenure</th>'+th('Present days','present')+th('Attendance','attRate')+th('Calls','calls')+th('Talk (min)','dur')+th('Calls/day','cpd')+th('Open leads','open')+th('Closed','closedN')+th('Unique leads','nLeads')+th('Sales','nSales')+th('Conv %','convPct')+th('Sales target','target')+th('% Sales tgt','pctS')+th('GWP','gwp')+th('GWP target','gwpT')+th('% GWP tgt','pctG')+th('Referrals','refs')+th('Cancels','nCancels')+th('Evals','ev')+th('Coach','coach')+th('QA pass','passRate')+th('Avg score','avgScore')+th('Criticals','crit')+'<th class="noclick">Data joins</th></tr></thead><tbody>'
-   +rows.map(r=>'<tr><td><b>'+aName(r.cb,maskName(r.name))+'</b><div style="font-size:10.5px;color:var(--muted)">'+esc(r.code)+'</div></td><td>'+maskName(r.tl)+'</td>'
+   +SC.rows.map(r=>'<tr><td><b>'+aName(r.cb,maskName(r.name))+'</b><div style="font-size:10.5px;color:var(--muted)">'+esc(r.code)+'</div></td><td>'+maskName(r.tl)+'</td>'
     +'<td style="font-size:11.5px;color:var(--muted)">'+esc(r.tenure||'—')+'</td>'
     +'<td class="num">'+(r.present||0)+'</td>'
     +'<td>'+ragPill(r.attRate,92,85)+'</td>'
@@ -3188,7 +3442,7 @@ function pageScorecard(win){
     +'<td class="num">'+fmtVal(r.avgScore,'pct')+'</td>'
     +'<td>'+(r.crit?'<span class="pill r">'+r.crit+'</span>':'<span class="pill g">0</span>')+'</td>'
     +'<td>'+['list','att','qa','calls','sf'].map(j=>'<span class="pill '+(r.joins[j]?'b':'n')+'" style="padding:2px 6px;margin-right:3px">'+j.toUpperCase()+'</span>').join('')+'</td></tr>').join('')
-   +'</tbody></table></div>'
+   +'</tbody></table>'+SC.foot+'</div>'
    +(unmappedAgents.length?'<div class="stale-banner" style="margin-top:10px">⚠ '+unmappedAgents.length+' dialler agent name(s) not mapped to CB codes ('+esc(unmappedAgents.slice(0,4).join(', '))+(unmappedAgents.length>4?'…':'')+') — their calls are excluded from per-agent maths. Map them in Dictionary → Agent Mapping.</div>':'')
    +'</div>'
    +'<div class="card"><div class="card-h"><span class="t">Team leader rollup</span></div><table class="tbl"><thead><tr><th class="noclick">Team leader</th><th class="noclick">Agents</th><th class="noclick">Avg attendance</th><th class="noclick">Avg QA pass</th><th class="noclick">Unique leads</th><th class="noclick">Sales</th><th class="noclick">Conv %</th><th class="noclick">Target</th><th class="noclick">% Sales</th><th class="noclick">GWP</th><th class="noclick">GWP target</th><th class="noclick">% GWP</th><th class="noclick">Referrals</th><th class="noclick">Cancels</th><th class="noclick">Criticals</th><th class="noclick">Calls/present day</th></tr></thead><tbody>'
@@ -3271,6 +3525,11 @@ function brainInit(nodes,edges){
   function physics(){
     tick++;
     if(alpha<.005)return;
+    // PERF: the O(n²) repulsion at 440 nodes is ~97k pair-tests per frame, forever
+    // (alpha floors at .06 so the graph keeps living). Once settled, the layout barely
+    // moves — run the n² pass every 3rd frame; springs/centering/jitter stay per-frame.
+    const settled=alpha<=.061&&!drag;
+    if(!settled||tick%3===0)
     for(let i=0;i<nodes.length;i++){const a=nodes[i];
       for(let j=i+1;j<nodes.length;j++){const b=nodes[j];
         let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy;if(d2<1)d2=1;if(d2>40000)continue;
@@ -3547,14 +3806,16 @@ function pageSession(){
   const unMx=mxRows.filter(m=>m.un).length;
   let pivotHtml='<div class="empty">No open-cases session uploaded yet.</div>';
   if(mxRows.length){
+    const hasSes={};SES_TIMES.forEach(t=>hasSes[t]=(state.facts['SES_OPEN_'+t]||[]).length>0);   // hoisted — was an array lookup per CELL (16k+ cells)
+    const SM=capTable(mxRows,'sessionMx',120);
     pivotHtml='<div style="overflow-x:auto"><table class="tbl" style="font-size:11px"><thead>'
      +'<tr><th class="noclick" rowspan="2" style="min-width:120px">Team Leader</th><th class="noclick" rowspan="2" style="min-width:140px">Agent Name</th>'
      +stGroups.map(st=>'<th class="noclick" colspan="'+SES_TIMES.length+'" style="text-align:center;background:#EAF1FB;border-left:2px solid var(--line)">'+esc(st)+'</th>').join('')+'</tr>'
      +'<tr>'+stGroups.map(()=>SES_TIMES.map((t,i)=>'<th class="noclick" style="color:var(--red);font-size:10px'+(i===0?';border-left:2px solid var(--line)':'')+'">'+SES_HLBL[t]+'</th>').join('')).join('')+'</tr></thead><tbody>'
-     +mxRows.map(m=>'<tr><td style="font-size:10.5px">'+(m.un?'—':maskName(m.tl))+'</td><td><b>'+maskName(m.name)+'</b>'+(m.un?' <span class="pill a" style="padding:1px 5px">unmapped</span>':'')+'</td>'
-       +stGroups.map(st=>SES_TIMES.map((t,i)=>{const v=(m.c[st]||{})[t];const has=(state.facts['SES_OPEN_'+t]||[]).length>0;
-         return '<td class="num" style="font-size:11px'+(i===0?';border-left:2px solid var(--line)':'')+'">'+(v||(has?'·':''))+'</td>'}).join('')).join('')+'</tr>').join('')
-     +'</tbody></table></div>'
+     +SM.rows.map(m=>'<tr><td style="font-size:10.5px">'+(m.un?'—':maskName(m.tl))+'</td><td><b>'+maskName(m.name)+'</b>'+(m.un?' <span class="pill a" style="padding:1px 5px">unmapped</span>':'')+'</td>'
+       +stGroups.map(st=>SES_TIMES.map((t,i)=>{const v=(m.c[st]||{})[t];
+         return '<td class="num" style="font-size:11px'+(i===0?';border-left:2px solid var(--line)':'')+'">'+(v||(hasSes[t]?'·':''))+'</td>'}).join('')).join('')+'</tr>').join('')
+     +'</tbody></table>'+SM.foot+'</div>'
      +'<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Blank columns: that session has no open-cases upload yet · dots: uploaded, zero for this agent.</div>'
      +((unMx||unowned2)?'<div class="stale-banner" style="margin-top:8px">⚠ '+(unMx?unMx+' owner(s) not on the roster. ':'')+(unowned2?unowned2+' unowned.':'')+'</div>':'');
   }
@@ -3665,18 +3926,26 @@ function pageDict(){
   }else if(tab==='map'){
     const bridge=state.facts.AGENT_LIST||[];
     const calls=state.facts.CALLX_CALL_RECORDS||[];
-    const names=[...new Set(calls.filter(c=>c.agent).map(c=>c.agent))].sort();
+    // ONE pass over the calls for name+count (this used to re-filter the whole call
+    // array once per agent name — 40M comparisons at fleet scale), and the CB-code
+    // option list + its normalisations are built once, not once per row.
+    const byName=new Map();
+    calls.forEach(c=>{if(c.agent)byName.set(c.agent,(byName.get(c.agent)||0)+1)});
+    const names=[...byName.keys()].sort();
     const codes=distinct('ATTENDANCE','employee_code');
+    const codesNorm=codes.map(c=>[normCB(c),esc(c)]);
     body='<div class="card" style="margin-bottom:14px"><div class="card-h"><span class="t">Identity bridge — from the Agent List</span><span class="s">'+bridge.length+' agents · rebuilt on every Agent List upload</span><span class="right"><button class="btn small" onclick="go(&#39;uploads&#39;)">Upload new list</button></span></div>'
      +(bridge.length?'<p style="font-size:12.5px;color:var(--muted);margin-bottom:8px">One row per agent, all systems: CB code (normalised, so CB15 = CB-15), attendance name, dialler alias, Salesforce name and team leader. Every cross-source join in the app runs through this table.</p>'
       +'<div style="overflow-x:auto;max-height:320px;overflow-y:auto"><table class="tbl"><thead><tr><th class="noclick">CB</th><th class="noclick">Agent</th><th class="noclick">Team leader</th><th class="noclick">Campaign</th><th class="noclick">Dialler alias</th><th class="noclick">Salesforce name</th><th class="noclick">Target</th></tr></thead><tbody>'
       +bridge.map(a=>'<tr><td><b>'+esc(a.cb_code)+'</b></td><td>'+maskName(a.agent_name)+'</td><td>'+maskName(a.team_leader)+'</td><td style="font-size:11.5px">'+esc(a.queue||'—')+'</td><td style="font-size:11.5px">'+maskName(a.callx_alias||'—')+'</td><td style="font-size:11.5px">'+maskName(a.sf_name||'—')+'</td><td class="num">'+(a.target??'—')+'</td></tr>').join('')
       +'</tbody></table></div>':'<div class="empty"><div class="big">No Agent List loaded</div><p>Upload the Matrix Agent List in the Upload Station — it maps CB codes, dialler aliases and Salesforce names in one file and unlocks per-agent GWP.</p></div>')+'</div>'
      +'<div class="grid g2"><div class="card"><div class="card-h"><span class="t">Dialler names — manual overrides</span><span class="s">'+names.filter(n=>state.agentMap[n]).length+' of '+names.length+' mapped</span></div>'
-     +(names.length?'<div style="max-height:300px;overflow-y:auto"><table class="tbl"><thead><tr><th class="noclick">Dialler agent name</th><th class="noclick">Calls</th><th class="noclick">CB code</th></tr></thead><tbody>'
-      +names.map(n=>{const cnt=calls.filter(c=>c.agent===n).length;
-        return '<tr><td><b>'+maskName(n)+'</b></td><td class="num">'+cnt.toLocaleString()+'</td><td><select data-name="'+esc(n)+'" onchange="mapAgent(this.dataset.name,this.value)"><option value="">— unmapped —</option>'+codes.map(c=>'<option '+(normCB(state.agentMap[n])===normCB(c)?'selected':'')+'>'+c+'</option>').join('')+'</select></td></tr>'}).join('')
-      +'</tbody></table></div>':'<div class="empty">Upload CallX call records first.</div>')+'</div>'
+     +(names.length?(function(){
+        const CT=capTable(names,'dictMap',80);   // each row carries a full <select> of every CB code — cap the DOM, not the data
+        return '<div style="max-height:300px;overflow-y:auto"><table class="tbl"><thead><tr><th class="noclick">Dialler agent name</th><th class="noclick">Calls</th><th class="noclick">CB code</th></tr></thead><tbody>'
+        +CT.rows.map(n=>{const cnt=byName.get(n)||0;const cur=normCB(state.agentMap[n]||'');
+          return '<tr><td><b>'+maskName(n)+'</b></td><td class="num">'+cnt.toLocaleString()+'</td><td><select data-name="'+esc(n)+'" onchange="mapAgent(this.dataset.name,this.value)"><option value="">— unmapped —</option>'+codesNorm.map(([cn,cl])=>'<option '+(cur&&cur===cn?'selected':'')+'>'+cl+'</option>').join('')+'</select></td></tr>'}).join('')
+        +'</tbody></table>'+CT.foot+'</div>'})():'<div class="empty">Upload CallX call records first.</div>')+'</div>'
      +'</div>';
   }
   return '<div class="tabs">'
@@ -3767,7 +4036,12 @@ function pageManual(){return '<div class="card guide" style="max-width:900px">'+
 
 /* ---------------- MODAL / EXPORT / MISC ---------------- */
 function modal(html){$('#modalBox').innerHTML=html;$('#overlay').classList.add('open')}
-function closeModal(){$('#overlay').classList.remove('open');$('#modalBox').classList.remove('xl');$('#modalBox').innerHTML=''}
+function closeModal(){
+  // Closing the modal by ANY route (✕, Cancel, Esc, backdrop click) abandons an
+  // in-flight upload flow — otherwise a background parse would reopen the dialog
+  // after the user dismissed it. Harmless for every other modal.
+  _upGen++;pendingUpload=null;
+  $('#overlay').classList.remove('open');$('#modalBox').classList.remove('xl');$('#modalBox').innerHTML=''}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
 $('#overlay').addEventListener('click',e=>{if(e.target.id==='overlay')closeModal()});
 
@@ -3807,7 +4081,7 @@ function render(){
   $('#pgTitle').textContent=p.title;$('#pgSub').textContent=p.sub;
   const win=periodWindow();
   $('#footCompare').textContent='Metrics compared to '+prevWindow(win).from+' → '+prevWindow(win).to+' unless stated.';
-  const a=anchorDate();$('#footAsof').textContent='Data as of '+isoDay(a)+(state.persistOk?'':' · ⚠ persistence unavailable this session');
+  const a=anchorDate();$('#footAsof').textContent='Data as of '+isoDay(a)+(state.hydrating?' · ⏳ syncing cloud data…':'')+(state.persistOk?'':' · ⚠ persistence unavailable this session');
   let html='';
   try{
   if(p.id==='exec')html=pageExec(win);
@@ -3833,7 +4107,19 @@ function render(){
      +'<p style="font-size:12.5px;color:var(--muted)">'+esc(e.message)+'</p>'
      +'<p style="font-size:12.5px">Try a hard refresh (Ctrl+Shift+R). If it persists, screenshot this and send it to Nick — the other pages still work.</p></div>';
   }
-  $('#page').innerHTML=html;
+  const pg=$('#page');
+  pg.innerHTML=html;
+  // Replay the entrance animation ONLY when the route actually changed — re-renders
+  // from a filter/sort/toggle must repaint in place with zero flicker.
+  if(window.__lastRoute!==state.route){window.__lastRoute=state.route;pg.style.animation='none';void pg.offsetWidth;pg.style.animation=''}
+}
+/* Large tables render the first `cap` rows; one click renders the rest. Sorting and
+   totals still run over the FULL dataset — only the DOM is capped. */
+function capTable(rows,id,cap){
+  cap=cap||150;
+  if(state.showAll[id]||rows.length<=cap)return{rows,foot:''};
+  return{rows:rows.slice(0,cap),
+    foot:'<div style="padding:9px 12px;font-size:12px;color:var(--muted)">Showing '+cap.toLocaleString()+' of '+rows.length.toLocaleString()+' rows · <button class="btn small" onclick="state.showAll[\''+id+'\']=1;render()">Show all '+rows.length.toLocaleString()+'</button></div>'};
 }
 let __initGen=0, __initDone=false;
 /* Activated Sales is retired — Power BI - Active Cases is the only money source. These
@@ -3888,10 +4174,22 @@ async function init(){
   if(gen!==__initGen)return; // a newer (post-login) init superseded this run
   if(cfg){if(cfg.kpis?.length)state.kpis=migrateKpis(cfg.kpis);if(cfg.rules)state.rules=Object.assign({},structuredClone(DEFAULT_RULES),cfg.rules);if(cfg.agentMap)state.agentMap=cfg.agentMap;if(cfg.sfOwnerMap)state.sfOwnerMap=cfg.sfOwnerMap;if(cfg.cbInfo)state.cbInfo=cfg.cbInfo;if(cfg.user)state.user=cfg.user}
   if(audit){state.batches=audit.batches||[];state.exceptions=audit.exceptions||[]}
+  // PROGRESSIVE BOOT: paint the shell + pages NOW with config/audit (identity maps live
+  // in the config, so scoping and nav are already correct), then stream the fact blobs
+  // in and re-render at most every 300 ms as they land. Before this, first paint waited
+  // for EVERY source — tens of MB from the cloud — behind a blank page.
+  state.hydrating=true;
+  bumpDataVer();render();
+  let hydT=null;
+  const hydTick=()=>{if(hydT||gen!==__initGen)return;
+    hydT=setTimeout(()=>{hydT=null;if(gen!==__initGen)return;bumpDataVer();render()},300)};
   // Parallel + resilient: 15 multi-MB sources load at once; one slow or failed
   // source never blocks or serialises behind the others.
-  await Promise.all([...SRC_KEYS,...SES_KEYS].map(async k=>{try{const f=await load('cb-facts-'+k);if(f&&f.length)state.facts[k]=f}catch(e){}}));
+  await Promise.all([...SRC_KEYS,...SES_KEYS].map(async k=>{try{const f=await load('cb-facts-'+k);
+    if(gen===__initGen&&f&&f.length){state.facts[k]=f;hydTick()}}catch(e){}}));
   if(gen!==__initGen)return;
+  if(hydT){clearTimeout(hydT);hydT=null}
+  state.hydrating=false;
   await purgeRetired();                      // after the loads, so SES_ACT_* rows are caught too
   if(gen!==__initGen)return;
   if(__kpisMigrated){__kpisMigrated=false;saveConfig();   // heal the stale cloud copy once
