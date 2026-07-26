@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vehicle Tracking — MTD Report · Chatterbox AgentOS</title>
+<!-- Gate this page itself: it is a directly reachable URL, and "the parent tab is
+     gated" is no protection for a child document. Same-origin sessionStorage means
+     an already-signed-in parent passes straight through with no second login. -->
+<script src="/auth-gate.js"></script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,3 29,10 16,17 3,10' fill='%234aa8f5'/%3E%3Cpolygon points='3,10 16,17 16,31 3,24' fill='%230d1526'/%3E%3Cpolygon points='29,10 16,17 16,31 29,24' fill='%231f6fd0'/%3E%3C/svg%3E">
 <style>
   :root{
@@ -249,6 +253,9 @@
 </style>
 </head>
 <body>
+<div style="background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.4);color:#FBBF24;border-radius:10px;margin:10px 14px 0;padding:8px 14px;font:600 12.5px Inter,system-ui,sans-serif">
+  SEED SNAPSHOT — this tab shows the July-2026 workbook consolidation, not live data. Figures here must not be quoted as actuals; the live feed arrives when the ingestion rules are wired (see the wiring-plan card).
+</div>
 <div class="app">
 
   <!-- ============ Sidebar ============ -->
@@ -349,7 +356,7 @@
         <div class="card">
           <div class="card-head"><h2 class="card-title">VT tracker — Power BI</h2><span class="card-hint">Counts with share of the month-to-date position</span></div>
           <div class="tscroll"><table id="vtTable"></table></div>
-          <p class="footnote">¹ share of Sales &nbsp;·&nbsp; ² share of Total fitments. <b>Rule to confirm:</b> the July workbook computes Sales as Scheduled + Panimax + Afrileads + JAGLeads + Total fitments + Missed (=SUM of the six columns).</p>
+          <p class="footnote">¹ share of Sales &nbsp;·&nbsp; ² share of Total fitments. <b>Rule to confirm (§8):</b> the July workbook computes Sales as Scheduled + Panimax + Afrileads + JAGLeads + Total fitments + Missed (=SUM of the six columns). Note that Panimax + Afrileads + JAGLeads already sum to Total fitments, so this definition counts every fitment twice — the figure is reproduced here for workbook parity and every "share of Sales" divides by it. Confirm or correct the rule before quoting these shares.</p>
         </div>
         <div class="grid-2">
           <div class="card">
@@ -703,17 +710,17 @@ function leadTable(rows, createdLabel) {
     return `<td class="pct">${f(cv)}</td><td class="pct">${f(ca)}</td>`;
   };
   let body = "";
+  const matched = [];
   for (let w = 1; w <= 5; w++) {
-    const wk = rows.filter((r) => r.w === w);
-    for (const r of wk) {
-      if (q && !r.d.toLowerCase().includes(q)) continue;
-      body += `<tr><td>${esc(r.d)}</td>${cells(r.v)}${convCells(r.v)}</tr>`;
-    }
-    const t = sum(wk);
-    body += `<tr class="subtotal"><td>Week ${w}</td>${cells(t)}${convCells(t, true)}</tr>`;
+    const wk = rows.filter((r) => r.w === w && (!q || r.d.toLowerCase().includes(q)));
+    if (!wk.length) continue;               // no phantom all-zero week rows (seed carries weeks 1-3)
+    for (const r of wk) body += `<tr><td>${esc(r.d)}</td>${cells(r.v)}${convCells(r.v)}</tr>`;
+    matched.push(...wk);
+    const t = sum(wk);                      // subtotals now total the rows actually SHOWN
+    body += `<tr class="subtotal"><td>Week ${w}${q ? " (filtered)" : ""}</td>${cells(t)}${convCells(t, true)}</tr>`;
   }
-  const mtd = sum(rows);
-  body += `<tr class="grand"><td>MTD</td>${cells(mtd)}${convCells(mtd)}</tr>`;
+  const mtd = sum(matched);
+  body += `<tr class="grand"><td>MTD${q ? " (filtered)" : ""}</td>${cells(mtd)}${convCells(mtd)}</tr>`;
   return `<thead><tr><th>Date</th>${LEAD_COLS.map((c, i) => `<th>${i === 0 ? createdLabel : c}</th>`).join("")}<th>Total vehicle conversion</th><th>Total account conversion</th></tr></thead><tbody>${body}</tbody>`;
 }
 

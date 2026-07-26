@@ -155,7 +155,9 @@ for (const [srcDir, urlDir, label] of [['nicks_code', 'pulse', 'VAS'], ['tracker
 
 // Extra self-contained pages served alongside a companion app (e.g. the VT MTD report
 // embedded as the Tracker's third tab via <iframe src="vt-mtd-report.html">). Copied
-// verbatim — no shim, no gate; access is controlled by the parent (already-gated) tab.
+// verbatim — no storage shim needed. The page now carries its OWN auth-gate include:
+// it is a directly reachable URL, so "the parent tab is gated" was never a boundary.
+// Inside the gated parent it passes through silently (same-origin sessionStorage).
 const VT_REL = 'tracker/vt-mtd-report.html';
 fs.mkdirSync(path.join(outDir, 'tracker'), { recursive: true });
 fs.copyFileSync(path.join(root, VT_REL), path.join(outDir, VT_REL));

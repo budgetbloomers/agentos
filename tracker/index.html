@@ -389,9 +389,12 @@
   var pushT = null;
 
   /* ---------- storage (cloud-authoritative, localStorage as cache) ---------- */
+  var _storeCache = null;   // parsed-store cache — refreshComputed used to re-parse the whole blob twice per keystroke
   function loadAll() {
-    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
-    catch (e) { return {}; }
+    if (_storeCache) return _storeCache;
+    try { _storeCache = JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
+    catch (e) { _storeCache = {}; }
+    return _storeCache;
   }
   function warn(msg) {
     try {
@@ -404,24 +407,35 @@
   }
   function tok() { return sessionStorage.getItem("cbx_token"); }
   /* rows mode: one row per date — concurrent users on different dates never clobber each other */
+  var pendingRows = {};   // saves made BEFORE hydrate lands — queued and flushed after, never silently dropped
+  function flushMsg(iso, okv) {   // a queued save's "syncing…" note must resolve when the flush lands
+    try {
+      var msg = document.getElementById("form-msg");
+      if (!msg || fields.date.value !== iso || msg.textContent.indexOf("syncing") === -1) return;
+      if (okv === true) { msg.textContent = "Saved " + fmtDate(iso) + " ✓ in the database"; msg.className = "form-msg ok"; }
+      else if (okv === false) { msg.textContent = "Saved " + fmtDate(iso) + " on this device — NOT in the database (see the warning above)"; msg.className = "form-msg err"; }
+    } catch (e) {}
+  }
   function cloudRow(iso, entryOrNull) {
     var t = tok();
-    if (!t) { warn("Not signed in — this entry was NOT saved to the database."); return; }
-    if (!hydrated) return;
-    if (mode === "kv") { clearTimeout(pushT); pushT = setTimeout(cloudPushBlob, 600); return; }
+    if (!t) { warn("Not signed in — this entry was NOT saved to the database."); return Promise.resolve(false); }
+    if (!hydrated) { pendingRows[iso] = entryOrNull; return Promise.resolve("queued"); }
+    if (mode === "kv") { clearTimeout(pushT); pushT = setTimeout(cloudPushBlob, 600); return Promise.resolve(true); }
     var body = entryOrNull ? {
       date: iso, employed: entryOrNull.employed, present: entryOrNull.present,
       afrilead: entryOrNull.afrilead, jag: entryOrNull.jag, vt: entryOrNull.vt,
       gwp: entryOrNull.gwp, target: entryOrNull.target
     } : { date: iso, "delete": true };
-    fetch(BASE + "/api/eod", {
+    return fetch(BASE + "/api/eod", {
       method: "POST",
       headers: { "Authorization": "Bearer " + t, "Content-Type": "application/json", "X-Cbx-Client": "v4" },
       body: JSON.stringify(body)
     }).then(function (r) {
-      if (!r.ok) warn("Cloud save failed (" + r.status + ") — this entry is NOT in the database. Try again or re-login.");
+      if (!r.ok) { warn("Cloud save failed (" + r.status + ") — this entry is NOT in the database. Try again or re-login."); return false; }
+      return true;
     }).catch(function () {
       warn("Cloud save failed (network) — this entry is NOT in the database. Check your connection and retry.");
+      return false;
     });
   }
   function cloudPushBlob() {
@@ -437,6 +451,7 @@
     });
   }
   function saveAll(data) {
+    _storeCache = data;
     localStorage.setItem(STORE_KEY, JSON.stringify(data));
     if (mode === "kv") { clearTimeout(pushT); pushT = setTimeout(cloudPushBlob, 600); }
   }
@@ -444,21 +459,34 @@
     var t = tok(); if (!t) return;
     fetch(BASE + "/api/kv?key=" + KV_KEY, { headers: { "Authorization": "Bearer " + t } })
       .then(function (r) {
-        if (r.status === 404) { localStorage.removeItem(STORE_KEY); mode = "kv"; hydrated = true; return null; }
+        if (r.status === 404) {
+          mode = "kv"; hydrated = true;
+          // mirror of the rows-mode migration: cloud has NOTHING — if this device holds
+          // entries, push them up rather than deleting the only copy in existence
+          if (Object.keys(loadAll()).length) { clearTimeout(pushT); pushT = setTimeout(cloudPushBlob, 600); }
+          else { _storeCache = null; localStorage.removeItem(STORE_KEY); }
+          return null;
+        }
         return r.ok ? r.text() : undefined;
       })
       .then(function (txt) {
         if (txt === undefined) return;
-        if (txt !== null && txt !== "") { try { JSON.parse(txt); localStorage.setItem(STORE_KEY, txt); } catch (e) {} }
+        if (txt !== null && txt !== "") { try { JSON.parse(txt); _storeCache = null; localStorage.setItem(STORE_KEY, txt); } catch (e) {} }
         mode = "kv"; hydrated = true;
+        var pend = pendingRows; pendingRows = {};
+        if (Object.keys(pend).length) { var d2 = loadAll(); Object.keys(pend).forEach(function (iso) { if (pend[iso] === null) delete d2[iso]; else d2[iso] = pend[iso]; }); saveAll(d2); Object.keys(pend).forEach(function (iso) { flushMsg(iso, true); }); }
         renderTable(); loadDateIntoForm();
       })
       .catch(function () { /* offline: local read-only, no pushes */ });
   }
+  var hydrateBusy = false;   // login fires hydrate TWICE (token check + cbx-authed) ~simultaneously;
+                             // the twin's GET predates the queue-flush POST and clobbered the fresh row
   function hydrate() {
-    var t = tok(); if (!t) return;
+    var t = tok(); if (!t || hydrateBusy) return;
+    hydrateBusy = true;
     fetch(BASE + "/api/eod", { headers: { "Authorization": "Bearer " + t } })
       .then(function (r) {
+        hydrateBusy = false;
         if (r.status === 503) { hydrateKv(); return undefined; }   // table not created yet
         return r.ok ? r.json() : undefined;
       })
@@ -478,19 +506,25 @@
           // another user wiped the table must not resurrect this tab's local cache.
           Object.keys(kvLeftover).forEach(function (iso) { map[iso] = kvLeftover[iso]; cloudRow(iso, kvLeftover[iso]); });
         }
-        localStorage.setItem(STORE_KEY, JSON.stringify(map));
+        // saves queued while this read was in flight are NEWER than the read — apply
+        // them on top, then send them to the database (the old code destroyed them)
+        var pend = pendingRows; pendingRows = {};
+        Object.keys(pend).forEach(function (iso) { if (pend[iso] === null) delete map[iso]; else map[iso] = pend[iso]; });
+        _storeCache = map; localStorage.setItem(STORE_KEY, JSON.stringify(map));
+        Object.keys(pend).forEach(function (iso) { cloudRow(iso, pend[iso]).then(function (okv) { flushMsg(iso, okv); }); });
         renderTable(); loadDateIntoForm();
       })
-      .catch(function () { /* offline: local read-only, no pushes */ });
+      .catch(function () { hydrateBusy = false; /* offline: local read-only, no pushes */ });
   }
   if (sessionStorage.getItem("cbx_token")) setTimeout(hydrate, 400);
   document.addEventListener("cbx-authed", function () { setTimeout(hydrate, 400); });
   /* cbx-fresh: multi-user visibility — re-pull rows every 4 min and on tab focus,
      so entries saved by another user appear without a manual refresh. */
   function freshCheck() {
-    if (!tok() || !hydrated || mode !== "rows") return;
+    if (!tok() || !hydrated) return;   // kv mode included: hydrate() probes /api/eod first, so this also escapes the blob fallback once the table exists
     var ae = document.activeElement;
     if (ae && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) return; // never clobber mid-edit
+    if (formDirty) return;             // typed-but-unsaved numbers must never be refreshed away
     hydrate();
   }
   setInterval(freshCheck, 240000);
@@ -623,8 +657,9 @@
       msg.textContent = ""; msg.className = "form-msg";
     }
   }
+  var formDirty = false;   // guards the 4-minute refresh: unsaved keystrokes must survive it
   Object.keys(fields).forEach(function (k) {
-    if (k !== "date") fields[k].addEventListener("input", refreshComputed);
+    if (k !== "date") fields[k].addEventListener("input", function () { formDirty = true; refreshComputed(); });
   });
 
   function loadDateIntoForm() {
@@ -637,6 +672,7 @@
     ["employed","present","afrilead","jag","vt","gwp","target"].forEach(function (k) {
       fields[k].value = editing && e[k] !== null && e[k] !== undefined ? e[k] : "";
     });
+    formDirty = false;
     refreshComputed();
   }
   fields.date.addEventListener("change", loadDateIntoForm);
@@ -658,9 +694,15 @@
     var existed = !!data[iso];
     data[iso] = e;
     saveAll(data);
-    cloudRow(iso, e);
-    msg.textContent = (existed ? "Updated " : "Saved ") + fmtDate(iso) + " ✓";
-    msg.className = "form-msg ok";
+    formDirty = false;
+    msg.textContent = "Saving " + fmtDate(iso) + "…";
+    msg.className = "form-msg";
+    cloudRow(iso, e).then(function (okv) {
+      if (fields.date.value !== iso) return;   // user moved on — don't overwrite a newer message
+      if (okv === "queued") { msg.textContent = (existed ? "Updated " : "Saved ") + fmtDate(iso) + " — syncing to the database…"; msg.className = "form-msg"; }
+      else if (okv) { msg.textContent = (existed ? "Updated " : "Saved ") + fmtDate(iso) + " ✓ in the database"; msg.className = "form-msg ok"; }
+      else { msg.textContent = (existed ? "Updated " : "Saved ") + fmtDate(iso) + " on this device — NOT in the database (see the warning above)"; msg.className = "form-msg err"; }
+    });
     $("edit-note").classList.add("show");
     $("btn-save").textContent = "Update entry";
     renderTable();
@@ -682,6 +724,7 @@
     body.innerHTML = ""; foot.innerHTML = "";
     var isEmpty = dates.length === 0;
     $("tracker-empty").hidden = !isEmpty;
+    if (isEmpty) $("tracker-empty").textContent = (!hydrated && tok()) ? "Loading entries from the database…" : "No entries yet — add your first day on the Input tab.";
     $("tracker-table").style.display = isEmpty ? "none" : "";
     if (isEmpty) return;
 
@@ -800,7 +843,7 @@
       ]);
     });
     var csv = rows.map(function (r) {
-      return r.map(function (c) { return c === null || c === undefined ? "" : String(c); }).join(",");
+      return r.map(function (c) { var s = c === null || c === undefined ? "" : String(c); return '"' + s.replace(/"/g, '""') + '"'; }).join(",");
     }).join("\r\n");
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     var a = document.createElement("a");
@@ -866,6 +909,7 @@ function cbxTrackerContext(){try{
     +(gN?" · avg GWP R"+Math.round(gS/gN*100)/100:"")
     +" · total agents-to-target "+tT+".");
   p.push("Definitions: Attendance % = Present HC ÷ Employed HC. SPD = VT Sales ÷ Present HC. DoD columns compare each day vs the previous tracked day.");
+  p.push("NOTE for the assistant: the VT MTD Report tab in this app is a SEED July-2026 workbook snapshot, NOT live data — never quote its figures as actuals; the live daily numbers are the EOD rows above.");
   return p.join(NL).slice(0,30000)
 }catch(e){return ""}}
 </script>
