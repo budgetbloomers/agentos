@@ -589,15 +589,15 @@ const DEFAULT_RULES = {
   discStages:{label:'Disciplinary stage ladder (offense number → stage)',vals:['1:Coaching conversation','2:Verbal warning','3:Written warning','4:Final written warning','5:Disciplinary hearing'],help:'Format is count:Stage label. An agent sits on the highest rung their offense number has reached. CONFIGURATION REQUIRED — confirm the ladder with Claudell / HR.'},
   nbaThresholds:{label:'NBA & scoring thresholds (key:value)',vals:['qaCritical:80','qaTarget:90','qaStd:85','attRisk:80','attTarget:95','gwpFloor:99','salesLow:70','salesNear:90','convTarget:10','talkFloorMin:150','talkTargetMin:210','cancelPctOK:10','attemptsMin:3','attemptsMax:5','r2a2Count:2','r2a2Rate:10','r2a3Count:4','r2a3Rate:30','pen1:2','pen2:5','pen3:10'],help:'Powers the Agent Card, the Two-Check rule, the graduated critical-fail tiers and the NBA decision ladder. R2A tiers: R2A-3 fires at r2a3Count fails OR r2a3Rate% CFR (penalty pen3); R2A-2 at r2a2Count / r2a2Rate (pen2); else R2A-1 (pen1, note only). Tier = the HIGHER band; penalty is capped at pen3. Edit any value and every card rescores instantly.'},
   compositeWeights:{label:'Composite score weights (%)',vals:['GWP/Sale:25','Target Ach:20','QA:20','GWP %ile:15','Conversion:10','Talk:5','Attendance:5'],help:'How the /100 composite is built (weights renormalise across metrics an agent actually has). Keep the intent: value first, then volume, then quality.'},
-  cycleStart:{label:'VAS cycle start date (YYYY-MM-DD)',vals:['2026-06-26'],help:'First dialing day of the current Matrix VAS cycle. Drives the Operational Performance panels on Sales Production.'},
-  cycleDialingDays:{label:'Dialing days in the cycle',vals:['21'],numeric:true,help:'Total dialing days the cycle runs. Days Past counts the distinct cycle days a campaign banked BI money or dialled (the union — a no-sale day still counts as worked, and a thin call-record export can no longer shrink it); Remaining = this minus Days Past.'},
+  cycleStart:{single:true,label:'VAS cycle start date (YYYY-MM-DD)',vals:['2026-06-26'],help:'First dialing day of the current Matrix VAS cycle. Drives the Operational Performance panels on Sales Production.'},
+  cycleDialingDays:{single:true,label:'Dialing days in the cycle',vals:['21'],numeric:true,help:'Total dialing days the cycle runs. Days Past counts the distinct cycle days a campaign banked BI money or dialled (the union — a no-sale day still counts as worked, and a thin call-record export can no longer shrink it); Remaining = this minus Days Past.'},
   cycleTargets:{label:'Cycle GWP targets by campaign (name:rand)',vals:['Cuddle:389285.16','Courtesy:375092.52'],help:'One panel per entry. Campaign matches each agent&#39;s roster queue. Add Matrix Vehicle Tracking here the day it gets a cycle target.'},
-  vatRate:{label:'VAT rate (%)',vals:['15'],numeric:true,help:'Required per Day incl VAT = ex-VAT × (1 + this). Also grosses up the BI money model: Power BI Charge Amounts are EX-VAT, so GWP incl = Σ charge × (1 + this). Zero-safe — set 0 and ex equals incl.'},
-  leadWindow:{label:'Lead window basis (snapshot | opened)',vals:['snapshot'],help:'How OPEN cases answer the date range. "snapshot" = open cases ignore the window — the rules pack default (R-TIME-06 "snapshot reads ignore W"; F-LEAD-01 "leads = open(snapshot) ∪ closed(W)"). "opened" = window open cases by the date each case was opened, so conversion moves with the date picker. Closed cases always window by close date, either way. Note: on "snapshot" the lead denominator is partly window-invariant, so narrowing the range lifts conversion without the floor changing. Switching to "opened" is a deliberate deviation from the pack and needs a version bump under §8 change control.'},
+  vatRate:{single:true,label:'VAT rate (%)',vals:['15'],numeric:true,help:'Required per Day incl VAT = ex-VAT × (1 + this). Also grosses up the BI money model: Power BI Charge Amounts are EX-VAT, so GWP incl = Σ charge × (1 + this). Zero-safe — set 0 and ex equals incl.'},
+  leadWindow:{single:true,label:'Lead window basis (snapshot | opened)',vals:['snapshot'],help:'How OPEN cases answer the date range. "snapshot" = open cases ignore the window — the rules pack default (R-TIME-06 "snapshot reads ignore W"; F-LEAD-01 "leads = open(snapshot) ∪ closed(W)"). "opened" = window open cases by the date each case was opened, so conversion moves with the date picker. Closed cases always window by close date, either way. Note: on "snapshot" the lead denominator is partly window-invariant, so narrowing the range lifts conversion without the floor changing. Switching to "opened" is a deliberate deviation from the pack and needs a version bump under §8 change control. SCOPE: this dial governs the LEAD DENOMINATOR (conversion tiles, funnel, per-agent leads). Backlog views — the Sales-page pipeline, ageing and owner load, and the Session snapshots — always read the full open snapshot regardless.'},
   qaDisputeStatuses:{label:'QA statuses that count as DISPUTED',vals:['closed_retracted','qa_review'],help:'Evaluations in these statuses count in the Disputed column on QA & Compliance: retracted = challenged and overturned; qa_review = challenge in progress. closed_mitigated is the normal terminal state (95% of evals) and is not a dispute by default — edit here if Jared disagrees.'},
-  gwpMult:{label:'GWP target multiplier (R per target sale)',vals:['89'],help:'GWP target = Sales target × this rand value. Edit when the average-premium assumption moves; every scorecard percentage recomputes instantly.',numeric:true},
-  staleDays:{label:'Days before a source is flagged STALE',vals:['7'],help:'Amber after this many days without a successful upload; red after double.',numeric:true},
-  askEndpoint:{label:'Ask AgentOS endpoint (AI Worker URL)',vals:['https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/ask'],help:'Where the Ask AgentOS console sends questions. The live Cloudflare Worker AI route. '}
+  gwpMult:{single:true,label:'GWP target multiplier (R per target sale)',vals:['89'],help:'GWP target = Sales target × this rand value. Edit when the average-premium assumption moves; every scorecard percentage recomputes instantly.',numeric:true},
+  staleDays:{single:true,label:'Days before a source is flagged STALE',vals:['7'],help:'Amber after this many days without a successful upload; red after double.',numeric:true},
+  askEndpoint:{single:true,label:'Ask AgentOS endpoint (AI Worker URL)',vals:['https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/ask'],help:'Where the Ask AgentOS console sends questions. The live Cloudflare Worker AI route. '}
 };
 
 /* ---------------- DEFAULT KPI DICTIONARY (fully editable; add your own) ----------------
@@ -608,7 +608,7 @@ const DEFAULT_KPIS = [
  /* ---- Sales Production ---- */
  {id:'total_calls',name:'Total Calls',domain:'Sales',icon:'phone',src:'CALLX_CALL_RECORDS',type:'count',format:'int',dir:'higher',green:null,amber:null,owner:'Leon',
   interp:'All dialler call records in the period (inbound + outbound). Activity volume, not quality.',red:'Check dialler uptime and that the latest CallX file was uploaded.'},
- {id:'answer_rate',name:'Answer Rate',domain:'Sales',icon:'phone',src:'CALLX_CALL_RECORDS',type:'ratio',num:[{f:'call_band',op:'ne',v:'No Answer'}],format:'pct',dir:'higher',green:60,amber:45,owner:'Leon',
+ {id:'answer_rate',name:'Answer Rate',domain:'Sales',icon:'phone',src:'CALLX_CALL_RECORDS',type:'ratio',num:[{f:'answered',op:'eq',v:1}],format:'pct',dir:'higher',green:60,amber:45,owner:'Leon',
   interp:'Connected calls ÷ all calls, where "answered" now reads the actual Lead Disposition (Dictionary → Rules → No-Answer dispositions), NOT call duration (client 2026-07-20). A blank disposition falls back to the legacy <30s rule. Low = lead-list or dialling-window problem.',red:'Review lead list quality, dialling windows and CLI reputation with Ryan.'},
  {id:'unique_calls',name:'Unique Calls',domain:'Sales',icon:'target',src:'CALLX_CALL_RECORDS',type:'distinct',field:'destination_number',num:[{f:'destination_number',op:'ne',v:'s'},{f:'destination_number',op:'notEmpty',v:''}],format:'int',dir:'higher',green:null,amber:null,owner:'Leon',
   interp:'Distinct numbers dialled (the Destination field). Inbound queue legs — destination "s" — are excluded, so this reads as unique customers reached for, not phone-system events.',red:'Unique calls flat while total calls climb = redial churn on the same numbers.'},
@@ -626,18 +626,18 @@ const DEFAULT_KPIS = [
   interp:'F-MONEY-02 — the same money on the ex-VAT basis, which under the BI model is exactly the raw Σ Charge Amount. Shown beside the inclusive figure because every headline GWP must declare its basis (R-FMT-01). Zero-safe: set the VAT rule to 0 and this equals the inclusive tile.',red:'If this diverges from Σ Charge Amount, the VAT rule or the charge parse is wrong — not the floor.'},
  {id:'avg_gwp_sale',name:'Avg GWP per Sale',domain:'Sales',icon:'target',src:'BI_ACTIVE_CASES',type:'count',special:'gwpAvg',format:'zar',dir:'higher',green:null,amber:null,owner:'Mekaeel',
   interp:'F-MONEY-06 — Total GWP (incl) ÷ sales, where sales = distinct accounts with a charge row in the window. The average inclusive premium per customer.',red:'Falling average with flat sales = product mix drifting to low-premium bundles; see the product mix on the BI Money tab.'},
- {id:'cancellations',name:'Cancellations',domain:'Sales',icon:'alert',src:'SF_INACTIVE',type:'distinct',field:'account_number',num:[{f:'contract_status',op:'eq',v:'Inactive'}],format:'int',dir:'lower',green:null,amber:null,owner:'Nick',
-  interp:'Cancelled accounts counted once per account and windowed by Contract Create Date — cancellations report against when the sale was made, so this reads as sales quality, not churn timing. Attributed to agents via the Owner field and the Agent List.',red:'Read alongside GWP Lost and the per-agent cancels column on the Scorecard.'},
+ {id:'cancellations',name:'Cancellations',domain:'Sales',icon:'alert',src:'SF_INACTIVE',type:'distinct',field:'account_number',format:'int',dir:'lower',green:null,amber:null,owner:'Nick',
+  interp:'Cancelled accounts counted once per account and windowed by Contract Create Date — cancellations report against when the sale was made, so this reads as sales quality, not churn timing. The FILE is the filter (pack §2: the inactive export IS the cancellation list) — no status sub-filter, so this tile, GWP Lost and every per-agent cancel figure count the same rows. Attributed to agents via the Owner field and the Agent List.',red:'Read alongside GWP Lost and the per-agent cancels column on the agent card.'},
  {id:'gwp_lost',name:'GWP Lost (Cancels)',domain:'Sales',icon:'alert',src:'SF_INACTIVE',type:'count',special:'gwpLost',format:'zar',dir:'lower',green:null,amber:null,owner:'Mekaeel',
-  interp:'Premium value of cancelled sales in the window (by contract create date), priced 1-sale-1-premium from the same GWP table. Shown separately — it does not net off Total GWP.',red:'Concentration by agent or product points at a sales-quality problem, not a retention problem.'},
+  interp:'Premium value of cancelled sales in the window (by contract create date). Priced from the cancellation file\'s own Charge Amount × (1 + VAT rule) — the same charge basis as BI money, never the retired GWP price table. Shown separately — it does not net off Total GWP. [ASSUMPTION: Inactive charges are ex-VAT like the BI export — confirm with Mekaeel.]',red:'Concentration by agent or product points at a sales-quality problem, not a retention problem.'},
  {id:'closed_total',name:'Total Closed Cases',domain:'Sales',icon:'check',src:'SF_CLOSED_CASES',type:'count',format:'int',dir:'higher',green:null,amber:null,owner:'Nick',
   interp:'Every case closed in the window, whatever the status — lead-management throughput. The split that matters (Closed vs Closed - No feedback) sits in the tile beside it and in the per-agent table below.',red:'Throughput dropping while open backlog climbs is the classic pile-up signal — check the inflow vs outflow chart.'},
  {id:'no_feedback_rate',name:'Closed - No Feedback Rate',domain:'Sales',icon:'inbox',src:'SF_CLOSED_CASES',type:'ratio',num:[{f:'status',op:'contains',v:'no feedback'}],format:'pct',dir:'lower',green:null,amber:null,owner:'Nick',
   interp:'Share of closed leads that ended without feedback versus a clean close — the lead-management quality split of the Status field.',red:'High no-feedback closing wastes leads; review dialling discipline on 3rd-attempt cases.'},
  {id:'open_backlog',name:'Total Open Cases',domain:'Sales',icon:'inbox',src:'SF_OPEN_CASES',type:'count',format:'int',dir:'lower',green:null,amber:null,owner:'Nick',
   interp:'Open Salesforce cases as of the latest upload (snapshot). Unresolved customer contact demand.',red:'Review owner workloads in the Case Pipeline table; assign a burn-down owner.'},
- {id:'closed_cases',name:'Closed Cases',domain:'Sales',icon:'check',src:'SF_CLOSED_CASES',type:'count',format:'int',dir:'higher',green:null,amber:null,owner:'Nick',
-  interp:'Cases closed in the period. Throughput of the contact machine.',red:'If throughput fell, check owner capacity and attendance for the same period.'},
+ {id:'closed_cases',name:'Closed Cases',domain:'Sales',icon:'check',src:'SF_CLOSED_CASES',type:'count',format:'int',dir:'higher',green:null,amber:null,owner:'Nick',show:false,
+  interp:'Cases closed in the period. HIDDEN by default — this is the same number as Total Closed Cases (identical source, no filter); kept for saved configs and custom dashboards. Flip Show in the Dictionary to surface it again.',red:'If throughput fell, check owner capacity and attendance for the same period.'},
  {id:'avg_case_age',name:'Avg Case Age',domain:'Sales',icon:'clock',src:'SF_OPEN_CASES',type:'avg',field:'age_hours',format:'hoursnum',dir:'lower',green:340,amber:720,owner:'Nick',
   interp:'Mean age (hours) of open cases. Salesforce exports this with comma decimals — the parser normalises it. A sudden spike usually means a parse issue, not a real backlog.',red:'Sort the pipeline table by age; oldest cases need an owner and a close-out date.'},
  /* ---- QA & Compliance ---- */
@@ -668,13 +668,13 @@ const DEFAULT_KPIS = [
  {id:'absenteeism',name:'Absenteeism Rate',domain:'Workforce',icon:'alert',src:'ATTENDANCE',type:'ratio',num:[{f:'absence_flag',op:'eq',v:1}],den:[{f:'excluded_flag',op:'eq',v:0}],format:'pct',dir:'lower',green:3,amber:6,owner:'Claudell',
   interp:'Unplanned absence ÷ all recorded days. The early-warning light for attrition.',red:'Cross-check the at-risk agents on the Scorecard; absenteeism precedes exits.'},
  /* ---- Agent Discipline (from QA export: offenses, SLA, escalation path) ---- */
- {id:'agents_in_process',name:'Agents in Process',domain:'Discipline',icon:'flag',src:'QA_EVALUATIONS',type:'distinct',field:'sales_agent_code',num:[{f:'offense_number',op:'gte',v:1},{f:'qa_status',op:'notContains',v:'closed'}],format:'int',dir:'lower',green:2,amber:5,owner:'Claudell',
+ {id:'agents_in_process',name:'Agents in Process',domain:'Discipline',icon:'flag',src:'QA_EVALUATIONS',type:'distinct',special:'qaAgentsDistinct',num:[{f:'offense_number',op:'gte',v:1},{f:'qa_status',op:'notContains',v:'closed'}],format:'int',dir:'lower',green:2,amber:5,owner:'Claudell',
   interp:'Distinct agents with at least one open offense on record — the size of the conduct caseload right now.',red:'Walk the register below with team leaders; every open case needs a named next step and a date.'},
  {id:'open_criticals',name:'Open Critical Fails',domain:'Discipline',icon:'alert',src:'QA_EVALUATIONS',type:'count',num:[{f:'escalation_decision',op:'in',v:'$qaCritical'},{f:'qa_status',op:'notContains',v:'closed'}],format:'int',dir:'lower',green:0,amber:2,owner:'Jared',
   interp:'Compliance-critical findings not yet closed. Any P1 open past 48 hours is itself an escalation.',red:'Same-day conversation, documented outcome, close the loop in the QA tool.'},
  {id:'sla_breaches',name:'SLA Breaches',domain:'Discipline',icon:'clock',src:'QA_EVALUATIONS',type:'count',special:'slaBreach',format:'int',dir:'lower',green:0,amber:1,owner:'Jared',
   interp:'Open evaluations past their SLA deadline, measured against the newest data date. This is the SLA Breach Risk metric from the spec.',red:'Clear breaches before touching new evaluations — they compound compliance risk.'},
- {id:'repeat_offenders',name:'Repeat Offenders',domain:'Discipline',icon:'users',src:'QA_EVALUATIONS',type:'distinct',field:'sales_agent_code',num:[{f:'offense_number',op:'gte',v:2}],format:'int',dir:'lower',green:0,amber:2,owner:'Claudell',
+ {id:'repeat_offenders',name:'Repeat Offenders',domain:'Discipline',icon:'users',src:'QA_EVALUATIONS',type:'distinct',special:'qaAgentsDistinct',num:[{f:'offense_number',op:'gte',v:2}],format:'int',dir:'lower',green:0,amber:2,owner:'Claudell',
   interp:'Agents whose offense number reached 2+ in the window — the Repeat Offense Count from the QA export.',red:'Repeat offenses mean coaching is not landing; move to the next rung on the stage ladder and log it.'},
  {id:'sm_escalations',name:'SM Escalations',domain:'Discipline',icon:'shield',src:'QA_EVALUATIONS',type:'count',num:[{f:'sm_flag',op:'eq',v:1}],format:'int',dir:'lower',green:0,amber:2,owner:'Nick',
   interp:'Evaluations escalated to senior management (an SM Escalation Reason is present on the record).',red:'Every SM escalation needs a written outcome — see the escalation list on the Discipline page.'},
@@ -686,7 +686,7 @@ const DEFAULT_KPIS = [
   num:{src:'BI_ACTIVE_CASES',agg:'distinct',field:'account_number'},den:{src:'ATTENDANCE',agg:'count',filter:[{f:'present_flag',op:'eq',v:1},{f:'is_sales',op:'eq',v:1}]},
   interp:'Distinct BI accounts ÷ Sales present days. Now dated properly — each sale sits on its own Contract Create Date, so this responds to the date range instead of being the old undated activation snapshot.',red:'If this drifts down while calls/day holds, the leak is conversion — look at QA coaching categories.'}
 ];
-DEFAULT_KPIS.forEach(k=>{k.show=true;k.core=true});
+DEFAULT_KPIS.forEach(k=>{if(k.show===undefined)k.show=true;k.core=true});   // a def may opt out of display (e.g. the duplicate closed_cases)
 
 /* ---------------- STATE ---------------- */
 const state = {
@@ -781,6 +781,10 @@ const ragPill=(v,g,a)=>v==null?'—':'<span class="pill '+(v>=g?'g':v>=a?'a':'r'
    upload data and must never reach markup unescaped. */
 function maskNameText(n){if(!n)return '—';if(state.unmasked)return String(n);const parts=String(n).trim().split(/\s+/);return parts.map((p,i)=>i===0?p[0]+'.':p.slice(0,2)+'•••').join(' ')}
 function maskName(n){return esc(maskNameText(n))}
+/* Table pills/dots must follow the SAME editable thresholds as the tiles (Dictionary →
+   Thresholds). Returns [green, amber], falling back to the shipped defaults only when
+   the KPI is missing or has no RAG set. */
+function kpiThr(id,g,a){const k=state.kpis.find(x=>x.id===id);return (k&&k.green!=null)?[k.green,(k.amber!=null?k.amber:k.green)]:[g,a]}
 function ragOf(k,v){
   if(v==null||k.green==null)return 'n';
   if(k.dir==='higher'){if(v>=k.green)return 'g';if(k.amber!=null&&v>=k.amber)return 'a';return 'r'}
@@ -894,6 +898,7 @@ function bufHash(buf){
    so hunt it in the first rows of each tab, load every matching tab, and align later
    tabs onto the first tab's column order. */
 function pickSheetRows(spec,sheets){
+  const skipped=[];
   if(spec&&spec.sheetScan){
     const norm=h=>String(h||'').toLowerCase().replace(/\s+/g,' ').trim();
     const req=spec.required.map(norm);
@@ -902,15 +907,15 @@ function pickSheetRows(spec,sheets){
       const rws=sh.rows;
       if(!rws.length)continue;
       let hi=-1;for(let k=0;k<Math.min(rws.length,15);k++){const hs=rws[k].map(norm);if(req.every(r=>hs.includes(r))){hi=k;break}}
-      if(hi<0)continue;
+      if(hi<0){skipped.push(sh.name);continue}   // a non-empty tab whose headers don't match — REPORTED in the confirm modal, no longer a silent hole
       const sheet=rws.slice(hi);
       if(!all){all=sheet}
       else{const map=sheet[0].map(h=>all[0].findIndex(x=>norm(x)===norm(h)));
         sheet.slice(1).forEach(r=>{const nr=new Array(all[0].length).fill('');r.forEach((v,i)=>{if(map[i]>=0)nr[map[i]]=v});all.push(nr)})}
     }
-    if(all)return all;
+    if(all)return {rows:all,skipped};
   }
-  return (sheets[0]&&sheets[0].rows)||[];
+  return {rows:(sheets[0]&&sheets[0].rows)||[],skipped};
 }
 async function readUpload(file,srcKey,onProg){
   const spec=srcKey?SOURCES[srcKey]:null;
@@ -920,6 +925,7 @@ async function readUpload(file,srcKey,onProg){
   const bytes=new Uint8Array(buf.slice(0,8));
   const isZip=bytes[0]===0x50&&bytes[1]===0x4B, isCFB=bytes[0]===0xD0&&bytes[1]===0xCF;
   const scan=!!(spec&&spec.sheetScan);
+  let skippedSheets=[];
   const wbMain=()=>{const wb=XLSX.read(buf,{type:'array',cellDates:true});
     const names=scan?wb.SheetNames:wb.SheetNames.slice(0,1);
     return pickSheetRows(spec,names.map(sn=>({name:sn,rows:XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:''})})))};
@@ -927,10 +933,10 @@ async function readUpload(file,srcKey,onProg){
     catch(e){return wbMain()}};                                                       // worker refused → same parse, main thread
   P(0.26,'Parsing…');
   let rows=[];
-  if(isZip||isCFB){ rows=await viaWB(); }                                             // xlsx / legacy xls
+  if(isZip||isCFB){ const pr=await viaWB(); rows=pr.rows; skippedSheets=pr.skipped; } // xlsx / legacy xls
   else{
     const text=new TextDecoder('utf-8').decode(buf);
-    if(text.includes('\u0000')){ rows=await viaWB(); }                                // binary that dodged the sniff
+    if(text.includes('\u0000')){ const pr=await viaWB(); rows=pr.rows; skippedSheets=pr.skipped; } // binary that dodged the sniff
     else if(/^\s*</.test(text)){                                                          // Salesforce HTML .xls — DOMParser only exists on the main thread
       const doc=new DOMParser().parseFromString(text,'text/html');
       const table=doc.querySelector('table');
@@ -952,7 +958,7 @@ async function readUpload(file,srcKey,onProg){
     if(i%4000===0){P(0.6+(i/rows.length)*0.4,'Preparing rows… '+i.toLocaleString()+' / '+(rows.length-1).toLocaleString());await new Promise(rz=>setTimeout(rz,0))}
   }
   P(1);
-  return {headers,data,textHash:hashStr(headers.join('|')+'|'+rows.length+'|'+file.size+'|'+(file.name||'')),contentHash};
+  return {headers,data,textHash:hashStr(headers.join('|')+'|'+rows.length+'|'+file.size+'|'+(file.name||'')),contentHash,skippedSheets};
 }
 
 /* ---------------- HEADER + ROW VALIDATION ---------------- */
@@ -1225,6 +1231,7 @@ function openUploadModal(){
     hv.missing.length?'<span class="chip a"><span class="dot"></span>'+hv.missing.length+' expected column(s) absent</span>':'',
     hv.extra.length?'<span class="chip a"><span class="dot"></span>'+hv.extra.length+' extra column(s): '+esc(hv.extra.slice(0,3).join(', '))+(hv.extra.length>3?'…':'')+'</span>':'',
     dupe?'<span class="chip a"><span class="dot"></span>Same file as batch '+esc(dupe.batch_id)+' — loading UPDATES it in place, no duplicate rows</span>':'',
+    (parsed.skippedSheets&&parsed.skippedSheets.length)?'<span class="chip a"><span class="dot"></span>'+parsed.skippedSheets.length+' sheet tab(s) NOT loaded — headers don\'t match: '+esc(parsed.skippedSheets.slice(0,3).join(', '))+(parsed.skippedSheets.length>3?'…':'')+'</span>':'',
     '<span class="chip n"><span class="dot"></span>'+parsed.data.length.toLocaleString()+' data rows detected</span>'
   ].filter(Boolean).join('');
   /* The merge plan is already computed — say exactly what confirming will do. */
@@ -1493,6 +1500,13 @@ function resolveRule(v){
   if(typeof v==='string'&&v.startsWith('$')){const r=state.rules[v.slice(1)];return r?r.vals:[]}
   return v;
 }
+/* Case-insensitive membership against a rule's values. The KPI engine's 'in'
+   operator lowercases both sides (passFilter) — every hand-rolled decision/status
+   matcher must agree with it, or a tile and the agent card could count the same
+   export row differently on a casing quirk. Trims both sides; lists are short. */
+function decIn(rule,v){const s=String(v??'').trim().toLowerCase();if(!s)return false;
+  const a=resolveRule(rule);for(let i=0;i<a.length;i++){if(String(a[i]).trim().toLowerCase()===s)return true}
+  return false}
 /* PERF: these helpers run once per CALL ROW (100k+ per pass) and every one of them
    used to re-split, re-lowercase and re-sort the rule arrays on each call. Parse the
    rules ONCE per data version (rule edits bump _dataVer via saveConfig) — behaviour
@@ -1505,8 +1519,9 @@ function callRules(){
   const labels=(state.rules.callTypes?.vals||[]).map(v=>String(v).slice(String(v).indexOf(':')+1).trim());
   const na=new Set(resolveRule('$noAnswerDispositions').map(x=>String(x).toLowerCase()));
   const sale=new Set(resolveRule('$saleDispositions').map(x=>String(x).toLowerCase()));
-  const legacyV=(state.rules.callTypes?.vals||[])[1];
-  _cr={rungs,labels,na,sale,legacy:legacyV?parseFloat(legacyV):30,phases:parseRungs(state.rules.callPhases?.vals)};
+  // blank-disposition fallback = the first non-zero band boundary of the SORTED
+  // ladder (was vals[1] positionally — inserting a band silently moved it)
+  _cr={rungs,labels,na,sale,legacy:(rungs[1]?rungs[1].n:30),phases:parseRungs(state.rules.callPhases?.vals)};
   _crV=_dataVer;
   return _cr;
 }
@@ -1682,10 +1697,10 @@ function rowsForRaw(src,win,sc){
   if(src==='CALLX_CALL_RECORDS'||spec.session?.base==='CALLX_CALL_RECORDS')rows=rows.map(r=>({...r,call_band:callBandForRow(r),answered:callAnswered(r)?1:0,is_sale_disp:isSaleDisp(r)?1:0}));
   if(src==='ATTENDANCE'){
     const U=a=>a.map(x=>String(x).toUpperCase());
-    const P=U(resolveRule('$presentCodes')),L=U(resolveRule('$leaveCodes')),X=U(resolveRule('$excludeCodes')),S=state.rules.salesDepts.vals;
+    const P=U(resolveRule('$presentCodes')),L=U(resolveRule('$leaveCodes')),X=U(resolveRule('$excludeCodes')),S=U(resolveRule('$salesDepts'));
     rows=rows.map(r=>{const c=String(r.status_code||'').toUpperCase();
       const ex=X.includes(c),p=!ex&&P.includes(c),l=!ex&&L.includes(c);
-      return{...r,excluded_flag:ex?1:0,present_flag:p?1:0,leave_flag:l?1:0,absence_flag:(!ex&&!p&&!l)?1:0,is_sales:S.includes(r.department)?1:0}});
+      return{...r,excluded_flag:ex?1:0,present_flag:p?1:0,leave_flag:l?1:0,absence_flag:(!ex&&!p&&!l)?1:0,is_sales:S.includes(String(r.department||'').toUpperCase())?1:0}});
   }
   return rows;
 }
@@ -1802,6 +1817,16 @@ function evalKPI(k,win){
     const qaSales=agg(rowsFor('QA_EVALUATIONS',win),'count',null,[{f:'assessment_type',op:'in',v:'$saleAssess'}]);
     return Math.max(0,acts-qaSales);
   }
+  if(k.special==='qaAgentsDistinct'){
+    // Distinct agents resolved through the SAME identity bridge as the disciplinary
+    // register (CB code, else Salesforce-name map) — the raw sales_agent_code string
+    // silently undercounted whenever the CB column was blank but the name mapped.
+    const set=new Set();
+    rows.forEach(r=>{if(k.num&&!passFilter(r,k.num))return;
+      const cb=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];
+      if(cb)set.add(cb)});
+    return set.size;
+  }
   if(k.type==='ratio'){
     const den=k.den?rows.filter(r=>passFilter(r,k.den)):rows;
     if(!den.length)return null;
@@ -1833,7 +1858,7 @@ function kpiDelta(k,win){
 }
 
 /* ---------------- FRESHNESS & SYSTEM HEALTH ---------------- */
-function staleLimit(){return parseInt(state.rules.staleDays.vals[0]||'7',10)}
+function staleLimit(){return parseInt((state.rules.staleDays?.vals||[])[0]||'7',10)}
 function freshness(src){
   const b=state.batches.find(x=>x.source_type===src&&x.validation_status!=='failed');
   if(!b)return{state:'n',label:'No upload',days:null,batch:null};
@@ -2103,8 +2128,8 @@ function nutshell(win){
 function pageExec(win){
   if(!hasData())return emptyState('No data yet — the Command Centre is waiting for its first upload');
   const qaRows=rowsFor('QA_EVALUATIONS',win);
-  const critOpen=qaRows.filter(r=>resolveRule('$qaCritical').includes(r.escalation_decision)&&!/closed/i.test(r.qa_status||''));
-  const coachOpen=qaRows.filter(r=>resolveRule('$qaCoaching').includes(r.escalation_decision)&&!/closed/i.test(r.qa_status||''));
+  const critOpen=qaRows.filter(r=>decIn('$qaCritical',r.escalation_decision)&&!/closed/i.test(r.qa_status||''));
+  const coachOpen=qaRows.filter(r=>decIn('$qaCoaching',r.escalation_decision)&&!/closed/i.test(r.qa_status||''));
   const stale=SRC_KEYS.filter(k=>['a','r','n'].includes(freshness(k).state));
   const actions=[
     ...critOpen.slice(0,5).map(r=>({p:'r',t:'Critical fail ('+esc(r.priority||'P1')+') — '+maskName(r.sales_agent),d:esc(r.critical_fail_category||'Compliance'),own:r.team_leader,date:r.call_date})),
@@ -2113,7 +2138,7 @@ function pageExec(win){
   ];
   const callRows=rowsFor('CALLX_CALL_RECORDS',win);
   const ds=dailySeries(callRows,win,rs=>rs.length);
-  const dsAns=dailySeries(callRows,win,rs=>rs.filter(r=>r.call_band!=='No Answer').length);
+  const dsAns=dailySeries(callRows,win,rs=>rs.filter(r=>r.answered).length);   // the answered flag IS the rule — never the band label string
   /* Client 2026-07-20: headline QA metric is the AVERAGE SCORE, not pass rate. */
   const qaTrend=dailySeries(qaRows,win,rs=>{const v=rs.map(r=>parseFloat(r.score_percent)).filter(x=>!isNaN(x));return v.length?v.reduce((a,b)=>a+b,0)/v.length:null});
   /* ---- command wall: gauge rings (same KPIs, evalKPI unchanged) ---- */
@@ -2149,13 +2174,13 @@ function pageExec(win){
   rowsFor('ATTENDANCE',win).forEach(r=>{if(r.excluded_flag)return;const t=r.reports_to||'(unassigned)';const o=TS[t]=TS[t]||{n:0,p:0,ev:0,s:0,sn:0,crit:0};o.n++;if(r.present_flag)o.p++});
   qaRows.forEach(r=>{const t=r.team_leader||'(unassigned)';const o=TS[t]=TS[t]||{n:0,p:0,ev:0,s:0,sn:0,crit:0};o.ev++;
     if(r.score_percent!=null){o.s+=r.score_percent;o.sn++}
-    if(resolveRule('$qaCritical').includes(r.escalation_decision))o.crit++});
+    if(decIn('$qaCritical',r.escalation_decision))o.crit++});
   const sgDot=(v,g,a,tip)=>'<span class="sg-dot '+(v==null?'n':v>=g?'g':v>=a?'a':'r')+'" title="'+tip+'"></span>';
   const tg=Object.entries(TS).map(([t,o])=>({t,att:o.n?o.p/o.n*100:null,pass:o.sn?o.s/o.sn:null,crit:o.crit,ev:o.ev}))
     .sort((a,b)=>(a.att==null?101:a.att)-(b.att==null?101:b.att)).slice(0,12);
   const sg=tg.map(r=>'<div class="sg-row"><b style="flex:1">'+maskName(r.t)+'</b>'
-    +sgDot(r.att,92,85,'Attendance '+fmtVal(r.att,'pct'))
-    +sgDot(r.pass,90,80,'QA avg score '+fmtVal(r.pass,'pct'))
+    +sgDot(r.att,...kpiThr('attendance_rate',92,85),'Attendance '+fmtVal(r.att,'pct'))
+    +sgDot(r.pass,...kpiThr('avg_qa_score',90,80),'QA avg score '+fmtVal(r.pass,'pct'))
     +'<span class="sg-dot '+(r.crit?'r':'g')+'" title="'+r.crit+' critical fail(s)"></span>'
     +'<span class="num" style="width:48px;text-align:right;color:var(--muted);font-size:11px">'+r.ev+' ev</span></div>').join('');
   return '<div class="wall">'
@@ -2191,9 +2216,11 @@ function leakTable(win){
   const at=evalKPI(state.kpis.find(k=>k.id==='attendance_rate'),win);
   const uv=evalKPI(state.kpis.find(k=>k.id==='unverified_sales'),win);
   const bk=evalKPI(state.kpis.find(k=>k.id==='open_backlog'),win);
-  if(ar!=null&&ar<55)rows.push(['Connection','Answer rate '+fmtVal(ar,'pct')+' — lead list / dialling windows','Leon']);
-  if(cs!=null&&cs<90)rows.push(['Quality','Clean-sale rate '+fmtVal(cs,'pct')+' — dirty sales cost more than missed ones','Jared']);
-  if(at!=null&&at<90)rows.push(['People','Attendance '+fmtVal(at,'pct')+' — the denominator is shrinking','Claudell']);
+  // Leak = below the KPI's own GREEN line — the same editable thresholds as the tiles.
+  // (These were hardcoded 55/90/90, matching neither green nor amber of any KPI.)
+  if(ar!=null&&ar<kpiThr('answer_rate',60,45)[0])rows.push(['Connection','Answer rate '+fmtVal(ar,'pct')+' — lead list / dialling windows','Leon']);
+  if(cs!=null&&cs<kpiThr('clean_sale_rate',92,85)[0])rows.push(['Quality','Clean-sale rate '+fmtVal(cs,'pct')+' — dirty sales cost more than missed ones','Jared']);
+  if(at!=null&&at<kpiThr('attendance_rate',92,85)[0])rows.push(['People','Attendance '+fmtVal(at,'pct')+' — the denominator is shrinking','Claudell']);
   if(uv!=null&&uv>0)rows.push(['Assurance',fmtVal(uv,'int')+' activations have no QA record','Jared']);
   if(bk!=null&&bk>0)rows.push(['Backlog',fmtVal(bk,'int')+' open cases awaiting contact','Nick']);
   if(!rows.length)return '<div class="empty">No leaks detected against current thresholds.</div>';
@@ -2275,7 +2302,7 @@ function cyclePanel(win){
     .map(([m,l])=>'<button class="btn small'+(m===mode?' primary':'')+'" onclick="state.cycleView=\''+m+'\';render()">'+l+'</button>').join(' ')+'</span>';
   if(!CC)return '<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Matrix VAS — Operational Performance Overview</span>'+chips+'</div>'
     +'<div class="empty">Set the cycleStart rule (Dictionary → Rules) for the cycle view — or switch to Calendar month / Main filter above.</div></div>';
-  if(!CC.targets.length)return '';
+  if(!CC.targets.length)return '<div class="card" style="margin-bottom:14px"><div class="card-h"><span class="t">Operational Performance</span></div><div class="empty">No cycle targets configured — add campaign targets under Dictionary → Interpretation rules → "Cycle GWP targets by campaign" to bring this panel back.</div></div>';
   const{start,to,totD,vat,targets,byCamp,campSales,unatt,pastOf,tlRows,weeks}=CC;
   const showTgt=mode!=='win';   // cycle targets only make sense over a full cycle/month
   const panel=([camp,tgt])=>{
@@ -2612,8 +2639,8 @@ function callPhaseDropoff(win,campFilter){
 function qaByCampaign(qa,win){
   const B={};const bump=k=>(B[k]=B[k]||{n:0,pass:0,crit:0,s:0,sn:0,sale:0});
   qa.forEach(r=>{const c=campBucket(r.campaign)||'(other)';const o=bump(c);o.n++;
-    if(resolveRule('$qaPass').includes(r.escalation_decision))o.pass++;
-    if(resolveRule('$qaCritical').includes(r.escalation_decision))o.crit++;
+    if(decIn('$qaPass',r.escalation_decision))o.pass++;
+    if(decIn('$qaCritical',r.escalation_decision))o.crit++;
     if(r.score_percent!=null){o.s+=r.score_percent;o.sn++}});
   (function(){const f=state.filters;try{accountPremiums(win).forEach(e=>{if(!e.cb)return;
     const c=campBucket(state.cbInfo[e.cb]?.queue)||'(other)';bump(c).sale++})}finally{state.filters=f}})();
@@ -2623,8 +2650,8 @@ function qaByCampaign(qa,win){
    the items still pending action. Ordered most-severe first. */
 function qaPipeline(qa){
   const open=qa.filter(r=>!/closed/i.test(r.qa_status||''));
-  const rank=r=>resolveRule('$qaCritical').includes(r.escalation_decision)?0
-    :resolveRule('$qaCoaching').includes(r.escalation_decision)?1:2;
+  const rank=r=>decIn('$qaCritical',r.escalation_decision)?0
+    :decIn('$qaCoaching',r.escalation_decision)?1:2;
   return open.map(r=>({r,rk:rank(r)})).sort((a,b)=>a.rk-b.rk||String(a.r.call_date||'').localeCompare(String(b.r.call_date||''))).map(x=>x.r);
 }
 
@@ -2644,7 +2671,7 @@ function pageQA(win){
     const p=QP[key]=QP[key]||{__cb:cb,__t:0,__name:cb?((state.cbInfo[cb]?.name)||r.sales_agent):(r.sales_agent||'(blank)'),__unmapped:!cb,__s:0,__sn:0,__d:{},__pe:0,__disp:0};
     p.__t++;if(r.score_percent!=null){p.__s+=r.score_percent;p.__sn++}
     if(r.sm_flag===1||String(r.sm_reason||'').trim())p.__pe++;
-    if(resolveRule('$qaDisputeStatuses').includes(r.status))p.__disp++;
+    if(decIn('$qaDisputeStatuses',r.qa_status))p.__disp++;
     const d=decCols.includes(r.escalation_decision)?r.escalation_decision:'Other';p.__d[d]=(p.__d[d]||0)+1});
   const qpSales={};(function(){const f=state.filters;try{accountPremiums(win).forEach(e=>{if(e.cb)qpSales[e.cb]=(qpSales[e.cb]||0)+1})}finally{state.filters=f}})();
   const qpRows=Object.values(QP).sort((a,b)=>b.__t-a.__t).slice(0,15);
@@ -2663,16 +2690,16 @@ function pageQA(win){
          +subs.map(([sb,n])=>'<tr><td style="padding-left:26px;font-size:12px;color:var(--body)">'+esc(sb)+'</td><td class="num" style="font-size:12px">'+n+'</td></tr>').join('')}).join('')
      +'</tbody></table>':'<div class="empty">None in this window.</div>')+'</div>'};
   const byTL={};qa.forEach(r=>{const t=r.team_leader;byTL[t]=byTL[t]||{n:0,p:0,c:0,s:0,sn:0};byTL[t].n++;
-    if(resolveRule('$qaPass').includes(r.escalation_decision))byTL[t].p++;
-    if(resolveRule('$qaCritical').includes(r.escalation_decision))byTL[t].c++;
+    if(decIn('$qaPass',r.escalation_decision))byTL[t].p++;
+    if(decIn('$qaCritical',r.escalation_decision))byTL[t].c++;
     if(r.score_percent!=null){byTL[t].s+=r.score_percent;byTL[t].sn++}});
   const tlRows=Object.entries(byTL).map(([t,v])=>({t,n:v.n,pass:v.p/v.n*100,crit:v.c,score:v.sn?v.s/v.sn:null})).sort((a,b)=>b.n-a.n);
-  const openCrit=qa.filter(r=>resolveRule('$qaCritical').includes(r.escalation_decision)&&!/closed/i.test(r.qa_status||''));
+  const openCrit=qa.filter(r=>decIn('$qaCritical',r.escalation_decision)&&!/closed/i.test(r.qa_status||''));
   /* --- client views 2026-07-20: QA-by-campaign, escalation/dispute, pending pipeline, phase drop-off --- */
   const qaStd=nbaVal('qaStd',85);
   const campQA=qaByCampaign(qa,win);
   const smN=qa.filter(r=>r.sm_flag===1||String(r.sm_reason||'').trim()).length;
-  const dispN=qa.filter(r=>resolveRule('$qaDisputeStatuses').includes(r.status)).length;
+  const dispN=qa.filter(r=>decIn('$qaDisputeStatuses',r.qa_status)).length;
   const pipe=qaPipeline(qa);
   const anc=isoDay(anchorDate());
   const daysOpen=r=>{const d=r.call_date||r._d;return d?Math.max(0,Math.round((new Date(anc+'T12:00:00')-new Date(d+'T12:00:00'))/864e5)):null};
@@ -2713,8 +2740,8 @@ function pageQA(win){
    +'<div class="ac-tile"><div class="ac-big" style="color:#B45309">'+dispN+'</div><div class="ac-sub">DISPUTED</div></div></div>'
    +(pipe.length?'<div style="overflow-x:auto;max-height:340px;overflow-y:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Pri</th><th class="noclick">Agent</th><th class="noclick">Decision</th><th class="noclick">Category</th><th class="noclick">Status</th><th class="noclick">Flags</th><th class="noclick">Days open</th></tr></thead><tbody>'
      +pipe.slice(0,60).map(r=>{const dop=daysOpen(r);const dec=r.escalation_decision||'(none)';
-       const decCls=resolveRule('$qaCritical').includes(dec)?'r':resolveRule('$qaCoaching').includes(dec)?'a':'g';
-       const flags=[r.sm_flag||String(r.sm_reason||'').trim()?'SM':'',resolveRule('$qaDisputeStatuses').includes(r.status)?'DISP':'',r.tl1_flag?'TL1':'',r.tl2_flag?'TL2':''].filter(Boolean).join(' ');
+       const decCls=decIn('$qaCritical',dec)?'r':decIn('$qaCoaching',dec)?'a':'g';
+       const flags=[r.sm_flag||String(r.sm_reason||'').trim()?'SM':'',decIn('$qaDisputeStatuses',r.qa_status)?'DISP':'',r.tl1_flag?'TL1':'',r.tl2_flag?'TL2':''].filter(Boolean).join(' ');
        return '<tr><td><span class="pill '+(String(r.priority||'').match(/1/)?'r':'a')+'" style="padding:1px 6px">'+esc(r.priority||'—')+'</span></td>'
         +'<td><b>'+maskName(r.sales_agent)+'</b></td><td><span class="pill '+decCls+'" style="padding:1px 6px">'+esc(dec)+'</span></td>'
         +'<td style="font-size:10.5px">'+esc(r.critical_fail_category||r.coaching_category||'—')+'</td>'
@@ -2732,7 +2759,7 @@ function pageQA(win){
    +'<div class="card"><div class="card-h"><span class="t">QA by agent</span><span class="info" title="Sales Agent CB is normalised (CB-97 = CB97) and matched to the roster; blank codes fall back to the agent name via the Agent List.">i</span><span class="s">score · decisions · total QA&#39;d — top 15</span></div>'
    +(qpRows.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Agent</th><th class="noclick">Avg score</th>'+decCols.map(d=>'<th class="noclick">'+esc(d)+'</th>').join('')+'<th class="noclick">Total QA&#39;d</th><th class="noclick" title="As specified: Total Sales ÷ QA&#39;d calls for the window. If the intent was coverage (QA&#39;d ÷ Sales), say the word — it is a one-line flip.">% sales / QA&#39;d</th><th class="noclick" title="Evaluations with an SM Escalation Reason (or SM flag). The column is in the export but blank so far — this lights up the day QA starts using it.">Partner esc.</th><th class="noclick" title="Evaluations whose Status is in the QA dispute rule (closed_retracted + qa_review by default — editable in Dictionary → Rules).">Disputed</th></tr></thead><tbody>'
      +qpRows.map(p=>'<tr><td><b>'+aName(p.__cb,maskName(p.__name))+'</b>'+(p.__unmapped?' <span class="pill a" style="padding:1px 6px">unmapped</span>':'')+'</td>'
-       +'<td>'+(p.__sn?ragPill(p.__s/p.__sn,90,80):'—')+'</td>'
+       +'<td>'+(p.__sn?ragPill(p.__s/p.__sn,...kpiThr('avg_qa_score',90,80)):'—')+'</td>'
        +decCols.map(d=>'<td class="num">'+(p.__d[d]||'·')+'</td>').join('')
        +'<td class="num" style="font-weight:800">'+p.__t+'</td>'
        +'<td class="num">'+(p.__cb!=null&&p.__cb in qpSales?fmtVal(qpSales[p.__cb]/p.__t*100,'pct'):(p.__cb?'0%':'—'))+'</td>'
@@ -2747,7 +2774,7 @@ function pageQA(win){
    +'</div>'
    +'<div class="grid g21">'
    +'<div class="card"><div class="card-h"><span class="t">Quality by team leader</span></div><table class="tbl"><thead><tr><th class="noclick">Team leader</th><th class="noclick">Evals</th><th class="noclick">Avg score</th><th class="noclick">Critical fails</th></tr></thead><tbody>'
-   +tlRows.map(r=>'<tr><td><b>'+maskName(r.t)+'</b></td><td class="num">'+r.n+'</td><td>'+ragPill(r.score,90,80)+'</td><td>'+(r.crit?'<span class="pill r">'+r.crit+'</span>':'<span class="pill g">0</span>')+'</td></tr>').join('')
+   +tlRows.map(r=>'<tr><td><b>'+maskName(r.t)+'</b></td><td class="num">'+r.n+'</td><td>'+ragPill(r.score,...kpiThr('avg_qa_score',90,80))+'</td><td>'+(r.crit?'<span class="pill r">'+r.crit+'</span>':'<span class="pill g">0</span>')+'</td></tr>').join('')
    +'</tbody></table></div>'
    +'<div class="card"><div class="card-h"><span class="t">Open critical fails</span><span class="s">'+openCrit.length+' pending</span></div>'
    +(openCrit.length?'<table class="tbl"><tbody>'+openCrit.slice(0,9).map(r=>'<tr><td><span class="pill r">'+esc(r.priority||'P1')+'</span></td><td><b>'+maskName(r.sales_agent)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(r.critical_fail_category||'')+'</div></td><td style="text-align:right;font-size:11px;color:var(--muted)">'+esc(r.call_date||'')+'<br>'+maskName(r.team_leader)+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">Nothing pending — all criticals closed out.</div>')
@@ -2760,13 +2787,12 @@ function pageQAPerf(win){
   if(!hasData())return emptyState('QA Agent Performance needs the QA evaluations export');
   const rows=rowsFor('QA_EVALUATIONS',win);
   if(!rows.length)return emptyState('No evaluations in the selected window');
-  const CRIT=resolveRule('$qaCritical'),COACH=resolveRule('$qaCoaching'),PASS=resolveRule('$qaPass');
   const A={};
   rows.forEach(r=>{const k=r.qa_agent||'(blank)';const a=A[k]=A[k]||{name:k,n:0,sec:0,crit:0,coach:0,pass:0,s:0,sn:0};
     a.n++;a.sec+=r.call_duration_seconds||0;
-    if(CRIT.includes(r.escalation_decision))a.crit++;
-    else if(COACH.includes(r.escalation_decision))a.coach++;
-    else if(PASS.includes(r.escalation_decision))a.pass++;
+    if(decIn('$qaCritical',r.escalation_decision))a.crit++;
+    else if(decIn('$qaCoaching',r.escalation_decision))a.coach++;
+    else if(decIn('$qaPass',r.escalation_decision))a.pass++;
     if(r.score_percent!=null){a.s+=r.score_percent;a.sn++}});
   const list=Object.values(A).sort((x,y)=>y.n-x.n);
   const G=list.reduce((g,a)=>({n:g.n+a.n,sec:g.sec+a.sec,crit:g.crit+a.crit,coach:g.coach+a.coach,pass:g.pass+a.pass,s:g.s+a.s,sn:g.sn+a.sn}),{n:0,sec:0,crit:0,coach:0,pass:0,s:0,sn:0});
@@ -2820,7 +2846,7 @@ function pageWF(win){
      +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">'+label+'</th><th class="noclick">People</th><th class="noclick">Att % (window)</th><th class="noclick">Att WoW Δ</th><th class="noclick">Att MoM Δ</th><th class="noclick">Attrition WoW</th><th class="noclick">Attrition MoM</th></tr></thead><tbody>'
      +keys.map(k=>{const c=cur[k]||stat([]),w1=tw[k]||stat([]),w0=lw[k]||stat([]),m1=tm[k]||stat([]),m0=lm[k]||stat([]);
        return '<tr><td><b>'+(keyF===keyTeam?maskName(k):esc(k))+'</b></td><td class="num">'+c.mem.size+'</td>'
-        +'<td>'+ragPill(c.att,92,85)+'</td>'
+        +'<td>'+ragPill(c.att,...kpiThr('attendance_rate',92,85))+'</td>'
         +'<td>'+ppPill(pp(w1.att,w0.att))+'</td><td>'+ppPill(pp(m1.att,m0.att))+'</td>'
         +'<td>'+nPill(w1.exits,w0.exits,true)+'</td><td>'+nPill(m1.exits,m0.exits,true)+'</td></tr>'}).join('')
      +'</tbody></table></div></div>'};
@@ -2865,14 +2891,14 @@ function pageWF(win){
    +'<div class="card"><div class="card-h"><span class="t">Status mix</span><span class="info" title="Which codes count as Present or Leave is set in Dictionary → Rules.">i</span></div><div class="chart-wrap"><canvas id="chW2"></canvas></div></div></div>'
    +'<div class="grid g2">'
    +'<div class="card"><div class="card-h"><span class="t">Attendance by team leader</span><span class="s">lowest first</span></div><table class="tbl"><thead><tr><th class="noclick">Team leader</th><th class="noclick">Days</th><th class="noclick">Attendance</th><th class="noclick">Absence days</th></tr></thead><tbody>'
-   +tlRows.map(r=>'<tr><td><b>'+maskName(r.t)+'</b></td><td class="num">'+r.n+'</td><td>'+ragPill(r.rate,92,85)+'</td><td class="num">'+r.abs+'</td></tr>').join('')+'</tbody></table></div>'
+   +tlRows.map(r=>'<tr><td><b>'+maskName(r.t)+'</b></td><td class="num">'+r.n+'</td><td>'+ragPill(r.rate,...kpiThr('attendance_rate',92,85))+'</td><td class="num">'+r.abs+'</td></tr>').join('')+'</tbody></table></div>'
    +'<div class="card"><div class="card-h"><span class="t">Status distribution — by '+dimDef[dim].label.toLowerCase()+'</span><span class="info" title="Every attendance status counted for the selected period, split by the dimension you choose. Tenure comes from the daily Agent List via the CB number. Present % excludes roster-exit rows (Terminated / Resigned) per the rules.">i</span>'
    +'<span class="right">'+Object.entries(dimDef).map(([k,v])=>'<button class="btn small'+(dim===k?' primary':'')+'" onclick="state.wfDim=&#39;'+k+'&#39;;render()">'+v.label+'</button>').join(' ')+'</span></div>'
    +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">'+dimDef[dim].label+'</th>'+stColsAll.map(st=>'<th class="noclick">'+esc(st)+'</th>').join('')+'<th class="noclick">Total</th><th class="noclick">Present %</th></tr></thead><tbody>'
    +dvRows.map(([k,d])=>{const denom=d.t-d.ex;const pr=denom?d.p/denom*100:null;
      return '<tr><td><b>'+(dim==='tl'?maskName(k):esc(k))+'</b></td>'+stColsAll.map(st=>'<td class="num">'+(d.sts[st]||'·')+'</td>').join('')
       +'<td class="num" style="font-weight:800">'+d.t+'</td>'
-      +'<td>'+ragPill(pr,92,85)+'</td></tr>'}).join('')
+      +'<td>'+ragPill(pr,...kpiThr('attendance_rate',92,85))+'</td></tr>'}).join('')
    +'</tbody></table></div>'
    +(unknown.length?'<div style="margin-top:10px" class="stale-banner">Codes counted as unplanned absence (in no rule): '+esc(unknown.join(', '))+' — reclassify in Dictionary → Rules if any are authorised.</div>':'')
    +'</div></div>'
@@ -2889,8 +2915,8 @@ function pageDisc(win){
     const a=A[key]=A[key]||{cb:key,code:(state.cbInfo[key]?.code)||r.sales_agent_code||'—',name:(state.cbInfo[key]?.name)||r.sales_agent,tl:(state.cbInfo[key]?.tl)||r.team_leader,off:0,open:0,openCrit:0,sla:0,tl1:0,tl2:0,sm:0,last:null};
     a.off=Math.max(a.off,r.offense_number||0);
     const open=!/closed/i.test(r.qa_status||'');
-    const isC=resolveRule('$qaCritical').includes(r.escalation_decision);
-    const isCo=resolveRule('$qaCoaching').includes(r.escalation_decision);
+    const isC=decIn('$qaCritical',r.escalation_decision);
+    const isCo=decIn('$qaCoaching',r.escalation_decision);
     if(open&&(isC||isCo))a.open++;
     if(open&&isC)a.openCrit++;
     if(open&&r.sla_deadline){const d=isoDay(parseDT(r.sla_deadline));if(d&&d<anchor)a.sla++}
@@ -2934,7 +2960,14 @@ function nbaVal(key,def){const v=(state.rules.nbaThresholds?.vals||[]).find(x=>S
 function compWeights(){const out=[];(state.rules.compositeWeights?.vals||[]).forEach(v=>{const i=String(v).lastIndexOf(':');const w=parseFloat(String(v).slice(i+1));if(!isNaN(w))out.push([String(v).slice(0,i),w])});return out}
 function rowsNF(src,win){const f=state.filters;state.filters={};let r;try{r=rowsFor(src,win)}finally{state.filters=f}return r}
 function groupOf(cb){const i=state.cbInfo[cb]||{};const t=String(i.tenure||'').trim();
-  if(/^exp/i.test(t))return 'EXP - '+String(i.queue||'?').toUpperCase().split(' ')[0];
+  if(/^exp/i.test(t)){
+    // Fold the queue through campBucket — the canonical campaign normaliser — so
+    // "Matrix Cuddle" and "Cuddle" land in the SAME group. The old first-word split
+    // made every "Matrix …" queue collapse into one merged "EXP - MATRIX" pool,
+    // which broke the EXP-Courtesy vs EXP-Cuddle tenure separation (non-negotiable 5).
+    const c=campBucket(i.queue);
+    return 'EXP - '+(c?c.toUpperCase():String(i.queue||'?').toUpperCase().split(' ')[0]);
+  }
   return (t||'UNGROUPED').toUpperCase()}
 function acCtx(win){
   // PERF: 8 full source passes per build, and one render can ask several times
@@ -2961,8 +2994,7 @@ function acCtxBuild(win){
     const k=String(r.case_number||'').trim();
     if(k){if(o.seen.has(k))return;o.seen.add(k)}
     o.tc++;addLead(LD(cb),r)});
-  const _CRIT=resolveRule('$qaCritical');
-  rowsNF('QA_EVALUATIONS',win).forEach(r=>{const cb=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];if(!cb)return;const o=C.qa[cb]=C.qa[cb]||{n:0,s:0,s0:0,sn:0,crit:0};o.n++;const isC=_CRIT.includes(r.escalation_decision);if(isC)o.crit++;if(r.score_percent!=null){o.s+=r.score_percent;o.sn++;o.s0+=isC?0:r.score_percent}else if(isC){/* crit with no score still counts as zero in the n denominator */}});
+  rowsNF('QA_EVALUATIONS',win).forEach(r=>{const cb=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];if(!cb)return;const o=C.qa[cb]=C.qa[cb]||{n:0,s:0,s0:0,sn:0,crit:0};o.n++;const isC=decIn('$qaCritical',r.escalation_decision);if(isC)o.crit++;if(r.score_percent!=null){o.s+=r.score_percent;o.sn++;o.s0+=isC?0:r.score_percent}else if(isC){/* crit with no score still counts as zero in the n denominator */}});
   rowsNF('ATTENDANCE',win).forEach(r=>{const cb=normCB(r.employee_code);if(!cb||r.excluded_flag)return;const o=C.att[cb]=C.att[cb]||{sched:0,p:0};o.sched++;if(r.present_flag)o.p++});
   rowsNF('CALLX_CALL_RECORDS',win).forEach(r=>{const cb=cbOf(r.agent);if(!cb)return;const o=C.call[cb]=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};o.n++;o.sec+=r.billable_seconds||0;o.bands[r.call_band]=(o.bands[r.call_band]||0)+1;if(r._d)o.days.add(r._d);const d=String(r.destination_number||'').trim();if(d&&d!=='s')o.uniq.add(d)});
   rowsNF('REFERRALS',win).forEach(r=>{const cb=normCB(r.employee_code)||cbOf(r.agent);if(!cb)return;const o=C.ref[cb]=C.ref[cb]||{n:0};o.n+=(r.referral_count??1)});
@@ -3404,9 +3436,9 @@ function pageScorecard(win){
   rowsFor('REFERRALS',win).forEach(r=>{const cb=normCB(r.employee_code)||cbOf(r.agent);if(!cb)return;const a=mk(cb,r.agent,'');a.refs+=(r.referral_count??1)});
   qa.forEach(r=>{const c=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];if(!c)return;const a=mk(c,r.sales_agent,r.team_leader);
     a.joins.qa=true;a.ev++;
-    if(resolveRule('$qaCoaching').includes(r.escalation_decision))a.coach=(a.coach||0)+1;
-    if(resolveRule('$qaPass').includes(r.escalation_decision))a.pass++;
-    if(resolveRule('$qaCritical').includes(r.escalation_decision))a.crit++;
+    if(decIn('$qaCoaching',r.escalation_decision))a.coach=(a.coach||0)+1;
+    if(decIn('$qaPass',r.escalation_decision))a.pass++;
+    if(decIn('$qaCritical',r.escalation_decision))a.crit++;
     if(r.score_percent!=null){a.score+=r.score_percent;a.scoreN++}});
   calls.forEach(r=>{if(!r.agent)return;const c=cbOf(r.agent);if(c&&A[c]){A[c].calls++;A[c].dur+=r.duration_seconds||0;A[c].joins.calls=true;if(r._d)(A[c].callDays=A[c].callDays||new Set()).add(r._d)}});
   const gm89=gwpMultVal();
@@ -3443,7 +3475,7 @@ function pageScorecard(win){
    +SC.rows.map(r=>'<tr><td><b>'+aName(r.cb,maskName(r.name))+'</b><div style="font-size:10.5px;color:var(--muted)">'+esc(r.code)+'</div></td><td>'+maskName(r.tl)+'</td>'
     +'<td style="font-size:11.5px;color:var(--muted)">'+esc(r.tenure||'—')+'</td>'
     +'<td class="num">'+(r.present||0)+'</td>'
-    +'<td>'+ragPill(r.attRate,92,85)+'</td>'
+    +'<td>'+ragPill(r.attRate,...kpiThr('attendance_rate',92,85))+'</td>'
     +'<td class="num">'+(r.joins.calls?r.calls.toLocaleString():'—')+'</td>'
     +'<td class="num">'+(r.joins.calls?Math.round(r.dur/60).toLocaleString()+'m':'—')+'</td>'
     +'<td class="num">'+(r.cpd!=null&&r.joins.calls?fmtVal(r.cpd,'num1'):'—')+'</td>'
@@ -3461,7 +3493,7 @@ function pageScorecard(win){
     +'<td>'+(r.nCancels?'<span class="pill r">'+r.nCancels+'</span>':(r.joins.sf?'<span class="pill g">0</span>':'—'))+'</td>'
     +'<td class="num">'+r.ev+'</td>'
     +'<td class="num">'+(r.coach||0)+'</td>'
-    +'<td>'+ragPill(r.passRate,90,80)+'</td>'
+    +'<td>'+ragPill(r.passRate,...kpiThr('avg_qa_score',90,80))+'</td>'
     +'<td class="num">'+fmtVal(r.avgScore,'pct')+'</td>'
     +'<td>'+(r.crit?'<span class="pill r">'+r.crit+'</span>':'<span class="pill g">0</span>')+'</td>'
     +'<td>'+['list','att','qa','calls','sf'].map(j=>'<span class="pill '+(r.joins[j]?'b':'n')+'" style="padding:2px 6px;margin-right:3px">'+j.toUpperCase()+'</span>').join('')+'</td></tr>').join('')
@@ -3470,8 +3502,8 @@ function pageScorecard(win){
    +'</div>'
    +'<div class="card"><div class="card-h"><span class="t">Team leader rollup</span></div><table class="tbl"><thead><tr><th class="noclick">Team leader</th><th class="noclick">Agents</th><th class="noclick">Avg attendance</th><th class="noclick">Avg QA pass</th><th class="noclick">Unique leads</th><th class="noclick">Sales</th><th class="noclick">Conv %</th><th class="noclick">Target</th><th class="noclick">% Sales</th><th class="noclick">GWP</th><th class="noclick">GWP target</th><th class="noclick">% GWP</th><th class="noclick">Referrals</th><th class="noclick">Cancels</th><th class="noclick">Criticals</th><th class="noclick">Calls/present day</th></tr></thead><tbody>'
    +Object.entries(T).map(([t,g])=>'<tr><td><b>'+maskName(t)+'</b></td><td class="num">'+g.n+'</td>'
-    +'<td>'+(g.attN?ragPill(g.att/g.attN,92,85):'—')+'</td>'
-    +'<td>'+(g.passN?ragPill(g.pass/g.passN,90,80):'—')+'</td>'
+    +'<td>'+(g.attN?ragPill(g.att/g.attN,...kpiThr('attendance_rate',92,85)):'—')+'</td>'
+    +'<td>'+(g.passN?ragPill(g.pass/g.passN,...kpiThr('avg_qa_score',90,80)):'—')+'</td>'
     +'<td class="num">'+(g.leads||'—')+'</td>'
     +'<td class="num" style="font-weight:800">'+g.sales+'</td>'
     +'<td>'+(g.leads?ragPill(g.sales/g.leads*100,ctS,ctS*.8):'—')+'</td>'
@@ -3890,15 +3922,16 @@ function pageUploads(){
      +(rows?'<button class="btn small danger" onclick="clearSource(\''+k+'\')">Delete file</button>':'<span class="file-note">or drag & drop here</span>')
      +'</div></div>';
   }).join('');
-  const bt=state.batches.slice(0,25).map(b=>'<tr><td><b>'+esc(b.batch_id)+'</b></td><td>'+esc(SOURCES[b.source_type]?.label||b.source_type)+'</td><td style="font-size:11px">'+esc(b.original_file_name)+'</td><td class="num">'+b.loaded_row_count.toLocaleString()+((b.duplicate_row_count||0)?'<div style="font-size:10px;color:var(--muted)">+'+b.duplicate_row_count.toLocaleString()+' already loaded — skipped</div>':'')+'</td><td class="num">'+b.rejected_row_count+'</td><td>'+esc(b.period_start||'—')+' → '+esc(b.period_end||'—')+'</td><td><span class="pill '+(b.validation_status==='passed'?'g':b.validation_status==='warning'?'a':'r')+'">'+b.validation_status+'</span></td><td style="font-size:11px;color:var(--muted)">'+new Date(b.uploaded_at).toLocaleString()+'<br>'+esc(b.uploaded_by)+'</td></tr>').join('');
-  const ex=state.exceptions.slice(0,25).map(e=>'<tr><td>'+esc(e.batch_id)+'</td><td>'+esc(SOURCES[e.source]?.label||e.source)+'</td><td class="num">'+e.row+'</td><td>'+esc(e.reason)+'</td><td style="font-size:11px;color:var(--muted)">'+e.sample+'</td></tr>').join('');
+  const BT=capTable(state.batches,'batches',25),EX=capTable(state.exceptions,'exceptions',25);
+  const bt=BT.rows.map(b=>'<tr><td><b>'+esc(b.batch_id)+'</b></td><td>'+esc(SOURCES[b.source_type]?.label||b.source_type)+'</td><td style="font-size:11px">'+esc(b.original_file_name)+'</td><td class="num">'+b.loaded_row_count.toLocaleString()+((b.duplicate_row_count||0)?'<div style="font-size:10px;color:var(--muted)">+'+b.duplicate_row_count.toLocaleString()+' already loaded — skipped</div>':'')+'</td><td class="num">'+b.rejected_row_count+'</td><td>'+esc(b.period_start||'—')+' → '+esc(b.period_end||'—')+'</td><td><span class="pill '+(b.validation_status==='passed'?'g':b.validation_status==='warning'?'a':'r')+'">'+b.validation_status+'</span></td><td style="font-size:11px;color:var(--muted)">'+new Date(b.uploaded_at).toLocaleString()+'<br>'+esc(b.uploaded_by)+'</td></tr>').join('');
+  const ex=EX.rows.map(e=>'<tr><td>'+esc(e.batch_id)+'</td><td>'+esc(SOURCES[e.source]?.label||e.source)+'</td><td class="num">'+e.row+'</td><td>'+esc(e.reason)+'</td><td style="font-size:11px;color:var(--muted)">'+e.sample+'</td></tr>').join('');
   return '<div class="card" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>Weekly rhythm:</b><span class="pill b">Mon — Ryan uploads all sources</span><span class="pill a">Wed — Jared uploads QA</span><span class="pill v">Fri — Nick reviews Executive view</span>'
    +'<span style="margin-left:auto;display:flex;gap:8px"><button class="btn danger" onclick="if(confirm(\'Clear all uploaded data? KPI dictionary and rules are kept.\'))clearAll()">Clear all data</button></span></div>'
    +'<div class="slot-grid">'+slots+'</div>'
    +'<div class="grid g2"><div class="card"><div class="card-h"><span class="t">Upload batch audit</span><span class="s">every load is traceable</span><span class="right"><button class="btn small" onclick="exportBatches()">Export CSV</button></span></div>'
-   +(state.batches.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Batch</th><th class="noclick">Source</th><th class="noclick">File</th><th class="noclick">Loaded</th><th class="noclick">Rejected</th><th class="noclick">Data period</th><th class="noclick">Status</th><th class="noclick">By / when</th></tr></thead><tbody>'+bt+'</tbody></table></div>':'<div class="empty">No uploads yet.</div>')+'</div>'
+   +(state.batches.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Batch</th><th class="noclick">Source</th><th class="noclick">File</th><th class="noclick">Loaded</th><th class="noclick">Rejected</th><th class="noclick">Data period</th><th class="noclick">Status</th><th class="noclick">By / when</th></tr></thead><tbody>'+bt+'</tbody></table>'+BT.foot+'</div>':'<div class="empty">No uploads yet.</div>')+'</div>'
    +'<div class="card"><div class="card-h"><span class="t">Exceptions</span><span class="s">rejected rows land here, never silently dropped</span></div>'
-   +(state.exceptions.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Batch</th><th class="noclick">Source</th><th class="noclick">Row</th><th class="noclick">Reason</th><th class="noclick">Sample</th></tr></thead><tbody>'+ex+'</tbody></table></div>':'<div class="empty">No exceptions — clean loads.</div>')+'</div></div>';
+   +(state.exceptions.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Batch</th><th class="noclick">Source</th><th class="noclick">Row</th><th class="noclick">Reason</th><th class="noclick">Sample</th></tr></thead><tbody>'+ex+'</tbody></table>'+EX.foot+'</div>':'<div class="empty">No exceptions — clean loads.</div>')+'</div></div>';
 }
 function dropFile(ev,k){ev.preventDefault();document.getElementById('slot_'+k)?.classList.remove('drag');const f=ev.dataTransfer.files[0];if(f)handleFile(k,f)}
 
@@ -3989,7 +4022,10 @@ function toggleKPI(id,on){const k=state.kpis.find(x=>x.id===id);if(k){k.show=on;
 function deleteKPI(id){const k=state.kpis.find(x=>x.id===id);if(!k)return;if(!confirm('Delete "'+k.name+'"? (Defaults can be restored later.)'))return;state.kpis=state.kpis.filter(x=>x.id!==id);saveConfig();render()}
 function restoreKPIs(){if(!confirm('Restore the default KPI set? Custom KPIs are kept.'))return;const custom=state.kpis.filter(k=>!k.core);state.kpis=structuredClone(DEFAULT_KPIS).concat(custom);saveConfig();render();toast('Default KPIs restored','ok')}
 function restoreRules(){if(!confirm('Restore all interpretation rules to defaults?'))return;state.rules=structuredClone(DEFAULT_RULES);saveConfig();render();toast('Rules restored to defaults','ok')}
-function ruleAdd(key){const inp=document.getElementById('rin_'+key);const v=(inp.value||'').trim();if(!v)return;state.rules[key].vals.push(v);inp.value='';saveConfig();render();toast('Rule updated — all KPIs recalculated','ok')}
+function ruleAdd(key){const inp=document.getElementById('rin_'+key);const v=(inp.value||'').trim();if(!v)return;
+  const r=state.rules[key];
+  if(r.single)r.vals=[v];else r.vals.push(v);   // single-value rules (VAT, stale days, cycle dates…) REPLACE — appending changed nothing while the toast claimed it did
+  inp.value='';saveConfig();render();toast('Rule updated — all KPIs recalculated','ok')}
 function ruleDel(key,i){state.rules[key].vals.splice(i,1);saveConfig();render();toast('Rule updated — all KPIs recalculated','ok')}
 function mapAgent(name,code){if(code)state.agentMap[name]=normCB(code);else delete state.agentMap[name];saveConfig();toast('Mapping saved')}
 
@@ -4006,7 +4042,7 @@ function editKPI(id){
    <div class="modal-h"><div class="t">${isNew?'Add a KPI':'Edit — '+esc(k.name)}</div><button class="modal-x" onclick="closeModal()">✕</button></div>
    <div class="frow">
      <div class="field"><label>Name</label><input type="text" id="kName" value="${esc(k.name)}" placeholder="e.g. Sale Dispositions"></div>
-     <div class="field"><label>Domain (which page it appears on)</label><select id="kDomain">${['Sales','QA','Workforce'].map(d=>'<option '+(k.domain===d?'selected':'')+'>'+d+'</option>').join('')}</select></div>
+     <div class="field"><label>Domain (which page it appears on)</label><select id="kDomain">${['Sales','QA','Workforce','Discipline'].map(d=>'<option '+(k.domain===d?'selected':'')+'>'+d+'</option>').join('')}</select></div>
    </div>
    <div class="frow3">
      <div class="field"><label>Source</label><select id="kSrc">${srcOpts}</select><div class="hint" id="kFieldHint">Fields available: ${esc(fieldsFor(k.src).slice(0,8).join(', '))||'(upload data to see fields)'}…</div></div>
@@ -4054,7 +4090,7 @@ function saveKPI(id,isNew){
 }
 
 /* ---------------- ROADMAP + GUIDE PAGES ---------------- */
-function pageManual(){return '<div class="card guide" style="max-width:900px">'+"\n<h2>1 · Read the colours first</h2>\n<p>Every KPI card and status dot uses one traffic-light system. Learn it once and you can read any page at a glance:</p>\n<ul>\n<li><b style=\"color:#34D399\">GREEN</b> — on target. The metric is at or better than its goal.</li>\n<li><b style=\"color:#FBBF24\">AMBER</b> — watch. Slipping toward a problem; keep an eye on it.</li>\n<li><b style=\"color:#FB7185\">RED</b> — act. Below target; it needs an owner and an action today.</li>\n<li><b style=\"color:#8296B5\">GREY</b> — informational, no target set.</li>\n</ul>\n<p>Each KPI shows its <b>value</b>, its <b>target</b> (e.g. \"target ≥ 90%\"), a trend arrow versus the previous period, and a mini-sparkline. Click any KPI for its full definition and what to do when it turns red.</p>\n\n<h2>2 · The rules behind the scores (NBA v3.0)</h2>\n<p>Agents are scored by The Chatterbox NBA Scoring Framework. You do not calculate anything — the system does — but knowing the rules tells you <i>why</i> an agent is flagged.</p>\n\n<h3>The Two-Check Sales Rule</h3>\n<p><b>Value is always checked before Volume.</b> Check 1 (Value): GWP per sale ≥ R99. Check 2 (Volume): daily sales vs the agent's tenure target. A high sales count at low value still fails — because it costs the business on every policy.</p>\n<table class=\"tbl\"><thead><tr><th>Value</th><th>Volume</th><th>Status → coach on</th></tr></thead><tbody>\n<tr><td>PASS</td><td>PASS</td><td>On Target → stretch goals</td></tr>\n<tr><td>FAIL</td><td>PASS</td><td>Value Issue → product mix & upselling</td></tr>\n<tr><td>PASS</td><td>FAIL</td><td>Volume Issue → activity, pipeline, closing</td></tr>\n<tr><td>FAIL</td><td>FAIL</td><td>Both → value coaching takes priority</td></tr>\n</tbody></table>\n<p>Tenure daily-sales targets: <b>M1 = 3, M2 = 4, EXP-Courtesy = 5, EXP-Cuddle = 8</b>. GWP/sale target is R99 for everyone. Agents are only ever compared with peers at the same tenure.</p>\n\n<h3>The Decision Ladder — one action per agent</h3>\n<p>Rules are checked top-to-bottom; the <b>first one that triggers is the agent's single Next Best Action</b>. Most serious always wins.</p>\n<ul>\n<li><b style=\"color:#FB7185\">Level 1 · Protect the Business</b> — R1 Zero Attendance · R2 Critical QA (&lt;80%) · R2A-3 Critical Compliance · R3 Attendance Risk (&lt;80%).</li>\n<li><b style=\"color:#FBBF24\">Level 2 · Protect the Revenue</b> — R2A-2 Compliance Risk · R4 GWP Value Failure (&lt;R99) · R4A Critical Sales-Volume · R5 Moderate QA (80–89%) · R6 Low Sales (70–89%).</li>\n<li><b style=\"color:#3D9BFF\">Level 3 · Improve the Skill</b> — R7 Conversion below target · R8 Talk Time (&lt;150 min/day) · R2A-1 Compliance Note (logged only).</li>\n<li><b style=\"color:#34D399\">Level 4 · Develop & Recognise</b> — R9 Developing (90–99%) · R10 Strong/Elite (meets all targets).</li>\n</ul>\n\n<h3>Graduated Critical-Fail (R2A)</h3>\n<p>Critical Fail Rate (CFR) = critical fails ÷ audited calls. The tier is the <b>higher</b> of the count band and the rate band, and the penalty is <b>capped at −10</b>:</p>\n<table class=\"tbl\"><thead><tr><th>Tier</th><th>Trigger</th><th>Composite</th><th>Elite</th></tr></thead><tbody>\n<tr><td>R2A-3</td><td>≥4 fails OR CFR ≥30%</td><td>−10</td><td>Blocked</td></tr>\n<tr><td>R2A-2</td><td>2–3 fails OR CFR 10–&lt;30%</td><td>−5</td><td>Blocked</td></tr>\n<tr><td>R2A-1</td><td>exactly 1 fail AND CFR &lt;10%</td><td>−2</td><td>Retained (a note, never a primary NBA)</td></tr>\n</tbody></table>\n\n<h3>The Composite Score (/100)</h3>\n<p>Seven weighted metrics sum to 100, then the capped critical-fail penalty is applied and reported as <b>'Adj'</b>: Avg GWP/Sale <b>25</b>, Target Achievement <b>20</b>, QA <b>20</b>, Total GWP percentile <b>15</b>, Conversion <b>10</b>, Talk Time <b>5</b>, Attendance <b>5</b>. Cancellations and attempts-per-lead are diagnostics — they are never scored.</p>\n\n<h2>3 · How to use the software</h2>\n<ol>\n<li><b>Check Data Trust first.</b> The bar at the top of the page shows every source's freshness — green is fresh, amber/red is stale. A beautiful chart on stale data is a confident wrong answer, so always read the trust bar before the numbers.</li>\n<li><b>Upload your exports</b> in the Upload Station. The type is detected from the headers; rejected rows are logged with reasons, never silently dropped.</li>\n<li><b>Filter and set the date range</b> in the top bar — every KPI, chart and table re-window to your selection.</li>\n<li><b>Click any agent's name</b> (on any table or chart) to open their full card — framework score, the primary NBA, the composite breakdown, graphs, peer comparison, and an AI coaching analysis of what to improve.</li>\n<li><b>Ask AgentOS</b> — the chat bubble in the bottom-right answers questions about the numbers on screen, the framework, and the business. It never invents figures.</li>\n</ol>\n\n<h2>4 · The weekly rhythm</h2>\n<p><b>Daily</b> the system assigns one NBA per agent. <b>Every Monday</b> the Team Leader confirms the data and sets owners and due dates. <b>During the week</b> the coaching happens. <b>At the next review</b> — clear the NBA if resolved, escalate if not. If a red number has no owned action, the system has failed.</p>\n\n<h2>Privacy (POPIA)</h2>\n<p>PII masking is on by default: names become initials, numbers and emails are partially hidden. The toggle in the footer is for authorised eyes doing casework — turn it back on before screen-sharing. Customer contact details are never needed for any KPI on these pages.</p>\n\n<h2>If something looks wrong</h2>\n<p>Work the chain in order: <b>Trust bar</b> (is the source fresh?) → <b>Upload audit</b> (did the batch load with warnings?) → <b>Exceptions</b> (what got rejected and why?) → <b>Rules</b> (does \"pass\"/\"present\" mean what you think?) → then, and only then, question the floor. Nine times out of ten the answer is in the first two steps.</p>\n"+'</div>'}
+function pageManual(){return '<div class="card guide" style="max-width:900px">'+"\n<h2>1 · Read the colours first</h2>\n<p>Every KPI card and status dot uses one traffic-light system. Learn it once and you can read any page at a glance:</p>\n<ul>\n<li><b style=\"color:#34D399\">GREEN</b> — on target. The metric is at or better than its goal.</li>\n<li><b style=\"color:#FBBF24\">AMBER</b> — watch. Slipping toward a problem; keep an eye on it.</li>\n<li><b style=\"color:#FB7185\">RED</b> — act. Below target; it needs an owner and an action today.</li>\n<li><b style=\"color:#8296B5\">GREY</b> — informational, no target set.</li>\n</ul>\n<p>Each KPI shows its <b>value</b>, its <b>target</b> (e.g. \"target ≥ 90%\"), a trend arrow versus the previous period, and a mini-sparkline. Click any KPI for its full definition and what to do when it turns red.</p>\n\n<h2>2 · The rules behind the scores (NBA v3.0)</h2>\n<p>Agents are scored by The Chatterbox NBA Scoring Framework. You do not calculate anything — the system does — but knowing the rules tells you <i>why</i> an agent is flagged.</p>\n<p style=\"font-size:12px;color:var(--muted)\">The numbers in this section are LIVE — this page reads the same Dictionary rules the scoring engine uses, so an edited threshold shows here instantly.</p>\n\n<h3>The Two-Check Sales Rule</h3>\n<p><b>Value is always checked before Volume.</b> Check 1 (Value): GWP per sale ≥ R"+nbaVal('gwpFloor',99)+". Check 2 (Volume): daily sales vs the agent's tenure target. A high sales count at low value still fails — because it costs the business on every policy.</p>\n<table class=\"tbl\"><thead><tr><th>Value</th><th>Volume</th><th>Status → coach on</th></tr></thead><tbody>\n<tr><td>PASS</td><td>PASS</td><td>On Target → stretch goals</td></tr>\n<tr><td>FAIL</td><td>PASS</td><td>Value Issue → product mix & upselling</td></tr>\n<tr><td>PASS</td><td>FAIL</td><td>Volume Issue → activity, pipeline, closing</td></tr>\n<tr><td>FAIL</td><td>FAIL</td><td>Both → value coaching takes priority</td></tr>\n</tbody></table>\n<p>Daily-sales targets come from each agent's roster <b>Target</b> column (framework defaults: M1 = 3 · M2 = 4 · EXP-Courtesy = 5 · EXP-Cuddle = 8). The GWP/sale floor is R"+nbaVal('gwpFloor',99)+" for everyone. Agents are only ever compared with peers at the same tenure.</p>\n\n<h3>The Decision Ladder — one action per agent</h3>\n<p>Rules are checked top-to-bottom; the <b>first one that triggers is the agent's single Next Best Action</b>. Most serious always wins.</p>\n<ul>\n<li><b style=\"color:#FB7185\">Level 1 · Protect the Business</b> — R1 Zero Attendance · R2 Critical QA (&lt;"+nbaVal('qaCritical',80)+"%) · R2A-3 Critical Compliance · R3 Attendance Risk (&lt;"+nbaVal('attRisk',80)+"%).</li>\n<li><b style=\"color:#FBBF24\">Level 2 · Protect the Revenue</b> — R2A-2 Compliance Risk · R4 GWP Value Failure (&lt;R"+nbaVal('gwpFloor',99)+") · R4A Critical Sales-Volume · R5 Moderate QA ("+nbaVal('qaCritical',80)+"–&lt;"+nbaVal('qaTarget',90)+"%) · R6 Low Sales ("+nbaVal('salesLow',70)+"–&lt;"+nbaVal('salesNear',90)+"% of target).</li>\n<li><b style=\"color:#3D9BFF\">Level 3 · Improve the Skill</b> — R7 Conversion below target · R8 Talk Time (&lt;"+nbaVal('talkFloorMin',150)+" min/day) · R2A-1 Compliance Note (logged only).</li>\n<li><b style=\"color:#34D399\">Level 4 · Develop & Recognise</b> — R9 Developing ("+nbaVal('salesNear',90)+"–99%) · R10 Strong/Elite (meets all targets).</li>\n</ul>\n\n<h3>Graduated Critical-Fail (R2A)</h3>\n<p>Critical Fail Rate (CFR) = critical fails ÷ audited calls. The tier is the <b>higher</b> of the count band and the rate band, and the penalty is <b>capped at −"+nbaVal('pen3',10)+"</b>:</p>\n<table class=\"tbl\"><thead><tr><th>Tier</th><th>Trigger</th><th>Composite</th><th>Elite</th></tr></thead><tbody>\n<tr><td>R2A-3</td><td>≥"+nbaVal('r2a3Count',4)+" fails OR CFR ≥"+nbaVal('r2a3Rate',30)+"%</td><td>−"+nbaVal('pen3',10)+"</td><td>Blocked</td></tr>\n<tr><td>R2A-2</td><td>≥"+nbaVal('r2a2Count',2)+" fails OR CFR ≥"+nbaVal('r2a2Rate',10)+"% (below the R2A-3 line)</td><td>−"+nbaVal('pen2',5)+"</td><td>Blocked</td></tr>\n<tr><td>R2A-1</td><td>any critical fail below the R2A-2 line</td><td>−"+nbaVal('pen1',2)+"</td><td>Retained (a note, never a primary NBA)</td></tr>\n</tbody></table>\n\n<h3>The Composite Score (/100)</h3>\n<p>The weighted metrics build the /100 (weights renormalise across the metrics an agent actually has), then the capped critical-fail penalty is applied and reported as <b>'Adj'</b>: "+compWeights().map(function(p){return esc(p[0])+' <b>'+p[1]+'</b>'}).join(', ')+". Cancellations and attempts-per-lead are diagnostics — they are never scored.</p>\n\n<h2>3 · How to use the software</h2>\n<ol>\n<li><b>Check Data Trust first.</b> The bar at the top of the page shows every source's freshness — green is fresh, amber/red is stale. A beautiful chart on stale data is a confident wrong answer, so always read the trust bar before the numbers.</li>\n<li><b>Upload your exports</b> in the Upload Station. The type is detected from the headers; rejected rows are logged with reasons, never silently dropped.</li>\n<li><b>Filter and set the date range</b> in the top bar — every KPI, chart and table re-window to your selection.</li>\n<li><b>Click any agent's name</b> (on any table or chart) to open their full card — framework score, the primary NBA, the composite breakdown, graphs, peer comparison, and an AI coaching analysis of what to improve.</li>\n<li><b>Ask AgentOS</b> — the chat bubble in the bottom-right answers questions about the numbers on screen, the framework, and the business. It never invents figures.</li>\n</ol>\n\n<h2>4 · The weekly rhythm</h2>\n<p><b>Daily</b> the system assigns one NBA per agent. <b>Every Monday</b> the Team Leader confirms the data and sets owners and due dates. <b>During the week</b> the coaching happens. <b>At the next review</b> — clear the NBA if resolved, escalate if not. If a red number has no owned action, the system has failed.</p>\n\n<h2>Privacy (POPIA)</h2>\n<p>PII masking is on by default: names become initials, numbers and emails are partially hidden. The toggle in the footer is for authorised eyes doing casework — turn it back on before screen-sharing. Customer contact details are never needed for any KPI on these pages.</p>\n\n<h2>If something looks wrong</h2>\n<p>Work the chain in order: <b>Trust bar</b> (is the source fresh?) → <b>Upload audit</b> (did the batch load with warnings?) → <b>Exceptions</b> (what got rejected and why?) → <b>Rules</b> (does \"pass\"/\"present\" mean what you think?) → then, and only then, question the floor. Nine times out of ten the answer is in the first two steps.</p>\n"+'</div>'}
 
 
 /* ---------------- MODAL / EXPORT / MISC ---------------- */
