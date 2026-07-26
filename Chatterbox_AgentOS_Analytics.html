@@ -1962,6 +1962,15 @@ Chart.defaults.font.family="'Inter','Segoe UI',sans-serif";Chart.defaults.color=
 Chart.defaults.animation=false;
 const PALETTE=['#2563EB','#38BDF8','#6D4AE0','#158A4C','#F59E0B','#DC2626','#0EA5E9','#94A3B8','#10B981','#E879F9'];
 function groupCount(rows,field,filt){const m={};rows.forEach(r=>{if(filt&&!passFilter(r,filt))return;const k=r[field]||'(none)';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1])}
+/* Canonical open-lead status vocabulary, in the order a lead is WORKED — 1st→5th
+   attempt, then New, In Progress, Escalated. Every open-cases pivot reads columns in
+   this sequence (frequency order put 5th attempt first, which reads as nonsense), so
+   the Lead Management table, the agent-scores table and the session matrix all agree.
+   canonStatus folds case/whitespace variants into the canonical name, so "4th Attempt"
+   lands in the 4th column instead of becoming a duplicate appended after Escalated.
+   Anything unrecognised keeps its own name and is ordered after the canon. */
+const LEAD_STATUSES=['1st attempt','2nd attempt','3rd attempt','4th attempt','5th attempt','New','In Progress','Escalated'];
+const canonStatus=s=>{const n=String(s==null?'':s).replace(/\s+/g,' ').trim();return LEAD_STATUSES.find(c=>c.toLowerCase()===n.toLowerCase())||(n||'(blank)')};
 /* Trend / sparkline x-axis range. The default "all data" window uses a 1900-01-01
    sentinel for `from`; walking 90-120 days forward from THAT plotted every point in
    1900 and left every chart blank (the data is in 2026). So: resolve the sentinel to
@@ -2541,13 +2550,18 @@ function pageSales(win){
   const cUnmapped=Object.values(cPivot).filter(p=>p.__unmapped).length;
   const closureMix=cStatFreq.slice(0,6);
   const statFreq=groupCount(open,'status');
-  const topStatuses=statFreq.slice(0,8).map(e=>e[0]);
-  const hasOther=statFreq.length>8;
+  // Columns follow the canonical working order (LEAD_STATUSES), not raw frequency —
+  // any status outside the canon keeps its place by frequency after it, and the
+  // overflow past 8 still lands in 'Other' so no case is dropped.
+  const presentSt=[...new Set(statFreq.map(e=>canonStatus(e[0])))];
+  const orderedSt=[...LEAD_STATUSES.filter(c=>presentSt.includes(c)),...presentSt.filter(c=>!LEAD_STATUSES.includes(c))];
+  const topStatuses=orderedSt.slice(0,8);
+  const hasOther=orderedSt.length>8;
   const pivot={};let unownedN=0;
   open.forEach(r=>{const raw=r.case_owner||'';if(!raw){unownedN++;return}
     const cb=cbOfOwner(raw);const key=cb||('RAW::'+normName(raw));
     const p=pivot[key]=pivot[key]||{__t:0,__name:cb?((state.cbInfo[cb]?.name)||raw):raw,__cb:cb,__unmapped:!cb,__sts:{}};
-    p.__t++;const st=topStatuses.includes(r.status)?r.status:'Other';p.__sts[st]=(p.__sts[st]||0)+1});
+    p.__t++;const st0=canonStatus(r.status);const st=topStatuses.includes(st0)?st0:'Other';p.__sts[st]=(p.__sts[st]||0)+1});
   const pivotRows=Object.values(pivot).sort((a,b)=>b.__t-a.__t).slice(0,15);
   const pivCols=hasOther?[...topStatuses,'Other']:topStatuses;
   const unmappedOwners=Object.values(pivot).filter(p=>p.__unmapped).length;
@@ -3294,16 +3308,12 @@ function pageLeads(win){
     if(GF.campaign&&campBucket(a.queue)!==GF.campaign)return;
     if(GF.agent&&normCB(a.cb_code)!==normCB(GF.agent))return;
     mk(a.cb_norm)});
-  const CANON=['1st attempt','2nd attempt','3rd attempt','4th attempt','5th attempt','New','In Progress','Escalated'];
-  // Fold status variants (case/whitespace) into the canonical name so "4th Attempt" counts into
-  // the canonical 4th column instead of a duplicate appended after Escalated.
-  const canonSt=s=>{const n=String(s==null?'':s).replace(/\s+/g,' ').trim();return CANON.find(c=>c.toLowerCase()===n.toLowerCase())||(n||'(blank)')};
   let unOpen=0,unClosed=0;
   rowsFor('SF_OPEN_CASES',win).forEach(r=>{const cb=cbOfOwner(r.case_owner);if(!cb||!A[cb]){if(!cb)unOpen++;return}
     if(!openInWin(r,win))return;                                    // snapshot: rowsFor can't window it
     const a=A[cb];const k=String(r.case_number||'').trim();
     if(k){if(a.seenO.has(k))return;a.seenO.add(k)}                  // one row per case
-    const st=canonSt(r.status);a.open++;addLead(a.leads,r);a.sts[st]=(a.sts[st]||0)+1});
+    const st=canonStatus(r.status);a.open++;addLead(a.leads,r);a.sts[st]=(a.sts[st]||0)+1});
   rowsFor('SF_CLOSED_CASES',win).forEach(r=>{const cb=cbOfOwner(r.case_owner);if(!cb||!A[cb]){if(!cb)unClosed++;return}
     const a=A[cb];const k=String(r.case_number||'').trim();
     if(k){if(a.seenC.has(k))return;a.seenC.add(k)}
@@ -3314,7 +3324,7 @@ function pageLeads(win){
   rowsFor('CALLX_CALL_RECORDS',win).forEach(r=>{const cb=cbOf(r.agent);if(cb&&A[cb]&&r._d)A[cb].dialDays.add(r._d)});
   const wd=workDays(win);
   const present=new Set();Object.values(A).forEach(a=>Object.keys(a.sts).forEach(k=>present.add(k)));
-  const stCols=[...CANON,...[...present].filter(c=>!CANON.includes(c)).sort()].slice(0,10);
+  const stCols=[...LEAD_STATUSES,...[...present].filter(c=>!LEAD_STATUSES.includes(c)).sort()].slice(0,10);
   const rows=Object.values(A).sort((x,y)=>String(x.tl).localeCompare(String(y.tl))||y.tc-x.tc||String(x.name).localeCompare(String(y.name)));
   const G={open:0,cl:0,nofb:0,tc:0,sales:0,canc:0,sts:{},leads:mkLeads()};
   rows.forEach(a=>{G.open+=a.open;G.cl+=a.cl;G.nofb+=a.nofb;G.tc+=a.tc;G.sales+=a.sales;G.canc+=a.canc;
@@ -3907,18 +3917,14 @@ function pageSession(){
   }
   /* consolidated matrix: agent rows × (attempt status × every session time) — the July LM sheet, live */
   const SES_HLBL={'0800':'8am','1000':'10am','1200':'12pm','1500':'3pm','1630':'4:30pm'};
-  const CANONS=['1st attempt','2nd attempt','3rd attempt','4th attempt','5th attempt','New','In Progress','Escalated'];
-  // Fold status variants (case/whitespace) into their canonical name so "4th Attempt" doesn't
-  // become a duplicate column appended after Escalated — it lands in the canonical 4th column.
-  const canonSt=s=>{const n=String(s==null?'':s).replace(/\s+/g,' ').trim();return CANONS.find(c=>c.toLowerCase()===n.toLowerCase())||(n||'(blank)')};
   const openBy={};SES_TIMES.forEach(t=>openBy[t]=rowsFor('SES_OPEN_'+t,null));
-  const present2=new Set();Object.values(openBy).forEach(rows=>rows.forEach(r=>present2.add(canonSt(r.status))));
-  const stGroups=[...CANONS,...[...present2].filter(c=>!CANONS.includes(c)).sort()];
+  const present2=new Set();Object.values(openBy).forEach(rows=>rows.forEach(r=>present2.add(canonStatus(r.status))));
+  const stGroups=[...LEAD_STATUSES,...[...present2].filter(c=>!LEAD_STATUSES.includes(c)).sort()];
   const MX={};let unowned2=0;
   SES_TIMES.forEach(t=>openBy[t].forEach(r=>{const raw=r.case_owner||'';if(!raw){unowned2++;return}
     const cb=cbOfOwner(raw);const key=cb||('RAW::'+normName(raw));
     const m=MX[key]=MX[key]||{name:cb?((state.cbInfo[cb]?.name)||raw):raw,tl:cb?((state.cbInfo[cb]?.tl)||'(unassigned)'):'—',un:!cb,c:{}};
-    const st=canonSt(r.status);(m.c[st]=m.c[st]||{})[t]=((m.c[st]||{})[t]||0)+1}));
+    const st=canonStatus(r.status);(m.c[st]=m.c[st]||{})[t]=((m.c[st]||{})[t]||0)+1}));
   const mxRows=Object.values(MX).sort((a,b)=>String(a.tl).localeCompare(String(b.tl))||String(a.name).localeCompare(String(b.name)));
   const unMx=mxRows.filter(m=>m.un).length;
   let pivotHtml='<div class="empty">No open-cases session uploaded yet.</div>';
