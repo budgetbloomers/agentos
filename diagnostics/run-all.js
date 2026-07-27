@@ -3,6 +3,7 @@ const { execFileSync } = require('child_process');
 const steps = [
   ['prep (fixtures + hermetic app copies)', ['prep.js']],
   ['Ops rules & calculations golden', ['golden.js']],
+  ['Ops display sweep (every page, filters, masking, live RAG)', ['display_sweep.js']],
   ['Upload merge / performance harness', ['harness.js', 'current']],
   ['Ask widget rendering (both widgets)', ['widget_test.js']],
   ['PULSE (VAS) golden via __mtd', ['pulse_golden.js']],

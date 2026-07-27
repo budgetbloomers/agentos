@@ -5,6 +5,7 @@
   "scripts": {
     "prep": "node prep.js",
     "ops-golden": "node prep.js && node golden.js",
+    "display": "node prep.js && node display_sweep.js",
     "merge": "node prep.js && node harness.js current",
     "pulse": "node pulse_golden.js",
     "tracker": "node tracker_test.js",

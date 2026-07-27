@@ -32,3 +32,54 @@
 ## [2026-07-26] suite-audit | Full suite pass over VAS (Pulse), Tracker + VT-MTD, and Ask AgentOS, with new browser harnesses for each (PULSE golden via __mtd with hand-computed BI/calls/QA fixtures; Tracker save-path smoke with stubbed /api/eod; widget rendering tests on both widgets). ASK AGENTOS: both widgets now render structured answers via askFmt (escape-first markdown-lite: bold/lists/tables/headings/code — also closed the UNESCAPED innerHTML sinks in the Ops agent-card AI and Pulse's drawer coach); Worker system prompt gained a formatting contract, KB retrieval widened to top-3 modules, fallback path rebuilt to keep the LIVE data blocks (old tail-slice cut them first). Worker needs `wrangler deploy`. PULSE fixes (workbook-verified calc bodies untouched, per audit DO-NOT-TOUCH list): Dashboard now honours the global Campaign/Team filters through the frozen agg() (identical output when unfiltered); MTD/Weekly tables honour the Team filter (screen now matches the export, which already applied it); removeFile no longer deletes dates another surviving file of the same type covers; overlapping same-type uploads warn that per-date stores replace whole days; ingest exceptions toast instead of vanishing as unhandled rejections; upload gets a parsing toast + per-file yield; chart/page animations replay only on a real tab change (were 1.1s on every sort/keystroke); drawer refreshes after background hydrate and its AI coach is cached per period (chart-tab clicks re-fired the LLM); drawer coach renders via askFmt; search boxes keep focus across re-renders; pivot max no longer arg-spreads agents×days; team rank uses a Set; campChip guards undefined; empty-state/exports/adjustments name the ACTUAL period (were S.ui.month under range presets); VAS digest gained period line, TL rollup, campaign totals, daily-by-campaign lines and a truncation notice; Manual no longer claims NBA v3.0 is scored in Pulse (it names Ops as the scoring home and labels Pulse's own 4-factor Score) nor that reject rows are logged. TRACKER fixes: saves made before hydrate are QUEUED and flushed (were silently destroyed); the save button reports Saving…/✓ in the database/NOT in the database honestly (green tick used to show regardless); queued saves resolve their syncing note on flush; single-flight hydrate (login fired it twice — the twin GET raced the flush POST and reverted fresh rows); typed-but-unsaved input survives the 4-min refresh (dirty guard); kv-fallback re-probes /api/eod so it escapes blob mode once the table exists, and a kv 404 pushes local entries up instead of deleting the only copy; parsed-store cached (two full JSON.parses per keystroke before); loading state instead of premature "No entries yet"; CSV export quoted. VT-MTD: now carries its OWN auth-gate (was a directly reachable UNGATED URL serving seeded agent names/case numbers — POPIA); unmissable SEED SNAPSHOT banner; lead-table subtotals/MTD follow the search filter (rows and totals used to disagree); phantom all-zero Weeks 4/5 gone; the workbook Sales-definition footnote now states explicitly that the six-column sum counts fitments twice (kept for workbook parity, §8 to confirm). Regression: Ops golden 95/95 · merge harness 33/33 · widget checks · PULSE golden · Tracker smoke — all green.
 
 ## [2026-07-27] bigfile-fix | 50MB CallX upload was breaking the app — root cause was PERSISTENCE, not parsing: 250k facts serialised to ~200MB of JSON per save (main-thread stringify freeze), the POST blew past the edge request cap so the cloud save failed every time, and once a giant blob DID exist every login re-downloaded and re-parsed it — "continuously breaking". FIX (loss-free, migration-free): (1) fact blobs persist as a columnar envelope {__cbxCols:1,keys,rows[[..]]} — one key list instead of 250k repeated key sets, ~45% smaller, ~2× faster stringify/parse, encode/decode chunk-yield so the thread never blocks; legacy plain-array blobs read transparently; per-session caches (_cbc/_cbcV/_campB) never persist. (2) The site shim gzips any kv value >1MB on write (ai-digest keys exempt — the Worker reads those as text) and inflates by magic-byte sniff on read — old uncompressed values keep working; Worker/Supabase stream the bytes untouched. (3) XLSX.read dense:true in both the parse worker and the main-thread fallback (several-× less SheetJS memory on big workbooks) + an honest "parsing here instead" label when a huge workbook forces the fallback. VERIFIED (diagnostics/bigfile_test.js, now in npm run all): a 52.4MB / 250,000-row CallX CSV uploads with live progress in 6.1s parse+plan + 0.3s confirm, all 250k rows load, the cloud blob is 6.2MB gzipped (~30× smaller, far under the 100MB edge cap), Sales renders in 1.3s, and a FRESH LOGIN restores all 250k rows byte-faithful in 2.1s with zero page errors. Full regression green (95/95 · 33/33 · widget · pulse · tracker · bigfile). NOTE: the live site keeps failing until /deploy ships site/ (Worker unchanged — no wrangler deploy needed for this one).
+
+## [2026-07-27] perf-lag-fix | 250k-row renders: memoised KPI engine + compiled filters
+User: 50MB CallX now uploads but the app is "very laggy". Profiled every page/interaction
+with the 250k-row fixture (scratch profiler on the bigfile harness): the lag was
+per-render RECOMPUTATION, not data volume — a warm Sales repaint re-ran ~2.75M
+interpreted passFilter calls + 500k cbOf resolutions; filter change 1.39s; clear 843ms.
+Fixes (Chatterbox_AgentOS_Analytics.html only, semantics identical — golden 95/95):
+- compileFilter(): KPI filter conditions compile ONCE per aggregation to a specialised
+  predicate ($rule resolution, lowercasing, op dispatch hoisted out of the row loop);
+  passFilter delegates to it, agg/groupCount/evalKPIRaw loops use it.
+- evalKPI = memo over evalKPIRaw keyed (kpi id | window | filters | dataVer | fleetCtx);
+  cleared in bumpDataVer. Values are pure in those inputs; every mutation path
+  (uploads, rule/threshold/mapping edits, clears) already goes through bumpDataVer.
+- cbOf/cbOfOwner memoise per raw string per dataVer (~200 distinct labels across 250k rows).
+- winMemo(tag,win,fn) for derived prep, keyed +unmasked +fleetCtx: accountPremiums,
+  cancelPremiums, convSplit, cycleCalc (was walking all 250k dialler rows per render),
+  pageSales prep (now ONE combined pass builds campaign/type/agent/band/day groupings +
+  AG table — was six walks), pageLeads per-agent build. dailyCountSeries helper = 
+  dailySeries parity from a prebuilt day-count map.
+Measured (250k rows): Sales warm 739→11-29ms · clear filter 843→5ms · campaign filter
+1390→~175ms · exec 169→72ms · leads 48→18ms · period switch 68→31ms · rule edit
+262→266ms (unchanged by design: a rule edit must invalidate everything) · cold Sales
+1134→731ms (once per window/filters/data version) · upload parse+plan 6.1→3.7s,
+post-upload sales render 1.3s→0.88s. All 7 diagnostics suites pass (golden 95/95 incl.
+live rule-edit invalidation, merge 33/33, widget, pulse, tracker, bigfile).
+Dashboard-reviewer pass on the diff: pending at commit time — any findings land as a
+follow-up commit.
+
+## [2026-07-27] perf-lag-review | Reviewer verdict SAFE-WITH-FIXES — hardening applied
+Dashboard-reviewer traced every mutation path to a bump/key-change (none stale), all
+memo consumers read-only, single-pass parity exact, TDZ safe. Two hardening items
+applied: (1) TL scope team now in _evCache/_wmCache keys (same suffix as rowsFor —
+cache symmetry instead of relying on the scope-is-per-session invariant); (2) shared
+seriesDays() day-walk under dailySeries + dailyCountSeries so paired chart axes can
+never drift. Full suite re-run green (golden 95/95). Both commits pushed.
+
+## [2026-07-27] display-sweep | Full display & frameworks verification — no defects found
+User asked to verify all data displays and all rules/frameworks apply. Golden 95/95
+re-proved the VALUES; new diagnostics/display_sweep.js (60 checks, now suite #2 in
+run-all) pins the RENDERING with all 8 sources loaded through the real upload path:
+every page renders data (no error cards; exec command row all-valued; sales 12 charts +
+band table + conversion split + cycle panel; leads 7 agents + ALL AGENTS union row;
+qaperf assessor table; brain graph nodes/links + L1-L4 legend; uploads row counts;
+dict ≥25 KPI rows), honest empty-states only where empty is correct (session slots),
+agent card shows tenure group + composite + NBA verdict (frameworks visible per agent),
+TL team-focus click re-focuses (4-agent Lead A table), PII masking defaults ON and
+toggles live through the memoised pages, campaign/team filters propagate (Cuddle → only
+D. Fo•••/E. Fi•••), threshold edit moves the RAG pill instantly and restores exactly,
+period switches coherent, zero page errors. One finding worth noting: avg QA 86.8 rates
+AMBER because shipped green is 90 — correct behaviour, initially misread by the test.
+No dashboard changes needed this round.
