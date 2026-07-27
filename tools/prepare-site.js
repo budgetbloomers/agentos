@@ -67,7 +67,16 @@ if (!window.storage) {
               return null;
             }
             if (r.ok) {
-              var data = await r.text();
+              // Big blobs are stored gzipped (see set below). Sniff the gzip magic and
+              // inflate locally — legacy plain-text values pass straight through.
+              var buf = await r.arrayBuffer();
+              var u8 = new Uint8Array(buf);
+              var data;
+              if (u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b && typeof DecompressionStream === 'function') {
+                data = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+              } else {
+                data = new TextDecoder('utf-8').decode(buf);
+              }
               mem[k] = data;
               // localStorage is a SYNCHRONOUS main-thread write hard-capped ~5 MB total:
               // caching a multi-MB source blob blocks the UI just to throw QuotaExceeded.
@@ -92,8 +101,17 @@ if (!window.storage) {
         else { try { localStorage.removeItem('cbx:' + k); } catch (e) {} }
         var h = authHdr();
         if (!h) { cbxSaveWarn('Not signed in — this data was NOT saved to the database.'); return; }
+        // TRANSPARENT COMPRESSION (loss-free): a month of call records serialises to
+        // hundreds of MB of highly repetitive JSON — past the edge request cap and
+        // slow to upload. Gzip anything over ~1 MB; get() inflates by magic-byte
+        // sniff, so old uncompressed values keep working. ai-digest keys stay plain
+        // text: the /api/ask Worker reads those server-side.
+        var body = v;
+        if (v.length > 1000000 && k.indexOf('ai-digest') !== 0 && typeof CompressionStream === 'function') {
+          try { body = await new Response(new Blob([v]).stream().pipeThrough(new CompressionStream('gzip'))).blob(); } catch (e) { body = v; }
+        }
         try {
-          var r = await fetch(API + '?key=' + encodeURIComponent(k), { method: 'POST', headers: { 'Authorization': h.Authorization, 'Content-Type': 'text/plain', 'X-Cbx-Client': 'v4' }, body: v });
+          var r = await fetch(API + '?key=' + encodeURIComponent(k), { method: 'POST', headers: { 'Authorization': h.Authorization, 'Content-Type': 'text/plain', 'X-Cbx-Client': 'v4' }, body: body });
           if (!r.ok) cbxSaveWarn('Cloud save failed (' + r.status + ') — this data is NOT in the database. Try again or re-login.');
         } catch (e) { cbxSaveWarn('Cloud save failed (network) — this data is NOT in the database. Check your connection and retry.'); }
       },

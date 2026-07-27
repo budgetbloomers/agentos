@@ -7,6 +7,7 @@ const steps = [
   ['Ask widget rendering (both widgets)', ['widget_test.js']],
   ['PULSE (VAS) golden via __mtd', ['pulse_golden.js']],
   ['Tracker save-path smoke', ['tracker_test.js']],
+  ['Large-file upload (250k-row CallX, gzip round-trip)', ['bigfile_test.js']],
 ];
 let failed = 0;
 for (const [name, args] of steps) {

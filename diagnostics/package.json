@@ -8,6 +8,7 @@
     "merge": "node prep.js && node harness.js current",
     "pulse": "node pulse_golden.js",
     "tracker": "node tracker_test.js",
+    "bigfile": "node bigfile_test.js",
     "widget": "node prep.js && node widget_test.js",
     "all": "node run-all.js"
   },
