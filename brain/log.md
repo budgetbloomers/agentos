@@ -64,3 +64,19 @@ applied: (1) TL scope team now in _evCache/_wmCache keys (same suffix as rowsFor
 cache symmetry instead of relying on the scope-is-per-session invariant); (2) shared
 seriesDays() day-walk under dailySeries + dailyCountSeries so paired chart axes can
 never drift. Full suite re-run green (golden 95/95). Both commits pushed.
+
+## [2026-07-27] display-sweep | Full display & frameworks verification — no defects found
+User asked to verify all data displays and all rules/frameworks apply. Golden 95/95
+re-proved the VALUES; new diagnostics/display_sweep.js (60 checks, now suite #2 in
+run-all) pins the RENDERING with all 8 sources loaded through the real upload path:
+every page renders data (no error cards; exec command row all-valued; sales 12 charts +
+band table + conversion split + cycle panel; leads 7 agents + ALL AGENTS union row;
+qaperf assessor table; brain graph nodes/links + L1-L4 legend; uploads row counts;
+dict ≥25 KPI rows), honest empty-states only where empty is correct (session slots),
+agent card shows tenure group + composite + NBA verdict (frameworks visible per agent),
+TL team-focus click re-focuses (4-agent Lead A table), PII masking defaults ON and
+toggles live through the memoised pages, campaign/team filters propagate (Cuddle → only
+D. Fo•••/E. Fi•••), threshold edit moves the RAG pill instantly and restores exactly,
+period switches coherent, zero page errors. One finding worth noting: avg QA 86.8 rates
+AMBER because shipped green is 90 — correct behaviour, initially misread by the test.
+No dashboard changes needed this round.
