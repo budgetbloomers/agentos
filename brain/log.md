@@ -80,3 +80,22 @@ D. Fo•••/E. Fi•••), threshold edit moves the RAG pill instantly and 
 period switches coherent, zero page errors. One finding worth noting: avg QA 86.8 rates
 AMBER because shipped green is 90 — correct behaviour, initially misread by the test.
 No dashboard changes needed this round.
+
+## [2026-07-27] leads-visibility | Lead Management "data not showing" — 4 defects fixed
+User reported missing data on Lead Management. Line-by-line audit + edge fixtures found:
+(1) NaN WINDOW BLANKED EVERYTHING — any invalid range mode (e.g. browser form-state
+restoring an option value from an older build) made periodWindow parseInt→NaN →
+from='NaN-NaN-NaN' → every _d>=from compare false → every windowed table/tile on EVERY
+page silently empty. periodWindow now self-heals to the 30-day default and resyncs the
+select. (2) Off-roster-but-resolvable owners silently dropped — sfOwnerMap restores
+from config, so departed/renamed agents still resolve to a CB with no roster row; their
+open/closed/sales/cancellations vanished with NO banner count (only null resolutions
+counted). Now flagged: banner counts open/closed/sales/canc not attributable to a
+CURRENT roster agent (suppressed when global filters deliberately narrow the roster).
+(3) Status columns >10 were silently invisible (counted in Total Open, shown nowhere,
+G totals only over visible cols) — overflow now rolls into an 'Other' column; visible
+cells always sum to Total Open. (4) No-BI state showed zero Sales/SPD/Conv with no
+explanation — page now carries the same honest banner as Sales Production. Plus: boot
+range-select now syncs to the actual boot window (said "Last 30 days" while showing
+all data). display_sweep grew a leads deep-check (bogus-mode self-heal, Other rollup,
+stale-map flagging, BI notice; 69 checks). All 8 suites green. NOT LIVE until /deploy.
