@@ -22,6 +22,7 @@ Chromium is resolved from `/opt/pw-browsers` (CI/sandbox); override with
 | Upload merge (33 asserts) | `npm run merge` | Idempotent re-uploads (byte-identical AND renamed files), overlap dedupe, QA record update-in-place, BI span replace + GWP stability, attendance employee-day supersede, all-page render sweep, worker-parse path. `node harness.js baseline` compares against `git show HEAD` when you want before/after timings. |
 | Ask widget | `npm run widget` | Both widgets render markdown-lite answers (bold/lists/tables/headings/code) from a stubbed `/api/ask`; injection payloads stay inert text. |
 | PULSE golden | `npm run pulse` | The frozen workbook engine via `window.__mtd`: unique-account sales, ex×1.15 GWP, talk/QA aggregates, idempotent re-ingest, global-filter maths, removeFile overlap safety, digest coverage, all-tab sweep. Fixtures are synthetic — see `nicks_code/diagnostics/verify.mjs` for the original (stale) workbook-file harness. |
+| Large-file upload | `npm run bigfile` | A ~52MB / 250,000-row CallX CSV uploads with a live progress bar, persists as a ~6MB gzipped columnar blob (vs ~200MB raw JSON that used to break the app and the edge request cap), and a fresh login restores every row byte-faithful. |
 | Tracker smoke | `npm run tracker` | Pre-hydrate save queue + flush, honest save status, single-flight hydrate, dirty-guard on background refresh, in-code Attendance %/SPD, vt-mtd seed banner + filtered totals + auth-gate include. |
 
 Run these after ANY change to the dashboard, PULSE, Tracker, the widgets, or
