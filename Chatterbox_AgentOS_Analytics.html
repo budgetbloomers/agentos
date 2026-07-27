@@ -1842,7 +1842,8 @@ function biLoaded(){return (state.facts.BI_ACTIVE_CASES||[]).length>0}
    Memoised results are read-only by convention, like rowsFor. */
 const _wmCache=new Map();
 function winMemo(tag,win,fn){
-  const key=tag+'|'+(win?win.from+'~'+win.to:'∅')+'|'+JSON.stringify(state.filters)+'|'+_dataVer+'|'+(state.unmasked?1:0)+(_fleetCtx?'|F':'');
+  const sc=_fleetCtx?null:userScopeTeam();   // same scope suffix as rowsFor — a TL's cache entries never serve another team
+  const key=tag+'|'+(win?win.from+'~'+win.to:'∅')+'|'+JSON.stringify(state.filters)+'|'+_dataVer+'|'+(state.unmasked?1:0)+(_fleetCtx?'|F':'')+(sc?'|@'+(sc.team||'∅'):'');
   let v=_wmCache.get(key);
   if(v===undefined){v=fn();if(_wmCache.size>400)_wmCache.clear();_wmCache.set(key,v)}
   return v;
@@ -1884,7 +1885,8 @@ function cancelPremiums(win){return winMemo('cancPrem',win,()=>{
    clear there is harmless. */
 const _evCache=new Map();
 function evalKPI(k,win){
-  const key=(k.id||JSON.stringify(k))+'|'+(win?win.from+'~'+win.to:'∅')+'|'+JSON.stringify(state.filters)+'|'+_dataVer+(_fleetCtx?'|F':'');
+  const sc=_fleetCtx?null:userScopeTeam();   // same scope suffix as rowsFor — a TL's cache entries never serve another team
+  const key=(k.id||JSON.stringify(k))+'|'+(win?win.from+'~'+win.to:'∅')+'|'+JSON.stringify(state.filters)+'|'+_dataVer+(_fleetCtx?'|F':'')+(sc?'|@'+(sc.team||'∅'):'');
   let v=_evCache.get(key);
   if(v===undefined){
     v=evalKPIRaw(k,win);if(v===undefined)v=null;
@@ -2065,25 +2067,29 @@ function seriesRange(win,maxDays){
   if(new Date(from+'T12:00:00')<cap)from=isoDay(cap);
   return{from,to};
 }
-/* Same shape as dailySeries(rows,win,rs=>rs.length) but from a prebuilt {day:count}
-   map — lets a single-pass page prep skip materialising per-day row arrays. */
-function dailyCountSeries(counts,win){
+/* ONE day-walk for every daily series (~7 months via seriesRange so a stale-but-loaded
+   source still trends; 240 backstop ≥ the seriesRange cap so the range is never
+   clipped). dailySeries and dailyCountSeries must stay on the same axis — charts plot
+   one's data against the other's labels — so both delegate here. */
+function seriesDays(win){
   const R=seriesRange(win,220);
   const f=new Date(R.from+'T12:00:00'),t=new Date(R.to+'T12:00:00');
   const days=Math.max(1,Math.min(240,Math.round((t-f)/864e5)+1));
+  const out=[];
+  for(let i=0;i<days;i++){const d=new Date(f);d.setDate(d.getDate()+i);out.push(isoDay(d))}
+  return out;
+}
+/* Same shape as dailySeries(rows,win,rs=>rs.length) but from a prebuilt {day:count}
+   map — lets a single-pass page prep skip materialising per-day row arrays. */
+function dailyCountSeries(counts,win){
   const labels=[],data=[];
-  for(let i=0;i<days;i++){const d=new Date(f);d.setDate(d.getDate()+i);const day=isoDay(d);
-    labels.push(day.slice(5));data.push(counts[day]||0)}
+  seriesDays(win).forEach(day=>{labels.push(day.slice(5));data.push(counts[day]||0)});
   return{labels,data};
 }
 function dailySeries(rows,win,valFn){
-  const R=seriesRange(win,220);   // ~7 months so a stale-but-loaded source (e.g. attendance) still trends
   const byDay={};rows.forEach(r=>{if(r._d)(byDay[r._d]=byDay[r._d]||[]).push(r)});
-  const f=new Date(R.from+'T12:00:00'),t=new Date(R.to+'T12:00:00');
-  const days=Math.max(1,Math.min(240,Math.round((t-f)/864e5)+1));   // backstop ≥ seriesRange cap, so the range is never clipped
   const labels=[],data=[];
-  for(let i=0;i<days;i++){const d=new Date(f);d.setDate(d.getDate()+i);const day=isoDay(d);
-    labels.push(day.slice(5));data.push(valFn(byDay[day]||[]))}
+  seriesDays(win).forEach(day=>{labels.push(day.slice(5));data.push(valFn(byDay[day]||[]))});
   return{labels,data};
 }
 function doughnut(id,entries,cutout){

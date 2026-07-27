@@ -56,3 +56,11 @@ post-upload sales render 1.3s→0.88s. All 7 diagnostics suites pass (golden 95/
 live rule-edit invalidation, merge 33/33, widget, pulse, tracker, bigfile).
 Dashboard-reviewer pass on the diff: pending at commit time — any findings land as a
 follow-up commit.
+
+## [2026-07-27] perf-lag-review | Reviewer verdict SAFE-WITH-FIXES — hardening applied
+Dashboard-reviewer traced every mutation path to a bump/key-change (none stale), all
+memo consumers read-only, single-pass parity exact, TDZ safe. Two hardening items
+applied: (1) TL scope team now in _evCache/_wmCache keys (same suffix as rowsFor —
+cache symmetry instead of relying on the scope-is-per-session invariant); (2) shared
+seriesDays() day-walk under dailySeries + dailyCountSeries so paired chart axes can
+never drift. Full suite re-run green (golden 95/95). Both commits pushed.
