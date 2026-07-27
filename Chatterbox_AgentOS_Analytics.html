@@ -1450,7 +1450,22 @@ function buildIdentity(){
   saveConfig();
 }
 function extractCB(str){const m=String(str||'').match(/CB[\s._-]*0*(\d{1,4})/i);return m?('CB'+m[1]):null}
+/* PERF: the same handful of raw agent/owner strings repeats across hundreds of
+   thousands of rows (250k CallX rows → ~200 distinct dialler labels). Resolve each
+   distinct string once per data version — every mapping/roster edit that could change
+   a resolution goes through saveConfig/confirmLoad → bumpDataVer, so the version check
+   invalidates the memo with it. */
+let _cbMemo=new Map(),_cbMemoV=-1;
+function _cbM(){if(_cbMemoV!==_dataVer){_cbMemo=new Map();_cbMemoV=_dataVer}return _cbMemo}
 function cbOf(v){
+  if(v==null||v==='')return null;
+  const M=_cbM(),key='a '+v;
+  const c=M.get(key);if(c!==undefined)return c;
+  const r=cbOfRaw(v);
+  if(M.size<60000)M.set(key,r);
+  return r;
+}
+function cbOfRaw(v){
   if(v==null||String(v).trim()==='')return null;
   if(state.agentMap[v]!=null)return normCB(state.agentMap[v]);
   const ex=extractCB(v);
@@ -1459,7 +1474,14 @@ function cbOf(v){
   if(state.sfOwnerMap&&state.sfOwnerMap[n])return state.sfOwnerMap[n];
   return ex;
 }
-function cbOfOwner(name){const n=normName(name);return state.sfOwnerMap?.[n]||null}
+function cbOfOwner(name){
+  if(name==null)return null;
+  const M=_cbM(),key='o '+name;
+  const c=M.get(key);if(c!==undefined)return c;
+  const r=state.sfOwnerMap?.[normName(name)]||null;
+  if(M.size<60000)M.set(key,r);
+  return r;
+}
 /* Auto-suggest dialler agent -> CB code by name match against attendance */
 function autoMapAgents(){
   const att=state.facts.ATTENDANCE||[];const byName={};
@@ -1607,26 +1629,35 @@ function stageFor(off){
   let cur=null,idx=-1;rungs.forEach((r,i)=>{if(off>=r.n){cur=r.label;idx=i}});
   return cur?{label:cur,idx,total:rungs.length}:null;
 }
-function passFilter(row,cond){
-  const list=Array.isArray(cond)?cond:[cond];
-  return list.every(c=>{
-    const val=row[c.f];const target=resolveRule(c.v);
+/* PERF: the KPI engine used to interpret this condition list once PER ROW — re-resolving
+   $rules, re-lowercasing the target and re-branching the op switch 250k+ times per
+   aggregation on a big month. compileFilter does that work ONCE and returns a
+   specialised predicate for the row loop. passFilter delegates to it, so there is a
+   single definition of every operator's semantics (the golden suite pins them). */
+function compileFilter(cond){
+  if(!cond)return null;
+  const list=(Array.isArray(cond)?cond:[cond]).map(c=>{
+    const f=c.f,target=resolveRule(c.v);
     switch(c.op){
-      case 'in':return (Array.isArray(target)?target:[target]).map(x=>String(x).toLowerCase()).includes(String(val??'').toLowerCase());
-      case 'eq':return String(val??'').toLowerCase()===String(target).toLowerCase()||val===target;
-      case 'ne':return !(String(val??'').toLowerCase()===String(target).toLowerCase()||val===target);
-      case 'notEmpty':return val!=null&&String(val).trim()!=='';
-      case 'empty':return val==null||String(val).trim()==='';
-      case 'gt':return parseNum(val)>parseNum(target);
-      case 'lt':return parseNum(val)<parseNum(target);
-      case 'gte':return parseNum(val)>=parseNum(target);
-      case 'lte':return parseNum(val)<=parseNum(target);
-      case 'notContains':return !String(val??'').toLowerCase().includes(String(target).toLowerCase());
-      case 'contains':return String(val??'').toLowerCase().includes(String(target).toLowerCase());
-      default:return true;
+      case 'in':{const set=new Set((Array.isArray(target)?target:[target]).map(x=>String(x).toLowerCase()));return r=>set.has(String(r[f]??'').toLowerCase())}
+      case 'eq':{const t=String(target).toLowerCase();return r=>{const v=r[f];return String(v??'').toLowerCase()===t||v===target}}
+      case 'ne':{const t=String(target).toLowerCase();return r=>{const v=r[f];return !(String(v??'').toLowerCase()===t||v===target)}}
+      case 'notEmpty':return r=>{const v=r[f];return v!=null&&String(v).trim()!==''};
+      case 'empty':return r=>{const v=r[f];return v==null||String(v).trim()===''};
+      case 'gt':{const t=parseNum(target);return r=>parseNum(r[f])>t}
+      case 'lt':{const t=parseNum(target);return r=>parseNum(r[f])<t}
+      case 'gte':{const t=parseNum(target);return r=>parseNum(r[f])>=t}
+      case 'lte':{const t=parseNum(target);return r=>parseNum(r[f])<=t}
+      case 'notContains':{const t=String(target).toLowerCase();return r=>!String(r[f]??'').toLowerCase().includes(t)}
+      case 'contains':{const t=String(target).toLowerCase();return r=>String(r[f]??'').toLowerCase().includes(t)}
+      default:return null;   // unknown op passes every row — same as the old interpreter
     }
-  });
+  }).filter(Boolean);
+  if(!list.length)return null;
+  if(list.length===1)return list[0];
+  return r=>{for(let i=0;i<list.length;i++)if(!list[i](r))return false;return true};
 }
+function passFilter(row,cond){const p=compileFilter(cond);return !p||p(row)}
 const GFMAP={ // global filter field per source
   campaign:{CALLX_CALL_RECORDS:'campaign',QA_EVALUATIONS:'campaign'},
   team:{QA_EVALUATIONS:'team_leader',ATTENDANCE:'reports_to'},
@@ -1651,7 +1682,7 @@ function dayRowsIdx(src){
   return m;
 }
 const _acCache=new Map();   // acCtx results — see acCtx()
-function bumpDataVer(){_dataVer++;_rfCache.clear();_rfRows=0;_dayIdx={};_acCache.clear();_anchD=undefined;_scopeVer=-1;}
+function bumpDataVer(){_dataVer++;_rfCache.clear();_rfRows=0;_dayIdx={};_acCache.clear();_anchD=undefined;_scopeVer=-1;_evCache.clear();_wmCache.clear();}
 /* ---- Permission-driven data scoping (client 2026-07-20) ----
    A signed-in team leader (role 'tl') sees ONLY their own team; admin/exec/qa/viewer
    are unrestricted here. The TL is matched to the team_leader field by their profile
@@ -1743,7 +1774,8 @@ function rowsForRaw(src,win,sc){
   return rows;
 }
 function agg(rows,type,field,filt){
-  const f=filt?rows.filter(r=>passFilter(r,filt)):rows;
+  const p=filt?compileFilter(filt):null;
+  const f=p?rows.filter(p):rows;
   if(type==='count')return f.length;
   if(type==='sum')return f.reduce((s,r)=>s+(parseNum(r[field])||0),0);
   if(type==='avg'){const v=f.map(r=>parseNum(r[field])).filter(x=>x!=null);return v.length?v.reduce((a,b)=>a+b,0)/v.length:null}
@@ -1775,7 +1807,7 @@ function openInWin(r,win){
    bucketed by the owning agent's roster queue. Leads or sales whose agent is unmapped
    (or whose queue folds to no campaign) count in overall only — flagged, never spread,
    so the campaign figures always reconcile to overall minus the flagged remainder. */
-function convSplit(win){
+function convSplit(win){return winMemo('convSplit',win,()=>{
   const camps={Courtesy:{L:mkLeads(),s:0},Cuddle:{L:mkLeads(),s:0}};
   const all=mkLeads(),unSet=mkLeads();let sAll=0,unS=0;
   const campOfCase=r=>{const cb=cbOfOwner(r.case_owner)||cbOf(r.case_owner);
@@ -1789,7 +1821,7 @@ function convSplit(win){
   const mk=(s,l)=>({sales:s,leads:l,pct:l>0?s/l*100:null});
   return{Courtesy:mk(camps.Courtesy.s,camps.Courtesy.L.n),Cuddle:mk(camps.Cuddle.s,camps.Cuddle.L.n),
     overall:mk(sAll,all.n),unLeads:unSet.n,unSales:unS};
-}
+})}
 function cancelRows(win){return rowsFor('SF_INACTIVE',win).map(r=>Object.assign({},r,{_cb:cbOfOwner(r.owner)}))}
 function biLoaded(){return (state.facts.BI_ACTIVE_CASES||[]).length>0}
 /* THE MONEY — rules pack §5, F-MONEY-01/02/04/05. One entry per distinct account holding
@@ -1802,7 +1834,20 @@ function biLoaded(){return (state.facts.BI_ACTIVE_CASES||[]).length>0}
    No legacy fallback by design — if no BI file is loaded there are no sales, and the
    pages say so. Silently reverting to a different money model is the exact conflation
    the money doctrine forbids. */
-function accountPremiums(win){
+/* PERF: derived roll-ups (money entries, campaign splits, page pivots) are pure in
+   (window, global filters, data version, PII masking) — a repaint after a sort click
+   or threshold edit must not re-pivot the fact arrays. Small keyed cache, cleared on
+   bumpDataVer. Masking is in the key because some prep bakes masked labels into chart
+   data; _fleetCtx so scope-exempt fleet passes never share entries with scoped views.
+   Memoised results are read-only by convention, like rowsFor. */
+const _wmCache=new Map();
+function winMemo(tag,win,fn){
+  const key=tag+'|'+(win?win.from+'~'+win.to:'∅')+'|'+JSON.stringify(state.filters)+'|'+_dataVer+'|'+(state.unmasked?1:0)+(_fleetCtx?'|F':'');
+  let v=_wmCache.get(key);
+  if(v===undefined){v=fn();if(_wmCache.size>400)_wmCache.clear();_wmCache.set(key,v)}
+  return v;
+}
+function accountPremiums(win){return winMemo('accPrem',win,()=>{
   const M=new Map(),mult=1+vatPct();
   rowsFor('BI_ACTIVE_CASES',win).forEach(r=>{const acc=r.account_number;if(!acc)return;
     let e=M.get(acc);if(!e){e={acc,gwp:0,ex:0,lines:0,product:null,cb:null,owner:''};M.set(acc,e)}
@@ -1812,14 +1857,14 @@ function accountPremiums(win){
     e.ex+=r.charge_amount||0;e.lines++});
   M.forEach(e=>{e.gwp=e.ex*mult});
   return[...M.values()];
-}
+})}
 /* F-MONEY-07. Cancellations price on the SAME charge basis — SF_INACTIVE carries its own
    Charge Amount, so GWP lost never touches the legacy GWP table. Windowed by contract
    create date (cancellations report against when the sale was made) and kept strictly
    separate from GWP: it does not net off.
    ASSUMPTION: Inactive charges are ex-VAT like the BI export [INPUT REQUIRED: confirm
    with Mekaeel — if they are incl-VAT, drop the mult here and nowhere else]. */
-function cancelPremiums(win){
+function cancelPremiums(win){return winMemo('cancPrem',win,()=>{
   const M=new Map(),mult=1+vatPct();
   cancelRows(win).forEach(r=>{const acc=r.account_number;if(!acc)return;
     let e=M.get(acc);if(!e){e={acc,gwp:0,ex:0,product:null,cb:null,owner:''};M.set(acc,e)}
@@ -1828,8 +1873,27 @@ function cancelPremiums(win){
     e.ex+=r.charge_amount||0});
   M.forEach(e=>{e.gwp=e.ex*mult});
   return[...M.values()];
-}
+})}
+/* PERF: a KPI value is a pure function of (definition, window, global filters, data
+   version) — yet every render recomputed all of them from scratch: ~2.7M row-filter
+   calls just to repaint an unchanged Sales page. Memoised here. Every path that can
+   change a value (uploads, rule/definition edits, mapping edits, clears) goes through
+   saveConfig/confirmLoad → bumpDataVer, which clears this cache. _fleetCtx is in the
+   key defensively so scope-exempt fleet computations never share entries with a scoped
+   team leader's view. Threshold/direction edits change colour, not value — a spurious
+   clear there is harmless. */
+const _evCache=new Map();
 function evalKPI(k,win){
+  const key=(k.id||JSON.stringify(k))+'|'+(win?win.from+'~'+win.to:'∅')+'|'+JSON.stringify(state.filters)+'|'+_dataVer+(_fleetCtx?'|F':'');
+  let v=_evCache.get(key);
+  if(v===undefined){
+    v=evalKPIRaw(k,win);if(v===undefined)v=null;
+    if(_evCache.size>40000)_evCache.clear();
+    _evCache.set(key,v);
+  }
+  return v;
+}
+function evalKPIRaw(k,win){
   if(k.type==='cross'){
     const n=agg(rowsFor(k.num.src,win),k.num.agg,k.num.field,k.num.filter);
     const d=agg(rowsFor(k.den.src,win),k.den.agg,k.den.field,k.den.filter);
@@ -1860,15 +1924,18 @@ function evalKPI(k,win){
     // register (CB code, else Salesforce-name map) — the raw sales_agent_code string
     // silently undercounted whenever the CB column was blank but the name mapped.
     const set=new Set();
-    rows.forEach(r=>{if(k.num&&!passFilter(r,k.num))return;
+    const p=k.num?compileFilter(k.num):null;
+    rows.forEach(r=>{if(p&&!p(r))return;
       const cb=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];
       if(cb)set.add(cb)});
     return set.size;
   }
   if(k.type==='ratio'){
-    const den=k.den?rows.filter(r=>passFilter(r,k.den)):rows;
+    const pd=k.den?compileFilter(k.den):null;
+    const den=pd?rows.filter(pd):rows;
     if(!den.length)return null;
-    return den.filter(r=>passFilter(r,k.num)).length/den.length*100;
+    const pn=compileFilter(k.num);
+    return (pn?den.filter(pn):den).length/den.length*100;
   }
   return agg(rows,k.type,k.field,k.num);
 }
@@ -1982,7 +2049,7 @@ Chart.defaults.font.family="'Inter','Segoe UI',sans-serif";Chart.defaults.color=
    the page-level CSS transition supplies the motion instead. */
 Chart.defaults.animation=false;
 const PALETTE=['#2563EB','#38BDF8','#6D4AE0','#158A4C','#F59E0B','#DC2626','#0EA5E9','#94A3B8','#10B981','#E879F9'];
-function groupCount(rows,field,filt){const m={};rows.forEach(r=>{if(filt&&!passFilter(r,filt))return;const k=r[field]||'(none)';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1])}
+function groupCount(rows,field,filt){const m={};const p=filt?compileFilter(filt):null;rows.forEach(r=>{if(p&&!p(r))return;const k=r[field]||'(none)';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1])}
 /* Trend / sparkline x-axis range. The default "all data" window uses a 1900-01-01
    sentinel for `from`; walking 90-120 days forward from THAT plotted every point in
    1900 and left every chart blank (the data is in 2026). So: resolve the sentinel to
@@ -1997,6 +2064,17 @@ function seriesRange(win,maxDays){
   const t=new Date(to+'T12:00:00'),cap=new Date(t);cap.setDate(cap.getDate()-(maxDays-1));
   if(new Date(from+'T12:00:00')<cap)from=isoDay(cap);
   return{from,to};
+}
+/* Same shape as dailySeries(rows,win,rs=>rs.length) but from a prebuilt {day:count}
+   map — lets a single-pass page prep skip materialising per-day row arrays. */
+function dailyCountSeries(counts,win){
+  const R=seriesRange(win,220);
+  const f=new Date(R.from+'T12:00:00'),t=new Date(R.to+'T12:00:00');
+  const days=Math.max(1,Math.min(240,Math.round((t-f)/864e5)+1));
+  const labels=[],data=[];
+  for(let i=0;i<days;i++){const d=new Date(f);d.setDate(d.getDate()+i);const day=isoDay(d);
+    labels.push(day.slice(5));data.push(counts[day]||0)}
+  return{labels,data};
 }
 function dailySeries(rows,win,valFn){
   const R=seriesRange(win,220);   // ~7 months so a stale-but-loaded source (e.g. attendance) still trends
@@ -2277,6 +2355,9 @@ function cycleCalc(mode){
      view, client 2026-07-20) · 'win' (linked to the main dashboard range filter). All
      three share one maths path — only the window and day-count denominator change. */
   mode=mode||'cycle';
+  /* PERF: iterates the full dialler array — memoised like the page preps. Keyed on the
+     main period window (superset: only the 'win' mode actually depends on it). */
+  return winMemo('cycleCalc:'+mode,periodWindow(),()=>{
   const vat=vatPct();
   const targets=[];(state.rules.cycleTargets?.vals||[]).forEach(v=>{const i=String(v).lastIndexOf(':');const t=parseFloat(String(v).slice(i+1));if(!isNaN(t))targets.push([String(v).slice(0,i).trim(),t])});
   let start,cw,totD;
@@ -2332,7 +2413,7 @@ function cycleCalc(mode){
    .sort((a,b)=>b.total-a.total);
   const byTL={};tlRows.forEach(r=>byTL[r.tl]=r);
   return{mode,start,to:cw.to,totD,vat,targets,byCamp,campSales,dialDays,unatt,wdFallback,pastOf,tlRows,byTL,weeks};
-}
+})}
 function cyclePanel(win){
   const mode=state.cycleView||'cycle';
   const CC=cycleCalc(mode);
@@ -2516,17 +2597,39 @@ function pageSales(win){
   // BI tab first: it renders its own page — the production tab's 12-chart data prep
   // below used to run (and schedule chart builds) just to be thrown away.
   if(state.salesTab==='bi')return salesTabs()+pageBIMoney(win);
+  /* PERF: everything below derives purely from (window, global filters, data version,
+     masking) — winMemo lets repaints (sort clicks, threshold edits, returning to the
+     tab) skip the 250k-row grouping/pivot passes and go straight to HTML + charts. */
+  const D=winMemo('salesPrep',win,()=>{
   const calls=rowsFor('CALLX_CALL_RECORDS',win);
   const acts=rowsFor('BI_ACTIVE_CASES',win);   // product mix reads the money source, not the retired activations
   const open=rowsFor('SF_OPEN_CASES',win);
   const closed=rowsFor('SF_CLOSED_CASES',win);
-  const byCamp=groupCount(calls,'campaign').slice(0,8);
-  const byType=groupCount(calls,'call_type');
-  const byAgent=groupCount(calls.filter(c=>c.agent),'agent').slice(0,10).map(([n,v])=>[maskNameText(n),v]);
+  /* PERF: ONE pass over the (possibly 250k-row) call array builds every call-derived
+     grouping at once — campaign/type/agent counts, band mix, per-day volume and the
+     per-agent band table each used to walk the whole array separately. */
+  const campM={},typeM={},agentM={},bandM={},dayM={},AG={};
+  calls.forEach(r=>{
+    const camp=r.campaign||'(none)';campM[camp]=(campM[camp]||0)+1;
+    const ct=r.call_type||'(none)';typeM[ct]=(typeM[ct]||0)+1;
+    bandM[r.call_band]=(bandM[r.call_band]||0)+1;
+    if(r._d)dayM[r._d]=(dayM[r._d]||0)+1;
+    if(!r.agent)return;
+    agentM[r.agent]=(agentM[r.agent]||0)+1;
+    const cb=cbOf(r.agent);const key=cb||('RAW::'+r.agent);
+    const a=AG[key]=AG[key]||{name:cb?((state.cbInfo[cb]?.name)||r.agent):r.agent,cb,unmapped:!cb,t:0,talk:0,uniq:new Set(),bands:{}};
+    a.t++;a.talk+=r.billable_seconds||0;
+    if(r.destination_number&&r.destination_number!=='s')a.uniq.add(r.destination_number);
+    a.bands[r.call_band]=(a.bands[r.call_band]||0)+1;
+  });
+  const srt=m=>Object.entries(m).sort((a,b)=>b[1]-a[1]);
+  const byCamp=srt(campM).slice(0,8);
+  const byType=srt(typeM);
+  const byAgent=srt(agentM).slice(0,10).map(([n,v])=>[maskNameText(n),v]);
   const prodMix=groupCount(acts,'product_bundle').slice(0,8);
   const dispMix=groupCount(closed,'disposition').slice(0,8);
   const ownerLoad=groupCount(open,'case_owner').slice(0,8).map(([n,v])=>[maskNameText(n),v]);
-  const ds=dailySeries(calls,win,rs=>rs.length);
+  const ds=dailyCountSeries(dayM,win);
   const dsClosed=dailySeries(closed,win,rs=>rs.length);
   const prem=accountPremiums(win);
   const gwpByProd={};prem.forEach(e=>{if(e.gwp!=null)gwpByProd[e.product]=(gwpByProd[e.product]||0)+e.gwp});
@@ -2538,12 +2641,7 @@ function pageSales(win){
   const dsIn=dailySeries(inflowRows,win,rs=>rs.length);
   const dsOut=dailySeries(closed,win,rs=>rs.length);
   const bandsAll=bandLabels();
-  const bandMix=(()=>{const m={};calls.forEach(r=>{m[r.call_band]=(m[r.call_band]||0)+1});return bandsAll.map(b=>[b,m[b]||0])})();
-  const AG={};calls.forEach(r=>{if(!r.agent)return;const cb=cbOf(r.agent);const key=cb||('RAW::'+r.agent);
-    const a=AG[key]=AG[key]||{name:cb?((state.cbInfo[cb]?.name)||r.agent):r.agent,cb,unmapped:!cb,t:0,talk:0,uniq:new Set(),bands:{}};
-    a.t++;a.talk+=r.billable_seconds||0;
-    if(r.destination_number&&r.destination_number!=='s')a.uniq.add(r.destination_number);
-    a.bands[r.call_band]=(a.bands[r.call_band]||0)+1});
+  const bandMix=bandsAll.map(b=>[b,bandM[b]||0]);
   const agRows=Object.values(AG).sort((x,y)=>y.t-x.t).slice(0,15);
   const unmappedCallAgents=Object.values(AG).filter(a=>a.unmapped).length;
   const cStatFreq=groupCount(closed,'status');
@@ -2572,6 +2670,9 @@ function pageSales(win){
   const pivotRows=Object.values(pivot).sort((a,b)=>b.__t-a.__t).slice(0,15);
   const pivCols=hasOther?[...topStatuses,'Other']:topStatuses;
   const unmappedOwners=Object.values(pivot).filter(p=>p.__unmapped).length;
+  return{open,closed,byCamp,byType,byAgent,prodMix,dispMix,ownerLoad,ds,dsClosed,gwpByProd,gwpByAgent,unattrib,dsIn,dsOut,bandsAll,bandMix,agRows,unmappedCallAgents,closureMix,cRows,cColsAll,cUnmapped,cUnowned,pivotRows,pivCols,unmappedOwners,unownedN};
+  });
+  const{open,closed,byCamp,byType,byAgent,prodMix,dispMix,ownerLoad,ds,dsClosed,gwpByProd,gwpByAgent,unattrib,dsIn,dsOut,bandsAll,bandMix,agRows,unmappedCallAgents,closureMix,cRows,cColsAll,cUnmapped,cUnowned,pivotRows,pivCols,unmappedOwners,unownedN}=D;
   setTimeout(()=>{
     mkChart('chS1',{type:'line',data:{labels:ds.labels,datasets:[
       {label:'Calls',data:ds.data,borderColor:'#2563EB',backgroundColor:'rgba(37,99,235,.08)',fill:true,tension:.35,pointRadius:0,borderWidth:2},
@@ -3304,6 +3405,9 @@ function pageTL(win){
 /* ---------------- PAGE: LEAD MANAGEMENT ---------------- */
 function pageLeads(win){
   if(!hasData())return emptyState('Lead Management joins the Agent List with open cases, closed cases, activations and cancellations');
+  /* PERF: the per-agent lead map walks every open/closed/BI/CallX row — memoised so
+     repaints and tab returns skip it (names are masked at HTML build, not here). */
+  const D=winMemo('leadsPrep',win,()=>{
   const roster=state.facts.AGENT_LIST||[];
   const GF=state.filters;
   const A={};
@@ -3341,6 +3445,9 @@ function pageLeads(win){
   rows.forEach(a=>{G.open+=a.open;G.cl+=a.cl;G.nofb+=a.nofb;G.tc+=a.tc;G.sales+=a.sales;G.canc+=a.canc;
     a.leads.set.forEach(k=>G.leads.set.add(k));G.leads.nokey+=a.leads.nokey;   // union, so ALL AGENTS dedupes too
     stCols.forEach(c=>G.sts[c]=(G.sts[c]||0)+(a.sts[c]||0))});
+  return{rows,stCols,G,unOpen,unClosed,wd};
+  });
+  const{rows,stCols,G,unOpen,unClosed,wd}=D;
   const pc=(n,d)=>d>0?fmtVal(n/d*100,'pct'):'—';
   const f1=v=>(Math.round(v*10)/10).toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1});
   const ctL=nbaVal('convTarget',10);   // same target the scorecard's Conversion uses — one definition, one dial
