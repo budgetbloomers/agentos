@@ -98,7 +98,7 @@ const ok = (name, cond, detail) => { if (!cond) { fails++; console.log('  FAIL',
   // click the OTHER team's row (its onclick sets state.tlPick) → agent table re-focuses
   const tlSwitch = await pg.evaluate(async () => {
     go('tl'); await new Promise(r => setTimeout(r, 60));
-    const row = [...document.querySelectorAll('#page [onclick]')].find(el => (el.getAttribute('onclick') || '').includes("state.tlPick='Lead A'"));
+    const row = [...document.querySelectorAll('#page tr.rowlink[onclick]')].find(el => /L\. A•••/.test(el.textContent) && (el.getAttribute('onclick') || '').includes('state.tlPick'));
     if (!row) return { found: false };
     row.click(); await new Promise(r => setTimeout(r, 80));
     const tabs = [...document.querySelectorAll('#page table.tbl')];

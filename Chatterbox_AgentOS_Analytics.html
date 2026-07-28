@@ -2322,7 +2322,7 @@ function pageExec(win){
    +kpiRow(null,win,['total_calls','answer_rate','activations','lead_conversion','clean_sale_rate','avg_qa_score','attendance_rate','open_backlog','critical_rate'])
    +'<div class="grid g21">'
    +'<div class="card"><div class="card-h"><span class="t">Activity & connection trend</span><span class="info" title="Daily calls vs answered. Uses the Rules definition of answered.">i</span></div><div class="chart-wrap"><canvas id="chExec1"></canvas></div></div>'
-   +'<div class="card"><div class="card-h"><span class="t">Action queue</span><span class="s">'+actions.length+' open</span></div>'
+   +'<div class="card"><div class="card-h"><span class="t">Action queue</span><span class="s">'+(critOpen.length+coachOpen.length)+' open · showing '+Math.min(8,actions.length)+'</span></div>'
    +(actions.length?'<table class="tbl"><tbody>'+actions.slice(0,8).map(a=>'<tr><td style="width:8px;padding-right:0"><span class="pill '+a.p+'" style="padding:3px 6px">'+(a.p==='r'?'P1':'!')+'</span></td><td><b>'+a.t+'</b><div style="font-size:11px;color:var(--muted)">'+a.d+'</div></td><td style="text-align:right;font-size:11px;color:var(--muted)">'+maskName(a.own)+'<br>'+esc(a.date||'')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No open actions — clean board.</div>')
    +'</div></div>'
    +'<div class="grid g2">'
@@ -2387,7 +2387,7 @@ function cycleCalc(mode){
     totD=parseFloat((state.rules.cycleDialingDays?.vals||[])[0])||21;
     cw={from:start,to:'2099-12-31'};
   }
-  const prem=(function(){const f=state.filters;try{return accountPremiums(cw)}finally{state.filters=f}})();
+  const prem=(function(){const f=state.filters;try{state.filters={};return accountPremiums(cw)}finally{state.filters=f}})();
   const dial=rowsFor('CALLX_CALL_RECORDS',cw);
   const byCamp={},campSales={},dialDays={},moneyDays={},tlAgg={},campOfAcc={};let unatt=0;
   prem.forEach(e=>{if(!e.cb){unatt+=e.gwp||0;return}
@@ -2759,10 +2759,12 @@ function pageSales(win){
 function agingTable(open){
   const buckets=[['0–72h',0,72],['3–14d',72,336],['14–30d',336,720],['30d+',720,1e9]];
   const counts=buckets.map(b=>open.filter(r=>r.age_hours!=null&&r.age_hours>=b[1]&&r.age_hours<b[2]).length);
+  const noAge=open.filter(r=>r.age_hours==null).length;
   const total=counts.reduce((a,b)=>a+b,0)||1;
   return '<div class="card"><div class="card-h"><span class="t">Open case ageing</span><span class="info" title="Salesforce exports age with comma decimals; the parser normalises them.">i</span></div>'
    +'<table class="tbl"><thead><tr><th class="noclick">Bucket</th><th class="noclick">Cases</th><th class="noclick" style="width:45%">Share</th></tr></thead><tbody>'
    +buckets.map((b,i)=>'<tr><td><b>'+b[0]+'</b></td><td class="num">'+counts[i].toLocaleString()+'</td><td><div class="bar-cell"><div class="bar-track"><div class="bar-fill" style="width:'+(counts[i]/total*100)+'%;background:'+(i>=3?'var(--red)':i===2?'#F59E0B':'var(--blue)')+'"></div></div><span class="num" style="font-size:11px;color:var(--muted)">'+Math.round(counts[i]/total*100)+'%</span></div></td></tr>').join('')
+   +(noAge?'<tr><td><b>(no parseable age)</b></td><td class="num">'+noAge.toLocaleString()+'</td><td style="font-size:11px;color:var(--muted)">excluded from the buckets above — check the Age (Hours) column</td></tr>':'')
    +'</tbody></table></div>';
 }
 
@@ -2795,7 +2797,7 @@ function qaByCampaign(qa,win){
     if(decIn('$qaPass',r.escalation_decision))o.pass++;
     if(decIn('$qaCritical',r.escalation_decision))o.crit++;
     if(r.score_percent!=null){o.s+=r.score_percent;o.sn++}});
-  (function(){const f=state.filters;try{accountPremiums(win).forEach(e=>{if(!e.cb)return;
+  (function(){const f=state.filters;try{state.filters={};accountPremiums(win).forEach(e=>{if(!e.cb)return;
     const c=campBucket(state.cbInfo[e.cb]?.queue)||'(other)';bump(c).sale++})}finally{state.filters=f}})();
   return B;
 }
@@ -2826,7 +2828,7 @@ function pageQA(win){
     if(r.sm_flag===1||String(r.sm_reason||'').trim())p.__pe++;
     if(decIn('$qaDisputeStatuses',r.qa_status))p.__disp++;
     const d=decCols.includes(r.escalation_decision)?r.escalation_decision:'Other';p.__d[d]=(p.__d[d]||0)+1});
-  const qpSales={};(function(){const f=state.filters;try{accountPremiums(win).forEach(e=>{if(e.cb)qpSales[e.cb]=(qpSales[e.cb]||0)+1})}finally{state.filters=f}})();
+  const qpSales={};(function(){const f=state.filters;try{state.filters={};accountPremiums(win).forEach(e=>{if(e.cb)qpSales[e.cb]=(qpSales[e.cb]||0)+1})}finally{state.filters=f}})();
   const qpRows=Object.values(QP).sort((a,b)=>b.__t-a.__t).slice(0,15);
   const qpUnmapped=Object.values(QP).filter(p=>p.__unmapped).length;
   /* nested category → sub-category */
@@ -2862,13 +2864,13 @@ function pageQA(win){
   const pbCtx=acCtx(win);
   const pbAg=Object.keys(state.cbInfo).filter(cbInScope).map(cb=>{const st=acStats(cb,win,pbCtx);st.tierInfo=cfTier(st);st.nba=acNBA(st);return st})
     .filter(st=>st.nba&&st.nba.lvl===1).sort((a,b)=>String(a.nba.code).localeCompare(String(b.nba.code)));
-  const pbCard='<div class="card" style="margin-bottom:16px;border-left:4px solid var(--red)"><div class="card-h"><span class="t">Protect the business — P1 (Level 1)</span><span class="info" title="The urgent/compliance tier of the NBA ladder (moved off the Team Leader view). One primary NBA per agent; a P1 is a 24–48h owned action. Critical-fail tiers and zero-attendance / QA-critical rules drive Level 1.">i</span><span class="s">'+pbAg.length+' agent(s) at P1</span></div>'
+  const pbCard='<div class="card" style="margin-bottom:16px;border-left:4px solid var(--red)"><div class="card-h"><span class="t">Protect the business — P1 (Level 1)</span><span class="s">fleet-wide — top-bar filters don&#39;t apply</span><span class="info" title="The urgent/compliance tier of the NBA ladder (moved off the Team Leader view). One primary NBA per agent; a P1 is a 24–48h owned action. Critical-fail tiers and zero-attendance / QA-critical rules drive Level 1.">i</span><span class="s">'+pbAg.length+' agent(s) at P1</span></div>'
    +(pbAg.length?'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Agent</th><th class="noclick">Team Leader</th><th class="noclick">NBA</th><th class="noclick">Why</th><th class="noclick">CF·CFR</th></tr></thead><tbody>'
      +pbAg.map(st=>'<tr><td><b>'+aName(st.cb,maskName(st.name))+'</b></td><td>'+maskName(st.tl)+'</td>'
        +'<td><span class="pill r" style="padding:1px 6px">'+esc(st.nba.code)+'</span> '+esc(st.nba.label)+'</td>'
        +'<td style="font-size:10.5px">'+esc(st.nba.detail||'')+'</td>'
        +'<td class="num">'+(st.tierInfo.cf||0)+' · '+fmtVal(st.tierInfo.cfr,'pct')+'</td></tr>').join('')
-     +'</tbody></table></div>':'<div class="empty" style="padding:14px">No P1 agents this period — the floor is clear of Level-1 actions.</div>')+'</div>';
+     +'</tbody></table></div>':'<div class="empty" style="padding:14px">'+((state.facts.QA_EVALUATIONS||[]).length?'No P1 agents this period — the floor is clear of Level-1 actions.':'No QA export loaded — P1 status is unknown until it is uploaded. This is NOT an all-clear.')+'</div>')+'</div>';
   const campOrder=['Courtesy','Cuddle','VT','(other)'].filter(c=>campQA[c]);
   const campTile=c=>{const o=campQA[c];const avg=o.sn?o.s/o.sn:null;const pass=o.n?o.pass/o.n*100:null;
     const cfr=o.n?o.crit/o.n*100:null;const psale=o.n?o.sale/o.n*100:null;
@@ -2910,10 +2912,10 @@ function pageQA(win){
    +'</div></div>'
    +'<div class="grid g21">'
    +'<div class="card"><div class="card-h"><span class="t">QA by agent</span><span class="info" title="Sales Agent CB is normalised (CB-97 = CB97) and matched to the roster; blank codes fall back to the agent name via the Agent List.">i</span><span class="s">score · decisions · total QA&#39;d — top 15</span></div>'
-   +(qpRows.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Agent</th><th class="noclick">Avg score</th>'+decCols.map(d=>'<th class="noclick">'+esc(d)+'</th>').join('')+'<th class="noclick">Total QA&#39;d</th><th class="noclick" title="As specified: Total Sales ÷ QA&#39;d calls for the window. If the intent was coverage (QA&#39;d ÷ Sales), say the word — it is a one-line flip.">% sales / QA&#39;d</th><th class="noclick" title="Evaluations with an SM Escalation Reason (or SM flag). The column is in the export but blank so far — this lights up the day QA starts using it.">Partner esc.</th><th class="noclick" title="Evaluations whose Status is in the QA dispute rule (closed_retracted + qa_review by default — editable in Dictionary → Rules).">Disputed</th></tr></thead><tbody>'
+   +(qpRows.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Agent</th><th class="noclick">Avg score</th>'+decCols.concat(qpRows.some(p=>p.__d&&p.__d.Other)?['Other']:[]).map(d=>'<th class="noclick">'+esc(d)+'</th>').join('')+'<th class="noclick">Total QA&#39;d</th><th class="noclick" title="As specified: Total Sales ÷ QA&#39;d calls for the window. If the intent was coverage (QA&#39;d ÷ Sales), say the word — it is a one-line flip.">% sales / QA&#39;d</th><th class="noclick" title="Evaluations with an SM Escalation Reason (or SM flag). The column is in the export but blank so far — this lights up the day QA starts using it.">Partner esc.</th><th class="noclick" title="Evaluations whose Status is in the QA dispute rule (closed_retracted + qa_review by default — editable in Dictionary → Rules).">Disputed</th></tr></thead><tbody>'
      +qpRows.map(p=>'<tr><td><b>'+aName(p.__cb,maskName(p.__name))+'</b>'+(p.__unmapped?' <span class="pill a" style="padding:1px 6px">unmapped</span>':'')+'</td>'
        +'<td>'+(p.__sn?ragPill(p.__s/p.__sn,...kpiThr('avg_qa_score',90,80)):'—')+'</td>'
-       +decCols.map(d=>'<td class="num">'+(p.__d[d]||'·')+'</td>').join('')
+       +decCols.concat(qpRows.some(x=>x.__d&&x.__d.Other)?['Other']:[]).map(d=>'<td class="num">'+(p.__d[d]||'·')+'</td>').join('')
        +'<td class="num" style="font-weight:800">'+p.__t+'</td>'
        +'<td class="num">'+(p.__cb!=null&&p.__cb in qpSales?fmtVal(qpSales[p.__cb]/p.__t*100,'pct'):(p.__cb?'0%':'—'))+'</td>'
        +'<td class="num">'+(p.__pe||'·')+'</td>'
@@ -3039,7 +3041,8 @@ function pageWF(win){
     mkChart('chW1',{type:'line',data:{labels:trend.labels,datasets:[{label:'Attendance %',data:trend.data,borderColor:'#0EA5E9',backgroundColor:'rgba(14,165,233,.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2,spanGaps:true}]},options:{plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{maxTicksLimit:10}},y:{grid:{color:'rgba(148,182,255,.10)'},suggestedMin:60,suggestedMax:100}},maintainAspectRatio:false}});
     doughnut('chW2',byStat);
   },0);
-  return kpiRow('Workforce',win)
+  return ((state.facts.ATTENDANCE||[]).length?'':'<div class="stale-banner">⚠ No Attendance file loaded — this whole page reads from it; the zeros below mean MISSING DATA, not perfect attendance.</div>')
+   +kpiRow('Workforce',win)
    +'<div class="grid g21"><div class="card"><div class="card-h"><span class="t">Attendance rate trend</span></div><div class="chart-wrap"><canvas id="chW1"></canvas></div></div>'
    +'<div class="card"><div class="card-h"><span class="t">Status mix</span><span class="info" title="Which codes count as Present or Leave is set in Dictionary → Rules.">i</span></div><div class="chart-wrap"><canvas id="chW2"></canvas></div></div></div>'
    +'<div class="grid g2">'
@@ -3100,7 +3103,7 @@ function pageDisc(win){
      +'<td>'+(a.sla?'<span class="pill r">Breached ×'+a.sla+'</span>':'<span class="pill g">OK</span>')+'</td>'
      +'<td>'+['tl1','tl2','sm'].map(f=>'<span class="pill '+(a[f]?'v':'n')+'" style="padding:2px 6px;margin-right:3px">'+f.toUpperCase()+'</span>').join('')+'</td>'
      +'<td style="font-size:11.5px;color:var(--muted)">'+esc(a.last||'—')+'</td></tr>').join('')
-    +'</tbody></table>'+DR.foot+'</div>':'<div class="empty"><div class="big">Clean sheet</div><p>No agents with open offenses in this window.</p></div>')
+    +'</tbody></table>'+DR.foot+'</div>':((state.facts.QA_EVALUATIONS||[]).length?'<div class="empty"><div class="big">Clean sheet</div><p>No agents with open offenses in this window.</p></div>':'<div class="empty"><div class="big">No QA export loaded</div><p>The disciplinary register reads from the QA file — upload it in the Upload Station. This is NOT a clean sheet.</p></div>'))
    +'</div>'
    +'<div><div class="card" style="margin-bottom:14px"><div class="card-h"><span class="t">Stage distribution</span></div><div class="chart-wrap short"><canvas id="chD1"></canvas></div></div>'
    +'<div class="card"><div class="card-h"><span class="t">Open SM escalations</span><span class="s">'+escal.length+'</span></div>'
@@ -3311,7 +3314,7 @@ function agentOpen(cb){
    +'<tr style="font-weight:800;border-top:2px solid var(--line)"><td colspan="3">Composite (Adj)</td><td class="num">'+(Math.round(comp.adj*10)/10).toFixed(1)+'</td></tr>'
    +'</table></div></div>');
   setTimeout(function(){
-    var ctx="Agent "+st.name+" ("+st.group+" tenure, TL "+st.tl+"). Metrics vs targets:";
+    var ctx="Agent "+maskNameText(st.name)+" ("+st.group+" tenure, TL "+maskNameText(st.tl)+"). Metrics vs targets:";
     ctx+="\nTarget achievement: "+(st.ta==null?"n/a":Math.round(st.ta)+"% of daily target");
     ctx+="\nGWP per sale: "+(st.gwpSale==null?"n/a":"R"+Math.round(st.gwpSale)+" (target R"+nbaVal("gwpFloor",99)+")");
     ctx+="\nQA score: "+(st.qaS==null?"n/a":fmtVal(st.qaS,"pct"));
@@ -3364,7 +3367,7 @@ function pageTL(win){
     t.ag.push(st);t.gwp+=st.gwp;t.sales+=st.sales;t.refs+=st.refs||0;t.cf+=st.crit||0;t.closed+=st.closedCases||0;
     if(st.talkDay!=null){t.talkDay+=st.talkDay;t.talkN++}
     if(st.uniqPerDay!=null){t.uniqDay+=st.uniqPerDay;t.uniqN++}});
-  const tls=Object.values(T).sort((a,b)=>b.gwp-a.gwp);
+  const tls=Object.values(T).sort((a,b)=>b.gwp-a.gwp);window.__tlKeys=tls.map(t=>t.tl);
   const pick=state.tlPick&&T[state.tlPick]?state.tlPick:(tls[0]&&tls[0].tl);
   const P=pick?T[pick]:null;
   const convOf=(closed,sales)=>sales>0?closed/sales*100:null;
@@ -3383,16 +3386,20 @@ function pageTL(win){
    +box(String(F.cf),'CRITICAL FAILS',F.cf?'var(--red)':'#158A4C')
    +box(fConv==null?'—':fmtVal(fConv,'pct'),'CONVERSION')
    +'</div>';
+  if(!biLoaded())h+='<div class="stale-banner">⚠ No Power BI Active Cases file loaded — GWP and conversion on this page read R0/— until it is uploaded (Power BI is the only money source; no fallback).</div>';
   h+='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Team leaders</span><span class="info" title="The six team-leader metrics (client 2026-07-20): talk time per day, unique calls per day, GWP (VAT-incl), referrals, outstanding critical fails, and conversion = closed cases ÷ sales (a closed-per-sale ratio, so it CAN exceed 100% — it is not a funnel/win rate). Protect-the-business / compliance detail lives on QA & Compliance.">i</span><span class="s">'+stats.length+' agents · '+tls.length+' teams · '+wd+' working days · click a team to focus</span></div>'
    +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Team Leader</th><th class="noclick">Agents</th><th class="noclick">Talk/day</th><th class="noclick">Unique calls/day</th><th class="noclick">GWP</th><th class="noclick">Referrals</th><th class="noclick">Critical fails</th><th class="noclick">Conversion</th></tr></thead><tbody>'
-   +tls.map(t=>{const cv=convOf(t.closed,t.sales);
-     return '<tr class="rowlink" onclick="state.tlPick=&#39;'+esc(t.tl).replace(/&#39;/g,"").replace(/'/g,'&#39;')+'&#39;;render()"><td><b>'+maskName(t.tl)+'</b></td><td class="num">'+t.ag.length+'</td>'
+   +tls.map((t,ti)=>{const cv=convOf(t.closed,t.sales);
+     return '<tr class="rowlink" onclick="state.tlPick=__tlKeys['+ti+'];render()"><td><b>'+maskName(t.tl)+'</b></td><td class="num">'+t.ag.length+'</td>'
       +'<td class="num">'+(t.talkN?Math.round(t.talkDay/t.talkN)+'m':'—')+'</td>'
       +'<td class="num">'+(t.uniqN?(Math.round(t.uniqDay/t.uniqN*10)/10).toFixed(1):'—')+'</td>'
       +'<td class="num" style="font-weight:800">'+zarStack(t.gwp)+'</td><td class="num">'+t.refs+'</td>'
       +'<td class="num" style="color:'+(t.cf?'var(--red)':'#158A4C')+';font-weight:800">'+t.cf+'</td>'
       +'<td class="num">'+(cv==null?'—':fmtVal(cv,'pct'))+'</td></tr>'}).join('')
    +'</tbody></table></div></div>';
+  {const unA=accountPremiums(win).filter(e=>!e.cb);
+   if(unA.length&&!userScopeTeam()){const unG=unA.reduce((t,e)=>t+(e.gwp||0),0);
+    h+='<div class="stale-banner" style="margin-bottom:16px">⚠ '+unA.length.toLocaleString()+' sale(s) / '+fmtVal(unG,'zar')+' GWP not attributed to any roster agent — inside the Sales/BI totals but invisible in the per-team figures above, and never spread (F-MONEY-05). Fix the Owner names in Mappings.</div>';}}
   if(P){const ag=[...P.ag].sort((a,b)=>b.gwp-a.gwp);
     // Agent-scores graph for the picked TL only — filtering by team leader narrows stats to one
     // team, so this shows exactly that team's agents. Coloured by NBA priority level.
@@ -3401,7 +3408,7 @@ function pageTL(win){
     h+='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">'+maskName(pick)+' — Agent Scores</span><span class="s">composite /100 · coloured by NBA priority (red P1 · amber P2 · blue P3 · green clear)</span></div>'
      +'<div class="chart-wrap" style="height:'+Math.max(160,gag.length*24+40)+'px"><canvas id="'+gid+'"></canvas></div></div>';
     h+='<div class="card"><div class="card-h"><span class="t">'+maskName(pick)+' — agents</span><span class="s">'+P.ag.length+' agents · click a name for the full agent card</span>'
-     +'<span class="right">'+tls.map(t=>'<button class="btn small'+(t.tl===pick?' primary':'')+'" onclick="state.tlPick=&#39;'+esc(t.tl).replace(/&#39;/g,"").replace(/'/g,'&#39;')+'&#39;;render()">'+maskName(t.tl)+'</button>').join(' ')+'</span></div>'
+     +'<span class="right">'+tls.map((t,ti)=>'<button class="btn small'+(t.tl===pick?' primary':'')+'" onclick="state.tlPick=__tlKeys['+ti+'];render()">'+maskName(t.tl)+'</button>').join(' ')+'</span></div>'
      +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr><th class="noclick">Agent</th><th class="noclick">Talk time</th><th class="noclick">Unique calls/day</th><th class="noclick">GWP</th><th class="noclick">Referrals</th><th class="noclick">Critical fails</th><th class="noclick">Conversion</th></tr></thead><tbody>'
      +ag.map(st=>{const cv=st.convClosed;
        return '<tr><td><b>'+aName(st.cb,maskName(st.name))+'</b></td>'
@@ -4053,7 +4060,7 @@ function pageSession(){
     dialP.forEach(r=>{const cb=cbOf(r.agent);const k=key(cb,r.agent);
       const a=AG[k]=AG[k]||{name:cb?((state.cbInfo[cb]?.name)||r.agent):(r.agent||'(blank)'),cb,un:!cb,calls:0,sales:0,uniq:new Set()};
       a.calls++;if(r.is_sale_disp)a.sales++;const d=String(r.destination_number||'').trim();if(d&&d!=='s')a.uniq.add(d)});
-    const ar=Object.values(AG).sort((x,y)=>y.calls-x.calls).slice(0,25);
+    const arAll=Object.values(AG).sort((x,y)=>y.calls-x.calls);const ar=arAll.slice(0,25);
     const unm=Object.values(AG).filter(a=>a.un).length;
     if(ar.length)agentHtml='<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Agent</th><th class="noclick">Calls</th><th class="noclick">Unique calls</th><th class="noclick" title="Sales from the dialler Lead Disposition (Dictionary → Rules → Sale dispositions), not the money model.">Sales</th><th class="noclick" title="Unique destinations reached per sale made in this session — a dialling-efficiency read.">Unique / sale</th></tr></thead><tbody>'
      +ar.map(a=>'<tr><td><b>'+aName(a.cb,maskName(a.name))+'</b>'+(a.un?' <span class="pill a" style="padding:1px 6px">unmapped</span>':'')+'</td>'
@@ -4098,8 +4105,10 @@ function pageSession(){
      snapshots), rolled up by calendar month. One row per agent, one column per month. */
   const mclRows=rowsFor('SF_CLOSED_CASES',null);
   const MCL={};const mSet=new Set();
-  mclRows.forEach(r=>{const cb=cbOfOwner(r.case_owner);if(!cb)return;const d=r.closed_at||r._d;if(!d)return;const mo=String(d).slice(0,7);mSet.add(mo);
+  let unMcl=0,ndMcl=0;
+  mclRows.forEach(r=>{const cb=cbOfOwner(r.case_owner);if(!cb){unMcl++;return}const d=r.closed_at||r._d;if(!d){ndMcl++;return}const mo=String(d).slice(0,7);mSet.add(mo);
     const a=MCL[cb]=MCL[cb]||{cb,name:(state.cbInfo[cb]?.name)||cb,tl:(state.cbInfo[cb]?.tl)||'(unassigned)',m:{},tot:0};a.m[mo]=(a.m[mo]||0)+1;a.tot++});
+  if(typeof arAll!=='undefined'&&arAll.length>25)agentHtml+='<div style="font-size:10.5px;color:var(--muted);margin-top:4px">Top 25 of '+arAll.length+' agents by calls.</div>';
   const months=[...mSet].sort();
   const mclList=Object.values(MCL).sort((a,b)=>b.tot-a.tot);
   let mclHtml='<div class="empty">Upload the daily Closed Cases file to see the monthly view.</div>';
@@ -4110,6 +4119,7 @@ function pageSession(){
        +'<td class="num" style="font-weight:800">'+a.tot.toLocaleString()+'</td></tr>').join('')
      +'</tbody></table></div>'+(mclList.length>40?'<div style="font-size:10.5px;color:var(--muted);margin-top:4px">Top 40 of '+mclList.length+' agents.</div>':'');
   }
+  if(unMcl||ndMcl)mclHtml+='<div class="stale-banner" style="margin-top:8px">⚠ Excluded from this monthly view: '+[unMcl?unMcl.toLocaleString()+' closed case(s) matched to no roster agent':'',ndMcl?ndMcl.toLocaleString()+' with no close date':''].filter(Boolean).join(' · ')+'.</div>';
   return '<div class="card" style="margin-bottom:14px">Session files ignore the <b>date range</b> (each is a moment-in-time snapshot) but honour the <b>Team leader, Tenure, Campaign and Department</b> filters through the base table — every dialler and Salesforce row resolves to its CB and filters on the roster. Nothing here touches the daily analytics.</div>'
    +'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Session statistics</span><span class="info" title="Calls & unique reach from the dialler snapshot; Sales = dialler rows with a sale Lead Disposition (Dictionary → Rules → Sale dispositions), a per-session COUNT — not the Power BI money model; Closed = closed-case rows in the session snapshot (upload the closed-cases slot in Session Uploads).">i</span><span class="s">calls, unique reach, sales &amp; closed per session</span></div>'
    +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Session</th><th class="noclick">Calls</th><th class="noclick">Unique calls</th><th class="noclick">Sales</th><th class="noclick">Unique / sale</th><th class="noclick">Closed cases</th><th class="noclick">Last upload</th></tr></thead><tbody>'
