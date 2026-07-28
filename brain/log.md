@@ -99,3 +99,20 @@ explanation — page now carries the same honest banner as Sales Production. Plu
 range-select now syncs to the actual boot window (said "Last 30 days" while showing
 all data). display_sweep grew a leads deep-check (bogus-mode self-heal, Other rollup,
 stale-map flagging, BI notice; 69 checks). All 8 suites green. NOT LIVE until /deploy.
+
+## [2026-07-28] access-mapping | 13 accounts + per-tab gating from Access_Mapping.xlsx
+supabase/migration-007: users with first-name usernames (two Ryans → ryann/ryang),
+password agentos123 PBKDF2-hashed via worker auth.mjs, must_change_password=true (the
+shared bootstrap password dies on first sign-in), pii_unmask=false for all (masking
+non-negotiable — grant per person deliberately). Full access (8): ryann aarav nick
+panday max claudell jared leon → tabs "*" ops/vas/tracker (nick=admin — NOTE possible
+duplicate of the bootstrap 'nicholas'). Scoped: ashton dalwin abigail ryang keshree per
+the sheet's X marks. Upsert never overwrites existing passwords/PII. "TLs" row = commented
+role-'tl' template (full_name must EXACTLY match the Agent List Team Leader column or
+scope fails closed). Sheet mapping assumptions, commented in the SQL: "Dashboard" col
+(inside the OPS merge) = PULSE dashboard tab; "Agent Performance" (OPS) = brain (Visual
+Brain); "Input" = tracker input+grid. Gating fixes: tracker tab buttons now carry
+data-page ids; auth-gate selector covers .tab-btn[data-page] and auto-routes off a
+hidden active tab (Abigail without PULSE dashboard lands on mtd, not a blank shell).
+Verified: 4-scenario browser gate test (ops/vas/tracker restricted + "*") all green;
+full suite green. SQL must be RUN in Supabase SQL Editor; gating ships with /deploy.

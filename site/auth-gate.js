@@ -78,13 +78,21 @@
   }
   function applyPerms() {
     var perm = allowedTabs(); if (perm.all) return;
+    var SEL = '.nav-item[onclick], .navitem[data-page], .tab-btn[data-page]'; // Ops go('id') · VAS data-page · Tracker tab-btn data-page
     var hide = function () {
-      // Ops nav-items carry onclick="go('id')"; VAS navitems carry data-page
-      document.querySelectorAll('.nav-item[onclick], .navitem[data-page]').forEach(function (el) {
+      document.querySelectorAll(SEL).forEach(function (el) {
         var id = el.getAttribute('data-page');
         if (!id) { var m = (el.getAttribute('onclick') || '').match(/go\(['"]([^'"]+)['"]\)/); id = m && m[1]; }
         if (id && id.indexOf('soon_') !== 0 && perm.list.indexOf(id) === -1) el.style.display = 'none';
       });
+      // If the ACTIVE tab just got hidden (e.g. the app boots on a tab this user
+      // may not see), route to the first tab they ARE allowed — otherwise they
+      // land on content their mapping excludes, or on a blank shell.
+      var act = document.querySelector('.nav-item.active[onclick], .navitem.on[data-page], .tab-btn[data-page][aria-selected="true"]');
+      if (act && act.style.display === 'none') {
+        var first = Array.prototype.find.call(document.querySelectorAll(SEL), function (el) { return el.style.display !== 'none'; });
+        if (first) first.click();
+      }
     };
     hide();
     var nav = document.getElementById('nav') || document.querySelector('.side') || document.body;
