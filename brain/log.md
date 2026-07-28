@@ -116,3 +116,26 @@ data-page ids; auth-gate selector covers .tab-btn[data-page] and auto-routes off
 hidden active tab (Abigail without PULSE dashboard lands on mtd, not a blank shell).
 Verified: 4-scenario browser gate test (ops/vas/tracker restricted + "*") all green;
 full suite green. SQL must be RUN in Supabase SQL Editor; gating ships with /deploy.
+
+## [2026-07-28] three-app-audit | Full display/rules/format audit — 52 findings fixed across the suite
+User asked for a full audit of Ops, VAS and Tracker. Three parallel line-level audits
+(taxonomy: silent drops · hidden columns · unexplained zeros · format violations ·
+filter truthfulness · reconciliation). OPS (19 findings): session monthly-closed silent
+owner/date drops now bannered; TL view gained missing-BI + unattributed-money banners
+(F-MONEY-05 was invisible there — TL GWP never summed to Sales-page totals with nothing
+saying why); missing QA no longer reads "Clean sheet"/"floor is clear"; QA decision
+pivot renders Other; workforce missing-attendance banner; fleet-money wrappers actually
+clear filters now (were no-op copies — cycle "% to target" compared filtered money to
+whole-campaign targets); aging no-age row; masked names in agent-card AI ctx (PII
+bypass); index-based team picks (apostrophe bug + raw names out of DOM); exec queue
+true count. PULSE (18): filters now reach QA tile/radar/trend, people tabs, ranked
+table, all sparklines, MTD TL sub-tab, tooltips; unmatched attendance/eval identities
+join the Upload Station table + badge; unmatched sales show GWP; VT money tiles →
+honest note; provisional ± markers; fmtR/1dp unification; Top-30/latest-N labels.
+TRACKER (15): failed-save rows survive hydrate (were silently destroyed) + localOnly
+retry queue + pending-sync note; first-hydrate failure retries instead of dead sync;
+in-flight-hydrate saves queue; distinct-week iteration + Unassigned bucket (rows with
+week 0/>5 vanished); DD/MM/YY days 20-31 misparse warned; all-time label honesty;
+ZAR format unified; KV "✓" only after blob POST settles; VT iframe fallback; doctype.
+Remaining (documented, deliberate): disc register unmapped pill, small showing-N notes
+(exec grid, QA/WF lists), aging/stage thresholds as rules. All 8 suites green.

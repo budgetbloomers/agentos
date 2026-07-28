@@ -1,3 +1,4 @@
+<!doctype html>
 <meta charset="utf-8">
 <title>Chatterbox AgentOS · Tracker Analytics</title>
 <script>document.documentElement.dataset.theme = document.documentElement.dataset.theme || 'dark';</script>
@@ -133,6 +134,17 @@
   }
   .edit-note.show { display: inline-flex; }
 
+  .local-note {
+    display: none; align-items: center; gap: 8px;
+    background: var(--warn-bg); color: var(--warn);
+    border: 1px solid rgba(251, 191, 36, .35);
+    border-radius: 9px; padding: 9px 14px; font-size: 13px; font-weight: 600;
+    margin: 0 0 16px;
+  }
+  .local-note.show { display: inline-flex; }
+
+  .tracker-caption { margin: -4px 0 12px; font-size: 12.5px; color: var(--muted); }
+
   /* computed preview */
   .computed {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -253,6 +265,8 @@
     <button class="tab-btn" id="tab-vt" data-page="vt" role="tab" aria-selected="false" aria-controls="panel-vt">VT MTD Report</button>
   </div>
 
+  <div class="local-note" id="local-note" role="status"></div>
+
   <!-- ================= INPUT TAB ================= -->
   <section class="tab-panel active" id="panel-input" role="tabpanel" aria-labelledby="tab-input">
     <div class="card">
@@ -333,6 +347,7 @@
           <button class="btn small danger" id="btn-wipe">Clear all data</button>
         </div>
       </div>
+      <p class="tracker-caption" id="tracker-caption" hidden></p>
       <div class="table-scroll">
         <table id="tracker-table">
           <thead>
@@ -376,6 +391,11 @@
     <iframe id="vt-frame" title="Vehicle Tracking — MTD Report"
       style="width:100%;height:calc(100vh - 150px);min-height:640px;border:1px solid var(--line);border-radius:12px;background:var(--bg)"
       loading="lazy" referrerpolicy="no-referrer"></iframe>
+    <div class="card" id="vt-fallback" hidden>
+      <p class="card-title">VT MTD Report</p>
+      <p style="margin:0;color:var(--body)">VT report unavailable — check sign-in, then Retry.</p>
+      <div class="actions"><button class="btn primary" id="vt-retry">Retry</button></div>
+    </div>
   </section>
 </div>
 
@@ -387,6 +407,9 @@
   var hydrated = false;   // cloud-authoritative: no pushes until we've synced from the database
   var mode = null;        // 'rows' = daily_eod table (preferred) · 'kv' = blob fallback until migration-004 runs
   var pushT = null;
+  var pushWaiters = [];        // KV mode: save promises settled only when the debounced blob POST lands
+  var hydrateInFlight = false; // a hydrate GET is airborne — saves made now must queue, or the landing GET reverts them
+  var hydrateFailed = false;   // first hydrate failed — loading copy swapped + toast shown once; freshCheck retries
 
   /* ---------- storage (cloud-authoritative, localStorage as cache) ---------- */
   var _storeCache = null;   // parsed-store cache — refreshComputed used to re-parse the whole blob twice per keystroke
@@ -408,6 +431,27 @@
   function tok() { return sessionStorage.getItem("cbx_token"); }
   /* rows mode: one row per date — concurrent users on different dates never clobber each other */
   var pendingRows = {};   // saves made BEFORE hydrate lands — queued and flushed after, never silently dropped
+  /* dates whose LAST cloud save failed — persisted so a later successful hydrate re-applies
+     these rows instead of destroying them, and re-queues them for a cloud retry */
+  var LOCAL_ONLY_KEY = "matrix_eod_localonly_v1";
+  var localOnly = {};     // iso → entry (or null for a pending delete)
+  try { localOnly = JSON.parse(localStorage.getItem(LOCAL_ONLY_KEY)) || {}; } catch (e) { localOnly = {}; }
+  function saveLocalOnly() {
+    try {
+      if (Object.keys(localOnly).length) localStorage.setItem(LOCAL_ONLY_KEY, JSON.stringify(localOnly));
+      else localStorage.removeItem(LOCAL_ONLY_KEY);
+    } catch (e) {}
+    renderLocalOnlyNote();
+  }
+  function markLocalOnly(iso, entryOrNull) { localOnly[iso] = entryOrNull; saveLocalOnly(); }
+  function clearLocalOnly(iso) { if (iso in localOnly) { delete localOnly[iso]; saveLocalOnly(); } }
+  function renderLocalOnlyNote() {
+    var el = document.getElementById("local-note");
+    if (!el) return;
+    var n = Object.keys(localOnly).length;
+    el.classList.toggle("show", n > 0);
+    if (n) el.textContent = "⚠ " + n + " local-only " + (n === 1 ? "entry" : "entries") + " pending sync";
+  }
   function flushMsg(iso, okv) {   // a queued save's "syncing…" note must resolve when the flush lands
     try {
       var msg = document.getElementById("form-msg");
@@ -418,9 +462,14 @@
   }
   function cloudRow(iso, entryOrNull) {
     var t = tok();
-    if (!t) { warn("Not signed in — this entry was NOT saved to the database."); return Promise.resolve(false); }
-    if (!hydrated) { pendingRows[iso] = entryOrNull; return Promise.resolve("queued"); }
-    if (mode === "kv") { clearTimeout(pushT); pushT = setTimeout(cloudPushBlob, 600); return Promise.resolve(true); }
+    if (!t) { warn("Not signed in — this entry was NOT saved to the database."); markLocalOnly(iso, entryOrNull); return Promise.resolve(false); }
+    // in-flight hydrate counts as !hydrated: a write sent mid-GET would be reverted when the GET lands
+    if (!hydrated || hydrateInFlight) { pendingRows[iso] = entryOrNull; return Promise.resolve("queued"); }
+    if (mode === "kv") {
+      clearTimeout(pushT); pushT = setTimeout(cloudPushBlob, 600);
+      // resolve only when the debounced blob POST settles — never claim "✓ in the database" early
+      return new Promise(function (resolve) { pushWaiters.push({ iso: iso, entry: entryOrNull, resolve: resolve }); });
+    }
     var body = entryOrNull ? {
       date: iso, employed: entryOrNull.employed, present: entryOrNull.present,
       afrilead: entryOrNull.afrilead, jag: entryOrNull.jag, vt: entryOrNull.vt,
@@ -431,23 +480,34 @@
       headers: { "Authorization": "Bearer " + t, "Content-Type": "application/json", "X-Cbx-Client": "v4" },
       body: JSON.stringify(body)
     }).then(function (r) {
-      if (!r.ok) { warn("Cloud save failed (" + r.status + ") — this entry is NOT in the database. Try again or re-login."); return false; }
+      if (!r.ok) { warn("Cloud save failed (" + r.status + ") — this entry is NOT in the database. Try again or re-login."); markLocalOnly(iso, entryOrNull); return false; }
+      clearLocalOnly(iso);
       return true;
     }).catch(function () {
       warn("Cloud save failed (network) — this entry is NOT in the database. Check your connection and retry.");
+      markLocalOnly(iso, entryOrNull);
       return false;
     });
   }
   function cloudPushBlob() {
-    var t = tok(); if (!t || !hydrated) return;
+    var t = tok();
+    var waiters = pushWaiters; pushWaiters = [];
+    function settle(okv) {   // the blob carries the WHOLE store, so a success clears every local-only mark
+      if (okv) { if (Object.keys(localOnly).length) { localOnly = {}; saveLocalOnly(); } }
+      else if (waiters.length) { waiters.forEach(function (w) { localOnly[w.iso] = w.entry; }); saveLocalOnly(); }
+      waiters.forEach(function (w) { w.resolve(okv); });
+    }
+    if (!t || !hydrated) { settle(false); return; }
     fetch(BASE + "/api/kv?key=" + KV_KEY, {
       method: "POST",
       headers: { "Authorization": "Bearer " + t, "Content-Type": "text/plain", "X-Cbx-Client": "v4" },
       body: localStorage.getItem(STORE_KEY) || "{}"
     }).then(function (r) {
-      if (!r.ok) warn("Cloud save failed (" + r.status + ") — this entry is NOT in the database. Try again or re-login.");
+      if (!r.ok) { warn("Cloud save failed (" + r.status + ") — this entry is NOT in the database. Try again or re-login."); settle(false); return; }
+      settle(true);
     }).catch(function () {
       warn("Cloud save failed (network) — this entry is NOT in the database. Check your connection and retry.");
+      settle(false);
     });
   }
   function saveAll(data) {
@@ -456,7 +516,7 @@
     if (mode === "kv") { clearTimeout(pushT); pushT = setTimeout(cloudPushBlob, 600); }
   }
   function hydrateKv() { // fallback until the daily_eod table exists
-    var t = tok(); if (!t) return;
+    var t = tok(); if (!t) { hydrateInFlight = false; return; }
     fetch(BASE + "/api/kv?key=" + KV_KEY, { headers: { "Authorization": "Bearer " + t } })
       .then(function (r) {
         if (r.status === 404) {
@@ -470,24 +530,48 @@
         return r.ok ? r.text() : undefined;
       })
       .then(function (txt) {
-        if (txt === undefined) return;
-        if (txt !== null && txt !== "") { try { JSON.parse(txt); _storeCache = null; localStorage.setItem(STORE_KEY, txt); } catch (e) {} }
-        mode = "kv"; hydrated = true;
+        if (txt === undefined) { hydrateInFlight = false; return; }
+        if (txt !== null && txt !== "") {
+          try {
+            var cloud = JSON.parse(txt);
+            // rows whose last push failed are NEWER than the cloud blob — keep them on top
+            Object.keys(localOnly).forEach(function (iso) { if (localOnly[iso] === null) delete cloud[iso]; else cloud[iso] = localOnly[iso]; });
+            _storeCache = cloud; localStorage.setItem(STORE_KEY, JSON.stringify(cloud));
+          } catch (e) {}
+        }
+        mode = "kv"; hydrated = true; hydrateInFlight = false; hydrateFailed = false;
         var pend = pendingRows; pendingRows = {};
-        if (Object.keys(pend).length) { var d2 = loadAll(); Object.keys(pend).forEach(function (iso) { if (pend[iso] === null) delete d2[iso]; else d2[iso] = pend[iso]; }); saveAll(d2); Object.keys(pend).forEach(function (iso) { flushMsg(iso, true); }); }
-        renderTable(); loadDateIntoForm();
+        if (Object.keys(pend).length) {
+          var d2 = loadAll();
+          Object.keys(pend).forEach(function (iso) { if (pend[iso] === null) delete d2[iso]; else d2[iso] = pend[iso]; });
+          saveAll(d2);
+          // route through cloudRow so the "syncing…" note resolves only once the blob POST lands
+          Object.keys(pend).forEach(function (iso) { cloudRow(iso, pend[iso]).then(function (okv) { flushMsg(iso, okv); }); });
+        } else if (Object.keys(localOnly).length) {
+          clearTimeout(pushT); pushT = setTimeout(cloudPushBlob, 600);   // retry the failed push
+        }
+        renderTable();
+        if (!formDirty) loadDateIntoForm();   // keystrokes typed while the GET was in flight survive
       })
-      .catch(function () { /* offline: local read-only, no pushes */ });
+      .catch(function () { hydrateInFlight = false; hydrateFail(); /* offline: local read-only, no pushes */ });
   }
   var hydrateBusy = false;   // login fires hydrate TWICE (token check + cbx-authed) ~simultaneously;
                              // the twin's GET predates the queue-flush POST and clobbered the fresh row
+  function hydrateFail() {   // FIRST hydrate failed — freshCheck keeps retrying; say so once, not per retry
+    if (hydrated) return;
+    var em = document.getElementById("tracker-empty");
+    if (em) em.textContent = "Could not load from the database — retrying…";
+    if (!hydrateFailed) { hydrateFailed = true; warn("Could not load from the database — retrying…"); }
+  }
   function hydrate() {
     var t = tok(); if (!t || hydrateBusy) return;
     hydrateBusy = true;
+    hydrateInFlight = true;   // saves/deletes made while this GET is airborne queue in pendingRows
     fetch(BASE + "/api/eod", { headers: { "Authorization": "Bearer " + t } })
       .then(function (r) {
         hydrateBusy = false;
-        if (r.status === 503) { hydrateKv(); return undefined; }   // table not created yet
+        if (r.status === 503) { hydrateKv(); return undefined; }   // table not created yet — hydrateKv clears hydrateInFlight
+        if (!r.ok) { hydrateInFlight = false; hydrateFail(); }
         return r.ok ? r.json() : undefined;
       })
       .then(function (j) {
@@ -498,7 +582,7 @@
             jag: row.jag, vt: row.vt, gwp: row.gwp === null ? null : Number(row.gwp), target: row.target };
         });
         var first = !hydrated;
-        mode = "rows"; hydrated = true;
+        mode = "rows"; hydrated = true; hydrateInFlight = false; hydrateFailed = false;
         var kvLeftover = loadAll();
         if (first && !(j.rows || []).length && Object.keys(kvLeftover).length) {
           // one-time migration, FIRST hydrate only: entries captured before the table
@@ -506,41 +590,51 @@
           // another user wiped the table must not resurrect this tab's local cache.
           Object.keys(kvLeftover).forEach(function (iso) { map[iso] = kvLeftover[iso]; cloudRow(iso, kvLeftover[iso]); });
         }
+        // rows whose LAST cloud save failed are NEWER than the server copy — re-apply
+        // them over the hydrate result (queued saves below are newer still and win)
+        Object.keys(localOnly).forEach(function (iso) { if (localOnly[iso] === null) delete map[iso]; else map[iso] = localOnly[iso]; });
         // saves queued while this read was in flight are NEWER than the read — apply
         // them on top, then send them to the database (the old code destroyed them)
         var pend = pendingRows; pendingRows = {};
         Object.keys(pend).forEach(function (iso) { if (pend[iso] === null) delete map[iso]; else map[iso] = pend[iso]; });
         _storeCache = map; localStorage.setItem(STORE_KEY, JSON.stringify(map));
         Object.keys(pend).forEach(function (iso) { cloudRow(iso, pend[iso]).then(function (okv) { flushMsg(iso, okv); }); });
-        renderTable(); loadDateIntoForm();
+        Object.keys(localOnly).forEach(function (iso) {   // re-queue the failed saves for a cloud retry
+          if (!(iso in pend)) cloudRow(iso, localOnly[iso]).then(function (okv) { flushMsg(iso, okv); });
+        });
+        renderTable();
+        if (!formDirty) loadDateIntoForm();   // keystrokes typed while the GET was in flight survive
       })
-      .catch(function () { hydrateBusy = false; /* offline: local read-only, no pushes */ });
+      .catch(function () { hydrateBusy = false; hydrateInFlight = false; hydrateFail(); /* offline: local read-only, no pushes */ });
   }
   if (sessionStorage.getItem("cbx_token")) setTimeout(hydrate, 400);
   document.addEventListener("cbx-authed", function () { setTimeout(hydrate, 400); });
   /* cbx-fresh: multi-user visibility — re-pull rows every 4 min and on tab focus,
      so entries saved by another user appear without a manual refresh. */
   function freshCheck() {
-    if (!tok() || !hydrated) return;   // kv mode included: hydrate() probes /api/eod first, so this also escapes the blob fallback once the table exists
+    if (!tok()) return;
+    if (!hydrated) { hydrate(); return; }   // first hydrate failed → keep retrying (the form rewrite is formDirty-guarded)
     var ae = document.activeElement;
     if (ae && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) return; // never clobber mid-edit
     if (formDirty) return;             // typed-but-unsaved numbers must never be refreshed away
-    hydrate();
+    hydrate();   // kv mode included: hydrate() probes /api/eod first, so this also escapes the blob fallback once the table exists
   }
   setInterval(freshCheck, 240000);
   document.addEventListener("visibilitychange", function () { if (!document.hidden) freshCheck(); });
 
   /* ---------- formatting (South-African style: comma decimal, R prefix) ---------- */
+  /* one ZAR style everywhere: space thousands + comma decimals, e.g. "R 12 345,68" */
   function fmtDec(n, dp) {
     if (n === null || !isFinite(n)) return "—";
-    return n.toFixed(dp).replace(".", ",");
+    var neg = n < 0 ? "-" : "";
+    var parts = Math.abs(n).toFixed(dp).split(".");
+    return neg + parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (parts.length > 1 ? "," + parts[1] : "");
   }
   function fmtPct(n) { return n === null || !isFinite(n) ? "—" : Math.round(n * 100) + "%"; }
   function fmtRand(n) {
     if (n === null || n === undefined || n === "" || !isFinite(n)) return "—";
     var v = Math.round(n * 100) / 100;
-    var s = (v % 1 === 0) ? String(v) : v.toFixed(2).replace(".", ",");
-    return "R" + s;
+    return "R " + fmtDec(v, v % 1 === 0 ? 0 : 2);
   }
   function fmtDate(iso) {
     var d = new Date(iso + "T00:00:00");
@@ -609,6 +703,15 @@
     if (which === "vt") { var f = $("vt-frame"); if (!f.getAttribute("src")) f.setAttribute("src", "vt-mtd-report.html"); }
   }
   TABS.forEach(function (t) { $("tab-" + t).addEventListener("click", function () { selectTab(t); }); });
+
+  /* VT iframe guard: a failed load (expired sign-in, missing file) used to leave a silent blank pane */
+  var vtFrame = $("vt-frame");
+  vtFrame.addEventListener("load", function () { $("vt-fallback").hidden = true; vtFrame.style.display = ""; });
+  vtFrame.addEventListener("error", function () { $("vt-fallback").hidden = false; vtFrame.style.display = "none"; });
+  $("vt-retry").addEventListener("click", function () {
+    $("vt-fallback").hidden = true; vtFrame.style.display = "";
+    vtFrame.setAttribute("src", "vt-mtd-report.html?retry=" + Date.now());
+  });
 
   /* ---------- input tab behaviour ---------- */
   function num(el) {
@@ -724,8 +827,11 @@
     body.innerHTML = ""; foot.innerHTML = "";
     var isEmpty = dates.length === 0;
     $("tracker-empty").hidden = !isEmpty;
-    if (isEmpty) $("tracker-empty").textContent = (!hydrated && tok()) ? "Loading entries from the database…" : "No entries yet — add your first day on the Input tab.";
+    if (isEmpty) $("tracker-empty").textContent = (!hydrated && tok())
+      ? (hydrateFailed ? "Could not load from the database — retrying…" : "Loading entries from the database…")
+      : "No entries yet — add your first day on the Input tab.";
     $("tracker-table").style.display = isEmpty ? "none" : "";
+    $("tracker-caption").hidden = isEmpty;
     if (isEmpty) return;
 
     var tEmployed = 0, tPresent = 0, tAfr = 0, tJag = 0, tVt = 0, gwpSum = 0, gwpCount = 0, tTarget = 0;
@@ -734,6 +840,8 @@
     var asc = dates.slice().sort();
     var prevOf = {};
     asc.forEach(function (iso, i) { prevOf[iso] = i > 0 ? data[asc[i - 1]] : null; });
+    $("tracker-caption").textContent = asc.length + (asc.length === 1 ? " day tracked · " : " days tracked · ") +
+      (asc.length === 1 ? fmtDate(asc[0]) : fmtDate(asc[0]) + " – " + fmtDate(asc[asc.length - 1]));
 
     dates.forEach(function (iso) {
       var e = data[iso];
@@ -775,18 +883,20 @@
     var avgAtt = tEmployed > 0 ? tPresent / tEmployed : null;
     var avgSpd = tPresent > 0 ? tVt / tPresent : null;
     var avgGwp = gwpCount > 0 ? gwpSum / gwpCount : null;
+    var hasVal = function (k) { return dates.some(function (iso) { return data[iso][k] !== null && data[iso][k] !== undefined; }); };
+    var totCell = function (k, v) { return hasVal(k) ? String(v) : "—"; };   // a column with no values totals "—", not 0
     var tf = document.createElement("tr");
     tf.innerHTML =
-      "<td>Period total / avg</td>" +
-      "<td>" + tEmployed + "</td>" +
-      "<td>" + tPresent + "</td>" +
+      "<td>All-time total / avg</td>" +
+      "<td>" + totCell("employed", tEmployed) + "</td>" +
+      "<td>" + totCell("present", tPresent) + "</td>" +
       "<td>" + fmtPct(avgAtt) + "</td><td></td>" +
-      "<td>" + tAfr + "</td>" +
-      "<td>" + tJag + "</td>" +
-      "<td>" + tVt + "</td><td></td>" +
+      "<td>" + totCell("afrilead", tAfr) + "</td>" +
+      "<td>" + totCell("jag", tJag) + "</td>" +
+      "<td>" + totCell("vt", tVt) + "</td><td></td>" +
       "<td>" + fmtDec(avgSpd, 2) + "</td><td></td>" +
       "<td>" + fmtRand(avgGwp) + "</td><td></td>" +
-      "<td>" + tTarget + "</td><td></td>";
+      "<td>" + totCell("target", tTarget) + "</td><td></td>";
     foot.appendChild(tf);
   }
 
@@ -863,6 +973,7 @@
     fields.date.value = iso;
     loadDateIntoForm();
     renderTable();
+    renderLocalOnlyNote();
   })();
 
 })();
