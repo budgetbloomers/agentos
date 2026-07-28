@@ -957,7 +957,7 @@ function buildModel(range, periodKey){
     for(const [k,v] of Object.entries(S.sales[d]||{})){
       const c=resolveKey(k);
       if(c){ const t=salesBy[d][c]=salesBy[d][c]||{n:0,gwp:0,canc:0}; t.n+=v.n; t.gwp+=v.gwp; t.canc+=v.canc||0; }
-      else if(resolveKey(k)!==null||S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'sales',n:0}; u.n+=v.n; }
+      else if(resolveKey(k)!==null||S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'sales',n:0,gwp:0}; u.n+=v.n; u.gwp+=v.gwp||0; }
     }
     for(const [k,v] of Object.entries(S.calls[d]||{})){
       const c=resolveKey(k);
@@ -1345,7 +1345,7 @@ function stackChart(box,valsBy){
     const tip=bx.querySelector('.tip');
     bx.querySelectorAll('.dbar').forEach(g=>{
       g.addEventListener('mousemove',e=>{
-        const i=+g.dataset.i,d=days[i],v=M.dailyByDate[d];
+        const i=+g.dataset.i,d=days[i],v=vals[i];   // same source as the bars — valsBy when filtered, not floor-wide dailyByDate
         const r=bx.getBoundingClientRect();
         tip.style.display='block';
         tip.style.left=Math.min(r.width-160,e.clientX-r.left+12)+'px';
@@ -1409,6 +1409,13 @@ function ringSVG(v,{size=86,color='var(--accent)',label='score'}={}){
 
 /* ---------- analytics: score, risk, trend, insights, coaching ---------- */
 function primaryAgg(code){ if(!M)return null; const pc=M.primaryCamp[code]; return (M.mtdCC[pc]||{})[code]||M.mtdCC.Cuddle[code]||M.mtdCC.Courtesy[code]; }
+function dispAgg(code){ // display aggregate — under a global filter, re-aggregate the agent's passing day-rows through the frozen agg; unfiltered stays the primary-campaign slice byte-for-byte
+  if(!M) return null;
+  if(!(S.ui.camp||S.ui.team)) return primaryAgg(code);
+  const rows=(M.byAgentDay[code]||[]).filter(gFilter); if(!rows.length) return null;
+  const o=M.agg(rows,rows.some(f=>f.campaign===M.primaryCamp[code])?code:null); // adjustments attach to the primary campaign, like mtdCC
+  o.qa=M.qaFor(code,M.range.from,M.range.to); return o;
+}
 function perfScore(a){
   if(!a) return 0;
   const t=Math.min((a.pctT??0)/1.0,1.25)/1.25;
@@ -1532,7 +1539,7 @@ function coachingFor(code){
     impact:`Full attendance at current SPD is worth ~${fmtNum((a.emp-a.act)*(a.spd||0),0)} more sales per period.`,
     ev:'From the attendance register'});
   if(optMed&&(a.optPct??0)<optMed*0.6&&(a.sales||0)>5) out.push({pri:3,area:'Insurance opt-in pitch',
-    why:`Opt-in rate ${fmtPct(a.optPct)} vs team median ${fmtPct(optMed)}.`,
+    why:`Opt-in rate ${fmtPct(a.optPct,1)} vs team median ${fmtPct(optMed,1)}.`,
     impact:'Opt-ins compound revenue on every sale already being made.',
     ev:`${fmtNum(a.opt)} opt-ins on ${fmtNum(a.sales)} sales`});
   return out.sort((x,y)=>x.pri-y.pri);
@@ -1579,8 +1586,19 @@ const NAV=[
     ['settings','Settings',I.gear],
   ]},
 ];
+/* DISPLAY-side sweep: attendance/eval identities in the current period that resolve to no
+   roster agent — the engine skips them silently (it looks S.att/S.evals up by roster code),
+   so surface them in the Upload Station + data badge. Aggregation is untouched. */
+function unmatchedExtras(){
+  const out={}; if(!M||!IDX) return out;
+  const add=(k,src,n)=>{ const c=resolveKey(k); if((c&&IDX.byCode[c])||S.map[k]==='__ignore__') return;
+    const u=out[k]=out[k]||{src,n:0}; u.n+=n; };
+  for(const d in S.att){ if(d<M.range.from||d>M.range.to) continue; for(const k in S.att[d]) add(k,'attendance',1); }
+  for(const d in S.evals){ if(d<M.range.from||d>M.range.to) continue; for(const k in S.evals[d]) add(k,'evals',S.evals[d][k].length); }
+  return out;
+}
 function dataBadge(){
-  const n=Object.keys(M?.unmatched||{}).length;
+  const n=Object.keys({...unmatchedExtras(),...(M?.unmatched||{})}).length;
   return n?`<span class="cnt">${n}</span>`:'';
 }
 function renderSide(){
@@ -1756,6 +1774,16 @@ PAGES.dashboard=()=>{
   const days=M.dates.length, pdays=(MP&&MP.dates.length)?MP.dates.length:0;
   const rate=(v,dd)=>dd?v/dd:null;
   const vsLab='vs last period';
+  // QA under the global filter: aggregate the filtered agents' codes through the frozen qaFor
+  const qaOf=m=>{ if(!m) return null; if(!FILT) return {avg:m.qaAvg,n:m.qaN};
+    let s=0,n=0; for(const c of new Set(m.facts.filter(gFilter).map(f=>f.code))){ const q=m.qaFor(c,m.range.from,m.range.to); if(q){s+=q.avg*q.n;n+=q.n;} }
+    return {avg:n?s/n:null,n}; };
+  const gqa=qaOf(M), gpqa=(MP&&MP.dates.length)?qaOf(MP):null;
+  const qaF=FILT?(()=>{ const cs=[...new Set(M.facts.filter(gFilter).map(f=>f.code))], out={dates:[],values:[]};
+    for(const d of Object.keys(S.evals).sort()){ if(d<M.range.from||d>M.range.to) continue;
+      let s=0,n=0; for(const c of cs){ const q=M.qaFor(c,d,d); if(q){s+=q.avg*q.n;n+=q.n;} }
+      if(n){ out.dates.push(d); out.values.push(s/n*100); } }
+    return out; })():null;
 
   const kpiCard=(k,small)=>`
     <div class="card lift kpi2 ${small?'sm':''}" title="${esc(k.tip||'')}">
@@ -1766,59 +1794,59 @@ PAGES.dashboard=()=>{
     </div>`;
 
   const row1=[
-    {lab:'Total GWP',val:fmtR(g.gwp),icon:I.money,color:'var(--accent)',
+    ...(S.ui.camp==='VT'?[]:[{lab:'Total GWP',val:fmtR(g.gwp),icon:I.money,color:'var(--accent)',
      cmp:gp?deltaChip(rate(g.gwp,days),rate(gp.gwp,pdays)):'',sub:`${fmtPct(g.pctG)} of target`,
-     s:seriesBy(f=>f.gwp,gFilter),tip:'Gross written premium from activated sales — '+fmtPct(g.pctG)+' of the '+fmtR(g.gwpT)+' target.'},
+     s:seriesBy(f=>f.gwp,gFilter),tip:'Gross written premium from activated sales — '+fmtPct(g.pctG)+' of the '+fmtR(g.gwpT)+' target.'}]),
     {lab:'Policies Sold',val:fmtNum(g.sales),icon:I.tag,color:'var(--cuddle)',
      cmp:gp?deltaChip(rate(g.sales,days),rate(gp.sales,pdays)):'',sub:`${fmtPct(g.pctT)} of target`,
      s:seriesBy(f=>f.sales,gFilter),tip:'Unique activated opportunities — '+fmtPct(g.pctT)+' of the '+fmtNum(g.target)+' target.'},
-    {lab:'Ave GWP / Sale',val:fmtR(g.aveG,2),icon:I.target,color:'var(--violet)',
-     cmp:gp?deltaChip(g.aveG,gp.aveG):'',s:ratioSeries(f=>f.gwp,f=>f.sales),tip:'GWP achieved ÷ sales achieved.'},
+    ...(S.ui.camp==='VT'?[]:[{lab:'Ave GWP / Sale',val:fmtR(g.aveG,2),icon:I.target,color:'var(--violet)',
+     cmp:gp?deltaChip(g.aveG,gp.aveG):'',s:ratioSeries(f=>f.gwp,f=>f.sales,gFilter),tip:'GWP achieved ÷ sales achieved.'}]),
     {lab:'SPD',val:fmtNum(g.spd,2),icon:I.up,color:'var(--courtesy)',
      cmp:gp?deltaChip(g.spd,gp.spd):'',sub:'',
-     s:ratioSeries(f=>f.sales,f=>f.act),tip:'Sales per actual shift — the core productivity measure.'},
+     s:ratioSeries(f=>f.sales,f=>f.act,gFilter),tip:'Sales per actual shift — the core productivity measure.'},
     {lab:'Insurance Opt-In',val:fmtPct(g.optPct,1),icon:I.check,color:'var(--accent2)',
      cmp:gp?deltaChip(g.optPct,gp.optPct):'',sub:'',
-     s:seriesBy(f=>f.opt),tip:'Opt-in dispositions as a share of sales ('+fmtNum(g.opt)+' opt-ins).'},
-    {lab:'Avg QA Score',val:M.qaAvg!=null?fmtPct(M.qaAvg,1):'–',icon:I.shield,color:'var(--good)',
-     cmp:(MP&&MP.dates.length&&MP.qaAvg!=null&&M.qaAvg!=null)?deltaChip(M.qaAvg,MP.qaAvg):'',sub:(MP&&MP.dates.length&&MP.qaAvg!=null)?'':M.qaN+' evaluations',
-     s:qaSeries(null),tip:'Average CallBi score for calls dated in the period ('+M.qaN+' evaluations).'},
+     s:seriesBy(f=>f.opt,gFilter),tip:'Opt-in dispositions as a share of sales ('+fmtNum(g.opt)+' opt-ins).'},
+    {lab:'Avg QA Score',val:gqa.avg!=null?fmtPct(gqa.avg,1):'–',icon:I.shield,color:'var(--good)',
+     cmp:(gpqa&&gpqa.avg!=null&&gqa.avg!=null)?deltaChip(gqa.avg,gpqa.avg):'',sub:(gpqa&&gpqa.avg!=null)?'':gqa.n+' evaluations',
+     s:FILT?(qaF||{values:[]}):qaSeries(null),tip:'Average CallBi score for calls dated in the period ('+gqa.n+' evaluations).'},
   ];
   const row2=[
     {lab:'Total Calls',val:fmtNum(g.calls),icon:I.phone,color:'var(--cuddle)',
      cmp:gp?deltaChip(rate(g.calls,days),rate(gp.calls,pdays)):'',sub:'',
-     s:seriesBy(f=>f.calls),tip:'Dialer records for the period.'},
+     s:seriesBy(f=>f.calls,gFilter),tip:'Dialer records for the period.'},
     {lab:'Answered Calls',val:fmtNum(g.ans),icon:I.check,color:'var(--good)',
      cmp:gp?deltaChip(rate(g.ans,days),rate(gp.ans,pdays)):'',sub:'',
-     s:seriesBy(f=>f.ans),tip:'Calls that bridged (ANSWERED).'},
+     s:seriesBy(f=>f.ans,gFilter),tip:'Calls that bridged (ANSWERED).'},
     {lab:'Avg Handle Time',val:g.aht?fmtDur(g.aht):'–',icon:I.clock,color:'var(--rose)',
      cmp:(gp&&gp.aht&&g.aht)?deltaChip(g.aht,gp.aht,{invert:true}):'',sub:(gp&&gp.aht)?'':'talk per answered call',
-     s:ratioSeries(f=>f.talk,f=>f.ans),tip:'Talk time ÷ answered calls. Lower is faster.'},
+     s:ratioSeries(f=>f.talk,f=>f.ans,gFilter),tip:'Talk time ÷ answered calls. Lower is faster.'},
     {lab:'Attendance %',val:fmtPct(g.att,1),icon:I.users,color:'var(--amber)',
      cmp:gp?deltaChip(g.att,gp.att):'',sub:'',
-     s:ratioSeries(f=>f.act,f=>f.emp),tip:fmtNum(g.act)+' of '+fmtNum(g.emp)+' employed shifts worked.'},
+     s:ratioSeries(f=>f.act,f=>f.emp,gFilter),tip:fmtNum(g.act)+' of '+fmtNum(g.emp)+' employed shifts worked.'},
     {lab:'Open Cases',val:S.opencases?fmtNum(S.opencases.total):'–',icon:I.case,color:'var(--muted)',
      sub:S.opencases?'backlog snapshot':'upload the SF report',s:null,tip:'Open welcome/courtesy cases from the latest Salesforce snapshot.'},
     {lab:'Answer Rate',val:fmtPct(g.ansPct,1),icon:I.target,color:'var(--violet)',
      cmp:gp?deltaChip(g.ansPct,gp.ansPct):'',sub:'',
-     s:ratioSeries(f=>f.ans,f=>f.calls),tip:'Answered calls as a share of all dials.'},
+     s:ratioSeries(f=>f.ans,f=>f.calls,gFilter),tip:'Answered calls as a share of all dials.'},
   ];
 
   // performance radar (company profile this period)
   const axes=[
     {key:'pctT',label:'Sales',fmt:v=>fmtPct(v)},
     {key:'qa',label:'QA',fmt:v=>v!=null?fmtPct(v,0):'–'},
-    {key:'att',label:'Attendance',fmt:v=>fmtPct(v)},
-    {key:'optPct',label:'Opt-In',fmt:v=>fmtPct(v)},
+    {key:'att',label:'Attendance',fmt:v=>fmtPct(v,1)},
+    {key:'optPct',label:'Opt-In',fmt:v=>fmtPct(v,1)},
     {key:'pctG',label:'GWP',fmt:v=>fmtPct(v)},
     {key:'ans',label:'Answered',fmt:v=>v!=null?fmtPct(v):'–'},
   ];
   const radar=radarChart(axes,[{name:'This period',color:'var(--accent)',
-    norm:{pctT:Math.min(1,g.pctT||0),qa:M.qaAvg||0,att:g.att||0,optPct:Math.min(1,(g.optPct||0)/0.6),pctG:Math.min(1,g.pctG||0),ans:g.ansPct||0},
-    raw:{pctT:g.pctT,qa:M.qaAvg,att:g.att,optPct:g.optPct,pctG:g.pctG,ans:g.ansPct}}],268);
+    norm:{pctT:Math.min(1,g.pctT||0),qa:gqa.avg||0,att:g.att||0,optPct:Math.min(1,(g.optPct||0)/0.6),pctG:Math.min(1,g.pctG||0),ans:g.ansPct||0},
+    raw:{pctT:g.pctT,qa:gqa.avg,att:g.att,optPct:g.optPct,pctG:g.pctG,ans:g.ansPct}}],268);
 
   // top performing agents with deltas
-  const ranked=M.agents.filter(a=>(S.ui.camp?M.primaryCamp[a.code]===S.ui.camp:!vtHidden(a.code))&&(!S.ui.team||a.tl===S.ui.team)).map(a=>({a,g:primaryAgg(a.code)})).filter(x=>x.g&&(x.g.sales>0||x.g.emp>0))
+  const ranked=(FILT?filteredAgents():M.agents.filter(a=>!vtHidden(a.code))).map(a=>({a,g:dispAgg(a.code)})).filter(x=>x.g&&(x.g.sales>0||x.g.emp>0))
     .sort((x,y)=>(y.g.gwp||0)-(x.g.gwp||0));
   const prevOf=code=>{
     if(MP&&MP.dates.length){ const p=(MP.mtdCC.Cuddle||{})[code]||(MP.mtdCC.Courtesy||{})[code];
@@ -1836,11 +1864,12 @@ PAGES.dashboard=()=>{
     return {label:(tl||'—')+(Object.keys(M.tlAgg).filter(x=>x.endsWith('|'+tl)).length>1?' · '+camp:''),v:o.pctT||0,color:CAMPC[camp]};})
     .sort((a,b)=>b.v-a.v);
   const hist=monthlyHistory();
-  const qa=qaSeries(null);   // period QA trend (floor-wide; per-agent QA lives in the drawer)
+  const qa=(qaF&&qaF.dates.length>1)?qaF:qaSeries(null);   // period QA trend — filtered when computable, else floor-wide (labelled)
+  const qaFloor=FILT&&!(qaF&&qaF.dates.length>1);
 
   return `
   <div class="page-head"><h2>Dashboard</h2><div class="sub">${M.range.from} → ${M.range.to} · ${days} dialing day${days===1?'':'s'}</div></div>
-  <div class="kpirow">${row1.map(k=>kpiCard(k)).join('')}</div>
+  <div class="kpirow">${S.ui.camp==='VT'?`<div class="card kpi2"><div class="k2head"><span class="kic" style="--c:var(--muted)">${I.money}</span><span class="lab2">GWP</span></div><div class="cmp" style="margin-top:6px"><span>Tracker (VT) units carry no GWP by design — money tiles return when the campaign filter clears.</span></div></div>`:''}${row1.map(k=>kpiCard(k)).join('')}</div>
   <div class="midgrid">
     <div class="card"><div class="cardhead"><div><h3>Revenue trend</h3><div class="sub">daily GWP performance</div></div></div>
       ${lineChart(null,{dates:M.dates,series:[{name:'GWP',color:'var(--accent)',values:seriesBy(f=>f.gwp,gFilter).values}],money:true,h:262})}</div>
@@ -1854,7 +1883,7 @@ PAGES.dashboard=()=>{
   <div class="cols3d">
     <div class="card"><div class="cardhead"><div><h3>Daily sales by campaign</h3><div class="sub">stacked activations${FILT?' · filtered':''}</div></div></div>${S.ui.camp==='VT'?'<div class="empty">Tracker (VT) units are not stacked here — see MTD → VT for the daily view.</div>':stackChart(null,FILT?(()=>{const o={};M.facts.filter(gFilter).forEach(f=>{const t=o[f.date]=o[f.date]||{Cuddle:0,Courtesy:0,VT:0};t[f.campaign]+=f.sales});return o})():null)}</div>
     <div class="card"><div class="cardhead"><div><h3>Teams — % to sales target</h3></div></div>${hbarChart(tlEntries,{target:1})}</div>
-    <div class="card"><div class="cardhead"><div><h3>QA trend</h3><div class="sub">daily average score</div></div></div>
+    <div class="card"><div class="cardhead"><div><h3>QA trend</h3><div class="sub">daily average score${FILT?(qaFloor?' · floor-wide (no filtered evaluations)':' · filtered'):''}</div></div></div>
       ${qa.dates.length>1?lineChart(null,{dates:qa.dates,series:[{name:'QA',color:'var(--good)',values:qa.values}],pct:true,h:250}):'<div class="empty">Upload QA evaluations to see the trend</div>'}</div>
   </div>
   ${(hist.length>1&&!FILT)?`<div class="card" style="margin-bottom:14px"><div class="cardhead"><div><h3>Monthly history</h3>
@@ -1910,7 +1939,7 @@ PAGES.agents=()=>{
   if(!M||!M.dates.length) return emptyState();
   const q=(S.ui.agentQ||'').toLowerCase();
   let rows=filteredAgents().map(a=>{
-    const g=primaryAgg(a.code)||{};
+    const g=dispAgg(a.code)||{};
     const r=riskOf(g), t=trendOf(a.code), sc=perfScore(g);
     const coach=(S.coach[M.periodKey]||{})[a.code]||{};
     const evs=evalsFor(a.code,M.range.from,M.range.to);
@@ -1943,7 +1972,7 @@ PAGES.agents=()=>{
     <td class="l"><span class="agentcell">${avatarOf(x.a.name,x.a.code)}<span class="nm">${esc(x.a.name)}<small>${x.a.code} · ${M.primaryCamp[x.a.code]||''} · ${esc(x.a.tenure)}</small></span></span></td>
     <td class="l">${esc(x.a.tl)}</td>
     <td><b>${fmtR(x.g.gwp)}</b></td><td>${fmtNum(x.g.sales)}</td><td>${pctPill(x.g.pctT)}</td><td>${fmtNum(x.g.spd,2)}</td>
-    <td>${x.g.qa?fmtPct(x.g.qa.avg,1):'–'}</td><td>${fmtPct(x.g.att,1)}</td><td>${fmtPct(x.g.optPct)}</td>
+    <td>${x.g.qa?fmtPct(x.g.qa.avg,1):'–'}</td><td>${fmtPct(x.g.att,1)}</td><td>${fmtPct(x.g.optPct,1)}</td>
     <td>${fmtNum(x.g.calls)}</td><td>${x.g.aht?fmtDur(x.g.aht):'–'}</td>
     <td style="width:90px">${sparkSVG(x.spark,{color:x.t.dir==='down'?'var(--crit)':(x.t.dir==='up'?'var(--good)':'var(--accent)'),w:90,h:26,fill:false})}</td>
     <td><b>${Math.round(x.sc*100)}</b></td>
@@ -1967,11 +1996,11 @@ PAGES.leaderboard=()=>{
     pctT:['% to Target',x=>x.g.pctT||0,v=>fmtPct(v)],spd:['SPD',x=>x.g.spd||0,v=>fmtNum(v,2)],
     qa:['QA',x=>x.g.qa?x.g.qa.avg:0,v=>fmtPct(v,1)],score:['Score',x=>x.sc,v=>Math.round(v*100)]};
   const [lab,fn,fmt]=defs[metric];
-  const rows=filteredAgents().map(a=>({a,g:primaryAgg(a.code)||{},sc:perfScore(primaryAgg(a.code))}))
-    .filter(x=>x.g.emp>0).sort((x,y)=>fn(y)-fn(x));
+  const rows=filteredAgents().map(a=>({a,g:dispAgg(a.code)||{},sc:perfScore(dispAgg(a.code))}))
+    .filter(x=>x.g.emp>0&&(metric!=='qa'||x.g.qa)).sort((x,y)=>fn(y)-fn(x));   // QA metric: no evals → excluded, never a fabricated 0.0%
   const max=fn(rows[0]||{g:{}})||1;
   return `
-  <div class="page-head"><h2>Leaderboard</h2><div class="sub">${lab} · ${M.range.from} → ${M.range.to}</div></div>
+  <div class="page-head"><h2>Leaderboard</h2><div class="sub">${lab} · ${M.range.from} → ${M.range.to}${rows.length>30?` · Top 30 of ${rows.length}`:''}</div></div>
   <div class="chiprow" style="margin-bottom:16px">${Object.entries(defs).map(([k,d])=>`<button class="chip ${metric===k?'on':''}" onclick="S.ui.lbMetric='${k}';save();renderPage()">${d[0]}</button>`).join('')}</div>
   <div class="podium">${rows.slice(0,3).map((x,i)=>`
     <div class="card lift pod" onclick="openDrawer('${x.a.code}')" style="cursor:pointer">
@@ -1991,7 +2020,7 @@ PAGES.leaderboard=()=>{
 /* ---------- coaching queue ---------- */
 PAGES.coaching=()=>{
   if(!M||!M.dates.length) return emptyState();
-  const queue=filteredAgents().map(a=>({a,recs:coachingFor(a.code),g:primaryAgg(a.code)}))
+  const queue=filteredAgents().map(a=>({a,recs:coachingFor(a.code),g:dispAgg(a.code)}))
     .filter(x=>x.recs.length).sort((x,y)=>x.recs[0].pri-y.recs[0].pri||((x.g.pctT||0)-(y.g.pctT||0)));
   const st=(S.coach[M.periodKey]=S.coach[M.periodKey]||{});
   return `
@@ -2028,14 +2057,14 @@ PAGES.compare=()=>{
   const B=S.ui.cmpB&&list.find(a=>a.code===S.ui.cmpB)?S.ui.cmpB:(list[1]||{}).code;
   const sel=(id,cur)=>`<select class="btn" onchange="S.ui.${id}=this.value;save();renderPage()">${list.map(a=>`<option value="${a.code}" ${a.code===cur?'selected':''}>${esc(a.name)} (${a.code})</option>`).join('')}</select>`;
   if(!A||!B) return emptyState();
-  const ga=primaryAgg(A)||{}, gb=primaryAgg(B)||{};
+  const ga=dispAgg(A)||{}, gb=dispAgg(B)||{};
   const na=(M.agents.find(x=>x.code===A)||{}).name, nb=(M.agents.find(x=>x.code===B)||{}).name;
   const spdMax=Math.max(ga.spd||0,gb.spd||0)||1, gwpMax=Math.max(ga.aveG||0,gb.aveG||0)||1;
   const axes=[
     {key:'pctT',label:'% Target',fmt:v=>fmtPct(v)},
     {key:'qa',label:'QA',fmt:v=>v!=null?fmtPct(v,0):'–'},
-    {key:'att',label:'Attendance',fmt:v=>fmtPct(v)},
-    {key:'optPct',label:'Opt-In',fmt:v=>fmtPct(v)},
+    {key:'att',label:'Attendance',fmt:v=>fmtPct(v,1)},
+    {key:'optPct',label:'Opt-In',fmt:v=>fmtPct(v,1)},
     {key:'spd',label:'SPD',fmt:v=>fmtNum(v,2)},
     {key:'aveG',label:'Ave GWP',fmt:v=>fmtR(v,0)},
   ];
@@ -2044,7 +2073,7 @@ PAGES.compare=()=>{
   const rows=[['GWP',fmtR(ga.gwp),fmtR(gb.gwp)],['Sales',fmtNum(ga.sales),fmtNum(gb.sales)],
     ['% to Target',fmtPct(ga.pctT),fmtPct(gb.pctT)],['SPD',fmtNum(ga.spd,2),fmtNum(gb.spd,2)],
     ['QA',ga.qa?fmtPct(ga.qa.avg,1):'–',gb.qa?fmtPct(gb.qa.avg,1):'–'],['Attendance',fmtPct(ga.att,1),fmtPct(gb.att,1)],
-    ['Opt-in %',fmtPct(ga.optPct),fmtPct(gb.optPct)],['Calls',fmtNum(ga.calls),fmtNum(gb.calls)],
+    ['Opt-in %',fmtPct(ga.optPct,1),fmtPct(gb.optPct,1)],['Calls',fmtNum(ga.calls),fmtNum(gb.calls)],
     ['AHT',ga.aht?fmtDur(ga.aht):'–',gb.aht?fmtDur(gb.aht):'–'],['Score',Math.round(perfScore(ga)*100),Math.round(perfScore(gb)*100)]];
   return `
   <div class="page-head"><h2>Compare agents</h2><div class="spacer"></div>${sel('cmpA',A)}<span class="lab">vs</span>${sel('cmpB',B)}</div>
@@ -2070,8 +2099,8 @@ function aggCols(opts={}){
     {h:'Agent',l:1,f:r=>`<span class="agentcell">${r.code?avatarOf(r.agent,r.code):''}<span class="nm">${esc(r.agent)}</span></span>`,csv:r=>r.agent},
     {h:'Emp',f:r=>fmtNum(r.emp)},
     {h:'Actual',f:r=>fmtNum(r.act,r.act%1?1:0)},
-    {h:'Att %',f:r=>fmtPct(r.att)},
-    {h:'Sales ±',f:r=>'<b>'+fmtNum(r.sales)+'</b>',csv:r=>r.sales},
+    {h:'Att %',f:r=>fmtPct(r.att,1),csv:r=>fmtPct(r.att)},
+    {h:'Sales ±',f:r=>'<b>'+fmtNum(r.sales)+'</b>'+(r.prov?' <span title="includes disposition-estimated (provisional) figures">±</span>':''),csv:r=>r.sales},
     {h:'SPD',f:r=>fmtNum(r.spd,2)},
     {h:'Calls',f:r=>fmtNum(r.calls)},
     {h:'Answered',f:r=>fmtNum(r.ans)},
@@ -2086,21 +2115,21 @@ function aggCols(opts={}){
     {h:'Agent',l:1,f:r=>`<span class="agentcell">${r.code?avatarOf(r.agent,r.code):''}<span class="nm">${esc(r.agent)}</span></span>`,csv:r=>r.agent},
     {h:'Emp',f:r=>fmtNum(r.emp)},
     {h:'Actual',f:r=>fmtNum(r.act,r.act%1?1:0)},
-    {h:'Att %',f:r=>fmtPct(r.att)},
+    {h:'Att %',f:r=>fmtPct(r.att,1),csv:r=>fmtPct(r.att)},
     {h:'Target',f:r=>fmtNum(r.target)},
-    {h:'Sales',f:r=>'<b>'+fmtNum(r.sales)+'</b>',csv:r=>r.sales},
+    {h:'Sales',f:r=>'<b>'+fmtNum(r.sales)+'</b>'+(r.prov?' <span title="includes disposition-estimated (provisional) figures">±</span>':''),csv:r=>r.sales},
     {h:'% Target',f:r=>pctPill(r.pctT),csv:r=>r.pctT==null?'':(r.pctT*100).toFixed(1)+'%'},
     {h:'SPD',f:r=>fmtNum(r.spd,2)}
   ];
   if(opts.canc) c.push({h:'Canc',f:r=>fmtNum(r.canc)},{h:'Canc %',f:r=>fmtPct(r.cancPct,1)});
   c.push(
     {h:'Ave Talk',f:r=>r.aveTalk!=null?fmtDur(r.aveTalk):'–'},
-    {h:'GWP Target',f:r=>fmtNum(r.gwpT)},
-    {h:'GWP',f:r=>fmtNum(r.gwp)},
+    {h:'GWP Target',f:r=>fmtR(r.gwpT),csv:r=>r.gwpT},
+    {h:'GWP',f:r=>fmtR(r.gwp)+(r.prov?' <span title="includes disposition-estimated (provisional) figures">±</span>':''),csv:r=>r.gwp},
     {h:'% GWP',f:r=>pctPill(r.pctG),csv:r=>r.pctG==null?'':(r.pctG*100).toFixed(1)+'%'},
-    {h:'Ave GWP',f:r=>fmtNum(r.aveG,1)},
+    {h:'Ave GWP',f:r=>fmtR(r.aveG,1),csv:r=>r.aveG},
     {h:'Opt-Ins',f:r=>fmtNum(r.opt)},
-    {h:'Opt-In %',f:r=>fmtPct(r.optPct)},
+    {h:'Opt-In %',f:r=>fmtPct(r.optPct,1),csv:r=>fmtPct(r.optPct)},
     {h:'Referrals',f:r=>fmtNum(r.ref)},
     {h:'QA',f:r=>r.qa?fmtPct(r.qa.avg,1):'–',csv:r=>r.qa?(r.qa.avg*100).toFixed(1)+'%':''}
   );
@@ -2141,30 +2170,34 @@ function groupByTL(rows){
 function campSection(camp,week,opts){
   opts=opts||{}; if(camp==='VT') opts={...opts,vt:true,canc:false};
   let rows=agentRows(camp,week); if(!rows.length) return '';
+  const anyProv=rows.some(r=>r.prov);
   if(camp==='Courtesy') rows=groupByTL(rows);
   const tot=Object.assign(totalRow(rows.filter(r=>!r._sub),'Grand Total'),{_tot:1});
-  return tableHTML(aggCols(opts),[...rows,tot],r=>r._tot?'total':(r._sub?'subtotal':''));
+  return tableHTML(aggCols(opts),[...rows,tot],r=>r._tot?'total':(r._sub?'subtotal':''))+
+    (anyProv?'<p class="note" style="margin:8px 0 0">± includes disposition-estimated (provisional) figures</p>':'');
 }
 
 PAGES.mtd=()=>{
   if(!M||!M.dates.length) return emptyState();
-  const sub=['Courtesy','Cuddle','VT','Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle';
+  // the global campaign filter snaps the sub-chip so screen and the exported workbook agree
+  const sub=S.ui.mtdSub==='Team Leaders'?'Team Leaders':(S.ui.camp||(['Courtesy','Cuddle','VT'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle'));
   const tlBlock=camp=>{
-    const keys=Object.keys(M.tlAgg).filter(k=>k.startsWith(camp+'|'));
+    const keys=Object.keys(M.tlAgg).filter(k=>k.startsWith(camp+'|')&&(!S.ui.team||k.split('|')[1]===S.ui.team));
     if(!keys.length) return '';
+    const tot=S.ui.team?Object.assign(totalRow(keys.map(k=>M.tlAgg[k]),''),{hc:keys.reduce((s,k)=>s+(M.tlAgg[k].hc||0),0),onT:keys.reduce((s,k)=>s+(M.tlAgg[k].onT||0),0)}):M.campAgg[camp];
     const metricRows=[
       ['Dialing Days',()=>M.dates.length],['Employed HC',o=>fmtNum(o.hc)],['Total Employed Shifts',o=>fmtNum(o.emp)],
       ['Total Actual Shifts',o=>fmtNum(o.act,o.act%1?1:0)],['% Of Attendance',o=>fmtPct(o.att,1)],
       ['Sales Target',o=>fmtNum(o.target)],['Sales Achieved',o=>'<b>'+fmtNum(o.sales)+'</b>'],['% To Sales Target',o=>pctPill(o.pctT)],
       ['SPD',o=>fmtNum(o.spd,2)],['Cancellations',o=>fmtNum(o.canc)],['% Canc to Sales',o=>fmtPct(o.cancPct,1)],
-      ['GWP Target',o=>fmtNum(o.gwpT)],['GWP Achieved',o=>fmtNum(o.gwp)],['% To GWP Target',o=>pctPill(o.pctG)],
-      ['Ave GWP',o=>fmtNum(o.aveG,1)],['Ave Talk Time',o=>o.aveTalk!=null?fmtDur(o.aveTalk):'–'],
+      ['GWP Target',o=>fmtR(o.gwpT)],['GWP Achieved',o=>fmtR(o.gwp)],['% To GWP Target',o=>pctPill(o.pctG)],
+      ['Ave GWP',o=>fmtR(o.aveG,1)],['Ave Talk Time',o=>o.aveTalk!=null?fmtDur(o.aveTalk):'–'],
       ['Insurance Opt-Ins',o=>fmtNum(o.opt)],['Opt-Ins %',o=>fmtPct(o.optPct,1)],
       ['Referrals',o=>fmtNum(o.ref)],['Referrals %',o=>fmtPct(o.refPct,1)],
       ['Agents on Target',o=>fmtNum(o.onT)],['% Agents on Target',o=>fmtPct(o.hc?o.onT/o.hc:null)]];
     const cols=[{h:'Metric',l:1,f:r=>r[0]},
       ...keys.map(k=>({h:esc(k.split('|')[1]),f:r=>typeof r[1]==='function'?r[1](M.tlAgg[k]):''})),
-      {h:'Campaign total',f:r=>'<b>'+(typeof r[1]==='function'?r[1](M.campAgg[camp]):'')+'</b>'}];
+      {h:S.ui.team?'Total (filtered)':'Campaign total',f:r=>'<b>'+(typeof r[1]==='function'?r[1](tot):'')+'</b>'}];
     return `<div class="card mt"><div class="cardhead"><div><h3>${CAMPLAB[camp]||camp} — team leaders</h3></div></div>${tableHTML(cols,metricRows)}</div>`;
   };
   return `
@@ -2172,14 +2205,14 @@ PAGES.mtd=()=>{
     <div class="spacer"></div><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
   <div class="chiprow" style="margin-bottom:14px">
     ${[['Courtesy','Matrix Courtesy'],['Cuddle','Matrix Cuddle'],['VT','Matrix Tracker'],['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';save();renderPage()">${l}</button>`).join('')}</div>
-  ${sub==='Team Leaders'?tlBlock('Courtesy')+tlBlock('Cuddle')+tlBlock('VT')
-    :`<div class="card">${campSection(sub,null,{canc:true})||'<div class="empty">No '+(CAMPLAB[sub]||sub)+' data in this period — upload the call records covering it</div>'}
+  ${sub==='Team Leaders'?((S.ui.camp?tlBlock(S.ui.camp):tlBlock('Courtesy')+tlBlock('Cuddle')+tlBlock('VT'))||'<div class="card"><div class="empty">No team-leader data matches the current filters</div></div>')
+    :`<div class="card">${campSection(sub,null,{canc:true})||'<div class="empty">No '+(CAMPLAB[sub]||sub)+' data in this period — upload the Power BI - Active Cases (money) file and the call records covering it</div>'}
       <p class="note" style="margin:10px 0 0">Cancellations and referrals come from the Adjustments page. QA is the average CallBi score for calls dated in the period.</p></div>`}`;
 };
 
 PAGES.weekly=()=>{
   if(!M||!M.weeks.length) return emptyState();
-  const camp=['Courtesy','Cuddle','VT'].includes(S.ui.wtdCamp)?S.ui.wtdCamp:'Cuddle';
+  const camp=S.ui.camp||(['Courtesy','Cuddle','VT'].includes(S.ui.wtdCamp)?S.ui.wtdCamp:'Cuddle');   // global campaign filter snaps the sub-chip so screen matches the export
   return `
   <div class="page-head"><h2>Weekly reports</h2><div class="sub">weeks run Monday–Sunday inside the period</div></div>
   <div class="chiprow" style="margin-bottom:14px">
@@ -2208,7 +2241,7 @@ PAGES.daily=()=>{
     {h:'Sales',f:r=>'<b>'+r.sales+'</b>'+(r.provisional?' <span class="pill pwarn" title="from call dispositions — upload the Power BI - Active Cases file">±</span>':''),csv:r=>r.sales},
     {h:'% Target',f:r=>pctPill(r.target?r.sales/r.target:null),csv:r=>r.target?(r.sales/r.target*100).toFixed(0)+'%':''},
     {h:'Talk',f:r=>fmtDur(r.talk)},{h:'Calls',f:r=>r.calls||''},
-    {h:'GWP',f:r=>fmtNum(r.gwp)},{h:'Ave GWP',f:r=>r.sales?fmtNum(r.gwp/r.sales,1):'–'},
+    {h:'GWP',f:r=>fmtR(r.gwp),csv:r=>r.gwp},{h:'Ave GWP',f:r=>r.sales?fmtR(r.gwp/r.sales,1):'–',csv:r=>r.sales?r.gwp/r.sales:''},
     {h:'Opt-Ins',f:r=>r.opt},{h:'Referrals',f:r=>r.ref||0}];
   window.__exp={name:'daily',cols,rows};
   return `
@@ -2272,7 +2305,7 @@ PAGES.attend=()=>{
     if(v.act>=1) return '<span class="attcell att1">✓</span>';
     if(v.act>0) return '<span class="attcell atth">½</span>';
     return '<span class="attcell att0">✕</span>'; };
-  const head='<th class="l">Agent</th><th class="l">Team</th>'+days.map(d=>`<th>${d.slice(8)}/${d.slice(5,7)}</th>`).join('')+'<th>Att %</th>';
+  const head='<th class="l">Agent</th><th class="l">Campaign</th>'+days.map(d=>`<th>${d.slice(8)}/${d.slice(5,7)}</th>`).join('')+'<th>Att %</th>';   // the cell renders campChip, not the TL
   const body=rows.map(r=>`<tr class="rowlink" onclick="openDrawer('${r.a.code}')">
     <td class="l"><span class="agentcell">${avatarOf(r.a.name,r.a.code)}<span class="nm">${esc(r.a.name)}<small>${r.a.code} · ${esc(r.a.tl)}</small></span></span></td>
     <td class="l">${campChip(M.primaryCamp[r.a.code]||r.a.campaign)}</td>`+
@@ -2293,7 +2326,7 @@ PAGES.cases=()=>{
   const entries=Object.entries(oc.by).sort((a,b)=>b[1]-a[1]).map(([k,v],i)=>({label:k,v,color:['var(--accent)','var(--cuddle)','var(--courtesy)','var(--violet)','var(--amber)','var(--rose)','var(--muted)'][i%7]}));
   const max=Math.max(...entries.map(e=>e.v));
   return `
-  <div class="page-head"><h2>Open cases</h2><div class="sub">snapshot from ${esc(oc.name)}</div></div>
+  <div class="page-head"><h2>Open cases</h2><div class="sub">snapshot from ${esc(oc.name)}${(S.ui.camp||S.ui.team)?' · floor-wide (filters don\'t apply)':''}</div></div>
   <div class="grid kpis">
     <div class="card kpi"><span class="lab">Total open</span><div class="val num">${fmtNum(oc.total)}</div><div class="cmp">welcome & courtesy call backlog</div></div>
     ${entries.slice(0,3).map(e=>`<div class="card kpi"><span class="lab">${esc(e.label)}</span><div class="val num">${fmtNum(e.v)}</div><div class="cmp">${fmtPct(e.v/oc.total,1)} of backlog</div></div>`).join('')}
@@ -2347,11 +2380,11 @@ PAGES.data=()=>{
       <div class="coverage">${M.dates.map(d=>`<div class="covday"><b>${d.slice(8)}</b>${d.slice(5,7)}
         <div class="dots"><i class="${S.sales[d]?'s':''}"></i><i class="${S.calls[d]?'c':''}"></i><i class="${S.att[d]?'a':''}"></i><i class="${S.evals[d]?'q':''}"></i></div></div>`).join('')}</div></div>`;
   }
-  const un=Object.entries(M?.unmatched||{});
+  const un=Object.entries({...unmatchedExtras(),...(M?.unmatched||{})});
   const unHtml=un.length?`<div class="card mt"><div class="cardhead"><div><h3>Unmatched agents</h3>
     <div class="sub">names in the uploads that don't match the agent list — names change sometimes, so map them once and it sticks</div></div></div>
-    <div class="tablewrap" style="max-height:300px"><table class="data"><thead><tr><th class="l">Identity in file</th><th class="l">Source</th><th>Volume</th><th class="l">Map to</th></tr></thead><tbody>
-    ${un.map(([k,v])=>`<tr><td class="l"><code>${esc(k)}</code></td><td class="l">${v.src}</td><td>${v.n}</td>
+    <div class="tablewrap" style="max-height:300px"><table class="data"><thead><tr><th class="l">Identity in file</th><th class="l">Source</th><th>Volume</th><th>GWP</th><th class="l">Map to</th></tr></thead><tbody>
+    ${un.map(([k,v])=>`<tr><td class="l"><code>${esc(k)}</code></td><td class="l">${v.src}</td><td>${v.n}</td><td>${v.gwp!=null?fmtR(v.gwp):'–'}</td>
       <td class="l"><select onchange="mapIdentity(this.dataset.k,this.value)" data-k="${esc(k)}"><option value="">— choose —</option><option value="__ignore__">Ignore</option>
       ${S.roster.map(a=>`<option value="${a.code}">${esc(a.name)} (${a.code})</option>`).join('')}</select></td></tr>`).join('')}
     </tbody></table></div></div>`:'';
@@ -2529,7 +2562,7 @@ function drawerHTML(code){
     ${mini('SPD',fmtNum(g.spd,2),(gp&&gp.spd!=null)?{cur:g.spd,prev:gp.spd}:null)}
     ${mini('QA',g.qa?fmtPct(g.qa.avg,1):'–',(gp&&gp.qa&&g.qa)?{cur:g.qa.avg,prev:gp.qa.avg}:null)}
     ${mini('Attendance',fmtPct(g.att,1),(gp&&gp.att!=null)?{cur:g.att,prev:gp.att}:null)}
-    ${mini('Opt-In',fmtPct(g.optPct),(gp&&gp.optPct!=null)?{cur:g.optPct,prev:gp.optPct}:null)}
+    ${mini('Opt-In',fmtPct(g.optPct,1),(gp&&gp.optPct!=null)?{cur:g.optPct,prev:gp.optPct}:null)}
     ${mini('AHT',g.aht?fmtDur(g.aht):'–',(gp&&gp.aht&&g.aht)?{cur:g.aht,prev:gp.aht}:null,true)}
   </div>
   <div style="display:flex;gap:10px;margin:12px 0 4px;flex-wrap:wrap;align-items:center">
@@ -2558,7 +2591,7 @@ function drawerHTML(code){
       <input type="date" class="btn small" style="padding:4px 8px" value="${c.due||''}" onchange="setCoach('${code}','due',this.value)"></div>
     <textarea class="notes" placeholder="Manager notes / action plan…" onchange="setCoach('${code}','notes',this.value)">${esc(c.notes||'')}</textarea>
   </div>
-  <div class="card mt" style="margin-bottom:30px"><div class="cardhead"><div><h3>Timeline</h3><div class="sub">evaluations & milestones this period</div></div></div>
+  <div class="card mt" style="margin-bottom:30px"><div class="cardhead"><div><h3>Timeline</h3><div class="sub">evaluations & milestones this period${evs.length>10?` · latest 10 of ${evs.length} evaluations`:''}${events.length>14?' · latest 14 shown':''}</div></div></div>
     ${events.slice(0,14).map(e=>`<div class="tl-item ${e.tone}"><span class="dot"></span>
       <span><time>${e.d}</time><br><b>${esc(e.t)}</b><p>${esc(e.p)}</p></span></div>`).join('')||'<p class="note">No events recorded in this period.</p>'}
   </div>`;
