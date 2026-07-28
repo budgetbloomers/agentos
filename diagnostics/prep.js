@@ -182,3 +182,33 @@ const pad = (n, w2) => String(n).padStart(w2, '0');
   w(D, 'g_inactive.csv', IH, [['ACC3', 'Inactive', 'Client ACC3', 'Ben Two', 'Cons', '20/07/2026', '07/07/2026', 'Bundle A', 'M', 'CS-X', '60', 'VAS']]);
 }
 console.log('prep complete →', WORK);
+
+/* Real-format fixtures: Salesforce HTML .xls (title row + Grand Totals footer +
+   comma decimals + " - Team" owner suffixes) and a genuine .xlsx BI workbook —
+   the CSV fixtures never exercised these paths, and a title row used to kill
+   the upload (header hunt now fixed in readUpload). */
+(function () {
+  const XLSX = require(path.join(WORK, 'libs', 'xlsx.full.min.js'));
+  const mk = (headers, rows, foot) => '<html><body><table>'
+    + '<tr><td colspan="' + headers.length + '">Report: Cases</td></tr>'
+    + '<tr>' + headers.map(h => '<td>' + h + '</td>').join('') + '</tr>'
+    + rows.map(r => '<tr>' + r.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('')
+    + (foot ? '<tr><td>Grand Totals (' + rows.length + ' records)</td></tr>' : '') + '</table></body></html>';
+  const OH = ['Case ID', 'Case Number', 'Subject', 'Date/Time Opened', 'Age (Hours)', 'Open', 'Account Name', 'Account Number', 'Account Mobile from Person Account', 'Person Account: Email', 'Case Record Type', 'Case Owner', 'Status'];
+  fs.writeFileSync(path.join(WORK, 'gdata', 'real_open.xls'), mk(OH, [
+    ['I1', 'RCASE-1', 's', '06/07/2026 09:00', '10,5', '1', 'x', 'RA1', '', '', 'VAS', 'Anna One - Durban', '3rd Attempt'],
+    ['I2', 'RCASE-2', 's', '06/07/2026 09:10', '20', '1', 'x', 'RA2', '', '', 'VAS', 'Ben Two - Durban', '2nd Attempt'],
+    ['I3', 'RCASE-3', 's', '07/07/2026 08:00', '30', '1', 'x', 'RA3', '', '', 'VAS', 'Cara Three', 'New']], true));
+  const CH = ['Case ID', 'Case Number', 'Subject', 'Date/Time Opened', 'Date/Time Closed', 'Closed', 'Disposition', 'Age (Hours)', 'Account Name', 'Account Number', 'Account Mobile from Person Account', 'Person Account: Email', 'Case Record Type', 'Case Owner', 'Status'];
+  fs.writeFileSync(path.join(WORK, 'gdata', 'real_closed.xls'), mk(CH, [
+    ['C1', 'RCASE-9', 's', '06/07/2026 09:10', '07/07/2026 10:00', '1', 'Took product', '25,0', 'x', 'RB1', '', '', 'VAS', 'Anna One - Durban', 'Closed'],
+    ['C2', 'RCASE-8', 's', '06/07/2026 10:00', '07/07/2026 11:00', '1', 'Not interested', '25', 'x', 'RB2', '', '', 'VAS', 'Ben Two', 'Closed - No feedback']], true));
+  const rows = [['Account Number', 'Contract Status', 'Account Name', 'Owner', 'Consultant', 'Contract Create Date', 'Contract Number', 'Case Number', 'Product Bundle', 'Merged Product Bundle', 'Charge Code', 'Charge Amount', 'Sales Vertical'],
+    ['RACC1', 'Active', 'Client 1', 'Anna One', 'C', '07/07/2026', 'CT1', 'CS1', 'Bundle A', 'M', 'CHG', '30.43', 'VAS'],
+    ['RACC1', 'Active', 'Client 1', 'Anna One', 'C', '07/07/2026', 'CT1', 'CS1', 'Bundle A', 'M', 'CHG', '33.91', 'VAS'],
+    ['RACC2', 'Active', 'Client 2', 'Ben Two', 'C', '08/07/2026', 'CT2', 'CS2', 'Bundle B', 'M', 'CHG', '55.00', 'VAS'],
+    ['RACC3', 'Active', 'Client 3', 'Zed Unknown', 'C', '08/07/2026', 'CT3', 'CS3', 'Bundle B', 'M', 'CHG', '70.00', 'VAS']];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Export');
+  fs.writeFileSync(path.join(WORK, 'gdata', 'real_bi.xlsx'), Buffer.from(XLSX.write(wb, { type: 'array', bookType: 'xlsx' })));
+  console.log('real-format fixtures: real_open.xls, real_closed.xls, real_bi.xlsx');
+})();

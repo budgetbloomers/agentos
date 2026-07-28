@@ -248,6 +248,18 @@ const ok = (name, cond, detail) => { if (!cond) { fails++; console.log('  FAIL',
   const S4 = await probe('sales');
   ok('missing CallX file called out on Sales Production', /No CallX call-records file loaded/.test(S4.text));
 
+  console.log('[sweep] real production file formats (SF HTML .xls with title/footer rows, real .xlsx BI)');
+  await pg.evaluate(() => go('uploads'));
+  await upload('SF_OPEN_CASES', 'real_open.xls');
+  await upload('SF_CLOSED_CASES', 'real_closed.xls');
+  await upload('BI_ACTIVE_CASES', 'real_bi.xlsx');
+  const counts = await pg.evaluate(() => ({ o: (state.facts.SF_OPEN_CASES || []).length, c: (state.facts.SF_CLOSED_CASES || []).filter(r => String(r.case_number).startsWith('RCASE')).length, b: (state.facts.BI_ACTIVE_CASES || []).length }));
+  ok('SF HTML .xls loads past the title row (3 open cases)', counts.o === 3, counts.o);
+  ok('SF HTML .xls closed cases load (2 rows)', counts.c === 2, counts.c);
+  ok('real .xlsx BI loads (4 charge rows)', counts.b === 4, counts.b);
+  const SR = await probe('sales');
+  ok('sales production shows the real-format money (GWP tile + unattributed banner)', !SR.errCard && /R\d/.test(SR.text.replace(/\s/g, '')) && /could not be attributed|unattributed/i.test(SR.text), SR.errCard);
+
   ok('no unexpected page errors across the sweep', errs.length === 0, errs.join(' | '));
   await pg.close(); await b.close(); srv.close();
   console.log(`DISPLAY SWEEP: ${fails ? fails + ' FAILURES' : 'all passed'}`);

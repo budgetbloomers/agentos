@@ -153,3 +153,17 @@ symptom the user reports matches pre-fix vintage, esp. the NaN-window blank (fix
 page-level missing-CallX banner (symmetric with the BI banner) + sweep assertion.
 FIX FOR THE USER = DEPLOY: node tools/prepare-site.js && npx wrangler pages deploy
 site --project-name chatterbox-agentos (+ worker deploy + migration-007 SQL).
+
+## [2026-07-28] sales-production-fix | REAL BUG: header row trusted blindly — SF exports failed to load
+User (on latest deployed code) still missing Sales Production data. Reproduced with
+REAL file formats (never covered — all fixtures were CSV): a Salesforce HTML .xls with
+a report-title row above the header row FAILED validation (readUpload took rows[0] as
+headers unconditionally) → upload unconfirmable → open/closed cases never load → the
+whole pipeline half of Sales Production empty. Fix: readUpload now hunts the header row
+in the first 15 rows (same normalised-required match as the sheetScan path); CSVs with
+clean headers unchanged (k=0). Verified end-to-end with real formats: title row +
+Grand Totals footer + comma decimals + " - Durban" owner suffixes → 3/2 rows load,
+real .xlsx BI → 4 rows, every sales card populated, unattributed sale bannered, zero
+errors. Durable: prep.js now GENERATES real_open.xls/real_closed.xls/real_bi.xlsx and
+display_sweep uploads them (4 new checks). All 8 suites green. Needs deploy to reach
+the live site.
