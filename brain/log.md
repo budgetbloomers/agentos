@@ -142,3 +142,17 @@ week 0/>5 vanished); DD/MM/YY days 20-31 misparse warned; all-time label honesty
 ZAR format unified; KV "✓" only after blob POST settles; VT iframe fallback; doctype.
 Remaining (documented, deliberate): disc register unmapped pill, small showing-N notes
 (exec grid, QA/WF lists), aging/stage thresholds as rules. All 8 suites green.
+
+## [2026-07-28] sales-production-check | Tab proven healthy at scale; live site is a stale build
+User: "sales production tab data not showing". Reproduction attempt with the HEAVIEST
+realistic load (250k CallX blob via gzip kv + all 7 other sources through the real
+upload UI): production tab renders 18/18 tiles with values, 12 charts, 48 table rows,
+cycle + conversion + band table, zero errors — across all-data, 30-day and filtered
+views. Current repo code exonerated. Live build unverifiable from the sandbox
+(pages.dev 403s — Access/gate) but NOTHING from this branch has ever been deployed
+(no wrangler creds here; last live deploy 2026-07-15 per hot.md) — every "not showing"
+symptom the user reports matches pre-fix vintage, esp. the NaN-window blank (fixed
+35965ac, undeployed). Added the one honest gap found: Sales Production now carries a
+page-level missing-CallX banner (symmetric with the BI banner) + sweep assertion.
+FIX FOR THE USER = DEPLOY: node tools/prepare-site.js && npx wrangler pages deploy
+site --project-name chatterbox-agentos (+ worker deploy + migration-007 SQL).

@@ -2743,6 +2743,7 @@ function pageSales(win){
     hbar('chS10',Object.entries(gwpByAgent).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n,v])=>[maskNameText(n),Math.round(v)]),'#2563EB');
   },0);
   return salesTabs()+cyclePanel(win)
+   +((state.facts.CALLX_CALL_RECORDS||[]).length?'':'<div class="stale-banner">⚠ No CallX call-records file loaded — calls, talk time, bands and the dialler charts on this tab read empty until it is uploaded in the Upload Station.</div>')
    +(biLoaded()?'':'<div class="stale-banner">⚠ No Power BI Active Cases file loaded — Sales, GWP and Conversion are the BI money model and read blank without it. Upload it in the Upload Station. Figures here do NOT fall back to the old Activated-Services pricing: the two money models are never mixed.</div>')
    +kpiRow('Sales',win)
    +(function(){const cs=convSplit(win);const lk=state.kpis.find(k=>k.id==='lead_conversion')||{green:10,amber:8};

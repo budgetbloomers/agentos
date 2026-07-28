@@ -243,6 +243,10 @@ const ok = (name, cond, detail) => { if (!cond) { fails++; console.log('  FAIL',
   await pg.evaluate(async () => { await clearSource('BI_ACTIVE_CASES'); });
   const L3 = await readLeads();
   ok('missing BI file called out on the page', /No Power BI Active Cases file loaded/.test(L3.text));
+  // missing CallX must be called out on Sales Production too (page-level, not just the band table)
+  await pg.evaluate(async () => { await clearSource('CALLX_CALL_RECORDS'); });
+  const S4 = await probe('sales');
+  ok('missing CallX file called out on Sales Production', /No CallX call-records file loaded/.test(S4.text));
 
   ok('no unexpected page errors across the sweep', errs.length === 0, errs.join(' | '));
   await pg.close(); await b.close(); srv.close();
