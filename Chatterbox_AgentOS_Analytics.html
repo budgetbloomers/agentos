@@ -2399,7 +2399,14 @@ function cycleCalc(mode){
      main period window (superset: only the 'win' mode actually depends on it). */
   return winMemo('cycleCalc:'+mode,periodWindow(),()=>{
   const vat=vatPct();
-  const targets=[];(state.rules.cycleTargets?.vals||[]).forEach(v=>{const i=String(v).lastIndexOf(':');const t=parseFloat(String(v).slice(i+1));if(!isNaN(t))targets.push([String(v).slice(0,i).trim(),t])});
+  /* Campaign keys are canonicalised through campBucket on BOTH sides. The roster's
+     queue column reads "Matrix Cuddle" while cycleTargets is written "Cuddle", and the
+     old raw-string match silently produced an all-zero panel: targets render from the
+     rule, so the TARGET still showed while Current/Projected read 0 and Days Past fell
+     back to the working-day count. A campaign campBucket does not recognise keeps its
+     raw name, so a bespoke target still matches its own roster rows. */
+  const qKey=v=>campBucket(v)||String(v||'').trim();
+  const targets=[];(state.rules.cycleTargets?.vals||[]).forEach(v=>{const i=String(v).lastIndexOf(':');const t=parseFloat(String(v).slice(i+1));const nm=String(v).slice(0,i).trim();if(!isNaN(t))targets.push([qKey(nm)||nm,t])});
   let start,cw,totD;
   if(mode==='month'){
     const a=isoDay(anchorDate());start=a.slice(0,8)+'01';
@@ -2417,7 +2424,7 @@ function cycleCalc(mode){
   const dial=rowsFor('CALLX_CALL_RECORDS',cw);
   const byCamp={},campSales={},dialDays={},moneyDays={},tlAgg={},campOfAcc={};let unatt=0;
   prem.forEach(e=>{if(!e.cb){unatt+=e.gwp||0;return}
-    const q=(state.cbInfo[e.cb]?.queue)||'(no queue)';byCamp[q]=(byCamp[q]||0)+(e.gwp||0);campSales[q]=(campSales[q]||0)+1;
+    const q=qKey(state.cbInfo[e.cb]?.queue)||'(no queue)';byCamp[q]=(byCamp[q]||0)+(e.gwp||0);campSales[q]=(campSales[q]||0)+1;
     campOfAcc[e.acc]=q;                                  // where this account's money landed
     const tl=(state.cbInfo[e.cb]?.tl)||'(unassigned)';const T=tlAgg[tl]=tlAgg[tl]||{gwp:0,sales:0,q:{}};T.gwp+=(e.gwp||0);T.sales++;T.q[q]=(T.q[q]||0)+1});
   /* Days Past follows the MONEY, not the dialler. This panel projects GWP, so its
@@ -2437,7 +2444,7 @@ function cycleCalc(mode){
     const q=campOfAcc[r.account_number];if(!q||!r._d)return;
     (moneyDays[q]=moneyDays[q]||new Set()).add(r._d)});
   const weeks=Object.keys(WK).sort().map(k=>({wk:k,gwp:WK[k].ex*(1+vat),sales:WK[k].acc.size}));
-  dial.forEach(r=>{const cb=cbOf(r.agent);if(!cb||!r._d)return;const q=(state.cbInfo[cb]?.queue);if(!q)return;(dialDays[q]=dialDays[q]||new Set()).add(r._d)});
+  dial.forEach(r=>{const cb=cbOf(r.agent);if(!cb||!r._d)return;const q=qKey(state.cbInfo[cb]?.queue);if(!q)return;(dialDays[q]=dialDays[q]||new Set()).add(r._d)});
   const anc=isoDay(anchorDate());
   const wdFallback=workDays({from:start,to:cw.to<anc?cw.to:anc});
   /* A campaign worked a day if it banked money OR dialled on it — the union, so neither a

@@ -11,7 +11,8 @@
     "tracker": "node tracker_test.js",
     "bigfile": "node bigfile_test.js",
     "widget": "node prep.js && node widget_test.js",
-    "all": "node run-all.js"
+    "all": "node run-all.js",
+    "cycle": "node prep.js && node cycle_test.js"
   },
   "devDependencies": {
     "playwright-core": "^1.49.0",
