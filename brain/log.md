@@ -83,3 +83,62 @@ D. Fo•••/E. Fi•••), threshold edit moves the RAG pill instantly and 
 period switches coherent, zero page errors. One finding worth noting: avg QA 86.8 rates
 AMBER because shipped green is 90 — correct behaviour, initially misread by the test.
 No dashboard changes needed this round.
+
+## [2026-07-27] leads-visibility | Lead Management "data not showing" — 4 defects fixed
+User reported missing data on Lead Management. Line-by-line audit + edge fixtures found:
+(1) NaN WINDOW BLANKED EVERYTHING — any invalid range mode (e.g. browser form-state
+restoring an option value from an older build) made periodWindow parseInt→NaN →
+from='NaN-NaN-NaN' → every _d>=from compare false → every windowed table/tile on EVERY
+page silently empty. periodWindow now self-heals to the 30-day default and resyncs the
+select. (2) Off-roster-but-resolvable owners silently dropped — sfOwnerMap restores
+from config, so departed/renamed agents still resolve to a CB with no roster row; their
+open/closed/sales/cancellations vanished with NO banner count (only null resolutions
+counted). Now flagged: banner counts open/closed/sales/canc not attributable to a
+CURRENT roster agent (suppressed when global filters deliberately narrow the roster).
+(3) Status columns >10 were silently invisible (counted in Total Open, shown nowhere,
+G totals only over visible cols) — overflow now rolls into an 'Other' column; visible
+cells always sum to Total Open. (4) No-BI state showed zero Sales/SPD/Conv with no
+explanation — page now carries the same honest banner as Sales Production. Plus: boot
+range-select now syncs to the actual boot window (said "Last 30 days" while showing
+all data). display_sweep grew a leads deep-check (bogus-mode self-heal, Other rollup,
+stale-map flagging, BI notice; 69 checks). All 8 suites green. NOT LIVE until /deploy.
+
+## [2026-07-28] access-mapping | 13 accounts + per-tab gating from Access_Mapping.xlsx
+supabase/migration-007: users with first-name usernames (two Ryans → ryann/ryang),
+password agentos123 PBKDF2-hashed via worker auth.mjs, must_change_password=true (the
+shared bootstrap password dies on first sign-in), pii_unmask=false for all (masking
+non-negotiable — grant per person deliberately). Full access (8): ryann aarav nick
+panday max claudell jared leon → tabs "*" ops/vas/tracker (nick=admin — NOTE possible
+duplicate of the bootstrap 'nicholas'). Scoped: ashton dalwin abigail ryang keshree per
+the sheet's X marks. Upsert never overwrites existing passwords/PII. "TLs" row = commented
+role-'tl' template (full_name must EXACTLY match the Agent List Team Leader column or
+scope fails closed). Sheet mapping assumptions, commented in the SQL: "Dashboard" col
+(inside the OPS merge) = PULSE dashboard tab; "Agent Performance" (OPS) = brain (Visual
+Brain); "Input" = tracker input+grid. Gating fixes: tracker tab buttons now carry
+data-page ids; auth-gate selector covers .tab-btn[data-page] and auto-routes off a
+hidden active tab (Abigail without PULSE dashboard lands on mtd, not a blank shell).
+Verified: 4-scenario browser gate test (ops/vas/tracker restricted + "*") all green;
+full suite green. SQL must be RUN in Supabase SQL Editor; gating ships with /deploy.
+
+## [2026-07-28] three-app-audit | Full display/rules/format audit — 52 findings fixed across the suite
+User asked for a full audit of Ops, VAS and Tracker. Three parallel line-level audits
+(taxonomy: silent drops · hidden columns · unexplained zeros · format violations ·
+filter truthfulness · reconciliation). OPS (19 findings): session monthly-closed silent
+owner/date drops now bannered; TL view gained missing-BI + unattributed-money banners
+(F-MONEY-05 was invisible there — TL GWP never summed to Sales-page totals with nothing
+saying why); missing QA no longer reads "Clean sheet"/"floor is clear"; QA decision
+pivot renders Other; workforce missing-attendance banner; fleet-money wrappers actually
+clear filters now (were no-op copies — cycle "% to target" compared filtered money to
+whole-campaign targets); aging no-age row; masked names in agent-card AI ctx (PII
+bypass); index-based team picks (apostrophe bug + raw names out of DOM); exec queue
+true count. PULSE (18): filters now reach QA tile/radar/trend, people tabs, ranked
+table, all sparklines, MTD TL sub-tab, tooltips; unmatched attendance/eval identities
+join the Upload Station table + badge; unmatched sales show GWP; VT money tiles →
+honest note; provisional ± markers; fmtR/1dp unification; Top-30/latest-N labels.
+TRACKER (15): failed-save rows survive hydrate (were silently destroyed) + localOnly
+retry queue + pending-sync note; first-hydrate failure retries instead of dead sync;
+in-flight-hydrate saves queue; distinct-week iteration + Unassigned bucket (rows with
+week 0/>5 vanished); DD/MM/YY days 20-31 misparse warned; all-time label honesty;
+ZAR format unified; KV "✓" only after blob POST settles; VT iframe fallback; doctype.
+Remaining (documented, deliberate): disc register unmapped pill, small showing-N notes
+(exec grid, QA/WF lists), aging/stage thresholds as rules. All 8 suites green.

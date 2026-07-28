@@ -98,7 +98,7 @@ const ok = (name, cond, detail) => { if (!cond) { fails++; console.log('  FAIL',
   // click the OTHER team's row (its onclick sets state.tlPick) → agent table re-focuses
   const tlSwitch = await pg.evaluate(async () => {
     go('tl'); await new Promise(r => setTimeout(r, 60));
-    const row = [...document.querySelectorAll('#page [onclick]')].find(el => (el.getAttribute('onclick') || '').includes("state.tlPick='Lead A'"));
+    const row = [...document.querySelectorAll('#page tr.rowlink[onclick]')].find(el => /L\. A•••/.test(el.textContent) && (el.getAttribute('onclick') || '').includes('state.tlPick'));
     if (!row) return { found: false };
     row.click(); await new Promise(r => setTimeout(r, 80));
     const tabs = [...document.querySelectorAll('#page table.tbl')];
@@ -178,11 +178,71 @@ const ok = (name, cond, detail) => { if (!cond) { fails++; console.log('  FAIL',
   ok('restore threshold → original rating returns', r3.cls === r0.cls, `${r3.cls} vs ${r0.cls}`);
 
   console.log('[sweep] period range switches keep every page coherent');
-  for (const mode of ['7d', 'today', 'month']) {
+  for (const mode of ['7', 'mtd', '30']) {
     await pg.evaluate(m => { document.getElementById('rangeSel').value = m; onRangeChange(); }, mode);
     const px = await probe('sales');
     ok(`period=${mode}: sales renders clean`, !px.errCard && px.tiles >= 1);
   }
+  // an INVALID mode (browser form-restore from an older build) used to NaN the window
+  // and silently blank every page — it must self-heal to the 30-day default instead
+  const healed = await pg.evaluate(async () => {
+    state.range.mode = 'month';   // a value no current option carries
+    go('leads'); await new Promise(r => setTimeout(r, 60));
+    const w = periodWindow();
+    const t = document.querySelector('#page table.tbl');
+    const tot = [...t.querySelectorAll('tbody tr')].find(tr => /Period Totals/.test(tr.textContent));
+    const c = tot ? [...tot.children].map(td => td.textContent.trim()) : [];
+    return { mode: state.range.mode, sel: document.getElementById('rangeSel').value, from: w.from, assigned: +String(c[1]).replace(/\D/g, '') || 0 };
+  });
+  ok('invalid range mode self-heals (no NaN window)', healed.mode === '30' && healed.sel === '30' && !/NaN/.test(healed.from), JSON.stringify(healed));
+  ok('data returns after self-heal (leads assigned nonzero)', healed.assigned >= 5, healed.assigned);
+
+  console.log('[sweep] lead management deep-check — nothing may vanish silently');
+  // movement table carries real numbers from the golden data
+  const move = await pg.evaluate(async () => {
+    go('leads'); await new Promise(r => setTimeout(r, 60));
+    const t = document.querySelector('#page table.tbl');
+    const tot = [...t.querySelectorAll('tbody tr')].find(tr => /Period Totals/.test(tr.textContent));
+    const c = tot ? [...tot.children].map(td => td.textContent.trim()) : [];
+    return { assigned: +String(c[1]).replace(/\D/g, '') || 0, sales: +String(c[3]).replace(/\D/g, '') || 0 };
+  });
+  ok('movement: Period Totals shows assigned leads', move.assigned >= 5, move.assigned);
+  ok('movement: Period Totals shows sales', move.sales >= 5, move.sales);
+  // edge fixture: >10 statuses (→ Other rollup), an unmapped owner, a ghost owner
+  const g2 = ['"Case ID","Case Number","Subject","Date/Time Opened","Age (Hours)","Open","Account Name","Account Number","Account Mobile from Person Account","Person Account: Email","Case Record Type","Case Owner","Status"'];
+  const sts = ['1st attempt', '6th attempt', 'Awaiting Docs', 'Client Query', 'Follow Up', 'Callback Set'];
+  sts.forEach((st, i) => g2.push(`"E${i}","ECASE-${i}","s","06/07/2026 09:0${i}","10","1","x","ZA${i}","","","VAS","Anna One","${st}"`));
+  g2.push('"E7","ECASE-7","s","06/07/2026 09:07","10","1","x","ZA7","","","VAS","Zed Nine","New"');
+  g2.push('"E8","ECASE-8","s","06/07/2026 09:08","10","1","x","ZA8","","","VAS","Ghost Owner","New"');
+  fs.writeFileSync(path.join(SP, 'gdata', 'g2_open.csv'), g2.join('\n'));
+  await pg.evaluate(() => go('uploads'));
+  await upload('SF_OPEN_CASES', 'g2_open.csv');   // snapshot → replaces the golden open file
+  const readLeads = () => pg.evaluate(async () => {
+    go('leads'); await new Promise(r => setTimeout(r, 60));
+    const el = document.getElementById('page');
+    const funnel = el.querySelectorAll('table.tbl')[1];
+    const heads = [...funnel.querySelectorAll('thead th')].map(h => h.textContent.trim());
+    const anna = [...funnel.querySelectorAll('tbody tr')].find(tr => /A\. On•••/.test(tr.textContent));
+    const cells = anna ? [...anna.children].map(td => td.textContent.trim()) : [];
+    const stN = heads.indexOf('Total Open') - 4;             // status columns sit between Agent Name and Total Open
+    const stSum = cells.slice(4, 4 + stN).reduce((s, v) => s + (+v || 0), 0);
+    const totOpen = +String(cells[4 + stN]).replace(/\D/g, '') || 0;
+    const banner = (el.textContent.match(/Not attributed to any CURRENT roster agent[^]*?(?=Owner names)/) || [''])[0];
+    return { heads, stN, stSum, totOpen, banner, text: el.textContent };
+  });
+  const L1 = await readLeads();
+  ok('status overflow rolls into an Other column (never hidden)', L1.heads.includes('Other'), L1.heads.join(','));
+  ok('Anna: visible status cells sum to Total Open (6 = 6)', L1.stSum === 6 && L1.totOpen === 6, `${L1.stSum}/${L1.totOpen}`);
+  ok('unmapped owners flagged in the banner (2 open cases)', /2 open case\(s\)/.test(L1.banner), L1.banner.slice(0, 90));
+  // stale sfOwnerMap: owner resolves to a CB that left the roster — must STILL be flagged
+  await pg.evaluate(() => { state.sfOwnerMap['zed nine'] = 'CB99'; bumpDataVer(); });
+  const L2 = await readLeads();
+  ok('off-roster-but-resolvable owner still flagged (stale map)', /2 open case\(s\)/.test(L2.banner), L2.banner.slice(0, 90));
+  // no BI file → the page must SAY the money columns are empty, not just show zeros
+  pg.on('dialog', d => d.accept());
+  await pg.evaluate(async () => { await clearSource('BI_ACTIVE_CASES'); });
+  const L3 = await readLeads();
+  ok('missing BI file called out on the page', /No Power BI Active Cases file loaded/.test(L3.text));
 
   ok('no unexpected page errors across the sweep', errs.length === 0, errs.join(' | '));
   await pg.close(); await b.close(); srv.close();

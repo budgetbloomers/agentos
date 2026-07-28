@@ -310,7 +310,7 @@
     <div class="trustbar">
       <span class="trust-label">Data Trust</span>
       <button id="trustPill" class="trust-pill warn" type="button">
-        <span class="dot"></span><span id="trustText">Sources need attention · 0/2 sources</span><span aria-hidden="true">›</span>
+        <span class="dot"></span><span id="trustText">Sources need attention · 0/2 sources on this device</span><span aria-hidden="true">›</span>
       </button>
       <button id="manageUploads" class="btn-ghost push" type="button">Manage uploads →</button>
     </div>
@@ -356,7 +356,7 @@
         <div class="card">
           <div class="card-head"><h2 class="card-title">VT tracker — Power BI</h2><span class="card-hint">Counts with share of the month-to-date position</span></div>
           <div class="tscroll"><table id="vtTable"></table></div>
-          <p class="footnote">¹ share of Sales &nbsp;·&nbsp; ² share of Total fitments. <b>Rule to confirm (§8):</b> the July workbook computes Sales as Scheduled + Panimax + Afrileads + JAGLeads + Total fitments + Missed (=SUM of the six columns). Note that Panimax + Afrileads + JAGLeads already sum to Total fitments, so this definition counts every fitment twice — the figure is reproduced here for workbook parity and every "share of Sales" divides by it. Confirm or correct the rule before quoting these shares.</p>
+          <p class="footnote" id="vtFoot">¹ share of Sales &nbsp;·&nbsp; ² share of Total fitments. <b>Rule to confirm (§8):</b> the July workbook computes Sales as Scheduled + Panimax + Afrileads + JAGLeads + Total fitments + Missed (=SUM of the six columns). Note that Panimax + Afrileads + JAGLeads already sum to Total fitments, so this definition counts every fitment twice — the figure is reproduced here for workbook parity and every "share of Sales" divides by it. Confirm or correct the rule before quoting these shares.</p>
         </div>
         <div class="grid-2">
           <div class="card">
@@ -690,11 +690,11 @@ function renderDetail() {
   );
   const gwp = rows.reduce((a, r) => a + (Number(r.g) || 0), 0);
   const n = rows.reduce((a, r) => a + (Number(r.n) || 0), 0);
-  $("#detailCount").textContent = `${rows.length} of ${SEED.detail.length} rows · ${fmtInt(n)} sales · GWP ${fmtInt(gwp)}`;
+  $("#detailCount").textContent = `${rows.length} of ${SEED.detail.length} rows · ${fmtInt(n)} sales · GWP R ${fmtInt(gwp)}`;
   $("#detailTable").innerHTML =
     `<thead><tr><th>Date</th><th>Agent</th><th>Campaign</th><th>Source partner</th><th>Scheduler</th><th>Sale count</th><th>GWP</th><th>Case number</th></tr></thead>` +
     `<tbody>${rows.map((r) =>
-      `<tr><td>${esc(r.d)}</td><td>${esc(r.a)}</td><td>${esc(r.c)}</td><td>${esc(r.s)}</td><td>${esc(r.sch)}</td><td>${fmtInt(r.n)}</td><td>${fmtInt(r.g)}</td><td>${esc(r.case)}</td></tr>`
+      `<tr><td>${esc(r.d)}</td><td>${esc(r.a)}</td><td>${esc(r.c)}</td><td>${esc(r.s)}</td><td>${esc(r.sch)}</td><td>${fmtInt(r.n)}</td><td>R ${fmtInt(r.g)}</td><td>${esc(r.case)}</td></tr>`
     ).join("") || `<tr><td colspan="8" style="text-align:center;color:var(--muted)">No rows match the current filters</td></tr>`}</tbody>`;
 }
 
@@ -711,16 +711,24 @@ function leadTable(rows, createdLabel) {
   };
   let body = "";
   const matched = [];
-  for (let w = 1; w <= 5; w++) {
-    const wk = rows.filter((r) => r.w === w && (!q || r.d.toLowerCase().includes(q)));
-    if (!wk.length) continue;               // no phantom all-zero week rows (seed carries weeks 1-3)
+  const hit = (r) => !q || r.d.toLowerCase().includes(q);
+  const wkNum = (r) => Number.isInteger(r.w) && r.w >= 1 && r.w <= 6 ? r.w : null; // missing/0/out-of-range → Unassigned
+  const group = (label, wk) => {
+    if (!wk.length) return;                 // no phantom all-zero week rows (seed carries weeks 1-3)
     for (const r of wk) body += `<tr><td>${esc(r.d)}</td>${cells(r.v)}${convCells(r.v)}</tr>`;
     matched.push(...wk);
     const t = sum(wk);                      // subtotals now total the rows actually SHOWN
-    body += `<tr class="subtotal"><td>Week ${w}${q ? " (filtered)" : ""}</td>${cells(t)}${convCells(t, true)}</tr>`;
+    body += `<tr class="subtotal"><td>${label}${q ? " (filtered)" : ""}</td>${cells(t)}${convCells(t, true)}</tr>`;
+  };
+  const weeks = [...new Set(rows.map(wkNum).filter((w) => w !== null))].sort((a, b) => a - b);
+  for (const w of weeks) group(`Week ${w}`, rows.filter((r) => wkNum(r) === w && hit(r))); // only weeks actually present
+  group("Unassigned", rows.filter((r) => wkNum(r) === null && hit(r)));                    // rendered last — nothing vanishes
+  if (!matched.length) {
+    body = `<tr><td colspan="13" style="text-align:center;color:var(--muted)">No rows match the current filters</td></tr>`;
+  } else {
+    const mtd = sum(matched);
+    body += `<tr class="grand"><td>MTD${q ? " (filtered)" : ""}</td>${cells(mtd)}${convCells(mtd)}</tr>`;
   }
-  const mtd = sum(matched);
-  body += `<tr class="grand"><td>MTD${q ? " (filtered)" : ""}</td>${cells(mtd)}${convCells(mtd)}</tr>`;
   return `<thead><tr><th>Date</th>${LEAD_COLS.map((c, i) => `<th>${i === 0 ? createdLabel : c}</th>`).join("")}<th>Total vehicle conversion</th><th>Total account conversion</th></tr></thead><tbody>${body}</tbody>`;
 }
 
@@ -764,19 +772,23 @@ function renderTrust() {
   const s = state.uploads.slots;
   const ready = (state.uploads.sf.length ? 1 : 0) + (s.A.rows && s.B.rows ? 1 : 0);
   const pill = $("#trustPill");
-  if (ready === 2) { pill.className = "trust-pill good"; $("#trustText").textContent = "All sources healthy · 2/2 sources"; }
-  else { pill.className = "trust-pill warn"; $("#trustText").textContent = `Sources need attention · ${ready}/2 sources`; }
+  if (ready === 2) { pill.className = "trust-pill good"; $("#trustText").textContent = "All sources healthy · 2/2 sources on this device"; }
+  else { pill.className = "trust-pill warn"; $("#trustText").textContent = `Sources need attention · ${ready}/2 sources on this device`; }
 }
 
 /* ---------------- scheduler paste slots ---------------- */
-function parseDateYMD(s) {
+function parseDateYMD(s, flags) {
   const m = String(s || "").trim().match(/^(\d{2}|\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
   if (!m) return null;
   let y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
   if (m[1].length === 2) y += 2000;
-  // form is YY/MM/DD; recover a DD/MM/YY paste (year lands implausibly early)
-  if ((mo > 12 || y < 2020) && Number(m[2]) <= 12 && Number(m[3]) >= 20) {
+  // form is YY/MM/DD; recover a DD/MM/YY paste — the year lands implausibly early,
+  // or (first field a day 13–31, e.g. "28/07/26") implausibly far in the future
+  const f1 = Number(m[1]);
+  const ddFirst = m[1].length === 2 && f1 > 12 && f1 <= 31 && Number(m[2]) <= 12 && y > new Date().getFullYear() + 1;
+  if (((mo > 12 || y < 2020) && Number(m[2]) <= 12 && Number(m[3]) >= 20) || ddFirst) {
     d = Number(m[1].slice(-2)); mo = Number(m[2]); y = 2000 + Number(String(m[3]).slice(-2));
+    if (flags) flags.reinterpreted = true;
   }
   if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
   const dt = new Date(y, mo - 1, d);
@@ -798,8 +810,10 @@ function parseSchedulerPaste(text) {
     if (!out.rows.length && !out.headerSkipped && /^date\b/i.test(cells[0])) { out.headerSkipped = true; return; }
     const [d, agent, caseNo, cell, source, gwpRaw] = cells;
     if (!agent && !caseNo) { out.skippedEmpty++; return; } // trailing date-only filler rows
-    const dt = parseDateYMD(d);
+    const df = {};
+    const dt = parseDateYMD(d, df);
     if (!dt) out.warnings.push(`Line ${n}: date “${d || "blank"}” not recognised — expected YY/MM/DD`);
+    else if (df.reinterpreted) out.warnings.push(`Line ${n}: date “${d}” read as DD/MM/YY → ${fmtDMY(dt)}`);
     if (!/^\d{6,10}$/.test(caseNo || "")) out.warnings.push(`Line ${n}: case number “${caseNo || "blank"}” looks wrong`);
     const g = parseGWP(gwpRaw);
     if (g === null) out.missingGwp++;
@@ -849,7 +863,7 @@ function renderSlotBody(k) {
       <button class="btn-ghost" data-edit="${k}" style="margin-left:auto;padding:5px 11px">Edit</button>
       <button class="fc-x" data-clear="${k}" title="Clear slot" aria-label="Clear slot ${k}">×</button></div>` +
       (s.warnings.length ? `<ul class="warnlist">${s.warnings.slice(0, 6).map((w) => `<li>${esc(w)}</li>`).join("")}${s.warnings.length > 6 ? `<li>… ${s.warnings.length - 6} more</li>` : ""}</ul>` : "");
-    $(`#status${k}`).innerHTML = `<span class="badge good"><span class="dot"></span>Registered</span>`;
+    $(`#status${k}`).innerHTML = `<span class="badge good"><span class="dot"></span>Registered on this device</span>`;
   } else {
     body.innerHTML = `<textarea class="paste" id="paste${k}" spellcheck="false" placeholder="Paste from Excel (tab-separated):
 Date	Agent Name	Case Number	Customer Cellphone	Source Partner	GWP
@@ -953,7 +967,7 @@ function exportReport() {
   let csv = `Chatterbox — Vehicle Tracking MTD report,${m}\r\n\r\n`;
   if (state.month !== SEED_MONTH && state.tab !== "uploads") csv += `No data for ${m} yet — upload the day's exports in Data & Uploads.\r\n`;
   else if (state.tab === "projection") csv += tableToCSV("#projTable", "Internal target — fitment projection") + tableToCSV("#matrixTable", "Matrix target & incentive");
-  else if (state.tab === "vt") csv += tableToCSV("#vtTable", "VT tracker — Power BI") + tableToCSV("#schedTable", "Scheduler tracker") + tableToCSV("#detailTable", "Sales & scheduling detail (filtered)");
+  else if (state.tab === "vt") csv += tableToCSV("#vtTable", "VT tracker — Power BI") + tableToCSV("#schedTable", "Scheduler tracker") + tableToCSV("#detailTable", "Sales & scheduling detail (filtered)") + csvCell($("#vtFoot").textContent.replace(/\s+/g, " ").trim()) + "\r\n";
   else if (state.tab === "leads") csv += tableToCSV("#afriTable", "Afri leads — daily tracker") + tableToCSV("#jagTable", "JAG leads — daily tracker");
   else {
     csv += "Data & uploads register\r\nSlot,Item,Detail,Received\r\n";
