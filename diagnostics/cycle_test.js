@@ -57,6 +57,33 @@ const ok = (n, g, w) => { const p = JSON.stringify(g) === JSON.stringify(w); if 
   ok('Days Past follows the money (2 distinct days), not the 21-day fallback', res.pastCuddle, 2);
   ok('Courtesy Days Past = 1', res.pastCourtesy, 1);
   ok('nothing fell into unattributed', res.unatt, 0);
+
+  // ---- blank Campaign column: money must be COUNTED and REPORTED, never silently binned ----
+  const blank = await page.evaluate(() => {
+    state.cbInfo = {
+      CB1: { name: 'A One', cb: 'CB1', queue: 'Matrix Cuddle', tl: 'Lead A', tenure: 'M1' },
+      CB9: { name: 'No Queue', cb: 'CB9', queue: '', tl: 'Lead A', tenure: 'M1' },   // Campaign column blank
+    };
+    state.sfOwnerMap = { 'a one': 'CB1', 'no queue': 'CB9' };
+    state.facts.BI_ACTIVE_CASES = [
+      { account_number: 'A1', owner: 'A One',    charge_amount: 100, contract_create_date: '2026-07-02', _d: '2026-07-02', case_number: 'C1' },
+      { account_number: 'Z1', owner: 'No Queue', charge_amount: 400, contract_create_date: '2026-07-02', _d: '2026-07-02', case_number: 'C9' },
+      { account_number: 'Z2', owner: 'No Queue', charge_amount: 600, contract_create_date: '2026-07-03', _d: '2026-07-03', case_number: 'C10' },
+    ];
+    if (typeof bumpDataVer === 'function') bumpDataVer();
+    const CC = cycleCalc('cycle');
+    go('sales');
+    return { noQ: Math.round(CC.noQ * 100) / 100, noQn: CC.noQn, agents: CC.noQagents,
+             cuddle: Math.round((CC.byCamp.Cuddle || 0) * 100) / 100,
+             banner: /NO campaign on the Agent List/.test(document.body.innerText || '') };
+  });
+  ok('blank-Campaign money is counted, not dropped', blank.noQ, 1150);       // (400+600) x 1.15
+  ok('blank-Campaign sales counted', blank.noQn, 2);
+  ok('affected agents counted', blank.agents, 1);
+  ok('real campaign money still attributes', blank.cuddle, 115);            // 100 x 1.15
+  ok('the page REPORTS it (banner rendered)', blank.banner, true);
+  ok('unplaceable money is NOT spread into a campaign', blank.cuddle === 115, true);
+
   if (errs.length) { fails++; console.log('  FAIL page errors', errs); }
   console.log(fails ? 'CYCLE PANEL: FAILED' : 'CYCLE PANEL: all passed');
   await b.close(); srv.close(); process.exit(fails ? 1 : 0);

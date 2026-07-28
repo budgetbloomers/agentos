@@ -2423,8 +2423,17 @@ function cycleCalc(mode){
   const prem=(function(){const f=state.filters;try{state.filters={};return accountPremiums(cw)}finally{state.filters=f}})();
   const dial=rowsFor('CALLX_CALL_RECORDS',cw);
   const byCamp={},campSales={},dialDays={},moneyDays={},tlAgg={},campOfAcc={};let unatt=0;
+  /* Money that DID match a roster agent but whose agent has no campaign on the Agent
+     List lands in '(no queue)'. No cycleTarget is named that, so it rendered nowhere —
+     the panels read R0,00 while the premium sat in the bucket, indistinguishable from
+     "no sales yet". That is a silent drop (non-negotiable #7), so it is now counted and
+     reported. It is NOT spread across campaigns: without a campaign column the split is
+     unknowable, and inventing one would be worse than showing the gap. */
+  let noQ=0,noQn=0;const noQcb=new Set();
   prem.forEach(e=>{if(!e.cb){unatt+=e.gwp||0;return}
-    const q=qKey(state.cbInfo[e.cb]?.queue)||'(no queue)';byCamp[q]=(byCamp[q]||0)+(e.gwp||0);campSales[q]=(campSales[q]||0)+1;
+    const q0=qKey(state.cbInfo[e.cb]?.queue);
+    if(!q0){noQ+=e.gwp||0;noQn++;noQcb.add(e.cb)}
+    const q=q0||'(no queue)';byCamp[q]=(byCamp[q]||0)+(e.gwp||0);campSales[q]=(campSales[q]||0)+1;
     campOfAcc[e.acc]=q;                                  // where this account's money landed
     const tl=(state.cbInfo[e.cb]?.tl)||'(unassigned)';const T=tlAgg[tl]=tlAgg[tl]||{gwp:0,sales:0,q:{}};T.gwp+=(e.gwp||0);T.sales++;T.q[q]=(T.q[q]||0)+1});
   /* Days Past follows the MONEY, not the dialler. This panel projects GWP, so its
@@ -2459,7 +2468,7 @@ function cycleCalc(mode){
     return{tl,camp,gwp:T.gwp,sales:T.sales,salesDay,projSales:T.sales+salesDay*rem,perDay,rem,proj:perDay*rem,total:T.gwp+perDay*rem}})
    .sort((a,b)=>b.total-a.total);
   const byTL={};tlRows.forEach(r=>byTL[r.tl]=r);
-  return{mode,start,to:cw.to,totD,vat,targets,byCamp,campSales,dialDays,unatt,wdFallback,pastOf,tlRows,byTL,weeks};
+  return{mode,start,to:cw.to,totD,vat,targets,byCamp,campSales,dialDays,unatt,noQ,noQn,noQagents:noQcb.size,wdFallback,pastOf,tlRows,byTL,weeks};
 })}
 function cyclePanel(win){
   const mode=state.cycleView||'cycle';
@@ -2469,7 +2478,7 @@ function cyclePanel(win){
   if(!CC)return '<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Matrix VAS — Operational Performance Overview</span>'+chips+'</div>'
     +'<div class="empty">Set the cycleStart rule (Dictionary → Rules) for the cycle view — or switch to Calendar month / Main filter above.</div></div>';
   if(!CC.targets.length)return '<div class="card" style="margin-bottom:14px"><div class="card-h"><span class="t">Operational Performance</span></div><div class="empty">No cycle targets configured — add campaign targets under Dictionary → Interpretation rules → "Cycle GWP targets by campaign" to bring this panel back.</div></div>';
-  const{start,to,totD,vat,targets,byCamp,campSales,unatt,pastOf,tlRows,weeks}=CC;
+  const{start,to,totD,vat,targets,byCamp,campSales,unatt,noQ,noQn,noQagents,pastOf,tlRows,weeks}=CC;
   const showTgt=mode!=='win';   // cycle targets only make sense over a full cycle/month
   const panel=([camp,tgt])=>{
     const cur=byCamp[camp]||0;
@@ -2515,6 +2524,16 @@ function cyclePanel(win){
    +'<span class="s">'+subLab+' · money attributed through the base table</span>'+chips+'</div>'
    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px">'+targets.map(panel).join('')+'</div>'
    +(unatt>0?'<div class="stale-banner" style="margin-top:10px">'+zar2(unatt)+' of window GWP is unattributed to any roster agent and sits outside the campaign panels.</div>':'')
+   /* The panels above can only show money that carries a campaign. When the Agent List's
+      Campaign column is blank the premium is real but unplaceable, and the cards read
+      R0,00 — say so loudly, with the exact remedy, instead of letting it look like a
+      dead cycle. */
+   +(noQ>0?'<div class="stale-banner" style="margin-top:10px;background:var(--red-soft);border-color:#F2B8B8;color:#8C1D1D">⚠ '
+      +zar2(noQ)+' of window GWP ('+Math.round(noQ/Math.max(1,noQ+Object.entries(byCamp).filter(([k])=>k!=='(no queue)').reduce((s,[,v])=>s+v,0))*100)+'% of matched money · '
+      +noQn.toLocaleString()+' sale'+(noQn===1?'':'s')+' across '+noQagents+' agent'+(noQagents===1?'':'s')
+      +') has NO campaign on the Agent List, so it cannot appear in any panel above. '
+      +'Fix: fill the <b>Campaign</b> column (accepted headers: Campaign / Queue / Que) on the daily Agent List and re-upload. '
+      +'It is deliberately not spread across campaigns — the split is unknowable without that column.</div>':'')
    +'<div style="margin-top:14px"><div class="ac-sec">TEAM LEADER PROJECTIONS — avg GWP per day × remaining days</div>'
    +'<div style="overflow-x:auto"><table class="tbl" style="font-size:12px"><thead><tr><th class="noclick">Team Leader</th><th class="noclick">Campaign</th><th class="noclick">Sales</th><th class="noclick">Proj. sales</th><th class="noclick">Current GWP</th><th class="noclick">GWP / day</th><th class="noclick">Remaining days</th><th class="noclick">Projection (remaining)</th><th class="noclick">Total (current + projection)</th></tr></thead><tbody>'
    +(tlRows.length?tlRows.map(r=>'<tr><td><b>'+maskName(r.tl)+'</b></td><td style="font-size:11px">'+esc(r.camp)+'</td>'
