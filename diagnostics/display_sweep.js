@@ -259,6 +259,13 @@ const ok = (name, cond, detail) => { if (!cond) { fails++; console.log('  FAIL',
   ok('real .xlsx BI loads (4 charge rows)', counts.b === 4, counts.b);
   const SR = await probe('sales');
   ok('sales production shows the real-format money (GWP tile + unattributed banner)', !SR.errCard && /R\d/.test(SR.text.replace(/\s/g, '')) && /could not be attributed|unattributed/i.test(SR.text), SR.errCard);
+  // idempotency with REAL formats: uploading the SAME files again must change nothing
+  await pg.evaluate(() => go('uploads'));
+  await upload('SF_OPEN_CASES', 'real_open.xls');
+  await upload('SF_CLOSED_CASES', 'real_closed.xls');
+  await upload('BI_ACTIVE_CASES', 'real_bi.xlsx');
+  const c2 = await pg.evaluate(() => ({ o: (state.facts.SF_OPEN_CASES || []).length, c: (state.facts.SF_CLOSED_CASES || []).filter(r => String(r.case_number).startsWith('RCASE')).length, b: (state.facts.BI_ACTIVE_CASES || []).length }));
+  ok('re-uploading the same real files creates ZERO duplicates', c2.o === 3 && c2.c === 2 && c2.b === 4, JSON.stringify(c2));
 
   ok('no unexpected page errors across the sweep', errs.length === 0, errs.join(' | '));
   await pg.close(); await b.close(); srv.close();
