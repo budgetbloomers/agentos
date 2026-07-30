@@ -436,7 +436,7 @@ h1,.page-title{letter-spacing:-.5px}
 <div class="scrim" id="scrim"></div>
 <div class="drawer" id="drawer" role="dialog" aria-label="Agent profile"></div>
 <div class="toast" id="toast"></div>
-<input type="file" id="fileInput" multiple accept=".csv,.txt" style="display:none">
+<input type="file" id="fileInput" multiple accept=".csv,.txt,.xlsx,.xls" style="display:none">
 
 <script>
 'use strict';
@@ -478,8 +478,16 @@ function splitSheets(text){
   return out;
 }
 function toObjects(rows){
-  // first row with ≥2 non-empty cells is the header
-  let h=0; while(h<rows.length && rows[h].filter(c=>c.trim()).length<2) h++;
+  // Header hunt: real exports (Salesforce HTML .xls, Power BI xlsx) can carry a
+  // report-title / "Filtered By" row ABOVE the real header — the first row within the
+  // first 15 that detectType recognises wins. Falls back to the old rule (first row
+  // with ≥2 non-empty cells) so unknown-format files behave exactly as before.
+  let h=-1;
+  for(let i=0;i<Math.min(rows.length,15);i++){
+    const cand=rows[i].map(c=>(c||'').trim());
+    if(cand.filter(Boolean).length>=2 && detectType(cand)){ h=i; break; }
+  }
+  if(h<0){ h=0; while(h<rows.length && rows[h].filter(c=>c.trim()).length<2) h++; }
   if(h>=rows.length) return {header:[],recs:[]};
   const header=rows[h].map(c=>c.trim());
   const recs=[];
@@ -496,6 +504,15 @@ const CAMPLAB={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',VT:'Matrix Trac
 const normName = s => (s||'').toLowerCase().replace(/-\s*panimax/g,'').replace(/panimax/g,'').replace(/cb[\s-]*\d+/g,'').replace(/[^a-z]/g,'');
 const cbCode = s => { const m=(s||'').match(/CB[\s-]*(\d+)/i); return m?('CB'+parseInt(m[1],10)):null; };
 const durSecs = s => { const p=(s||'').split(':').map(Number); return p.length===3?(p[0]*3600+p[1]*60+p[2]):(p.length===2?(p[0]*60+p[1]):0); };
+// Locale-tolerant number: ZA exports write comma decimals ("30,43" is 30.43, "1 234,56"
+// is 1234.56) while US-style "1,234.56" keeps the dot. Dot-decimal and plain-integer
+// strings parse exactly as parseFloat did, so clean files are unchanged.
+const parseAmt = v => {
+  if(typeof v==='number') return v;
+  let s=String(v??'').trim().replace(/[\s\u00A0]/g,'');
+  if(s.includes(',')&&!s.includes('.')) s=s.replace(/,/g,'.');   // comma is the decimal
+  return parseFloat(s.replace(/[^0-9.\-]/g,''));                 // then drop currency/thousands junk
+};
 const fmtDur = t => { t=Math.round(t||0); const h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60; return h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); };
 const fmtPct = (x,d=0) => (x==null||!isFinite(x))?'–':(x*100).toFixed(d)+'%';
 const fmtNum = (x,d=0) => (x==null||!isFinite(x))?'–':Number(x).toLocaleString('en-ZA',{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -504,7 +521,12 @@ function parseDateLoose(s){
   if(!s) return null;
   s=s.trim();
   let m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/); if(m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
-  m=s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/); if(m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  m=s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+  if(m){ let d=+m[1],mo=+m[2];                 // day-first (ZA exports)
+    if(mo>12&&d<=12){ [d,mo]=[mo,d]; }        // impossible day-first → US m/d/y (same swap as dateFromFilename)
+    if(mo<1||mo>12||d<1||d>31) return null;   // never mint a garbage date key
+    return `${m[3]}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  }
   return null;
 }
 function dateFromFilename(name){
@@ -692,10 +714,10 @@ const INGEST={
     for(const r of recs){
       const acc=String(r['Account Number']||'').trim();
       if(!acc||/^applied filters/i.test(acc)) continue;          // R-ING-BI-07 footer guard
-      const chg=parseFloat(String(r['Charge Amount']||'').replace(/[^0-9.\-]/g,''));
+      const chg=parseAmt(r['Charge Amount']);            // ZA comma decimals: "30,43" is R30.43, never R3043
       if(isNaN(chg)) continue;
-      const d=String(r['Contract Create Date']||'').slice(0,10); // ISO 'YYYY-MM-DD …'
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+      const d=parseDateLoose(r['Contract Create Date']); // ISO (xlsx serials are rewritten upstream) or dd/mm/yyyy in raw CSV exports
+      if(!d) continue;
       const owner=normName(r['Owner']);
       dates.add(d);
       const o=((byDate[d]=byDate[d]||{})[owner]=byDate[d][owner]||{accts:new Set(),ex:0});
@@ -750,7 +772,7 @@ const INGEST={
       const d=parseDateLoose(r['Date of Call']||r['Date of Assessment']); if(!d) continue;
       const code=('CB'+((r['Sales Agent CB']||'').match(/(\d+)/)||[])[1]).replace('CBundefined','');
       if(!code) continue;
-      const sc=parseFloat((r['Score %']||'').replace('%','')); if(!isFinite(sc)) continue;
+      const sc=parseAmt(r['Score %']); if(!isFinite(sc)) continue;   // "87,5%" reads 87.5
       dates.add(d);
       const bk=(byDate[d]=byDate[d]||{});
       (bk[code]=bk[code]||[]).push({s:sc,dec:r['Escalation Decision']||'',cat:r['Coaching Category']||r['Critical Fail Category']||'',pri:r['Priority']||'',camp:r['Campaign']||''});
@@ -765,12 +787,12 @@ const INGEST={
       const code=(r['Employee Code']||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       if(!code||!/^CB\d+$/.test(code)) continue;
       const rawCamp=(r['Campaign']||r['Que']||'').trim();
-      if(rawCamp && !/cuddle|courtesy|track|vehicle|vision/i.test(rawCamp)) continue; // unknown campaign
+      if(rawCamp && !/cuddle|courtesy|track|vehicle|vision|^vt$/i.test(rawCamp)) continue; // unknown campaign (accept everything campOf resolves — "VT" included)
       out.push({
         tl:r['Team Leader']||'', code, name:r['Agent Name']||r['Agent']||'',
         campaign:campOf(rawCamp),
         tenure:r['Tenure']||'', callx:r['Call x']||'', sf:(r['Sales Force']||'').trim()==='-'?'':(r['Sales Force']||''),
-        target:parseFloat(r['Target'])||0, start:parseDateLoose(r['Start Date'])||'',
+        target:parseAmt(r['Target'])||0, start:parseDateLoose(r['Start Date'])||'',
         role:r['Job Title']||''
       });
     }
@@ -796,19 +818,28 @@ const INGEST={
       dates.add(d);
       (S.tracker[d]=S.tracker[d]||{})[code]={
         tl:r['Team Leader'],campaign:r['Campaign'],agent:r['Agent'],tenure:r['Tenure'],
-        emp:parseFloat(r['Employed Shifts'])||0, act:parseFloat(r['Actual Shifts'])||0,
-        target:parseFloat(r['Sales Target'])||0, sales:parseFloat(r['Sales Achieved'])||0,
-        talk:durSecs(r['Talk Time']), gwpT:parseFloat(r['GWP Target'])||0, gwp:parseFloat(r['GWP Achieved'])||0,
-        opt:parseFloat(r['Insurance Opt In'])||0, ref:parseFloat(r['Referrals'])||0
+        emp:parseAmt(r['Employed Shifts'])||0, act:parseAmt(r['Actual Shifts'])||0,
+        target:parseAmt(r['Sales Target'])||0, sales:parseAmt(r['Sales Achieved'])||0,
+        talk:durSecs(r['Talk Time']), gwpT:parseAmt(r['GWP Target'])||0, gwp:parseAmt(r['GWP Achieved'])||0,
+        opt:parseAmt(r['Insurance Opt In'])||0, ref:parseAmt(r['Referrals'])||0
       };
     }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
     return regFile(name,'tracker daily'+(sheet?' ('+sheet+')':''),dates,recs.length);
   },
   opencases(recs,name){
-    const by={}; for(const r of recs){ const s=r['Status']||'?'; by[s]=(by[s]||0)+1; }
-    S.opencases={name,total:recs.length,by};
-    return regFile(name,'open cases',[],recs.length);
+    // Real SF exports end with "Grand Totals (n records)" / blank padding rows — a row
+    // with no Case Number and no Status is a footer, not a case. Skip it from the
+    // counts but SAY so (skipped renders on the Open Cases page), never silently.
+    const by={}; let skipped=0,total=0;
+    for(const r of recs){
+      const cn=String(r['Case Number']||'').trim(), st=String(r['Status']||'').trim();
+      if(!cn&&!st){ skipped++; continue; }
+      by[st||'?']=(by[st||'?']||0)+1; total++;
+    }
+    if(!total) return null;                   // nothing but footer rows -> not a load; fail loudly
+    S.opencases={name,total,by,skipped};
+    return regFile(name,'open cases',[],total);
   }
 };
 
@@ -2333,6 +2364,7 @@ PAGES.cases=()=>{
   </div>
   <div class="card mt"><div class="cardhead"><div><h3>Backlog by status</h3></div></div>
     ${hbarChart(entries.map(e=>({...e,v:e.v})),{pct:false})}
+  ${oc.skipped?`<p class="note">${fmtNum(oc.skipped)} footer/blank row${oc.skipped>1?'s':''} in the export (no case number or status — e.g. "Grand Totals") ignored, not counted above.</p>`:''}
   <p class="note">This report is a point-in-time snapshot — re-upload it whenever you want the backlog refreshed.</p></div>`;
 };
 
@@ -2663,7 +2695,20 @@ async function fileToText(f){
   const buf=await f.arrayBuffer();
   const b=new Uint8Array(buf.slice(0,8));
   const isZip=b[0]===0x50&&b[1]===0x4B, isCFB=b[0]===0xD0&&b[1]===0xCF;
-  if(!isZip&&!isCFB) return new TextDecoder('utf-8').decode(buf).replace(/^﻿/,'');
+  if(!isZip&&!isCFB){
+    const text=new TextDecoder('utf-8').decode(buf).replace(/^﻿/,'');
+    // Salesforce ".xls" reports are really an HTML TABLE — decoded as text they would
+    // hit parseCSV as markup noise and the upload died unrecognised. Render the first
+    // table's cells to real CSV (quoted, so commas/newlines inside cells survive);
+    // plain CSV/TXT passes through byte-identical.
+    if(/^\s*</.test(text)&&/<table/i.test(text)){
+      const doc=new DOMParser().parseFromString(text,'text/html');
+      const table=doc.querySelector('table');
+      if(table) return [...table.querySelectorAll('tr')].map(tr=>
+        [...tr.querySelectorAll('th,td')].map(c=>'"'+c.textContent.trim().replace(/"/g,'""')+'"').join(',')).join('\n');
+    }
+    return text;
+  }
   if(typeof XLSX==='undefined'){ toast('Cannot read '+f.name+' — the spreadsheet reader did not load. Refresh, or export as CSV.'); return null; }
   // cellNF keeps each cell's number format on `c.z`; without it SheetJS renders the date
   // into `c.w` ("7/13/26") and drops `z`, so a date cell is indistinguishable from a plain
@@ -2682,7 +2727,9 @@ async function fileToText(f){
       // the raw serial is timezone-safe; the t==='d' arm covers workbooks already
       // carrying real Date cells.
       if(c.t==='n'&&c.z&&XLSX.SSF&&XLSX.SSF.is_date(c.z)){
-        c.v=XLSX.SSF.format('yyyy-mm-dd',c.v); c.t='s'; delete c.w; delete c.z;
+        // a serial <1 is a pure TIME cell (durations like 00:10:00) — render hh:mm:ss
+        // for durSecs, not a nonsense 1899/1900 "date" that zeroed every talk figure
+        c.v=c.v<1?XLSX.SSF.format('hh:mm:ss',c.v):XLSX.SSF.format('yyyy-mm-dd',c.v); c.t='s'; delete c.w; delete c.z;
       }else if(c.t==='d'&&c.v instanceof Date){
         const d=c.v;
         c.v=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
