@@ -435,7 +435,7 @@ h1,.page-title{letter-spacing:-.5px}
 <div class="scrim" id="scrim"></div>
 <div class="drawer" id="drawer" role="dialog" aria-label="Agent profile"></div>
 <div class="toast" id="toast"></div>
-<input type="file" id="fileInput" multiple accept=".csv,.txt" style="display:none">
+<input type="file" id="fileInput" multiple accept=".csv,.txt,.xls,.xlsx" style="display:none">
 
 <script>
 'use strict';
@@ -561,7 +561,7 @@ function normalizeState(){
   if(!S.map) S.map={};
   if(!Array.isArray(S.files)) S.files=[];
   if(!Array.isArray(S.roster)) S.roster=[];
-  for(const k of ['sales','calls','att','evals','tracker']) if(!S[k]) S[k]={};
+  for(const k of ['sales','calls','att','evals','tracker','callsMeta']) if(!S[k]) S[k]={};
   if(S.gwpPerUnit==null) S.gwpPerUnit=89;
   if(!S.ui) S.ui={month:'',mode:'calendar',tab:'dashboard'};
   if(!S.ui.camp) S.ui.camp='';                    // global campaign filter
@@ -624,7 +624,9 @@ function detectType(header, sheetName){
 }
 
 let rosterCovered=null; // campaigns already replaced by an earlier sheet of the same file
-function ingestText(name, text, expected){
+let __curFileHash=null; // content hash of the file being ingested — regFile stamps it on the registry entry
+function ingestText(name, text, expected, hash){
+  __curFileHash=hash||null;
   const sheets=splitSheets(text);
   const names=Object.keys(sheets);
   let ingested=[];
@@ -663,7 +665,8 @@ function ingestText(name, text, expected){
 
 function regFile(name,type,dates,rows,extra){
   S.files=S.files.filter(f=>!(f.name===name&&f.type===type));
-  S.files.push({name,type,dates:[...dates].sort(),rows,at:new Date().toISOString().slice(0,16).replace('T',' '),...(extra||{})});
+  S.files.push({name,type,dates:[...dates].sort(),rows,at:new Date().toISOString().slice(0,16).replace('T',' '),
+    ...(__curFileHash?{hash:__curFileHash}:{}),...(extra||{})});
   return {type,rows,dates:[...dates]};
 }
 
@@ -715,9 +718,24 @@ const INGEST={
       if(isOptIn(r['Lead Disposition'])) b.opt++;
       if(isSaleDisp(r['Lead Disposition'])) b.saleD++;
     }
-    for(const d of dates) S.calls[d]=buckets[d]||{};
+    // FULLEST-DAY-WINS: dialer exports overlap (a "(2)" partial re-export next to the big
+    // date-range file). Blind replace let the LAST file wipe a fuller day loaded earlier.
+    // Per date, keep whichever FILE recorded more calls; same-file re-upload always wins
+    // (it is the corrected version of itself). Provenance lives in S.callsMeta[date].
+    S.callsMeta=S.callsMeta||{};
+    const stored=[]; let kept=0;
+    for(const d of dates){
+      const bk=buckets[d]||{};
+      let n=0; for(const k in bk) n+=bk[k].calls;
+      const m=S.callsMeta[d];
+      if(m&&m.f!==name&&m.n>n&&S.calls[d]){ kept++; continue; }  // an earlier file has a fuller day — keep it
+      S.calls[d]=bk; S.callsMeta[d]={f:name,n};
+      stored.push(d);
+    }
+    if(kept) toast(kept+' day'+(kept>1?'s':'')+' in '+name+' already covered more fully — kept the fuller data');
+    if(!stored.length&&dates.size) return regFile(name,'calls',[],recs.length); // recognised, but every day was fuller elsewhere
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    return regFile(name,'calls',dates,recs.length);
+    return regFile(name,'calls',stored,recs.length);
   },
   attendance(recs,name){
     const dates=new Set();
@@ -805,7 +823,7 @@ function removeFile(idx){
   if(!confirm('Remove "'+f.name+'"?\n\nIts data leaves the dashboard and the change is saved to the cloud database.')) return;
   const storeOf={bi:'sales',calls:'calls',attendance:'att',evals:'evals'};
   const st=storeOf[f.type.split(' ')[0]];
-  if(st && f.dates) for(const d of f.dates) delete S[st][d];
+  if(st && f.dates) for(const d of f.dates){ delete S[st][d]; if(st==='calls'&&S.callsMeta) delete S.callsMeta[d]; }
   if(f.type.startsWith('tracker')) for(const d of f.dates||[]) delete S.tracker[d];
   if(f.type==='open cases') S.opencases=null;
   S.files.splice(idx,1);
@@ -899,6 +917,11 @@ function monthlyHistory(){
 function pruneDeadFiles(){
   const before=(S.files||[]).length;
   S.files=(S.files||[]).filter(f=>{
+    // Entries carrying a content hash were ingested AFTER the xlsx fix by a reader that
+    // verified them — they are never phantoms, and a 0-date calls entry can be legitimate
+    // (every one of its days was covered more fully by another file). Keeping it keeps its
+    // hash, which is what stops tomorrow's re-upload of the same file re-parsing 50 MB.
+    if(f.hash) return true;
     const t=String(f.type||'').split(' (')[0];
     if(t==='roster') return true;
     if(t==='open cases'){
@@ -2324,7 +2347,7 @@ PAGES.data=()=>{
     <div class="sub">one slot per file — drop the file on its slot or click Choose file. Renamed files are fine: the type is confirmed from the file's own columns, and anything dropped on the wrong slot gets filed correctly with a heads-up.</div></div>
   <div class="slots">${slotCards}</div>
   <div class="card"><div class="cardhead"><div><h3>Uploaded files</h3></div></div>${reg}
-    <p class="note" style="margin:10px 0 0">Daily sources (sales, calls, attendance, QA) <b>append</b> — each file adds to the history as the month builds up; re-uploading the same day/month refreshes it. The <b>Agent List replaces the roster</b> — upload a fresh one as often as agents join, leave or move. Everything saves to the cloud database, and <b>removing a file here removes it from the database too</b>.</p></div>
+    <p class="note" style="margin:10px 0 0">Files are recognised by their <b>content</b> — re-uploading a file that's already loaded (even renamed) is skipped automatically, so you can safely upload your whole export folder every day and only new files are added. Daily sources (sales, calls, attendance, QA) <b>append</b> — each file adds to the history as the month builds up; re-uploading the same day/month refreshes it. The <b>Agent List replaces the roster</b> — upload a fresh one as often as agents join, leave or move. Everything saves to the cloud database, and <b>removing a file here removes it from the database too</b>.</p></div>
   ${cov}${unHtml}`;
 };
 PAGES['_wire_data']=()=>{
@@ -2588,19 +2611,24 @@ function exportReport(){
    CSV — so splitSheets/toObjects/INGEST all work unchanged, every sheet included.
    cellDates + dateNF force ISO yyyy-mm-dd: Excel hands back serials or locale strings
    ("7/13/26"), and INGEST.bi requires /^\d{4}-\d{2}-\d{2}$/ or it silently drops the row. */
-async function fileToText(f){
-  const buf=await f.arrayBuffer();
-  const b=new Uint8Array(buf.slice(0,8));
-  const isZip=b[0]===0x50&&b[1]===0x4B, isCFB=b[0]===0xD0&&b[1]===0xCF;
-  if(!isZip&&!isCFB) return new TextDecoder('utf-8').decode(buf).replace(/^﻿/,'');
-  if(typeof XLSX==='undefined'){ toast('Cannot read '+f.name+' — the spreadsheet reader did not load. Refresh, or export as CSV.'); return null; }
-  // cellNF keeps each cell's number format on `c.z`; without it SheetJS renders the date
-  // into `c.w` ("7/13/26") and drops `z`, so a date cell is indistinguishable from a plain
-  // number and the rewrite below can never fire. No cellDates: serials stay numeric so the
-  // conversion is pure serial math and cannot shift a day across timezones.
-  const wb=XLSX.read(buf,{type:'array',cellNF:true});
+async function fileToText(f){ return bufferToText(f.name, await f.arrayBuffer()); }
+function wbToText(wb){
   for(const sn of wb.SheetNames){
     const ws=wb.Sheets[sn]; if(!ws) continue;
+    // Columns whose header names a date, by column index. Some Power BI/SF exports stamp
+    // date serials with a junk custom format ('"TRUE";"TRUE";"FALSE"') that SSF.is_date
+    // cannot recognise — every date then renders as literal "TRUE" and each row dies on
+    // the downstream date guards. For numeric cells in a date-NAMED column whose format
+    // is not a date format, convert plausible date serials (1995–2064) directly.
+    const dateCols=new Set();
+    try{
+      const R=XLSX.utils.decode_range(ws['!ref']||'A1');
+      for(let r=R.s.r;r<=Math.min(R.e.r,R.s.r+9);r++)
+        for(let cc=R.s.c;cc<=R.e.c;cc++){
+          const h=ws[XLSX.utils.encode_cell({r,c:cc})];
+          if(h&&h.t==='s'&&/date/i.test(h.v)) dateCols.add(cc);
+        }
+    }catch(e){}
     for(const a in ws){
       if(a[0]==='!') continue;
       const c=ws[a]; if(!c) continue;
@@ -2609,8 +2637,15 @@ async function fileToText(f){
       // and every guard downstream (INGEST.bi's /^\d{4}-\d{2}-\d{2}$/, parseDateLoose)
       // wants ISO, so the whole file would parse and then drop every row. SSF.format on
       // the raw serial is timezone-safe; the t==='d' arm covers workbooks already
-      // carrying real Date cells.
+      // carrying real Date cells. TIME-ONLY cells (Duration hh:mm:ss — no y/d in the
+      // format) must NOT become dates: durSecs needs the h:m:s string, so render those
+      // as hh:mm:ss or talk time reads zero.
       if(c.t==='n'&&c.z&&XLSX.SSF&&XLSX.SSF.is_date(c.z)){
+        const z=String(c.z);
+        c.v=(/[hH]/.test(z)&&!/[yYdD]/.test(z))?XLSX.SSF.format('hh:mm:ss',c.v):XLSX.SSF.format('yyyy-mm-dd',c.v);
+        c.t='s'; delete c.w; delete c.z;
+      }else if(c.t==='n'&&c.v>34700&&c.v<60000&&dateCols.has(XLSX.utils.decode_cell(a).c)){
+        // date serial hidden behind a non-date format in a date-named column (see above)
         c.v=XLSX.SSF.format('yyyy-mm-dd',c.v); c.t='s'; delete c.w; delete c.z;
       }else if(c.t==='d'&&c.v instanceof Date){
         const d=c.v;
@@ -2621,13 +2656,57 @@ async function fileToText(f){
   }
   return wb.SheetNames.map(sn=>'### Sheet: '+sn+' ###\n'+XLSX.utils.sheet_to_csv(wb.Sheets[sn],{blankrows:false})).join('\n');
 }
+async function bufferToText(name, buf){
+  const b=new Uint8Array(buf.slice(0,8));
+  const isZip=b[0]===0x50&&b[1]===0x4B, isCFB=b[0]===0xD0&&b[1]===0xCF;
+  const needXLSX=()=>{ if(typeof XLSX==='undefined'){ toast('Cannot read '+name+' — the spreadsheet reader did not load. Refresh, or export as CSV.'); return true; } return false; };
+  if(!isZip&&!isCFB){
+    const text=new TextDecoder('utf-8').decode(buf).replace(/^﻿/,'');
+    // Salesforce exports "Open Cases.xls" that is really an HTML <table> — SheetJS
+    // parses HTML strings, so route it there instead of feeding tags to parseCSV.
+    const head=text.slice(0,512).trimStart().toLowerCase();
+    if(head.startsWith('<')&&/<(!doctype|html|head|meta|table)/.test(head)){
+      if(needXLSX()) return null;
+      return wbToText(XLSX.read(text,{type:'string'}));
+    }
+    return text;
+  }
+  if(needXLSX()) return null;
+  // cellNF keeps each cell's number format on `c.z`; without it SheetJS renders the date
+  // into `c.w` ("7/13/26") and drops `z`, so a date cell is indistinguishable from a plain
+  // number and the rewrite in wbToText can never fire. No cellDates: serials stay numeric
+  // so the conversion is pure serial math and cannot shift a day across timezones.
+  return wbToText(XLSX.read(buf,{type:'array',cellNF:true}));
+}
+/* Fingerprint the file's BYTES — identical content is recognised no matter what the
+   file is called ("call_records (2).xlsx" re-downloaded = same hash), so the daily
+   re-upload of an unchanged export is skipped instead of re-ingested/duplicated. */
+async function hashBuf(buf){
+  try{
+    const h=await crypto.subtle.digest('SHA-256',buf);
+    return [...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('');
+  }catch(e){ // non-secure context fallback: dual DJB2/FNV-style rolling hash + length
+    const u=new Uint8Array(buf); let h1=5381,h2=52711;
+    for(let i=0;i<u.length;i++){ h1=((h1*33)^u[i])>>>0; h2=((h2*31)+u[i])>>>0; }
+    return 'x'+h1.toString(16)+'-'+h2.toString(16)+'-'+u.length.toString(16);
+  }
+}
 async function handleFiles(list, expected){
-  let ok=0;
-  for(const f of list){
+  let ok=0, skipped=0;
+  for(const f of Array.from(list)){
+    let buf=null;
+    try{ buf=await f.arrayBuffer(); }catch(e){ toast('Could not read '+f.name+' — '+(e.message||e)); continue; }
+    const hash=await hashBuf(buf);
+    const dup=(S.files||[]).find(x=>x.hash&&x.hash===hash);
+    if(dup){ skipped++; toast('Skipped '+f.name+' — already uploaded'+(dup.name!==f.name?' (as "'+dup.name+'")':'')); continue; }
+    if(f.size>4*1048576){ // big export: show progress and let the toast paint before the parse blocks the thread
+      toast('Reading '+f.name+' ('+Math.round(f.size/1048576)+' MB) — this can take a minute…');
+      await new Promise(r=>setTimeout(r,60));
+    }
     let text=null;
-    try{ text=await fileToText(f); }catch(e){ toast('Could not read '+f.name+' — '+(e.message||e)); }
+    try{ text=await bufferToText(f.name,buf); }catch(e){ toast('Could not read '+f.name+' — '+(e.message||e)); }
     if(text==null) continue;
-    if(ingestText(f.name,text,expected)) ok++;
+    if(ingestText(f.name,text,expected,hash)) ok++;
   }
   if(ok){
     if(!S.ui.month) S.ui.month=latestMonth();
@@ -2635,7 +2714,9 @@ async function handleFiles(list, expected){
     const ds=[...allDataDates()];
     if(r&&!ds.some(d=>d>=r.from&&d<=r.to)&&ds.length){ S.ui.month=latestMonth(); }
     save(); rebuild(); renderAll();
-    toast(ok+' file'+(ok>1?'s':'')+' loaded');
+    toast(ok+' file'+(ok>1?'s':'')+' loaded'+(skipped?' · '+skipped+' skipped (already uploaded)':''));
+  }else if(skipped){
+    toast(skipped+' file'+(skipped>1?'s':'')+' skipped — already uploaded, nothing new to add');
   }
 }
 document.getElementById('fileInput').onchange=e=>{ const exp=window.__slotExpected; window.__slotExpected=null;
