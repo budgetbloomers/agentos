@@ -502,8 +502,12 @@ const dkey = d => d instanceof Date ? d.toISOString().slice(0,10) : String(d).sl
 function parseDateLoose(s){
   if(!s) return null;
   s=s.trim();
-  let m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/); if(m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
-  m=s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/); if(m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  // month/day sanity: an unchecked US-format '12/25/2026' would mint the key '2026-25-12',
+  // which lexicographically beats every real month and blanks the whole dashboard via latestMonth()
+  const chk=(y,mo,d)=>{ mo=+mo; d=+d; if(mo<1||mo>12||d<1||d>31) return null;
+    return y+'-'+String(mo).padStart(2,'0')+'-'+String(d).padStart(2,'0'); };
+  let m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/); if(m) return chk(m[1],m[2],m[3]);
+  m=s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/); if(m) return chk(m[3],m[2],m[1]);
   return null;
 }
 function dateFromFilename(name){
@@ -562,6 +566,10 @@ function normalizeState(){
   if(!Array.isArray(S.files)) S.files=[];
   if(!Array.isArray(S.roster)) S.roster=[];
   for(const k of ['sales','calls','att','evals','tracker','callsMeta']) if(!S[k]) S[k]={};
+  // blobs saved before callsMeta existed: seed provenance from the data itself, so
+  // fullest-day-wins protects pre-existing days instead of silently blind-replacing them
+  for(const d in S.calls){ if(!S.callsMeta[d]){ let n=0; const bk=S.calls[d];
+    for(const k in bk) n+=bk[k].calls||0; S.callsMeta[d]={f:'',n}; } }
   if(S.gwpPerUnit==null) S.gwpPerUnit=89;
   if(!S.ui) S.ui={month:'',mode:'calendar',tab:'dashboard'};
   if(!S.ui.camp) S.ui.camp='';                    // global campaign filter
@@ -583,7 +591,8 @@ for(const store of ['adjust','coach']){
 }
 var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_token');if(!t)return;if(!window.__vasHydrated)return;try{window.__vasLastPush=Date.now();var b=JSON.stringify(S);fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=vas-state',{method:'POST',headers:{'Content-Type':'text/plain','Authorization':'Bearer '+t,'X-Cbx-Client':'v4'},body:b,keepalive:!!(kl&&b.length<60000)}).then(function(r){if(r&&r.ok){}else if(typeof toast==='function')toast('⚠ Cloud save failed ('+(r?r.status:'?')+') — data NOT in the database')}).catch(function(){if(typeof toast==='function')toast('⚠ Cloud save failed (network) — data NOT in the database')})}catch(e){}}
 window.addEventListener('pagehide',function(){try{clearTimeout(__cloudT);__cloudPush(true)}catch(e){}});
-function save(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(S)); }catch(e){ toast('Storage full — could not save'); } clearTimeout(__cloudT); __cloudT=setTimeout(__cloudPush,1500); }
+function save(){ S._rev=Date.now();   // revision stamp — hydrate() compares it so an older cloud blob can never overwrite newer local data
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(S)); }catch(e){ toast('Storage full — could not save'); } clearTimeout(__cloudT); __cloudT=setTimeout(__cloudPush,1500); }
 
 let toastTimer=null;
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
@@ -615,7 +624,7 @@ function detectType(header, sheetName){
   const has=(...ks)=>ks.every(k=>H.some(h=>h.includes(k)));
   if(has('charge amount','contract create date')&&has('account number')) return 'bi';   // Power BI - Active Cases (the money source)
   if(has('date & time','lead disposition')) return 'calls';
-  if(has('employee code','status')&&has('date')&&has('employee name')) return 'attendance';
+  if(has('employee code','status')&&has('date')) return 'attendance';   // Employee Name not required — the parser never reads it
   if(has('qa agent','sales agent cb')) return 'evals';
   if(has('case number','case owner')) return 'opencases';
   if(has('team leader','agent name')&&(has('sales force')||has('call x'))) return 'roster';
@@ -663,11 +672,27 @@ function ingestText(name, text, expected, hash){
   save(); return true;
 }
 
+const STORE_OF={bi:'sales',calls:'calls',attendance:'att',evals:'evals',tracker:'tracker'};
 function regFile(name,type,dates,rows,extra){
+  const nd=[...dates].sort();
+  // same file re-uploaded with a SMALLER date span: days the old version stored but the
+  // new one no longer carries would otherwise survive with no registry entry claiming
+  // them — feeding KPIs forever and undeletable from the UI. Clear them (unless another
+  // file also claims the day).
+  const old=S.files.find(f=>f.name===name&&f.type===type);
+  if(old){
+    const t0=type.split(' ')[0], st=STORE_OF[t0];
+    if(st) for(const d of old.dates||[]){
+      if(nd.includes(d)) continue;
+      if(S.files.some(x=>x!==old&&x.type.split(' ')[0]===t0&&(x.dates||[]).includes(d))) continue;
+      if(st==='calls'){ if(S.callsMeta&&S.callsMeta[d]&&S.callsMeta[d].f===name){ delete S.calls[d]; delete S.callsMeta[d]; } }
+      else delete S[st][d];
+    }
+  }
   S.files=S.files.filter(f=>!(f.name===name&&f.type===type));
-  S.files.push({name,type,dates:[...dates].sort(),rows,at:new Date().toISOString().slice(0,16).replace('T',' '),
+  S.files.push({name,type,dates:nd,rows,at:new Date().toISOString().slice(0,16).replace('T',' '),
     ...(__curFileHash?{hash:__curFileHash}:{}),...(extra||{})});
-  return {type,rows,dates:[...dates]};
+  return {type,rows,dates:nd};
 }
 
 const INGEST={
@@ -680,13 +705,15 @@ const INGEST={
     const VAT=1.15;                                   // 15%, matching the AgentOS BI model
     const byDate={};                                  // date -> owner -> {accts:Set, ex}
     const dates=new Set();
+    let skip=0;
     for(const r of recs){
       const acc=String(r['Account Number']||'').trim();
-      if(!acc||/^applied filters/i.test(acc)) continue;          // R-ING-BI-07 footer guard
-      const chg=parseFloat(String(r['Charge Amount']||'').replace(/[^0-9.\-]/g,''));
-      if(isNaN(chg)) continue;
+      if(!acc||/^applied filters/i.test(acc)) continue;          // R-ING-BI-07 footer guard (expected junk, not counted)
+      // ZA comma-decimal safe: '30,43' must read 30.43, not 3043
+      const chg=parseFloat(String(r['Charge Amount']||'').replace(/\s/g,'').replace(/^(-?\d+),(\d+)$/,'$1.$2').replace(/[^0-9.\-]/g,''));
+      if(isNaN(chg)){ skip++; continue; }
       const d=String(r['Contract Create Date']||'').slice(0,10); // ISO 'YYYY-MM-DD …'
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ skip++; continue; }
       const owner=normName(r['Owner']);
       dates.add(d);
       const o=((byDate[d]=byDate[d]||{})[owner]=byDate[d][owner]||{accts:new Set(),ex:0});
@@ -701,15 +728,16 @@ const INGEST={
       }
     }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    return regFile(name,'bi',[...dates].sort(),recs.length);
+    return regFile(name,'bi',[...dates].sort(),recs.length,{skip});
   },
   calls(recs,name){
     const dates=new Set();
     const buckets={};
+    let skip=0;
     for(const r of recs){
-      const d=parseDateLoose(r['Date & Time']); if(!d) continue;
+      const d=parseDateLoose(r['Date & Time']); if(!d){ skip++; continue; }
+      const agent=(r['Agent']||'').trim(); if(!agent){ skip++; continue; }  // before dates.add: a day of only agent-less rows must not claim the date with an empty bucket
       dates.add(d);
-      const agent=(r['Agent']||'').trim(); if(!agent) continue;
       const key=agent;   // resolved to an employee code at report-build time
       const bk=(buckets[d]=buckets[d]||{});
       const b=bk[key]=bk[key]||{talk:0,calls:0,ans:0,opt:0,saleD:0};
@@ -733,37 +761,39 @@ const INGEST={
       stored.push(d);
     }
     if(kept) toast(kept+' day'+(kept>1?'s':'')+' in '+name+' already covered more fully — kept the fuller data');
-    if(!stored.length&&dates.size) return regFile(name,'calls',[],recs.length); // recognised, but every day was fuller elsewhere
+    if(!stored.length&&dates.size) return regFile(name,'calls',[],recs.length,{skip}); // recognised, but every day was fuller elsewhere
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    return regFile(name,'calls',stored,recs.length);
+    return regFile(name,'calls',stored,recs.length,{skip});
   },
   attendance(recs,name){
     const dates=new Set();
     const byDate={};
+    let skip=0;
     for(const r of recs){
       const d=parseDateLoose(r['Date']); const code=(r['Employee Code']||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-      if(!d||!code) continue;
+      if(!d||!code){ skip++; continue; }
       dates.add(d);
       (byDate[d]=byDate[d]||{})[code]=r['Status']||r['Status Code']||'';
     }
     for(const d of dates) S.att[d]=Object.assign(S.att[d]||{}, byDate[d]);
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    return regFile(name,'attendance',dates,recs.length);
+    return regFile(name,'attendance',dates,recs.length,{skip});
   },
   evals(recs,name){
     const dates=new Set(); const byDate={};
+    let skip=0;
     for(const r of recs){
-      const d=parseDateLoose(r['Date of Call']||r['Date of Assessment']); if(!d) continue;
+      const d=parseDateLoose(r['Date of Call']||r['Date of Assessment']); if(!d){ skip++; continue; }
       const code=('CB'+((r['Sales Agent CB']||'').match(/(\d+)/)||[])[1]).replace('CBundefined','');
-      if(!code) continue;
-      const sc=parseFloat((r['Score %']||'').replace('%','')); if(!isFinite(sc)) continue;
+      if(!code){ skip++; continue; }
+      const sc=parseFloat((r['Score %']||'').replace('%','')); if(!isFinite(sc)){ skip++; continue; }
       dates.add(d);
       const bk=(byDate[d]=byDate[d]||{});
       (bk[code]=bk[code]||[]).push({s:sc,dec:r['Escalation Decision']||'',cat:r['Coaching Category']||r['Critical Fail Category']||'',pri:r['Priority']||'',camp:r['Campaign']||''});
     }
     for(const d of dates) S.evals[d]=byDate[d];
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    return regFile(name,'evals',dates,recs.length);
+    return regFile(name,'evals',dates,recs.length,{skip});
   },
   roster(recs,name,sheet){
     const out=[];
@@ -796,9 +826,10 @@ const INGEST={
   },
   trackerDaily(recs,name,sheet){
     const dates=new Set();
+    let skip=0;
     for(const r of recs){
       const d=parseDateLoose(r['Date']); const code=(r['Emp Code']||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-      if(!d||!code) continue;
+      if(!d||!code){ skip++; continue; }
       dates.add(d);
       (S.tracker[d]=S.tracker[d]||{})[code]={
         tl:r['Team Leader'],campaign:r['Campaign'],agent:r['Agent'],tenure:r['Tenure'],
@@ -809,7 +840,7 @@ const INGEST={
       };
     }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    return regFile(name,'tracker daily'+(sheet?' ('+sheet+')':''),dates,recs.length);
+    return regFile(name,'tracker daily'+(sheet?' ('+sheet+')':''),dates,recs.length,{skip});
   },
   opencases(recs,name){
     const by={}; for(const r of recs){ const s=r['Status']||'?'; by[s]=(by[s]||0)+1; }
@@ -821,10 +852,24 @@ const INGEST={
 function removeFile(idx){
   const f=S.files[idx]; if(!f) return;
   if(!confirm('Remove "'+f.name+'"?\n\nIts data leaves the dashboard and the change is saved to the cloud database.')) return;
+  const t0=f.type.split(' ')[0];
+  // ownership guard: registry date lists overlap by design (daily cumulative BI exports,
+  // overlapping dialler files). A day is only deleted if THIS file still owns it — for
+  // calls that is callsMeta provenance; for the rest, no other same-type file claims it.
+  // Without this, removing yesterday's entry wiped days today's file had re-stored.
+  const claimedElsewhere=d=>S.files.some(x=>x!==f&&x.type.split(' ')[0]===t0&&(x.dates||[]).includes(d));
   const storeOf={bi:'sales',calls:'calls',attendance:'att',evals:'evals'};
-  const st=storeOf[f.type.split(' ')[0]];
-  if(st && f.dates) for(const d of f.dates){ delete S[st][d]; if(st==='calls'&&S.callsMeta) delete S.callsMeta[d]; }
-  if(f.type.startsWith('tracker')) for(const d of f.dates||[]) delete S.tracker[d];
+  const st=storeOf[t0];
+  if(st && f.dates) for(const d of f.dates){
+    if(st==='calls'){
+      if(S.callsMeta&&S.callsMeta[d]&&S.callsMeta[d].f&&S.callsMeta[d].f!==f.name) continue; // a fuller file owns this day now
+      delete S.calls[d]; if(S.callsMeta) delete S.callsMeta[d];
+    }else{
+      if(claimedElsewhere(d)) continue;
+      delete S[st][d];
+    }
+  }
+  if(f.type.startsWith('tracker')) for(const d of f.dates||[]){ if(!claimedElsewhere(d)) delete S.tracker[d]; }
   if(f.type==='open cases') S.opencases=null;
   S.files.splice(idx,1);
   save(); rebuild(); render();
@@ -960,7 +1005,7 @@ function buildModel(range, periodKey){
     for(const [k,v] of Object.entries(S.sales[d]||{})){
       const c=resolveKey(k);
       if(c){ const t=salesBy[d][c]=salesBy[d][c]||{n:0,gwp:0,canc:0}; t.n+=v.n; t.gwp+=v.gwp; t.canc+=v.canc||0; }
-      else if(resolveKey(k)!==null||S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'sales',n:0}; u.n+=v.n; }
+      else if(resolveKey(k)!==null||S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'sales',n:0,gwp:0}; u.n+=v.n; u.gwp+=v.gwp||0; }
     }
     for(const [k,v] of Object.entries(S.calls[d]||{})){
       const c=resolveKey(k);
@@ -2324,8 +2369,8 @@ PAGES.data=()=>{
   const reg=S.files.length?`<div class="tablewrap" style="max-height:340px"><table class="data"><thead><tr>
       <th class="l">File</th><th class="l">Detected as</th><th class="l">Dates covered</th><th>Rows</th><th class="l">Uploaded</th><th></th></tr></thead><tbody>
     ${S.files.map((f,i)=>`<tr><td class="l">${esc(f.name)}</td><td class="l">${esc(typeLabel[f.type.split(' (')[0]]||f.type)}</td>
-      <td class="l">${f.dates.length?(f.dates.length>3?f.dates[0]+' → '+f.dates[f.dates.length-1]+' ('+f.dates.length+' days)':f.dates.join(', ')):'–'}</td>
-      <td>${fmtNum(f.rows)}</td><td class="l">${f.at}</td>
+      <td class="l">${f.dates.length?(f.dates.length>3?f.dates[0]+' → '+f.dates[f.dates.length-1]+' ('+f.dates.length+' days)':f.dates.join(', ')):(f.hash&&f.type.startsWith('calls')?'<span class="pill pmuted" title="every day in this file was already covered more fully by another file">covered by fuller file</span>':'–')}</td>
+      <td>${fmtNum(f.rows)}${f.skip?` <span class="pill pmuted" title="rows without a usable date, agent or amount — not loaded">−${fmtNum(f.skip)}</span>`:''}</td><td class="l">${f.at}</td>
       <td><button class="btn small danger" onclick="removeFile(${i})">Remove</button></td></tr>`).join('')}
     </tbody></table></div>`:'<p class="note">Nothing uploaded yet.</p>';
   let cov='';
@@ -2336,10 +2381,11 @@ PAGES.data=()=>{
         <div class="dots"><i class="${S.sales[d]?'s':''}"></i><i class="${S.calls[d]?'c':''}"></i><i class="${S.att[d]?'a':''}"></i><i class="${S.evals[d]?'q':''}"></i></div></div>`).join('')}</div></div>`;
   }
   const un=Object.entries(M?.unmatched||{});
+  const unGwp=un.reduce((s,[,v])=>s+(v.gwp||0),0);
   const unHtml=un.length?`<div class="card mt"><div class="cardhead"><div><h3>Unmatched agents</h3>
-    <div class="sub">names in the uploads that don't match the agent list — names change sometimes, so map them once and it sticks</div></div></div>
+    <div class="sub"><b>This activity is NOT counted in any total until mapped${unGwp?' — R'+fmtNum(unGwp)+' GWP is currently unattributed':''}.</b> Names in the uploads that don't match the agent list — upload a fresh Agent List (new starters appear here), or map them once and it sticks</div></div></div>
     <div class="tablewrap" style="max-height:300px"><table class="data"><thead><tr><th class="l">Identity in file</th><th class="l">Source</th><th>Volume</th><th class="l">Map to</th></tr></thead><tbody>
-    ${un.map(([k,v])=>`<tr><td class="l"><code>${esc(k)}</code></td><td class="l">${v.src}</td><td>${v.n}</td>
+    ${un.map(([k,v])=>`<tr><td class="l"><code>${esc(k)}</code></td><td class="l">${v.src}</td><td>${v.n}${v.gwp?' · R'+fmtNum(v.gwp):''}</td>
       <td class="l"><select onchange="mapIdentity(this.dataset.k,this.value)" data-k="${esc(k)}"><option value="">— choose —</option><option value="__ignore__">Ignore</option>
       ${S.roster.map(a=>`<option value="${a.code}">${esc(a.name)} (${a.code})</option>`).join('')}</select></td></tr>`).join('')}
     </tbody></table></div></div>`:'';
@@ -2623,10 +2669,12 @@ function wbToText(wb){
     const dateCols=new Set();
     try{
       const R=XLSX.utils.decode_range(ws['!ref']||'A1');
-      for(let r=R.s.r;r<=Math.min(R.e.r,R.s.r+9);r++)
+      // header rows only (first two), and 'date' as a whole word — a DATA cell like
+      // "Updated" or "Candidate" deeper in the sheet must never mark a numeric column
+      for(let r=R.s.r;r<=Math.min(R.e.r,R.s.r+1);r++)
         for(let cc=R.s.c;cc<=R.e.c;cc++){
           const h=ws[XLSX.utils.encode_cell({r,c:cc})];
-          if(h&&h.t==='s'&&/date/i.test(h.v)) dateCols.add(cc);
+          if(h&&h.t==='s'&&/(^|[^a-z])date([^a-z]|$)/i.test(h.v)) dateCols.add(cc);
         }
     }catch(e){}
     for(const a in ws){
@@ -2642,7 +2690,10 @@ function wbToText(wb){
       // as hh:mm:ss or talk time reads zero.
       if(c.t==='n'&&c.z&&XLSX.SSF&&XLSX.SSF.is_date(c.z)){
         const z=String(c.z);
-        c.v=(/[hH]/.test(z)&&!/[yYdD]/.test(z))?XLSX.SSF.format('hh:mm:ss',c.v):XLSX.SSF.format('yyyy-mm-dd',c.v);
+        // time-only (no y/d in the format, incl. 'mm:ss'): render elapsed-style so a
+        // 30-hour duration stays 30:00:00 instead of wrapping mod 24, and never
+        // becomes a date (that zeroed talk time)
+        c.v=(/[hHsS]/.test(z)&&!/[yYdD]/.test(z))?XLSX.SSF.format('[h]:mm:ss',c.v):XLSX.SSF.format('yyyy-mm-dd',c.v);
         c.t='s'; delete c.w; delete c.z;
       }else if(c.t==='n'&&c.v>34700&&c.v<60000&&dateCols.has(XLSX.utils.decode_cell(a).c)){
         // date serial hidden behind a non-date format in a date-named column (see above)
@@ -2691,6 +2742,19 @@ async function hashBuf(buf){
     return 'x'+h1.toString(16)+'-'+h2.toString(16)+'-'+u.length.toString(16);
   }
 }
+/* Is the data this registry entry stored still present? A hash entry whose days were
+   since deleted (file removals, orphan cleanup) must NOT block re-uploading the same
+   file to repair the gap — that would show "already uploaded" while the data is gone. */
+function dupStillLive(f){
+  const ty=String(f.type||'');
+  if(ty.startsWith('roster')) return true;
+  if(ty.startsWith('open')) return !!S.opencases;
+  const st=STORE_OF[ty.split(' ')[0]];
+  if(!st) return true;
+  const ds=f.dates||[];
+  if(!ds.length) return false;      // stored nothing (e.g. every day was fuller elsewhere) — always allow a retry
+  return ds.every(d=>S[st][d]);
+}
 async function handleFiles(list, expected){
   let ok=0, skipped=0;
   for(const f of Array.from(list)){
@@ -2698,7 +2762,8 @@ async function handleFiles(list, expected){
     try{ buf=await f.arrayBuffer(); }catch(e){ toast('Could not read '+f.name+' — '+(e.message||e)); continue; }
     const hash=await hashBuf(buf);
     const dup=(S.files||[]).find(x=>x.hash&&x.hash===hash);
-    if(dup){ skipped++; toast('Skipped '+f.name+' — already uploaded'+(dup.name!==f.name?' (as "'+dup.name+'")':'')); continue; }
+    if(dup&&dupStillLive(dup)){ skipped++; toast('Skipped '+f.name+' — already uploaded'+(dup.name!==f.name?' (as "'+dup.name+'")':'')); continue; }
+    if(dup) S.files=S.files.filter(x=>x!==dup);   // stale entry, its data is gone — drop it and re-ingest
     if(f.size>4*1048576){ // big export: show progress and let the toast paint before the parse blocks the thread
       toast('Reading '+f.name+' ('+Math.round(f.size/1048576)+' MB) — this can take a minute…');
       await new Promise(r=>setTimeout(r,60));
@@ -2712,7 +2777,7 @@ async function handleFiles(list, expected){
     if(!S.ui.month) S.ui.month=latestMonth();
     const r=periodRange();
     const ds=[...allDataDates()];
-    if(r&&!ds.some(d=>d>=r.from&&d<=r.to)&&ds.length){ S.ui.month=latestMonth(); }
+    if(r&&!ds.some(d=>d>=r.from&&d<=r.to)&&ds.length){ S.ui.preset=''; S.ui.month=latestMonth(); }  // a sticky 'today/7d' preset outside the data's range would show "No data yet" right after a successful upload
     save(); rebuild(); renderAll();
     toast(ok+' file'+(ok>1?'s':'')+' loaded'+(skipped?' · '+skipped+' skipped (already uploaded)':''));
   }else if(skipped){
@@ -2792,22 +2857,38 @@ function cbxVasContext(){try{
 var SRC=[["bi","Power BI - Active Cases"],["calls","Call Records"],["attendance","Attendance"],["evals","QA Evaluations"],["roster","Agent List"],["open cases","Open Cases"]];var open=false;function daysSince(at){if(!at)return null;var d=new Date(at.replace(" ","T"));if(isNaN(d))return null;return Math.floor((Date.now()-d.getTime())/864e5)}function fresh(days){if(days==null)return["n","#8296B5"];if(days<=7)return["g","#34D399"];if(days<=14)return["a","#FBBF24"];return["r","#FB7185"]}function build(){var host=document.getElementById("vasTrust");var view=document.getElementById("view");if(!view)return;if(!host){host=document.createElement("div");host.id="vasTrust";view.parentNode.insertBefore(host,view)}var S=(window.__mtd&&window.__mtd.state)?window.__mtd.state():null;var files=(S&&S.files)||[];var latest={};files.forEach(function(f){var t=(f.type||"").split(" (")[0];SRC.forEach(function(s){if(t.indexOf(s[0])===0){var d=daysSince(f.at);if(latest[s[0]]==null||(d!=null&&d<latest[s[0]]))latest[s[0]]=d}})});var worst="g";SRC.forEach(function(s){var st=fresh(latest[s[0]])[0];if(st==="r"||st==="n"){if(worst!=="r")worst=(st==="r"?"r":"a")}else if(st==="a"&&worst==="g")worst="a"});var have=SRC.filter(function(s){return latest[s[0]]!=null}).length;var wc=worst==="g"?"#34D399":worst==="a"?"#FBBF24":"#FB7185";var wl=worst==="g"?"All sources fresh":worst==="a"?"Sources need attention":"Stale or missing sources";function chip(color,label){return "<span style='display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(148,182,255,.10);color:"+color+"'><span style='width:7px;height:7px;border-radius:50%;background:"+color+"'></span>"+label+"</span>"}var chips=open?SRC.map(function(s){var d=latest[s[0]];var fr=fresh(d);var lbl=s[1]+" · "+(d==null?"none":d===0?"today":d+"d");return chip(fr[1],lbl)}).join(""):"";var html="<div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:linear-gradient(180deg,rgba(148,182,255,.05),rgba(148,182,255,.02)),#0A1730;border:1px solid rgba(148,182,255,.14);border-radius:16px;padding:10px 14px;margin:0 0 16px'>"+"<span style='font-size:11px;font-weight:800;letter-spacing:.8px;color:#8296B5'>DATA TRUST</span>"+"<span onclick='window.__vasTrustToggle()' style='cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(148,182,255,.10);color:"+wc+"'><span style='width:7px;height:7px;border-radius:50%;background:"+wc+"'></span>"+wl+" · "+have+"/"+SRC.length+" sources "+(open?"▾":"▸")+"</span>"+chips+"<button onclick='go(&quot;data&quot;)' style='margin-left:auto;border:1px solid rgba(148,182,255,.16);background:rgba(148,182,255,.07);color:#C6D3E8;border-radius:9px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer'>Manage uploads →</button>"+"</div>";if(html!==window.__vtLast){window.__vtLast=html;host.innerHTML=html}}window.__vasTrustToggle=function(){open=!open;build()};var t=setInterval(build,10000);setTimeout(build,300);})();</script>
 
 <script>(function(){
+var hydWarned=false;
+function hydRetry(){
+  // 401/5xx/network on hydrate used to leave __vasHydrated false FOREVER: every upload
+  // then looked saved but silently never reached the cloud. Warn once, keep retrying.
+  if(!hydWarned){ hydWarned=true; try{ if(typeof toast==="function") toast("⚠ Cloud not reachable — uploads are NOT saving to the database yet; retrying…"); }catch(e){} }
+  setTimeout(hydrate,30000);
+}
 function hydrate(){
   var t=sessionStorage.getItem("cbx_token"); if(!t) return;
   fetch("https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=vas-state",{headers:{"Authorization":"Bearer "+t}})
    .then(function(r){ if(r.status===404) return {empty:true}; return r.ok ? r.text().then(function(x){return {txt:x}}) : {skip:true}; })
    .then(function(res){
-     if(!res||res.skip) return;                 // auth/5xx — leave local as-is (offline), never push
-     if(res.empty){                             // CLOUD AUTHORITATIVE: no VAS data in the cloud → wipe local copy
+     if(!res||res.skip){ hydRetry(); return; }  // auth/5xx — keep local, warn, retry; never push blind
+     if(res.empty){
+       // no blob in the cloud. If THIS device holds real data (first-ever sync, or the
+       // cloud copy was lost), push it up — factory-wiping local uploads loses work.
+       if(S&&Array.isArray(S.files)&&S.files.length){ window.__vasHydrated=true; if(typeof __cloudPush==="function")__cloudPush(false); return; }
        try{ if(typeof freshState==="function"){ var fr=freshState(); Object.keys(S).forEach(function(k){delete S[k]}); Object.assign(S,fr); localStorage.setItem("vas_mtd_tracker_v1",JSON.stringify(S)); if(typeof rebuild==="function")rebuild(); if(typeof renderAll==="function")renderAll(); } }catch(e){}
        window.__vasHydrated=true; return;
      }
      var cloud; try{cloud=JSON.parse(res.txt)}catch(e){ window.__vasHydrated=true; return; }
-     if(cloud&&typeof cloud==="object"){        // cloud is the source of truth — adopt it wholesale
+     if(cloud&&typeof cloud==="object"){
+       if(cloud._rev&&S&&S._rev&&S._rev>cloud._rev){
+         // local is NEWER than the cloud blob (e.g. the push was aborted by a tab close).
+         // Keep local and re-push it — adopting the older cloud copy would destroy the upload.
+         window.__vasHydrated=true; if(typeof __cloudPush==="function")__cloudPush(false); return;
+       }
+       // cloud is same-or-newer — adopt it wholesale
        try{ Object.keys(S).forEach(function(k){delete S[k]}); Object.assign(S,cloud); localStorage.setItem("vas_mtd_tracker_v1",JSON.stringify(S)); if(typeof rebuild==="function")rebuild(); if(typeof renderAll==="function")renderAll(); }catch(e){}
      }
      window.__vasHydrated=true;
-   }).catch(function(){ /* network error — keep local (offline), never push */ });
+   }).catch(function(){ hydRetry(); });        // network error — keep local, warn, retry
 }
 if(sessionStorage.getItem("cbx_token")) setTimeout(hydrate,400);
 document.addEventListener("cbx-authed",function(){setTimeout(hydrate,400)});
