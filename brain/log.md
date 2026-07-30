@@ -167,3 +167,12 @@ real .xlsx BI → 4 rows, every sales card populated, unattributed sale bannered
 errors. Durable: prep.js now GENERATES real_open.xls/real_closed.xls/real_bi.xlsx and
 display_sweep uploads them (4 new checks). All 8 suites green. Needs deploy to reach
 the live site.
+
+## [2026-07-29] pulse-real-format | VAS uploads: 8 real-format ingest defects fixed
+Real-format probe through PULSE's real upload UI found 8 ingest bugs the CSV fixtures
+never hit: SF HTML .xls unreadable; title rows killed type detection; comma-decimal
+money ×100 (R30,43 → 3043); dd/mm BI CSV dates dropped whole files; xlsx TIME cells
+zeroed all talk time; Grand-Totals footer counted as an open case; file picker hid
+.xlsx/.xls; roster dropped VT agents. Fixed in ingest only (engine frozen, clean files
+byte-identical); skipped footers a visible count; unmatched owners still flagged.
+36/36 probe asserts + full 8-suite regression green (commit facdce8). Needs deploy.
