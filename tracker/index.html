@@ -53,13 +53,12 @@
     display: flex; background: var(--panel); border: 1px solid var(--line);
     border-radius: 11px; padding: 3px; gap: 3px; max-width: 560px; margin-bottom: 16px;
   }
-  .as-btn {
-    flex: 1; border: none; border-radius: 8px; padding: 7px 4px;
-    font: inherit; font-size: 11.5px; font-weight: 800; letter-spacing: 0.3px;
-    background: transparent; color: var(--muted); cursor: pointer;
+  .as-select {
+    flex: 1; width: 100%; border: none; border-radius: 8px; padding: 8px 10px;
+    font-family: inherit; font-size: 12px; font-weight: 800; letter-spacing: 0.3px;
+    background: linear-gradient(135deg, #2E7CF6, #38C6F4); color: #04101F; cursor: pointer;
   }
-  .as-btn.active { background: linear-gradient(135deg, #2E7CF6, #38C6F4); color: #04101F; }
-  .as-btn:not(.active):hover { color: var(--text); }
+  .as-select option { background: var(--panel); color: var(--text); font-weight: 700; }
 
   /* ---------- Brand bar (same logo treatment as Ops/VAS) ---------- */
   .brandbar {
@@ -232,9 +231,11 @@
 
 <div class="wrap">
   <div class="app-switch">
-    <button class="as-btn" onclick="location.href='/'">Ops Analytics</button>
-    <button class="as-btn" onclick="location.href='/pulse/'">VAS Analytics</button>
-    <button class="as-btn active">Tracker Analytics</button>
+    <select class="as-select" aria-label="Switch app" onchange="if(this.value)location.href=this.value">
+      <option value="/">Ops Analytics</option>
+      <option value="/pulse/">VAS Analytics</option>
+      <option value="" selected>Tracker Analytics</option>
+    </select>
   </div>
 
   <div class="brandbar">

@@ -396,9 +396,8 @@ kbd{background:rgba(148,182,255,.12);border-color:rgba(148,182,255,.20);color:va
 .logo-img{width:158px;max-width:100%}
 /* ===== app switcher (two softwares, one platform) ===== */
 .app-switch{display:flex;background:rgba(148,182,255,.07);border:1px solid rgba(148,182,255,.14);border-radius:11px;padding:3px;margin-bottom:14px;gap:3px}
-.as-btn{flex:1;border:none;border-radius:8px;padding:7px 4px;font-size:11.5px;font-weight:800;letter-spacing:.3px;background:transparent;color:#8FA2C4;cursor:pointer;transition:background-color .18s,color .18s}
-.as-btn.active{background:linear-gradient(135deg,#2E7CF6,#38C6F4);color:#04101F}
-.as-btn:not(.active):hover{color:#EAF1FB;background:rgba(148,182,255,.08)}
+.as-select{flex:1;width:100%;border:none;border-radius:8px;padding:8px 10px;font-family:inherit;font-size:12px;font-weight:800;letter-spacing:.3px;background:linear-gradient(135deg,#2E7CF6,#38C6F4);color:#04101F;cursor:pointer}
+.as-select option{background:#0A1730;color:#EAF1FB;font-weight:700}
 /* ===== ask agentos chatbot widget ===== */
 .ask-fab{position:fixed;right:22px;bottom:22px;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#2E7CF6,#38C6F4);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:58;box-shadow:0 10px 28px rgba(46,124,246,.45);transition:transform .18s var(--ease),box-shadow .18s var(--ease)}
 .ask-fab:hover{transform:translateY(-2px) scale(1.05);box-shadow:0 14px 34px rgba(46,124,246,.55)}
@@ -440,9 +439,11 @@ kbd{background:rgba(148,182,255,.12);border-color:rgba(148,182,255,.20);color:va
       <div class="logo-sub">The Chatterbox AgentOS</div>
     </div>
     <div class="app-switch">
-      <button class="as-btn active">Ops Analytics</button>
-      <button class="as-btn" onclick="location.href='pulse/index.html'">VAS Analytics</button>
-      <button class="as-btn" onclick="location.href='tracker/index.html'">Tracker Analytics</button>
+      <select class="as-select" aria-label="Switch app" onchange="if(this.value)location.href=this.value">
+        <option value="" selected>Ops Analytics</option>
+        <option value="pulse/index.html">VAS Analytics</option>
+        <option value="tracker/index.html">Tracker Analytics</option>
+      </select>
     </div>
     <nav class="nav" id="nav"></nav>
     <div class="sys-card" id="sysCard"></div>
