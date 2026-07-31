@@ -489,6 +489,41 @@ function toObjects(rows){
   }
   return {header,recs};
 }
+/* Cooperative variants for BIG uploads: identical logic, but they yield to the event
+   loop periodically so a 60 MB converted export can't freeze the page (the remaining
+   main-thread "lag" after the XLSX parse moved to a Worker). */
+const __yield=()=>new Promise(r=>setTimeout(r,0));
+async function parseCSVAsync(text){
+  const rows=[]; let row=[], field='', q=false;
+  for(let i=0;i<text.length;i++){
+    if(i&&(i&0xFFFFF)===0) await __yield();       // every ~1M chars
+    const c=text[i];
+    if(q){
+      if(c==='"'){ if(text[i+1]==='"'){field+='"';i++;} else q=false; }
+      else field+=c;
+    }else{
+      if(c==='"') q=true;
+      else if(c===','){ row.push(field); field=''; }
+      else if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+      else if(c!=='\r') field+=c;
+    }
+  }
+  if(field!==''||row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+async function toObjectsAsync(rows){
+  let h=0; while(h<rows.length && rows[h].filter(c=>c.trim()).length<2) h++;
+  if(h>=rows.length) return {header:[],recs:[]};
+  const header=rows[h].map(c=>c.trim());
+  const recs=[];
+  for(let i=h+1;i<rows.length;i++){
+    if((i%20000)===0&&i>h+1) await __yield();
+    const r=rows[i]; if(!r.some(c=>c&&c.trim())) continue;
+    const o={}; header.forEach((k,j)=>{ if(k && !(k in o)) o[k]=(r[j]||'').trim(); }); // duplicate header → FIRST wins
+    recs.push(o);
+  }
+  return {header,recs};
+}
 const campOf = c => /cuddle/i.test(c||'')?'Cuddle':(/track|vehicle|vision|^vt$/i.test(c||'')?'VT':'Courtesy');
 const CAMPS=['Cuddle','Courtesy','VT'];
 const CAMPLAB={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',VT:'Matrix Tracker'};
@@ -595,8 +630,8 @@ function save(){ S._rev=Date.now();   // revision stamp — hydrate() compares i
   try{ localStorage.setItem(STORE_KEY, JSON.stringify(S)); }catch(e){ toast('Storage full — could not save'); } clearTimeout(__cloudT); __cloudT=setTimeout(__cloudPush,1500); }
 
 let toastTimer=null;
-function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
-  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),2600); }
+function toast(msg,ms){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),ms||2600); }
 
 /* ================= classification rules ================= */
 function attWeight(status){
@@ -634,7 +669,7 @@ function detectType(header, sheetName){
 
 let rosterCovered=null; // campaigns already replaced by an earlier sheet of the same file
 let __curFileHash=null; // content hash of the file being ingested — regFile stamps it on the registry entry
-function ingestText(name, text, expected, hash){
+async function ingestText(name, text, expected, hash){
   __curFileHash=hash||null;
   const sheets=splitSheets(text);
   const names=Object.keys(sheets);
@@ -647,7 +682,7 @@ function ingestText(name, text, expected, hash){
   });
   let dailyDone=false;
   for(const sn of order){
-    const {header,recs}=toObjects(parseCSV(sheets[sn]));
+    const {header,recs}=await toObjectsAsync(await parseCSVAsync(sheets[sn]));
     if(!recs.length) continue;
     const type=detectType(header, sn);
     if(!type) continue;
@@ -658,7 +693,7 @@ function ingestText(name, text, expected, hash){
   if(!ingested.length && expected && INGEST[expected]){
     // slot upload with unrecognised headers: try the slot's own parser as a last resort
     const first=Object.values(sheets)[0]||'';
-    const {recs}=toObjects(parseCSV(first));
+    const {recs}=await toObjectsAsync(await parseCSVAsync(first));
     if(recs.length){ try{ const res=INGEST[expected](recs,name); if(res) ingested.push(res); }catch(err){} }
   }
   if(!ingested.length){ toast('Could not recognise "'+name+'" — check the file headers'); return false; }
@@ -2660,7 +2695,14 @@ function exportReport(){
    cellDates + dateNF force ISO yyyy-mm-dd: Excel hands back serials or locale strings
    ("7/13/26"), and INGEST.bi requires /^\d{4}-\d{2}-\d{2}$/ or it silently drops the row. */
 async function fileToText(f){ return bufferToText(f.name, await f.arrayBuffer()); }
-function wbToText(wb){
+/* PURE spreadsheet → "### Sheet:" text conversion. SELF-CONTAINED on purpose: it is
+   serialised with .toString() and shipped into a Web Worker so the multi-second
+   XLSX parse of a 50 MB export runs OFF the main thread (the UI used to freeze
+   solid for the duration — that was the upload "lag"). No globals, no toast, no
+   template literals in here. `data` is an ArrayBuffer (xlsx/xls) or a string
+   (Salesforce HTML-.xls). */
+function __sheetCore(XLSX, data){
+  const wb=(typeof data==='string')?XLSX.read(data,{type:'string'}):XLSX.read(data,{type:'array',cellNF:true});
   for(const sn of wb.SheetNames){
     const ws=wb.Sheets[sn]; if(!ws) continue;
     // Columns whose header names a date, by column index. Some Power BI/SF exports stamp
@@ -2709,27 +2751,56 @@ function wbToText(wb){
   }
   return wb.SheetNames.map(sn=>'### Sheet: '+sn+' ###\n'+XLSX.utils.sheet_to_csv(wb.Sheets[sn],{blankrows:false})).join('\n');
 }
+/* Background parser: a Blob Worker built from __sheetCore's own source, loading the
+   self-hosted SheetJS via importScripts. Falls back to the synchronous in-page parse
+   when workers are unavailable (file://, CSP without worker-src, old browser). */
+let __shWorkerP=null, __shJobs={}, __shSeq=0;
+function __sheetWorkerP(){
+  if(__shWorkerP) return __shWorkerP;
+  __shWorkerP=(async()=>{
+    try{
+      // inline the self-hosted SheetJS into the worker blob — no importScripts, so no
+      // MIME/CSP surprises; the ~1 MB source is fetched once and reused for every file
+      const r=await fetch(new URL('/xlsx.full.min.js',location.href));
+      if(!r.ok) return null;
+      const lib=await r.text();
+      const src=lib+'\n;var __core=('+__sheetCore.toString()+');'+
+        'self.onmessage=function(e){var d=e.data;try{var t=__core(self.XLSX||XLSX,d.data);'+
+        'self.postMessage({id:d.id,text:t});}catch(err){self.postMessage({id:d.id,error:String(err&&err.message||err)});}};';
+      const w=new Worker(URL.createObjectURL(new Blob([src],{type:'text/javascript'})));
+      w.onmessage=e=>{ const j=__shJobs[e.data.id]; if(!j) return; delete __shJobs[e.data.id];
+        e.data.error?j.reject(new Error(e.data.error)):j.resolve(e.data.text); };
+      w.onerror=()=>{ for(const k in __shJobs){ __shJobs[k].reject(new Error('worker failed')); delete __shJobs[k]; } };
+      return w;
+    }catch(e){ return null; }   // no worker support — callers use the in-page parse
+  })();
+  return __shWorkerP;
+}
+async function __convertOffThread(data){
+  const w=await __sheetWorkerP(); if(!w) return null;
+  const id=++__shSeq;
+  return new Promise((resolve,reject)=>{ __shJobs[id]={resolve,reject};
+    try{ w.postMessage({id, data}); }
+    catch(e){ delete __shJobs[id]; reject(e); } });
+}
 async function bufferToText(name, buf){
   const b=new Uint8Array(buf.slice(0,8));
   const isZip=b[0]===0x50&&b[1]===0x4B, isCFB=b[0]===0xD0&&b[1]===0xCF;
-  const needXLSX=()=>{ if(typeof XLSX==='undefined'){ toast('Cannot read '+name+' — the spreadsheet reader did not load. Refresh, or export as CSV.'); return true; } return false; };
+  let data=buf;
   if(!isZip&&!isCFB){
     const text=new TextDecoder('utf-8').decode(buf).replace(/^﻿/,'');
     // Salesforce exports "Open Cases.xls" that is really an HTML <table> — SheetJS
     // parses HTML strings, so route it there instead of feeding tags to parseCSV.
     const head=text.slice(0,512).trimStart().toLowerCase();
-    if(head.startsWith('<')&&/<(!doctype|html|head|meta|table)/.test(head)){
-      if(needXLSX()) return null;
-      return wbToText(XLSX.read(text,{type:'string'}));
-    }
-    return text;
+    if(!(head.startsWith('<')&&/<(!doctype|html|head|meta|table)/.test(head))) return text;
+    data=text;
   }
-  if(needXLSX()) return null;
-  // cellNF keeps each cell's number format on `c.z`; without it SheetJS renders the date
-  // into `c.w` ("7/13/26") and drops `z`, so a date cell is indistinguishable from a plain
-  // number and the rewrite in wbToText can never fire. No cellDates: serials stay numeric
-  // so the conversion is pure serial math and cannot shift a day across timezones.
-  return wbToText(XLSX.read(buf,{type:'array',cellNF:true}));
+  // heavy parse off the main thread when possible — the page keeps painting
+  try{ const t=await __convertOffThread(data); if(t!=null) return t; }catch(e){ /* fall through to the in-page parse */ }
+  if(typeof XLSX==='undefined'){ toast('Cannot read '+name+' — the spreadsheet reader did not load. Refresh, or export as CSV.'); return null; }
+  // cellNF (set inside __sheetCore) keeps each cell's number format on `c.z`; without it
+  // SheetJS renders dates into `c.w` ("7/13/26") and the ISO rewrite could never fire.
+  return __sheetCore(XLSX, data);
 }
 /* Fingerprint the file's BYTES — identical content is recognised no matter what the
    file is called ("call_records (2).xlsx" re-downloaded = same hash), so the daily
@@ -2766,14 +2837,14 @@ async function handleFiles(list, expected){
     const dup=(S.files||[]).find(x=>x.hash&&x.hash===hash);
     if(dup&&dupStillLive(dup)){ skipped++; toast('Skipped '+f.name+' — already uploaded'+(dup.name!==f.name?' (as "'+dup.name+'")':'')); continue; }
     if(dup) S.files=S.files.filter(x=>x!==dup);   // stale entry, its data is gone — drop it and re-ingest
-    if(f.size>4*1048576){ // big export: show progress and let the toast paint before the parse blocks the thread
-      toast('Reading '+f.name+' ('+Math.round(f.size/1048576)+' MB) — this can take a minute…');
+    if(f.size>4*1048576){ // big export: sticky progress toast — the parse itself runs in a background thread
+      toast('Reading '+f.name+' ('+Math.round(f.size/1048576)+' MB) — the app stays usable while this loads…',600000);
       await new Promise(r=>setTimeout(r,60));
     }
     let text=null;
     try{ text=await bufferToText(f.name,buf); }catch(e){ toast('Could not read '+f.name+' — '+(e.message||e)); }
     if(text==null) continue;
-    if(ingestText(f.name,text,expected,hash)) ok++;
+    if(await ingestText(f.name,text,expected,hash)) ok++;
   }
   if(ok){
     if(!S.ui.month) S.ui.month=latestMonth();
