@@ -654,13 +654,26 @@ function isSaleDisp(disp){
 }
 
 /* ================= ingestion ================= */
-function detectType(header, sheetName){
+function detectType(header, sheetName, recs){
   const H=header.map(h=>h.toLowerCase());
   const has=(...ks)=>ks.every(k=>H.some(h=>h.includes(k)));
-  if(has('charge amount','contract create date')&&has('account number')) return 'bi';   // Power BI - Active Cases (the money source)
+  if(has('charge amount','contract create date')&&has('account number')){
+    // Power BI Active vs Inactive are HEADER-IDENTICAL supersets (both carry 40+
+    // columns incl. Contract Deactivate Date) — only the DATA tells them apart:
+    // in an Active export the deactivate date is empty on every row; in an Inactive
+    // (cancellations) export it is filled on every row. Un-guarded, an Inactive file
+    // would REPLACE real sales days with cancelled-contract charges. The deactivate
+    // column appears exactly once, so this sniff is immune to the export's duplicated
+    // Contract Status / Charge Amount headers.
+    const sample=(recs||[]).slice(0,500);
+    const dd=sample.filter(r=>String(r['Contract Deactivate Date']||'').trim()!=='').length;
+    if(sample.length&&dd>=sample.length/2) return 'inactiveIgnored';
+    return 'bi';   // Power BI - Active Cases (the money source)
+  }
   if(has('date & time','lead disposition')) return 'calls';
   if(has('employee code','status')&&has('date')) return 'attendance';   // Employee Name not required — the parser never reads it
   if(has('qa agent','sales agent cb')) return 'evals';
+  if(has('date/time closed')) return 'closedIgnored';   // closed-cases export would otherwise overwrite the open-cases snapshot
   if(has('case number','case owner')) return 'opencases';
   if(has('team leader','agent name')&&(has('sales force')||has('call x'))) return 'roster';
   if(has('date','team leader','emp code','sales achieved')) return 'trackerDaily';
@@ -684,7 +697,7 @@ async function ingestText(name, text, expected, hash){
   for(const sn of order){
     const {header,recs}=await toObjectsAsync(await parseCSVAsync(sheets[sn]));
     if(!recs.length) continue;
-    const type=detectType(header, sn);
+    const type=detectType(header, sn, recs);
     if(!type) continue;
     if(type==='trackerDaily'&&dailyDone) continue;
     const res=INGEST[type](recs, name, sn);
@@ -881,6 +894,17 @@ const INGEST={
     const by={}; for(const r of recs){ const s=r['Status']||'?'; by[s]=(by[s]||0)+1; }
     S.opencases={name,total:recs.length,by};
     return regFile(name,'open cases',[],recs.length);
+  },
+  // Recognised-but-not-used: these arrive in the same daily export drop as the files
+  // this dashboard DOES read. They are acknowledged (no scary "could not recognise")
+  // and deliberately touch nothing — the Ops dashboard is where they belong.
+  inactiveIgnored(recs,name){
+    toast('"'+name+'" is a cancellations (Inactive) export — the VAS dashboard does not use it. Upload it in the Ops dashboard.');
+    return {type:'ignored (cancellations — Ops file)',rows:recs.length,dates:[]};
+  },
+  closedIgnored(recs,name){
+    toast('"'+name+'" is a closed-cases export — the VAS dashboard does not use it. Upload it in the Ops dashboard.');
+    return {type:'ignored (closed cases — Ops file)',rows:recs.length,dates:[]};
   }
 };
 
