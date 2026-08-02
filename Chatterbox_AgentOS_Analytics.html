@@ -540,8 +540,8 @@ const SOURCES = {
     purpose:'Cancelled sales: cancellation counts per agent and GWP lost. Counted unique per account, windowed by Contract Create Date — cancellations report against when the sale was made.'},
   AGENT_LIST:{label:'Agent List (daily base)',system:'Roster',fmt:'.xlsx',color:'sky',
     headers:['Employee Code','Start Date','Team Leader','Agent Name','Campaign','Tenure','Call x','Sales Force','Target'],
-    required:['Employee Code','Agent Name'],snapshot:true,dateH:null,sheetScan:true,
-    purpose:'THE BASE — uploaded daily. Every other report joins onto this roster: CB code, name, team leader, campaign, tenure, dialler alias, Salesforce name. Each upload replaces the previous roster and rebuilds all identity maps; all matching sheets are read.'},
+    required:['Employee Code','Agent Name'],snapshot:true,dateH:null,sheetScan:true,preferHeader:'Campaign',
+    purpose:'THE BASE — uploaded daily. Every other report joins onto this roster: CB code, name, team leader, campaign, tenure, dialler alias, Salesforce name. Each upload replaces the previous roster and rebuilds all identity maps; all matching sheets are read. When the workbook carries a stale legacy tab (the old "Que"-format month sheet) next to the current Campaign-format tabs, only the current-format tabs load — and an agent code appearing on two loaded tabs keeps the LAST tab\'s row, so nobody is on the roster twice.'},
   REFERRALS:{label:'Referrals · Contact Export',system:'Referral tracker',fmt:'.csv',color:'amber',
     headers:['Contact Id','First Name','Last Name','Phone','Email','Business Name','Created','Last Activity','Tags','Referral Details'],required:[],snapshot:false,dateH:null,
     purpose:'The referral contact export. The agent is extracted from the "Agent:" line inside Referral Details and matched to the Agent List by name; the Submitted line dates each referral (Created as fallback). One row = one referral. The earlier simple format (Employee Code / Referrals columns) still loads as a fallback.'},
@@ -845,7 +845,7 @@ function readUpload(file,srcKey){
           if(spec&&spec.sheetScan){
             const norm=h=>String(h||'').toLowerCase().replace(/\s+/g,' ').trim();
             const req=spec.required.map(norm);
-            let all=null;
+            let matched=[];
             for(const sn of wb.SheetNames){
               const rws=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:''});
               if(!rws.length)continue;
@@ -855,6 +855,14 @@ function readUpload(file,srcKey){
               let hi=-1;for(let k=0;k<Math.min(rws.length,15);k++){const hs=rws[k].map(norm);if(req.every(r=>hs.includes(r))){hi=k;break}}
               if(hi<0)continue;
               const sheet=rws.slice(hi);
+              matched.push({sheet,hasPref:!!(spec.preferHeader&&sheet[0].map(norm).includes(norm(spec.preferHeader)))});
+            }
+            // preferHeader: when current-format tabs (carrying this column) sit next to a stale
+            // legacy tab (missing it), only the current-format tabs load — e.g. the Agent List's
+            // leftover "Que"-format month sheet next to the live Campaign-format sheets.
+            if(spec.preferHeader&&matched.some(m=>m.hasPref))matched=matched.filter(m=>m.hasPref);
+            let all=null;
+            for(const {sheet} of matched){
               if(!all){all=sheet}
               else{const map=sheet[0].map(h=>all[0].findIndex(x=>norm(x)===norm(h)));
                 sheet.slice(1).forEach(r=>{const nr=new Array(all[0].length).fill('');r.forEach((v,i)=>{if(map[i]>=0)nr[map[i]]=v});all.push(nr)})}
@@ -1105,7 +1113,31 @@ async function _pushBI(batch,file,ep,t){
   }catch(e){toast('BI rows not written to the database: '+esc(e.message)+' — on-screen figures are unaffected.','err')}
 }
 async function confirmLoad(){
-  const {srcKey,file,parsed}=pendingUpload;const spec=SOURCES[srcKey];
+  const {srcKey,file,parsed}=pendingUpload;
+  const notes=($('#upNotes')?.value||'').trim();
+  const res=applyLoad(srcKey,file,parsed,notes);
+  // SPEED: the rows are already parsed, transformed and in state — the screen is correct
+  // NOW, so confirm now. Persisting used to be awaited here first: the cloud state blob
+  // plus, for BI, a raw-file archive (several MB) and the rows POST. That left the modal
+  // sitting open and the confirmation silent for seconds on a big export. The cloud work
+  // continues below in the background and reports its own outcome when it lands.
+  closeModal();
+  toast(loadMsg(srcKey,res),res.rejects&&!res.loaded?'err':'ok');
+  // Kick off persistence BEFORE re-rendering: a throw anywhere in render() must never be
+  // able to skip the cloud save. Order inside matters — pushBI stamps batch.storage_path,
+  // so it has to finish before saveAudit writes the batch record.
+  (async()=>{
+    try{
+      if(srcKey==='BI_ACTIVE_CASES')await pushBI(res.batch,file);  // real rows + raw archive
+      await Promise.all([saveFacts(srcKey),saveAudit()]);
+    }catch(e){toast('Saved on screen, but the cloud save failed: '+esc(e.message||e),'err')}
+  })();
+  autoMapAgents(); render();
+}
+/* The load core — parse-validated rows into state with every dedup guarantee. Shared by
+   the single-file confirm modal and the bulk intake, so the two paths can never drift. */
+function applyLoad(srcKey,file,parsed,notes){
+  const spec=SOURCES[srcKey];
   // SAME FILE RE-UPLOADED = UPDATE, not a second copy. The file hash identifies the file;
   // if this exact file was loaded before, we reuse its batch id and drop its previous rows
   // (below) so a re-pull or correction REFRESHES it in place. A DIFFERENT file never
@@ -1124,8 +1156,8 @@ async function confirmLoad(){
     original_file_name:file.name,file_hash:parsed.textHash,raw_row_count:parsed.data.length,
     loaded_row_count:loaded.length,rejected_row_count:rejects.length,
     validation_status:rejects.length===0?'passed':(loaded.length?'warning':'failed'),
-    parser_version:'v1.0',notes:($('#upNotes')?.value||'').trim()};
-  let replaced=0,refreshed=0;
+    parser_version:'v1.0',notes:notes||''};
+  let replaced=0,refreshed=0,fullerDays=0;
   if(prevSame){
     // drop this file's OWN previous rows (tagged with its batch id) and retire the old
     // batch record — everything else stays exactly where it is. This is the update.
@@ -1135,13 +1167,27 @@ async function confirmLoad(){
     state.batches=state.batches.filter(b=>b.batch_id!==prevSame.batch_id);
     batch.updated_at=batch.uploaded_at;batch.first_uploaded_at=prevSame.first_uploaded_at||prevSame.uploaded_at;
   }
+  if(srcKey==='AGENT_LIST'&&loaded.length){
+    // One roster row per agent. A code appearing on two loaded tabs keeps the LAST
+    // tab's row (the fresher assignment); the drop is counted on the batch, never silent.
+    const seen=new Map();loaded.forEach((r,i)=>{seen.set(r.cb_norm||('#row'+i),r)});
+    if(seen.size<loaded.length){batch.deduped_roster_rows=loaded.length-seen.size;
+      loaded=[...seen.values()];batch.loaded_row_count=loaded.length}
+  }
   if(spec.snapshot){state.facts[srcKey]=loaded}                       // snapshots replace
   else{let prev=state.facts[srcKey]||[];
     if(srcKey==='ATTENDANCE'&&loaded.length){
       // Monthly register uploads: append across months, but the NEW file wins per
       // employee-day — a corrected or overlapping export (e.g. month-to-date then
       // full month) must never double-count days in the attendance denominators.
-      const akey=r=>{const c=normCB(r.employee_code);return c?c+'|'+r._d:null};
+      // Codes normCB can't normalise (rare: empty/symbol-only) key on the raw code,
+      // so even those rows supersede instead of quietly stacking.
+      const akey=r=>{const c=normCB(r.employee_code)||String(r.employee_code||'').trim().toUpperCase();return c?c+'|'+r._d:null};
+      // The register itself sometimes exports a day twice (identical rows). One row per
+      // employee-day WITHIN the file too — last wins — or the denominators double-count.
+      const inFile=new Map();loaded.forEach((r,i)=>{inFile.set(akey(r)||('#row'+i),r)});
+      if(inFile.size<loaded.length){batch.deduped_in_file=loaded.length-inFile.size;
+        loaded=[...inFile.values()];batch.loaded_row_count=loaded.length}
       const nk=new Set(loaded.map(akey).filter(Boolean));
       const keep=prev.filter(r=>{const k=akey(r);return !k||!nk.has(k)});
       replaced=prev.length-keep.length;prev=keep;
@@ -1158,31 +1204,164 @@ async function confirmLoad(){
         replaced=prev.length-keep.length;prev=keep;
         batch.superseded_range=mn+' → '+mx;
         if(replaced)batch.superseded_prev_rows=replaced}}
+    if((srcKey==='QA_EVALUATIONS'||srcKey==='SF_CLOSED_CASES'||srcKey==='SF_INACTIVE')&&loaded.length){
+      // Daily exports OVERLAP by design — QA is a full history export every time, and
+      // closed-case / cancellation windows get re-pulled with a later end date. Blind
+      // append would double-count, so the NEW file wins per record identity:
+      //   QA           — Record ID (the QA tool's own primary key)
+      //   Closed cases — Case Number (a case closes once)
+      //   Inactive     — Account|Contract|Deactivate date. Account alone is NOT unique
+      //                  across monthly windows (an account can cancel two contracts in
+      //                  different months) — the triple never collides across months.
+      const rkey= srcKey==='QA_EVALUATIONS'?(r=>{const v=String(r.record_id??'').trim();return v||null})
+                : srcKey==='SF_CLOSED_CASES'?(r=>{const v=String(r.case_number??'').trim();return v||null})
+                : (r=>{const a=String(r.account_number??'').trim();return a?a+'|'+String(r.contract_number??'').trim()+'|'+String(r.deactivate_date??''):null});
+      const nk=new Set(loaded.map(rkey).filter(Boolean));
+      const keep=prev.filter(r=>{const k=rkey(r);return !k||!nk.has(k)});
+      replaced=prev.length-keep.length;prev=keep;
+      if(replaced)batch.superseded_prev_rows=replaced}
+    if(srcKey==='CALLX_CALL_RECORDS'&&loaded.length){
+      // Dialler exports overlap (a growing date-range re-export lands next to earlier
+      // chunks; call rows carry no unique ID). Same doctrine as Pulse: FULLEST-DAY-WINS —
+      // per calendar day, whichever file holds MORE rows for that day is authoritative
+      // and the other file's rows for that day are dropped, never stacked. On a tie the
+      // new file wins (it is the fresher export). Days only one file covers are kept.
+      const nd={};loaded.forEach(r=>{if(r._d)nd[r._d]=(nd[r._d]||0)+1});
+      const od={};prev.forEach(r=>{if(r._d&&nd[r._d])od[r._d]=(od[r._d]||0)+1});
+      const loseNew=new Set(),loseOld=new Set();
+      for(const d in nd){if(!od[d])continue;if(od[d]>nd[d])loseNew.add(d);else loseOld.add(d)}
+      if(loseNew.size){const b4=loaded.length;loaded=loaded.filter(r=>!loseNew.has(r._d));
+        fullerDays=b4-loaded.length;batch.kept_fuller_days=fullerDays;batch.loaded_row_count=loaded.length}
+      if(loseOld.size){const keep=prev.filter(r=>!(r._d&&loseOld.has(r._d)));
+        replaced=prev.length-keep.length;prev=keep;
+        if(replaced)batch.superseded_prev_rows=replaced}}
     state.facts[srcKey]=prev.concat(loaded)}                          // time-series append
   state.batches.unshift(batch);
   bumpDataVer();
   state.exceptions=rejects.concat(state.exceptions).slice(0,600);
   if(srcKey==='AGENT_LIST')buildIdentity();
-  // SPEED: the rows are already parsed, transformed and in state — the screen is correct
-  // NOW, so confirm now. Persisting used to be awaited here first: the cloud state blob
-  // plus, for BI, a raw-file archive (several MB) and the rows POST. That left the modal
-  // sitting open and the confirmation silent for seconds on a big export. The cloud work
-  // continues below in the background and reports its own outcome when it lands.
-  closeModal();
-  toast(batch_id+(prevSame?' updated: ':' loaded: ')+loaded.length.toLocaleString()+' rows'
-   +(refreshed?' · same file re-uploaded — refreshed its '+refreshed.toLocaleString()+' previous row(s) in place':'')
-   +(replaced?' · '+replaced.toLocaleString()+(srcKey==='BI_ACTIVE_CASES'?' row(s) replaced for '+(batch.superseded_range||'this period')+' — other months kept':' overlapping day-row(s) superseded by this file'):'')
-   +(rejects.length?' · '+rejects.length+' rejected → exceptions':''),rejects.length&&!loaded.length?'err':'ok');
-  // Kick off persistence BEFORE re-rendering: a throw anywhere in render() must never be
-  // able to skip the cloud save. Order inside matters — pushBI stamps batch.storage_path,
-  // so it has to finish before saveAudit writes the batch record.
-  (async()=>{
+  return {batch,loaded:loaded.length,rejects:rejects.length,replaced,refreshed,fullerDays,prevSame:!!prevSame};
+}
+function loadMsg(srcKey,r){
+  return r.batch.batch_id+(r.prevSame?' updated: ':' loaded: ')+r.loaded.toLocaleString()+' rows'
+   +(r.refreshed?' · same file re-uploaded — refreshed its '+r.refreshed.toLocaleString()+' previous row(s) in place':'')
+   +(r.replaced?' · '+r.replaced.toLocaleString()+(srcKey==='BI_ACTIVE_CASES'?' row(s) replaced for '+(r.batch.superseded_range||'this period')+' — other months kept':' overlapping row(s) superseded by this file — nothing double-counted'):'')
+   +(r.fullerDays?' · '+r.fullerDays.toLocaleString()+' row(s) skipped — an earlier file already covers those day(s) more fully':'')
+   +(r.rejects?' · '+r.rejects+' rejected → exceptions':'');
+}
+
+/* ---------------- BULK INTAKE — drop a whole day's exports at once ----------------
+   Each file's source is detected from its HEADERS (never the filename): a source
+   qualifies only when every required header is present; among qualifiers the best
+   fraction of expected headers wins. That fraction is what disambiguates the
+   look-alikes — a closed-case export also satisfies the open-case required set, and
+   a BI Inactive export satisfies the BI Active required set, but each matches its
+   own contract 100% and the other one only partially. A tie is treated as
+   unrecognised and reported — routed by hand via its slot, never guessed. */
+function detectSource(parsed){
+  const norm=h=>h.toLowerCase().replace(/\s+/g,' ').trim();
+  const have=new Set(parsed.headers.map(norm));
+  let cands=[];
+  for(const k of SRC_KEYS){
+    const s=SOURCES[k];
+    if(!s.required.length||s.required.some(r=>!have.has(norm(r))))continue;
+    const hit=s.headers.filter(h=>have.has(norm(h))).length;
+    const score=s.headers.length?hit/s.headers.length:0;
+    if(score>0)cands.push({k,score});
+  }
+  if(!cands.length)return null;
+  const top=Math.max(...cands.map(c=>c.score));
+  cands=cands.filter(c=>c.score>=top-1e-9).map(c=>c.k);
+  if(cands.length===1)return cands[0];
+  // The two Power BI exports are the one header-identical pair — both carry 40+ columns
+  // that satisfy BOTH contracts. The data itself disambiguates: an Inactive export is
+  // rows of cancelled contracts, an Active export is not. Majority of Contract Status
+  // over a sample decides; any other tie stays unrecognised — routed by hand, never guessed.
+  if(cands.length===2&&cands.includes('BI_ACTIVE_CASES')&&cands.includes('SF_INACTIVE')){
+    const sample=parsed.data.slice(0,500);
+    if(!sample.length)return null;   // header-only file: no data to decide with — don't guess
+    const inact=sample.filter(r=>/inactive/i.test(String(hcol(r,'Contract Status')||''))).length;
+    return inact>=sample.length/2?'SF_INACTIVE':'BI_ACTIVE_CASES';
+  }
+  return null;
+}
+/* Load order for a bulk batch: identity base first so every later join resolves, money
+   and workforce next, high-volume dialler last. Within a source, files load oldest
+   period first so where two files DO overlap, the fresher export is the one that wins. */
+const BULK_ORDER=['AGENT_LIST','ATTENDANCE','BI_ACTIVE_CASES','SF_OPEN_CASES','SF_CLOSED_CASES','SF_INACTIVE','CALLX_CALL_RECORDS','QA_EVALUATIONS'];
+// (REFERRALS is absent by design: its contract has no required headers, so it cannot be
+// header-detected — referral exports load via their own slot, never through bulk.)
+let pendingBulk=null;
+async function handleBulkFiles(files){
+  const list=[...files];if(!list.length)return;
+  toast('Reading '+list.length+' file(s)…','ok');
+  const items=[];
+  for(const f of list){
     try{
-      if(srcKey==='BI_ACTIVE_CASES')await pushBI(batch,file);  // real rows + raw archive
-      await Promise.all([saveFacts(srcKey),saveAudit()]);
-    }catch(e){toast('Saved on screen, but the cloud save failed: '+esc(e.message||e),'err')}
-  })();
-  autoMapAgents(); render();
+      let parsed=await readUpload(f,null);
+      let src=detectSource(parsed);
+      if(src&&SOURCES[src].sheetScan)parsed=await readUpload(f,src);   // re-read: all tabs + header-row scan
+      if(!src){ // multi-tab registers can hide their header row from the generic first-sheet read
+        for(const k of SRC_KEYS){if(!SOURCES[k].sheetScan)continue;
+          const p2=await readUpload(f,k);
+          if(p2.headers.length&&validateHeaders(k,p2.headers).ok){src=k;parsed=p2;break}}}
+      const it={file:f,parsed,src};
+      if(src){
+        const spec=SOURCES[src];
+        it.dupe=!!state.batches.find(b=>b.file_hash===parsed.textHash&&b.source_type===src&&b.validation_status!=='failed');
+        if(spec.dateH){let mn=null,mx=null;
+          for(const raw of parsed.data){const d=isoDay(parseDT(hcol(raw,spec.dateH)));if(!d)continue;if(!mn||d<mn)mn=d;if(!mx||d>mx)mx=d}
+          it.dMin=mn;it.dMax=mx}}
+      items.push(it);
+    }catch(e){items.push({file:f,error:e.message||String(e)})}
+  }
+  items.sort((a,b)=>{
+    const oa=a.src?BULK_ORDER.indexOf(a.src):99,ob=b.src?BULK_ORDER.indexOf(b.src):99;
+    return oa-ob||String(a.dMin||'').localeCompare(String(b.dMin||''))||a.file.name.localeCompare(b.file.name);
+  });
+  pendingBulk=items;
+  const ok=items.filter(i=>i.src),bad=items.filter(i=>!i.src);
+  modal(`
+    <div class="modal-h"><div class="t">Bulk upload — ${items.length} file(s)</div><button class="modal-x" onclick="pendingBulk=null;closeModal()">✕</button></div>
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Sources detected from each file's headers. Files load in dependency order (roster first); every source's own dedup rules apply — re-uploads update in place, overlapping rows are superseded, never stacked.</div>
+    <div class="prev-wrap" style="max-height:340px"><table><thead><tr><th>File</th><th>Detected source</th><th>Rows</th><th>Period</th><th></th></tr></thead><tbody>
+    ${items.map(i=>'<tr><td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">'+esc(i.file.name)+'</td>'
+      +(i.error?'<td colspan="3" style="color:var(--red)">could not read: '+esc(i.error)+'</td>'
+       :i.src?'<td><b>'+esc(SOURCES[i.src].label)+'</b></td><td class="num">'+i.parsed.data.length.toLocaleString()+'</td><td>'+esc(i.dMin?i.dMin+' → '+i.dMax:'—')+'</td>'
+       :'<td colspan="3" style="color:var(--amber)">unrecognised headers — load it by hand via its slot below</td>')
+      +'<td>'+(i.dupe?'<span class="chip a"><span class="dot"></span>already loaded — will update in place</span>':'')+'</td></tr>').join('')}
+    </tbody></table></div>
+    ${bad.length?'<div style="font-size:12px;color:var(--amber);margin:8px 0">'+bad.length+' file(s) will be skipped.</div>':''}
+    <div class="modal-foot">
+      <button class="btn" onclick="pendingBulk=null;closeModal()">Cancel</button>
+      <button class="btn primary" ${ok.length?'':'disabled'} onclick="bulkLoadAll()">Load ${ok.length} file(s)</button>
+    </div>`);
+}
+async function bulkLoadAll(){
+  const items=(pendingBulk||[]).filter(i=>i.src&&!i.error);pendingBulk=null;
+  closeModal();
+  if(!items.length)return;
+  const touched=new Set(),lines=[];
+  for(const it of items){
+    try{
+      const res=applyLoad(it.src,it.file,it.parsed,'bulk upload');
+      touched.add(it.src);
+      if(it.src==='BI_ACTIVE_CASES'){try{await pushBI(res.batch,it.file)}
+        catch(e){toast('BI rows not written to the database: '+esc(e.message||e)+' — on-screen figures are unaffected.','err')}}
+      lines.push({f:it.file.name,ok:res.rejects===0||res.loaded>0,msg:loadMsg(it.src,res)});
+    }catch(e){lines.push({f:it.file.name,ok:false,msg:'FAILED — '+(e.message||String(e))})}
+  }
+  // One cloud save per touched source at the end — not one per file — so a 20-file
+  // morning drop writes each kv blob once instead of racing 20 overlapping saves.
+  try{await Promise.all([...touched].map(k=>saveFacts(k)));await saveAudit()}
+  catch(e){toast('Loaded on screen, but the cloud save failed: '+esc(e.message||e),'err')}
+  autoMapAgents();render();
+  modal(`
+    <div class="modal-h"><div class="t">Bulk upload — done</div><button class="modal-x" onclick="closeModal()">✕</button></div>
+    <div class="prev-wrap" style="max-height:380px"><table><thead><tr><th></th><th>File</th><th>Result</th></tr></thead><tbody>
+    ${lines.map(l=>'<tr><td>'+(l.ok?'<span class="chip g"><span class="dot"></span>ok</span>':'<span class="chip r"><span class="dot"></span>check</span>')+'</td><td style="max-width:240px;overflow:hidden;text-overflow:ellipsis">'+esc(l.f)+'</td><td style="font-size:12px">'+esc(l.msg)+'</td></tr>').join('')}
+    </tbody></table></div>
+    <div class="modal-foot"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
 }
 
 /* Rebuild identity maps from the uploaded Agent List (all systems -> CB) */
@@ -3609,8 +3788,9 @@ function pageUploads(){
   }).join('');
   const bt=state.batches.slice(0,25).map(b=>'<tr><td><b>'+esc(b.batch_id)+'</b></td><td>'+esc(SOURCES[b.source_type]?.label||b.source_type)+'</td><td style="font-size:11px">'+esc(b.original_file_name)+'</td><td class="num">'+b.loaded_row_count.toLocaleString()+'</td><td class="num">'+b.rejected_row_count+'</td><td>'+esc(b.period_start||'—')+' → '+esc(b.period_end||'—')+'</td><td><span class="pill '+(b.validation_status==='passed'?'g':b.validation_status==='warning'?'a':'r')+'">'+b.validation_status+'</span></td><td style="font-size:11px;color:var(--muted)">'+new Date(b.uploaded_at).toLocaleString()+'<br>'+esc(b.uploaded_by)+'</td></tr>').join('');
   const ex=state.exceptions.slice(0,25).map(e=>'<tr><td>'+esc(e.batch_id)+'</td><td>'+esc(SOURCES[e.source]?.label||e.source)+'</td><td class="num">'+e.row+'</td><td>'+esc(e.reason)+'</td><td style="font-size:11px;color:var(--muted)">'+e.sample+'</td></tr>').join('');
-  return '<div class="card" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>Weekly rhythm:</b><span class="pill b">Mon — Ryan uploads all sources</span><span class="pill a">Wed — Jared uploads QA</span><span class="pill v">Fri — Nick reviews Executive view</span>'
-   +'<span style="margin-left:auto;display:flex;gap:8px"><button class="btn danger" onclick="if(confirm(\'Clear all uploaded data? KPI dictionary and rules are kept.\'))clearAll()">Clear all data</button></span></div>'
+  return '<div class="card" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap" ondragover="event.preventDefault();this.classList.add(\'drag\')" ondragleave="this.classList.remove(\'drag\')" ondrop="event.preventDefault();this.classList.remove(\'drag\');if(event.dataTransfer.files.length)handleBulkFiles(event.dataTransfer.files)"><b>Weekly rhythm:</b><span class="pill b">Mon — Ryan uploads all sources</span><span class="pill a">Wed — Jared uploads QA</span><span class="pill v">Fri — Nick reviews Executive view</span>'
+   +'<span style="margin-left:auto;display:flex;gap:8px"><label class="btn primary" style="display:inline-block" title="Drop or pick a whole day\'s exports at once — each file\'s source is detected from its headers, loaded in dependency order, duplicates superseded never stacked">Bulk upload<input type="file" multiple style="display:none" onchange="if(this.files.length){handleBulkFiles(this.files);this.value=\'\'}"></label>'
+   +'<button class="btn danger" onclick="if(confirm(\'Clear all uploaded data? KPI dictionary and rules are kept.\'))clearAll()">Clear all data</button></span></div>'
    +'<div class="slot-grid">'+slots+'</div>'
    +'<div class="grid g2"><div class="card"><div class="card-h"><span class="t">Upload batch audit</span><span class="s">every load is traceable</span><span class="right"><button class="btn small" onclick="exportBatches()">Export CSV</button></span></div>'
    +(state.batches.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Batch</th><th class="noclick">Source</th><th class="noclick">File</th><th class="noclick">Loaded</th><th class="noclick">Rejected</th><th class="noclick">Data period</th><th class="noclick">Status</th><th class="noclick">By / when</th></tr></thead><tbody>'+bt+'</tbody></table></div>':'<div class="empty">No uploads yet.</div>')+'</div>'
