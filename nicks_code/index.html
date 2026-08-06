@@ -529,6 +529,10 @@ const CAMPS=['Cuddle','Courtesy','VT'];
 const CAMPLAB={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',VT:'Matrix Tracker'};
 const normName = s => (s||'').toLowerCase().replace(/-\s*panimax/g,'').replace(/panimax/g,'').replace(/cb[\s-]*\d+/g,'').replace(/[^a-z]/g,'');
 const cbCode = s => { const m=(s||'').match(/CB[\s-]*(\d+)/i); return m?('CB'+parseInt(m[1],10)):null; };
+/* Name TOKENS, for the middle-name case: the dialler prints "Meelindree Crowie" while the
+   roster carries "Meelindree Melanie Crowie". normName strips spaces, so it cannot match
+   those; a subset match on the tokens can - and only when exactly one agent fits. */
+const nameTokens = s => (s||'').toLowerCase().replace(/cb[\s-]*\d+/g,' ').replace(/panimax/g,' ').replace(/[^a-z ]/g,' ').split(/\s+/).filter(Boolean);
 const durSecs = s => { const p=(s||'').split(':').map(Number); return p.length===3?(p[0]*3600+p[1]*60+p[2]):(p.length===2?(p[0]*60+p[1]):0); };
 const fmtDur = t => { t=Math.round(t||0); const h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60; return h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); };
 const fmtPct = (x,d=0) => (x==null||!isFinite(x))?'–':(x*100).toFixed(d)+'%';
@@ -573,6 +577,7 @@ function freshState(){
     gwpPerUnit: 89,
     sales:{},    // date -> ownerKey(normName) -> {n,gwp,canc,unmatchedProducts:[]}
     calls:{},    // date -> agentKey(CBnnn|norm) -> {talk,calls,opt,saleD}
+    vici:{},     // 'from..to' -> multi-day ViciDial aggregate, deliberately NOT split across days
     att:{},      // date -> CBnnn -> status
     evals:{},    // date -> CBnnn -> [scores 0-100]
     tracker:{},  // date -> CBnnn -> imported tracker daily row
@@ -695,6 +700,9 @@ async function ingestText(name, text, expected, hash){
   });
   let dailyDone=false;
   for(const sn of order){
+    if(/"USER NAME"/.test(sheets[sn])&&/time range:/i.test(sheets[sn])){
+      const vr=INGEST.vici(sheets[sn],name); if(vr){ ingested.push(vr); continue; }
+    }
     const {header,recs}=await toObjectsAsync(await parseCSVAsync(sheets[sn]));
     if(!recs.length) continue;
     const type=detectType(header, sn, recs);
@@ -890,6 +898,70 @@ const INGEST={
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
     return regFile(name,'tracker daily'+(sheet?' ('+sheet+')':''),dates,recs.length,{skip});
   },
+  /* ViciDial "Agent Performance Detail" — the SECOND dialler. Cuddle moved off CallX
+     (client note 2026-07-20) and both systems now run side by side, so both exports land
+     in the same daily drop. This file is not per-call: it is one AGGREGATE row per agent
+     covering the range printed in its own preamble, above a TOTALS footer.
+     A ONE-DAY export maps straight onto that day and behaves like any other call file.
+     A MULTI-DAY export cannot be split across its days without inventing figures, so it
+     is stored whole, flagged, and kept OUT of the per-day metrics — never averaged out.
+     Identity comes from the agent NAME through resolveKey (the roster is the base): this
+     export's own ID column is unreliable — "Kyle Kisten" ships as CB138, who is really
+     Jabu Ntombela — and a wrong code would pay one agent's talk time to another. */
+  vici(raw,name){
+    const q=l=>(l.match(/"([^"]*)"/g)||[]).map(s=>s.slice(1,-1));
+    const lines=raw.split(/\r?\n/);
+    const rm=raw.match(/time range:\s*(\d{4}-\d{2}-\d{2})[\s\S]*?\sto\s+(\d{4}-\d{2}-\d{2})/i);
+    if(!rm) { toast('"'+name+'" is a ViciDial report with no "Time range:" line — its period cannot be established, so it was not loaded'); return null; }
+    const from=rm[1], to=rm[2];
+    const hi=lines.findIndex(l=>/^\s*"USER NAME"/.test(l));
+    if(hi<0) return null;
+    const head=q(lines[hi]);
+    const rows=[];
+    let totals=0, admins=0, unmapped=[];
+    for(const l of lines.slice(hi+1)){
+      if(!l.trim()) continue;
+      const c=q(l); if(!c.length) continue;
+      const o={}; head.forEach((h,i)=>o[h]=c[i]);
+      const grp=(o['CURRENT USER GROUP']||'').trim();
+      if(/^totals?$/i.test(grp)){ totals++; continue; }        // the footer line, never an agent
+      if(/^admin$/i.test(grp)){ admins++; continue; }           // supervisor consoles, not selling agents
+      const code=resolveKey((o['USER NAME']||'').trim());
+      if(!code){ unmapped.push((o['USER NAME']||'?').trim()); continue; }
+      const n=k=>parseFloat(o[k])||0;
+      rows.push({code, calls:n('CALLS'), talk:durSecs(o['TALK']),
+                 saleD:n('SALE')+n('VASNP')+n('VASKP'), opt:n('VASKP'), id:(o['ID']||'').trim(),
+                 name:(o['USER NAME']||'').trim()});
+    }
+    if(!rows.length) return null;
+    // Cross-reference the file's own ID column against the roster and report any clash —
+    // flagged, never silently trusted (the name has already decided the attribution).
+    const clash=rows.filter(r=>/^CB\d+$/i.test(r.id)&&r.id.toUpperCase().replace(/[^A-Z0-9]/g,'')!==r.code);
+    if(clash.length) toast(clash.length+' ViciDial row(s) carry an employee code that belongs to someone else — counted by NAME: '
+      +clash.slice(0,3).map(r=>r.name+' ('+r.id+' → '+r.code+')').join(', '));
+    if(unmapped.length) toast(unmapped.length+' ViciDial agent(s) are not on the Agent List and were not counted: '+unmapped.slice(0,4).join(', '));
+    const days=[]; { const d=new Date(from+'T00:00:00Z');
+      while(dkey(d)<=to&&days.length<400){ days.push(dkey(d)); d.setUTCDate(d.getUTCDate()+1); } }
+    if(days.length===1){
+      // Single-day export: merge onto the day. MERGE, not replace — Courtesy is still on
+      // CallX, so the same day legitimately holds rows from both diallers for DIFFERENT
+      // agents. Where one agent appears in both, the fuller record wins (never the sum).
+      const d=days[0]; const bk=(S.calls[d]=S.calls[d]||{}); let kept=0;
+      for(const r of rows){
+        const cur=bk[r.code];
+        if(cur&&(cur.talk||0)>=r.talk){ kept++; continue; }
+        bk[r.code]={talk:r.talk,calls:r.calls,ans:r.calls,opt:r.opt,saleD:r.saleD};
+      }
+      if(kept) toast(kept+' agent-day(s) already had a fuller dialler record — kept those');
+      delete S.vici[from+'..'+to];
+      return regFile(name,'calls (ViciDial)',[d],rows.length,{totals,admins});
+    }
+    // Multi-day export: stored whole and kept out of the per-day metrics, because there is
+    // no honest way to split one number across three days.
+    S.vici[from+'..'+to]={from,to,rows,at:new Date().toISOString().slice(0,16).replace('T',' ')};
+    toast('"'+name+'" covers '+days.length+' days as one total per agent — stored, but NOT split across those days. Export one day at a time for daily talk time.',9000);
+    return regFile(name,'vici range '+from+'..'+to,[],rows.length,{totals,admins,rangeOnly:true});
+  },
   opencases(recs,name){
     const by={}; for(const r of recs){ const s=r['Status']||'?'; by[s]=(by[s]||0)+1; }
     S.opencases={name,total:recs.length,by};
@@ -943,7 +1015,7 @@ function removeFile(idx){
 let IDX=null;
 const normFull = s => (s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 function buildIndex(){
-  IDX={byCode:{},byName:{},byCallx:{}};
+  IDX={byCode:{},byName:{},byCallx:{},tok:[]};
   for(const a of S.roster){
     IDX.byCode[a.code]=a;
     // dialer names can carry a DIFFERENT CB number than the employee code
@@ -951,6 +1023,7 @@ function buildIndex(){
     // string wins over the embedded code when resolving call records.
     if(a.callx) IDX.byCallx[normFull(a.callx)]=a.code;
     for(const n of [a.name,a.sf,a.callx]) if(n){ const k=normName(n); if(k) IDX.byName[k]=a.code; }
+    { const t=nameTokens(a.name); if(t.length>=2) IDX.tok.push({code:a.code,t}); }
   }
 }
 function resolveKey(key){
@@ -958,6 +1031,9 @@ function resolveKey(key){
   if(/^CB\d+$/.test(key)) return IDX.byCode[key]?key:null;
   const fx=IDX.byCallx[normFull(key)]; if(fx) return fx;
   const nn=IDX.byName[normName(key)]; if(nn) return nn;
+  // middle names: match on tokens, but only when exactly one roster agent contains them all
+  const kt=nameTokens(key);
+  if(kt.length>=2){ const h=IDX.tok.filter(e=>kt.every(x=>e.t.includes(x))); if(h.length===1) return h[0].code; }
   const c=cbCode(key); if(c&&IDX.byCode[c]) return c;
   return null;
 }
