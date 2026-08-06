@@ -841,7 +841,7 @@ function readUpload(file,srcKey){
         const buf=rd.result; const bytes=new Uint8Array(buf.slice(0,8));
         const isZip=bytes[0]===0x50&&bytes[1]===0x4B, isCFB=bytes[0]===0xD0&&bytes[1]===0xCF;
         let rows=[];
-        const viaSheetJS=()=>{const wb=XLSX.read(buf,{type:'array',cellDates:true});
+        const viaSheetJS=()=>{const wb=XLSX.read(buf,{type:'array',cellDates:true,dense:true});
           if(spec&&spec.sheetScan){
             const norm=h=>String(h||'').toLowerCase().replace(/\s+/g,' ').trim();
             const req=spec.required.map(norm);
@@ -869,6 +869,7 @@ function readUpload(file,srcKey){
             }
             if(all)return all;
           }
+
           const ws=wb.Sheets[wb.SheetNames[0]];
           return XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''})};
         if(isZip||isCFB){ rows=viaSheetJS(); }                                              // xlsx / legacy xls
