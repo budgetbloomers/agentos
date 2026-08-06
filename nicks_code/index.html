@@ -607,7 +607,7 @@ function normalizeState(){
   if(!S.map) S.map={};
   if(!Array.isArray(S.files)) S.files=[];
   if(!Array.isArray(S.roster)) S.roster=[];
-  for(const k of ['sales','calls','att','evals','tracker','callsMeta']) if(!S[k]) S[k]={};
+  for(const k of ['sales','calls','att','evals','tracker','callsMeta','canc','vici','viciDays']) if(!S[k]) S[k]={};
   // blobs saved before callsMeta existed: seed provenance from the data itself, so
   // fullest-day-wins protects pre-existing days instead of silently blind-replacing them
   for(const d in S.calls){ if(!S.callsMeta[d]){ let n=0; const bk=S.calls[d];   // CallX rows only - ViciDial entries are not a CallX day
