@@ -681,7 +681,7 @@ function detectType(header, sheetName, recs){
   if(has('employee code','status')&&has('date')) return 'attendance';   // Employee Name not required — the parser never reads it
   if(has('qa agent','sales agent cb')) return 'evals';
   if(has('date/time closed')) return 'closedIgnored';   // closed-cases export would otherwise overwrite the open-cases snapshot
-  if(has('case number','case owner')) return 'opencases';
+  if(has('case number','case owner')) return 'opencasesIgnored';   // VAS dropped the Open Cases view - not stored
   if(has('team leader','agent name')&&(has('sales force')||has('call x'))) return 'roster';
   if(has('date','team leader','emp code','sales achieved')) return 'trackerDaily';
   return null;
@@ -722,7 +722,7 @@ async function ingestText(name, text, expected, hash){
   if(!ingested.length){ toast('Could not recognise "'+name+'" — check the file headers'); return false; }
   if(expected){
     const SLOT_TYPES={bi:['bi'],calls:['calls'],attendance:['attendance'],inactive:['cancellations'],vici:['calls (ViciDial)','vici'],
-      evals:['evals'],roster:['roster'],trackerDaily:['tracker','roster'],opencases:['open']};
+      evals:['evals'],roster:['roster'],trackerDaily:['tracker','roster']};
     const want=SLOT_TYPES[expected]||[expected];
     if(!ingested.some(r=>want.some(w=>r.type.startsWith(w))))
       toast('Heads up: "'+name+'" is actually '+ingested.map(r=>r.type).join(', ')+' — filed there instead');
@@ -1030,6 +1030,10 @@ const INGEST={
 
     return regFile(name,'cancellations',[...dates].sort(),recs.length,{skip,dupes});
   },
+  opencasesIgnored(recs,name){
+    toast('"'+name+'" is an open-cases export - the VAS dashboard does not use it. Upload it in the Ops dashboard.');
+    return {type:'ignored (open cases - Ops file)',rows:recs.length,dates:[]};
+  },
   closedIgnored(recs,name){
     toast('"'+name+'" is a closed-cases export — the VAS dashboard does not use it. Upload it in the Ops dashboard.');
     return {type:'ignored (closed cases — Ops file)',rows:recs.length,dates:[]};
@@ -1045,7 +1049,7 @@ function removeFile(idx){
   // calls that is callsMeta provenance; for the rest, no other same-type file claims it.
   // Without this, removing yesterday's entry wiped days today's file had re-stored.
   const claimedElsewhere=d=>S.files.some(x=>x!==f&&x.type.split(' ')[0]===t0&&(x.dates||[]).includes(d));
-  const storeOf={bi:'sales',calls:'calls',attendance:'att',evals:'evals'};
+  const storeOf={bi:'sales',calls:'calls',attendance:'att',evals:'evals',cancellations:'canc'};
   const st=storeOf[t0];
   if(st && f.dates) for(const d of f.dates){
     if(st==='calls'){
@@ -1057,6 +1061,17 @@ function removeFile(idx){
     }
   }
   if(f.type.startsWith('tracker')) for(const d of f.dates||[]){ if(!claimedElsewhere(d)) delete S.tracker[d]; }
+  // A ViciDial DAY file owns only its own v-tagged entries on that day - CallX rows for the
+  // same day belong to another file and must survive. Removing it also releases the day, so
+  // a multi-day range covering it can count again.
+  if(f.type.startsWith('calls (ViciDial)')) for(const d of f.dates||[]){
+    const bk=S.calls[d]; if(!bk) continue;
+    for(const k in bk) if(bk[k]&&bk[k].v) delete bk[k];
+    if(!Object.keys(bk).length){ delete S.calls[d]; if(S.callsMeta) delete S.callsMeta[d]; }
+    if(S.viciDays) delete S.viciDays[d];
+  }
+  // A ViciDial RANGE file carries its own key in the registry type - drop the stored range.
+  if(f.type.startsWith('vici range')&&S.vici) delete S.vici[f.type.replace('vici range ','').trim()];
   if(f.type==='open cases') S.opencases=null;
   S.files.splice(idx,1);
   save(); rebuild(); render();
@@ -2719,7 +2734,7 @@ PAGES.settings=()=>{
     </tbody></table></div></div>
   <div class="card mt"><div class="cardhead"><div><h3>Danger zone</h3></div></div>
     <div class="formrow" style="border:none">
-      <button class="btn danger" onclick="if(confirm('Remove all uploaded data (keeps agent list and settings)?')){['sales','calls','att','evals','tracker'].forEach(k=>S[k]={});S.files=[];S.opencases=null;save();rebuild();renderAll();}">Clear uploaded data</button>
+      <button class="btn danger" onclick="if(confirm('Remove all uploaded data (keeps agent list and settings)?')){['sales','calls','att','evals','tracker','canc','vici','viciDays','callsMeta'].forEach(k=>S[k]={});S.files=[];S.opencases=null;save();rebuild();renderAll();}">Clear uploaded data</button>
       <button class="btn danger" onclick="if(confirm('Reset EVERYTHING to factory defaults?')){localStorage.removeItem(STORE_KEY);location.reload();}">Full reset</button>
     </div></div>`;
 };
