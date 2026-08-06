@@ -610,8 +610,8 @@ function normalizeState(){
   for(const k of ['sales','calls','att','evals','tracker','callsMeta']) if(!S[k]) S[k]={};
   // blobs saved before callsMeta existed: seed provenance from the data itself, so
   // fullest-day-wins protects pre-existing days instead of silently blind-replacing them
-  for(const d in S.calls){ if(!S.callsMeta[d]){ let n=0; const bk=S.calls[d];
-    for(const k in bk) n+=bk[k].calls||0; S.callsMeta[d]={f:'',n}; } }
+  for(const d in S.calls){ if(!S.callsMeta[d]){ let n=0; const bk=S.calls[d];   // CallX rows only - ViciDial entries are not a CallX day
+    for(const k in bk) if(!bk[k].v) n+=bk[k].calls||0; S.callsMeta[d]={f:'',n}; } }
   if(S.gwpPerUnit==null) S.gwpPerUnit=89;
   if(!S.ui) S.ui={month:'',mode:'calendar',tab:'dashboard'};
   if(!S.ui.camp) S.ui.camp='';                    // global campaign filter
@@ -813,8 +813,21 @@ const INGEST={
     for(const d of dates){
       const bk=buckets[d]||{};
       let n=0; for(const k in bk) n+=bk[k].calls;
+      // Split what is already stored for this day by dialler. ViciDial entries are carried
+      // over untouched - the two systems cover different agents on the same day - and the
+      // fullest-day comparison is made against the OTHER CallX rows only. Comparing a CallX
+      // file against ViciDial's call count let a Vici day block the CallX load entirely.
+      const pd=S.calls[d]||{}; const prevV={}; let prevOtherN=0;
+      for(const k in pd){ if(pd[k]&&pd[k].v) prevV[k]=pd[k]; else prevOtherN+=(pd[k].calls||0); }
       const m=S.callsMeta[d];
-      if(m&&m.f!==name&&m.n>n&&S.calls[d]){ kept++; continue; }  // an earlier file has a fuller day — keep it
+      if(m&&m.f!==name&&prevOtherN>n){ kept++; continue; }       // an earlier CallX file holds a fuller day
+      // Where both diallers hold the same agent on this day, the fuller record wins.
+
+
+
+
+
+      for(const k in prevV) if(!bk[k]||(bk[k].talk||0)<prevV[k].talk) bk[k]=prevV[k];
       S.calls[d]=bk; S.callsMeta[d]={f:name,n};
       stored.push(d);
     }
@@ -839,19 +852,24 @@ const INGEST={
   },
   evals(recs,name){
     const dates=new Set(); const byDate={};
-    let skip=0;
+    // An evaluation is identified by its Record ID and can only ever count once. A full-
+    // history export that repeats a row (or lists it twice) must not score the agent twice.
+    const seenIds=new Set();
+    let skip=0, dupes=0;
     for(const r of recs){
       const d=parseDateLoose(r['Date of Call']||r['Date of Assessment']); if(!d){ skip++; continue; }
       const code=('CB'+((r['Sales Agent CB']||'').match(/(\d+)/)||[])[1]).replace('CBundefined','');
       if(!code){ skip++; continue; }
       const sc=parseFloat((r['Score %']||'').replace('%','')); if(!isFinite(sc)){ skip++; continue; }
+      const rid=String(r['Record ID']||'').trim();
+      if(rid){ if(seenIds.has(rid)){ dupes++; continue; } seenIds.add(rid); }
       dates.add(d);
       const bk=(byDate[d]=byDate[d]||{});
       (bk[code]=bk[code]||[]).push({s:sc,dec:r['Escalation Decision']||'',cat:r['Coaching Category']||r['Critical Fail Category']||'',pri:r['Priority']||'',camp:r['Campaign']||''});
     }
     for(const d of dates) S.evals[d]=byDate[d];
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    return regFile(name,'evals',dates,recs.length,{skip});
+    return regFile(name,'evals',dates,recs.length,{skip,dupes});
   },
   roster(recs,name,sheet){
     const out=[];
@@ -869,6 +887,11 @@ const INGEST={
       });
     }
     if(!out.length) return null;
+    // One row per employee code. A sheet that lists someone twice must not put them on the
+    // roster twice - that would double them in Team Split and in the head counts.
+    { const byCode=new Map(); out.forEach(a=>byCode.set(a.code,a));
+      if(byCode.size<out.length){ toast((out.length-byCode.size)+' duplicate agent row(s) in '+name+' - kept one per employee code');
+        out.length=0; byCode.forEach(v=>out.push(v)); } }
     // replace only the campaigns this sheet covers (a VAS list doesn't wipe VT, and vice versa);
     // if an earlier sheet in the same file already covered these campaigns (e.g. the
     // current 'VAS' sheet before an old 'May' sheet), skip this one.
@@ -920,7 +943,7 @@ const INGEST={
     if(hi<0) return null;
     const head=q(lines[hi]);
     const rows=[];
-    let totals=0, admins=0, unmapped=[];
+    let totals=0, admins=0;
     for(const l of lines.slice(hi+1)){
       if(!l.trim()) continue;
       const c=q(l); if(!c.length) continue;
@@ -928,20 +951,20 @@ const INGEST={
       const grp=(o['CURRENT USER GROUP']||'').trim();
       if(/^totals?$/i.test(grp)){ totals++; continue; }        // the footer line, never an agent
       if(/^admin$/i.test(grp)){ admins++; continue; }           // supervisor consoles, not selling agents
-      const code=resolveKey((o['USER NAME']||'').trim());
-      if(!code){ unmapped.push((o['USER NAME']||'?').trim()); continue; }
+      const nm=(o['USER NAME']||'').trim(); if(!nm) continue;   // identity resolved at model-build time, not here
+
       const n=k=>parseFloat(o[k])||0;
-      rows.push({code, calls:n('CALLS'), talk:durSecs(o['TALK']),
-                 saleD:n('SALE')+n('VASNP')+n('VASKP'), opt:n('VASKP'), id:(o['ID']||'').trim(),
-                 name:(o['USER NAME']||'').trim()});
+      rows.push({name:nm, calls:n('CALLS'), talk:durSecs(o['TALK']),
+                 saleD:n('SALE')+n('VASNP')+n('VASKP'), opt:n('VASKP'), id:(o['ID']||'').trim()});
+
     }
     if(!rows.length) return null;
     // Cross-reference the file's own ID column against the roster and report any clash —
     // flagged, never silently trusted (the name has already decided the attribution).
-    const clash=rows.filter(r=>/^CB\d+$/i.test(r.id)&&r.id.toUpperCase().replace(/[^A-Z0-9]/g,'')!==r.code);
+    const clash=rows.filter(r=>{ if(!/^CB\d+$/i.test(r.id)||!IDX) return false; const c=resolveKey(r.name); return c&&c!==r.id.toUpperCase().replace(/[^A-Z0-9]/g,''); });
     if(clash.length) toast(clash.length+' ViciDial row(s) carry an employee code that belongs to someone else — counted by NAME: '
-      +clash.slice(0,3).map(r=>r.name+' ('+r.id+' → '+r.code+')').join(', '));
-    if(unmapped.length) toast(unmapped.length+' ViciDial agent(s) are not on the Agent List and were not counted: '+unmapped.slice(0,4).join(', '));
+      +clash.slice(0,3).map(r=>r.name+' ('+r.id+' -> '+resolveKey(r.name)+')').join(', '));
+
     const days=[]; { const d=new Date(from+'T00:00:00Z');
       while(dkey(d)<=to&&days.length<400){ days.push(dkey(d)); d.setUTCDate(d.getUTCDate()+1); } }
     if(days.length===1){
@@ -950,9 +973,9 @@ const INGEST={
       // agents. Where one agent appears in both, the fuller record wins (never the sum).
       const d=days[0]; const bk=(S.calls[d]=S.calls[d]||{}); let kept=0;
       for(const r of rows){
-        const cur=bk[r.code];
+        const cur=bk[r.name];
         if(cur&&(cur.talk||0)>=r.talk){ kept++; continue; }
-        bk[r.code]={talk:r.talk,calls:r.calls,ans:r.calls,opt:r.opt,saleD:r.saleD};
+        bk[r.name]={talk:r.talk,calls:r.calls,ans:r.calls,opt:r.opt,saleD:r.saleD,v:1};   // v: sourced from ViciDial
       }
       if(kept) toast(kept+' agent-day(s) already had a fuller dialler record - kept those');
       S.viciDays[d]=1;                       // day-level detail exists for this day now
@@ -1180,12 +1203,28 @@ function buildModel(range, periodKey){
       if(c) cancBy[d][c]=(cancBy[d][c]||0)+v;
       else if(S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'cancellations',n:0}; u.n+=v; }
     }
+    const byDialler={};
     for(const [k,v] of Object.entries(S.calls[d]||{})){
       const c=resolveKey(k);
-      if(c){ const t=callsBy[d][c]=callsBy[d][c]||{talk:0,calls:0,ans:0,opt:0,saleD:0}; t.talk+=v.talk; t.calls+=v.calls; t.ans+=(v.ans||0); t.opt+=v.opt; t.saleD+=v.saleD; }
+      if(c){
+        /* ONE DIALLER PER AGENT PER DAY. CallX stores its rows against the raw dialler
+           string and ViciDial against the agent's name, so the same agent can hold an
+           entry from BOTH systems on one day while Cuddle migrates. Adding them would pay
+           one shift twice, so each source is totalled separately and the FULLER one is
+           taken - decided here, at model-build time, so the answer never depends on which
+           file was uploaded first. */
+        const slot=byDialler[c]=byDialler[c]||{v:null,o:null};
+        const w=v.v?'v':'o';
+        const t=slot[w]=slot[w]||{talk:0,calls:0,ans:0,opt:0,saleD:0};
+        t.talk+=v.talk; t.calls+=v.calls; t.ans+=(v.ans||0); t.opt+=v.opt; t.saleD+=v.saleD;
+      }
       else if(S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'calls',n:0}; u.n+=v.calls; }
     }
+    // take the fuller of the two diallers for each agent on this day - never the sum
+    for(const c in byDialler){ const s=byDialler[c];
+      callsBy[d][c]=(s.v&&s.o)?((s.v.talk>=s.o.talk)?s.v:s.o):(s.v||s.o); }
   }
+
 
   // week buckets
   const mondays=[...new Set(dates.map(mondayOf))].sort();
@@ -1259,10 +1298,22 @@ function buildModel(range, periodKey){
       while(dkey(d)<=v.to&&days.length<400){ days.push(dkey(d)); d.setUTCDate(d.getUTCDate()+1); } }
     if(days.some(d=>S.viciDays[d])) continue;                   // superseded by day-level exports
     const last=days[days.length-1];
+    /* ONE DIALLER PER AGENT. An agent inside the range may also have per-day rows from the
+       OTHER dialler (CallX) on those same days - the two systems overlap while Cuddle
+       migrates. Adding both would pay one shift twice, so the fuller record wins: if the
+       per-day rows already hold more talk, the range row is skipped; otherwise the range
+       wins and those days' dialler figures are cleared (their sales and attendance stay). */
+    const inRange=new Set(days), perAgent={};
+    facts.forEach(f=>{ if(!f.rangeAgg&&inRange.has(f.date)) (perAgent[f.code]=perAgent[f.code]||[]).push(f); });
     for(const r of v.rows){
-      const a=metaOf[r.code]; if(!a) continue;                  // not on the current Agent List - leaver
-      facts.push({date:last,week:weekOf[last]||1,code:r.code,tl:a.tl||'',campaign:campOf(a.campaign),
-        agent:a.name||r.code,tenure:a.tenure||'',emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,
+      const rc=resolveKey(r.name); if(!rc) continue;            // not on the Agent List
+      const a=metaOf[rc]; if(!a) continue;                      // leaver - off the current roster
+      const own=perAgent[rc]||[];
+      const perDayTalk=own.reduce((t,f)=>t+(f.talk||0),0);
+      if(perDayTalk>=(r.talk||0)) continue;                     // per-day rows are fuller - keep them
+      own.forEach(f=>{ f.talk=0; f.calls=0; f.ans=0; f.opt=0; });  // range wins - drop the per-day dialler part
+      facts.push({date:last,week:weekOf[last]||1,code:rc,tl:a.tl||'',campaign:campOf(a.campaign),
+        agent:a.name||rc,tenure:a.tenure||'',emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,
         talk:r.talk||0,opt:r.opt||0,ref:0,canc:0,provisional:false,calls:r.calls||0,ans:r.calls||0,
         rangeAgg:true,rangeFrom:v.from,rangeTo:v.to});
     }
