@@ -578,6 +578,7 @@ function freshState(){
     sales:{},    // date -> ownerKey(normName) -> {n,gwp,canc,unmatchedProducts:[]}
     calls:{},    // date -> agentKey(CBnnn|norm) -> {talk,calls,opt,saleD}
     vici:{},     // 'from..to' -> multi-day ViciDial aggregate, deliberately NOT split across days
+    canc:{},     // date -> CBnnn -> cancellations (Contract Deactivate Date, from the BI Inactive export)
     att:{},      // date -> CBnnn -> status
     evals:{},    // date -> CBnnn -> [scores 0-100]
     tracker:{},  // date -> CBnnn -> imported tracker daily row
@@ -672,7 +673,7 @@ function detectType(header, sheetName, recs){
     // Contract Status / Charge Amount headers.
     const sample=(recs||[]).slice(0,500);
     const dd=sample.filter(r=>String(r['Contract Deactivate Date']||'').trim()!=='').length;
-    if(sample.length&&dd>=sample.length/2) return 'inactiveIgnored';
+    if(sample.length&&dd>=sample.length/2) return 'inactive';   // cancellations - the MTD Cancellations column
     return 'bi';   // Power BI - Active Cases (the money source)
   }
   if(has('date & time','lead disposition')) return 'calls';
@@ -719,7 +720,7 @@ async function ingestText(name, text, expected, hash){
   }
   if(!ingested.length){ toast('Could not recognise "'+name+'" — check the file headers'); return false; }
   if(expected){
-    const SLOT_TYPES={bi:['bi'],calls:['calls'],attendance:['attendance'],
+    const SLOT_TYPES={bi:['bi'],calls:['calls'],attendance:['attendance'],inactive:['cancellations'],vici:['calls (ViciDial)','vici'],
       evals:['evals'],roster:['roster'],trackerDaily:['tracker','roster'],opencases:['open']};
     const want=SLOT_TYPES[expected]||[expected];
     if(!ingested.some(r=>want.some(w=>r.type.startsWith(w))))
@@ -728,7 +729,7 @@ async function ingestText(name, text, expected, hash){
   save(); return true;
 }
 
-const STORE_OF={bi:'sales',calls:'calls',attendance:'att',evals:'evals',tracker:'tracker'};
+const STORE_OF={bi:'sales',calls:'calls',attendance:'att',evals:'evals',tracker:'tracker',cancellations:'canc'};
 function regFile(name,type,dates,rows,extra){
   const nd=[...dates].sort();
   // same file re-uploaded with a SMALLER date span: days the old version stored but the
@@ -970,9 +971,39 @@ const INGEST={
   // Recognised-but-not-used: these arrive in the same daily export drop as the files
   // this dashboard DOES read. They are acknowledged (no scary "could not recognise")
   // and deliberately touch nothing — the Ops dashboard is where they belong.
-  inactiveIgnored(recs,name){
-    toast('"'+name+'" is a cancellations (Inactive) export — the VAS dashboard does not use it. Upload it in the Ops dashboard.');
-    return {type:'ignored (cancellations — Ops file)',rows:recs.length,dates:[]};
+  /* CANCELLATIONS — the Power BI Inactive export. This is where the MTD tracker's
+     "Cancellations" and "% of Cancellations" columns come from: the workbook counts
+     Contract Deactivate Date per agent, so a cancellation lands on the day the contract
+     was deactivated, attributed to its Owner. Until now VAS had no upload for this and
+     the figures were keyed in by hand on the Adjustments tab.
+     DEDUP: a contract can only cancel once, so the identity is account|contract|deactivate
+     date. The file is authoritative for every DAY it covers — those days are rebuilt from
+     it — which is what makes a daily re-pull of an overlapping range safe: the same
+     cancellation cannot be counted twice, whether it arrives once or in five exports. */
+  inactive(recs,name){
+    const byDate={}, dates=new Set();
+    const seen=new Set();
+    let skip=0, dupes=0;
+    for(const r of recs){
+      const acc=String(r['Account Number']||'').trim();
+      if(!acc||/^applied filters/i.test(acc)){ skip++; continue; }   // Power BI footer, not data
+      const d=parseDateLoose(r['Contract Deactivate Date']);
+      if(!d){ skip++; continue; }                                     // still active, or no date
+      const key=acc+'|'+String(r['Contract Number']||'').trim()+'|'+d;
+      if(seen.has(key)){ dupes++; continue; }                         // same contract twice in one file
+      seen.add(key);
+      const owner=(r['Owner']||'').trim();   // stored RAW - resolved at model-build time
+      if(!owner){ skip++; continue; }
+
+      dates.add(d);
+      const bk=(byDate[d]=byDate[d]||{});
+      bk[owner]=(bk[owner]||0)+1;
+    }
+    if(!dates.size){ toast('"'+name+'" carried no cancellations with a Contract Deactivate Date'); return null; }
+    // the file owns the days it covers - rebuild them rather than adding to them
+    for(const d of dates) S.canc[d]=byDate[d];
+
+    return regFile(name,'cancellations',[...dates].sort(),recs.length,{skip,dupes});
   },
   closedIgnored(recs,name){
     toast('"'+name+'" is a closed-cases export — the VAS dashboard does not use it. Upload it in the Ops dashboard.');
@@ -1134,13 +1165,18 @@ function buildModel(range, periodKey){
   }
 
   // resolve raw aggregate keys -> codes per date
-  const salesBy={}, callsBy={}, unmatched={};
+  const salesBy={}, callsBy={}, cancBy={}, unmatched={};
   for(const d of dates){
-    salesBy[d]={}; callsBy[d]={};
+    salesBy[d]={}; callsBy[d]={}; cancBy[d]={};
     for(const [k,v] of Object.entries(S.sales[d]||{})){
       const c=resolveKey(k);
       if(c){ const t=salesBy[d][c]=salesBy[d][c]||{n:0,gwp:0,canc:0}; t.n+=v.n; t.gwp+=v.gwp; t.canc+=v.canc||0; }
       else if(resolveKey(k)!==null||S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'sales',n:0,gwp:0}; u.n+=v.n; u.gwp+=v.gwp||0; }
+    }
+    for(const [k,v] of Object.entries(S.canc[d]||{})){
+      const c=resolveKey(k);
+      if(c) cancBy[d][c]=(cancBy[d][c]||0)+v;
+      else if(S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'cancellations',n:0}; u.n+=v; }
     }
     for(const [k,v] of Object.entries(S.calls[d]||{})){
       const c=resolveKey(k);
@@ -1172,13 +1208,13 @@ function buildModel(range, periodKey){
       const terminated=term[code]&&d>=term[code];
       let emp=(started&&!terminated)?1:0;
       const sd=salesBy[d][code], cd=callsBy[d][code];
-      let sales=0,gwp=0,canc=0,provisional=false;
+      let sales=0,gwp=0,canc=(cancBy[d]||{})[code]||0,provisional=false;
       if(camp==='VT'){
         // tracker-unit sales never appear in the Power BI money source —
         // count "Sale Made" dispositions from the dialer instead (no GWP).
         if(cd&&cd.saleD){ sales=cd.saleD; provisional=true; }
       }
-      else if(hasSalesData){ if(sd){sales=sd.n;gwp=sd.gwp;canc=sd.canc;} }
+      else if(hasSalesData){ if(sd){sales=sd.n;gwp=sd.gwp;} }
       else if(tr){ sales=tr.sales; gwp=tr.gwp; }
       else if(cd&&cd.saleD){ sales=cd.saleD; gwp=cd.saleD*S.gwpPerUnit; provisional=true; }
       let talk=cd?cd.talk:(tr?tr.talk:0);
@@ -1215,12 +1251,18 @@ function buildModel(range, periodKey){
   };
 
   const adj=S.adjust[periodKey]||{};
+  // Cancellations now arrive in the BI Inactive upload. Where the file covers a day in
+  // this period, the hand-keyed cancellation top-up is IGNORED rather than added - the
+  // same cancellation must not be counted once from the file and again by hand. Referrals
+  // are untouched: no upload carries them, so the Adjustments tab is still their source.
+  const cancFromFile=dates.some(d=>S.canc[d]&&Object.keys(S.canc[d]).length);
+  const adjC=code=>cancFromFile?0:((adj[code]||{}).c||0);
 
   function agg(rows,code){
     const o={emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,days:0,prov:0,calls:0,ans:0};
     for(const f of rows){ o.emp+=f.emp;o.act+=f.act;o.target+=f.target;o.sales+=f.sales;o.gwp+=f.gwp;o.gwpT+=f.gwpT;
       o.talk+=f.talk;o.opt+=f.opt;o.ref+=f.ref;o.canc+=f.canc;o.days++; o.calls+=(f.calls||0); o.ans+=(f.ans||0); if(f.provisional)o.prov++; }
-    if(code&&adj[code]){ o.canc+=adj[code].c||0; o.ref+=adj[code].r||0; }
+    if(code&&adj[code]){ o.canc+=adjC(code); o.ref+=adj[code].r||0; }
     o.att=o.emp?o.act/o.emp:null; o.pctT=o.target?o.sales/o.target:null; o.spd=o.act?o.sales/o.act:null;
     o.pctG=o.gwpT?o.gwp/o.gwpT:null; o.aveG=o.sales?o.gwp/o.sales:null; o.aveTalk=o.act?o.talk/o.act:null;
     o.optPct=o.sales?o.opt/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null; o.cancPct=o.sales?o.canc/o.sales:null;
@@ -1275,7 +1317,7 @@ function buildModel(range, periodKey){
         const rows=campRows.filter(f=>f.tl===tl);
         const codes=[...new Set(rows.map(f=>f.code))];
         const o=agg(rows,null);
-        for(const c of codes) if(primaryCamp[c]===camp&&adj[c]){ o.canc+=adj[c].c||0; o.ref+=adj[c].r||0; }
+        for(const c of codes) if(primaryCamp[c]===camp&&adj[c]){ o.canc+=adjC(c); o.ref+=adj[c].r||0; }
         o.cancPct=o.sales?o.canc/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null;
         o.hc=codes.length;
         o.onT=codes.filter(c=>mtdCC[camp][c]&&mtdCC[camp][c].pctT!=null&&mtdCC[camp][c].pctT>=S.settings.onTarget).length;
@@ -1283,7 +1325,7 @@ function buildModel(range, periodKey){
       }
       const codes=[...new Set(campRows.map(f=>f.code))];
       const o=agg(campRows,null);
-      for(const c of codes) if(primaryCamp[c]===camp&&adj[c]){ o.canc+=adj[c].c||0; o.ref+=adj[c].r||0; }
+      for(const c of codes) if(primaryCamp[c]===camp&&adj[c]){ o.canc+=adjC(c); o.ref+=adj[c].r||0; }
       o.cancPct=o.sales?o.canc/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null;
       o.hc=codes.length;
       o.onT=codes.filter(c=>mtdCC[camp][c]&&mtdCC[camp][c].pctT!=null&&mtdCC[camp][c].pctT>=S.settings.onTarget).length;
@@ -1292,7 +1334,7 @@ function buildModel(range, periodKey){
   }
   // headline totals stay VAS — tracker-unit sales are a different product with no GWP
   const grand=agg(facts.filter(f=>f.campaign!=='VT'),null);
-  for(const c in adj){ grand.canc+=adj[c].c||0; grand.ref+=adj[c].r||0; }
+  for(const c in adj){ grand.canc+=adjC(c); grand.ref+=adj[c].r||0; }
   grand.cancPct=grand.sales?grand.canc/grand.sales:null; grand.refPct=grand.sales?grand.ref/grand.sales:null;
 
   // QA period average
@@ -1751,7 +1793,7 @@ const NAV=[
     ['manual','Manual',I.book],
   ]},
   {lab:'Operations',items:[
-    ['cases','Open Cases',I.case],
+
     ['data','Upload Station',I.db],
     ['adjust','Adjustments',I.sliders],
   ]},
@@ -1968,8 +2010,6 @@ PAGES.dashboard=()=>{
     {lab:'Attendance %',val:fmtPct(g.att,1),icon:I.users,color:'var(--amber)',
      cmp:gp?deltaChip(g.att,gp.att):'',sub:'',
      s:ratioSeries(f=>f.act,f=>f.emp),tip:fmtNum(g.act)+' of '+fmtNum(g.emp)+' employed shifts worked.'},
-    {lab:'Open Cases',val:S.opencases?fmtNum(S.opencases.total):'–',icon:I.case,color:'var(--muted)',
-     sub:S.opencases?'backlog snapshot':'upload the SF report',s:null,tip:'Open welcome/courtesy cases from the latest Salesforce snapshot.'},
     {lab:'Answer Rate',val:fmtPct(g.ansPct,1),icon:I.target,color:'var(--violet)',
      cmp:gp?deltaChip(g.ansPct,gp.ansPct):'',sub:'',
      s:ratioSeries(f=>f.ans,f=>f.calls),tip:'Answered calls as a share of all dials.'},
@@ -2476,7 +2516,7 @@ PAGES.cases=()=>{
 /* ---------- data / adjustments / settings ---------- */
 PAGES.data=()=>{
   const typeLabel={bi:'Power BI - Active Cases',calls:'Call records',attendance:'Attendance',evals:'QA evaluations',
-    roster:'Agent list','open cases':'Open cases','tracker daily':'Tracker workbook'};
+    roster:'Agent list','open cases':'Open cases','tracker daily':'Tracker workbook',cancellations:'Cancellations (BI Inactive)','calls (ViciDial)':'ViciDial (Cuddle)','vici range':'ViciDial - multi-day aggregate'};
 
   // per-slot status from the file registry
   const statFor=prefixes=>{
@@ -2493,8 +2533,8 @@ PAGES.data=()=>{
     {t:'attendance',icon:I.users,color:'var(--amber)',name:'Attendance',desc:'Attendance register export — shifts, leave, terminations. Exports cap at 1,000 rows, so pull short ranges.',stat:statFor(['attendance'])},
     {t:'evals',icon:I.shield,color:'var(--good)',name:'QA Evaluations',desc:'CallBi full evaluations export — scores, decisions and coaching categories per call.',stat:statFor(['evals'])},
     {t:'roster',icon:I.grid,color:'var(--violet)',name:'Agent List',desc:'Matrix agent list — team leaders, campaigns, tenure, daily targets, start dates. Replaces the current roster.',stat:`<span class="pill pgood">${S.roster.length} agents</span>`},
-    {t:'trackerDaily',icon:I.cal,color:'var(--courtesy)',name:'Tracker Workbook',desc:'A past month\'s tracker workbook (June format) — back-fills that month\'s daily history exactly.',stat:statFor(['tracker'])},
-    {t:'opencases',icon:I.case,color:'var(--rose)',name:'Open Cases',desc:'SF open cases report — a point-in-time backlog snapshot for the Open Cases page.',stat:S.opencases?`<span class="pill pgood">${fmtNum(S.opencases.total)} open</span><span>${esc(S.opencases.name.slice(0,24))}</span>`:'<span class="pill pmuted">Nothing yet</span>'},
+    {t:'inactive',icon:I.alert,color:'var(--rose)',name:'Cancellations (BI Inactive)',desc:'Power BI Inactive export — cancelled contracts, counted per agent by Contract Deactivate Date. This is where the MTD Cancellations and % of Cancellations columns come from. Upload daily; each upload replaces the days it covers, so overlapping pulls never double-count.',stat:statFor(['cancellations'])},
+    {t:'vici',icon:I.phone,color:'var(--cuddle)',name:'ViciDial (Cuddle)',desc:'ViciDial Agent Performance Detail — the Cuddle floor. One row per agent for the range in the file\'s own "Time range:" line. Export ONE DAY AT A TIME: a multi-day pull is one total per agent and cannot be split across days, so it is stored and flagged rather than guessed.',stat:statFor(['calls (ViciDial)','vici range'])},
   ];
   const slotCards=SLOTS.map(s=>`
     <div class="slot" data-slot="${s.t}" tabindex="0" role="button" aria-label="Upload ${s.name}">
@@ -2552,7 +2592,7 @@ PAGES.adjust=()=>{
   const adj=S.adjust[M.periodKey]||{};
   const rows=filteredAgents().map(a=>({a,c:(adj[a.code]||{}).c||0,r:(adj[a.code]||{}).r||0}));
   return `<div class="page-head"><h2>Adjustments</h2>
-    <div class="sub">cancellations &amp; referrals for ${S.ui.month} — no upload carries these, so key them here</div></div>
+    <div class="sub">referrals for ${S.ui.month} — no upload carries those, so key them here. ${Object.keys(S.canc).length?'<b>Cancellations now come from the Cancellations (BI Inactive) upload</b>, so anything keyed below is ignored for cancellations — it cannot be counted twice.':'Cancellations are read from the Cancellations (BI Inactive) upload; key them here only until that file is uploaded.'}</div></div>
   <div class="card" style="padding:0;overflow:hidden"><div class="tablewrap" style="border:none"><table class="data"><thead><tr>
     <th class="l">Team Leader</th><th class="l">Agent</th><th class="l">Campaign</th><th>Cancellations</th><th>Referrals</th></tr></thead><tbody>
   ${rows.map(r=>`<tr><td class="l">${esc(r.a.tl)}</td>
