@@ -1,0 +1,10 @@
+{
+  "name": "vas-diagnostics",
+  "private": true,
+  "type": "module",
+  "description": "Headless verification suites for the VAS dashboard. Run with: npm i && npx playwright install chromium && node audit-dupes.mjs",
+  "devDependencies": {
+    "playwright": "^1.49.0",
+    "xlsx": "^0.18.5"
+  }
+}

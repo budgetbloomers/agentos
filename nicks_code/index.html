@@ -600,6 +600,10 @@ if(!S || S.v!==1) S=freshState();
    back out in that state, forever. `coach` was exactly that: absent from the live blob, so
    `S.coach[M.periodKey]` in PAGES.agents threw and the whole Agent Performance page died on
    every device. Idempotent — also called from rebuild(), which runs after every hydrate. */
+/* THE SOURCE REGISTRY - one list of what a data store is. Declared HERE, above
+   normalizeState, because that runs at load time: a const declared further down would
+   still be in its temporal dead zone and the whole script would die on boot. */
+const DATA_STORES=['sales','calls','callsMeta','att','evals','tracker','canc','vici','viciDays'];
 function normalizeState(){
   S.settings=Object.assign({attOverride:{},onTarget:1,trainingCounts:true},S.settings);
   if(!S.coach) S.coach={};                        // periodKey -> code -> {notes,due,status}
@@ -607,7 +611,7 @@ function normalizeState(){
   if(!S.map) S.map={};
   if(!Array.isArray(S.files)) S.files=[];
   if(!Array.isArray(S.roster)) S.roster=[];
-  for(const k of ['sales','calls','att','evals','tracker','callsMeta','canc','vici','viciDays']) if(!S[k]) S[k]={};
+  for(const k of DATA_STORES) if(!S[k]) S[k]={};
   // blobs saved before callsMeta existed: seed provenance from the data itself, so
   // fullest-day-wins protects pre-existing days instead of silently blind-replacing them
   for(const d in S.calls){ if(!S.callsMeta[d]){ let n=0; const bk=S.calls[d];   // CallX rows only - ViciDial entries are not a CallX day
@@ -730,6 +734,14 @@ async function ingestText(name, text, expected, hash){
   save(); return true;
 }
 
+/* THE SOURCE REGISTRY - one place that knows what a data store is.
+   This knowledge used to be copied in four places (this map, removeFile's own private
+   copy, normalizeState's seed list and the Clear-uploaded-data button). Adding a source
+   meant remembering all four, and twice it was not: cancellations became undeletable
+   because removeFile's copy was stale, and canc/vici/viciDays were missing from
+   normalizeState, which would have killed the app on the next hydrate against an older
+   cloud blob. One list now, used by all four. */
+// file type (first word of the registry type) -> the store it owns
 const STORE_OF={bi:'sales',calls:'calls',attendance:'att',evals:'evals',tracker:'tracker',cancellations:'canc'};
 function regFile(name,type,dates,rows,extra){
   const nd=[...dates].sort();
@@ -988,11 +1000,6 @@ const INGEST={
     toast('"'+name+'" covers '+days.length+' days as one total per agent — stored, but NOT split across those days. Export one day at a time for daily talk time.',9000);
     return regFile(name,'vici range '+from+'..'+to,[],rows.length,{totals,admins,rangeOnly:true});
   },
-  opencases(recs,name){
-    const by={}; for(const r of recs){ const s=r['Status']||'?'; by[s]=(by[s]||0)+1; }
-    S.opencases={name,total:recs.length,by};
-    return regFile(name,'open cases',[],recs.length);
-  },
   // Recognised-but-not-used: these arrive in the same daily export drop as the files
   // this dashboard DOES read. They are acknowledged (no scary "could not recognise")
   // and deliberately touch nothing — the Ops dashboard is where they belong.
@@ -1049,8 +1056,8 @@ function removeFile(idx){
   // calls that is callsMeta provenance; for the rest, no other same-type file claims it.
   // Without this, removing yesterday's entry wiped days today's file had re-stored.
   const claimedElsewhere=d=>S.files.some(x=>x!==f&&x.type.split(' ')[0]===t0&&(x.dates||[]).includes(d));
-  const storeOf={bi:'sales',calls:'calls',attendance:'att',evals:'evals',cancellations:'canc'};
-  const st=storeOf[t0];
+
+  const st=STORE_OF[t0];   // the shared registry - never a second copy
   if(st && f.dates) for(const d of f.dates){
     if(st==='calls'){
       if(S.callsMeta&&S.callsMeta[d]&&S.callsMeta[d].f&&S.callsMeta[d].f!==f.name) continue; // a fuller file owns this day now
@@ -1060,7 +1067,7 @@ function removeFile(idx){
       delete S[st][d];
     }
   }
-  if(f.type.startsWith('tracker')) for(const d of f.dates||[]){ if(!claimedElsewhere(d)) delete S.tracker[d]; }
+
   // A ViciDial DAY file owns only its own v-tagged entries on that day - CallX rows for the
   // same day belong to another file and must survive. Removing it also releases the day, so
   // a multi-day range covering it can count again.
@@ -2734,7 +2741,7 @@ PAGES.settings=()=>{
     </tbody></table></div></div>
   <div class="card mt"><div class="cardhead"><div><h3>Danger zone</h3></div></div>
     <div class="formrow" style="border:none">
-      <button class="btn danger" onclick="if(confirm('Remove all uploaded data (keeps agent list and settings)?')){['sales','calls','att','evals','tracker','canc','vici','viciDays','callsMeta'].forEach(k=>S[k]={});S.files=[];S.opencases=null;save();rebuild();renderAll();}">Clear uploaded data</button>
+      <button class="btn danger" onclick="if(confirm('Remove all uploaded data (keeps agent list and settings)?')){DATA_STORES.forEach(k=>S[k]={});S.files=[];S.opencases=null;save();rebuild();renderAll();}">Clear uploaded data</button>
       <button class="btn danger" onclick="if(confirm('Reset EVERYTHING to factory defaults?')){localStorage.removeItem(STORE_KEY);location.reload();}">Full reset</button>
     </div></div>`;
 };
@@ -3004,7 +3011,7 @@ function exportTracker(){
     for(const [lab,fn] of TL_METRICS) tl.push([lab,...cols.map(fn),fn(tot)]);
     tl.push([]);
   }
-  const tlFmt={}; for(let i=1;i<=12;i++) tlFmt[i]=null;
+
   const tlWs=xlSheet(tl,{});
   // per-row formats: percentages, the duration row and the money rows
   tl.forEach((row,r)=>{
