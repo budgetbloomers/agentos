@@ -578,6 +578,7 @@ function freshState(){
     sales:{},    // date -> ownerKey(normName) -> {n,gwp,canc,unmatchedProducts:[]}
     calls:{},    // date -> agentKey(CBnnn|norm) -> {talk,calls,opt,saleD}
     vici:{},     // 'from..to' -> multi-day ViciDial aggregate, deliberately NOT split across days
+    viciDays:{}, // days that arrived as a SINGLE-DAY ViciDial export - these supersede any range covering them
     canc:{},     // date -> CBnnn -> cancellations (Contract Deactivate Date, from the BI Inactive export)
     att:{},      // date -> CBnnn -> status
     evals:{},    // date -> CBnnn -> [scores 0-100]
@@ -953,7 +954,8 @@ const INGEST={
         if(cur&&(cur.talk||0)>=r.talk){ kept++; continue; }
         bk[r.code]={talk:r.talk,calls:r.calls,ans:r.calls,opt:r.opt,saleD:r.saleD};
       }
-      if(kept) toast(kept+' agent-day(s) already had a fuller dialler record — kept those');
+      if(kept) toast(kept+' agent-day(s) already had a fuller dialler record - kept those');
+      S.viciDays[d]=1;                       // day-level detail exists for this day now
       delete S.vici[from+'..'+to];
       return regFile(name,'calls (ViciDial)',[d],rows.length,{totals,admins});
     }
@@ -1240,6 +1242,29 @@ function buildModel(range, periodKey){
         agent:a?.name||tr?.agent||code,
         tenure:(tr?.tenure)||a?.tenure||'',
         emp,act,target,sales,gwp,gwpT,talk,opt,ref,canc,provisional,calls:ncalls,ans:nans});
+    }
+  }
+
+  /* MULTI-DAY VICIDIAL RANGES. A 5-day pull is one total per agent and cannot be split
+     across its days, so it is added as a single range-aggregate fact on the last day it
+     covers: every period total (WTD, MTD, TL, pivot) then includes it, while the daily
+     sheet skips it rather than showing five days of talk on one date.
+     DEDUP: if ANY of the range's days later arrives as a single-day export, the whole
+     range is dropped - the finer data already contains it, and counting both would pay
+     the agent twice. Ranges reaching outside the period are left out entirely.  */
+  for(const key in S.vici){
+    const v=S.vici[key];
+    if(v.from<range.from||v.to>range.to) continue;              // only count what the period contains
+    const days=[]; { const d=new Date(v.from+'T00:00:00Z');
+      while(dkey(d)<=v.to&&days.length<400){ days.push(dkey(d)); d.setUTCDate(d.getUTCDate()+1); } }
+    if(days.some(d=>S.viciDays[d])) continue;                   // superseded by day-level exports
+    const last=days[days.length-1];
+    for(const r of v.rows){
+      const a=metaOf[r.code]; if(!a) continue;                  // not on the current Agent List - leaver
+      facts.push({date:last,week:weekOf[last]||1,code:r.code,tl:a.tl||'',campaign:campOf(a.campaign),
+        agent:a.name||r.code,tenure:a.tenure||'',emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,
+        talk:r.talk||0,opt:r.opt||0,ref:0,canc:0,provisional:false,calls:r.calls||0,ans:r.calls||0,
+        rangeAgg:true,rangeFrom:v.from,rangeTo:v.to});
     }
   }
 
@@ -2379,7 +2404,7 @@ PAGES.mtd=()=>{
   };
   return `
   <div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · sorted by SPD</div>
-    <div class="spacer"></div><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
+    <div class="spacer"></div><button class="btn small" onclick="exportTracker()">${I.download}<span>Generate MTD tracker</span></button><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
   <div class="chiprow" style="margin-bottom:14px">
     ${[['Courtesy','Matrix Courtesy'],['Cuddle','Matrix Cuddle'],['VT','Matrix Tracker'],['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';save();renderPage()">${l}</button>`).join('')}</div>
   ${sub==='Team Leaders'?tlBlock('Courtesy')+tlBlock('Cuddle')+tlBlock('VT')
@@ -2784,6 +2809,154 @@ function downloadText(filename, text){
   a.href=URL.createObjectURL(new Blob([text],{type:'text/csv'}));
   a.download=filename; a.click(); URL.revokeObjectURL(a.href);
 }
+/* ================= MTD TRACKER GENERATOR =================
+   Rebuilds the "VAS - <Month> MTD Tracker" workbook: Pivot Table, the daily sheet, WTD and
+   MTD per campaign, Team Split and TL MTD. Same sheets, same columns, same order as the
+   workbook this replaces, computed from the uploaded files instead of by hand.
+   Everything is written as real numbers with Excel number formats (talk time as a duration,
+   percentages as percentages) so the sheets stay sortable and chartable.
+   NOTE ON TL MTD: in the hand-built workbook that sheet sat on a different basis to the MTD
+   sheets beside it (head count x planned dialing days, rather than the shifts actually
+   worked), so the two never reconciled. Here it is computed from the SAME actuals as every
+   other sheet - one basis for the whole workbook. */
+const XF={pct:'0.0%',dur:'[h]:mm:ss',money:'#,##0',num:'0.00'};
+function xlSheet(aoa,fmt){
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  if(fmt) for(const key in fmt){
+    const col=Number(key);
+    for(let r=0;r<aoa.length;r++){
+      const ref=XLSX.utils.encode_cell({r,c:col}), cell=ws[ref];
+      if(cell&&typeof cell.v==='number') cell.z=fmt[key];
+    }
+  }
+  return ws;
+}
+const dur=s=>(s||0)/86400;                       // seconds -> Excel time fraction
+const pctOf=(n,d)=>d?n/d:0;
+const ddmm=d=>{const p=String(d).split('-');return p.length===3?`${p[2]}.${p[1]}.${p[0]}`:String(d)};
+
+function trackerAgentCols(mtd){
+  // the workbook's per-agent block; MTD carries the two cancellation columns, WTD does not
+  const c=[['Team Leader',r=>r.tl],['Tenure',r=>r.tenure],['Agent',r=>r.agent],
+    ['Employed Shifts ',r=>r.emp],['Actual Shifts ',r=>r.act],['Att % ',r=>pctOf(r.act,r.emp)],
+    ['Sales Target ',r=>r.target],['Sales Achieved ',r=>r.sales],[' % of Sales Target ',r=>pctOf(r.sales,r.target)],
+    ['SPD',r=>r.act?r.sales/r.act:0]];
+  if(mtd)c.push(['Cancellations',r=>r.canc||0],['% of Cancellations',r=>pctOf(r.canc||0,r.sales)]);
+  c.push(['Ave Talk Time',r=>dur(r.act?r.talk/r.act:0)],
+    ['GWP Target ',r=>r.gwpT],['GWP Achieved ',r=>r.gwp],['% To GWP Target',r=>pctOf(r.gwp,r.gwpT)],
+    ['Ave GWP ',r=>r.sales?r.gwp/r.sales:0],['Referrals ',r=>r.ref||0],
+    ['% Of Referrals To Sales Achieved ',r=>pctOf(r.ref||0,r.sales)],
+    ['QA',r=>r.qa&&r.qa.n?r.qa.avg:'No QA %']);
+  return c;
+}
+function trackerAgentSheet(title,rows,mtd){
+  const cols=trackerAgentCols(mtd);
+  const aoa=[[title],cols.map(c=>c[0])];
+  rows.forEach(r=>aoa.push(cols.map(c=>c[1](r))));
+  if(rows.length){ const t=totalRow(rows,'Grand Total'); t.tenure='';t.agent='';
+    aoa.push(cols.map(c=>c[1](t))); }
+  const fmt={}; cols.forEach((c,i)=>{
+    if(/Att %|% of Sales|% To GWP|% of Cancellations|% Of Referrals|^QA$/.test(c[0].trim()))fmt[i]=XF.pct;
+    if(/Ave Talk Time/.test(c[0]))fmt[i]=XF.dur;
+    if(/GWP/.test(c[0])&&!/%/.test(c[0]))fmt[i]=XF.money;
+    if(/SPD/.test(c[0]))fmt[i]=XF.num;
+  });
+  return xlSheet(aoa,fmt);
+}
+const TL_METRICS=[
+  ['Dialing Days',o=>o.days??''],['Employed HC',o=>o.hc??''],
+  ['Total Employed Shifts',o=>o.emp],['Total Actual Shifts',o=>o.act],
+  ['% Of Attendance',o=>pctOf(o.act,o.emp)],
+  ['Sales Target',o=>o.target],['Sales Achieved',o=>o.sales],
+  ['% To Sales Target',o=>pctOf(o.sales,o.target)],['SPD',o=>o.act?o.sales/o.act:0],
+  ['Cancellations',o=>o.canc||0],['% of Cancellations to Sales',o=>pctOf(o.canc||0,o.sales)],
+  ['GWP Target',o=>o.gwpT],['GWP Achieved',o=>o.gwp],['% To GWP Target',o=>pctOf(o.gwp,o.gwpT)],
+  ['Ave GWP',o=>o.sales?o.gwp/o.sales:0],['Ave Talk Time',o=>dur(o.act?o.talk/o.act:0)],
+  ['Referrals',o=>o.ref||0],['Referrals %',o=>pctOf(o.ref||0,o.sales)],
+  ['Number Of Agents on Target',o=>o.onT??''],['% Of Agents on Target',o=>pctOf(o.onT||0,o.hc||0)],
+  ['QA %',o=>o.qa&&o.qa.n?o.qa.avg:'']];
+function exportTracker(){
+  if(!M||!M.dates.length){ toast('Nothing to build yet - upload the day\'s files first'); return; }
+  if(typeof XLSX==='undefined'||!XLSX.writeFile){ toast('Spreadsheet library not loaded - refresh and retry'); return; }
+  const wb=XLSX.utils.book_new();
+  const monthName=new Date(M.dates[0]+'T00:00:00Z').toLocaleString('en',{month:'long',timeZone:'UTC'});
+  const camps=['Cuddle','Courtesy'];
+
+  /* ---- Pivot Table: the source block the workbook's pivots read from, plus the two
+     side blocks it carries (cancellations by agent, and QA by agent). */
+  const piv=[['Week',M.weeks.length?'Week '+M.weeks[M.weeks.length-1].num:''],['Campaign',camps.join(' + ')],[],
+    ['Team Leader','Tenure','Agent','Sum of Employed Shifts','Sum of Actual Shifts','Sum of Sales Target',
+     'Sum of Sales Achieved','Average of Talk Time','Sum of GWP Target','Sum of GWP Achieved','Sum of Referrals',
+     '','','Row Labels','Count of Contract Deactivate Date','','Agent','Comment','Issued Date','','','Row Labels','Average of Score %']];
+  const allRows=camps.flatMap(c=>agentRows(c,null));
+  allRows.sort((a,b)=>String(a.agent).localeCompare(String(b.agent)));
+  allRows.forEach(r=>piv.push([r.tl,r.tenure,r.agent,r.emp,r.act,r.target,r.sales,
+    dur(r.act?r.talk/r.act:0),r.gwpT,r.gwp,r.ref||0,'','',r.agent,r.canc||0,'','','','','',
+    r.agent,(r.qa&&r.qa.n)?r.qa.avg:'']));
+  XLSX.utils.book_append_sheet(wb,xlSheet(piv,{7:XF.dur,8:XF.money,9:XF.money,21:XF.pct}),'Pivot Table');
+
+  /* ---- the daily sheet, one row per agent per dialing day (the workbook's month tab).
+     Range-aggregate dialler rows are excluded here by design: a multi-day ViciDial export
+     is one total per agent and cannot be attributed to a single day without inventing it.
+     They still count in every period total below. */
+  const dCols=[['Week',r=>'Week '+r.week],['Date',r=>ddmm(r.date)],['Team Leader',r=>r.tl],['Campaign',r=>r.campaign],
+    ['Agent',r=>r.agent],['Emp Code',r=>r.code],['Tenure',r=>r.tenure],['Employed Shifts',r=>r.emp],
+    ['Actual Shifts',r=>r.act],['Att %',r=>pctOf(r.act,r.emp)],['Sales Target',r=>r.target],
+    ['Sales Achieved',r=>r.sales],['% of Sales Target',r=>pctOf(r.sales,r.target)],['Talk Time',r=>dur(r.talk)],
+    ['GWP Target',r=>r.gwpT],['GWP Achieved',r=>r.gwp],['% of GWP Target',r=>pctOf(r.gwp,r.gwpT)],
+    ['Ave GWP',r=>r.sales?r.gwp/r.sales:0],['Referrals',r=>r.ref||0],
+    ['% Of Referrals To Sales Achieved',r=>pctOf(r.ref||0,r.sales)]];
+  const daily=[dCols.map(c=>c[0])];
+  M.facts.filter(f=>!f.rangeAgg).forEach(f=>daily.push(dCols.map(c=>c[1](f))));
+  XLSX.utils.book_append_sheet(wb,xlSheet(daily,{9:XF.pct,12:XF.pct,13:XF.dur,14:XF.money,15:XF.money,16:XF.pct,17:XF.money,19:XF.pct}),monthName.slice(0,31));
+
+  /* ---- WTD (latest week) and MTD, one sheet per campaign, as in the workbook */
+  const wk=M.weeks.length?M.weeks[M.weeks.length-1].num:null;
+  for(const camp of camps){
+    const rows=wk?agentRows(camp,wk):[];
+    XLSX.utils.book_append_sheet(wb,trackerAgentSheet(`${camp} Team${camp==='Courtesy'?'s':''} - Week ${wk||''}`,rows,false),('WTD - '+camp).slice(0,31));
+  }
+  for(const camp of camps)
+    XLSX.utils.book_append_sheet(wb,trackerAgentSheet(camp,agentRows(camp,null),true),('MTD - '+camp).slice(0,31));
+
+  /* ---- Team Split: the roster the whole workbook joins onto */
+  const ts=[['Employee Code','Sales Force','Start Date','Team Leader','Agent Name','Campaign','Tenure','Call x','Sales Force','Target','Employee Code']];
+  S.roster.slice().sort((a,b)=>String(a.tl).localeCompare(String(b.tl))||String(a.name).localeCompare(String(b.name)))
+    .forEach(a=>ts.push([a.code,a.sf||'',a.start||'',a.tl||'',a.name||'',a.campaign||'',a.tenure||'',a.callx||'',a.sf||'',a.target||0,a.code]));
+  XLSX.utils.book_append_sheet(wb,xlSheet(ts,{}),'Team Split');
+
+  /* ---- TL MTD: a block per campaign, one column per team leader + campaign totals */
+  const tl=[];
+  for(const camp of camps){
+    const keys=Object.keys(M.tlAgg).filter(k=>k.split('|')[0]===camp).sort();
+    if(!keys.length) continue;
+    const dialDays=new Set(M.facts.filter(f=>f.campaign===camp&&(f.act>0||f.sales>0||f.talk>0)).map(f=>f.date)).size;
+    const cols=keys.map(k=>({...M.tlAgg[k],days:dialDays}));
+    const tot={...M.campAgg[camp],days:dialDays};
+    tl.push([camp]);
+    tl.push(['Team Leaders',...keys.map(k=>k.split('|')[1]),'Campaign Totals']);
+    for(const [lab,fn] of TL_METRICS) tl.push([lab,...cols.map(fn),fn(tot)]);
+    tl.push([]);
+  }
+  const tlFmt={}; for(let i=1;i<=12;i++) tlFmt[i]=null;
+  const tlWs=xlSheet(tl,{});
+  // per-row formats: percentages, the duration row and the money rows
+  tl.forEach((row,r)=>{
+    const lab=String(row[0]||'');
+    let z=null;
+    if(/^%|%$|% Of|% To|% of/.test(lab)) z=XF.pct;
+    else if(/Ave Talk Time/.test(lab)) z=XF.dur;
+    else if(/GWP Target|GWP Achieved|Ave GWP/.test(lab)) z=XF.money;
+    else if(/SPD/.test(lab)) z=XF.num;
+    if(!z) return;
+    for(let c=1;c<row.length;c++){ const cell=tlWs[XLSX.utils.encode_cell({r,c})]; if(cell&&typeof cell.v==='number') cell.z=z; }
+  });
+  XLSX.utils.book_append_sheet(wb,tlWs,'TL MTD');
+
+  XLSX.writeFile(wb,`VAS - ${monthName} ${M.dates[0].slice(0,4)} MTD Tracker ${ddmm(M.dates[0]).slice(0,5)} - ${ddmm(M.dates[M.dates.length-1]).slice(0,5)}.xlsx`);
+  toast('MTD tracker generated - '+M.dates.length+' dialing day(s), '+allRows.length+' agents');
+}
+
 function exportReport(){
   if(!M){ toast('Nothing to export'); return; }
   if(typeof XLSX==='undefined'||!XLSX.writeFile){ toast('Spreadsheet library not loaded — refresh and retry'); return; }
