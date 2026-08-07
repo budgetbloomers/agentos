@@ -49,6 +49,8 @@ All fixes are in `nicks_code/index.html`, with regression tests in `nicks_code/d
 
 **7. The daily sheet omitted five derived columns.** Att %, % of Sales Target, % of GWP Target, Ave GWP and % Of Referrals To Sales Achieved were not exported, so the daily sheet could not be reconciled line by line. Added.
 
+**7b. Ave Talk Time used the wrong denominator.** The app computed talk ÷ **actual** shifts; the workbook uses talk ÷ **employed** shifts. Invisible on any agent with full attendance, which is why it survived — it only shows up where the two differ. Maharani Munsami: 25,305s over emp 2 / act 1.5 reads **12,652** in the workbook, and the app returned 16,870. Thiloshini Barnard: 19,187s over emp 2 / act 1 reads **9,593**, app returned 19,187. Worst case, Mzwandile Masuku talked for 2,562s per employed shift but was booked absent, so the app divided by zero actual shifts and showed **nothing at all**. Fixed — the metric is now "talk per rostered day", which is what the workbook has always meant.
+
 **8. VAT rate was hardcoded.** `const VAT=1.15` in Pulse against a live-editable `vatRate` rule in Ops — today both are 15%, but any Dictionary change would have silently diverged every money figure between the two apps. Now `settings.vatRate`.
 
 ## Not fixed — these need source data or a ruling
@@ -77,6 +79,20 @@ Nesting   broken out separately;  grand = 614 = Cuddle + Courtesy (Nesting exclu
 
 Every figure ties to the workbook exactly. The same suite returns **0 dialing days and 16 failures** on the pre-fix build.
 
+### Cell-level: every agent, every column
+
+`nicks_code/diagnostics/august-mtd-cells.mjs` goes further — it reconciles **each agent row against each workbook column** across both MTD tabs: employed shifts, actual shifts, Att %, sales target, sales, % of target, SPD, Ave Talk Time, GWP target, GWP achieved, % to GWP target, Ave GWP, referrals, % of referrals.
+
+**910 of 910 cells pass** (65 agents × 14 columns). The pre-fix build cannot load the workbook at all — 65 row problems, zero cells checked.
+
+Two columns are deliberately out of scope for this harness because the daily sheet does not carry them: **Cancellations** (an Adjustments input) and **QA %** (from the evaluations export). Supply those two sources and they can be reconciled the same way.
+
+### The WTD tabs are stale too
+
+`WTD - Cuddle` reports **554 sales over 84 employed shifts** while its own `MTD - Cuddle` reports **470 over 50**; `WTD - Courtesy` reports 276/138 against 144/80. A week-to-date figure cannot exceed the month-to-date that contains it, so both WTD tabs are leftovers from an earlier refresh. The harness detects this automatically and skips them rather than reconciling against bad numbers.
+
+**Four of the workbook's eight sheets are stale:** `TL MTD`, `Team Split`, `WTD - Cuddle`, `WTD - Courtesy`. Only `August` (daily) and the two `MTD -` tabs are current and mutually consistent. This matters for the monthly routine below.
+
 ## Why the running app still shows the old numbers
 
 The screenshot of `Matrix Courtesy` (EMP 4 for every agent, attendance 100%, Bandile Dlamini 3 actual shifts) is the **pre-fix build** — EMP 4 is 01+03+04+05 August, i.e. the phantom Saturday is still being counted, and the MTD tab strip has no **Nesting** chip. Nothing was wrong with what you were looking at; it simply predates these fixes.
@@ -88,6 +104,24 @@ The fixes are on branch `claude/august-file-audit-reconcile-k1tgw0` and are **no
 3. `npx wrangler pages deploy site --project-name chatterbox-agentos`.
 
 I could not run step 3: `chatterbox-agentos.pages.dev` and `api.cloudflare.com` are both blocked by this session's egress policy (403 on CONNECT).
+
+## Monthly routine — keeping this correct
+
+The point of the fixes is that next month's upload comes out right without anyone re-checking by hand. To keep that true:
+
+1. Upload the month's sources, then run all three suites against that month's workbook:
+   ```
+   node nicks_code/diagnostics/august-rules.mjs                        # framework rules
+   node nicks_code/diagnostics/august-reconcile.mjs  <workbook.xlsx>   # grand totals
+   node nicks_code/diagnostics/august-mtd-cells.mjs  <workbook.xlsx>   # every agent × column
+   ```
+   All three exit non-zero on any mismatch, so they drop straight into CI or a pre-deploy check.
+
+2. **Refresh every tab of the workbook before comparing.** Half this month's file was stale, and a stale tab is indistinguishable from a software bug until someone does the arithmetic. The suites now catch WTD-over-MTD automatically; `TL MTD` and `Team Split` still need a human to refresh them.
+
+3. **Enter referrals and cancellations in Adjustments** before the report is read. Neither has a source file — referrals exported 0 against the workbook's 54, and cancellations 91 against 4.
+
+4. If a month introduces a new campaign, add it to `campOf` and `CAMPS`. Anything unrecognised falls through to Courtesy, and the roster parser drops campaigns outside its allowlist — that is exactly how the Nesting agents vanished.
 
 ## Important caveat on scope
 

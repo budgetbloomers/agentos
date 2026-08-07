@@ -1173,7 +1173,13 @@ function buildModel(range, periodKey){
       o.talk+=f.talk;o.opt+=f.opt;o.ref+=f.ref;o.canc+=f.canc;o.days++; o.calls+=(f.calls||0); o.ans+=(f.ans||0); if(f.provisional)o.prov++; }
     if(code&&adj[code]){ o.canc+=adj[code].c||0; o.ref+=adj[code].r||0; }
     o.att=o.emp?o.act/o.emp:null; o.pctT=o.target?o.sales/o.target:null; o.spd=o.act?o.sales/o.act:null;
-    o.pctG=o.gwpT?o.gwp/o.gwpT:null; o.aveG=o.sales?o.gwp/o.sales:null; o.aveTalk=o.act?o.talk/o.act:null;
+    o.pctG=o.gwpT?o.gwp/o.gwpT:null; o.aveG=o.sales?o.gwp/o.sales:null;
+    // Ave Talk Time is talk per EMPLOYED shift, not per actual shift — the workbook's
+    // definition, verified on the agents where the two differ (Maharani Munsami
+    // 25 305s over emp 2 / act 1.5 reads 12 652, and Thiloshini Barnard 19 187s over
+    // emp 2 / act 1 reads 9 593). Dividing by actual shifts overstated every agent
+    // who missed a shift, and blanked anyone who talked on a day booked as absent.
+    o.aveTalk=o.emp?o.talk/o.emp:null;
     o.optPct=o.sales?o.opt/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null; o.cancPct=o.sales?o.canc/o.sales:null;
     o.aht=o.ans?o.talk/o.ans:null; o.ansPct=o.calls?o.ans/o.calls:null;
     return o;
