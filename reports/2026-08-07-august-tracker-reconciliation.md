@@ -45,6 +45,8 @@ All fixes are in `nicks_code/index.html`, with regression tests in `nicks_code/d
 
 **6. TL MTD was missing seven rows.** `QA %` exported blank because QA was only ever computed per agent — TL and campaign rollups had no `qa` at all. Added, averaged over every evaluation in the group (so a 10-eval agent weighs 10× a 1-eval agent, same basis as the campaign figure). Also added the rows the workbook carries and the export omitted: Dialing Days, % of Cancellations, Ave Talk Time, % Of Referrals, % Of Agents on Target.
 
+**7a. Dot-separated dates never parsed.** `parseDateLoose` accepted `-` and `/` but not `.`, while the tracker workbook writes `03.08.2026` — the ZA convention used throughout these exports. Every tracker row failed the date check and was skipped silently (`if(!d||!code){ skip++; continue; }`), so uploading the workbook to back-fill a month did nothing at all. Found by feeding the real August workbook into the app: the model came back with **zero dialing days**. Fixed; `dateFromFilename` already accepted dots, so the two were inconsistent.
+
 **7. The daily sheet omitted five derived columns.** Att %, % of Sales Target, % of GWP Target, Ave GWP and % Of Referrals To Sales Achieved were not exported, so the daily sheet could not be reconciled line by line. Added.
 
 **8. VAT rate was hardcoded.** `const VAT=1.15` in Pulse against a live-editable `vatRate` rule in Ops — today both are 15%, but any Dictionary change would have silently diverged every money figure between the two apps. Now `settings.vatRate`.
@@ -61,6 +63,31 @@ I did **not** change the sales grain, because `specs/AgentOS-v3.8-upload-framewo
 **B. Talk time — the call-record join drops ~22 agents/day.** 03.08: 148.49 h → 91.86 h (−38%); 04.08: 165.14 h → 106.01 h. Agents with real talk in the tracker export as `0:00:00` — CB106, CB136, CB137, CB15, CB152, CB17, CB19, CB196, CB197, CB206, CB21, CB30, CB42, CB44 and more — and **never the reverse**, so calls are being dropped, not just misattributed. A few agents also gain time (CB176: 02:02:28 → 3:19:10), which points at misattribution on top. The roster shows why the VT ones fail — blank `Call x` (no dialer name) — but the Cuddle/Courtesy agents above all have one, so the fault is in the matching itself. **I need the August call-records export** to fix this properly; guessing at name-normalisation without the real dialer strings would be reckless.
 
 **C. Referrals and cancellations have no source.** Referrals export as 0 everywhere against the tracker's 54 (Cuddle 50, Courtesy 4). Cancellations run the other way: 91 in the software (Cuddle 70, Courtesy 21) against the tracker's 4. Both are Adjustments-tab manual inputs — the BI ingest hardcodes `canc: 0` — so this is data entry, not calculation. The cancellation figure in particular looks over-entered by a wide margin and should be checked before anyone reads it.
+
+## End-to-end proof
+
+`nicks_code/diagnostics/august-reconcile.mjs` feeds the **real August workbook's daily sheet** into the app and compares the model against the workbook's own MTD tabs. On the fixed build, **17/17 pass**:
+
+```
+dialing days: 2026-08-03, 2026-08-04
+Cuddle    emp 50  act 44.5  target 400  sales 470  gwpT 35600  gwp 47370  ref 50
+Courtesy  emp 80  act 59.5  target 380  sales 144  gwpT 33820  gwp 14636  ref 4
+Nesting   broken out separately;  grand = 614 = Cuddle + Courtesy (Nesting excluded)
+```
+
+Every figure ties to the workbook exactly. The same suite returns **0 dialing days and 16 failures** on the pre-fix build.
+
+## Why the running app still shows the old numbers
+
+The screenshot of `Matrix Courtesy` (EMP 4 for every agent, attendance 100%, Bandile Dlamini 3 actual shifts) is the **pre-fix build** — EMP 4 is 01+03+04+05 August, i.e. the phantom Saturday is still being counted, and the MTD tab strip has no **Nesting** chip. Nothing was wrong with what you were looking at; it simply predates these fixes.
+
+The fixes are on branch `claude/august-file-audit-reconcile-k1tgw0` and are **not live**. To ship them:
+
+1. Merge the branch to `main`.
+2. `node tools/prepare-site.js` — already run here; `site/pulse/index.html` now carries the fixes.
+3. `npx wrangler pages deploy site --project-name chatterbox-agentos`.
+
+I could not run step 3: `chatterbox-agentos.pages.dev` and `api.cloudflare.com` are both blocked by this session's egress policy (403 on CONNECT).
 
 ## Important caveat on scope
 

@@ -550,8 +550,11 @@ function parseDateLoose(s){
   // which lexicographically beats every real month and blanks the whole dashboard via latestMonth()
   const chk=(y,mo,d)=>{ mo=+mo; d=+d; if(mo<1||mo>12||d<1||d>31) return null;
     return y+'-'+String(mo).padStart(2,'0')+'-'+String(d).padStart(2,'0'); };
-  let m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/); if(m) return chk(m[1],m[2],m[3]);
-  m=s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/); if(m) return chk(m[3],m[2],m[1]);
+  // Dots are the ZA convention and the tracker workbook's own daily sheet uses them
+  // ("03.08.2026"). Without them every tracker row failed the date parse and was
+  // skipped silently, so uploading the workbook to back-fill a month did nothing.
+  let m=s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/); if(m) return chk(m[1],m[2],m[3]);
+  m=s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/); if(m) return chk(m[3],m[2],m[1]);
   return null;
 }
 function dateFromFilename(name){
