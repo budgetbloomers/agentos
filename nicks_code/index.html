@@ -588,6 +588,7 @@ function freshState(){
     att:{},      // date -> CBnnn -> status
     evals:{},    // date -> CBnnn -> [scores 0-100]
     tracker:{},  // date -> CBnnn -> imported tracker daily row
+    cancels:[],  // [{acc,owner,created,deact}] from BI - Inactive (spec S9)
     adjust:{},   // periodKey -> CBnnn -> {c,r}
     map:{},      // identityKey -> CBnnn (manual mapping)
     files:[],    // {name,type,dates:[..],rows,at}
@@ -668,10 +669,41 @@ function isSaleDisp(disp){
 }
 
 /* ================= ingestion ================= */
-function detectType(header, sheetName){
+/* Vici exports lead with a title, a "Time range:" line and a section banner before the
+   real header row, so the generic CSV reader would take the title as the header and the
+   file would be rejected. Trim to the header row and remember the range it declares. */
+let __viciRange=null;
+function viciTrim(text){
+  if(!/agent performance detail|-+\s*AGENTS Details/i.test(text)) return text;
+  const lines=text.split(/\r?\n/);
+  const hdr=lines.findIndex(l=>/^"?USER NAME"?\s*,/i.test(l.trim()));
+  if(hdr<0) return text;
+  // "Time range: 2026-08-03 00:00:00 to 2026-08-05 23:59:59" — the times between the
+  // two dates contain digits, so the gap cannot be matched with [^\d]+.
+  const m=text.match(/Time range:\s*(\d{4}-\d{2}-\d{2})[\s\S]*?to\s*(\d{4}-\d{2}-\d{2})/i);
+  __viciRange=m?{from:m[1],to:m[2]}:null;
+  return lines.slice(hdr).join('\n');
+}
+function detectType(header, sheetName, recs, fileName){
   const H=header.map(h=>h.toLowerCase());
   const has=(...ks)=>ks.every(k=>H.some(h=>h.includes(k)));
-  if(has('charge amount','contract create date')&&has('account number')) return 'bi';   // Power BI - Active Cases (the money source)
+  if(has('charge amount','contract create date')&&has('account number')){
+    // BI - Active and BI - Inactive are the SAME 45-column export; only the data
+    // differs. Detected on headers alone, the Inactive file would be ingested as
+    // money and REPLACE the real sales for every date it touches. Decide on content:
+    // a majority of Inactive contract statuses means this is the cancellations file.
+    let inact=0,tot=0;
+    for(const r of (recs||[])){
+      const s=String(r['Contract Status']||'').trim().toLowerCase();
+      if(!s) continue; tot++; if(s==='inactive'||s==='cancelled') inact++;
+    }
+    if((tot&&inact/tot>0.5)||/inactive/i.test(fileName||'')) return 'cancellations';
+    return 'bi';                        // Power BI - Active Cases (the money source)
+  }
+  // ViciDial "Agent Performance Detail" — the Cuddle floor's dialler. CallX only
+  // carries MATRIX WELCOME CALL (Courtesy), so without this every Cuddle agent
+  // reads zero talk time.
+  if(has('user name','talk')&&(has('dispo')||has('pause'))) return 'vici';
   if(has('date & time','lead disposition')) return 'calls';
   if(has('employee code','status')&&has('date')) return 'attendance';   // Employee Name not required — the parser never reads it
   if(has('qa agent','sales agent cb')) return 'evals';
@@ -696,9 +728,9 @@ async function ingestText(name, text, expected, hash){
   });
   let dailyDone=false;
   for(const sn of order){
-    const {header,recs}=await toObjectsAsync(await parseCSVAsync(sheets[sn]));
+    const {header,recs}=await toObjectsAsync(await parseCSVAsync(viciTrim(sheets[sn])));
     if(!recs.length) continue;
-    const type=detectType(header, sn);
+    const type=detectType(header, sn, recs, name);
     if(!type) continue;
     if(type==='trackerDaily'&&dailyDone) continue;
     const res=INGEST[type](recs, name, sn);
@@ -785,6 +817,49 @@ const INGEST={
     }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
     return regFile(name,'bi',[...dates].sort(),recs.length,{skip});
+  },
+  // BI - Inactive: the cancellations source (spec S9). Unique per ACCOUNT, carrying
+  // both dates so the model can apply the workbook's window. Verified against the
+  // August tracker: of the 8 accounts created 03-04 Aug, the 4 it counts were
+  // deactivated inside the period and the 3 it omits were deactivated on 05.08,
+  // after the cut-off (the 5th, Justin Motilall, is Nesting and off the campaign tabs).
+  // Never touches S.sales — a cancellation is reported, never netted off GWP.
+  // ViciDial "Agent Performance Detail" — one row per agent, already AGGREGATED over the
+  // export's time range, so it carries no per-day detail. Stored as a period total and
+  // applied to the agent's aggregate; the daily sheet cannot show Cuddle talk per day
+  // until Vici is exported one day at a time. TALK is the talk column, SALE the sale
+  // disposition count. ADMIN rows (team leaders) are not agents.
+  vici(recs,name){
+    const by={}; let skip=0;
+    for(const r of recs){
+      const grp=String(r['CURRENT USER GROUP']||r['MOST RECENT USER GROUP']||'').trim();
+      const id=String(r['ID']||'').trim();
+      const code=cbCode(id)||cbCode(String(r['USER NAME']||''));
+      if(!code||/^admin$/i.test(grp)){ skip++; continue; }
+      const talk=durSecs(String(r['TALK']||''));
+      by[code]={talk, calls:parseInt(r['CALLS'],10)||0, saleD:parseInt(r['SALE'],10)||0};
+    }
+    if(!Object.keys(by).length) return null;
+    const rg=__viciRange||{};
+    S.vici={from:rg.from||'', to:rg.to||'', byCode:by};
+    return regFile(name,'vici',rg.from?[rg.from,rg.to]:[],recs.length,{skip});
+  },
+  cancellations(recs,name){
+    const seen=new Set(); const rows=[]; const dates=new Set(); let skip=0;
+    for(const r of recs){
+      const acc=String(r['Account Number']||'').trim();
+      if(!acc||/^applied filters/i.test(acc)) continue;
+      const created=String(r['Contract Create Date']||'').slice(0,10);
+      const deact=String(r['Contract Deactivate Date']||'').slice(0,10);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(created)){ skip++; continue; }
+      if(seen.has(acc)) continue; seen.add(acc);        // unique per account
+      rows.push({acc, owner:normName(r['Owner']), created,
+                 deact:/^\d{4}-\d{2}-\d{2}$/.test(deact)?deact:''});
+      dates.add(created);
+    }
+    if(!rows.length) return null;
+    S.cancels=rows;                                     // snapshot source: replaces wholesale
+    return regFile(name,'cancellations',[...dates].sort(),recs.length,{skip});
   },
   calls(recs,name){
     const dates=new Set();
@@ -1079,11 +1154,18 @@ function buildModel(range, periodKey){
   // (attendance read 100%, targets were raised, SPD was diluted). A date only counts
   // if somebody actually talked or sold on it; that also drops public holidays with
   // no special-casing, which is how the workbook's daily sheet is built.
+  // Dialling is the test, not sales. Contracts get created on Saturdays and public
+  // holidays by admin or back-dating — the August BI export carries four for Sat 01.08 —
+  // and counting those as a working day rosters the whole floor onto a day nobody
+  // worked. So when the period has ANY call data, a dialling day must show talk; sales
+  // alone only qualify a day when no call source was uploaded at all.
+  const anyCalls=dates.some(d=>Object.values(callsBy[d]||{}).some(v=>v.talk>0));
   const liveDate=d=>{
-    for(const c in (salesBy[d]||{})){ const v=salesBy[d][c]; if(v.n>0||v.gwp>0) return true; }
     for(const c in (callsBy[d]||{})){ if(callsBy[d][c].talk>0) return true; }
     const tr=S.tracker[d]||{};
     for(const c in tr){ if((tr[c].sales||0)>0||(tr[c].talk||0)>0) return true; }
+    if(anyCalls) return false;
+    for(const c in (salesBy[d]||{})){ const v=salesBy[d][c]; if(v.n>0||v.gwp>0) return true; }
     return false;
   };
   const droppedDates=dates.filter(d=>!liveDate(d));
@@ -1167,11 +1249,42 @@ function buildModel(range, periodKey){
 
   const adj=S.adjust[periodKey]||{};
 
+  // Cancellations for the period, from BI - Inactive. A sale counts as cancelled here
+  // only when it was BOTH made and cancelled inside the reporting window — that is the
+  // workbook's rule (a contract created 04.08 but deactivated 05.08 is not an 04.08
+  // cancellation, and one created in July that lapses now is not this month's either).
+  // Unique per account, attributed to the Owner, and never netted off GWP.
+  // Vici period totals. The export is aggregated over its own range, so it can only be
+  // applied when that range sits wholly inside the reporting window — otherwise it would
+  // credit an agent with talk from days outside the report. Applied at agent level; the
+  // daily sheet still cannot break Cuddle talk down per day (see viciPartial).
+  const V=S.vici&&S.vici.byCode?S.vici:null;
+  const viciFits=!!(V&&V.from&&V.to&&V.from>=range.from&&V.to<=range.to);
+  const viciPartial=!!(V&&!viciFits);
+  // Only fill agents who have NO per-day talk already. An agent covered by both a
+  // per-day source (CallX, or an imported tracker sheet) and this period total would
+  // otherwise be credited twice — Cuddle read 467h against a true 290h that way.
+  const viciByCode={};
+  if(viciFits){
+    const talkSoFar={}; facts.forEach(f=>{ talkSoFar[f.code]=(talkSoFar[f.code]||0)+f.talk; });
+    for(const c in V.byCode) if(!talkSoFar[c]) viciByCode[c]=V.byCode[c];
+  }
+
+  const cancByCode={};
+  for(const c of (S.cancels||[])){
+    if(!(c.created>=range.from&&c.created<=range.to)) continue;
+    if(!(c.deact&&c.deact>=range.from&&c.deact<=range.to)) continue;
+    const code=resolveKey(c.owner); if(!code) continue;
+    cancByCode[code]=(cancByCode[code]||0)+1;
+  }
+
   function agg(rows,code){
     const o={emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,days:0,prov:0,calls:0,ans:0};
     for(const f of rows){ o.emp+=f.emp;o.act+=f.act;o.target+=f.target;o.sales+=f.sales;o.gwp+=f.gwp;o.gwpT+=f.gwpT;
       o.talk+=f.talk;o.opt+=f.opt;o.ref+=f.ref;o.canc+=f.canc;o.days++; o.calls+=(f.calls||0); o.ans+=(f.ans||0); if(f.provisional)o.prov++; }
     if(code&&adj[code]){ o.canc+=adj[code].c||0; o.ref+=adj[code].r||0; }
+    if(code&&cancByCode[code]) o.canc+=cancByCode[code];
+    if(code&&viciByCode[code]){ o.talk+=viciByCode[code].talk||0; o.calls+=viciByCode[code].calls||0; }
     o.att=o.emp?o.act/o.emp:null; o.pctT=o.target?o.sales/o.target:null; o.spd=o.act?o.sales/o.act:null;
     o.pctG=o.gwpT?o.gwp/o.gwpT:null; o.aveG=o.sales?o.gwp/o.sales:null;
     // Ave Talk Time is talk per EMPLOYED shift, not per actual shift — the workbook's
@@ -1232,8 +1345,11 @@ function buildModel(range, periodKey){
         const rows=campRows.filter(f=>f.tl===tl);
         const codes=[...new Set(rows.map(f=>f.code))];
         const o=agg(rows,null);
-        for(const c of codes) if(primaryCamp[c]===camp&&adj[c]){ o.canc+=adj[c].c||0; o.ref+=adj[c].r||0; }
+        for(const c of codes){ if(primaryCamp[c]===camp){ if(adj[c]){ o.canc+=adj[c].c||0; o.ref+=adj[c].r||0; }
+        if(cancByCode[c]) o.canc+=cancByCode[c]; }
+        if(viciByCode[c]){ o.talk+=viciByCode[c].talk||0; o.calls+=viciByCode[c].calls||0; } }
         o.cancPct=o.sales?o.canc/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null;
+        o.aveTalk=o.emp?o.talk/o.emp:null;
         o.hc=codes.length;
         o.onT=codes.filter(c=>mtdCC[camp][c]&&mtdCC[camp][c].pctT!=null&&mtdCC[camp][c].pctT>=S.settings.onTarget).length;
         o.onTPct=o.hc?o.onT/o.hc:null;
@@ -1246,8 +1362,11 @@ function buildModel(range, periodKey){
       }
       const codes=[...new Set(campRows.map(f=>f.code))];
       const o=agg(campRows,null);
-      for(const c of codes) if(primaryCamp[c]===camp&&adj[c]){ o.canc+=adj[c].c||0; o.ref+=adj[c].r||0; }
+      for(const c of codes){ if(primaryCamp[c]===camp){ if(adj[c]){ o.canc+=adj[c].c||0; o.ref+=adj[c].r||0; }
+        if(cancByCode[c]) o.canc+=cancByCode[c]; }
+        if(viciByCode[c]){ o.talk+=viciByCode[c].talk||0; o.calls+=viciByCode[c].calls||0; } }
       o.cancPct=o.sales?o.canc/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null;
+      o.aveTalk=o.emp?o.talk/o.emp:null;
       o.hc=codes.length;
       o.onT=codes.filter(c=>mtdCC[camp][c]&&mtdCC[camp][c].pctT!=null&&mtdCC[camp][c].pctT>=S.settings.onTarget).length;
       o.onTPct=o.hc?o.onT/o.hc:null;
@@ -1262,13 +1381,15 @@ function buildModel(range, periodKey){
   // belongs in the campaign tabs or the grand total)
   const grand=agg(facts.filter(f=>VAS_CAMPS.includes(f.campaign)),null);
   for(const c in adj){ grand.canc+=adj[c].c||0; grand.ref+=adj[c].r||0; }
+  // grand stays VAS-only: a cancellation on a VT or Nesting agent is not a VAS cancellation
+  for(const c in cancByCode) if(VAS_CAMPS.includes(primaryCamp[c])) grand.canc+=cancByCode[c];
   grand.cancPct=grand.sales?grand.canc/grand.sales:null; grand.refPct=grand.sales?grand.ref/grand.sales:null;
 
   // QA period average
   let qs=0,qn=0; for(const d in S.evals){ if(d<range.from||d>range.to) continue;
     for(const c in S.evals[d]) for(const v of S.evals[d][c]){qs+=(typeof v==='number'?v:v.s);qn++;} }
 
-  return {range,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
+  return {range,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,viciPartial,cancByCode,
      qaAvg:qn?qs/qn/100:null,qaN:qn,periodKey,
      droppedDates,
      dailyByDate:(()=>{ const o={}; facts.forEach(f=>{ const t=o[f.date]=o[f.date]||CAMPS.reduce((a,c)=>(a[c]=0,a),{}); t[f.campaign]+=f.sales; }); return o; })()};
@@ -2965,7 +3086,7 @@ if(!PAGES[S.ui.tab]) S.ui.tab='dashboard';
 rebuild(); renderAll();
 
 /* test hook (kept API-compatible) */
-window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
+window.__mtd={ ingest:ingestText, bufferToText, state:()=>S, model:()=>M, prevModel:()=>MP,
   setPeriod:(m,mode)=>{ S.ui.month=m; S.ui.preset=(mode==='cycle')?'cycle':'month'; if(mode)S.ui.mode=mode; save(); rebuild(); renderAll(); },
   setRange:(from,to)=>{ S.ui.preset='custom'; S.ui.from=from; S.ui.to=to; save(); rebuild(); renderAll(); },
   setPreset:p=>{ S.ui.preset=p; save(); rebuild(); renderAll(); },
