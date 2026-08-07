@@ -53,7 +53,7 @@ pages and exports work unchanged. Nothing is hardcoded to a month.
 
 | File | What it feeds |
 |---|---|
-| **SF Activated Services** (one per sale day) | Sales achieved + GWP achieved per agent (one GWP-valued line per opportunity, priced from the built-in GWP list) |
+| **Power BI - Active Cases** (monthly; months accumulate) | Sales achieved + GWP achieved per agent, dated per row's Contract Create Date. THE money source — Activated Services and the GWP price list were retired 2026-07 |
 | **Call records** (3CX/PBX export) | Talk time, insurance opt-ins per agent per day |
 | **Attendance** export | Employed / actual shifts, attendance %, terminations |
 | **QA evaluations** (CallBi full export) | QA % per agent (by date of call) |
@@ -68,11 +68,24 @@ pages and exports work unchanged. Nothing is hardcoded to a month.
 
 ## Calculation rules (mirrors the June workbook)
 
-- **Sales achieved** = unique opportunities in the Activated Services file per agent.
-- **GWP achieved** = one value per opportunity — the "Subs" line's bundled-product
-  price from the GWP list (e.g. Titanium Single → R99). The GWP price list is
-  hard-coded into the app (it doesn't change); GWP file uploads are ignored, and
-  one-off extra products can be added in Settings.
+- **Sales achieved** = unique `Account Number`s in the Power BI - Active Cases file
+  per agent per Contract Create Date. (Register item S1 is still open: the manual
+  tracker counts unique *opportunities*, so an account carrying two contracts reads
+  2 there and 1 here. Finance decides; see the reconciliation note below.)
+- **GWP achieved** = Σ `Charge Amount` per account × (1 + `settings.vatRate`, default
+  15%), **rounded to the rand per account**. Charges are ex-VAT — Titanium Single's
+  three lines 30,43 + 33,91 + 21,74 = R86,08 = R99 ÷ 1,15. Rounding per account is
+  what recovers the exact R99; grossing up an owner-day total in one step left every
+  sale ~1c short. There is no price list — it was retired in 2026-07.
+- **Dialing days** = dates with real activity (some talk or some sales). A source
+  export can carry rows for a Saturday or public holiday; those days book no shifts.
+- **Actual shifts** = the attendance register's weight (a half-day stays 0.5), but an
+  agent with no talk and no sale books 0 however the register was filled in
+  (`settings.shiftNeedsActivity`). A missing attendance file never means "everyone
+  present".
+- **Campaigns**: Cuddle and Courtesy are the VAS headline. **VT** (tracker units, no
+  GWP) and **Nesting** (agents in induction) appear on the daily sheet but never in
+  the campaign tabs or the grand total.
 - **Sales target** = agent's daily target × employed shifts; **GWP target** = sales
   target × 89 (configurable in Settings).
 - **SPD** = sales ÷ actual shifts; **Att %** = actual ÷ employed shifts.

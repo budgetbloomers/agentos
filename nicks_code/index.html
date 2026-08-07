@@ -524,9 +524,18 @@ async function toObjectsAsync(rows){
   }
   return {header,recs};
 }
-const campOf = c => /cuddle/i.test(c||'')?'Cuddle':(/track|vehicle|vision|^vt$/i.test(c||'')?'VT':'Courtesy');
-const CAMPS=['Cuddle','Courtesy','VT'];
-const CAMPLAB={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',VT:'Matrix Tracker'};
+// Nesting (agents still in induction) is its OWN campaign. It used to fall through
+// to Courtesy, which pushed trainee shifts, targets and sales into the Courtesy MTD
+// tab; the workbook keeps them on the daily sheet but out of both campaign tabs.
+const campOf = c => /cuddle/i.test(c||'')?'Cuddle'
+  :(/track|vehicle|vision|^vt$/i.test(c||'')?'VT'
+  :(/nest|induct/i.test(c||'')?'Nesting':'Courtesy'));
+const CAMPS=['Cuddle','Courtesy','VT','Nesting'];
+// The VAS headline: tracker units are a different product with no GWP, and nesting
+// agents are not yet on the floor. Both stay off the campaign tabs and the grand total.
+const VAS_CAMPS=['Cuddle','Courtesy'];
+const byCamp=()=>CAMPS.reduce((o,c)=>(o[c]={},o),{});
+const CAMPLAB={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',VT:'Matrix Tracker',Nesting:'Nesting'};
 const normName = s => (s||'').toLowerCase().replace(/-\s*panimax/g,'').replace(/panimax/g,'').replace(/cb[\s-]*\d+/g,'').replace(/[^a-z]/g,'');
 const cbCode = s => { const m=(s||'').match(/CB[\s-]*(\d+)/i); return m?('CB'+parseInt(m[1],10)):null; };
 const durSecs = s => { const p=(s||'').split(':').map(Number); return p.length===3?(p[0]*3600+p[1]*60+p[2]):(p.length===2?(p[0]*60+p[1]):0); };
@@ -580,7 +589,9 @@ function freshState(){
     map:{},      // identityKey -> CBnnn (manual mapping)
     files:[],    // {name,type,dates:[..],rows,at}
     opencases:null,
-    settings:{ attOverride:{}, onTarget:1, trainingCounts:true },
+    settings:{ attOverride:{}, onTarget:1, trainingCounts:true,
+      vatRate:0.15,              // mirrors the Ops Dictionary vatRate rule
+      shiftNeedsActivity:true }, // no talk + no sale => no actual shift booked
     ui:{ month:'', mode:'calendar', tab:'dashboard' }
   };
 }
@@ -737,8 +748,10 @@ const INGEST={
   // Date; the agent is the Owner. Fills the same S.sales[date][owner]={n,gwp,canc} the
   // rest of the model reads, so nothing downstream changes. Months accumulate by date key.
   bi(recs,name){
-    const VAT=1.15;                                   // 15%, matching the AgentOS BI model
-    const byDate={};                                  // date -> owner -> {accts:Set, ex}
+    // Rate lives in settings so Ops (vatRate rule) and Pulse cannot drift apart.
+    // Hardcoding it meant a Dictionary change silently broke every money figure here.
+    const VAT=1+(S.settings&&S.settings.vatRate!=null?S.settings.vatRate:0.15);
+    const byDate={};                                  // date -> owner -> {accts:Map(acc->exVat), }
     const dates=new Set();
     let skip=0;
     for(const r of recs){
@@ -751,15 +764,20 @@ const INGEST={
       if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ skip++; continue; }
       const owner=normName(r['Owner']);
       dates.add(d);
-      const o=((byDate[d]=byDate[d]||{})[owner]=byDate[d][owner]||{accts:new Set(),ex:0});
-      o.accts.add(acc); o.ex+=chg;
+      const o=((byDate[d]=byDate[d]||{})[owner]=byDate[d][owner]||{accts:new Map()});
+      o.accts.set(acc,(o.accts.get(acc)||0)+chg);
     }
     // the file is authoritative for the dates it carries — replace those days, keep others
     for(const d of dates){
       S.sales[d]={};
       for(const owner in byDate[d]){
         const o=byDate[d][owner];
-        S.sales[d][owner]={n:o.accts.size, gwp:o.ex*VAT, canc:0};
+        // Gross up and round PER ACCOUNT, not once over the owner-day total.
+        // Charges are ex-VAT to the cent, so a bundle reads 86,08 and 86,08 x 1,15
+        // = 98,992 — the sale is R99. Summing first and grossing up once carried
+        // that ~1c/sale shortfall into every total (the workbook shows R99 exactly).
+        let gwp=0; for(const ex of o.accts.values()) gwp+=Math.round(ex*VAT);
+        S.sales[d][owner]={n:o.accts.size, gwp, canc:0};
       }
     }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
@@ -836,7 +854,10 @@ const INGEST={
       const code=(r['Employee Code']||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       if(!code||!/^CB\d+$/.test(code)) continue;
       const rawCamp=(r['Campaign']||r['Que']||'').trim();
-      if(rawCamp && !/cuddle|courtesy|track|vehicle|vision/i.test(rawCamp)) continue; // unknown campaign
+      // Nesting/induction agents belong on the roster — they sell while in induction
+      // (the workbook's daily sheet carries them). They were dropped here as an
+      // "unknown campaign", so their rows and sales never reached the model at all.
+      if(rawCamp && !/cuddle|courtesy|track|vehicle|vision|nest|induct/i.test(rawCamp)) continue; // unknown campaign
       out.push({
         tl:r['Team Leader']||'', code, name:r['Agent Name']||r['Agent']||'',
         campaign:campOf(rawCamp),
@@ -1025,7 +1046,7 @@ function rebuild(){
 }
 function buildModel(range, periodKey){
   if(!range) return null;
-  const dates=[...allDataDates()].filter(d=>d>=range.from&&d<=range.to).sort();
+  let dates=[...allDataDates()].filter(d=>d>=range.from&&d<=range.to).sort();
 
   // termination map: first date an agent is marked Terminated/Resigned
   const term={};
@@ -1049,6 +1070,22 @@ function buildModel(range, periodKey){
     }
   }
 
+  // DIALING DAYS. A source export can carry rows for a Saturday, Sunday or public
+  // holiday — the dialer writes a header row, the roster is unchanged — and every
+  // roster agent then booked an employed AND an actual shift on a day nobody worked
+  // (attendance read 100%, targets were raised, SPD was diluted). A date only counts
+  // if somebody actually talked or sold on it; that also drops public holidays with
+  // no special-casing, which is how the workbook's daily sheet is built.
+  const liveDate=d=>{
+    for(const c in (salesBy[d]||{})){ const v=salesBy[d][c]; if(v.n>0||v.gwp>0) return true; }
+    for(const c in (callsBy[d]||{})){ if(callsBy[d][c].talk>0) return true; }
+    const tr=S.tracker[d]||{};
+    for(const c in tr){ if((tr[c].sales||0)>0||(tr[c].talk||0)>0) return true; }
+    return false;
+  };
+  const droppedDates=dates.filter(d=>!liveDate(d));
+  dates=dates.filter(liveDate);
+
   // week buckets
   const mondays=[...new Set(dates.map(mondayOf))].sort();
   const weekOf={}; dates.forEach(d=>{ weekOf[d]=mondays.indexOf(mondayOf(d))+1; });
@@ -1057,7 +1094,6 @@ function buildModel(range, periodKey){
   // Agents can work a different campaign on different days, so campaign/TL come from the
   // tracker row when that day was imported from a tracker workbook, else from the roster.
   const facts=[];
-  const attCovered=d=>!!S.att[d]&&Object.keys(S.att[d]).length>0;
   const metaOf={}; S.roster.forEach(a=>{ metaOf[a.code]=a; });
   for(const d of dates){
     const hasSalesData=!!S.sales[d]; const trk=S.tracker[d]||{};
@@ -1089,8 +1125,12 @@ function buildModel(range, periodKey){
       let act;
       const st=(S.att[d]||{})[code];
       if(st!=null){ const w=attWeight(st); act=w===-1?0:w; }
-      else if(attCovered(d)) act=active?1:0;
-      else act=active?1:(emp?1:0);
+      else act=active?1:0;   // NEVER fall back to "employed, so present": a missing
+                             // attendance file used to book a full shift for everyone.
+      // An agent who logged no talk and made no sale did not work a sellable shift,
+      // however the register was filled in. The register still supplies the FRACTION
+      // (a half-day stays 0.5) — it just cannot manufacture a shift out of nothing.
+      if(!active && S.settings.shiftNeedsActivity!==false) act=0;
       const trackerIsSource=tr&&!cd&&!sd&&st==null;
       if(trackerIsSource){ emp=tr.emp; act=tr.act; }
       if(!emp&&(active)) emp=1;                    // has activity → must be employed
@@ -1108,11 +1148,19 @@ function buildModel(range, periodKey){
   }
 
   // per-agent QA over a date range
-  const qaFor=(code,from,to)=>{
+  const qaFor=(code,from,to)=>qaForCodes([code],from,to);
+  // TL and campaign rows need QA too — the workbook's TL MTD carries a QA % line and
+  // it exported blank, because QA was only ever computed per agent. Averaged over
+  // every EVALUATION in the group (not the mean of per-agent means), so an agent with
+  // ten evals weighs ten times an agent with one — same basis as the campaign figure.
+  function qaForCodes(codes,from,to){
+    const set=codes instanceof Set?codes:new Set(codes);
     let s=0,n=0;
-    for(const d in S.evals){ if(d<from||d>to) continue; const arr=S.evals[d][code]; if(arr) for(const v of arr){s+=(typeof v==='number'?v:v.s);n++;} }
+    for(const d in S.evals){ if(d<from||d>to) continue;
+      for(const c in S.evals[d]){ if(!set.has(c)) continue;
+        for(const v of S.evals[d][c]){ s+=(typeof v==='number'?v:v.s); n++; } } }
     return n?{avg:s/n/100,n}:null;
-  };
+  }
 
   const adj=S.adjust[periodKey]||{};
 
@@ -1138,7 +1186,7 @@ function buildModel(range, periodKey){
 
   // aggregate by agent × campaign (an agent can appear in both tabs, like the workbook)
   const meta=rows=>{ const l=rows[rows.length-1]; return {tl:l.tl,tenure:l.tenure,agent:l.agent,code:l.code}; };
-  const byCC={Cuddle:{},Courtesy:{},VT:{}};
+  const byCC=byCamp();
   facts.forEach(f=>{ (byCC[f.campaign][f.code]=byCC[f.campaign][f.code]||[]).push(f); });
   // adjustments (cancellations/referrals) attach to the agent's primary campaign
   const primaryCamp={};
@@ -1149,7 +1197,7 @@ function buildModel(range, periodKey){
       if(n>bestN){bestN=n;best=c;} }
     primaryCamp[code]=best||'Courtesy';
   }
-  const mtdCC={Cuddle:{},Courtesy:{},VT:{}}, wtdCC={};
+  const mtdCC=byCamp(), wtdCC={};
   const weeks=mondays.map((m,i)=>({num:i+1,from:m,to:addDays(m,6),dates:dates.filter(d=>mondayOf(d)===m)}));
   for(const camp of CAMPS){
     for(const code in byCC[camp]){
@@ -1160,14 +1208,14 @@ function buildModel(range, periodKey){
       for(const w of weeks){
         const wr=rows.filter(f=>f.week===w.num); if(!wr.length) continue;
         const wo=agg(wr,null); Object.assign(wo, meta(wr)); wo.qa=qaFor(code,w.from,w.to);
-        ((wtdCC[w.num]=wtdCC[w.num]||{Cuddle:{},Courtesy:{},VT:{}})[camp])[code]=wo;
+        ((wtdCC[w.num]=wtdCC[w.num]||byCamp())[camp])[code]=wo;
       }
     }
   }
 
   // team-leader and campaign rollups
   const tlAgg={}, campAgg={};
-  for(const camp of ['Courtesy','Cuddle','VT']){
+  for(const camp of CAMPS){
     const campRows=facts.filter(f=>f.campaign===camp);
     if(campRows.length){
       const tls=[...new Set(campRows.map(f=>f.tl))];
@@ -1179,6 +1227,12 @@ function buildModel(range, periodKey){
         o.cancPct=o.sales?o.canc/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null;
         o.hc=codes.length;
         o.onT=codes.filter(c=>mtdCC[camp][c]&&mtdCC[camp][c].pctT!=null&&mtdCC[camp][c].pctT>=S.settings.onTarget).length;
+        o.onTPct=o.hc?o.onT/o.hc:null;
+        // Dialing Days is the period's count, identical on every TL column — that is
+        // how the workbook reads it. activeDays keeps the per-team figure available.
+        o.days=dates.length;
+        o.activeDays=[...new Set(rows.map(f=>f.date))].length;
+        o.qa=qaForCodes(codes,range.from,range.to);
         tlAgg[camp+'|'+tl]=o;
       }
       const codes=[...new Set(campRows.map(f=>f.code))];
@@ -1187,11 +1241,17 @@ function buildModel(range, periodKey){
       o.cancPct=o.sales?o.canc/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null;
       o.hc=codes.length;
       o.onT=codes.filter(c=>mtdCC[camp][c]&&mtdCC[camp][c].pctT!=null&&mtdCC[camp][c].pctT>=S.settings.onTarget).length;
+      o.onTPct=o.hc?o.onT/o.hc:null;
+      o.days=dates.length;
+      o.activeDays=[...new Set(campRows.map(f=>f.date))].length;
+      o.qa=qaForCodes(codes,range.from,range.to);
       campAgg[camp]=o;
     }
   }
-  // headline totals stay VAS — tracker-unit sales are a different product with no GWP
-  const grand=agg(facts.filter(f=>f.campaign!=='VT'),null);
+  // headline totals stay VAS — tracker-unit sales are a different product with no GWP,
+  // and nesting agents are still in induction (both sit on the daily sheet, neither
+  // belongs in the campaign tabs or the grand total)
+  const grand=agg(facts.filter(f=>VAS_CAMPS.includes(f.campaign)),null);
   for(const c in adj){ grand.canc+=adj[c].c||0; grand.ref+=adj[c].r||0; }
   grand.cancPct=grand.sales?grand.canc/grand.sales:null; grand.refPct=grand.sales?grand.ref/grand.sales:null;
 
@@ -1201,7 +1261,8 @@ function buildModel(range, periodKey){
 
   return {range,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
      qaAvg:qn?qs/qn/100:null,qaN:qn,periodKey,
-     dailyByDate:(()=>{ const o={}; facts.forEach(f=>{ const t=o[f.date]=o[f.date]||{Cuddle:0,Courtesy:0,VT:0}; t[f.campaign]+=f.sales; }); return o; })()};
+     droppedDates,
+     dailyByDate:(()=>{ const o={}; facts.forEach(f=>{ const t=o[f.date]=o[f.date]||CAMPS.reduce((a,c)=>(a[c]=0,a),{}); t[f.campaign]+=f.sales; }); return o; })()};
 }
 
 
@@ -1693,7 +1754,7 @@ function renderTop(){
     ${(preset==='month'||preset==='cycle')?`<div class="ctl"><input type="month" id="pMonth" value="${S.ui.month}"></div>`:''}
     ${preset==='custom'?`<div class="ctl"><input type="date" id="pFrom" value="${S.ui.from||''}"><span class="lab">→</span><input type="date" id="pTo" value="${S.ui.to||''}"></div>`:''}
     <div class="ctl"><span class="lab">Campaign</span><select id="fCampG">
-      <option value="">All</option><option value="Courtesy" ${S.ui.camp==='Courtesy'?'selected':''}>Matrix Courtesy</option><option value="Cuddle" ${S.ui.camp==='Cuddle'?'selected':''}>Matrix Cuddle</option><option value="VT" ${S.ui.camp==='VT'?'selected':''}>Matrix Tracker</option></select></div>
+      <option value="">All</option>${CAMPS.map(c=>`<option value="${c}" ${S.ui.camp===c?'selected':''}>${CAMPLAB[c]}</option>`).join('')}</select></div>
     <div class="ctl"><span class="lab">Team</span><select id="fTeamG"><option value="">All</option>
       ${tls.map(t=>`<option ${S.ui.team===t?'selected':''}>${esc(t)}</option>`).join('')}</select></div>
     <span style="flex:1"></span>
@@ -2218,7 +2279,7 @@ function campSection(camp,week,opts){
 
 PAGES.mtd=()=>{
   if(!M||!M.dates.length) return emptyState();
-  const sub=['Courtesy','Cuddle','VT','Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle';
+  const sub=[...CAMPS,'Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle';
   const tlBlock=camp=>{
     const keys=Object.keys(M.tlAgg).filter(k=>k.startsWith(camp+'|'));
     if(!keys.length) return '';
@@ -2241,7 +2302,7 @@ PAGES.mtd=()=>{
   <div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · sorted by SPD</div>
     <div class="spacer"></div><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
   <div class="chiprow" style="margin-bottom:14px">
-    ${[['Courtesy','Matrix Courtesy'],['Cuddle','Matrix Cuddle'],['VT','Matrix Tracker'],['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';save();renderPage()">${l}</button>`).join('')}</div>
+    ${[...CAMPS.map(c=>[c,CAMPLAB[c]]),['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';save();renderPage()">${l}</button>`).join('')}</div>
   ${sub==='Team Leaders'?tlBlock('Courtesy')+tlBlock('Cuddle')+tlBlock('VT')
     :`<div class="card">${campSection(sub,null,{canc:true})||'<div class="empty">No '+(CAMPLAB[sub]||sub)+' data in this period — upload the call records covering it</div>'}
       <p class="note" style="margin:10px 0 0">Cancellations and referrals come from the Adjustments page. QA is the average CallBi score for calls dated in the period.</p></div>`}`;
@@ -2655,11 +2716,19 @@ function exportReport(){
     let nm=name.replace(/[:\\/?*\[\]]/g,'-').slice(0,31),i=1; while(used[nm]) nm=(name.slice(0,27)+' ~'+(i++)).slice(0,31); used[nm]=1;
     XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),nm);
   };
+  // Column-for-column with the workbook's daily sheet. The five derived columns
+  // (Att %, % of Sales Target, % of GWP Target, Ave GWP, % Of Referrals) were not
+  // exported at all, so the daily sheet could not be reconciled line by line.
+  const rate=(a,b)=>b?a/b:0;
   const dCols=[{h:'Week',f:r=>'Week '+r.week},{h:'Date',f:r=>r.date},{h:'Team Leader',f:r=>r.tl},{h:'Campaign',f:r=>r.campaign},
     {h:'Agent',f:r=>r.agent},{h:'Emp Code',f:r=>r.code},{h:'Tenure',f:r=>r.tenure},{h:'Employed Shifts',f:r=>r.emp},
-    {h:'Actual Shifts',f:r=>r.act},{h:'Sales Target',f:r=>r.target},{h:'Sales Achieved',f:r=>r.sales},
+    {h:'Actual Shifts',f:r=>r.act},{h:'Att %',f:r=>rate(r.act,r.emp)},
+    {h:'Sales Target',f:r=>r.target},{h:'Sales Achieved',f:r=>r.sales},
+    {h:'% of Sales Target',f:r=>rate(r.sales,r.target)},
     {h:'Talk Time',f:r=>fmtDur(r.talk)},{h:'GWP Target',f:r=>r.gwpT},{h:'GWP Achieved',f:r=>r.gwp},
-    {h:'Insurance Opt In',f:r=>r.opt},{h:'Referrals',f:r=>r.ref||0}];
+    {h:'% of GWP Target',f:r=>rate(r.gwp,r.gwpT)},{h:'Ave GWP',f:r=>rate(r.gwp,r.sales)},
+    {h:'Insurance Opt In',f:r=>r.opt},{h:'Referrals',f:r=>r.ref||0},
+    {h:'% Of Referrals To Sales Achieved',f:r=>rate(r.ref||0,r.sales)}];
   // Export honours the on-screen filters: campaign (S.ui.camp) and team leader (S.ui.team) —
   // the same gFilter every view uses, so you extract exactly what you're looking at.
   const teamOK=r=>!S.ui.team||r.tl===S.ui.team;
@@ -2674,13 +2743,28 @@ function exportReport(){
     if(rows.length) sheet('MTD - '+camp,aggCols({canc:true}),[...rows,totalRow(rows,'Grand Total')]);
   }
   const tlKeys=Object.keys(M.tlAgg).filter(k=>{const p=k.split('|');return (!S.ui.camp||p[0]===S.ui.camp)&&(!S.ui.team||p[1]===S.ui.team)});
-  const metricList=[['Employed HC','hc'],['Total Employed Shifts','emp'],['Total Actual Shifts','act'],['% Of Attendance','att'],
-    ['Sales Target','target'],['Sales Achieved','sales'],['% To Sales Target','pctT'],['SPD','spd'],['Cancellations','canc'],
+  // Mirrors the workbook's TL MTD block row-for-row. Dialing Days, the three
+  // percentage rows, Ave Talk Time and QA % were absent, so those lines exported
+  // blank or missing against the tracker.
+  const metricList=[['Dialing Days','days'],['Employed HC','hc'],['Total Employed Shifts','emp'],
+    ['Total Actual Shifts','act'],['% Of Attendance','att'],
+    ['Sales Target','target'],['Sales Achieved','sales'],['% To Sales Target','pctT'],['SPD','spd'],
+    ['Cancellations','canc'],['% of Cancellations','cancPct'],
     ['GWP Target','gwpT'],['GWP Achieved','gwp'],['% To GWP Target','pctG'],['Ave GWP','aveG'],
-    ['Insurance Opt-Ins','opt'],['Referrals','ref'],['Agents on Target','onT']];
+    ['Ave Talk Time','aveTalk'],['Insurance Opt-Ins','opt'],
+    ['Referrals','ref'],['% Of Referrals','refPct'],
+    ['Number Of Agents on Target','onT'],['% Of Agents on Target','onTPct'],['QA %','qa']];
+  const PCT=new Set(['att','pctT','pctG','cancPct','refPct','onTPct']);
   const tlAoa=[['Metric',...tlKeys.map(k=>k.replace('|',' — '))]];
   for(const [lab,key] of metricList)
-    tlAoa.push([lab,...tlKeys.map(k=>{ const v=M.tlAgg[k][key]; return v==null?'':(typeof v==='number'?(key.startsWith('pct')||key==='att'?(v*100).toFixed(1)+'%':Math.round(v*100)/100):v); })]);
+    tlAoa.push([lab,...tlKeys.map(k=>{
+      let v=M.tlAgg[k][key];
+      if(key==='qa') v=v?v.avg:null;                       // {avg,n} -> number
+      if(v==null) return '';
+      if(key==='aveTalk') return fmtDur(v);                // seconds -> h:mm:ss
+      if(PCT.has(key)||key==='qa') return (v*100).toFixed(1)+'%';
+      return typeof v==='number'?Math.round(v*100)/100:v;
+    })]);
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(tlAoa),'TL MTD');
   const tag=(S.ui.camp||'All')+(S.ui.team?'_'+S.ui.team.replace(/[^A-Za-z0-9]+/g,''):'');
   XLSX.writeFile(wb,`VAS_${tag}_${S.ui.month}_${S.ui.mode}.xlsx`);
