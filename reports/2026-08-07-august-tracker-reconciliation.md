@@ -127,6 +127,39 @@ The point of the fixes is that next month's upload comes out right without anyon
 
 4. If a month introduces a new campaign, add it to `campOf` and `CAMPS`. Anything unrecognised falls through to Courtesy, and the roster parser drops campaigns outside its allowlist — that is exactly how the Nesting agents vanished.
 
+## Live run against the real sources (2026-08-07)
+
+With the Agent List, BI Active, BI Inactive, CallX and Vici loaded — no tracker workbook — the software produces, for 03–05 Aug:
+
+| Campaign | Agents | Emp | Act | Sales | GWP | Talk (h) | Canc |
+|---|---|---|---|---|---|---|---|
+| Cuddle | 27 | 81 | 68 | 717 | R72,118 | 268.7 | 7 |
+| Courtesy | 40 | 120 | 96 | 232 | R23,448 | 313.6 | 3 |
+| Nesting | 4 | 12 | 9 | 20 | R1,660 | 31.6 | 1 |
+| VT | 22 | 66 | 0 | 0 | — | 0 | 0 |
+| **VAS grand** | | | | **949** | **R95,566** | | **10** |
+
+Narrowed to the tracker's own window (03–04) the money ties: **Cuddle GWP R46,974 + Nevelin Naicker's unattributed R396 = R47,370, exactly the workbook's figure**, and cancellations land on **4, matching the workbook exactly**.
+
+Three sources settled the open items:
+
+- **Talk time** — CallX carries *only* `MATRIX WELCOME CALL` (Courtesy). Cuddle dials on **ViciDial**, which had no ingest. That was the whole 38% loss.
+- **Sales grain (S1)** — the workbook counts **accounts**: 03.08 has 311 unique accounts vs 993 contracts against the tracker's 302. The documented rule was right; nothing changed.
+- **Cancellations** — unique per account, counted only when create *and* deactivate both fall in the period. Verified exactly against the workbook's 4.
+
+### Extract timing is a permanent ~2-sale difference
+
+BI Active is a **point-in-time snapshot**. Contracts that cancelled between the tracker's build and the export date have moved to BI Inactive and no longer appear in Active at all — Sylvannas Gengan, Enoch Pillay and Amahle Makhanyela each had a contract created 04.08 and deactivated 05.08. A tracker built on the 4th can never tie exactly to an export pulled on the 5th. Compare like-dated extracts, or accept a small timing variance.
+
+### Still outstanding
+
+| Gap | Impact | Needs |
+|---|---|---|
+| **Attendance export** | Actual Shifts / Att % / half-days / terminations. Model has **zero** fractional shifts; the workbook has 44.5 and 59.5. Also why 2 ex-agents (CB67, CB205) still carry employed shifts | The attendance register |
+| **CB264 Nevelin Naicker, Snenhlanhla Zulu** | 4 sales, R396 unattributed | Add them to the Agent List |
+| **QA evaluations export** | QA % column unverifiable | The evaluations file |
+| **Vici per-day** | Daily sheet cannot break Cuddle talk down by day | Vici exported one day at a time |
+
 ## Important caveat on scope
 
 **The uploaded software export was not produced by any code in this repository.** It contains `Pivot Table`, `Team Split` and `August` sheets, plus Excel pivot vocabulary (`Row Labels`, `Sum of…`, `Count of…`), none of which appear anywhere in the codebase; Pulse's own exporter emits `Daily` and `WTD - Cuddle - Week 1`. Its TL MTD is also a superset of Pulse's.

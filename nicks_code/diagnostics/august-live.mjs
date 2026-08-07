@@ -51,6 +51,7 @@ const sendText = async (p) =>
 const loaded = {};
 const SKIP_TRACKER = !!process.env.SKIP_TRACKER;
 for (const [label, re, isCsv] of [
+  ['agent list',     /Matrix__Agent_List.*\.xlsx$/i,   false],
   ['roster/tracker', /VAS__August.*Tracker.*\.xlsx$/i, false],
   ['BI active',      /BI_Active.*\.xlsx$/i,            false],
   ['BI inactive',    /BI_Inactive.*\.xlsx$/i,          false],

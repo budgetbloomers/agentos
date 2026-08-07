@@ -1028,6 +1028,16 @@ function buildIndex(){
     for(const n of [a.name,a.sf,a.callx]) if(n){ const k=normName(n); if(k) IDX.byName[k]=a.code; }
   }
 }
+/* Dialler system accounts — not agents, and never will be. They are excluded from the
+   exceptions list so a real unmapped agent stands out instead of being buried among
+   "Training 3" and "Agent Test". Excluded, not silently dropped: they carry no sales,
+   and the pattern is narrow and editable (settings.nonAgentPattern). */
+const NON_AGENT=/^(agent\s*test|training\s*\d*|test\s*agent|admin)$/i;
+function isNonAgent(key){
+  const pat=S.settings&&S.settings.nonAgentPattern;
+  if(pat){ try{ if(new RegExp(pat,'i').test(String(key).trim())) return true; }catch(e){} }
+  return NON_AGENT.test(String(key).trim());
+}
 function resolveKey(key){
   if(S.map[key]!==undefined) return S.map[key]==='__ignore__'?null:S.map[key];
   if(/^CB\d+$/.test(key)) return IDX.byCode[key]?key:null;
@@ -1144,7 +1154,7 @@ function buildModel(range, periodKey){
     for(const [k,v] of Object.entries(S.calls[d]||{})){
       const c=resolveKey(k);
       if(c){ const t=callsBy[d][c]=callsBy[d][c]||{talk:0,calls:0,ans:0,opt:0,saleD:0}; t.talk+=v.talk; t.calls+=v.calls; t.ans+=(v.ans||0); t.opt+=v.opt; t.saleD+=v.saleD; }
-      else if(S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'calls',n:0}; u.n+=v.calls; }
+      else if(S.map[k]!=='__ignore__'&&!isNonAgent(k)){ const u=unmatched[k]=unmatched[k]||{src:'calls',n:0}; u.n+=v.calls; }
     }
   }
 
