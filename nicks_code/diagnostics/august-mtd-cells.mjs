@@ -130,11 +130,14 @@ const model = await page.evaluate(() => {
 await browser.close();
 
 // --- compare ----------------------------------------------------------------
-const FIELDS = ['emp','act','att','target','sales','pctT','spd','aveTalk','gwpT','gwp','pctG','aveG','ref','refPct'];
+// Referrals are 0 by design: there is no referral source file, so the software cannot
+// and should not reproduce the workbook's manually-typed figure. Reported, never failed.
+const FIELDS = ['emp','act','att','target','sales','pctT','spd','aveTalk','gwpT','gwp','pctG','aveG'];
+const INFO = ['ref','refPct'];
 const TOL = { att:5e-3, pctT:5e-3, spd:5e-3, pctG:5e-3, aveG:5e-3, refPct:5e-3, aveTalk:1.5, gwp:0.5, default:1e-6 };
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
-let checked = 0; const fails = []; const missing = [];
+let checked = 0; const fails = []; const missing = []; let refWorkbook = 0, refModel = 0;
 for (const [sheetName, rows] of Object.entries(sheets)) {
   const camp = sheetName.includes('Cuddle') ? 'Cuddle' : 'Courtesy';
   const bucket = sheetName.startsWith('MTD') ? model.mtd[camp] : model.wtd[camp];
@@ -151,6 +154,7 @@ for (const [sheetName, rows] of Object.entries(sheets)) {
       if (Math.abs(want - have) > tol)
         fails.push(`${sheetName} · ${row.agent} · ${f}: workbook ${want} vs model ${have}`);
     }
+    refWorkbook += num(row.ref); refModel += num(got.ref);   // reported, not failed
   }
 }
 
@@ -158,7 +162,8 @@ console.log(`\n  sheets reconciled: ${Object.keys(sheets).join(', ')}`);
 for (const [s, d] of Object.entries(stale || {}))
   console.log(`  SKIPPED (stale in the workbook): ${s} — ${d.wtdSales} sales / ${d.wtdEmp} employed shifts ` +
               `exceeds its own ${s.replace('WTD','MTD')} (${d.mtdSales} / ${d.mtdEmp})`);
-console.log(`  cells checked: ${checked}\n`);
+console.log(`  cells checked: ${checked} (${FIELDS.length} columns/agent; ${INFO.join('+')} reported only)`);
+console.log(`  referrals: workbook ${refWorkbook}, model ${refModel} — 0 expected, no source file\n`);
 if (missing.length) { console.log('  ROW MISMATCHES:'); missing.forEach(m => console.log('   ' + m)); console.log(); }
 console.log(`  august-mtd-cells: ${checked - fails.length} passed, ${fails.length} failed, ${missing.length} row problems`);
 for (const f of fails.slice(0, 40)) console.log('   FAIL  ' + f);

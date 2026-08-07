@@ -64,7 +64,9 @@ I did **not** change the sales grain, because `specs/AgentOS-v3.8-upload-framewo
 
 **B. Talk time — the call-record join drops ~22 agents/day.** 03.08: 148.49 h → 91.86 h (−38%); 04.08: 165.14 h → 106.01 h. Agents with real talk in the tracker export as `0:00:00` — CB106, CB136, CB137, CB15, CB152, CB17, CB19, CB196, CB197, CB206, CB21, CB30, CB42, CB44 and more — and **never the reverse**, so calls are being dropped, not just misattributed. A few agents also gain time (CB176: 02:02:28 → 3:19:10), which points at misattribution on top. The roster shows why the VT ones fail — blank `Call x` (no dialer name) — but the Cuddle/Courtesy agents above all have one, so the fault is in the matching itself. **I need the August call-records export** to fix this properly; guessing at name-normalisation without the real dialer strings would be reckless.
 
-**C. Referrals and cancellations have no source.** Referrals export as 0 everywhere against the tracker's 54 (Cuddle 50, Courtesy 4). Cancellations run the other way: 91 in the software (Cuddle 70, Courtesy 21) against the tracker's 4. Both are Adjustments-tab manual inputs — the BI ingest hardcodes `canc: 0` — so this is data entry, not calculation. The cancellation figure in particular looks over-entered by a wide margin and should be checked before anyone reads it.
+**C. Referrals — RESOLVED, 0 is correct.** Confirmed 2026-08-07: referrals should read **0**. There is no referral source file, so the software cannot and should not reproduce the workbook's manually-typed 54. `august-mtd-cells.mjs` reports the referral figures but never fails on them; the must-match set is the other 12 columns.
+
+**D. Cancellations — Pulse has no ingest for them at all.** The software shows 91 (Cuddle 70, Courtesy 21) against the workbook's 4. This is not a calculation error: `INGEST.bi` hardcodes `canc: 0`, so every cancellation in the app came from hand-typed Adjustments entries. Clearing them would give 0, which still would not match 4. Per `specs/AgentOS-v3.8-upload-frameworks.md` the real source is **S9 `SF_INACTIVE`** ("xlsx `Export` · windowed by Contract Create · unique per account") — a source Pulse does not implement. Closing this properly means building that ingest, which needs the export to validate against.
 
 ## End-to-end proof
 
@@ -83,9 +85,11 @@ Every figure ties to the workbook exactly. The same suite returns **0 dialing da
 
 `nicks_code/diagnostics/august-mtd-cells.mjs` goes further — it reconciles **each agent row against each workbook column** across both MTD tabs: employed shifts, actual shifts, Att %, sales target, sales, % of target, SPD, Ave Talk Time, GWP target, GWP achieved, % to GWP target, Ave GWP, referrals, % of referrals.
 
-**910 of 910 cells pass** (65 agents × 14 columns). The pre-fix build cannot load the workbook at all — 65 row problems, zero cells checked.
+**780 of 780 cells pass** — 65 agents × the 12 columns that must match. The pre-fix build cannot load the workbook at all: 65 row problems, zero cells checked.
 
-Two columns are deliberately out of scope for this harness because the daily sheet does not carry them: **Cancellations** (an Adjustments input) and **QA %** (from the evaluations export). Supply those two sources and they can be reconciled the same way.
+**Referrals are excluded from pass/fail by decision (2026-08-07): they should read 0.** There is no referral source, so the workbook's hand-typed 54 is not reproducible and is not required. The harness reports both figures and moves on.
+
+**Cancellations** and **QA %** are also out of scope for this harness — neither is carried on the daily sheet. See items D and E.
 
 ### The WTD tabs are stale too
 
@@ -119,7 +123,7 @@ The point of the fixes is that next month's upload comes out right without anyon
 
 2. **Refresh every tab of the workbook before comparing.** Half this month's file was stale, and a stale tab is indistinguishable from a software bug until someone does the arithmetic. The suites now catch WTD-over-MTD automatically; `TL MTD` and `Team Split` still need a human to refresh them.
 
-3. **Enter referrals and cancellations in Adjustments** before the report is read. Neither has a source file — referrals exported 0 against the workbook's 54, and cancellations 91 against 4.
+3. **Leave referrals at 0** — that is the agreed correct value. Do **not** hand-type cancellations into Adjustments either: that is what produced the 91-against-4 discrepancy. Cancellations need the `SF_INACTIVE` ingest built (item D), not manual entry.
 
 4. If a month introduces a new campaign, add it to `campOf` and `CAMPS`. Anything unrecognised falls through to Courtesy, and the roster parser drops campaigns outside its allowlist — that is exactly how the Nesting agents vanished.
 
