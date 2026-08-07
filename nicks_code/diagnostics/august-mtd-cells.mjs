@@ -70,7 +70,8 @@ def grab(sheet):
             target=g('Sales Target'), sales=g('Sales Achieved'), pctT=g('% of Sales Target'),
             spd=g('SPD'), aveTalk=secs(g('Ave Talk Time')),
             gwpT=g('GWP Target'), gwp=g('GWP Achieved'), pctG=g('% To GWP Target'),
-            aveG=g('Ave GWP'), ref=g('Referrals'), refPct=g('% Of Referrals To Sales Achieved')))
+            aveG=g('Ave GWP'), ref=g('Referrals'), refPct=g('% Of Referrals To Sales Achieved'),
+            canc=g('Cancellations'), qa=(None if str(g('QA')).strip() in ('No QA %','None','') else g('QA'))))
     return rows
 
 sheets={}; stale={}
@@ -108,14 +109,44 @@ const page = await browser.newPage();
 const pageErrors = [];
 page.on('pageerror', e => pageErrors.push(e.message));
 await page.goto(APP);
-await page.evaluate(t => window.__mtd.ingest('VAS_August_Tracker.csv', t), csv);
-await page.evaluate(() => window.__mtd.setRange('2026-08-01', '2026-08-31'));
+
+// LIVE_DIR=<uploads dir> reconciles the REAL production pipeline (Agent List, BI
+// Active, BI Inactive, CallX, Vici, attendance, evaluations) against the workbook,
+// instead of feeding the workbook's own daily sheet back through the app.
+const LIVE = process.env.LIVE_DIR;
+if (LIVE) {
+  await page.addScriptTag({ path: new URL('../../site/xlsx.full.min.js', import.meta.url).pathname });
+  await page.waitForFunction(() => typeof XLSX !== 'undefined');
+  const fsx = await import('node:fs'); const pth = await import('node:path');
+  const pick = re => { const f = fsx.readdirSync(LIVE).find(n => re.test(n));
+    if (!f) throw new Error('LIVE_DIR has no file matching ' + re); return pth.join(LIVE, f); };
+  for (const [re, isCsv] of [
+    [/Matrix__Agent_List.*\.xlsx$/i, false], [/BI_Active.*\.xlsx$/i, false],
+    [/BI_Inactive.*\.xlsx$/i, false], [/Call_X.*\.xlsx$/i, false],
+    [/attendance_\d+_to_\d+\.csv$/i, true], [/evaluationsfullexport.*\.csv$/i, true],
+    [/Vici.*\.csv$/i, true],
+  ]) {
+    const f = pick(re); const base = pth.basename(f);
+    if (isCsv) await page.evaluate(([n, t]) => window.__mtd.ingest(n, t), [base, fsx.readFileSync(f, 'utf8')]);
+    else {
+      const b64 = fsx.readFileSync(f).toString('base64');
+      await page.evaluate(async ([n, d]) => { const bin = atob(d); const u = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+        return window.__mtd.ingest(n, await window.__mtd.bufferToText(n, u.buffer)); }, [base, b64]);
+    }
+  }
+  await page.evaluate(([f, t]) => window.__mtd.setRange(f, t),
+    [process.env.LIVE_FROM || '2026-08-01', process.env.LIVE_TO || '2026-08-04']);
+} else {
+  await page.evaluate(t => window.__mtd.ingest('VAS_August_Tracker.csv', t), csv);
+  await page.evaluate(() => window.__mtd.setRange('2026-08-01', '2026-08-31'));
+}
 
 const model = await page.evaluate(() => {
   const m = window.__mtd.model();
   const pick = o => ({ emp:o.emp, act:o.act, att:o.att, target:o.target, sales:o.sales,
     pctT:o.pctT, spd:o.spd, aveTalk:o.aveTalk, gwpT:o.gwpT, gwp:o.gwp, pctG:o.pctG,
-    aveG:o.aveG, ref:o.ref, refPct:o.refPct });
+    aveG:o.aveG, ref:o.ref, refPct:o.refPct, canc:o.canc, qa:o.qa?o.qa.avg:null });
   const out = { mtd:{}, wtd:{}, weeks:m.weeks.map(w=>w.num) };
   for (const c of ['Cuddle','Courtesy']) {
     out.mtd[c] = Object.fromEntries(Object.entries(m.mtdCC[c]||{}).map(([k,v])=>[k,pick(v)]));
@@ -132,9 +163,11 @@ await browser.close();
 // --- compare ----------------------------------------------------------------
 // Referrals are 0 by design: there is no referral source file, so the software cannot
 // and should not reproduce the workbook's manually-typed figure. Reported, never failed.
-const FIELDS = ['emp','act','att','target','sales','pctT','spd','aveTalk','gwpT','gwp','pctG','aveG'];
+let FIELDS = ['emp','act','att','target','sales','pctT','spd','aveTalk','gwpT','gwp','pctG','aveG'];
 const INFO = ['ref','refPct'];
-const TOL = { att:5e-3, pctT:5e-3, spd:5e-3, pctG:5e-3, aveG:5e-3, refPct:5e-3, aveTalk:1.5, gwp:0.5, default:1e-6 };
+// With the real sources loaded, cancellations and QA become derivable too.
+if (process.env.LIVE_DIR) FIELDS = FIELDS.concat(['canc','qa']);
+const TOL = { att:5e-3, pctT:5e-3, spd:5e-3, pctG:5e-3, aveG:5e-3, refPct:5e-3, aveTalk:1.5, gwp:0.5, qa:5e-3, default:1e-6 };
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
 let checked = 0; const fails = []; const missing = []; let refWorkbook = 0, refModel = 0;
@@ -166,7 +199,7 @@ console.log(`  cells checked: ${checked} (${FIELDS.length} columns/agent; ${INFO
 console.log(`  referrals: workbook ${refWorkbook}, model ${refModel} — 0 expected, no source file\n`);
 if (missing.length) { console.log('  ROW MISMATCHES:'); missing.forEach(m => console.log('   ' + m)); console.log(); }
 console.log(`  august-mtd-cells: ${checked - fails.length} passed, ${fails.length} failed, ${missing.length} row problems`);
-for (const f of fails.slice(0, 40)) console.log('   FAIL  ' + f);
-if (fails.length > 40) console.log(`   … and ${fails.length - 40} more`);
+for (const f of fails.slice(0, Number(process.env.MAXFAIL||40))) console.log('   FAIL  ' + f);
+if (fails.length > Number(process.env.MAXFAIL||40)) console.log(`   … and ${fails.length - Number(process.env.MAXFAIL||40)} more`);
 if (pageErrors.length) console.log('  PAGE ERRORS: ' + pageErrors.join(' | '));
 process.exit(fails.length || missing.length || pageErrors.length ? 1 : 0);

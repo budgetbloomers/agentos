@@ -56,6 +56,8 @@ for (const [label, re, isCsv] of [
   ['BI active',      /BI_Active.*\.xlsx$/i,            false],
   ['BI inactive',    /BI_Inactive.*\.xlsx$/i,          false],
   ['CallX',          /Call_X.*\.xlsx$/i,               false],
+  ['attendance',     /attendance_\d+_to_\d+\.csv$/i,    true ],
+  ['evaluations',    /evaluationsfullexport.*\.csv$/i,  true ],
   ['Vici',           /Vici.*\.csv$/i,                  true ],
 ]) {
   if (SKIP_TRACKER && label === 'roster/tracker') { console.log('  skipped  roster/tracker (SKIP_TRACKER)'); continue; }

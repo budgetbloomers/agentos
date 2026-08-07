@@ -812,7 +812,9 @@ const INGEST={
         // = 98,992 — the sale is R99. Summing first and grossing up once carried
         // that ~1c/sale shortfall into every total (the workbook shows R99 exactly).
         let gwp=0; for(const ex of o.accts.values()) gwp+=Math.round(ex*VAT);
-        S.sales[d][owner]={n:o.accts.size, gwp, canc:0};
+        // accs is kept so a contract that later CANCELLED can be added back as the sale
+        // it was without double-counting an account this file already carries.
+        S.sales[d][owner]={n:o.accts.size, gwp, canc:0, accs:[...o.accts.keys()]};
       }
     }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
@@ -845,18 +847,23 @@ const INGEST={
     return regFile(name,'vici',rg.from?[rg.from,rg.to]:[],recs.length,{skip});
   },
   cancellations(recs,name){
-    const seen=new Set(); const rows=[]; const dates=new Set(); let skip=0;
+    const VAT=1+(S.settings&&S.settings.vatRate!=null?S.settings.vatRate:0.15);
+    const by={}; const dates=new Set(); let skip=0;
     for(const r of recs){
       const acc=String(r['Account Number']||'').trim();
       if(!acc||/^applied filters/i.test(acc)) continue;
       const created=String(r['Contract Create Date']||'').slice(0,10);
       const deact=String(r['Contract Deactivate Date']||'').slice(0,10);
       if(!/^\d{4}-\d{2}-\d{2}$/.test(created)){ skip++; continue; }
-      if(seen.has(acc)) continue; seen.add(acc);        // unique per account
-      rows.push({acc, owner:normName(r['Owner']), created,
-                 deact:/^\d{4}-\d{2}-\d{2}$/.test(deact)?deact:''});
+      const chg=parseFloat(String(r['Charge Amount']||'').replace(/\s/g,'')
+        .replace(/^(-?\d+),(\d+)$/,'$1.$2').replace(/[^0-9.\-]/g,''));
+      const e=by[acc]=by[acc]||{acc, owner:normName(r['Owner']), created,
+        deact:/^\d{4}-\d{2}-\d{2}$/.test(deact)?deact:'', ex:0};
+      if(!isNaN(chg)) e.ex+=chg;                        // unique per account, charges summed
       dates.add(created);
     }
+    const rows=Object.values(by).map(e=>({acc:e.acc, owner:e.owner, created:e.created,
+      deact:e.deact, gwp:Math.round(e.ex*VAT)}));
     if(!rows.length) return null;
     S.cancels=rows;                                     // snapshot source: replaces wholesale
     return regFile(name,'cancellations',[...dates].sort(),recs.length,{skip});
@@ -872,7 +879,14 @@ const INGEST={
       const key=agent;   // resolved to an employee code at report-build time
       const bk=(buckets[d]=buckets[d]||{});
       const b=bk[key]=bk[key]||{talk:0,calls:0,ans:0,opt:0,saleD:0};
-      b.talk+=durSecs(r['Duration']); b.calls++;
+      // Talk time is CONNECTED time. 'Duration' runs from dial to hang-up, so it bills
+      // ringing on every unanswered call — a NO ANSWER row reads Duration 00:00:23 with
+      // Billable Seconds 0. Summing Duration inflated talk by 50-80% against the
+      // workbook. Prefer Billable Seconds; fall back to Duration only if the column is
+      // absent (older exports).
+      const bill=r['Billable Seconds'];
+      b.talk+=(bill!=null&&String(bill).trim()!=='')?(parseFloat(bill)||0):durSecs(r['Duration']);
+      b.calls++;
       if((r['Bridge']||'').toUpperCase()==='ANSWERED') b.ans++;
       if(isOptIn(r['Lead Disposition'])) b.opt++;
       if(isSaleDisp(r['Lead Disposition'])) b.saleD++;
@@ -1146,7 +1160,20 @@ function buildModel(range, periodKey){
   const salesBy={}, callsBy={}, unmatched={};
   for(const d of dates){
     salesBy[d]={}; callsBy[d]={};
-    for(const [k,v] of Object.entries(S.sales[d]||{})){
+    // A contract sold on this date is a SALE even if it was cancelled afterwards. The
+    // BI Active export simply drops cancelled contracts, which silently nets the
+    // cancellation off both sales and GWP — the money model says GWP Lost is reported
+    // separately and never netted. Add them back from BI Inactive, skipping any account
+    // the Active file already carries so nothing is counted twice.
+    const sold={};
+    for(const [k,v] of Object.entries(S.sales[d]||{})) sold[k]={n:v.n,gwp:v.gwp,canc:v.canc||0,accs:new Set(v.accs||[])};
+    for(const c of (S.cancels||[])){
+      if(c.created!==d) continue;
+      const e=sold[c.owner]=sold[c.owner]||{n:0,gwp:0,canc:0,accs:new Set()};
+      if(e.accs.has(c.acc)) continue;
+      e.accs.add(c.acc); e.n+=1; e.gwp+=c.gwp||0;
+    }
+    for(const [k,v] of Object.entries(sold)){
       const c=resolveKey(k);
       if(c){ const t=salesBy[d][c]=salesBy[d][c]||{n:0,gwp:0,canc:0}; t.n+=v.n; t.gwp+=v.gwp; t.canc+=v.canc||0; }
       else if(resolveKey(k)!==null||S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'sales',n:0,gwp:0}; u.n+=v.n; u.gwp+=v.gwp||0; }
@@ -1217,14 +1244,21 @@ function buildModel(range, periodKey){
       let ref=tr?tr.ref:0;
       const ncalls=cd?cd.calls:0, nans=cd?cd.ans:0;
       const active=(talk>0||sales>0);
-      let act;
+      // The attendance register is the authority whenever it covers the agent-day —
+      // half-days, leave and suspensions are facts the dialler cannot show, and an
+      // agent can be legitimately at work with nothing to log. Only when the register
+      // is silent does activity decide, and it NEVER falls back to "employed, so
+      // present": that assumption booked a full shift for the whole floor on a day
+      // nobody worked.
       const st=(S.att[d]||{})[code];
+      let act;
       if(st!=null){ const w=attWeight(st); act=w===-1?0:w; }
-      else act=active?1:0;   // NEVER fall back to "employed, so present": a missing
-                             // attendance file used to book a full shift for everyone.
-      // An agent who logged no talk and made no sale did not work a sellable shift,
-      // however the register was filled in. The register still supplies the FRACTION
-      // (a half-day stays 0.5) — it just cannot manufacture a shift out of nothing.
+      else act=active?1:0;
+      // The register cannot manufacture a shift out of nothing: an agent with no talk
+      // and no sale did not work a sellable one. It still supplies the FRACTION, so a
+      // half-day stays 0.5. Empirically closer to the workbook than trusting the
+      // register outright (3 mismatching agents vs 6). Set shiftNeedsActivity:false to
+      // take the register at face value.
       if(!active && S.settings.shiftNeedsActivity!==false) act=0;
       const trackerIsSource=tr&&!cd&&!sd&&st==null;
       if(trackerIsSource){ emp=tr.emp; act=tr.act; }
@@ -2420,6 +2454,14 @@ function campSection(camp,week,opts){
 PAGES.mtd=()=>{
   if(!M||!M.dates.length) return emptyState();
   const sub=[...CAMPS,'Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle';
+  // A Vici export aggregated over a range wider than the report cannot be attributed to
+  // this window, so Cuddle talk reads 0. Say so — a silent zero looks like "no calls".
+  const viciWarn=M.viciPartial?`<div class="card" style="border-color:var(--warn);background:var(--warn-bg);margin-bottom:12px">
+    <b>Cuddle talk time is not shown for this period.</b> The ViciDial export covers
+    ${esc(S.vici.from)} to ${esc(S.vici.to)}, which is not inside ${esc(M.range.from)} to ${esc(M.range.to)}.
+    It is an agent-level total for its own range, so it cannot be split across days or
+    trimmed to a shorter window — export Vici for this period (ideally one day at a time)
+    and Cuddle talk will populate. Courtesy talk comes from CallX and is unaffected.</div>`:'';
   const tlBlock=camp=>{
     const keys=Object.keys(M.tlAgg).filter(k=>k.startsWith(camp+'|'));
     if(!keys.length) return '';
@@ -2443,6 +2485,7 @@ PAGES.mtd=()=>{
     <div class="spacer"></div><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
   <div class="chiprow" style="margin-bottom:14px">
     ${[...CAMPS.map(c=>[c,CAMPLAB[c]]),['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';save();renderPage()">${l}</button>`).join('')}</div>
+  ${viciWarn}
   ${sub==='Team Leaders'?tlBlock('Courtesy')+tlBlock('Cuddle')+tlBlock('VT')
     :`<div class="card">${campSection(sub,null,{canc:true})||'<div class="empty">No '+(CAMPLAB[sub]||sub)+' data in this period — upload the call records covering it</div>'}
       <p class="note" style="margin:10px 0 0">Cancellations and referrals come from the Adjustments page. QA is the average CallBi score for calls dated in the period.</p></div>`}`;
