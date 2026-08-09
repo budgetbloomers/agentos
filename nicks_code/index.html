@@ -1852,18 +1852,28 @@ function buildModel(range, periodKey){
   const adjC=code=>cancFromFile?0:((adj[code]||{}).c||0);
 
   function agg(rows,code){
-    const o={emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,days:0,prov:0,calls:0,ans:0,actDial:0};
+    const o={emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,days:0,prov:0,calls:0,ans:0,actDial:0,empDial:0};
     for(const f of rows){ o.emp+=f.emp;o.act+=f.act;o.target+=f.target;o.sales+=f.sales;o.gwp+=f.gwp;o.gwpT+=f.gwpT;
       o.talk+=f.talk;o.opt+=f.opt;o.ref+=f.ref;o.canc+=f.canc;o.days++; o.calls+=(f.calls||0); o.ans+=(f.ans||0);
-      if(f.dCov)o.actDial+=f.act;                    // shifts the dialler actually observed
+      if(f.dCov){o.actDial+=f.act; o.empDial+=f.emp;} // shifts the dialler actually observed
       if(f.provisional)o.prov++; }
     if(code&&adj[code]){ o.canc+=adjC(code); o.ref+=adj[code].r||0; }
-    o.att=o.emp?o.act/o.emp:null; o.pctT=o.target?o.sales/o.target:null; o.spd=o.act?o.sales/o.act:null;
+    o.att=o.emp?o.act/o.emp:null; o.pctT=o.target?o.sales/o.target:null;
+    // SPD is =IFERROR(Sales/Actual Shifts,0) — zero, not blank, when no shift was worked
+    o.spd=o.act?o.sales/o.act:0;
     o.pctG=o.gwpT?o.gwp/o.gwpT:null; o.aveG=o.sales?o.gwp/o.sales:null;
-    /* Ave Talk Time divides by the shifts the DIALLER covered, not by every shift in the
-       period. Dividing a three-day dialler total by a whole month of shifts is what made
-       these averages read far below the hand-built tracker. */
-    o.aveTalk=o.actDial?o.talk/o.actDial:(o.act?o.talk/o.act:null);
+    /* AVE TALK TIME DIVIDES BY EMPLOYED SHIFTS (spec §6.4: "divide by employed days, not days
+       on which calls were made"). It used to divide by the shifts the dialler saw the agent
+       WORK, which is a different question and breaks in both directions: an agent who dialled
+       but was credited no shift got no average at all, and anyone who worked part of the
+       period read high. The reference tracker settles it — an agent with 5,125s of dialling
+       and ZERO actual shifts still shows 0:42:43, which is 5,125 over his 2 EMPLOYED shifts.
+       EVERY employed shift in the period, not just the days the dialler covered: an agent the
+       dialler saw on one of two employed days still averages over two. Where the dialler does
+       not cover the whole period the figure genuinely reads low, and the honest answer is the
+       warning that already names those days on the MTD page — not a quietly narrowed
+       denominator that makes a partial upload look complete. */
+    o.aveTalk=o.emp?o.talk/o.emp:null;
     o.optPct=o.sales?o.opt/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null; o.cancPct=o.sales?o.canc/o.sales:null;
     o.aht=o.ans?o.talk/o.ans:null; o.ansPct=o.calls?o.ans/o.calls:null;
     return o;
@@ -3003,7 +3013,7 @@ function agentRows(camp, week){
   return rows;
 }
 function totalRow(rows,label){
-  const t={tl:label,tenure:'',agent:'',emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,calls:0,ans:0,qa:null};
+  const t={tl:label,tenure:'',agent:'',emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,calls:0,ans:0,empDial:0,qa:null};
   /* QA IS THE ONE COLUMN THAT IS AVERAGED, NOT SUMMED. Every other ratio on this row is
      recomputed from the summed numerator and denominator below (spec §8) — QA cannot be,
      because there is no numerator to sum: the workbook's total is literally
@@ -3013,9 +3023,12 @@ function totalRow(rows,label){
      same as one with twenty. qn is carried for display only ("n evaluations"). */
   let qs=0,qn=0,qa=0;
   for(const r of rows){ t.emp+=r.emp;t.act+=r.act;t.target+=r.target;t.sales+=r.sales;t.gwp+=r.gwp;t.gwpT+=r.gwpT;
-    t.talk+=r.talk;t.opt+=r.opt;t.ref+=r.ref;t.canc+=r.canc;t.calls+=(r.calls||0);t.ans+=(r.ans||0); if(r.qa){qs+=r.qa.avg;qa++;qn+=r.qa.n;} }
-  t.att=t.emp?t.act/t.emp:null;t.pctT=t.target?t.sales/t.target:null;t.spd=t.act?t.sales/t.act:null;
-  t.pctG=t.gwpT?t.gwp/t.gwpT:null;t.aveG=t.sales?t.gwp/t.sales:null;t.aveTalk=t.act?t.talk/t.act:null;
+    t.talk+=r.talk;t.opt+=r.opt;t.ref+=r.ref;t.canc+=r.canc;t.calls+=(r.calls||0);t.ans+=(r.ans||0);
+    t.empDial+=(r.empDial||0); if(r.qa){qs+=r.qa.avg;qa++;qn+=r.qa.n;} }
+  t.att=t.emp?t.act/t.emp:null;t.pctT=t.target?t.sales/t.target:null;t.spd=t.act?t.sales/t.act:0;
+  t.pctG=t.gwpT?t.gwp/t.gwpT:null;t.aveG=t.sales?t.gwp/t.sales:null;
+  // same denominator as the agent rows — employed shifts, over the days the dialler covered
+  t.aveTalk=t.emp?t.talk/t.emp:null;
   t.optPct=t.sales?t.opt/t.sales:null;t.refPct=t.sales?t.ref/t.sales:null;t.cancPct=t.sales?t.canc/t.sales:null;
   t.aht=t.ans?t.talk/t.ans:null;
   t.qa=qa?{avg:qs/qa,n:qn,agents:qa}:null;

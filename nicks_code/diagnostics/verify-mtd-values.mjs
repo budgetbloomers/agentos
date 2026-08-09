@@ -102,9 +102,13 @@ function tabulate(bk, sn) {
 const num = (o, col) => { const i = o.hdr.indexOf(col); if (i < 0) return null;
   const n = Number(o.r[i]); return Number.isFinite(n) ? n : null; };
 
-// "Kasavani Snakarparsad" is the Agent List's own spelling of Ashnee Kasavani Sankarparsad —
-// a typo in the source file, not a matching failure. Aliased so the row still gets compared.
-const ALIAS = { ashneekasavanisankarparsad: 'kasavanisnakarparsad' };
+/* No aliases needed any more. This used to map the workbook's "Ashnee Kasavani Sankarparsad"
+   onto the app's "Kasavani Snakarparsad", because the app took its display name from the Agent
+   List's `Agent Name` column, which carries that typo. The engine now takes it from `Sales
+   Force` (spec §3) — the column the workbook itself uses, and the string its Cancellations and
+   QA lookups join on — so both sides spell the name the same way and the alias would misdirect.
+   If this map ever needs an entry again, the roster is wrong, not the comparison. */
+const ALIAS = {};
 
 const EXACT = ['Employed Shifts', 'Actual Shifts', 'Att %', 'Sales Target', 'GWP Target',
   'Sales Achieved', 'GWP Achieved', 'Ave GWP', 'Cancellations'];
