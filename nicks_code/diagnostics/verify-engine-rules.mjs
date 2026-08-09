@@ -264,6 +264,42 @@ ok('Courtesy actual shifts are not simply the register', R.camps.Courtesy.act <=
   }
 }
 
+/* EVERY CAMPAIGN IN THE DATA NEEDS A SECTION ON SCREEN. Nesting was added to the engine and
+   to the totals, but the MTD and WTD campaign tabs were hardcoded lists that did not include
+   it — so its 3 agents and 17 sales counted toward the headline with no reachable section
+   showing them, and Courtesy + Cuddle + Tracker visibly summed to 612 against a headline of
+   629. A campaign that exists in the facts but not in the tab strip is invisible arithmetic,
+   which is exactly what "the totals don't add up" looks like from the floor. */
+{
+  await page.evaluate(() => go('mtd'));
+  await page.waitForTimeout(2000);
+  const seen = await page.evaluate(() => {
+    const M = window.__mtd.model();
+    const inData = [...new Set(M.facts.map(f => f.campaign))];
+    const tabs = [...document.querySelectorAll('.chip')].map(e => e.textContent.trim());
+    return { inData, tabs };
+  });
+  const labelFor = c => ({ Courtesy: 'Matrix Courtesy', Cuddle: 'Matrix Cuddle', Nesting: 'Nesting', VT: 'Matrix Tracker' })[c] || c;
+  const missing = seen.inData.filter(c => !seen.tabs.includes(labelFor(c)));
+  ok('every campaign in the data has a section on screen', !missing.length,
+    `missing tabs: ${missing.join(', ')} (tabs: ${seen.tabs.join(', ')})`);
+
+  // and the VAS campaigns must sum to the VAS headline (VT is excluded from it by design)
+  const sums = await page.evaluate(() => {
+    const M = window.__mtd.model(); const by = {};
+    for (const f of M.facts) { if (f.rangeAgg) continue;
+      const t = by[f.campaign] = by[f.campaign] || { emp: 0, sales: 0, gwp: 0 };
+      t.emp += f.emp; t.sales += f.sales; t.gwp += f.gwp; }
+    const vas = Object.entries(by).filter(([c]) => c !== 'VT')
+      .reduce((a, [, t]) => ({ emp: a.emp + t.emp, sales: a.sales + t.sales, gwp: a.gwp + t.gwp }), { emp: 0, sales: 0, gwp: 0 });
+    return { vas, grand: { emp: M.grand.emp, sales: M.grand.sales, gwp: Math.round(M.grand.gwp) } };
+  });
+  ok('the VAS campaign sections sum to the headline total',
+    sums.vas.emp === sums.grand.emp && sums.vas.sales === sums.grand.sales
+      && Math.abs(Math.round(sums.vas.gwp) - sums.grand.gwp) <= 1,
+    `campaigns ${JSON.stringify(sums.vas)} vs headline ${JSON.stringify(sums.grand)}`);
+}
+
 // §11 — the checks themselves
 console.log('\n== §11 rule checks, as the dashboard reports them ==');
 const errs = R.checks.filter(c => !c.ok && c.sev === 'error');

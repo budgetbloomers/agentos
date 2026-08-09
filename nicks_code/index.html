@@ -2451,7 +2451,7 @@ function renderTop(){
     ${preset==='custom'?`<div class="ctl"><input type="date" id="pFrom" value="${S.ui.from||''}"><span class="lab">→</span><input type="date" id="pTo" value="${S.ui.to||''}"></div>`:''}
     ${preset!=='custom'?`<div class="ctl" title="Stop the period on this day. Use it to line the dashboard up with a tracker that was cut earlier — the month keeps its shape, it just ends where you say."><span class="lab">as at</span><input type="date" id="pAsAt" value="${S.ui.asAt||''}">${S.ui.asAt?`<button class="btn ghost" id="pAsAtClear" style="padding:2px 8px" title="show every day again">✕</button>`:''}</div>`:''}
     <div class="ctl"><span class="lab">Campaign</span><select id="fCampG">
-      <option value="">All</option><option value="Courtesy" ${S.ui.camp==='Courtesy'?'selected':''}>Matrix Courtesy</option><option value="Cuddle" ${S.ui.camp==='Cuddle'?'selected':''}>Matrix Cuddle</option><option value="VT" ${S.ui.camp==='VT'?'selected':''}>Matrix Tracker</option></select></div>
+      <option value="">All</option>${CAMPS.map(c=>`<option value="${c}" ${S.ui.camp===c?'selected':''}>${esc(CAMPLAB[c]||c)}</option>`).join('')}</select></div>
     <div class="ctl"><span class="lab">Team</span><select id="fTeamG"><option value="">All</option>
       ${tls.map(t=>`<option ${S.ui.team===t?'selected':''}>${esc(t)}</option>`).join('')}</select></div>
     <span style="flex:1"></span>
@@ -3059,7 +3059,7 @@ PAGES.mtd=()=>{
   ${diallerWarning()}${coverageNote()}<div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialling day${M.diallingDays===1?'':'s'}${S.ui.asAt?' · <b>as at '+esc(S.ui.asAt)+'</b>':''} · sorted by SPD</div>
     <div class="spacer"></div><button class="btn small" onclick="exportTracker()">${I.download}<span>Generate MTD tracker</span></button><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
   <div class="chiprow" style="margin-bottom:14px">
-    ${[['Courtesy','Matrix Courtesy'],['Cuddle','Matrix Cuddle'],['VT','Matrix Tracker'],['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';save();renderPage()">${l}</button>`).join('')}</div>
+    ${[...CAMPS.map(c=>[c,CAMPLAB[c]||c]),['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';save();renderPage()">${esc(l)}</button>`).join('')}</div>
   ${sub==='Team Leaders'?tlBlock('Courtesy')+tlBlock('Cuddle')+tlBlock('VT')
     :`<div class="card">${campSection(sub,null,{canc:true})||'<div class="empty">No '+(CAMPLAB[sub]||sub)+' data in this period — upload the call records covering it</div>'}
       <p class="note" style="margin:10px 0 0">Cancellations and referrals come from the Adjustments page. QA is the average CallBi score for calls dated in the period.</p></div>`}`;
@@ -3071,7 +3071,7 @@ PAGES.weekly=()=>{
   return `
   <div class="page-head"><h2>Weekly reports</h2><div class="sub">weeks run Monday–Sunday inside the period</div></div>
   <div class="chiprow" style="margin-bottom:14px">
-    ${[['Courtesy','Matrix Courtesy'],['Cuddle','Matrix Cuddle'],['VT','Matrix Tracker']].map(([c,l])=>`<button class="chip ${camp===c?'on':''}" onclick="S.ui.wtdCamp='${c}';save();renderPage()">${l}</button>`).join('')}</div>
+    ${CAMPS.map(c=>`<button class="chip ${camp===c?'on':''}" onclick="S.ui.wtdCamp='${c}';save();renderPage()">${esc(CAMPLAB[c]||c)}</button>`).join('')}</div>
   ${[...M.weeks].reverse().map(w=>{
     const sec=campSection(camp,w.num);
     return sec?`<div class="card mt" style="margin-top:12px"><div class="cardhead"><div><h3>${CAMPLAB[camp]||camp} — Week ${w.num}</h3>
