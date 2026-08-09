@@ -798,12 +798,37 @@ function detectType(header, sheetName, recs){
 
 let rosterCovered=null; // campaigns already replaced by an earlier sheet of the same file
 let __curFileHash=null; // content hash of the file being ingested — regFile stamps it on the registry entry
+/* THE GENERATED TRACKER IS AN OUTPUT, NOT AN INPUT. "VAS - <Month> MTD Tracker.xlsx" is the
+   workbook this app produces (Export report). Dropped back in with the day's exports it does
+   real damage, silently:
+
+     · Its "Team Split" sheet is a column-for-column clone of the Agent List's VAS sheet, so
+       detectType reads it as a roster and INGEST.roster then supersedes the live Agent List
+       with the stale snapshot frozen into the report. Measured on the 1-4 Aug workbook:
+       Courtesy 40 -> 42, Nesting 4 -> 8, six departed agents resurrected, and its campaign
+       column says "Courtesy - Nesting" rather than "Nesting".
+     · Its "August" sheet is trackerDaily-shaped, so yesterday's computed figures get stored
+       as facts and then override today's live ones through the trackerIsSource path.
+
+   Both make the whole report wrong in a way nothing on screen explains. The file is refused
+   whole — recognised by its own sheet names, so a rename cannot sneak it past. */
+const TRACKER_OUTPUT_SHEETS=[/^team split$/i,/^tl mtd$/i,/^pivot table$/i,/^(mtd|wtd)\s*-\s*/i];
+function isGeneratedTracker(names){
+  const hits=TRACKER_OUTPUT_SHEETS.filter(re=>names.some(n=>re.test(n.trim()))).length;
+  return hits>=2;   // two independent output sheets — no ordinary export looks like this
+}
 async function ingestText(name, text, expected, hash){
   __curFileHash=hash||null;
   const sheets=splitSheets(text);
   const names=Object.keys(sheets);
   let ingested=[];
   rosterCovered=new Set();
+  if(isGeneratedTracker(names)){
+    toast('"'+name+'" is a tracker workbook this dashboard GENERATED, not a data export — it was not loaded. '
+      +'Its Team Split sheet is a stale copy of the agent list and would overwrite your live roster. '
+      +'Upload the raw exports instead (Agent List, BI, dialler, attendance, QA).',12000);
+    return false;
+  }
   // prefer roster sheets named VAS / Agent List when multi-sheet
   const order=names.sort((a,b)=>{
     const rank=n=>/agent list|vas$/i.test(n)?0:(/^(june|july|august|september|october|november|december|january|february|march|april|may)$/i.test(n)?1:2);
@@ -1479,9 +1504,13 @@ function validateMTD(m){
   const rosterCodes=new Set(S.roster.map(a=>a.code));
   const money=F.filter(f=>f.campaign!=='VT');   // VT carries dialler-counted sales and no GWP
 
-  // V01 — one row per agent per day. A duplicate double-counts everything on the row.
+  /* V01 — one row per agent per day. A duplicate double-counts everything on the row.
+     rangeAgg rows are exempt and must be: a multi-day ViciDial pull has no per-day detail, so
+     its talk is carried on a deliberate extra row against the last covered day, with emp, act,
+     target and sales all zero. It adds a row without adding a shift or a sale. Counting those
+     as duplicates reported 24 phantom failures on a clean August drop. */
   { const seen=new Set(), dup=[];
-    for(const f of F){ const k=f.date+'|'+f.code; if(seen.has(k)) dup.push(k); seen.add(k); }
+    for(const f of F){ if(f.rangeAgg) continue; const k=f.date+'|'+f.code; if(seen.has(k)) dup.push(k); seen.add(k); }
     add('V01','error',!dup.length, dup.length?dup.length+' duplicate agent-day row(s), e.g. '+dup.slice(0,3).join(', '):'no duplicate Date + Emp Code'); }
 
   // V02 — Employed Shifts is a count of rows, never a number in a row.
@@ -1597,7 +1626,15 @@ function buildModel(range, periodKey){
      team by a third. Falls back to the data dates when no register is loaded, so the figure
      degrades to "what we know" rather than to zero. */
   const attDates=Object.keys(S.att).filter(d=>d>=range.from&&d<=range.to&&Object.keys(S.att[d]||{}).length).sort();
-  const diallingDays=attDates.length||dates.length;
+  /* A dialling day needs BOTH a register and something to report on it. The register runs
+     ahead of the other exports — on the August drop it reaches the 6th while the dialler and
+     BI stop at the 5th — and those trailing register-only days carry no fact rows at all, so
+     counting them divides TL-level SPD by a day nobody worked. Counting only the fact dates
+     has the opposite fault (01 Aug is a Saturday with sales and no register). The intersection
+     is the honest answer; the fallbacks keep the figure meaningful when a source is missing
+     entirely rather than collapsing it to zero. */
+  const factDates=new Set(dates);
+  const diallingDays=attDates.filter(d=>factDates.has(d)).length||attDates.length||dates.length;
 
   // termination map: first date an agent is marked Terminated/Resigned
   const term={};

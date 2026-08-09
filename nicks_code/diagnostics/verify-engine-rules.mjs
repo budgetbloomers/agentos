@@ -230,6 +230,40 @@ ok('CB156 displays the Sales Force name', R.rosterNames[0] === 'Ashnee Kasavani 
 ok('Courtesy actual shifts are not simply the register', R.camps.Courtesy.act <= R.camps.Courtesy.emp,
   `act ${R.camps.Courtesy.act} vs emp ${R.camps.Courtesy.emp}`);
 
+/* THE GENERATED TRACKER MUST BE REFUSED. It is this app's own output, and its "Team Split"
+   sheet is a column-for-column clone of the Agent List's VAS sheet — so it reads as a roster
+   and supersedes the live one with the stale snapshot frozen into the report. Measured before
+   the guard: Courtesy 40 -> 42, Nesting 4 -> 8 (written "Courtesy - Nesting"), six departed
+   agents resurrected, targets zeroed, and Courtesy attendance falsely dropped to 55%. Nothing
+   on screen said why. This is the regression test for that. */
+{
+  const TRK = j(SRC, 'VAS - August 2026 MTD Tracker 1 - 4 Aug.xlsx');
+  if (fs.existsSync(TRK)) {
+    const before = await page.evaluate(() => {
+      const S = window.__mtd.state(); const by = {};
+      S.roster.forEach(a => by[a.campaign] = (by[a.campaign] || 0) + 1);
+      return { n: S.roster.length, by: JSON.stringify(by) };
+    });
+    await page.setInputFiles('#fileInput', [TRK], { timeout: 120000 });
+    await page.waitForTimeout(7000);
+    const after = await page.evaluate(() => {
+      const S = window.__mtd.state(); const by = {};
+      S.roster.forEach(a => by[a.campaign] = (by[a.campaign] || 0) + 1);
+      return { n: S.roster.length, by: JSON.stringify(by),
+        rosterFiles: (S.files || []).filter(f => /roster/.test(f.type)).map(f => f.name),
+        tracker: Object.keys(S.tracker || {}).length };
+    });
+    ok('the generated tracker workbook does not touch the roster',
+      before.n === after.n && before.by === after.by,
+      `${before.n} ${before.by} -> ${after.n} ${after.by}`);
+    ok('the generated tracker workbook is not stored as facts', after.tracker === 0, `${after.tracker} tracker days`);
+    ok('the live Agent List still owns the roster',
+      after.rosterFiles.every(f => /agent list/i.test(f)), after.rosterFiles.join(', '));
+  } else {
+    console.log('  (skipping tracker-workbook guard — reference workbook not in src-aug)');
+  }
+}
+
 // §11 — the checks themselves
 console.log('\n== §11 rule checks, as the dashboard reports them ==');
 const errs = R.checks.filter(c => !c.ok && c.sev === 'error');
