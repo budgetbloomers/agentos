@@ -530,7 +530,16 @@ const MTD_RULES = {
 
   /* §1 — the calendar month, not the Salesforce sales-month. The BI exports arrive
      pre-filtered on a WIDER window and must be re-filtered on Contract Create Date. */
-  periodBasis: 'CALENDAR_MONTH'
+  periodBasis: 'CALENDAR_MONTH',
+
+  /* WHICH CAMPAIGNS THIS DASHBOARD REPORTS ON — Nick's call, 2026-08-09: "remove matrix
+     tracker and nesting". This is a deliberate DEVIATION from spec §7, which asks for a third
+     Nesting block; the spec's concern was never that Nesting must be reported, it was that it
+     was vanishing SILENTLY (3 agents and 17 sales dropping out of every report with nothing to
+     say so). So the campaigns come out, but the engine counts what it dropped and the Rule
+     checks panel names it every time. Put a campaign back in this list and its section, tabs,
+     exports and totals all return — nothing else is hardcoded to two campaigns. */
+  reportedCampaigns: ['Cuddle','Courtesy']
 };
 
 /* ================= utilities ================= */
@@ -617,7 +626,11 @@ async function toObjectsAsync(rows){
    own targets (M0 → 2/day) into one with different ones. §5 of the spec: the fact table
    must write exactly Courtesy | Cuddle | Nesting. */
 const campOf = c => /nest/i.test(c||'')?'Nesting':(/cuddle/i.test(c||'')?'Cuddle':(/track|vehicle|vision|^vt$/i.test(c||'')?'VT':'Courtesy'));
-const CAMPS=['Cuddle','Courtesy','Nesting','VT'];
+/* campOf still classifies every campaign that exists in the roster — that is how an excluded
+   one can be NAMED rather than silently swallowed by the Courtesy fallback. CAMPS is what the
+   dashboard actually reports on, and everything (sections, tabs, exports, totals, pivots)
+   derives from it. */
+const CAMPS=MTD_RULES.reportedCampaigns.slice();
 const CAMPLAB={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',Nesting:'Nesting',VT:'Matrix Tracker'};
 const normName = s => (s||'').toLowerCase().replace(/-\s*panimax/g,'').replace(/panimax/g,'').replace(/cb[\s-]*\d+/g,'').replace(/[^a-z]/g,'');
 const cbCode = s => { const m=(s||'').match(/CB[\s-]*(\d+)/i); return m?('CB'+parseInt(m[1],10)):null; };
@@ -1527,7 +1540,8 @@ function validateMTD(m){
     let n=0,g=0;
     for(const d in S.sales){ if(d<R.from||d>R.to) continue;
       for(const k in S.sales[d]){ const c=resolveKey(k); if(!c||!rosterCodes.has(c)) continue;
-        if(campOfCode[c]==='VT') continue;
+        // only the campaigns this dashboard reports on — the rest are tallied by offCampaign
+        if(!CAMPS.includes(campOfCode[c])) continue;
         if(S.settings.applyExclusions!==false&&MTD_RULES.excludeAgents[c]) continue;
         n+=S.sales[d][k].n; g+=S.sales[d][k].gwp; } }
     const fn=money.filter(f=>!f.provisional).reduce((a,f)=>a+f.sales,0);
@@ -1539,9 +1553,11 @@ function validateMTD(m){
   { const emp=F.reduce((a,f)=>a+f.emp,0), ag=new Set(F.filter(f=>f.emp).map(f=>f.code)).size, dd=m.diallingDays;
     add('V05','warn',emp<=ag*dd, 'Employed Shifts '+fmtNum(emp)+' over '+ag+' agents x '+dd+' dialling day'+(dd===1?'':'s')); }
 
-  // V06 — a campaign token outside the three vanishes from every campaign total.
+  /* V06 — every fact row must sit in a reported campaign. Anything else is dropped upstream
+     and tallied into offCampaign, so a stray token arriving here means the filter leaked and
+     a campaign is silently inflating a total it does not belong to. */
   { const known=new Set(CAMPS), bad=[...new Set(F.map(f=>f.campaign))].filter(c=>!known.has(c));
-    add('V06','error',!bad.length, bad.length?'unknown campaign token(s): '+bad.join(', '):'every row is Cuddle, Courtesy, Nesting or VT'); }
+    add('V06','error',!bad.length, bad.length?'unreported campaign token(s) in the fact table: '+bad.join(', '):'every row is '+CAMPS.join(' or ')); }
 
   // V07 — more cancellations than sales means the two are counted in different units.
   { const by={}; money.forEach(f=>{ const t=by[f.code]=by[f.code]||{s:0,c:0}; t.s+=f.sales; t.c+=f.canc; });
@@ -1606,6 +1622,13 @@ function validateMTD(m){
     add('V21','error',pass+coach+cf===ev, 'Pass '+pass+' + Coaching '+coach+' + Critical Fail '+cf+' = '+(pass+coach+cf)+' against '+ev+' evaluations');
     add('V22','warn',!upheld, upheld?upheld+' upheld dispute(s) — the period\'s QA is provisional':'no upheld disputes in the period');
     if(open) out.push({id:'QA',sev:'warn',ok:false,msg:open+' of '+ev+' evaluations are not closed — QA is provisional'}); }
+
+  /* Campaigns deliberately left out of this dashboard. Reported every build, with the sales
+     and GWP they take with them, so "the totals look light" always has an answer on screen. */
+  { const off=Object.entries(m.offCampaign||{});
+    if(off.length) out.push({id:'campaign',sev:'info',ok:true,
+      msg:'not reported on: '+off.map(([c,v])=>`${c} (${v.agents} agent${v.agents===1?'':'s'}, ${v.sales} sale${v.sales===1?'':'s'}${v.gwp?', '+fmtR(v.gwp):''})`).join('; ')
+        +' — excluded by the reported-campaigns rule, not missing data'}); }
 
   // The exclusions are applied, so they must be visible: a head count short by three with no
   // explanation is exactly the kind of silent hole the spec keeps warning about.
@@ -1696,6 +1719,11 @@ function buildModel(range, periodKey){
   // Agents can work a different campaign on different days, so campaign/TL come from the
   // tracker row when that day was imported from a tracker workbook, else from the roster.
   const facts=[];
+  /* Campaigns this dashboard does not report on (MTD_RULES.reportedCampaigns). They are
+     counted as they are dropped — agents, sales and GWP — so the Rule checks panel can say
+     exactly what is not in the totals. A campaign leaving the report silently is the bug the
+     spec spent a whole section on; leaving it out LOUDLY is a decision. */
+  const offCampaign={};
   const attCovered=d=>!!S.att[d]&&Object.keys(S.att[d]).length>0;
   const metaOf={}; S.roster.forEach(a=>{ metaOf[a.code]=a; });
   for(const d of dates){
@@ -1714,6 +1742,13 @@ function buildModel(range, periodKey){
       if(S.settings.applyExclusions!==false && MTD_RULES.excludeAgents[code]) continue;
       const a=metaOf[code], tr=trk[code];
       const camp=campOf((tr&&tr.campaign)||(a&&a.campaign));
+      if(!CAMPS.includes(camp)){
+        // not a reported campaign — tally what is being left out, then drop the row
+        const sd0=salesBy[d][code];
+        const t=offCampaign[camp]=offCampaign[camp]||{agents:new Set(),sales:0,gwp:0};
+        t.agents.add(code); if(sd0){ t.sales+=sd0.n; t.gwp+=sd0.gwp; }
+        continue;
+      }
       const started=tr?true:(!a?.start||a.start<=d);
       const terminated=term[code]&&d>=term[code];
       let emp=(started&&!terminated)?1:0;
@@ -1967,6 +2002,7 @@ function buildModel(range, periodKey){
   const noDialler=[...workedDays].filter(d=>!talkDays.has(d)).sort();
   return {range,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
     viciSkipped,talkDays,noDialler,attDates,diallingDays,
+     offCampaign:Object.fromEntries(Object.entries(offCampaign).map(([k,v])=>[k,{agents:v.agents.size,sales:v.sales,gwp:Math.round(v.gwp)}])),
      qaAvg:qa?qs/qa:null,qaN:qn,qaAgents:qa,periodKey,
      dailyByDate:(()=>{ const o={}; facts.forEach(f=>{ const t=o[f.date]=o[f.date]||Object.fromEntries(CAMPS.map(c=>[c,0])); t[f.campaign]+=f.sales; }); return o; })()};
 }

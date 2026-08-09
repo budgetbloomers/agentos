@@ -66,13 +66,13 @@ console.log('generated:', dl.suggestedFilename());
 
 const G = XLSX.read(fs.readFileSync(out),{type:'buffer',cellDates:true});
 console.log('sheets:', JSON.stringify(G.SheetNames));
-/* Ten sheets now, not the reference workbook's eight: Nesting gets its own WTD and MTD sheet.
-   The hand-built workbook filtered Nesting out of both pivots, so 3 agents and 17 sales
-   appeared in NO sheet at all — spec §7 records that as a coverage gap to close, not a layout
-   to copy. Everything else keeps the workbook's order. */
-const want=['Pivot Table','August','WTD - Cuddle','WTD - Courtesy','WTD - Nesting',
-            'MTD - Cuddle','MTD - Courtesy','MTD - Nesting','Team Split','TL MTD'];
-ok('all 10 sheets, in the workbook\'s order plus Nesting', JSON.stringify(G.SheetNames)===JSON.stringify(want), JSON.stringify(G.SheetNames));
+/* Back to the reference workbook's own eight sheets. Nesting briefly had its own WTD and MTD
+   sheet (spec §7 treats its absence as a coverage gap); Nick's instruction on 2026-08-09 was
+   to report Cuddle and Courtesy only, and the sheet list follows MTD_RULES.reportedCampaigns.
+   The agents are not lost in silence — the engine tallies them and the Rule checks panel names
+   them with the sales they take with them. */
+const want=['Pivot Table','August','WTD - Cuddle','WTD - Courtesy','MTD - Cuddle','MTD - Courtesy','Team Split','TL MTD'];
+ok('all 8 sheets, in the workbook\'s order', JSON.stringify(G.SheetNames)===JSON.stringify(want), JSON.stringify(G.SheetNames));
 
 // headers must match the template
 // find the header row by content, not position: the template carries extra banner rows

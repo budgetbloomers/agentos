@@ -165,22 +165,23 @@ await page.waitForTimeout(2500);
 const R = await page.evaluate(() => {
   const M = window.__mtd.model(), S = window.__mtd.state();
   const camps = {};
-  for (const c of ['Cuddle', 'Courtesy', 'Nesting', 'VT']) {
+  for (const c of ['Cuddle', 'Courtesy', 'Nesting', 'VT']) {   // includes the unreported ones, to prove they are empty
     const rows = M.facts.filter(f => f.campaign === c);
     camps[c] = { rows: rows.length, agents: new Set(rows.map(f => f.code)).size,
       sales: rows.reduce((a, f) => a + f.sales, 0), gwp: Math.round(rows.reduce((a, f) => a + f.gwp, 0)),
       emp: rows.reduce((a, f) => a + f.emp, 0), act: rows.reduce((a, f) => a + f.act, 0) };
   }
-  return { camps, dates: M.dates.length, diallingDays: M.diallingDays, checks: window.__mtd.checks(),
+  return { camps, offCampaign: M.offCampaign || {}, dates: M.dates.length, diallingDays: M.diallingDays, checks: window.__mtd.checks(),
     codes: [...new Set(M.facts.map(f => f.code))],
     attCodes: [...new Set(Object.values(S.att).flatMap(o => Object.keys(o)))],
     rosterNames: S.roster.filter(a => a.code === 'CB156').map(a => a.name),
-    // BI money for agents the fact table gives no GWP to (VT) plus owners off the roster —
-    // the two legitimate reasons the union total exceeds the campaign totals
+    /* Money whose OWNER resolves to nobody on the roster. Campaign-excluded money (Nesting,
+       Tracker) is NOT counted here — offCampaign already carries it, and counting it twice is
+       what made this check overshoot by exactly the Tracker total. */
     offBook: (() => { const roster = {}; S.roster.forEach(a => roster[a.code] = a); let g = 0;
       for (const d in S.sales) { if (d < '2026-08-01' || d > '2026-08-04') continue;
         for (const k in S.sales[d]) { const c = resolveKey(k);
-          if (!c || !roster[c] || roster[c].campaign === 'VT') g += S.sales[d][k].gwp; } }
+          if (!c || !roster[c]) g += S.sales[d][k].gwp; } }
       return Math.round(g); })(),
     qaAvg: M.qaAvg, qaAgents: M.qaAgents };
 });
@@ -194,10 +195,15 @@ ok('no page errors', !errors.length, errors.slice(0, 2).join(' | '));
 ok('dialling days come from the register, not every dated file', R.diallingDays === 2,
   `${R.diallingDays} dialling days over ${R.dates} dated days`);
 
-// §7 coverage gap — 3 agents and 17 sales that used to vanish from every report
-ok('Nesting is a reported campaign', R.camps.Nesting.agents === WORKBOOK.Nesting.agents
-  && R.camps.Nesting.sales === WORKBOOK.Nesting.sales,
-  `${R.camps.Nesting.agents} agents / ${R.camps.Nesting.sales} sales vs workbook ${WORKBOOK.Nesting.agents}/${WORKBOOK.Nesting.sales}`);
+/* Nesting and Tracker are NOT reported (Nick's call, 2026-08-09). The spec's §7 concern was
+   never that Nesting must appear — it was that it disappeared SILENTLY. So the test is not
+   "is it reported" but "is its absence accounted for": no fact rows, and the engine naming
+   the agents and sales it dropped. */
+ok('Nesting produces no fact rows', !R.camps.Nesting.rows, `${R.camps.Nesting.rows} rows`);
+ok('Tracker produces no fact rows', !R.camps.VT.rows, `${R.camps.VT.rows} rows`);
+ok('the excluded campaigns are named with what they took with them',
+  (R.offCampaign.Nesting?.sales === WORKBOOK.Nesting.sales) && R.offCampaign.Nesting?.agents === WORKBOOK.Nesting.agents,
+  JSON.stringify(R.offCampaign));
 
 // §7 reference output — the figures the hand-built workbook carries
 ok('Cuddle GWP matches the workbook exactly', R.camps.Cuddle.gwp === WORKBOOK.Cuddle.gwp,
@@ -221,9 +227,10 @@ ok('CB156 displays the Sales Force name', R.rosterNames[0] === 'Ashnee Kasavani 
    row) must add back up to the independent recompute, to the rand. This is the check that
    would catch money quietly going missing in a transform. */
 {
-  const gwp = R.camps.Cuddle.gwp + R.camps.Courtesy.gwp + R.camps.Nesting.gwp;
-  ok('every rand of the BI union is accounted for', Math.abs(gwp + R.offBook - expGwp) <= 3,
-    `campaigns R${gwp} + off-book R${R.offBook} = R${gwp + R.offBook} vs recompute R${expGwp}`);
+  const gwp = R.camps.Cuddle.gwp + R.camps.Courtesy.gwp;
+  const off = Object.values(R.offCampaign).reduce((a, v) => a + (v.gwp || 0), 0);
+  ok('every rand of the BI union is accounted for', Math.abs(gwp + off + R.offBook - expGwp) <= 3,
+    `reported R${gwp} + unreported campaigns R${off} + off-book R${R.offBook} = R${gwp + off + R.offBook} vs recompute R${expGwp}`);
 }
 
 // §6.2 — Courtesy shifts are dialler-derived, so a Present agent who never dialled is 0
@@ -279,7 +286,7 @@ ok('Courtesy actual shifts are not simply the register', R.camps.Courtesy.act <=
     const tabs = [...document.querySelectorAll('.chip')].map(e => e.textContent.trim());
     return { inData, tabs };
   });
-  const labelFor = c => ({ Courtesy: 'Matrix Courtesy', Cuddle: 'Matrix Cuddle', Nesting: 'Nesting', VT: 'Matrix Tracker' })[c] || c;
+  const labelFor = c => ({ Courtesy: 'Matrix Courtesy', Cuddle: 'Matrix Cuddle' })[c] || c;
   const missing = seen.inData.filter(c => !seen.tabs.includes(labelFor(c)));
   ok('every campaign in the data has a section on screen', !missing.length,
     `missing tabs: ${missing.join(', ')} (tabs: ${seen.tabs.join(', ')})`);
