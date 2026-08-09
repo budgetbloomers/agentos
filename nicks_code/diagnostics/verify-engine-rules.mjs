@@ -127,8 +127,19 @@ for (const ow in acct) for (const a in acct[ow]) { expAcc++; expGwp += Math.roun
 console.log(`  independent recompute 01-04 Aug: ${expAcc} accounts, GWP R${expGwp} (all owners), ${testRows} test rows excluded`);
 
 /* ------------------------------------------------------------- 3. the app ---- */
-const SERVE = { '/': j(REPO, 'nicks_code', 'index.html'), '/index.html': j(REPO, 'nicks_code', 'index.html'),
-  '/xlsx.full.min.js': j(REPO, 'site', 'xlsx.full.min.js') };
+/* By default this drives the SOURCE (nicks_code/index.html). Set PULSE_HTML to drive the
+   BUILD instead — `PULSE_HTML=site/pulse/index.html node verify-engine-rules.mjs` proves the
+   artefact that actually ships obeys the rules, which is not quite the same claim: the build
+   goes through prepare-site.js, which injects the storage shim, the stale-guard and the auth
+   gate, and a build step is exactly the sort of place a rule can quietly stop being applied. */
+const TARGET = process.env.PULSE_HTML
+  ? path.resolve(REPO, process.env.PULSE_HTML)
+  : j(REPO, 'nicks_code', 'index.html');
+console.log(`  driving: ${path.relative(REPO, TARGET)}`);
+const SERVE = { '/': TARGET, '/index.html': TARGET,
+  '/xlsx.full.min.js': j(REPO, 'site', 'xlsx.full.min.js'),
+  '/auth-gate.js': j(REPO, 'site', 'auth-gate.js'),
+  '/ask-widget.js': j(REPO, 'site', 'ask-widget.js') };
 const server = http.createServer((req, res) => {
   const p = SERVE[req.url.split('?')[0]];
   if (!p || !fs.existsSync(p)) { res.writeHead(404); res.end('nf'); return; }
