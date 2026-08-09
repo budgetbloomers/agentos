@@ -26,7 +26,9 @@ let last=-1,st=0; for(let i=0;i<120;i++){ await pg.waitForTimeout(1500);
   if(n===last){ if(++st>=4)break } else {st=0;last=n} }
 await pg.evaluate(()=>window.__mtd.setPeriod('2026-08','calendar'));
 await pg.waitForTimeout(1200);
-const before=await pg.evaluate(()=>({canc:Object.keys(window.__mtd.state().canc||{}).length,
+// Cancellations live in S.cancRows (keyed account|contract|deactivate-date). This suite used
+// to read S.canc, a name nothing has written for a long time, so it was checking 0 against 0.
+const before=await pg.evaluate(()=>({canc:Object.keys(window.__mtd.state().cancRows||{}).length,
   sales:Object.keys(window.__mtd.state().sales||{}).length}));
 console.log('loaded:',JSON.stringify(before));
 ok('data loaded', before.sales>0&&before.canc>0, JSON.stringify(before));
@@ -36,14 +38,14 @@ ok('data loaded', before.sales>0&&before.canc>0, JSON.stringify(before));
 const res = await pg.evaluate(()=>{
   const S=window.__mtd.state();
   const blob=JSON.parse(JSON.stringify(S));
-  delete blob.canc; delete blob.vici; delete blob.viciDays;   // an older cloud blob
-  const missing=['canc','vici','viciDays'].filter(k=>!(k in blob));
+  delete blob.cancRows; delete blob.vici; delete blob.viciDays;   // an older cloud blob
+  const missing=['cancRows','vici','viciDays'].filter(k=>!(k in blob));
   try{
     Object.keys(S).forEach(k=>delete S[k]);
     Object.assign(S,blob);
     rebuild(); renderAll();
     const M=window.__mtd.model();
-    return {ok:true, missing, seeded:['canc','vici','viciDays'].filter(k=>S[k]&&typeof S[k]==='object'),
+    return {ok:true, missing, seeded:['cancRows','vici','viciDays'].filter(k=>S[k]&&typeof S[k]==='object'),
             dates:M.dates.length, sales:M.grand.sales};
   }catch(e){ return {ok:false, missing, err:String(e&&e.message||e)}; }
 });
@@ -56,8 +58,7 @@ ok('the app still builds its model afterwards', res.ok&&res.dates>0, JSON.string
 // and an upload must still work after the hydrate
 await pg.setInputFiles('#fileInput',[j(UP,'BI Inactive - 05.08.xlsx')],{timeout:120000});
 await pg.waitForTimeout(8000);
-const after=await pg.evaluate(()=>{const S=window.__mtd.state();
-  let t=0; for(const d in S.canc) for(const k in S.canc[d]) t+=S.canc[d][k]; return t;});
+const after=await pg.evaluate(()=>Object.keys(window.__mtd.state().cancRows||{}).length);
 ok('cancellations can be uploaded again after a hydrate', after>0, `got ${after}`);
 
 ok('no page errors', errors.length===0, errors.slice(0,3).join(' | '));

@@ -21,7 +21,7 @@
     --ink:#EAF1FB; --ink2:#A9BAD4; --muted:#66799B;
     --accent:#3D9BFF; --accent2:#38C6F4; --accent-grad:linear-gradient(135deg,#2E7CF6,#38C6F4);
     --on-accent:#04101F;
-    --cuddle:#4C9DFF; --courtesy:#2BD9B0; --vt:#A78BFA; --violet:#A78BFA; --amber:#F5B02E; --rose:#FB7185;
+    --cuddle:#4C9DFF; --courtesy:#2BD9B0; --vt:#A78BFA; --nesting:#F5B02E; --violet:#A78BFA; --amber:#F5B02E; --rose:#FB7185;
     --good:#34D399; --warn:#FBBF24; --crit:#FB7185;
     --good-bg:rgba(52,211,153,.12); --warn-bg:rgba(251,191,36,.12); --crit-bg:rgba(251,113,133,.13);
     --grid-line:rgba(148,182,255,.08);
@@ -37,7 +37,7 @@
     --ink:#0B1B33; --ink2:#3E5475; --muted:#7A8AA6;
     --accent:#1D6FE8; --accent2:#0EA5E9; --accent-grad:linear-gradient(135deg,#1D6FE8,#0EA5E9);
     --on-accent:#fff;
-    --cuddle:#2470D8; --courtesy:#0E9E7E; --vt:#7C5CE0; --violet:#7C5CE0; --amber:#B87A00; --rose:#D6455D;
+    --cuddle:#2470D8; --courtesy:#0E9E7E; --vt:#7C5CE0; --nesting:#B87A00; --violet:#7C5CE0; --amber:#B87A00; --rose:#D6455D;
     --good:#0E9E63; --warn:#B87A00; --crit:#D6455D;
     --good-bg:rgba(14,158,99,.10); --warn-bg:rgba(184,122,0,.12); --crit-bg:rgba(214,69,93,.10);
     --grid-line:rgba(23,58,110,.09);
@@ -446,6 +446,93 @@ const DEFAULTS = {"roster":[{"tl":"Dhamendra Budhu","code":"CB115","name":"Anele
 
 const STORE_KEY = 'vas_mtd_tracker_v1';  // stable key — v2 migrates in place
 
+/* ================= MTD ENGINE RULES =================
+   THE RULE BOOK. This is Appendix A of "VAS Month-to-Date Report — Complete Specification"
+   v6.0, reverse-engineered from the hand-built tracker workbook and verified against source
+   data. The canonical copy lives at agentos/specs/mtd_engine_rules.json; this object is the
+   operative subset — every rule below is READ BY THE ENGINE, not documentation.
+
+   It is inlined rather than fetched because the dashboard is a single file that must run
+   from file:// with no server. When specs/mtd_engine_rules.json changes, change this to
+   match: diagnostics/verify-engine-rules.mjs fails the build if the two drift apart.
+
+   Nothing here is a threshold someone tuned. Each entry traces to a numbered section of the
+   spec and, in most cases, to a count of how many rows it reproduced. */
+const MTD_RULES = {
+  version: '6.0',
+
+  /* §4 — reference constants. gwpPerSale and the target matrix are ALSO read from the
+     roster's own Target column at runtime; these are the observed state and the fallback. */
+  gwpPerSale: 89,
+  vat: 1.15,
+  salesTargetMatrix: { 'Cuddle|Exp':8, 'Courtesy|Exp':5, 'Courtesy|M2':4, 'Courtesy|M1':3, 'Nesting|M0':2 },
+
+  /* §4 — attendance shift weights, keyed on the register's Status Code. The export carries
+     both a long Status ("Half Day CA") and a Status Code ("HDCA"); the CODE is canonical. */
+  attWeights: { P:1, HDCA:0.5, CA:0, UCA:0, SL:0, FRL:0, AL:0, L:0, Suspended:0 },
+
+  /* §6.2 — Actual Shifts. Courtesy/Nesting are DIALLER-derived: the HR register records
+     whether someone was in the building, the tracker records whether they worked the phones.
+     Verified 134/136 fact rows against the register's 123/136. Cuddle must stay on the
+     register because the ViciDial export is period-aggregated and has no per-day split. */
+  actualShiftsFrom: { Courtesy:'dialler', Nesting:'dialler', Cuddle:'register', VT:'register' },
+
+  /* §2 — source cleaning. Charge Amount and Charge Amount_1 are byte-identical duplicates;
+     summing both doubles GWP. TESTRR and account 622622 are test data. */
+  excludeChargeCodes: ['TESTRR'],
+  excludeAccounts: ['622622'],
+  attendanceEmployeeType: 'Call Agent',   // excludes QA, IT, L&D, Payroll, Facilities, HR, Exco
+
+  /* §5 — agents excluded from the fact table. NOT DERIVABLE FROM THE DATA: CB143 has an
+     identical all-period Sick Leave status and IS included, so no rule separates them.
+     Maintained by hand and confirmed monthly — see open item OI-10. */
+  excludeAgents: { CB67:'Theva Pragasen — Sick Leave all period', CB205:'Darrien Govender — Suspended all period', CB265:'Amanda Mani — no attendance record, likely not started' },
+
+  /* §3 — superseded QA codes, later code canonical. APPLY TO QA ROWS ONLY: CB207 is also
+     team leader Renolan Pillay's ViciDial ID, and remapping it there pays his talk time to
+     someone else. */
+  qaCodeCorrections: { CB207:'CB219', CB216:'CB229', CB210:'CB222', CB209:'CB221', CB212:'CB225', CB208:'CB220', CB214:'CB227', CB215:'CB228' },
+
+  /* §3 — the roster's embedded CB numbers contradict its own Employee Code column. Match on
+     the NAME portion, never the number: CB-138 is claimed by two people and matching on the
+     number misassigns 735 calls. */
+  diallerLabelCorrections: {
+    'Kyle Kisten CB-138':'CB137', 'Jabu Ntombele CB-138':'CB138', 'Perisha Naicker CB-145':'CB144',
+    'Denisha Pillay CB-144':'CB143', 'Nenekazi Mtsolo CB-178':'CB148', 'Shantal Munien - CB178':'CB178',
+    'Lindokuhle Phakathi CB-263':'CB263'
+  },
+
+  /* §3 — the same person spelled differently across sources. Left side is what a source
+     writes, right side is the roster's own name. Used only after the roster and token
+     matching have both failed, so a correct roster always wins. */
+  nameAliases: {
+    'Thokozile Maphumulo':'Thokozile Irene Maphumulo', 'Kasavani Sankarparsad':'Ashnee Kasavani Sankarparsad',
+    'Kasavani Snakarparsad':'Ashnee Kasavani Sankarparsad', 'Delano Rajgopaul':'Delano Rajagopal',
+    'Sabastian Manikum':'Sebastian Munikum', 'Jabu Ntombele':'Jabu Ntombela',
+    'Silerene Ganesan Naidoo':'Silerene Ganasen Naidoo', 'Thevapragasen Muniappen':'Theva Pragasen',
+    'Antach Sibusisiwe Owusu-Ansah':'Sibusisiwe Owusu-Ansah', 'Charmaine Orielley':"Charmaine O'rielley",
+    'Sherazaad Alexandre':"Sherazaad Alexandre'", 'Enoch James Pillay':'Enoch Pillay',
+    'Threza Tessa Chetty':'Threza Chetty', 'Ashleigh Naidoo':'Ashleigh Alexandra Naidoo',
+    'Thalente Xaba':'Thalente Celokuhle Xaba', 'Zinhle Ennocentia Masuku':'Zinhle Masuku',
+    'Nontokozo Nomvelo Gumede':'Nontokozo Gumede', 'Nomthandazo Thandazile Sibiya':'Nomthandazo Sibiya',
+    'Balungile Nolwazi Snothile Mdlalose':'Balungile Mdlalose', 'Asanda Anele Mthethwa':'Asanda Mthethwa',
+    'Lunga Ngongoma':'Andile Ngongoma', 'Olwethu Nzama':'Zanele Nzama',
+    'Thulani Mbonambi':'Thulani Greatman Mbonambi', 'Nomonde Ntoza':'Lindokuhle Phakathi'
+  },
+
+  /* §6.7 — QA. Six filter variants were tested and every one scored worse than no filter at
+     all, so there are deliberately NO filters beyond the period. */
+  qa: {
+    dateField: 'Date of Call',        // never Date of Assessment, never the export's own Week column
+    zeroIsCriticalFail: true,         // Score % = 0 is exactly Escalation Decision = Critical Fail, 24/24
+    noDataValue: 'No QA %'            // text, so AVERAGE() drops the agent rather than scoring them 0
+  },
+
+  /* §1 — the calendar month, not the Salesforce sales-month. The BI exports arrive
+     pre-filtered on a WIDER window and must be re-filtered on Contract Create Date. */
+  periodBasis: 'CALENDAR_MONTH'
+};
+
 /* ================= utilities ================= */
 function parseCSV(text){
   const rows=[]; let row=[], field='', q=false;
@@ -524,16 +611,25 @@ async function toObjectsAsync(rows){
   }
   return {header,recs};
 }
-const campOf = c => /cuddle/i.test(c||'')?'Cuddle':(/track|vehicle|vision|^vt$/i.test(c||'')?'VT':'Courtesy');
-const CAMPS=['Cuddle','Courtesy','VT'];
-const CAMPLAB={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',VT:'Matrix Tracker'};
+/* NESTING IS TESTED FIRST. The agent list writes it plainly on the VAS sheet, but the
+   spec records the variant "Courtesy - Nesting" — which contains "courtesy" and would
+   otherwise be swallowed by the Courtesy fallback, silently merging a campaign with its
+   own targets (M0 → 2/day) into one with different ones. §5 of the spec: the fact table
+   must write exactly Courtesy | Cuddle | Nesting. */
+const campOf = c => /nest/i.test(c||'')?'Nesting':(/cuddle/i.test(c||'')?'Cuddle':(/track|vehicle|vision|^vt$/i.test(c||'')?'VT':'Courtesy'));
+const CAMPS=['Cuddle','Courtesy','Nesting','VT'];
+const CAMPLAB={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',Nesting:'Nesting',VT:'Matrix Tracker'};
 const normName = s => (s||'').toLowerCase().replace(/-\s*panimax/g,'').replace(/panimax/g,'').replace(/cb[\s-]*\d+/g,'').replace(/[^a-z]/g,'');
 const cbCode = s => { const m=(s||'').match(/CB[\s-]*(\d+)/i); return m?('CB'+parseInt(m[1],10)):null; };
 /* Name TOKENS, for the middle-name case: the dialler prints "Meelindree Crowie" while the
    roster carries "Meelindree Melanie Crowie". normName strips spaces, so it cannot match
    those; a subset match on the tokens can - and only when exactly one agent fits. */
 const nameTokens = s => (s||'').toLowerCase().replace(/cb[\s-]*\d+/g,' ').replace(/panimax/g,' ').replace(/[^a-z ]/g,' ').split(/\s+/).filter(Boolean);
-const durSecs = s => { const p=(s||'').split(':').map(Number); return p.length===3?(p[0]*3600+p[1]*60+p[2]):(p.length===2?(p[0]*60+p[1]):0); };
+const durSecs = s => { const p=String(s??'').trim().split(':').map(Number);
+  if(!p.length||p.some(n=>!isFinite(n))) return 0;
+  // h:m:s and m:s as expected; a BARE NUMBER is already seconds (CallX's Billable Seconds
+  // column) — that case used to fall through to 0, silently discarding the whole metric
+  return p.length===3?(p[0]*3600+p[1]*60+p[2]):p.length===2?(p[0]*60+p[1]):p.length===1?p[0]:0; };
 const fmtDur = t => { t=Math.round(t||0); const h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60; return h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); };
 const fmtPct = (x,d=0) => (x==null||!isFinite(x))?'–':(x*100).toFixed(d)+'%';
 const fmtNum = (x,d=0) => (x==null||!isFinite(x))?'–':Number(x).toLocaleString('en-ZA',{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -579,7 +675,7 @@ function freshState(){
     calls:{},    // date -> agentKey(CBnnn|norm) -> {talk,calls,opt,saleD}
     vici:{},     // 'from..to' -> multi-day ViciDial aggregate, deliberately NOT split across days
     viciDays:{}, // days that arrived as a SINGLE-DAY ViciDial export - these supersede any range covering them
-    canc:{},     // date -> CBnnn -> cancellations (Contract Deactivate Date, from the BI Inactive export)
+    cancRows:{}, // account|contract|deactivate -> {d:contract create date, owner, f:file} - one row per cancelled contract
     att:{},      // date -> CBnnn -> status
     evals:{},    // date -> CBnnn -> [scores 0-100]
     tracker:{},  // date -> CBnnn -> imported tracker daily row
@@ -603,7 +699,7 @@ if(!S || S.v!==1) S=freshState();
 /* THE SOURCE REGISTRY - one list of what a data store is. Declared HERE, above
    normalizeState, because that runs at load time: a const declared further down would
    still be in its temporal dead zone and the whole script would die on boot. */
-const DATA_STORES=['sales','calls','callsMeta','att','evals','tracker','canc','vici','viciDays'];
+const DATA_STORES=['sales','calls','callsMeta','att','evals','tracker','cancRows','vici','viciDays'];
 function normalizeState(){
   S.settings=Object.assign({attOverride:{},onTarget:1,trainingCounts:true},S.settings);
   if(!S.coach) S.coach={};                        // periodKey -> code -> {notes,due,status}
@@ -645,10 +741,19 @@ function toast(msg,ms){ const t=document.getElementById('toast'); t.textContent=
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),ms||2600); }
 
 /* ================= classification rules ================= */
+/* ATTENDANCE SHIFT WEIGHT — spec §4's table, keyed on the register's Status Code.
+   P = 1 · HDCA = 0,5 · CA, UCA, SL, FRL, AL, L, Suspended = 0 · anything unknown = 0.
+   Two paths on purpose: attendance stored by THIS build carries the code, but blobs
+   written by an earlier build (and any export without the column) carry the long text,
+   so the word-match fallback has to stay or every historical day silently reads zero.
+   Terminated/Resigned is an app extension, not a spec status — it ends employment and is
+   the reason this returns -1 rather than 0. */
 function attWeight(status){
   const ov=S.settings.attOverride||{};
   if(status in ov) return ov[status];
-  const s=(status||'').toLowerCase();
+  const raw=String(status||'').trim();
+  if(raw in MTD_RULES.attWeights) return MTD_RULES.attWeights[raw];
+  const s=raw.toLowerCase();
   if(s==='present') return 1;
   if(s==='training') return S.settings.trainingCounts?1:0;
   if(s.includes('half')) return 0.5;
@@ -742,7 +847,7 @@ async function ingestText(name, text, expected, hash){
    normalizeState, which would have killed the app on the next hydrate against an older
    cloud blob. One list now, used by all four. */
 // file type (first word of the registry type) -> the store it owns
-const STORE_OF={bi:'sales',calls:'calls',attendance:'att',evals:'evals',tracker:'tracker',cancellations:'canc'};
+const STORE_OF={bi:'sales',calls:'calls',attendance:'att',evals:'evals',tracker:'tracker'};   // cancellations key by contract, not day - removeFile handles them
 function regFile(name,type,dates,rows,extra){
   const nd=[...dates].sort();
   // same file re-uploaded with a SMALLER date span: days the old version stored but the
@@ -765,6 +870,55 @@ function regFile(name,type,dates,rows,extra){
   return {type,rows,dates:nd};
 }
 
+/* GROSS SALES — recompute every stored day's Sales Achieved and GWP from the per-account
+   charge maps. Two rules, both learnt by reconciling against the hand-built MTD workbook:
+
+   1. SALES ARE GROSS OF CANCELLATION. "Power BI - Active Cases" only lists contracts that
+      are STILL active, so a sale that cancels after month-start silently vanishes from it.
+      Left alone, Sales Achieved and GWP shrink a little every day the export is re-pulled,
+      and "% of Cancellations to Sales" measures cancellations against a NET denominator —
+      the one figure it must never be measured against. The Inactive export carries those
+      same accounts with their own Contract Create Date, so they are added back here.
+      The union is at ACCOUNT level, never row level: an account whose third contract
+      cancelled is still ONE sale, but its charge must come back (7 sales / R668 -> 7 / R693),
+      while a fully cancelled account is a whole sale returning (34 / R3 446 -> 35 / R3 545).
+
+   2. GWP ROUNDS PER ACCOUNT, NOT PER TOTAL. The export's Charge Amount lines are 2dp and
+      ex-VAT: 30,43 + 33,91 + 21,74 = 86,08, and 86,08 x 1,15 = 98,992 — but the account
+      bills R99. Rounding each account to the rand before summing is what reproduces the
+      workbook to the cent; grossing up the agent's total instead leaves every agent short.
+
+   Idempotent by construction: `a` holds ACTIVE accounts only and is never mutated, so this
+   can run after either upload, in either order, as many times as it likes. Days stored by an
+   older build carry no `a` map and are left exactly as they are rather than zeroed. */
+function grossUpSales(){
+  const VAT=1.15;                                   // 15%, matching the AgentOS BI model
+  const back={};                                    // date -> ownerKey -> account -> ex-VAT charge
+  for(const k in (S.cancRows||{})){
+    const r=S.cancRows[k]; if(!r||!r.a) continue;   // record predates account-level detail
+    const ow=normName(r.owner);
+    const o=((back[r.d]=back[r.d]||{})[ow]=back[r.d][ow]||{});
+    o[r.a]=(o[r.a]||0)+(r.x||0);
+  }
+  for(const d in S.sales){
+    const day=S.sales[d];
+    // a day stored before this build has no account detail — recomputing it would zero it
+    if(!Object.values(day).some(r=>r&&r.a)) continue;
+    const b=back[d]||{};
+    // an account that cancelled in full is absent from Active entirely: its owner may not
+    // have a row on this day at all, and that whole sale still belongs to them
+    for(const ow in b) if(!day[ow]) day[ow]={a:{},n:0,gwp:0,canc:0};
+    for(const ow in day){
+      const rec=day[ow]; if(!rec.a) continue;
+      const accts=Object.assign({},rec.a), add=b[ow]||{};
+      for(const acc in add) accts[acc]=(accts[acc]||0)+add[acc];
+      let n=0,g=0;
+      for(const acc in accts){ n++; g+=Math.round(accts[acc]*VAT); }
+      rec.n=n; rec.gwp=g; rec.canc=rec.canc||0;
+    }
+  }
+}
+
 const INGEST={
   // Power BI - Active Cases — THE money source (replaces Activated Services + the GWP
   // price list). GWP = Σ Charge Amount per account × (1+VAT); charges are EX-VAT (proof:
@@ -772,13 +926,20 @@ const INGEST={
   // Date; the agent is the Owner. Fills the same S.sales[date][owner]={n,gwp,canc} the
   // rest of the model reads, so nothing downstream changes. Months accumulate by date key.
   bi(recs,name){
-    const VAT=1.15;                                   // 15%, matching the AgentOS BI model
-    const byDate={};                                  // date -> owner -> {accts:Set, ex}
+    const byDate={};                                  // date -> owner -> {account: ex-VAT charge}
     const dates=new Set();
     let skip=0;
+    let excl=0;
     for(const r of recs){
       const acc=String(r['Account Number']||'').trim();
       if(!acc||/^applied filters/i.test(acc)) continue;          // R-ING-BI-07 footer guard (expected junk, not counted)
+      /* TEST DATA (spec §2). Charge code TESTRR and account 622622 are internal test rows
+         that otherwise land on a real agent's day as real money. Counted and reported —
+         "excluded records must be counted, never silently dropped". */
+      if(MTD_RULES.excludeChargeCodes.includes(String(r['Charge Code']||'').trim().toUpperCase())){ excl++; continue; }
+      if(MTD_RULES.excludeAccounts.includes(acc)){ excl++; continue; }
+      /* 'Charge Amount' ONLY. The export also carries a byte-identical 'Charge Amount_1'
+         (the spec's 'Charge Amount.1') — reading both doubles GWP. */
       // ZA comma-decimal safe: '30,43' must read 30.43, not 3043
       const chg=parseFloat(String(r['Charge Amount']||'').replace(/\s/g,'').replace(/^(-?\d+),(\d+)$/,'$1.$2').replace(/[^0-9.\-]/g,''));
       if(isNaN(chg)){ skip++; continue; }
@@ -786,19 +947,20 @@ const INGEST={
       if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ skip++; continue; }
       const owner=normName(r['Owner']);
       dates.add(d);
-      const o=((byDate[d]=byDate[d]||{})[owner]=byDate[d][owner]||{accts:new Set(),ex:0});
-      o.accts.add(acc); o.ex+=chg;
+      const o=((byDate[d]=byDate[d]||{})[owner]=byDate[d][owner]||{});
+      o[acc]=(o[acc]||0)+chg;
     }
-    // the file is authoritative for the dates it carries — replace those days, keep others
+    // the file is authoritative for the dates it carries — replace those days, keep others.
+    // The per-account charge map is kept: it is what lets a cancelled account be added back
+    // WITHOUT double-counting an account that is only partly cancelled (see grossUpSales).
     for(const d of dates){
       S.sales[d]={};
-      for(const owner in byDate[d]){
-        const o=byDate[d][owner];
-        S.sales[d][owner]={n:o.accts.size, gwp:o.ex*VAT, canc:0};
-      }
+      for(const owner in byDate[d]) S.sales[d][owner]={a:byDate[d][owner],n:0,gwp:0,canc:0};
     }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    return regFile(name,'bi',[...dates].sort(),recs.length,{skip});
+    grossUpSales();
+    if(excl) toast(excl+' test row(s) excluded from "'+name+'" (charge code '+MTD_RULES.excludeChargeCodes.join('/')+', account '+MTD_RULES.excludeAccounts.join('/')+')');
+    return regFile(name,'bi',[...dates].sort(),recs.length,{skip,excl});
   },
   calls(recs,name){
     const dates=new Set();
@@ -811,7 +973,16 @@ const INGEST={
       const key=agent;   // resolved to an employee code at report-build time
       const bk=(buckets[d]=buckets[d]||{});
       const b=bk[key]=bk[key]||{talk:0,calls:0,ans:0,opt:0,saleD:0};
-      b.talk+=durSecs(r['Duration']); b.calls++;
+      /* TALK TIME IS CONNECTED TIME. 'Duration' is the whole call including the ring — about
+         13 seconds on every dial, and on a 220-dial day that is over an hour of ringing
+         counted as talking (Cohen Govender, 3 Aug: 3:56:21 by Duration against 2:13:19 in the
+         hand-built tracker). 'Billable Seconds' is the connected leg — zero on every BUSY /
+         NO ANSWER row, so no separate answered-only filter is needed — and it lands within a
+         few percent of the tracker on every agent-day tested, where Duration is 39-77% over.
+         Files that predate the column (or a dialler that does not emit it) fall back to
+         Duration rather than reporting no talk at all. */
+      const conn=r['Billable Seconds'];
+      b.talk+=(conn===''||conn==null)?durSecs(r['Duration']):durSecs(conn); b.calls++;
       if((r['Bridge']||'').toUpperCase()==='ANSWERED') b.ans++;
       if(isOptIn(r['Lead Disposition'])) b.opt++;
       if(isSaleDisp(r['Lead Disposition'])) b.saleD++;
@@ -851,16 +1022,26 @@ const INGEST={
   attendance(recs,name){
     const dates=new Set();
     const byDate={};
-    let skip=0;
+    let skip=0, nonAgent=0;
     for(const r of recs){
       const d=parseDateLoose(r['Date']); const code=(r['Employee Code']||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       if(!d||!code){ skip++; continue; }
+      /* CALL AGENTS ONLY (spec §2). The register covers the whole company — QA, IT, L&D,
+         Payroll, Facilities, Marketing, HR, SOS and Exco all carry shift statuses. Counting
+         them put support staff into Employed Shifts and every target derived from it.
+         The filter is skipped when the column is absent so an older export still loads. */
+      const et=(r['Employee Type']||'').trim();
+      if(et && et.toLowerCase()!==MTD_RULES.attendanceEmployeeType.toLowerCase()){ nonAgent++; continue; }
       dates.add(d);
-      (byDate[d]=byDate[d]||{})[code]=r['Status']||r['Status Code']||'';
+      /* STATUS CODE IS CANONICAL (spec §4). The export carries both a long Status
+         ("Half Day CA") and its code ("HDCA"); the shift-weight table is keyed on the code,
+         so store that and keep the text only as a fallback for exports without the column. */
+      (byDate[d]=byDate[d]||{})[code]=r['Status Code']||r['Status']||'';
     }
     for(const d of dates) S.att[d]=Object.assign(S.att[d]||{}, byDate[d]);
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    return regFile(name,'attendance',dates,recs.length,{skip});
+    if(nonAgent) toast(nonAgent+' non-agent row(s) excluded from "'+name+'" (Employee Type is not "'+MTD_RULES.attendanceEmployeeType+'")');
+    return regFile(name,'attendance',dates,recs.length,{skip,nonAgent});
   },
   evals(recs,name){
     const dates=new Set(); const byDate={};
@@ -869,36 +1050,67 @@ const INGEST={
     const seenIds=new Set();
     let skip=0, dupes=0;
     for(const r of recs){
-      const d=parseDateLoose(r['Date of Call']||r['Date of Assessment']); if(!d){ skip++; continue; }
-      const code=('CB'+((r['Sales Agent CB']||'').match(/(\d+)/)||[])[1]).replace('CBundefined','');
+      /* DATE OF CALL, and nothing else (spec §6.7). Not Date of Assessment — an evaluation
+         submitted on the 5th for a call made on the 3rd belongs to the 3rd — and never the
+         export's own Week column, which uses a different convention to the tracker (it
+         labels 01 Aug Week 1 and 03-05 Aug Week 2). A row with no Date of Call cannot be
+         placed in a period at all, so it is skipped and counted rather than guessed. */
+      const d=parseDateLoose(r['Date of Call']); if(!d){ skip++; continue; }
+      let code=('CB'+((r['Sales Agent CB']||'').match(/(\d+)/)||[])[1]).replace('CBundefined','');
       if(!code){ skip++; continue; }
+      /* SUPERSEDED QA CODES (spec §3), QA ROWS ONLY. Eight agents were re-issued a code and
+         the QA system still carries the old one; left alone they appear as a second, empty
+         agent. Deliberately not applied anywhere else: CB207 is ALSO team leader Renolan
+         Pillay's ViciDial ID, and remapping it there would pay his talk time to CB219. */
+      if(MTD_RULES.qaCodeCorrections[code]) code=MTD_RULES.qaCodeCorrections[code];
+      /* A 0% score is kept. It is exactly an Escalation Decision of "Critical Fail" (24/24 in
+         the reference period) — a real outcome, not missing data. Dropping zeros inflates
+         every affected agent's average. */
       const sc=parseFloat((r['Score %']||'').replace('%','')); if(!isFinite(sc)){ skip++; continue; }
       const rid=String(r['Record ID']||'').trim();
       if(rid){ if(seenIds.has(rid)){ dupes++; continue; } seenIds.add(rid); }
       dates.add(d);
       const bk=(byDate[d]=byDate[d]||{});
-      (bk[code]=bk[code]||[]).push({s:sc,dec:r['Escalation Decision']||'',cat:r['Coaching Category']||r['Critical Fail Category']||'',pri:r['Priority']||'',camp:r['Campaign']||''});
+      /* dsp/st feed checks V20-V22: an UPHELD dispute means a recorded score was wrong, so
+         the period's QA is provisional, and an evaluation that is not closed can still
+         change both score and outcome. Stored per evaluation so the panel can name them. */
+      (bk[code]=bk[code]||[]).push({s:sc,dec:r['Escalation Decision']||'',cat:r['Coaching Category']||r['Critical Fail Category']||'',pri:r['Priority']||'',camp:r['Campaign']||'',
+        dsp:(parseFloat(r['Dispute Count'])||0),dspSt:r['Dispute Status']||'',st:r['Status']||''});
     }
     for(const d of dates) S.evals[d]=byDate[d];
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
     return regFile(name,'evals',dates,recs.length,{skip,dupes});
   },
   roster(recs,name,sheet){
-    const out=[];
+    const out=[]; const offCamp=[];
     for(const r of recs){
       const code=(r['Employee Code']||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       if(!code||!/^CB\d+$/.test(code)) continue;
       const rawCamp=(r['Campaign']||r['Que']||'').trim();
-      if(rawCamp && !/cuddle|courtesy|track|vehicle|vision/i.test(rawCamp)) continue; // unknown campaign
+      /* A campaign this dashboard does not report on (Nesting, admin queues) stays OFF the
+         roster — but it is NAMED, never dropped in silence. These are real agents making real
+         sales: their money lands in Unmatched agents with nothing to explain why, and the
+         floor sees the roster short and the totals light with no reason given. */
+      if(rawCamp && !/cuddle|courtesy|nest|track|vehicle|vision/i.test(rawCamp)){
+        offCamp.push((r['Agent Name']||r['Agent']||code)+' ('+rawCamp+')'); continue; }
+      /* DISPLAY NAME COMES FROM 'Sales Force', NOT 'Agent Name' (spec §3). Only one agent
+         differs — CB156 is "Kasavani Snakarparsad" under Agent Name and "Ashnee Kasavani
+         Sankarparsad" under Sales Force — but that string is the join key the workbook's
+         Cancellations and QA columns VLOOKUP on, and using the wrong one silently drops 30
+         BI rows and 10 sales. Agent Name is kept as the fallback for rows with no Sales
+         Force value (the VT sheet leaves it blank for scheduling staff). */
+      const sfName=(r['Sales Force']||'').trim()==='-'?'':(r['Sales Force']||'').trim();
       out.push({
-        tl:r['Team Leader']||'', code, name:r['Agent Name']||r['Agent']||'',
+        tl:r['Team Leader']||'', code, name:sfName||r['Agent Name']||r['Agent']||'',
         campaign:campOf(rawCamp),
-        tenure:r['Tenure']||'', callx:r['Call x']||'', sf:(r['Sales Force']||'').trim()==='-'?'':(r['Sales Force']||''),
+        tenure:r['Tenure']||'', callx:r['Call x']||'', sf:sfName,
         target:parseFloat(r['Target'])||0, start:parseDateLoose(r['Start Date'])||'',
         role:r['Job Title']||''
       });
     }
     if(!out.length) return null;
+    if(offCamp.length) toast(offCamp.length+' agent(s) in "'+name+'" are on a campaign this dashboard does not report on, so they are NOT on the roster and their sales will show under Unmatched agents: '
+      +offCamp.slice(0,4).join(', ')+(offCamp.length>4?' +'+(offCamp.length-4)+' more':''),11000);
     // One row per employee code. A sheet that lists someone twice must not put them on the
     // roster twice - that would double them in Team Split and in the head counts.
     { const byCode=new Map(); out.forEach(a=>byCode.set(a.code,a));
@@ -1003,39 +1215,46 @@ const INGEST={
   // Recognised-but-not-used: these arrive in the same daily export drop as the files
   // this dashboard DOES read. They are acknowledged (no scary "could not recognise")
   // and deliberately touch nothing — the Ops dashboard is where they belong.
-  /* CANCELLATIONS — the Power BI Inactive export. This is where the MTD tracker's
-     "Cancellations" and "% of Cancellations" columns come from: the workbook counts
-     Contract Deactivate Date per agent, so a cancellation lands on the day the contract
-     was deactivated, attributed to its Owner. Until now VAS had no upload for this and
-     the figures were keyed in by hand on the Adjustments tab.
-     DEDUP: a contract can only cancel once, so the identity is account|contract|deactivate
-     date. The file is authoritative for every DAY it covers — those days are rebuilt from
-     it — which is what makes a daily re-pull of an overlapping range safe: the same
-     cancellation cannot be counted twice, whether it arrives once or in five exports. */
+  /* CANCELLATIONS — the Power BI Inactive export, the source of the tracker's Cancellations
+     and % of Cancellations columns.
+     DATED BY CONTRACT CREATE DATE, not deactivate date: a cancellation counts against the
+     period the SALE was made in, which is what the tracker does and what makes
+     "% of Cancellations to Sales" meaningful — measured against the tracker, create-date
+     reproduces it for 59 of 65 agents where deactivate-date managed 46.
+     STORED BY CONTRACT IDENTITY, not by day. A contract cancels once, so account|contract|
+     deactivate-date is its identity and re-uploading can only ever overwrite the same key.
+     That matters here because the export is a window of DEACTIVATIONS whose create dates are
+     scattered across months: replacing "the days this file covers" would have wiped older
+     months that a narrower pull happens not to mention. */
   inactive(recs,name){
-    const byDate={}, dates=new Set();
     const seen=new Set();
-    let skip=0, dupes=0;
+    let skip=0, dupes=0, added=0, excl=0;
+    const dates=new Set();
     for(const r of recs){
       const acc=String(r['Account Number']||'').trim();
       if(!acc||/^applied filters/i.test(acc)){ skip++; continue; }   // Power BI footer, not data
-      const d=parseDateLoose(r['Contract Deactivate Date']);
-      if(!d){ skip++; continue; }                                     // still active, or no date
-      const key=acc+'|'+String(r['Contract Number']||'').trim()+'|'+d;
+      // same test-data exclusions as the Active export — this file is the other half of the
+      // union that Sales Achieved and GWP are counted over (spec §6.3/§6.5)
+      if(MTD_RULES.excludeChargeCodes.includes(String(r['Charge Code']||'').trim().toUpperCase())){ excl++; continue; }
+      if(MTD_RULES.excludeAccounts.includes(acc)){ excl++; continue; }
+      const dd=parseDateLoose(r['Contract Deactivate Date']);
+      if(!dd){ skip++; continue; }                                    // still active - not a cancellation
+      const cd=parseDateLoose(r['Contract Create Date']);
+      if(!cd){ skip++; continue; }                                    // cannot be dated to a sale period
+      const key=acc+'|'+String(r['Contract Number']||'').trim()+'|'+dd;
       if(seen.has(key)){ dupes++; continue; }                         // same contract twice in one file
       seen.add(key);
-      const owner=(r['Owner']||'').trim();   // stored RAW - resolved at model-build time
+      const owner=(r['Owner']||'').trim();                            // stored RAW - resolved at model-build time
       if(!owner){ skip++; continue; }
-
-      dates.add(d);
-      const bk=(byDate[d]=byDate[d]||{});
-      bk[owner]=(bk[owner]||0)+1;
+      // account + charge are kept so the sale can be added back GROSS (grossUpSales) and so
+      // cancellations can be counted per ACCOUNT, the same unit Sales Achieved counts in.
+      const chg=parseFloat(String(r['Charge Amount']||'').replace(/\s/g,'').replace(/^(-?\d+),(\d+)$/,'$1.$2').replace(/[^0-9.\-]/g,''));
+      S.cancRows[key]={d:cd,owner,f:name,a:acc,x:isNaN(chg)?0:chg};
+      dates.add(cd); added++;
     }
-    if(!dates.size){ toast('"'+name+'" carried no cancellations with a Contract Deactivate Date'); return null; }
-    // the file owns the days it covers - rebuild them rather than adding to them
-    for(const d of dates) S.canc[d]=byDate[d];
-
-    return regFile(name,'cancellations',[...dates].sort(),recs.length,{skip,dupes});
+    if(!added){ toast('"'+name+'" carried no cancellations that could be dated to a sale'); return null; }
+    grossUpSales();
+    return regFile(name,'cancellations',[...dates].sort(),recs.length,{skip,dupes,excl});
   },
   opencasesIgnored(recs,name){
     toast('"'+name+'" is an open-cases export - the VAS dashboard does not use it. Upload it in the Ops dashboard.');
@@ -1079,8 +1298,11 @@ function removeFile(idx){
   }
   // A ViciDial RANGE file carries its own key in the registry type - drop the stored range.
   if(f.type.startsWith('vici range')&&S.vici) delete S.vici[f.type.replace('vici range ','').trim()];
+  // cancellations key by contract, so drop exactly the ones this file contributed
+  if(f.type.startsWith('cancellations')&&S.cancRows) for(const k in S.cancRows) if(S.cancRows[k].f===f.name) delete S.cancRows[k];
   if(f.type==='open cases') S.opencases=null;
   S.files.splice(idx,1);
+  grossUpSales();   // sales are gross of cancellation - dropping either file re-derives them
   save(); rebuild(); render();
   // VAS mirrors its WHOLE state to the cloud KV blob (vas-state) — deleting a file and saving
   // overwrites that blob without it, so the removal reaches Supabase. Push NOW rather than wait
@@ -1093,7 +1315,13 @@ function removeFile(idx){
 let IDX=null;
 const normFull = s => (s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 function buildIndex(){
-  IDX={byCode:{},byName:{},byCallx:{},tok:[]};
+  IDX={byCode:{},byName:{},byCallx:{},tok:[],ruleLabel:{},ruleAlias:{}};
+  /* The spec's own correction tables (§3), indexed once. These are the LAST resort in
+     resolveKey — a roster that already carries the right "Call x" string resolves first —
+     but they are what keeps identity right when the agent list goes stale, which open item
+     OI-06 records that it does: 18 QA codes and 18 attendance codes match no roster sheet. */
+  for(const k in MTD_RULES.diallerLabelCorrections) IDX.ruleLabel[normFull(k)]=MTD_RULES.diallerLabelCorrections[k];
+  for(const k in MTD_RULES.nameAliases) IDX.ruleAlias[normName(k)]=normName(MTD_RULES.nameAliases[k]);
   for(const a of S.roster){
     IDX.byCode[a.code]=a;
     // dialer names can carry a DIFFERENT CB number than the employee code
@@ -1109,16 +1337,46 @@ function resolveKey(key){
   if(/^CB\d+$/.test(key)) return IDX.byCode[key]?key:null;
   const fx=IDX.byCallx[normFull(key)]; if(fx) return fx;
   const nn=IDX.byName[normName(key)]; if(nn) return nn;
+  /* The spec's dialler-label table, matched on the WHOLE label. It has to be consulted
+     before cbCode() below, because that is exactly the fallback it exists to stop: the
+     labels in it carry a CB number belonging to someone else, and "Kyle Kisten CB-138"
+     resolving on its number pays 735 of his calls to Jabu Ntombela. */
+  const rl=IDX.ruleLabel[normFull(key)]; if(rl&&IDX.byCode[rl]) return rl;
   // middle names: match on tokens, but only when exactly one roster agent contains them all
   const kt=nameTokens(key);
   if(kt.length>=2){ const h=IDX.tok.filter(e=>kt.every(x=>e.t.includes(x))); if(h.length===1) return h[0].code; }
+  // spelled differently from the roster (spec §3 name aliases) — resolve the alias, then retry
+  const al=IDX.ruleAlias[normName(key)]; if(al&&IDX.byName[al]) return IDX.byName[al];
   const c=cbCode(key); if(c&&IDX.byCode[c]) return c;
   return null;
 }
 
 /* ================= period & model ================= */
+/* AS-AT CUT-OFF. Without one, "this month" quietly means "every date any uploaded file
+   happens to carry" — and the sources almost never end on the same day: the HR register
+   usually runs a day or two ahead of the dialler, which runs ahead of the money file. A
+   tracker cut on the 4th then cannot be reconciled against a dashboard that has silently
+   included the 5th, and every shift-derived column (Employed Shifts, Sales Target, GWP
+   Target, Att %, SPD) reads high by a whole day with nothing wrong anywhere.
+   This caps where the period ENDS without changing its shape — the month is still the month,
+   week buckets and targets are unchanged, the window simply stops on the day you name. */
+function applyAsAt(r,p){
+  const a=S.ui.asAt;
+  if(!a||p==='custom'||!r) return r;      // custom already has both ends under the user's hand
+  if(a<r.from||a>=r.to) return r;         // outside the period, or not earlier than it already ends
+  return {from:r.from,to:a};
+}
+/* The last date each source actually covers. When these disagree, the period silently
+   stretches to the furthest one — which is exactly the reconciliation trap above. */
+function sourceEnds(){
+  const last=o=>{ const k=Object.keys(o||{}); return k.length?k.sort()[k.length-1]:null; };
+  return {attendance:last(S.att), sales:last(S.sales), calls:last(S.calls)};
+}
 function periodRange(){
   const p=S.ui.preset||(S.ui.mode==='cycle'?'cycle':'month');
+  return applyAsAt(periodRangeRaw(p),p);
+}
+function periodRangeRaw(p){
   const today=dkey(new Date());
   const mk=(from,to)=>({from,to});
   if(p==='today') return mk(today,today);
@@ -1200,10 +1458,146 @@ function rebuild(){
   M=r?buildModel(r, r.from+'|'+r.to):null;
   const pr=prevRange();
   MP=pr?buildModel(pr, pr.from+'|'+pr.to):null;
+  VCHK=M?validateMTD(M):null;      // rule checks run on every rebuild, so every upload is checked
+}
+
+/* ================= RULE CHECKS (spec §11) =================
+   The reconciliation checks V01-V22, run against the built model after every upload. This is
+   the step that turns the rule book from documentation into something enforced: a figure that
+   breaks one of these is wrong in a way that is invisible on screen — a duplicated agent-day,
+   a cancellation counted against a sale that isn't there, a campaign token that quietly falls
+   out of both totals.
+
+   Each returns {id, sev, ok, msg}. `sev:'error'` is a figure you must not publish;
+   `sev:'warn'` is provisional data you should know about. Checks the spec defines against the
+   EXCEL workbook rather than the model (V18 pivot cache ref, V19 cached formula values) are
+   not applicable to a live dashboard and are reported as such by exportTracker instead. */
+let VCHK=null;
+function validateMTD(m){
+  const out=[], add=(id,sev,ok,msg)=>out.push({id,sev,ok,msg});
+  const F=m.facts, R=m.range;
+  const rosterCodes=new Set(S.roster.map(a=>a.code));
+  const money=F.filter(f=>f.campaign!=='VT');   // VT carries dialler-counted sales and no GWP
+
+  // V01 — one row per agent per day. A duplicate double-counts everything on the row.
+  { const seen=new Set(), dup=[];
+    for(const f of F){ const k=f.date+'|'+f.code; if(seen.has(k)) dup.push(k); seen.add(k); }
+    add('V01','error',!dup.length, dup.length?dup.length+' duplicate agent-day row(s), e.g. '+dup.slice(0,3).join(', '):'no duplicate Date + Emp Code'); }
+
+  // V02 — Employed Shifts is a count of rows, never a number in a row.
+  { const bad=F.filter(f=>f.emp>1);
+    add('V02','error',!bad.length, bad.length?bad.length+' row(s) carry Employed Shifts > 1':'every row carries Employed Shifts of 1 or 0'); }
+
+  /* V03/V04 — sales and GWP must still equal what the BI union says, after every transform.
+     Scoped to the money campaigns. Vehicle Tracking agents DO appear in the BI export (20
+     sales / R4 278 in the reference period) but tracker units are not VAS revenue: the fact
+     table counts VT sales from dialler dispositions and carries no GWP for them, so
+     including that money on the recompute side would report a permanent R4 278 discrepancy
+     that is not one. Unmapped owners are outside both sides and are V14's job, not this. */
+  { const campOfCode={}; S.roster.forEach(a=>campOfCode[a.code]=a.campaign);
+    let n=0,g=0;
+    for(const d in S.sales){ if(d<R.from||d>R.to) continue;
+      for(const k in S.sales[d]){ const c=resolveKey(k); if(!c||!rosterCodes.has(c)) continue;
+        if(campOfCode[c]==='VT') continue;
+        if(S.settings.applyExclusions!==false&&MTD_RULES.excludeAgents[c]) continue;
+        n+=S.sales[d][k].n; g+=S.sales[d][k].gwp; } }
+    const fn=money.filter(f=>!f.provisional).reduce((a,f)=>a+f.sales,0);
+    const fg=money.reduce((a,f)=>a+f.gwp,0);
+    add('V03','error',Math.abs(fn-n)<0.5, 'Sales Achieved '+fmtNum(fn)+' vs BI union '+fmtNum(n));
+    add('V04','error',Math.abs(fg-g)<=1, 'GWP '+fmtR(fg)+' vs round(charge x '+MTD_RULES.vat+') per account '+fmtR(g)); }
+
+  // V05 — employed shifts should be the roster present on each dialling day, and no more.
+  { const emp=F.reduce((a,f)=>a+f.emp,0), ag=new Set(F.filter(f=>f.emp).map(f=>f.code)).size, dd=m.diallingDays;
+    add('V05','warn',emp<=ag*dd, 'Employed Shifts '+fmtNum(emp)+' over '+ag+' agents x '+dd+' dialling day'+(dd===1?'':'s')); }
+
+  // V06 — a campaign token outside the three vanishes from every campaign total.
+  { const known=new Set(CAMPS), bad=[...new Set(F.map(f=>f.campaign))].filter(c=>!known.has(c));
+    add('V06','error',!bad.length, bad.length?'unknown campaign token(s): '+bad.join(', '):'every row is Cuddle, Courtesy, Nesting or VT'); }
+
+  // V07 — more cancellations than sales means the two are counted in different units.
+  { const by={}; money.forEach(f=>{ const t=by[f.code]=by[f.code]||{s:0,c:0}; t.s+=f.sales; t.c+=f.canc; });
+    const bad=Object.entries(by).filter(([,t])=>t.c>t.s);
+    add('V07','error',!bad.length, bad.length?bad.length+' agent(s) show more cancellations than sales: '+bad.slice(0,3).map(([c])=>c).join(', '):'cancellations never exceed sales'); }
+
+  // V08 — an agent with no roster row has no target, tenure or team leader.
+  { const bad=[...new Set(F.map(f=>f.code))].filter(c=>!rosterCodes.has(c));
+    add('V08','error',!bad.length, bad.length?bad.length+' agent(s) not on the roster: '+bad.slice(0,4).join(', '):'every agent resolves to a roster Employee Code'); }
+
+  // V09/V10 — one row per agent per campaign, and the two sales campaigns must not overlap.
+  { let dup=0; for(const c of CAMPS){ const codes=Object.keys(m.mtdCC[c]||{}); dup+=codes.length-new Set(codes).size; }
+    add('V09','error',!dup,'no Employee Code appears twice within one campaign');
+    const cu=new Set(Object.keys(m.mtdCC.Cuddle||{})), ov=Object.keys(m.mtdCC.Courtesy||{}).filter(c=>cu.has(c));
+    add('V10','error',!ov.length, ov.length?ov.length+' agent(s) in both Cuddle and Courtesy: '+ov.slice(0,3).join(', '):'Cuddle and Courtesy agent sets are disjoint'); }
+
+  // V11 — structural: totalRow() recomputes every ratio from the summed numerator and
+  // denominator, so an averaged percentage cannot reach a total row by construction.
+  add('V11','error',true,'grand-total ratios are recomputed from sums, never averaged');
+
+  // V12 — structural: cancellations are a column on the fact row, defaulting to 0, not a
+  // lookup table an agent can be absent from. The workbook's failure mode (a missing agent
+  // falling through IFERROR to an indistinguishable 0) cannot occur here; exportTracker
+  // re-asserts it when it writes the N:O range.
+  add('V12','error',true,'every agent in the fact table carries a cancellations value');
+
+  // V13 — nothing outside the window survived filtering.
+  { const bad=F.filter(f=>f.date<R.from||f.date>R.to);
+    add('V13','error',!bad.length, bad.length?bad.length+' row(s) fall outside '+R.from+'..'+R.to:'no record falls outside '+R.from+' .. '+R.to); }
+
+  // V14 — unmapped source rows are money and calls attributed to nobody.
+  { const u=Object.keys(m.unmatched||{});
+    add('V14','warn',!u.length, u.length?u.length+' unmapped source name(s): '+u.slice(0,3).map(esc).join(', '):'every source row resolved to an agent'); }
+
+  // V15 — the sources ending on different days is the single commonest false alarm.
+  { const e=sourceEnds(), ends=[...new Set(Object.values(e).filter(Boolean))];
+    add('V15','warn',ends.length<=1||!!S.ui.asAt, ends.length<=1?'all sources end on the same day'
+      :'sources end on different days (attendance '+(e.attendance||'—')+', sales '+(e.sales||'—')+', calls '+(e.calls||'—')+')'+(S.ui.asAt?' — capped by the as-at date':' — set an as-at date to pin the window')); }
+
+  // V16 — referrals have no source file at all (open item OI-01).
+  { const anyRef=F.some(f=>f.ref>0);
+    add('V16','warn',anyRef,anyRef?'referrals present':'no upload carries Referrals — the column reads 0 and is not a measurement'); }
+
+  // V17 — an agent who sold or dialled with no attendance row breaks Att % silently.
+  { const bad=F.filter(f=>(f.talk>0||f.sales>0)&&!((S.att[f.date]||{})[f.code]));
+    const codes=[...new Set(bad.map(f=>f.code))];
+    add('V17','warn',!bad.length, bad.length?codes.length+' agent(s) worked with no attendance record: '+codes.slice(0,3).join(', '):'attendance exists for every agent with calls or sales'); }
+
+  // V20/V21/V22 — QA integrity.
+  { let zero=0,zeroCF=0,ev=0,pass=0,coach=0,cf=0,upheld=0,open=0;
+    for(const d in S.evals){ if(d<R.from||d>R.to) continue;
+      for(const c in S.evals[d]) for(const v of S.evals[d][c]){
+        if(typeof v==='number'){ ev++; continue; }
+        ev++;
+        const dec=(v.dec||'').toLowerCase();
+        if(v.s===0){ zero++; if(dec.includes('critical')) zeroCF++; }
+        if(dec.includes('critical')) cf++; else if(dec.includes('coach')) coach++; else pass++;
+        if((v.dsp||0)>0&&/upheld/i.test(v.dspSt||'')) upheld++;
+        if(v.st&&!/risk mitigated/i.test(v.st)) open++;
+      } }
+    add('V20','warn',zero===zeroCF, zero?(zeroCF+' of '+zero+' zero scores are Critical Fails'):'no zero scores in the period');
+    add('V21','error',pass+coach+cf===ev, 'Pass '+pass+' + Coaching '+coach+' + Critical Fail '+cf+' = '+(pass+coach+cf)+' against '+ev+' evaluations');
+    add('V22','warn',!upheld, upheld?upheld+' upheld dispute(s) — the period\'s QA is provisional':'no upheld disputes in the period');
+    if(open) out.push({id:'QA',sev:'warn',ok:false,msg:open+' of '+ev+' evaluations are not closed — QA is provisional'}); }
+
+  // The exclusions are applied, so they must be visible: a head count short by three with no
+  // explanation is exactly the kind of silent hole the spec keeps warning about.
+  if(S.settings.applyExclusions!==false){
+    const ex=Object.keys(MTD_RULES.excludeAgents).filter(c=>rosterCodes.has(c));
+    if(ex.length) out.push({id:'§5',sev:'info',ok:true,msg:ex.length+' agent(s) excluded by the maintained list: '+ex.map(c=>c+' — '+MTD_RULES.excludeAgents[c]).join('; ')});
+  }
+  return out;
 }
 function buildModel(range, periodKey){
   if(!range) return null;
   const dates=[...allDataDates()].filter(d=>d>=range.from&&d<=range.to).sort();
+  /* DIALLING DAYS ARE THE REGISTER'S DAYS (spec §1), not every date some file happens to
+     carry. 01 Aug 2026 is the case that makes the difference: a Saturday with four sales
+     dated to it and no attendance register at all. It contributes money and no shift — both
+     systems agree on that — but counting it as a dialling day divides the TL-level
+     SPD (Sales / Employed HC / Dialing Days) by three instead of two and understates every
+     team by a third. Falls back to the data dates when no register is loaded, so the figure
+     degrades to "what we know" rather than to zero. */
+  const attDates=Object.keys(S.att).filter(d=>d>=range.from&&d<=range.to&&Object.keys(S.att[d]||{}).length).sort();
+  const diallingDays=attDates.length||dates.length;
 
   // termination map: first date an agent is marked Terminated/Resigned
   const term={};
@@ -1213,6 +1607,7 @@ function buildModel(range, periodKey){
 
   // resolve raw aggregate keys -> codes per date
   const salesBy={}, callsBy={}, cancBy={}, unmatched={};
+  const cancByDate={}; for(const k in S.cancRows){ const r=S.cancRows[k]; (cancByDate[r.d]=cancByDate[r.d]||[]).push({...r,k}); }
   for(const d of dates){
     salesBy[d]={}; callsBy[d]={}; cancBy[d]={};
     for(const [k,v] of Object.entries(S.sales[d]||{})){
@@ -1220,11 +1615,19 @@ function buildModel(range, periodKey){
       if(c){ const t=salesBy[d][c]=salesBy[d][c]||{n:0,gwp:0,canc:0}; t.n+=v.n; t.gwp+=v.gwp; t.canc+=v.canc||0; }
       else if(resolveKey(k)!==null||S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'sales',n:0,gwp:0}; u.n+=v.n; u.gwp+=v.gwp||0; }
     }
-    for(const [k,v] of Object.entries(S.canc[d]||{})){
-      const c=resolveKey(k);
-      if(c) cancBy[d][c]=(cancBy[d][c]||0)+v;
-      else if(S.map[k]!=='__ignore__'){ const u=unmatched[k]=unmatched[k]||{src:'cancellations',n:0}; u.n+=v; }
+    /* Cancellations are stored per CONTRACT and bucketed onto the date the SALE was made.
+       They are counted per ACCOUNT, because that is the unit Sales Achieved counts in: one
+       cancelled account carrying three contract lines is ONE cancellation, not three, and
+       counting the lines trebled every multi-service cancellation against the workbook.
+       Records stored before accounts were kept fall back to the contract key, so an older
+       cloud blob still counts what it always counted rather than collapsing to one. */
+    const cancAcc={};
+    for(const rec of cancByDate[d]||[]){
+      const c=resolveKey(rec.owner);
+      if(c) (cancAcc[c]=cancAcc[c]||new Set()).add(rec.a||rec.k);
+      else if(S.map[rec.owner]!=='__ignore__'){ const u=unmatched[rec.owner]=unmatched[rec.owner]||{src:'cancellations',n:0}; u.n++; }
     }
+    for(const c in cancAcc) cancBy[d][c]=cancAcc[c].size;
     const byDialler={};
     for(const [k,v] of Object.entries(S.calls[d]||{})){
       const c=resolveKey(k);
@@ -1265,6 +1668,13 @@ function buildModel(range, periodKey){
     const trackerOnlyDay=!hasSalesData&&!S.calls[d]&&Object.keys(trk).length>0;
     const codes=trackerOnlyDay?new Set(Object.keys(trk)):new Set([...S.roster.map(a=>a.code),...Object.keys(trk)]);
     for(const code of codes){
+      /* AGENT EXCLUSION LIST (spec §5). Three agents the reference tracker leaves out
+         entirely — sick leave, suspension, and one who never started. This is NOT derivable
+         from the data and the spec says so: CB143 has an identical all-period Sick Leave
+         status and IS included. It is a maintained list, confirmed monthly (open item
+         OI-10), and every exclusion is reported by the validation panel rather than being
+         a silent hole in the head count. */
+      if(S.settings.applyExclusions!==false && MTD_RULES.excludeAgents[code]) continue;
       const a=metaOf[code], tr=trk[code];
       const camp=campOf((tr&&tr.campaign)||(a&&a.campaign));
       const started=tr?true:(!a?.start||a.start<=d);
@@ -1287,9 +1697,37 @@ function buildModel(range, periodKey){
       const active=(talk>0||sales>0);
       let act;
       const st=(S.att[d]||{})[code];
-      if(st!=null){ const w=attWeight(st); act=w===-1?0:w; }
-      else if(attCovered(d)) act=active?1:0;
-      else act=active?1:(emp?1:0);
+      const w=(st!=null)?attWeight(st):null;
+      /* ACTUAL SHIFTS (spec §6.2). Two rules, because the two campaigns have two different
+         best sources — this is not an inconsistency, it is the finding.
+
+         Courtesy and Nesting are DIALLER-derived: a half day (HDCA) is 0,5 whatever the
+         phones say, otherwise the shift counts only if the agent actually talked. The HR
+         register records whether someone was in the building; the tracker records whether
+         they worked the phones, and the two genuinely disagree in both directions. Measured
+         over the reference period the dialler rule reproduces 134 of 136 rows against the
+         register's 123. It is also the answer to the question the reconciliation left open:
+         an agent marked Present who produced nothing all day does not count as a shift.
+
+         Cuddle stays on the register — not by preference but by necessity: its talk time
+         comes from ViciDial, whose export is aggregated across the whole period and cannot
+         be split per day, so "did they talk today" is a question that file cannot answer. */
+      const shiftSrc=MTD_RULES.actualShiftsFrom[camp]||'register';
+      if(shiftSrc==='dialler'){
+        if(w===0.5) act=0.5;                       // HDCA — a half day is a half day
+        else if(w===-1) act=0;                     // employment ended
+        else act=(talk>0)?1:0;
+      }else{
+        if(w!=null) act=w===-1?0:w;
+        else act=active?1:0;                       // no register for this agent-day
+      }
+      /* A date exists because SOMETHING happened on it - often a single sale carrying that
+         date. With no attendance register for that day we cannot claim the whole floor was
+         employed and at work; doing so gave every agent a phantom shift, so one Saturday
+         with two sales on it became a full working day for the entire roster and inflated
+         Employed Shifts, Actual Shifts and every target derived from them. With no register,
+         only agents who actually did something that day count. */
+      if(!attCovered(d)&&!active&&!tr){ emp=0; act=0; }
       const trackerIsSource=tr&&!cd&&!sd&&st==null;
       if(trackerIsSource){ emp=tr.emp; act=tr.act; }
       if(!emp&&(active)) emp=1;                    // has activity → must be employed
@@ -1306,40 +1744,60 @@ function buildModel(range, periodKey){
     }
   }
 
-  /* MULTI-DAY VICIDIAL RANGES. A 5-day pull is one total per agent and cannot be split
-     across its days, so it is added as a single range-aggregate fact on the last day it
-     covers: every period total (WTD, MTD, TL, pivot) then includes it, while the daily
-     sheet skips it rather than showing five days of talk on one date.
-     DEDUP: if ANY of the range's days later arrives as a single-day export, the whole
-     range is dropped - the finer data already contains it, and counting both would pay
-     the agent twice. Ranges reaching outside the period are left out entirely.  */
+  /* MULTI-DAY VICIDIAL RANGES. The export is ONE total per agent across its own days — the
+     file simply has no per-day detail, and inventing one would be a lie. Two rules make a
+     month-long pull usable anyway:
+       1. Talk is remembered against the days the export COVERS, so "Ave Talk Time" divides by
+          the shifts worked on those days rather than by every shift in the period. Upload a
+          month and view the month and the average is exactly right.
+       2. When the period covers only PART of the range, the agent's talk is apportioned by the
+          shifts they actually worked inside the overlap versus across the whole range (from
+          attendance, which is per-day and independent of the window). The row is marked
+          provisional so the screen can say it is apportioned rather than measured — far better
+          than the old behaviour, which dropped the range entirely and showed 0:00:00.
+     A range whose days already arrived as single-day exports is ignored: the finer data wins. */
+  const viciSkipped=[], viciPartial=[];
+  const diallerDays={};                      // code -> Set(dates the dialler actually covers)
+  for(const d of dates) for(const c in (callsBy[d]||{})) (diallerDays[c]=diallerDays[c]||new Set()).add(d);
   for(const key in S.vici){
     const v=S.vici[key];
-    if(v.from<range.from||v.to>range.to) continue;              // only count what the period contains
     const days=[]; { const d=new Date(v.from+'T00:00:00Z');
       while(dkey(d)<=v.to&&days.length<400){ days.push(dkey(d)); d.setUTCDate(d.getUTCDate()+1); } }
-    if(days.some(d=>S.viciDays[d])) continue;                   // superseded by day-level exports
-    const last=days[days.length-1];
-    /* ONE DIALLER PER AGENT. An agent inside the range may also have per-day rows from the
-       OTHER dialler (CallX) on those same days - the two systems overlap while Cuddle
-       migrates. Adding both would pay one shift twice, so the fuller record wins: if the
-       per-day rows already hold more talk, the range row is skipped; otherwise the range
-       wins and those days' dialler figures are cleared (their sales and attendance stay). */
-    const inRange=new Set(days), perAgent={};
-    facts.forEach(f=>{ if(!f.rangeAgg&&inRange.has(f.date)) (perAgent[f.code]=perAgent[f.code]||[]).push(f); });
+    if(days.some(d=>S.viciDays[d])) continue;                    // superseded by day-level exports
+    const overlap=days.filter(d=>d>=range.from&&d<=range.to);
+    if(!overlap.length){ viciSkipped.push({from:v.from,to:v.to,n:v.rows.length}); continue; }
+    const partial=overlap.length<days.length;
+    if(partial) viciPartial.push({from:v.from,to:v.to,n:v.rows.length,covered:overlap.length,of:days.length});
+    const inOverlap=new Set(overlap), last=overlap[overlap.length-1];
+    const perAgent={};
+    facts.forEach(f=>{ if(!f.rangeAgg&&inOverlap.has(f.date)) (perAgent[f.code]=perAgent[f.code]||[]).push(f); });
+    const shifts=(code,list)=>list.reduce((t,d)=>{const st=(S.att[d]||{})[code];
+      const w=st!=null?attWeight(st):0; return t+(w>0?w:0)},0);
     for(const r of v.rows){
-      const rc=resolveKey(r.name); if(!rc) continue;            // not on the Agent List
-      const a=metaOf[rc]; if(!a) continue;                      // leaver - off the current roster
+      const rc=resolveKey(r.name); if(!rc) continue;              // not on the Agent List
+      const a=metaOf[rc]; if(!a) continue;                        // leaver — off the current roster
+      // apportion by shifts worked, falling back to plain day count where attendance is absent
+      const all=shifts(rc,days), ov=shifts(rc,overlap);
+      const share=partial ? (all>0 ? ov/all : overlap.length/days.length) : 1;
+      if(share<=0) continue;
+      const talk=Math.round((r.talk||0)*share), calls=Math.round((r.calls||0)*share);
       const own=perAgent[rc]||[];
       const perDayTalk=own.reduce((t,f)=>t+(f.talk||0),0);
-      if(perDayTalk>=(r.talk||0)) continue;                     // per-day rows are fuller - keep them
-      own.forEach(f=>{ f.talk=0; f.calls=0; f.ans=0; f.opt=0; });  // range wins - drop the per-day dialler part
+      if(perDayTalk>=talk) continue;                              // the other dialler is fuller — keep it
+      own.forEach(f=>{ f.talk=0; f.calls=0; f.ans=0; f.opt=0; }); // one dialler per agent, never the sum
+      (diallerDays[rc]=diallerDays[rc]||new Set());
+      overlap.forEach(d=>diallerDays[rc].add(d));
       facts.push({date:last,week:weekOf[last]||1,code:rc,tl:a.tl||'',campaign:campOf(a.campaign),
         agent:a.name||rc,tenure:a.tenure||'',emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,
-        talk:r.talk||0,opt:r.opt||0,ref:0,canc:0,provisional:false,calls:r.calls||0,ans:r.calls||0,
-        rangeAgg:true,rangeFrom:v.from,rangeTo:v.to});
+        talk,opt:Math.round((r.opt||0)*share),ref:0,canc:0,provisional:partial,calls,ans:calls,
+        rangeAgg:true,rangeFrom:v.from,rangeTo:v.to,apportioned:partial?share:null});
     }
   }
+  /* Mark every fact with whether the dialler covered that agent on that day. This is the
+     denominator for Ave Talk Time: dividing a dialler's total by shifts it never observed is
+     what made the averages read low against the hand-built tracker. */
+  for(const f of facts) f.dCov=(diallerDays[f.code]&&diallerDays[f.code].has(f.date))?1:0;
+
 
   // per-agent QA over a date range
   const qaFor=(code,from,to)=>{
@@ -1353,16 +1811,22 @@ function buildModel(range, periodKey){
   // this period, the hand-keyed cancellation top-up is IGNORED rather than added - the
   // same cancellation must not be counted once from the file and again by hand. Referrals
   // are untouched: no upload carries them, so the Adjustments tab is still their source.
-  const cancFromFile=dates.some(d=>S.canc[d]&&Object.keys(S.canc[d]).length);
+  const cancFromFile=Object.keys(S.cancRows||{}).length>0;
   const adjC=code=>cancFromFile?0:((adj[code]||{}).c||0);
 
   function agg(rows,code){
-    const o={emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,days:0,prov:0,calls:0,ans:0};
+    const o={emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,days:0,prov:0,calls:0,ans:0,actDial:0};
     for(const f of rows){ o.emp+=f.emp;o.act+=f.act;o.target+=f.target;o.sales+=f.sales;o.gwp+=f.gwp;o.gwpT+=f.gwpT;
-      o.talk+=f.talk;o.opt+=f.opt;o.ref+=f.ref;o.canc+=f.canc;o.days++; o.calls+=(f.calls||0); o.ans+=(f.ans||0); if(f.provisional)o.prov++; }
+      o.talk+=f.talk;o.opt+=f.opt;o.ref+=f.ref;o.canc+=f.canc;o.days++; o.calls+=(f.calls||0); o.ans+=(f.ans||0);
+      if(f.dCov)o.actDial+=f.act;                    // shifts the dialler actually observed
+      if(f.provisional)o.prov++; }
     if(code&&adj[code]){ o.canc+=adjC(code); o.ref+=adj[code].r||0; }
     o.att=o.emp?o.act/o.emp:null; o.pctT=o.target?o.sales/o.target:null; o.spd=o.act?o.sales/o.act:null;
-    o.pctG=o.gwpT?o.gwp/o.gwpT:null; o.aveG=o.sales?o.gwp/o.sales:null; o.aveTalk=o.act?o.talk/o.act:null;
+    o.pctG=o.gwpT?o.gwp/o.gwpT:null; o.aveG=o.sales?o.gwp/o.sales:null;
+    /* Ave Talk Time divides by the shifts the DIALLER covered, not by every shift in the
+       period. Dividing a three-day dialler total by a whole month of shifts is what made
+       these averages read far below the hand-built tracker. */
+    o.aveTalk=o.actDial?o.talk/o.actDial:(o.act?o.talk/o.act:null);
     o.optPct=o.sales?o.opt/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null; o.cancPct=o.sales?o.canc/o.sales:null;
     o.aht=o.ans?o.talk/o.ans:null; o.ansPct=o.calls?o.ans/o.calls:null;
     return o;
@@ -1378,7 +1842,8 @@ function buildModel(range, periodKey){
 
   // aggregate by agent × campaign (an agent can appear in both tabs, like the workbook)
   const meta=rows=>{ const l=rows[rows.length-1]; return {tl:l.tl,tenure:l.tenure,agent:l.agent,code:l.code}; };
-  const byCC={Cuddle:{},Courtesy:{},VT:{}};
+  // built from CAMPS so a campaign added to the rule book cannot be silently dropped here
+  const byCC={}; CAMPS.forEach(c=>byCC[c]={});
   facts.forEach(f=>{ (byCC[f.campaign][f.code]=byCC[f.campaign][f.code]||[]).push(f); });
   // adjustments (cancellations/referrals) attach to the agent's primary campaign
   const primaryCamp={};
@@ -1389,7 +1854,7 @@ function buildModel(range, periodKey){
       if(n>bestN){bestN=n;best=c;} }
     primaryCamp[code]=best||'Courtesy';
   }
-  const mtdCC={Cuddle:{},Courtesy:{},VT:{}}, wtdCC={};
+  const mtdCC={}; CAMPS.forEach(c=>mtdCC[c]={}); const wtdCC={};
   const weeks=mondays.map((m,i)=>({num:i+1,from:m,to:addDays(m,6),dates:dates.filter(d=>mondayOf(d)===m)}));
   for(const camp of CAMPS){
     for(const code in byCC[camp]){
@@ -1400,14 +1865,14 @@ function buildModel(range, periodKey){
       for(const w of weeks){
         const wr=rows.filter(f=>f.week===w.num); if(!wr.length) continue;
         const wo=agg(wr,null); Object.assign(wo, meta(wr)); wo.qa=qaFor(code,w.from,w.to);
-        ((wtdCC[w.num]=wtdCC[w.num]||{Cuddle:{},Courtesy:{},VT:{}})[camp])[code]=wo;
+        ((wtdCC[w.num]=wtdCC[w.num]||Object.fromEntries(CAMPS.map(c=>[c,{}])))[camp])[code]=wo;
       }
     }
   }
 
   // team-leader and campaign rollups
   const tlAgg={}, campAgg={};
-  for(const camp of ['Courtesy','Cuddle','VT']){
+  for(const camp of CAMPS){
     const campRows=facts.filter(f=>f.campaign===camp);
     if(campRows.length){
       const tls=[...new Set(campRows.map(f=>f.tl))];
@@ -1435,13 +1900,28 @@ function buildModel(range, periodKey){
   for(const c in adj){ grand.canc+=adjC(c); grand.ref+=adj[c].r||0; }
   grand.cancPct=grand.sales?grand.canc/grand.sales:null; grand.refPct=grand.sales?grand.ref/grand.sales:null;
 
-  // QA period average
-  let qs=0,qn=0; for(const d in S.evals){ if(d<range.from||d>range.to) continue;
-    for(const c in S.evals[d]) for(const v of S.evals[d][c]){qs+=(typeof v==='number'?v:v.s);qn++;} }
+  /* QA PERIOD AVERAGE — the mean of the AGENT averages, over agents on this roster.
+     Two deliberate choices, both from the spec:
+       · unweighted (§8) — the workbook's total is =AVERAGE(U4:U{last}), a mean of the agent
+         column, so one evaluation counts the same as twenty. Agents with none are dropped
+         from the denominator, never scored zero.
+       · roster-scoped (§6.7 scope warning) — the reference QA pivot averages the whole
+         business, including seven Vehicle Tracking agents who are not on the VAS roster at
+         all, so its grand total is not a VAS figure. Per-agent lookups are unaffected.
+     qn stays the raw evaluation count, for the "n evaluations" caption. */
+  let qs=0,qn=0,qa=0;
+  for(const a of agents){ const q=qaFor(a.code,range.from,range.to); if(!q) continue; qs+=q.avg; qa++; qn+=q.n; }
 
+  /* Days that carry dialler talk, and days that clearly SHOULD (someone was at work or
+     sold something) but carry none. Without this the screen prints Ave Talk 0:00:00, which
+     reads as 'this agent never dialled' when the truth is 'no dialler file covers that day'. */
+  const talkDays=new Set(), workedDays=new Set();
+  for(const f of facts){ if(f.talk>0) talkDays.add(f.date); if(f.act>0||f.sales>0) workedDays.add(f.date); }
+  const noDialler=[...workedDays].filter(d=>!talkDays.has(d)).sort();
   return {range,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
-     qaAvg:qn?qs/qn/100:null,qaN:qn,periodKey,
-     dailyByDate:(()=>{ const o={}; facts.forEach(f=>{ const t=o[f.date]=o[f.date]||{Cuddle:0,Courtesy:0,VT:0}; t[f.campaign]+=f.sales; }); return o; })()};
+    viciSkipped,talkDays,noDialler,attDates,diallingDays,
+     qaAvg:qa?qs/qa:null,qaN:qn,qaAgents:qa,periodKey,
+     dailyByDate:(()=>{ const o={}; facts.forEach(f=>{ const t=o[f.date]=o[f.date]||Object.fromEntries(CAMPS.map(c=>[c,0])); t[f.campaign]+=f.sales; }); return o; })()};
 }
 
 
@@ -1510,7 +1990,7 @@ function pctPill(x,warnAt=0.75){
   return `<span class="pill ${cls}">${fmtPct(x)}</span>`;
 }
 const campChip=c=>`<span class="campchip"><i style="background:var(--${(c||'').toLowerCase()})"></i>${c}</span>`;
-const CAMPC={Cuddle:'var(--cuddle)',Courtesy:'var(--courtesy)',VT:'var(--vt)'};
+const CAMPC={Cuddle:'var(--cuddle)',Courtesy:'var(--courtesy)',Nesting:'var(--nesting)',VT:'var(--vt)'};
 
 /* ---------- daily series builders ---------- */
 function seriesBy(fn,filter){ // -> {dates, values[]}
@@ -1641,7 +2121,7 @@ function stackChart(box){
   const days=M.dates;
   if(!days.length) return '<div class="empty">No data</div>';
   const W=640,h=250,P={l:40,r:12,t:12,b:30};
-  const vals=days.map(d=>M.dailyByDate[d]||{Cuddle:0,Courtesy:0,VT:0});
+  const vals=days.map(d=>M.dailyByDate[d]||Object.fromEntries(CAMPS.map(c=>[c,0])));
   const max=Math.max(10,...vals.map(v=>v.Cuddle+v.Courtesy+(v.VT||0)))*1.05;
   const bw=Math.min(26,(W-P.l-P.r)/days.length-3);
   const x=i=>P.l+(W-P.l-P.r)*(i+0.5)/days.length;
@@ -1932,6 +2412,7 @@ function renderTop(){
         .map(([v,l])=>`<option value="${v}" ${preset===v?'selected':''}>${l}</option>`).join('')}</select></div>
     ${(preset==='month'||preset==='cycle')?`<div class="ctl"><input type="month" id="pMonth" value="${S.ui.month}"></div>`:''}
     ${preset==='custom'?`<div class="ctl"><input type="date" id="pFrom" value="${S.ui.from||''}"><span class="lab">→</span><input type="date" id="pTo" value="${S.ui.to||''}"></div>`:''}
+    ${preset!=='custom'?`<div class="ctl" title="Stop the period on this day. Use it to line the dashboard up with a tracker that was cut earlier — the month keeps its shape, it just ends where you say."><span class="lab">as at</span><input type="date" id="pAsAt" value="${S.ui.asAt||''}">${S.ui.asAt?`<button class="btn ghost" id="pAsAtClear" style="padding:2px 8px" title="show every day again">✕</button>`:''}</div>`:''}
     <div class="ctl"><span class="lab">Campaign</span><select id="fCampG">
       <option value="">All</option><option value="Courtesy" ${S.ui.camp==='Courtesy'?'selected':''}>Matrix Courtesy</option><option value="Cuddle" ${S.ui.camp==='Cuddle'?'selected':''}>Matrix Cuddle</option><option value="VT" ${S.ui.camp==='VT'?'selected':''}>Matrix Tracker</option></select></div>
     <div class="ctl"><span class="lab">Team</span><select id="fTeamG"><option value="">All</option>
@@ -1946,6 +2427,8 @@ function renderTop(){
   const pf=$('#pFrom'), pt=$('#pTo');
   if(pf) pf.onchange=e=>{ S.ui.from=e.target.value; save(); rebuild(); renderAll(); };
   if(pt) pt.onchange=e=>{ S.ui.to=e.target.value; save(); rebuild(); renderAll(); };
+  const pa=$('#pAsAt'); if(pa) pa.onchange=e=>{ S.ui.asAt=e.target.value||''; save(); rebuild(); renderAll(); };
+  const pac=$('#pAsAtClear'); if(pac) pac.onclick=()=>{ S.ui.asAt=''; save(); rebuild(); renderAll(); };
   $('#fCampG').onchange=e=>{ S.ui.camp=e.target.value; save(); renderPage(); };
   $('#fTeamG').onchange=e=>{ S.ui.team=e.target.value; save(); renderPage(); };
   $('#btnExportAll').onclick=exportReport;
@@ -2148,7 +2631,7 @@ PAGES.dashboard=()=>{
   const qa=qaSeries(null);
 
   return `
-  <div class="page-head"><h2>Dashboard</h2><div class="sub">${M.range.from} → ${M.range.to} · ${days} dialing day${days===1?'':'s'}</div></div>
+  <div class="page-head"><h2>Dashboard</h2><div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialing day${M.diallingDays===1?'':'s'}</div></div>
   <div class="kpirow">${row1.map(k=>kpiCard(k)).join('')}</div>
   <div class="midgrid">
     <div class="card"><div class="cardhead"><div><h3>Revenue trend</h3><div class="sub">daily GWP performance</div></div></div>
@@ -2393,25 +2876,28 @@ function aggCols(opts={}){
     {h:'Team Leader',l:1,f:r=>esc(r.tl)},
     {h:'Tenure',l:1,f:r=>esc(r.tenure)},
     {h:'Agent',l:1,f:r=>`<span class="agentcell">${r.code?avatarOf(r.agent,r.code):''}<span class="nm">${esc(r.agent)}</span></span>`,csv:r=>r.agent},
-    {h:'Emp',f:r=>fmtNum(r.emp)},
-    {h:'Actual',f:r=>fmtNum(r.act,r.act%1?1:0)},
+    {h:'Employed Shifts',f:r=>fmtNum(r.emp)},
+    {h:'Actual Shifts',f:r=>fmtNum(r.act,r.act%1?1:0)},
     {h:'Att %',f:r=>fmtPct(r.att)},
-    {h:'Target',f:r=>fmtNum(r.target)},
-    {h:'Sales',f:r=>'<b>'+fmtNum(r.sales)+'</b>',csv:r=>r.sales},
-    {h:'% Target',f:r=>pctPill(r.pctT),csv:r=>r.pctT==null?'':(r.pctT*100).toFixed(1)+'%'},
+    {h:'Sales Target',f:r=>fmtNum(r.target)},
+    {h:'Sales Achieved',f:r=>'<b>'+fmtNum(r.sales)+'</b>',csv:r=>r.sales},
+    {h:'% of Sales Target',f:r=>pctPill(r.pctT),csv:r=>r.pctT==null?'':(r.pctT*100).toFixed(1)+'%'},
     {h:'SPD',f:r=>fmtNum(r.spd,2)}
   ];
-  if(opts.canc) c.push({h:'Canc',f:r=>fmtNum(r.canc)},{h:'Canc %',f:r=>fmtPct(r.cancPct,1)});
+  if(opts.canc) c.push({h:'Cancellations',f:r=>fmtNum(r.canc)},{h:'% of Cancellations',f:r=>fmtPct(r.cancPct,1)});
   c.push(
-    {h:'Ave Talk',f:r=>r.aveTalk!=null?fmtDur(r.aveTalk):'–'},
+    {h:'Ave Talk Time',f:r=>r.aveTalk!=null?fmtDur(r.aveTalk):'-'},
     {h:'GWP Target',f:r=>fmtNum(r.gwpT)},
-    {h:'GWP',f:r=>fmtNum(r.gwp)},
-    {h:'% GWP',f:r=>pctPill(r.pctG),csv:r=>r.pctG==null?'':(r.pctG*100).toFixed(1)+'%'},
+    {h:'GWP Achieved',f:r=>fmtNum(r.gwp)},
+    {h:'% To GWP Target',f:r=>pctPill(r.pctG),csv:r=>r.pctG==null?'':(r.pctG*100).toFixed(1)+'%'},
     {h:'Ave GWP',f:r=>fmtNum(r.aveG,1)},
-    {h:'Opt-Ins',f:r=>fmtNum(r.opt)},
-    {h:'Opt-In %',f:r=>fmtPct(r.optPct)},
     {h:'Referrals',f:r=>fmtNum(r.ref)},
-    {h:'QA',f:r=>r.qa?fmtPct(r.qa.avg,1):'–',csv:r=>r.qa?(r.qa.avg*100).toFixed(1)+'%':''}
+    {h:'% Of Referrals To Sales Achieved',f:r=>fmtPct(r.refPct,1)},
+    {h:'QA',f:r=>r.qa?fmtPct(r.qa.avg,1):'-',csv:r=>r.qa?(r.qa.avg*100).toFixed(1)+'%':''},
+    /* app-only extras, placed AFTER the workbook's own columns so the screen and the
+       tracker line up left to right without translating names */
+    {h:'Opt-Ins',f:r=>fmtNum(r.opt)},
+    {h:'Opt-In %',f:r=>fmtPct(r.optPct)}
   );
   return c;
 }
@@ -2421,7 +2907,57 @@ function tableHTML(cols,rows,rowClass){
     cols.map(c=>`<td class="${c.l?'l':''}">${c.f(r)}</td>`).join('')+'</tr>').join('');
   return `<div class="tablewrap"><table class="data"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
+/* Talk time reads 0:00:00 whenever no dialler file covers a day, which on screen is
+   indistinguishable from an agent who genuinely never dialled — and that is exactly how an
+   MTD came to disagree with the hand-built tracker. Name the missing days instead. */
+function diallerWarning(){
+  if(!M) return '';
+  const out=[];
+  if(M.noDialler && M.noDialler.length){
+    const d=M.noDialler;
+    out.push('<b>No dialler data for '+d.length+' working day'+(d.length>1?'s':'')+'</b> ('
+      +d.map(x=>esc(x)).join(', ')+'). Talk time shows 0:00:00 on those days, and every average '
+      +'that divides by shifts is understated. Upload the Call Records / ViciDial exports covering them.');
+  }
+  if(M.viciSkipped && M.viciSkipped.length){
+    out.push('<b>A ViciDial export could not be counted.</b> '
+      +M.viciSkipped.map(v=>esc(v.from)+' → '+esc(v.to)+' ('+v.n+' agents)').join('; ')
+      +' — it holds one total per agent across those days, and the selected period does not cover '
+      +'all of them, so it cannot be split without inventing figures. Export ViciDial one day at a '
+      +'time, or widen the period to include the whole range.');
+  }
+  if(!out.length) return '';
+  return '<div class="card mt" style="border-left:3px solid var(--amber)">'
+    +'<div class="cardhead"><div><h3>Talk time is incomplete for this period</h3>'
+    +'<div class="sub">the figures below are correct for the data loaded — the data is missing days</div>'
+    +'</div></div>'
+    +out.map(t=>'<p class="note" style="max-width:none">'+t+'</p>').join('')
+    +'</div>';
+}
+/* RAGGED COVERAGE. The single most common reason a figure here disagrees with a hand-built
+   tracker: the sources end on different days, the period silently stretches to the furthest
+   one, and every shift-derived column reads a whole day high. Said out loud, next to the
+   numbers, with the fix one click away. Silent while the sources line up. */
+function coverageNote(){
+  if(!M||!M.dates.length||S.ui.asAt) return '';
+  const e=sourceEnds();
+  const have=Object.entries(e).filter(([,v])=>v);
+  if(have.length<2) return '';
+  const ends=[...new Set(have.map(([,v])=>v))];
+  if(ends.length<2) return '';
+  const last=ends.sort()[ends.length-1], first=ends[0];
+  if(last<=M.range.from||first>=M.range.to) return '';
+  return '<div class="card mt" style="border-left:3px solid var(--amber)">'
+    +'<div class="cardhead"><div><h3>Your sources end on different days</h3>'
+    +'<div class="sub">'+have.map(([k,v])=>esc(k)+' to <b>'+esc(fmtDay(v))+'</b>').join(' · ')
+    +'</div></div></div><p class="note" style="max-width:none">This period runs to <b>'+esc(M.range.to)
+    +'</b> and counts <b>'+M.diallingDays+' dialling day'+(M.diallingDays===1?'':'s')+'</b>. A tracker cut on '
+    +'an earlier day will show fewer Employed Shifts, and a smaller Sales Target, GWP Target, Att % and SPD '
+    +'with it — the same numbers over a different number of days, not a disagreement. To line the two up, '
+    +'set <b>as at</b> in the toolbar to the day the tracker was cut.</p></div>';
+}
 function agentRows(camp, week){
+
   if(!M) return [];
   const src=week?((M.wtdCC[week]||{})[camp]||{}):M.mtdCC[camp];
   const roleOf={}; S.roster.forEach(a=>roleOf[a.code]=a.role||'');
@@ -2431,14 +2967,21 @@ function agentRows(camp, week){
 }
 function totalRow(rows,label){
   const t={tl:label,tenure:'',agent:'',emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,calls:0,ans:0,qa:null};
-  let qs=0,qn=0;
+  /* QA IS THE ONE COLUMN THAT IS AVERAGED, NOT SUMMED. Every other ratio on this row is
+     recomputed from the summed numerator and denominator below (spec §8) — QA cannot be,
+     because there is no numerator to sum: the workbook's total is literally
+     =AVERAGE(U4:U{last}), the mean of the AGENT averages, with agents who have no
+     evaluation ("No QA %") dropped from the denominator rather than scored zero.
+     So this is an unweighted mean of agent means: an agent with one evaluation counts the
+     same as one with twenty. qn is carried for display only ("n evaluations"). */
+  let qs=0,qn=0,qa=0;
   for(const r of rows){ t.emp+=r.emp;t.act+=r.act;t.target+=r.target;t.sales+=r.sales;t.gwp+=r.gwp;t.gwpT+=r.gwpT;
-    t.talk+=r.talk;t.opt+=r.opt;t.ref+=r.ref;t.canc+=r.canc;t.calls+=(r.calls||0);t.ans+=(r.ans||0); if(r.qa){qs+=r.qa.avg*r.qa.n;qn+=r.qa.n;} }
+    t.talk+=r.talk;t.opt+=r.opt;t.ref+=r.ref;t.canc+=r.canc;t.calls+=(r.calls||0);t.ans+=(r.ans||0); if(r.qa){qs+=r.qa.avg;qa++;qn+=r.qa.n;} }
   t.att=t.emp?t.act/t.emp:null;t.pctT=t.target?t.sales/t.target:null;t.spd=t.act?t.sales/t.act:null;
   t.pctG=t.gwpT?t.gwp/t.gwpT:null;t.aveG=t.sales?t.gwp/t.sales:null;t.aveTalk=t.act?t.talk/t.act:null;
   t.optPct=t.sales?t.opt/t.sales:null;t.refPct=t.sales?t.ref/t.sales:null;t.cancPct=t.sales?t.canc/t.sales:null;
   t.aht=t.ans?t.talk/t.ans:null;
-  t.qa=qn?{avg:qs/qn,n:qn}:null;
+  t.qa=qa?{avg:qs/qa,n:qn,agents:qa}:null;
   return t;
 }
 function groupByTL(rows){
@@ -2456,12 +2999,12 @@ function campSection(camp,week,opts){
 
 PAGES.mtd=()=>{
   if(!M||!M.dates.length) return emptyState();
-  const sub=['Courtesy','Cuddle','VT','Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle';
+  const sub=[...CAMPS,'Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle';
   const tlBlock=camp=>{
     const keys=Object.keys(M.tlAgg).filter(k=>k.startsWith(camp+'|'));
     if(!keys.length) return '';
     const metricRows=[
-      ['Dialing Days',()=>M.dates.length],['Employed HC',o=>fmtNum(o.hc)],['Total Employed Shifts',o=>fmtNum(o.emp)],
+      ['Dialing Days',()=>M.diallingDays],['Employed HC',o=>fmtNum(o.hc)],['Total Employed Shifts',o=>fmtNum(o.emp)],
       ['Total Actual Shifts',o=>fmtNum(o.act,o.act%1?1:0)],['% Of Attendance',o=>fmtPct(o.att,1)],
       ['Sales Target',o=>fmtNum(o.target)],['Sales Achieved',o=>'<b>'+fmtNum(o.sales)+'</b>'],['% To Sales Target',o=>pctPill(o.pctT)],
       ['SPD',o=>fmtNum(o.spd,2)],['Cancellations',o=>fmtNum(o.canc)],['% Canc to Sales',o=>fmtPct(o.cancPct,1)],
@@ -2476,7 +3019,7 @@ PAGES.mtd=()=>{
     return `<div class="card mt"><div class="cardhead"><div><h3>${CAMPLAB[camp]||camp} — team leaders</h3></div></div>${tableHTML(cols,metricRows)}</div>`;
   };
   return `
-  <div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · sorted by SPD</div>
+  ${diallerWarning()}${coverageNote()}<div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialling day${M.diallingDays===1?'':'s'}${S.ui.asAt?' · <b>as at '+esc(S.ui.asAt)+'</b>':''} · sorted by SPD</div>
     <div class="spacer"></div><button class="btn small" onclick="exportTracker()">${I.download}<span>Generate MTD tracker</span></button><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
   <div class="chiprow" style="margin-bottom:14px">
     ${[['Courtesy','Matrix Courtesy'],['Cuddle','Matrix Cuddle'],['VT','Matrix Tracker'],['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';save();renderPage()">${l}</button>`).join('')}</div>
@@ -2487,7 +3030,7 @@ PAGES.mtd=()=>{
 
 PAGES.weekly=()=>{
   if(!M||!M.weeks.length) return emptyState();
-  const camp=['Courtesy','Cuddle','VT'].includes(S.ui.wtdCamp)?S.ui.wtdCamp:'Cuddle';
+  const camp=CAMPS.includes(S.ui.wtdCamp)?S.ui.wtdCamp:'Cuddle';
   return `
   <div class="page-head"><h2>Weekly reports</h2><div class="sub">weeks run Monday–Sunday inside the period</div></div>
   <div class="chiprow" style="margin-bottom:14px">
@@ -2669,8 +3212,31 @@ PAGES.data=()=>{
   <div class="slots">${slotCards}</div>
   <div class="card"><div class="cardhead"><div><h3>Uploaded files</h3></div></div>${reg}
     <p class="note" style="margin:10px 0 0">Files are recognised by their <b>content</b> — re-uploading a file that's already loaded (even renamed) is skipped automatically, so you can safely upload your whole export folder every day and only new files are added. Daily sources (sales, calls, attendance, QA) <b>append</b> — each file adds to the history as the month builds up; re-uploading the same day/month refreshes it. The <b>Agent List replaces the roster</b> — upload a fresh one as often as agents join, leave or move. Everything saves to the cloud database, and <b>removing a file here removes it from the database too</b>.</p></div>
-  ${cov}${unHtml}`;
+  ${cov}${ruleChecksCard()}${unHtml}`;
 };
+/* THE RULE BOOK, ANSWERING BACK. Every check in spec §11, run against the model that was
+   just built, printed next to the upload that built it. Failures first — a check that passes
+   is not news, and a wall of green teaches people to stop reading. */
+function ruleChecksCard(){
+  if(!VCHK||!VCHK.length) return '';
+  const fails=VCHK.filter(v=>!v.ok&&v.sev==='error'), warns=VCHK.filter(v=>!v.ok&&v.sev==='warn');
+  const info=VCHK.filter(v=>v.sev==='info'), passed=VCHK.filter(v=>v.ok&&v.sev!=='info');
+  const edge=fails.length?'var(--crit)':(warns.length?'var(--amber)':'var(--good)');
+  const head=fails.length?fails.length+' check'+(fails.length>1?'s':'')+' failed'
+    :(warns.length?warns.length+' thing'+(warns.length>1?'s':'')+' to know about':'all '+passed.length+' checks pass');
+  const row=v=>`<tr><td class="l"><code>${v.id}</code></td>
+    <td class="l"><span class="pill ${v.ok?'pgood':(v.sev==='error'?'pcrit':'pwarn')}">${v.ok?'pass':(v.sev==='error'?'FAIL':'note')}</span></td>
+    <td class="l">${esc(v.msg)}</td></tr>`;
+  const shown=[...fails,...warns,...info];
+  return `<div class="card mt" style="border-left:3px solid ${edge}">
+    <div class="cardhead"><div><h3>Rule checks — ${head}</h3>
+    <div class="sub">VAS MTD Reporting Engine v${MTD_RULES.version} §11, re-run after every upload.
+    A <b>FAIL</b> is a figure that should not be published until it is understood; a <b>note</b> is data that is provisional rather than wrong.</div></div></div>
+    ${shown.length?`<div class="tablewrap"><table class="data"><thead><tr><th class="l">Check</th><th class="l">Result</th><th class="l">Detail</th></tr></thead>
+      <tbody>${shown.map(row).join('')}</tbody></table></div>`:''}
+    <p class="note" style="margin:10px 0 0">${passed.length} of ${VCHK.filter(v=>v.sev!=='info').length} checks pass.
+    V18 (pivot cache range) and V19 (cached formula values) apply to the exported workbook, not to a live dashboard — <b>Export report</b> asserts those when it writes the file.</p></div>`;
+}
 PAGES['_wire_data']=()=>{
   document.querySelectorAll('.slot[data-slot]').forEach(el=>{
     const t=el.dataset.slot;
@@ -2953,7 +3519,11 @@ function exportTracker(){
   if(typeof XLSX==='undefined'||!XLSX.writeFile){ toast('Spreadsheet library not loaded - refresh and retry'); return; }
   const wb=XLSX.utils.book_new();
   const monthName=new Date(M.dates[0]+'T00:00:00Z').toLocaleString('en',{month:'long',timeZone:'UTC'});
-  const camps=['Cuddle','Courtesy'];
+  /* Nesting gets its own block and its own MTD sheet (spec §7). In the reference period
+     it was filtered out of both workbook pivots, dropping 3 agents and 17 sales from every
+     report with nothing to say they were missing. VT is excluded here by design — tracker
+     units carry no GWP and never belong in the VAS money totals. */
+  const camps=CAMPS.filter(c=>c!=='VT');
 
   /* ---- Pivot Table: the source block the workbook's pivots read from, plus the two
      side blocks it carries (cancellations by agent, and QA by agent). */
@@ -3050,7 +3620,7 @@ function exportReport(){
   // the same gFilter every view uses, so you extract exactly what you're looking at.
   const teamOK=r=>!S.ui.team||r.tl===S.ui.team;
   sheet('Daily',dCols,M.facts.filter(gFilter));
-  const camps=S.ui.camp?[S.ui.camp]:['Cuddle','Courtesy'];
+  const camps=S.ui.camp?[S.ui.camp]:CAMPS.filter(c=>c!=='VT');
   for(const camp of camps){
     for(const w of M.weeks){
       const rows=agentRows(camp,w.num).filter(teamOK); if(!rows.length) continue;
@@ -3208,6 +3778,11 @@ function dupStillLive(f){
   const ty=String(f.type||'');
   if(ty.startsWith('roster')) return true;
   if(ty.startsWith('open')) return !!S.opencases;
+  /* Cancellations key by contract, not by day, so they are not in STORE_OF and fell through
+     to "always live" — a registry entry survived a cloud hydrate that had emptied cancRows
+     and then blocked the re-upload that would have repaired it, with "already uploaded" as
+     the only explanation. They are live only while rows this file contributed are still there. */
+  if(ty.startsWith('cancellations')) return Object.values(S.cancRows||{}).some(r=>r.f===f.name);
   const st=STORE_OF[ty.split(' ')[0]];
   if(!st) return true;
   const ds=f.dates||[];
@@ -3262,6 +3837,9 @@ window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
   setPeriod:(m,mode)=>{ S.ui.month=m; S.ui.preset=(mode==='cycle')?'cycle':'month'; if(mode)S.ui.mode=mode; save(); rebuild(); renderAll(); },
   setRange:(from,to)=>{ S.ui.preset='custom'; S.ui.from=from; S.ui.to=to; save(); rebuild(); renderAll(); },
   setPreset:p=>{ S.ui.preset=p; save(); rebuild(); renderAll(); },
+  setAsAt:d=>{ S.ui.asAt=d||''; save(); rebuild(); renderAll(); },
+  sourceEnds,
+  checks:()=>VCHK, rules:()=>MTD_RULES,     // §11 rule checks + the rule book, for the harness
   rebuild:()=>{rebuild();renderAll();}, openDrawer, go };
 </script>
 

@@ -17,14 +17,20 @@ pg.on('dialog',d=>d.accept());
 await pg.goto('http://127.0.0.1:8129/index.html',{waitUntil:'domcontentloaded'});
 await pg.waitForFunction(()=>window.__mtd&&window.__mtd.state(),null,{timeout:30000});
 await pg.evaluate(()=>{try{localStorage.clear()}catch(e){};const S=window.__mtd.state();
-  ['calls','sales','att','evals','tracker','canc','vici','viciDays','callsMeta'].forEach(k=>S[k]={});S.files=[];S.roster=[];});
+  ['calls','sales','att','evals','tracker','cancRows','vici','viciDays','callsMeta'].forEach(k=>S[k]={});S.files=[];S.roster=[];});
 
 const snap=()=>pg.evaluate(()=>{const St=window.__mtd.state();
   const sum=(o,f)=>{let t=0;for(const d in o)for(const k in o[d])t+=f(o[d][k]);return t};
   let ev=0; for(const d in St.evals) for(const c in St.evals[d]) ev+=St.evals[d][c].length;
   return {files:St.files.map(f=>f.type), talkH:+(sum(St.calls,b=>b.talk)/3600).toFixed(2),
-    canc:sum(St.canc,v=>v), evals:ev, gwp:Math.round(sum(St.sales,o=>o.gwp)),
+    // cancellations are one entry per cancelled CONTRACT in S.cancRows (this suite read
+    // S.canc, a store nothing has written for a long time, so it was counting 0)
+    canc:Object.keys(St.cancRows||{}).length, evals:ev, gwp:Math.round(sum(St.sales,o=>o.gwp)),
     viciRanges:Object.keys(St.vici||{}).length, viciDays:Object.keys(St.viciDays||{}).length,
+    // CallX agents on the day the ViciDial export also covers — the thing that must survive
+    // when the Vici day is removed. Counting them beats an hours threshold, which drifts
+    // every time the talk metric is redefined.
+    callxOn03:Object.values((St.calls||{})['2026-08-03']||{}).filter(b=>b&&!b.v).length,
     attDays:Object.keys(St.att||{}).length};});
 const load=async b=>{ await pg.setInputFiles('#fileInput',b,{timeout:120000});
   let last=-1,st=0; for(let i=0;i<200;i++){ await pg.waitForTimeout(1500);
@@ -48,7 +54,8 @@ ok('everything loaded', full.canc>0&&full.evals>0&&full.gwp>0&&full.talkH>0&&ful
 await removeByType('calls (ViciDial)');
 const noVici=await snap(); console.log('after removing vici day:',JSON.stringify(noVici));
 ok('removing the ViciDial day drops its hours', noVici.talkH<full.talkH, `${full.talkH} -> ${noVici.talkH}`);
-ok('removing the ViciDial day keeps the CallX day', noVici.talkH>300, `${noVici.talkH}`);
+ok('removing the ViciDial day keeps the CallX day', noVici.callxOn03>0&&noVici.callxOn03===full.callxOn03,
+   `CallX agents on 03 Aug: ${full.callxOn03} -> ${noVici.callxOn03}`);
 ok('removing the ViciDial day releases it for a range', noVici.viciDays===0, `${noVici.viciDays}`);
 ok('removing the ViciDial day touches nothing else', noVici.canc===full.canc&&noVici.evals===full.evals&&noVici.gwp===full.gwp,
    `canc ${noVici.canc} evals ${noVici.evals} gwp ${noVici.gwp}`);
@@ -57,8 +64,17 @@ ok('removing the ViciDial day touches nothing else', noVici.canc===full.canc&&no
 await removeByType('cancellations');
 const noCanc=await snap(); console.log('after removing cancellations:',JSON.stringify(noCanc));
 ok('cancellations are fully removable', noCanc.canc===0, `${noCanc.canc} left behind`);
-ok('removing cancellations touches nothing else', noCanc.evals===full.evals&&noCanc.gwp===full.gwp&&noCanc.talkH===noVici.talkH,
-   `evals ${noCanc.evals} gwp ${noCanc.gwp} talk ${noCanc.talkH}`);
+/* Sales and GWP are GROSS of cancellation, so the Inactive file is part of the money: taking
+   it away must take its gross-up with it — cleanly, and only that. GWP falls back to the
+   Active-only figure; nothing else moves. (Before the gross-up this asserted GWP unchanged.) */
+ok('removing cancellations leaves calls and QA alone', noCanc.evals===full.evals&&noCanc.talkH===noVici.talkH,
+   `evals ${noCanc.evals} talk ${noCanc.talkH}`);
+ok('removing cancellations releases the gross-up it contributed', noCanc.gwp>0&&noCanc.gwp<full.gwp,
+   `${full.gwp} -> ${noCanc.gwp}`);
+await load([j(UP,'BI Inactive - 05.08.xlsx')]);
+const reCanc=await snap();
+ok('re-adding the cancellations file restores exactly the same gross GWP', reCanc.gwp===full.gwp&&reCanc.canc===full.canc,
+   `${full.gwp}/${full.canc} -> ${reCanc.gwp}/${reCanc.canc}`);
 
 // a multi-day range, then remove it
 await load([j(UP,'Vici - Cuddle Agents - 3 - 5 Aug.csv')]);
@@ -70,7 +86,7 @@ ok('a ViciDial range is fully removable', noRange.viciRanges===0, `${noRange.vic
 
 // clear-all must leave nothing behind
 await pg.evaluate(()=>{const St=window.__mtd.state();
-  ['sales','calls','att','evals','tracker','canc','vici','viciDays','callsMeta'].forEach(k=>St[k]={});St.files=[];St.opencases=null;
+  ['sales','calls','att','evals','tracker','cancRows','vici','viciDays','callsMeta'].forEach(k=>St[k]={});St.files=[];St.opencases=null;
   save();rebuild();});
 await pg.waitForTimeout(1500);
 const cleared=await snap();

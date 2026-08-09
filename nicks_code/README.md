@@ -66,6 +66,39 @@ pages and exports work unchanged. Nothing is hardcoded to a month.
    **WTD/MTD · Courtesy**, **TL MTD** — each exports to CSV, and **Export report**
    produces the full multi-sheet workbook CSV.
 
+## The rule book
+
+Since 2026-08-09 the calculations are driven by the **VAS MTD Reporting Engine spec v6.0**.
+The machine-readable rules live in `../specs/mtd_engine_rules.json`; the operative subset is
+inlined in `index.html` as `MTD_RULES` (inlined because the app must run from `file://` with
+no server), and `diagnostics/verify-engine-rules.mjs` fails if the two drift apart.
+
+What the rule book decides, and where the spec says so:
+
+- **Actual Shifts** (§6.2) — Courtesy and Nesting are **dialler-derived**: `HDCA → 0.5`,
+  else `talk > 0 → 1`, else `0`. Cuddle stays on the HR register, because the ViciDial export
+  is period-aggregated and cannot answer "did they talk today". The register records who was
+  in the building; the tracker records who worked the phones, and the two genuinely disagree
+  (134/136 rows against the register's 123/136).
+- **Nesting is a reported campaign** (§7) — it used to be folded into Courtesy and filtered
+  out of both pivots, losing 3 agents and 17 sales from every report.
+- **Excluded agents** (§5) — `CB67`, `CB205`, `CB265` are off the fact table. Not derivable
+  from the data (CB143 has an identical status and stays in); a maintained list, confirmed
+  monthly, and always named in the Rule checks panel.
+- **Dialling days** (§1) — distinct dates in the **attendance register**, not every date some
+  file happens to carry. 01 Aug is a Saturday with four sales and no register: money, but not
+  a shift. TL-level SPD divides by this.
+- **QA** (§6.7) — filtered on `Date of Call` only, no other filters (six variants were tested
+  and all scored worse), 0% scores kept (they are exactly Critical Fails), superseded CB codes
+  remapped for QA rows *only*, and agents with no evaluation excluded from the average rather
+  than scored zero. Totals are the mean of agent means, per the workbook's `=AVERAGE(U4:U)`.
+- **Test data** (§2) — charge code `TESTRR` and account `622622` excluded and counted;
+  `Charge Amount` only, never the byte-identical `Charge Amount_1`; the attendance register
+  filtered to `Employee Type = Call Agent` so support staff stop accruing shifts.
+- **Rule checks** (§11) — V01–V22 re-run after every upload and print on the Data tab. A
+  **FAIL** is a figure that should not be published; a **note** is data that is provisional
+  rather than wrong.
+
 ## Calculation rules (mirrors the June workbook)
 
 - **Sales achieved** = unique opportunities in the Activated Services file per agent.

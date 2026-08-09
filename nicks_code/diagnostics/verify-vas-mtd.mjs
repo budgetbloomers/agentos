@@ -98,10 +98,13 @@ const FILES=[ j(UP,'Matrix - Agent List.xlsx'), j(UP,'attendance_2026-08-01_to_2
   j(UP,'BI Active - 05.08.xlsx'), j(UP,'BI Inactive - 05.08.xlsx'),
   j(UP,'Call X Call report - 3 - 5.xlsx'), j(UP,'evaluations-full-export-2026-08-06.csv') ];
 
+// Cancellations live in S.cancRows, keyed account|contract|deactivate-date — one entry per
+// cancelled CONTRACT. (They used to live in a per-day S.canc bucket; this suite still read
+// that name long after it stopped being written, so the assertion below was reading 0.)
 const snap=()=>page.evaluate(()=>{ const S=window.__mtd.state();
-  const sumC=o=>{let t=0;for(const d in o)for(const k in o[d])t+=o[d][k];return t};
+  const rows=S.cancRows||{};
   return { files:(S.files||[]).map(f=>f.type), roster:(S.roster||[]).length,
-    cancDays:Object.keys(S.canc||{}).length, cancTotal:sumC(S.canc||{}),
+    cancDays:new Set(Object.values(rows).map(r=>r.d)).size, cancTotal:Object.keys(rows).length,
     salesDays:Object.keys(S.sales||{}).length, callDays:Object.keys(S.calls||{}).length }; });
 
 console.log('\nRound 1: August drop…');
@@ -110,9 +113,6 @@ await page.waitForFunction(()=>(window.__mtd.state().files||[]).length>=5,null,{
 await page.waitForTimeout(4000);
 const s1=await snap(); console.log(JSON.stringify(s1));
 ok('cancellations file recognised', s1.files.some(t=>/cancellations/.test(t)), s1.files.join(','));
-const resolved = await page.evaluate(()=>{ const S=window.__mtd.state(); let att=0, un=0;
-   for(const d in S.canc) for(const k in S.canc[d]){ const c=window.__mtd.resolve?window.__mtd.resolve(k):null; }
-   return null; });
 ok('cancellations stored raw and complete (every dated contract kept)', s1.cancTotal===EXP_CANC, `app ${s1.cancTotal} vs file ${EXP_CANC}`);
 
 

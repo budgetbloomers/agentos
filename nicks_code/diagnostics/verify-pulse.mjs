@@ -104,7 +104,11 @@ console.log(JSON.stringify(s1, null, 1));
 ok('roster 95', s1.roster === 95, `got ${s1.roster}`);
 ok('campaigns Courtesy 50 / Cuddle 27 / VT 18', s1.campCount.Courtesy === 50 && s1.campCount.Cuddle === 27 && s1.campCount.VT === 18, JSON.stringify(s1.campCount));
 ok('an Open Cases export is recognised and NOT stored as VAS data', s1.open === null && !s1.files.some(f=>/open/i.test(f)), JSON.stringify(s1.open)+' | '+s1.files.filter(f=>/open/i.test(f)).join(';'));
-ok('GWP = independent recompute', Math.abs(s1.gwp - E.gwpIncl) < 1, `got ${s1.gwp} want ${E.gwpIncl}`);
+// pulse-expected.json's gwpRule records how this number is derived — gross of cancellation,
+// rounded per account. A whole-rand result is part of the assertion: per-account rounding
+// means no total can ever carry cents.
+ok('GWP = independent recompute (gross of cancellation, rounded per account)',
+   Math.abs(s1.gwp - E.gwpIncl) < 1 && s1.gwp === Math.round(s1.gwp), `got ${s1.gwp} want ${E.gwpIncl}`);
 ok('sales days = ' + E.biDays, s1.salesDays === E.biDays, `got ${s1.salesDays}`);
 ok('calls = agent-attributed rows ' + E.callsWithAgent, s1.calls === E.callsWithAgent, `got ${s1.calls}`);
 ok('call days = ' + E.callDays, s1.callDays === E.callDays, `got ${s1.callDays}`);
