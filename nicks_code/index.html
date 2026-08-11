@@ -1909,6 +1909,14 @@ function buildModel(range, periodKey){
        warning that already names those days on the MTD page — not a quietly narrowed
        denominator that makes a partial upload look complete. */
     o.aveTalk=o.emp?o.talk/o.emp:null;
+    /* TALK PER DAY WORKED — the same seconds over ACTUAL shifts instead of employed ones.
+       Ave Talk Time is a utilisation figure: a rostered shift that was not worked drags it
+       down, which is the point of it. This is the intensity figure — how hard the agent went
+       on the days they were actually there — and the two only diverge where attendance is the
+       problem rather than performance. Null, never 0, when no shift was worked: an agent with
+       talk and no credited shift has no meaningful per-day rate, and 0 would say the opposite
+       of the truth. */
+    o.talkPerWorked=o.act?o.talk/o.act:null;
     o.optPct=o.sales?o.opt/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null; o.cancPct=o.sales?o.canc/o.sales:null;
     o.aht=o.ans?o.talk/o.ans:null; o.ansPct=o.calls?o.ans/o.calls:null;
     return o;
@@ -2979,6 +2987,12 @@ function aggCols(opts={}){
     {h:'QA',f:r=>r.qa?fmtPct(r.qa.avg,1):'-',csv:r=>r.qa?(r.qa.avg*100).toFixed(1)+'%':''},
     /* app-only extras, placed AFTER the workbook's own columns so the screen and the
        tracker line up left to right without translating names */
+    /* Talk per Day Worked sits next to Ave Talk Time on purpose. Ave Talk divides by EMPLOYED
+       shifts (utilisation — an unworked shift drags it down); this divides by ACTUAL shifts
+       (intensity on the days they were there). Read together, a big gap between the two is an
+       attendance problem, and a low figure in BOTH is a performance one. */
+    {h:'Talk / Day Worked',f:r=>r.talkPerWorked!=null?fmtDur(r.talkPerWorked):'–',
+      csv:r=>r.talkPerWorked!=null?fmtDur(r.talkPerWorked):''},
     {h:'Opt-Ins',f:r=>fmtNum(r.opt)},
     {h:'Opt-In %',f:r=>fmtPct(r.optPct)}
   );
@@ -3063,8 +3077,10 @@ function totalRow(rows,label){
     t.empDial+=(r.empDial||0); if(r.qa){qs+=r.qa.avg;qa++;qn+=r.qa.n;} }
   t.att=t.emp?t.act/t.emp:null;t.pctT=t.target?t.sales/t.target:null;t.spd=t.act?t.sales/t.act:0;
   t.pctG=t.gwpT?t.gwp/t.gwpT:null;t.aveG=t.sales?t.gwp/t.sales:null;
-  // same denominator as the agent rows — employed shifts, over the days the dialler covered
+  // both talk figures recomputed from the summed seconds and the summed shifts, never by
+  // averaging the agent rows — same rule as every other ratio on this row
   t.aveTalk=t.emp?t.talk/t.emp:null;
+  t.talkPerWorked=t.act?t.talk/t.act:null;
   t.optPct=t.sales?t.opt/t.sales:null;t.refPct=t.sales?t.ref/t.sales:null;t.cancPct=t.sales?t.canc/t.sales:null;
   t.aht=t.ans?t.talk/t.ans:null;
   t.qa=qa?{avg:qs/qa,n:qn,agents:qa}:null;
@@ -3144,7 +3160,13 @@ PAGES.daily=()=>{
     {h:'Target',f:r=>fmtNum(r.target)},
     {h:'Sales',f:r=>'<b>'+r.sales+'</b>'+(r.provisional?' <span class="pill pwarn" title="from call dispositions — upload the Power BI - Active Cases file">±</span>':''),csv:r=>r.sales},
     {h:'% Target',f:r=>pctPill(r.target?r.sales/r.target:null),csv:r=>r.target?(r.sales/r.target*100).toFixed(0)+'%':''},
-    {h:'Talk',f:r=>fmtDur(r.talk)},{h:'Calls',f:r=>r.calls||''},
+    {h:'Talk',f:r=>fmtDur(r.talk)},
+    /* At day grain this is the day's talk over that day's actual shift: unchanged on a full
+       shift, doubled on a half day, and flagged where an agent talked but was credited no
+       shift at all — the anomaly a daily view exists to surface. */
+    {h:'Talk / Worked',f:r=>r.act?fmtDur(r.talk/r.act):(r.talk?'<span class="pill pwarn" title="talk recorded but no shift credited">no shift</span>':'–'),
+      csv:r=>r.act?fmtDur(r.talk/r.act):''},
+    {h:'Calls',f:r=>r.calls||''},
     {h:'GWP',f:r=>fmtNum(r.gwp)},{h:'Ave GWP',f:r=>r.sales?fmtNum(r.gwp/r.sales,1):'–'},
     {h:'Opt-Ins',f:r=>r.opt},{h:'Referrals',f:r=>r.ref||0}];
   window.__exp={name:'daily',cols,rows};
@@ -3596,7 +3618,13 @@ const TL_METRICS=[
   ['% To Sales Target',o=>pctOf(o.sales,o.target)],['SPD',o=>o.act?o.sales/o.act:0],
   ['Cancellations',o=>o.canc||0],['% of Cancellations to Sales',o=>pctOf(o.canc||0,o.sales)],
   ['GWP Target',o=>o.gwpT],['GWP Achieved',o=>o.gwp],['% To GWP Target',o=>pctOf(o.gwp,o.gwpT)],
-  ['Ave GWP',o=>o.sales?o.gwp/o.sales:0],['Ave Talk Time',o=>dur(o.act?o.talk/o.act:0)],
+  /* Ave Talk Time divides by EMPLOYED shifts here too. It used to divide by actual, which put
+     the TL rollup at odds with the agent rows in the very same workbook — spec §9 reads it as
+     an AVERAGE over the daily fact rows, and every fact row carries exactly 1 employed shift,
+     so employed is the denominator. Talk / Day Worked keeps the actual-shift view beside it. */
+  ['Ave GWP',o=>o.sales?o.gwp/o.sales:0],
+  ['Ave Talk Time',o=>dur(o.emp?o.talk/o.emp:0)],
+  ['Talk / Day Worked',o=>dur(o.act?o.talk/o.act:0)],
   ['Referrals',o=>o.ref||0],['Referrals %',o=>pctOf(o.ref||0,o.sales)],
   ['Number Of Agents on Target',o=>o.onT??''],['% Of Agents on Target',o=>pctOf(o.onT||0,o.hc||0)],
   ['QA %',o=>o.qa&&o.qa.n?o.qa.avg:'']];
