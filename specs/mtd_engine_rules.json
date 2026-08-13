@@ -180,8 +180,8 @@
       "exclusions": [
         {
           "field": "user",
-          "in": ["VDAD", "VDCL", "VDLB", "CBT001", "CBT003"],
-          "reason": "ViciDial internal accounts (auto-dial, closer) and test logins. Excluded and COUNTED, never silently dropped."
+          "in": ["VDAD", "VDCL", "VDLB", "CBT001", "CBT003", "CBT005", "CBT007"],
+          "reason": "ViciDial internal accounts (auto-dial, closer) and test logins. Excluded and COUNTED, never silently dropped. CBT005 and CBT007 were added from the 01-13 Aug pull, which carries them (15 and 4 rows) where the 13 Aug pull did not - the CBT### series is the training/test bank and every member of it is a test login."
         },
         {
           "field": "length_in_sec",

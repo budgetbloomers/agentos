@@ -547,13 +547,15 @@ const MTD_RULES = {
      talkFrom is 'contacted'.
 
      nonAgentUsers are ViciDial's internal accounts (VDAD auto-dial, VDCL closer) and the
-     CBT### test logins. Excluded from the figures and COUNTED — never silently dropped. */
+     CBT### test logins. Excluded from the figures and COUNTED — never silently dropped.
+     CBT005 and CBT007 come from the 01-13 Aug pull; the 13 Aug pull happens not to carry
+     them, which is exactly how a test login reaches the floor's figures unnoticed. */
   viciCallReport: {
     talkFrom: 'all',                  // 'all' = every row's length_in_sec · 'contacted' = reached-a-person rows only
     recordKey: ['call_date','user','lead_id','status'],   // unique over all 2 317 rows of the reference pull
     noContactStatuses: ['N','NA','B','AB','A','VM','DC','DNE','DROP','PDROP','TIMEOT',
                         'INCALL','UC','UCNUM','DA','FAIL','DUPL'],
-    nonAgentUsers: ['VDAD','VDCL','VDLB','CBT001','CBT003']
+    nonAgentUsers: ['VDAD','VDCL','VDLB','CBT001','CBT003','CBT005','CBT007']
   },
 
   /* §1 — the calendar month, not the Salesforce sales-month. The BI exports arrive
@@ -1383,10 +1385,23 @@ const INGEST={
 
      TALK TIME IS THE SUM OF length_in_sec ON THE CB NUMBER (Nick, 2026-08-13). The agent is
      `user`, which carries the employee code directly — not `owner`, which is blank on 1 249
-     of the reference pull's 2 317 rows and disagrees with `user` on another 68, and not the
-     agent name, which would go through resolveKey for no benefit when the code is right
-     there. Identity still resolves through the Agent List at model-build time, so a code on
-     no roster is FLAGGED as unmatched rather than invented or dropped.
+     of the reference pull's 2 317 rows and disagrees with `user` on another 68. Identity
+     still resolves through the Agent List at model-build time, so a code on no roster is
+     FLAGGED as unmatched rather than invented or dropped.
+
+     BUT THE AGENT LIST DECIDES WHO A ROW BELONGS TO, NOT THE EXPORT (Nick, 2026-08-13:
+     "we always reference what the agent list says"). `user` is a dialler LOGIN, and a login
+     is not always the employee code: ViciDial ships Kyle Kisten as CB138, which the Agent
+     List gives to Jabu Ntombela. Spec §3's dialler-label table is explicit about it —
+     "CB-138 is claimed by two people … always match on the NAME portion" — and the
+     Agent Performance parser below has always obeyed that while this one did not, so a
+     per-call export would have paid 735 of Kyle's calls to Jabu. The row's own `full_name`
+     is now resolved against the roster first and wins any disagreement with the login.
+     Every reassignment is REPORTED, never quietly applied.
+
+     With no Agent List loaded there is nothing to resolve against and the login is used
+     as before — so a drop whose call report parses before its roster is corrected by
+     re-uploading the call report once the list is in.
 
      What the row count does not tell you is how much of that time was spent talking. The
      rule book's note on viciCallReport has the numbers; the engine repeats them on upload.
@@ -1407,17 +1422,36 @@ const INGEST={
     const contactedOnly=R.talkFrom==='contacted';
     const dates=new Set(), buckets={}, seen=new Set(), sysHits={};
     let skip=0, dupes=0, negative=0, sysRows=0, allSecs=0, ringSecs=0;
+    /* The roster may have landed earlier in this same batch, so the index is refreshed here
+       rather than trusted from the last rebuild. Cached per login+name pair — resolveKey does
+       real work and this runs per call row. */
+    if(S.roster.length) buildIndex();
+    const idCache={}, reassigned={};
+    const identify=(login,full)=>{
+      const ck=login+' '+full;
+      if(idCache[ck]!==undefined) return idCache[ck];
+      let out=login;
+      if(IDX&&full){
+        const byName=resolveKey(full);
+        // the name is on the list and points somewhere else — the list wins
+        if(byName&&byName!==resolveKey(login)){ out=byName; reassigned[full+' ('+login+' → '+byName+')']=1; }
+      }
+      return (idCache[ck]=out);
+    };
     for(const r of recs){
       const d=String(r['call_date']||'').slice(0,10);
       if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ skip++; continue; }
-      const user=String(r['user']||'').trim();
-      if(!user){ skip++; continue; }
+      const login=String(r['user']||'').trim();
+      if(!login){ skip++; continue; }
       const status=String(r['status']||'').trim().toUpperCase();
-      // the same call twice — a re-export appended to itself, or an overlapping pull
-      const key=r['call_date']+'|'+user+'|'+(r['lead_id']||'')+'|'+status;
+      /* the same call twice — a re-export appended to itself, or an overlapping pull.
+         Keyed on the export's OWN login, which is what the record key in the rule book
+         names; reassigning identity must not change what counts as one call. */
+      const key=r['call_date']+'|'+login+'|'+(r['lead_id']||'')+'|'+status;
       if(seen.has(key)){ dupes++; continue; }
       seen.add(key);
-      if(sysUsers.has(user.toUpperCase())){ sysRows++; sysHits[user]=(sysHits[user]||0)+1; continue; }
+      if(sysUsers.has(login.toUpperCase())){ sysRows++; sysHits[login]=(sysHits[login]||0)+1; continue; }
+      const user=identify(login,String(r['full_name']||'').trim());
       let secs=parseInt(r['length_in_sec'],10);
       if(!isFinite(secs)) secs=0;
       /* ViciDial writes the occasional negative length. It is corrupt, not a credit against
@@ -1477,6 +1511,11 @@ const INGEST={
     }
     if(sysRows) toast(sysRows+' row(s) in "'+name+'" belong to ViciDial system or test logins rather than agents, and were excluded: '
       +Object.entries(sysHits).map(([u,n])=>u+' ('+n+')').join(', '),9000);
+    /* Say every time the Agent List overrode the export's own login. This is an attribution
+       change — one agent's talk time moving to another — and it is never applied silently. */
+    { const ra=Object.keys(reassigned);
+      if(ra.length) toast(ra.length+' ViciDial login(s) in "'+name+'" belong to someone else on the Agent List — counted by NAME: '
+        +ra.slice(0,3).join(', ')+(ra.length>3?' +'+(ra.length-3)+' more':''),12000); }
     if(kept) toast(kept+' agent-day(s) already held a fuller dialler record — kept those');
     if(negative) toast(negative+' row(s) in "'+name+'" carry a negative call length — counted as zero');
     /* SAY WHAT IS IN THE TALK TIME. length_in_sec runs from dial to hangup, so it includes
