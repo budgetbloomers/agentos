@@ -118,7 +118,7 @@ async function session(label, batches){
       for(const k in S.calls[d]) calls[d][k]={...S.calls[d][k]}; }
     return { calls, viciDays:{...S.viciDays},
       files:S.files.map(f=>({name:f.name,type:f.type,dates:f.dates,rows:f.rows,dupes:f.dupes,sysRows:f.sysRows,
-        negative:f.negative,talkSecs:f.talkSecs,noContactSecs:f.noContactSecs})) };
+        negative:f.negative,talkSecs:f.talkSecs,noContactSecs:f.noContactSecs,landed:f.landed})) };
   });
   await page.close();
   return out;
@@ -193,6 +193,24 @@ console.log('\n— it coexists with the other sources —');
 const withRoster=await session('with roster',[[path.join(AUG,'Matrix - Agent List.xlsx'), SRCPATH]]);
 ok('loading it beside the agent list keeps every second',
    talkOf(withRoster)===expTotalTalk, `${hms(talkOf(withRoster))} vs ${hms(expTotalTalk)}`);
+/* THE FLOOR THIS FILE IS ACTUALLY FROM. The 13 Aug pull is Vehicle Tracking and digital —
+   not one Cuddle agent in it — so most of its hours land on a campaign the dashboard does
+   not report on, or on codes the Agent List has never seen. That is not a parsing failure,
+   it is the file, and the upload has to say so rather than report "loaded" and go quiet. */
+{
+  const r=withRoster.files.find(f=>f.type==='calls (ViciDial)');
+  const landed=(r&&r.landed)||{};
+  const inReport=Object.entries(landed).filter(([c])=>c==='Cuddle'||c==='Courtesy')
+    .reduce((t,[,v])=>t+v.secs,0);
+  const outside=Object.entries(landed).filter(([c])=>c!=='Cuddle'&&c!=='Courtesy')
+    .reduce((t,[,v])=>t+v.secs,0);
+  ok('the upload reports which campaigns its talk landed on', Object.keys(landed).length>0, JSON.stringify(landed));
+  ok('every second is accounted for across those campaigns', inReport+outside===expTotalTalk,
+     `${hms(inReport)}+${hms(outside)} vs ${hms(expTotalTalk)}`);
+  ok('this export carries no Cuddle agent at all — Cuddle talk comes from the other ViciDial file',
+     !landed.Cuddle, JSON.stringify(landed.Cuddle||null));
+  console.log('   landed:', Object.entries(landed).map(([c,v])=>`${c} ${v.agents}a ${hms(v.secs)}`).join(' · '));
+}
 const withCallX=await session('with CallX',[[path.join(AUG,'Matrix - Agent List.xlsx'),
   path.join(AUG,'Call X Call report - 3 - 5.xlsx'), SRCPATH]]);
 ok('CallX days and the call-report day both survive',

@@ -1449,6 +1449,32 @@ const INGEST={
       }
       S.viciDays[d]=1;                        // day-level detail exists — an aggregate range must not override it
     }
+    /* WHERE THE TALK LANDED, said at upload time. This export is not necessarily the floor
+       you think it is: the 13 Aug pull is the Vehicle Tracking and digital floor and holds
+       not one Cuddle agent, so 31 of its 55 hours belong to a campaign this dashboard does
+       not report on and another 22 to codes the Agent List has never heard of. Every part of
+       that was already discoverable — VT lands in the off-campaign tally, unknown codes in
+       V14 — but only by going and looking, and the upload itself said "loaded". A file whose
+       hours nearly all fall outside the report has to say so while the person who chose it
+       is still watching. */
+    const landed={};
+    for(const d of dates) for(const u in buckets[d]){
+      const r=S.roster.find(a=>a.code===u);
+      const c=r?campOf(r.campaign):'not on the Agent List';
+      (landed[c]=landed[c]||{codes:new Set(),secs:0});
+      landed[c].codes.add(u); landed[c].secs+=buckets[d][u].talk;
+    }
+    const outside=Object.entries(landed).filter(([c])=>!CAMPS.includes(c));
+    const inside=Object.entries(landed).filter(([c])=>CAMPS.includes(c));
+    const fmtPart=([c,v])=>c+' '+v.codes.size+' agent'+(v.codes.size===1?'':'s')+' '+fmtDur(v.secs);
+    if(outside.length){
+      const lostSecs=outside.reduce((t,[,v])=>t+v.secs,0);
+      toast('"'+name+'": '+fmtDur(lostSecs)+' of talk is NOT in the report — '
+        +outside.map(fmtPart).join(', ')+'. '
+        +(inside.length?'Counted: '+inside.map(fmtPart).join(', ')+'.'
+                       :'Nothing in this file lands on Cuddle or Courtesy. Upload a current Agent List, and note that Cuddle talk time comes from the "Vici - Cuddle Agents" export, not this one.'),
+        16000);
+    }
     if(sysRows) toast(sysRows+' row(s) in "'+name+'" belong to ViciDial system or test logins rather than agents, and were excluded: '
       +Object.entries(sysHits).map(([u,n])=>u+' ('+n+')').join(', '),9000);
     if(kept) toast(kept+' agent-day(s) already held a fuller dialler record — kept those');
@@ -1462,7 +1488,8 @@ const INGEST={
         +'voicemail and answering machines. Set viciCallReport.talkFrom to "contacted" to bill only answered calls.',13000);
     }
     return regFile(name,'calls (ViciDial)',[...dates].sort(),recs.length,
-      {skip,dupes,negative,sysRows,talkSecs:allSecs,noContactSecs:ringSecs});
+      {skip,dupes,negative,sysRows,talkSecs:allSecs,noContactSecs:ringSecs,
+       landed:Object.fromEntries(Object.entries(landed).map(([c,v])=>[c,{agents:v.codes.size,secs:v.secs}]))});
   },
   /* ViciDial "Agent Performance Detail" — the SECOND dialler. Cuddle moved off CallX
      (client note 2026-07-20) and both systems now run side by side, so both exports land
@@ -1661,7 +1688,20 @@ function buildIndex(){
 }
 function resolveKey(key){
   if(S.map[key]!==undefined) return S.map[key]==='__ignore__'?null:S.map[key];
-  if(/^CB\d+$/.test(key)) return IDX.byCode[key]?key:null;
+  /* A BARE EMPLOYEE CODE, LEADING ZEROS AND ALL. ViciDial's call report writes the code
+     zero-padded — CB014, CB016, CB047 — while the Agent List carries CB14, CB16, CB47. This
+     returned null on the mismatch and stopped, so three real agents and 4h37m of talk went
+     to Unmatched with nothing wrong anywhere. cbCode() already strips the padding (it parses
+     the digits as base 10) and was sitting at the bottom of this function, unreachable for
+     exactly the keys that needed it. Verified against the name: all three resolve to the
+     same agent either way, so this corrects an identity that was already unambiguous rather
+     than guessing at a new one. */
+  if(/^CB\d+$/i.test(key)){
+    const up=key.toUpperCase();
+    if(IDX.byCode[up]) return up;
+    const z=cbCode(up);                       // CB014 -> CB14
+    return (z&&IDX.byCode[z])?z:null;
+  }
   const fx=IDX.byCallx[normFull(key)]; if(fx) return fx;
   const nn=IDX.byName[normName(key)]; if(nn) return nn;
   /* The spec's dialler-label table, matched on the WHOLE label. It has to be consulted
