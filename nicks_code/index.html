@@ -730,7 +730,7 @@ function freshState(){
     sales:{},    // date -> ownerKey(normName) -> {n,gwp,canc,unmatchedProducts:[]}
     calls:{},    // date -> agentKey(CBnnn|norm) -> {talk,calls,opt,saleD}
     vici:{},     // 'from..to' -> multi-day ViciDial aggregate, deliberately NOT split across days
-    viciDays:{}, // days that arrived as a SINGLE-DAY ViciDial export - these supersede any range covering them
+    viciDays:{}, // days that arrived with day-level ViciDial detail. Bookkeeping only since the per-AGENT supersede (viciDayCov) — a day flag cannot say WHICH agents the day-level file covered
     cancRows:{}, // account|contract|deactivate -> {d:contract create date, owner, f:file} - one row per cancelled contract
     att:{},      // date -> CBnnn -> status
     evals:{},    // date -> CBnnn -> [scores 0-100]
@@ -1481,7 +1481,7 @@ const INGEST={
         if(cur&&(cur.talk||0)>=next.talk&&(cur.calls||0)>=next.calls){ kept++; continue; }
         bk[u]=next;
       }
-      S.viciDays[d]=1;                        // day-level detail exists — an aggregate range must not override it
+      S.viciDays[d]=1;                        // day-level detail exists (bookkeeping — supersede is decided per agent at model build)
     }
     /* WHERE THE TALK LANDED, said at upload time. This export is not necessarily the floor
        you think it is: the 13 Aug pull is the Vehicle Tracking and digital floor and holds
@@ -1585,7 +1585,7 @@ const INGEST={
         bk[r.name]={talk:r.talk,calls:r.calls,ans:r.calls,opt:r.opt,saleD:r.saleD,v:1};   // v: sourced from ViciDial
       }
       if(kept) toast(kept+' agent-day(s) already had a fuller dialler record - kept those');
-      S.viciDays[d]=1;                       // day-level detail exists for this day now
+      S.viciDays[d]=1;                       // day-level detail exists for this day now (bookkeeping — supersede is per agent)
       delete S.vici[from+'..'+to];
       return regFile(name,'calls (ViciDial)',[d],rows.length,{totals,admins});
     }
@@ -2226,15 +2226,27 @@ function buildModel(range, periodKey){
           attendance, which is per-day and independent of the window). The row is marked
           provisional so the screen can say it is apportioned rather than measured — far better
           than the old behaviour, which dropped the range entirely and showed 0:00:00.
-     A range whose days already arrived as single-day exports is ignored: the finer data wins. */
+     An AGENT whose days already arrived as day-level ViciDial exports keeps them: the finer
+     data wins. Per AGENT, not per day — this used to skip the whole range the moment any of
+     its days carried any day-level ViciDial detail, and the per-call EXPORT_CALL_REPORT
+     covering 01–13 Aug is a VT-floor file that flags every one of its days while holding
+     not one Cuddle agent. Loading it beside the Cuddle range zeroed Cuddle talk time for
+     the whole tab: the flag said "finer data exists" and for those 24 agents it did not.
+     A day-level flag set by a file that never saw an agent cannot speak for that agent. */
   const viciSkipped=[], viciPartial=[];
   const diallerDays={};                      // code -> Set(dates the dialler actually covers)
   for(const d of dates) for(const c in (callsBy[d]||{})) (diallerDays[c]=diallerDays[c]||new Set()).add(d);
+  /* Which agents actually HAVE day-level ViciDial records, and on which dates. Read from
+     S.calls rather than callsBy because the v flag (ViciDial-sourced) does not survive the
+     fuller-dialler merge above, and CallX coverage must not count here — CallX-vs-range is
+     still decided below by which is fuller, exactly as before. */
+  const viciDayCov={};                       // code -> Set(dates with a day-level ViciDial record)
+  for(const d of dates) for(const k in (S.calls[d]||{})){ if(!S.calls[d][k].v) continue;
+    const c=resolveKey(k); if(c) (viciDayCov[c]=viciDayCov[c]||new Set()).add(d); }
   for(const key in S.vici){
     const v=S.vici[key];
     const days=[]; { const d=new Date(v.from+'T00:00:00Z');
       while(dkey(d)<=v.to&&days.length<400){ days.push(dkey(d)); d.setUTCDate(d.getUTCDate()+1); } }
-    if(days.some(d=>S.viciDays[d])) continue;                    // superseded by day-level exports
     const overlap=days.filter(d=>d>=range.from&&d<=range.to);
     if(!overlap.length){ viciSkipped.push({from:v.from,to:v.to,n:v.rows.length}); continue; }
     const partial=overlap.length<days.length;
@@ -2247,6 +2259,9 @@ function buildModel(range, periodKey){
     for(const r of v.rows){
       const rc=resolveKey(r.name); if(!rc) continue;              // not on the Agent List
       const a=metaOf[rc]; if(!a) continue;                        // leaver — off the current roster
+      // THIS agent's days already arrived as day-level ViciDial exports — the finer data wins
+      const cov=viciDayCov[rc];
+      if(cov&&overlap.every(d=>cov.has(d))) continue;
       // apportion by shifts worked, falling back to plain day count where attendance is absent
       const all=shifts(rc,days), ov=shifts(rc,overlap);
       const share=partial ? (all>0 ? ov/all : overlap.length/days.length) : 1;
@@ -2425,7 +2440,7 @@ function buildModel(range, periodKey){
   for(const f of facts){ if(f.talk>0) talkDays.add(f.date); if(f.act>0||f.sales>0) workedDays.add(f.date); }
   const noDialler=[...workedDays].filter(d=>!talkDays.has(d)).sort();
   return {range,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
-    viciSkipped,talkDays,noDialler,attDates,diallingDays,
+    viciSkipped,viciPartial,talkDays,noDialler,attDates,diallingDays,
      /* Agents whose work in THIS period sits under a leader who no longer owns them. Not an
         error — it is the historical rule doing its job — but it is the one thing a reader of
         an old month needs told, because the org chart on screen elsewhere disagrees. */
@@ -3439,9 +3454,19 @@ function diallerWarning(){
   if(M.viciSkipped && M.viciSkipped.length){
     out.push('<b>A ViciDial export could not be counted.</b> '
       +M.viciSkipped.map(v=>esc(v.from)+' → '+esc(v.to)+' ('+v.n+' agents)').join('; ')
-      +' — it holds one total per agent across those days, and the selected period does not cover '
-      +'all of them, so it cannot be split without inventing figures. Export ViciDial one day at a '
-      +'time, or widen the period to include the whole range.');
+      +' — it holds one total per agent across those days, and the selected period covers none of '
+      +'them, so its talk belongs entirely outside this view. Widen the period to include the range.');
+  }
+  /* The period covers PART of a range: the talk is apportioned by shifts worked inside the
+     window and marked provisional. The design promised the screen would say so ("marked
+     provisional so the screen can say it is apportioned rather than measured") — this is
+     that sentence, previously computed and never rendered. */
+  if(M.viciPartial && M.viciPartial.length){
+    out.push('<b>A ViciDial export reaches beyond the period.</b> '
+      +M.viciPartial.map(v=>esc(v.from)+' → '+esc(v.to)+' ('+v.covered+' of '+v.of+' days inside the period)').join('; ')
+      +' — it holds one total per agent across the whole range, so each agent\'s talk is '
+      +'apportioned by the shifts they worked inside the period, and is provisional rather than '
+      +'measured. Export ViciDial one day at a time for exact daily talk.');
   }
   if(!out.length) return '';
   return '<div class="card mt" style="border-left:3px solid var(--amber)">'

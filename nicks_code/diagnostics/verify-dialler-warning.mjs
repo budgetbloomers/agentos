@@ -43,17 +43,37 @@ console.log('after CallX ->',JSON.stringify(withDial));
 ok('loading the dialler reduces the missing days', withDial.days<noDial.days, `${noDial.days} -> ${withDial.days}`);
 ok('the days the file covers now carry talk', withDial.talkDays.length>=3, JSON.stringify(withDial.talkDays));
 
-// --- 3. a multi-day ViciDial range against a narrower period must be called out, not silently dropped
+// --- 3. a multi-day ViciDial range only PARTLY inside the period is apportioned — and the
+//        screen says so. (This used to assert the old behaviour, dropping the range whole
+//        and banner-ing it as uncountable; apportioning replaced that and the suite was
+//        never updated, so these two checks were failing against every commit since.)
 await pg.setInputFiles('#fileInput',[j(UP,'Vici - Cuddle Agents - 3 - 5 Aug.csv')],{timeout:180000});
 await settle(7);
 await pg.evaluate(()=>{window.__mtd.setRange('2026-08-03','2026-08-04'); go('mtd')});
 await pg.waitForTimeout(1200);
+const part=await pg.evaluate(()=>{const M=window.__mtd.model();
+  return {n:(M.viciPartial||[]).length, skippedN:(M.viciSkipped||[]).length,
+          talk:M.facts.filter(f=>f.rangeAgg).reduce((t,f)=>t+f.talk,0),
+          // share is 0<s<=1: an agent whose shifts all fell inside the window keeps the whole total (s=1)
+          prov:M.facts.filter(f=>f.rangeAgg).every(f=>f.provisional&&f.apportioned>0&&f.apportioned<=1),
+          banner:[...document.querySelectorAll('.card')].some(c=>/ViciDial export reaches beyond the period/i.test(c.innerText)&&/apportioned/i.test(c.innerText))}});
+console.log('vici range vs narrow period ->',JSON.stringify(part));
+ok('a partly-covered range is apportioned, not dropped', part.n===1&&part.talk>0, `partial=${part.n} talk=${part.talk}`);
+ok('every apportioned row is marked provisional with its share', part.prov);
+ok('and the screen says the talk is apportioned, not measured', part.banner, 'no apportioned banner');
+
+// --- 4. a range wholly OUTSIDE the period is skipped — and the screen says why.
+//        01–02 Aug: sales and attendance exist (so the MTD page renders), the Vici range 03–05
+//        does not overlap at all. A window with NO data (say 06–06) renders the empty state
+//        instead of the warning card, which is its own correct answer — not this test.
+await pg.evaluate(()=>{window.__mtd.setRange('2026-08-01','2026-08-02'); go('mtd')});
+await pg.waitForTimeout(1200);
 const skipped=await pg.evaluate(()=>{const M=window.__mtd.model();
-  return {n:(M.viciSkipped||[]).length, banner:[...document.querySelectorAll('.card')].some(c=>/ViciDial export could not be counted/i.test(c.innerText)),
-          txt:([...document.querySelectorAll('.card')].map(c=>c.innerText).join(' ').match(/A ViciDial export[^.]*\./)||[''])[0].slice(0,140)}});
-console.log('vici range vs narrow period ->',JSON.stringify(skipped));
-ok('a range the period does not cover is reported', skipped.n===1, String(skipped.n));
-ok('and the screen explains why talk is missing', skipped.banner, 'no vici banner');
+  return {n:(M.viciSkipped||[]).length,
+          banner:[...document.querySelectorAll('.card')].some(c=>/ViciDial export could not be counted/i.test(c.innerText))}});
+console.log('vici range wholly outside ->',JSON.stringify(skipped));
+ok('a range the period covers none of is reported as skipped', skipped.n===1, String(skipped.n));
+ok('and the screen explains why its talk is missing', skipped.banner, 'no vici banner');
 
 ok('no page errors', errors.length===0, errors.slice(0,3).join(' | '));
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
