@@ -47,18 +47,28 @@ const j=f=>path.join(UP,f);
 stage='upload';
 await page.setInputFiles('#fileInput',[j('Matrix - Agent List.xlsx'),j('attendance_2026-08-01_to_2026-08-06.csv'),
   j('BI Active - 05.08.xlsx'),j('BI Inactive - 05.08.xlsx'),j('evaluations-full-export-2026-08-06.csv')],{timeout:180000});
+/* 1,5s x 5 — the settle window audit-dupes uses. A tighter one reads as stable during the
+   pause while the 4,6 MB QA export parses, the model is then built from half a drop, and the
+   failure lands somewhere else entirely: an agent with no facts is absent from M.agents, so
+   the drawer renders empty and the history checks fail for a reason that is not real. */
 let last=-1,stable=0;
-for(let i=0;i<200;i++){ await page.waitForTimeout(500);
+for(let i=0;i<200;i++){ await page.waitForTimeout(1500);
   const n=await page.evaluate(()=>window.__mtd.state().files.length);
-  if(n===last){ if(++stable>=4) break; } else { stable=0; last=n; } }
+  if(n===last){ if(++stable>=5) break; } else { stable=0; last=n; } }
 
 /* Move somebody, through the real recording path, so the movement UI has something to draw.
    A second agent list is the honest way to do it — same code path a reorganisation takes. */
 let moved=null;
 try{
   moved=await page.evaluate(()=>{
-    const S=window.__mtd.state(), a=S.roster.find(x=>x.campaign==='Courtesy'&&x.tl);
-    window.recordOrg(a.code,'2026-08-04',{tl:'Someone Else',campaign:a.campaign,tenure:a.tenure},'agent-list');
+    /* Pick an agent the MODEL actually holds, not merely one on the roster: drawerHTML looks
+       the code up in M.agents and returns an empty string when it is not there, which is a
+       blank drawer rather than an error and reads as a content failure. */
+    const S=window.__mtd.state(), M=window.__mtd.model();
+    const a=(M.agents||[]).find(x=>x.tl&&M.primaryCamp[x.code]==='Courtesy')||(M.agents||[])[0];
+    if(!a) throw new Error('the model holds no agents — the drop did not load');
+    const r=S.roster.find(x=>x.code===a.code)||a;
+    window.recordOrg(a.code,'2026-08-04',{tl:'Someone Else',campaign:r.campaign||'Courtesy',tenure:r.tenure||''},'agent-list');
     window.__mtd.rebuild();
     return a.code;
   });
