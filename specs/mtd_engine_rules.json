@@ -143,6 +143,54 @@
       ]
     },
     {
+      "id": "vici_call_report",
+      "file_pattern": "EXPORT_CALL_REPORT_YYYYMMDD-HHMMSS.txt",
+      "added": "2026-08-13, Nick. This is the daily Vici export vici_cuddle.grain_warning asks for - it closes that open item.",
+      "format": "TAB-separated plain text, 39 columns, no preamble and no totals footer.",
+      "feeds": [
+        "August.N (Talk Time)",
+        "Calls, Answered, Insurance Opt-In and dialler Sales dispositions"
+      ],
+      "grain": "ONE ROW PER CALL, dated per call. Unlike vici_cuddle this splits across its own days, so a multi-day pull needs no apportioning and no estimate flag.",
+      "join_field": "user",
+      "join_note": "'user' carries the agent's employee code directly. NOT 'owner' - blank on 1249 of the reference pull's 2317 rows and disagreeing with 'user' on another 68. Identity still resolves through agent_roster; a code on no roster is flagged unmatched, never invented.",
+      "talk_time": {
+        "rule": "SUM(length_in_sec) GROUP BY user",
+        "decided_by": "Nick, 2026-08-13",
+        "caveat": "length_in_sec runs from dial to hangup and therefore includes ringing. On the 2026-08-13 reference pull 32% of the seconds (17h51m of 55h27m) sit on statuses that reached no one - No Answer averages 32s, Busy 102s, Answering Machine 57s. This is the same trap call_x_call documents for 'Duration' vs 'Billable Seconds'. The engine reports the split on every upload.",
+        "alternative": "talkFrom = 'contacted' bills only rows whose status is not in no_contact_statuses."
+      },
+      "record_key": [
+        "call_date",
+        "user",
+        "lead_id",
+        "status"
+      ],
+      "record_key_note": "Unique across all 2317 rows of the reference pull. Repeats within a file are counted once; across files the fuller agent-day wins, never the sum.",
+      "no_contact_statuses": [
+        "N", "NA", "B", "AB", "A", "VM", "DC", "DNE", "DROP", "PDROP",
+        "TIMEOT", "INCALL", "UC", "UCNUM", "DA", "FAIL", "DUPL"
+      ],
+      "no_contact_note": "ViciDial status CODES meaning nobody was reached. Note 'A' is Answering Machine in this export, NOT answered. These set Answered (and so AHT and Answer %), and affect talk time only when talkFrom is 'contacted'.",
+      "dispositions": {
+        "source_field": "status_name",
+        "opt_in": "isOptIn - contains 'insurance opt' and not 'no insurance'. Verified: 'Sale Insurance Opt-In' counts, 'Sale No Insurance Opt-In' and 'VAS Sale No Insurance Opt In' do not.",
+        "sale": "isSaleDisp - all four Sale* dispositions count."
+      },
+      "exclusions": [
+        {
+          "field": "user",
+          "in": ["VDAD", "VDCL", "VDLB", "CBT001", "CBT003"],
+          "reason": "ViciDial internal accounts (auto-dial, closer) and test logins. Excluded and COUNTED, never silently dropped."
+        },
+        {
+          "field": "length_in_sec",
+          "condition": "< 0",
+          "reason": "ViciDial writes the occasional negative length. Zeroed and counted, never subtracted from the agent's day."
+        }
+      ]
+    },
+    {
       "id": "agent_roster",
       "file_pattern": "Matrix_-_Agent_List.xlsx",
       "feeds": [

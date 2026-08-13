@@ -528,6 +528,34 @@ const MTD_RULES = {
     noDataValue: 'No QA %'            // text, so AVERAGE() drops the agent rather than scoring them 0
   },
 
+  /* VICIDIAL "EXPORT_CALL_REPORT" — the per-CALL export (tab-separated .txt), as opposed to
+     the aggregated Agent Performance Detail. One row per dial, and the columns that matter
+     are `user` (the agent's CB number), `length_in_sec` and `status`/`status_name`.
+
+     talkFrom: 'all' is Nick's instruction — talk time is the sum of length_in_sec on the CB
+     number, every row. Recorded as a rule rather than written into the parser because it is
+     a decision, and one worth being able to revisit: length_in_sec is the whole call from
+     dial to hangup, so it includes ringing. On the 13 Aug pull, 32% of the seconds sit on
+     rows where nobody was reached (No Answer averages 32s, Busy 102s, Answering Machine
+     57s). That is the same trap the CallX rule documents — Duration ran 39-77% over the
+     hand-built tracker until it moved to connected time — so the engine reports the split
+     on every upload instead of hiding it. Switch this to 'contacted' to bill only the rows
+     below that are NOT in noContactStatuses; nothing else needs to change.
+
+     noContactStatuses are ViciDial's own status CODES for calls that never reached a person.
+     They set Answered (and therefore AHT and Answer %); they only affect talk time when
+     talkFrom is 'contacted'.
+
+     nonAgentUsers are ViciDial's internal accounts (VDAD auto-dial, VDCL closer) and the
+     CBT### test logins. Excluded from the figures and COUNTED — never silently dropped. */
+  viciCallReport: {
+    talkFrom: 'all',                  // 'all' = every row's length_in_sec · 'contacted' = reached-a-person rows only
+    recordKey: ['call_date','user','lead_id','status'],   // unique over all 2 317 rows of the reference pull
+    noContactStatuses: ['N','NA','B','AB','A','VM','DC','DNE','DROP','PDROP','TIMEOT',
+                        'INCALL','UC','UCNUM','DA','FAIL','DUPL'],
+    nonAgentUsers: ['VDAD','VDCL','VDLB','CBT001','CBT003']
+  },
+
   /* §1 — the calendar month, not the Salesforce sales-month. The BI exports arrive
      pre-filtered on a WIDER window and must be re-filtered on Contract Create Date. */
   periodBasis: 'CALENDAR_MONTH',
@@ -543,7 +571,19 @@ const MTD_RULES = {
 };
 
 /* ================= utilities ================= */
-function parseCSV(text){
+/* WHICH CHARACTER SEPARATES THE COLUMNS. Everything arriving through a workbook is comma-
+   separated, but ViciDial's EXPORT_CALL_REPORT is a raw TAB-separated .txt — read as CSV it
+   collapses into one 39-wide column per row, detectType sees a single nonsense header, and
+   the file is rejected as unrecognised with nothing to explain why.
+   Decided on the HEADER LINE alone, and only when tabs clearly outnumber commas, so a comma
+   file carrying the odd tab inside a quoted note is never mis-read. */
+function sniffDelim(text){
+  const line=(String(text||'').split('\n').find(l=>l.trim())||'');
+  const tabs=(line.match(/\t/g)||[]).length, commas=(line.match(/,/g)||[]).length;
+  return (tabs>=3&&tabs>commas) ? '\t' : ',';
+}
+function parseCSV(text, delim){
+  const D=delim||',';
   const rows=[]; let row=[], field='', q=false;
   for(let i=0;i<text.length;i++){
     const c=text[i];
@@ -552,7 +592,7 @@ function parseCSV(text){
       else field+=c;
     }else{
       if(c==='"') q=true;
-      else if(c===','){ row.push(field); field=''; }
+      else if(c===D){ row.push(field); field=''; }
       else if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
       else if(c!=='\r') field+=c;
     }
@@ -589,7 +629,8 @@ function toObjects(rows){
    loop periodically so a 60 MB converted export can't freeze the page (the remaining
    main-thread "lag" after the XLSX parse moved to a Worker). */
 const __yield=()=>new Promise(r=>setTimeout(r,0));
-async function parseCSVAsync(text){
+async function parseCSVAsync(text, delim){
+  const D=delim||',';
   const rows=[]; let row=[], field='', q=false;
   for(let i=0;i<text.length;i++){
     if(i&&(i&0xFFFFF)===0) await __yield();       // every ~1M chars
@@ -599,7 +640,7 @@ async function parseCSVAsync(text){
       else field+=c;
     }else{
       if(c==='"') q=true;
-      else if(c===','){ row.push(field); field=''; }
+      else if(c===D){ row.push(field); field=''; }
       else if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
       else if(c!=='\r') field+=c;
     }
@@ -876,6 +917,11 @@ function detectType(header, sheetName, recs){
     if(sample.length&&dd>=sample.length/2) return 'inactive';   // cancellations - the MTD Cancellations column
     return 'bi';   // Power BI - Active Cases (the money source)
   }
+  /* ViciDial EXPORT_CALL_REPORT — one row per CALL, tab-separated. Sniffed on its own
+     lower-case snake_case columns, which nothing else in the drop uses. Checked BEFORE
+     attendance: this file carries both a 'status' and a date column and would otherwise be
+     read as an HR register with no Employee Code, loading nothing. */
+  if(has('call_date','length_in_sec')&&has('user')) return 'viciCalls';
   if(has('date & time','lead disposition')) return 'calls';
   if(has('employee code','status')&&has('date')) return 'attendance';   // Employee Name not required — the parser never reads it
   if(has('qa agent','sales agent cb')) return 'evals';
@@ -930,7 +976,7 @@ async function ingestText(name, text, expected, hash){
     if(/"USER NAME"/.test(sheets[sn])&&/time range:/i.test(sheets[sn])){
       const vr=INGEST.vici(sheets[sn],name); if(vr){ ingested.push(vr); continue; }
     }
-    const {header,recs}=await toObjectsAsync(await parseCSVAsync(sheets[sn]));
+    const {header,recs}=await toObjectsAsync(await parseCSVAsync(sheets[sn], sniffDelim(sheets[sn])));
     if(!recs.length) continue;
     const type=detectType(header, sn, recs);
     if(!type) continue;
@@ -941,7 +987,7 @@ async function ingestText(name, text, expected, hash){
   if(!ingested.length && expected && INGEST[expected]){
     // slot upload with unrecognised headers: try the slot's own parser as a last resort
     const first=Object.values(sheets)[0]||'';
-    const {recs}=await toObjectsAsync(await parseCSVAsync(first));
+    const {recs}=await toObjectsAsync(await parseCSVAsync(first, sniffDelim(first)));
     if(recs.length){ try{ const res=INGEST[expected](recs,name); if(res) ingested.push(res); }catch(err){} }
   }
   if(!ingested.length){ toast('Could not recognise "'+name+'" — check the file headers'); return false; }
@@ -1329,6 +1375,94 @@ const INGEST={
     }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
     return regFile(name,'tracker daily'+(sheet?' ('+sheet+')':''),dates,recs.length,{skip});
+  },
+  /* VICIDIAL "EXPORT_CALL_REPORT" — the per-CALL export, tab-separated .txt, one row per
+     dial. The finer-grained sibling of the Agent Performance Detail below, and it answers
+     the question that one cannot: it is dated per call, so a pull covering a week splits
+     across its days properly instead of being stored whole as one untouchable total.
+
+     TALK TIME IS THE SUM OF length_in_sec ON THE CB NUMBER (Nick, 2026-08-13). The agent is
+     `user`, which carries the employee code directly — not `owner`, which is blank on 1 249
+     of the reference pull's 2 317 rows and disagrees with `user` on another 68, and not the
+     agent name, which would go through resolveKey for no benefit when the code is right
+     there. Identity still resolves through the Agent List at model-build time, so a code on
+     no roster is FLAGGED as unmatched rather than invented or dropped.
+
+     What the row count does not tell you is how much of that time was spent talking. The
+     rule book's note on viciCallReport has the numbers; the engine repeats them on upload.
+
+     Dispositions come off `status_name` through the SAME isOptIn/isSaleDisp rules the rest
+     of the app uses — checked against this export's vocabulary: "Sale Insurance Opt-In" is
+     an opt-in, "Sale No Insurance Opt-In" and "VAS Sale No Insurance Opt In" are sales that
+     are not, and all four Sale* dispositions count as sales.
+
+     A call is identified by call_date + user + lead_id + status, unique across every row of
+     the reference pull. Repeated rows within one file are counted once. Across files the
+     fuller agent-day wins, exactly as for a single-day Agent Performance export, so a
+     midday pull is never destroyed by a later one and a re-upload changes nothing. */
+  viciCalls(recs,name){
+    const R=MTD_RULES.viciCallReport;
+    const noContact=new Set(R.noContactStatuses.map(s=>s.toUpperCase()));
+    const sysUsers=new Set(R.nonAgentUsers.map(s=>s.toUpperCase()));
+    const contactedOnly=R.talkFrom==='contacted';
+    const dates=new Set(), buckets={}, seen=new Set(), sysHits={};
+    let skip=0, dupes=0, negative=0, sysRows=0, allSecs=0, ringSecs=0;
+    for(const r of recs){
+      const d=String(r['call_date']||'').slice(0,10);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ skip++; continue; }
+      const user=String(r['user']||'').trim();
+      if(!user){ skip++; continue; }
+      const status=String(r['status']||'').trim().toUpperCase();
+      // the same call twice — a re-export appended to itself, or an overlapping pull
+      const key=r['call_date']+'|'+user+'|'+(r['lead_id']||'')+'|'+status;
+      if(seen.has(key)){ dupes++; continue; }
+      seen.add(key);
+      if(sysUsers.has(user.toUpperCase())){ sysRows++; sysHits[user]=(sysHits[user]||0)+1; continue; }
+      let secs=parseInt(r['length_in_sec'],10);
+      if(!isFinite(secs)) secs=0;
+      /* ViciDial writes the occasional negative length. It is corrupt, not a credit against
+         the agent's day, so it is zeroed and counted rather than subtracted. */
+      if(secs<0){ negative++; secs=0; }
+      const reached=!noContact.has(status);
+      allSecs+=secs; if(!reached) ringSecs+=secs;
+      dates.add(d);
+      const bk=(buckets[d]=buckets[d]||{});
+      const b=bk[user]=bk[user]||{talk:0,calls:0,ans:0,opt:0,saleD:0,v:1};   // v: sourced from ViciDial
+      if(!contactedOnly||reached) b.talk+=secs;
+      b.calls++;
+      if(reached) b.ans++;
+      const disp=r['status_name']||'';
+      if(isOptIn(disp)) b.opt++;
+      if(isSaleDisp(disp)) b.saleD++;
+    }
+    if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
+    /* FULLER AGENT-DAY WINS, never the sum — the rule the single-day Agent Performance
+       export already uses. Two pulls of one day must not add up, and the narrower one must
+       not wipe the wider. */
+    let kept=0;
+    for(const d of dates){
+      const bk=(S.calls[d]=S.calls[d]||{});
+      for(const u in buckets[d]){
+        const cur=bk[u], next=buckets[d][u];
+        if(cur&&(cur.talk||0)>=next.talk&&(cur.calls||0)>=next.calls){ kept++; continue; }
+        bk[u]=next;
+      }
+      S.viciDays[d]=1;                        // day-level detail exists — an aggregate range must not override it
+    }
+    if(sysRows) toast(sysRows+' row(s) in "'+name+'" belong to ViciDial system or test logins rather than agents, and were excluded: '
+      +Object.entries(sysHits).map(([u,n])=>u+' ('+n+')').join(', '),9000);
+    if(kept) toast(kept+' agent-day(s) already held a fuller dialler record — kept those');
+    if(negative) toast(negative+' row(s) in "'+name+'" carry a negative call length — counted as zero');
+    /* SAY WHAT IS IN THE TALK TIME. length_in_sec runs from dial to hangup, so it includes
+       ringing; on the reference pull a third of it sits on calls nobody answered. The figure
+       is the one that was asked for, and the split is stated rather than left to be found. */
+    if(allSecs&&ringSecs&&!contactedOnly){
+      toast('Talk time in "'+name+'" is every call\'s length on the CB number ('+fmtDur(allSecs)+'). '
+        +Math.round(ringSecs/allSecs*100)+'% of it ('+fmtDur(ringSecs)+') is on calls that reached no one — ringing, busy, '
+        +'voicemail and answering machines. Set viciCallReport.talkFrom to "contacted" to bill only answered calls.',13000);
+    }
+    return regFile(name,'calls (ViciDial)',[...dates].sort(),recs.length,
+      {skip,dupes,negative,sysRows,talkSecs:allSecs,noContactSecs:ringSecs});
   },
   /* ViciDial "Agent Performance Detail" — the SECOND dialler. Cuddle moved off CallX
      (client note 2026-07-20) and both systems now run side by side, so both exports land
@@ -3467,7 +3601,7 @@ PAGES.data=()=>{
     {t:'evals',icon:I.shield,color:'var(--good)',name:'QA Evaluations',desc:'CallBi full evaluations export — scores, decisions and coaching categories per call.',stat:statFor(['evals'])},
     {t:'roster',icon:I.grid,color:'var(--violet)',name:'Agent List',desc:'Matrix agent list — team leaders, campaigns, tenure, daily targets, start dates. Replaces the current roster.',stat:`<span class="pill pgood">${S.roster.length} agents</span>`},
     {t:'inactive',icon:I.alert,color:'var(--rose)',name:'Cancellations (BI Inactive)',desc:'Power BI Inactive export — cancelled contracts, counted per agent by Contract Deactivate Date. This is where the MTD Cancellations and % of Cancellations columns come from. Upload daily; each upload replaces the days it covers, so overlapping pulls never double-count.',stat:statFor(['cancellations'])},
-    {t:'vici',icon:I.phone,color:'var(--cuddle)',name:'ViciDial (Cuddle)',desc:'ViciDial Agent Performance Detail — the Cuddle floor. One row per agent for the range in the file\'s own "Time range:" line. Export ONE DAY AT A TIME: a multi-day pull is one total per agent and cannot be split across days, so it is stored and flagged rather than guessed.',stat:statFor(['calls (ViciDial)','vici range'])},
+    {t:'vici',icon:I.phone,color:'var(--cuddle)',name:'ViciDial (Cuddle)',desc:'Two ViciDial exports land here. <b>EXPORT_CALL_REPORT</b> (tab-separated .txt) is the one to prefer — one row per call, dated per call, so any date range splits across its days correctly. Talk time is every call\'s length on the agent\'s CB number; the upload says how much of it is ringing rather than talking. The older <b>Agent Performance Detail</b> is one row per agent for the range in its own "Time range:" line — export that ONE DAY AT A TIME, because a multi-day pull is a single total per agent and cannot be split across days.',stat:statFor(['calls (ViciDial)','vici range'])},
   ];
   const slotCards=SLOTS.map(s=>`
     <div class="slot" data-slot="${s.t}" tabindex="0" role="button" aria-label="Upload ${s.name}">

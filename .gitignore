@@ -26,6 +26,11 @@ site/tracker/vt-mtd-report.html
 *.xls
 *.xlsx
 *.zip
+# .txt is on this list because of ViciDial's EXPORT_CALL_REPORT — a tab-separated plain-text
+# export carrying lead names, phone numbers and email addresses. It lands in the repo root
+# like the rest, and until it was added here a `git add .` would have written live customer
+# contact details into history permanently. No .txt was tracked when this was added.
+*.txt
 
 # Obsidian workspace + vendored community plugin (OBSIDIAN-SYNC.md installs it from the plugin browser)
 brain/.obsidian/

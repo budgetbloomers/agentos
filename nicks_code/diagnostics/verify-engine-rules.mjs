@@ -74,6 +74,26 @@ ok('VAT multiplier matches', inlined.vat === SPEC.reference_data.vat_multiplier.
   const missing = ex.filter(c => !inlined.excludeAgents[c]);
   ok('agent exclusion list matches', !missing.length && ex.length === Object.keys(inlined.excludeAgents).length, missing.join(','));
 }
+{
+  /* The ViciDial per-call export. Its talk-time rule is a DECISION (sum length_in_sec on the
+     CB number, ringing included) rather than something derivable from the data, so the two
+     copies drifting apart would change every Cuddle talk figure with nothing to show why. */
+  const s = SPEC.sources.find(x => x.id === 'vici_call_report');
+  const v = inlined.viciCallReport;
+  ok('the ViciDial call report is in both copies of the rule book', !!s && !!v);
+  if (s && v) {
+    ok('call-report record key matches', JSON.stringify(v.recordKey) === JSON.stringify(s.record_key),
+       `${v.recordKey} vs ${s.record_key}`);
+    ok('call-report no-contact statuses match',
+       JSON.stringify([...v.noContactStatuses].sort()) === JSON.stringify([...s.no_contact_statuses].sort()),
+       `${v.noContactStatuses.length} vs ${s.no_contact_statuses.length}`);
+    const ex = (s.exclusions.find(e => e.field === 'user') || {}).in || [];
+    ok('call-report non-agent user list matches',
+       JSON.stringify([...v.nonAgentUsers].sort()) === JSON.stringify([...ex].sort()), `${v.nonAgentUsers} vs ${ex}`);
+    ok('talk time is summed from length_in_sec on the CB number',
+       v.talkFrom === 'all' && /SUM\(length_in_sec\) GROUP BY user/.test(s.talk_time.rule), v.talkFrom);
+  }
+}
 
 /* ------------------------------------------------------- 2. reference data ---- */
 if (!fs.existsSync(SRC)) {
