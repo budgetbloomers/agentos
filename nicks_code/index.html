@@ -1935,6 +1935,29 @@ function validateMTD(m){
     const codes=[...new Set(bad.map(f=>f.code))];
     add('V17','warn',!bad.length, bad.length?codes.length+' agent(s) worked with no attendance record: '+codes.slice(0,3).join(', '):'attendance exists for every agent with calls or sales'); }
 
+  /* V18 — A WHOLE CAMPAIGN WITH NO DIALLER RECORD. Ave Talk Time reading 0:00:00 down an
+     entire tab is not a calculation fault, it is a missing upload, and on screen the two look
+     identical. Establishing that the Cuddle floor simply had no dialler data — every agent
+     employed, selling, and with no call record, because ViciDial's export was pulled without
+     their user groups — took a long investigation that this check would have ended in a
+     glance. Named per campaign, and only where there are shifts to compare against, so an
+     empty period stays quiet. */
+  { const byCamp={};
+    for(const f of F){ const t=byCamp[f.campaign]=byCamp[f.campaign]||{codes:new Set(),dial:new Set(),emp:0};
+      t.codes.add(f.code); t.emp+=f.emp; if((f.talk||0)>0) t.dial.add(f.code); }
+    const dark=Object.entries(byCamp).filter(([,t])=>t.emp>0&&t.dial.size===0);
+    const thin=Object.entries(byCamp).filter(([,t])=>t.emp>0&&t.dial.size>0&&t.dial.size<t.codes.size/2);
+    /* WARN, however loud the message reads. A campaign with no dialler data yet is the
+       ordinary state of every morning before the export lands, and non-negotiable 12 says
+       never ship a figure with an error-severity FAIL — as an error this would condemn the
+       day's first upload over a file that is merely not in yet. */
+    add('V18','warn', !dark.length&&!thin.length,
+      dark.length
+        ? dark.map(([c,t])=>`${c}: not one of its ${t.codes.size} agents has a dialler record — Ave Talk Time reads 0:00:00 for the whole tab. The dialler export does not cover this campaign.`).join(' ')
+        : (thin.length
+            ? thin.map(([c,t])=>`${c}: only ${t.dial.size} of ${t.codes.size} agents have a dialler record`).join('; ')
+            : 'every reported campaign has dialler coverage')); }
+
   // V20/V21/V22 — QA integrity.
   { let zero=0,zeroCF=0,ev=0,pass=0,coach=0,cf=0,upheld=0,open=0;
     for(const d in S.evals){ if(d<R.from||d>R.to) continue;
