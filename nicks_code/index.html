@@ -692,6 +692,7 @@ function freshState(){
     att:{},      // date -> CBnnn -> status
     evals:{},    // date -> CBnnn -> [scores 0-100]
     tracker:{},  // date -> CBnnn -> imported tracker daily row
+    orgHist:{},  // CBnnn -> [{d,tl,campaign,tenure,src}] effective-dated org attribution, one entry per CHANGE
     adjust:{},   // periodKey -> CBnnn -> {c,r}
     map:{},      // identityKey -> CBnnn (manual mapping)
     files:[],    // {name,type,dates:[..],rows,at}
@@ -716,6 +717,16 @@ const DATA_STORES=['sales','calls','callsMeta','att','evals','tracker','cancRows
 function normalizeState(){
   S.settings=Object.assign({attOverride:{},onTarget:1,trainingCounts:true},S.settings);
   if(!S.coach) S.coach={};                        // periodKey -> code -> {notes,due,status}
+  /* ORG HISTORY is deliberately NOT in DATA_STORES: it is not keyed by date, "Clear uploaded
+     data" keeps the agent list and must keep the history that goes with it, and removing one
+     file must never erase who an agent reported to on a day another file still covers. It
+     does have to be seeded here — hydrate() adopts a cloud blob wholesale, so a store an
+     older client never pushed comes back undefined and then gets pushed back out that way. */
+  if(!S.orgHist) S.orgHist={};
+  // orgAt() walks the segments in date order and stops at the first one past the date it was
+  // asked about, so an out-of-order list silently answers with the wrong leader rather than
+  // failing. recordOrg keeps them sorted; this is the guard for anything that did not.
+  for(const c in S.orgHist) if(Array.isArray(S.orgHist[c])) S.orgHist[c].sort((a,b)=>String(a.d).localeCompare(String(b.d)));
   if(!S.adjust) S.adjust={};
   if(!S.map) S.map={};
   if(!Array.isArray(S.files)) S.files=[];
@@ -748,6 +759,72 @@ var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_tok
 window.addEventListener('pagehide',function(){try{clearTimeout(__cloudT);__cloudPush(true)}catch(e){}});
 function save(){ S._rev=Date.now();   // revision stamp — hydrate() compares it so an older cloud blob can never overwrite newer local data
   try{ localStorage.setItem(STORE_KEY, JSON.stringify(S)); }catch(e){ toast('Storage full — could not save'); } clearTimeout(__cloudT); __cloudT=setTimeout(__cloudPush,1500); }
+
+/* ================= org history — historical attribution ================= *
+   THE RULE: an agent's CURRENT team leader must never rewrite the team leader attached to
+   activity that happened before they moved. Agent A sold 100 under TL A in Month 1; moving
+   them to TL B in Month 2 leaves Month 1 reading "TL A — 100 sales" forever.
+
+   The Agent List is a live snapshot with no effective-date column, so it says who reports to
+   whom TODAY and nothing about yesterday. Reading history off it — which is what the model
+   used to do — means every historical report silently re-attributes itself the moment the
+   floor reorganises. So each snapshot is stamped with the date it describes and stored as an
+   effective-dated segment; the model then asks "who owned this agent on THIS day", never
+   "who owns them now".
+
+   One entry per CHANGE, not per upload: uploading the same list every morning for a month
+   adds nothing, which is what keeps the store small and makes re-uploads idempotent.
+
+   Dates BEFORE the earliest observation resolve to that earliest segment. We genuinely did
+   not observe the org before we started looking, and extrapolating the first thing we saw
+   backwards is the only answer that is stable — it never changes when a later list arrives,
+   which is the whole point. Where a source carries its own per-date team leader (the tracker
+   daily sheet does), that source is recorded too and wins outright at fact level: it is a
+   dated statement of who owned the agent that day, not a snapshot of today. */
+const sameOrg=(a,b)=>!!a&&!!b&&a.tl===b.tl&&a.campaign===b.campaign&&a.tenure===b.tenure;
+function recordOrg(code,d,val,src){
+  if(!code||!/^\d{4}-\d{2}-\d{2}$/.test(d||'')) return false;
+  const seg={d,tl:String(val.tl||'').trim(),campaign:String(val.campaign||'').trim(),
+             tenure:String(val.tenure||'').trim(),src:src||''};
+  if(!seg.tl&&!seg.campaign) return false;          // nothing to attribute — don't record a blank
+  const list=S.orgHist[code]=S.orgHist[code]||[];
+  const at=list.findIndex(s=>s.d===d);
+  let moved=false;
+  if(at>=0){                                        // the same day re-observed: a correction, in place
+    if(sameOrg(list[at],seg)) return false;
+    moved=list[at].tl!==seg.tl; list[at]=seg;
+  }else{
+    let i=-1; for(let k=0;k<list.length;k++){ if(list[k].d<=d) i=k; else break; }
+    if(i>=0&&sameOrg(list[i],seg)) return false;    // no change against what was already in force
+    moved=i>=0&&list[i].tl!==seg.tl;
+    list.splice(i+1,0,seg);
+  }
+  // a later segment that now repeats its predecessor is noise, not a movement
+  for(let k=1;k<list.length;k++) if(sameOrg(list[k-1],list[k])){ list.splice(k,1); k--; }
+  return moved;
+}
+function orgAt(code,d){
+  const list=S.orgHist&&S.orgHist[code];
+  if(!list||!list.length) return null;
+  let cur=list[0];                                  // before the first observation — see the note above
+  for(const s of list){ if(s.d<=d) cur=s; else break; }
+  return cur;
+}
+/* The date an Agent List snapshot describes. An explicit "effective from" wins (upload a list
+   you are loading late and say so), then a date in the filename, then today. Never the file's
+   dates array — a roster carries no activity dates.
+   The override is ONE-SHOT, and deliberately so. A sticky one would sit in the settings
+   unnoticed and quietly back-date every list uploaded after it, so a real reorganisation
+   months later would be recorded against a date in the past and land in the wrong month —
+   the exact failure this whole mechanism exists to prevent, arriving through its own
+   controls. It applies to the next list and then clears itself. */
+let __rosterAsOf=null;   // resolved once per FILE — a multi-sheet workbook calls this per sheet
+function rosterAsOf(name){
+  if(__rosterAsOf) return __rosterAsOf;
+  const ov=(S.settings&&S.settings.rosterAsOf)||'';
+  if(/^\d{4}-\d{2}-\d{2}$/.test(ov)){ S.settings.rosterAsOf=''; return (__rosterAsOf=ov); }
+  return (__rosterAsOf=dateFromFilename(name)||dkey(new Date()));
+}
 
 let toastTimer=null;
 function toast(msg,ms){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
@@ -836,6 +913,7 @@ async function ingestText(name, text, expected, hash){
   const names=Object.keys(sheets);
   let ingested=[];
   rosterCovered=new Set();
+  __rosterAsOf=null;      // a fresh file, a fresh snapshot date (and a fresh one-shot override)
   if(isGeneratedTracker(names)){
     toast('"'+name+'" is a tracker workbook this dashboard GENERATED, not a data export — it was not loaded. '
       +'Its Team Split sheet is a stale copy of the agent list and would overwrite your live roster. '
@@ -899,6 +977,11 @@ function regFile(name,type,dates,rows,extra){
       if(nd.includes(d)) continue;
       if(S.files.some(x=>x!==old&&x.type.split(' ')[0]===t0&&(x.dates||[]).includes(d))) continue;
       if(st==='calls'){ if(S.callsMeta&&S.callsMeta[d]&&S.callsMeta[d].f===name){ delete S.calls[d]; delete S.callsMeta[d]; } }
+      else if(st==='evals'){   // QA days hold more than one file's evaluations — drop only this file's
+        const bk=S.evals[d]; if(!bk) continue;
+        for(const c in bk){ const keep=(bk[c]||[]).filter(e=>!(e&&e.f===name)); if(keep.length) bk[c]=keep; else delete bk[c]; }
+        if(!Object.keys(bk).length) delete S.evals[d];
+      }
       else delete S[st][d];
     }
   }
@@ -988,12 +1071,35 @@ const INGEST={
       const o=((byDate[d]=byDate[d]||{})[owner]=byDate[d][owner]||{});
       o[acc]=(o[acc]||0)+chg;
     }
-    // the file is authoritative for the dates it carries — replace those days, keep others.
-    // The per-account charge map is kept: it is what lets a cancelled account be added back
-    // WITHOUT double-counting an account that is only partly cancelled (see grossUpSales).
+    /* THE DAY IS THE RECORD SET, AND REPLACING IT *IS* THE PER-RECORD MERGE HERE — this is
+       the one source where merging account by account would create duplicates rather than
+       prevent them. `a` means "accounts created on this date that are STILL ACTIVE", and
+       grossUpSales() reconstructs the rest by adding the cancelled accounts back from the
+       Inactive export. Keep an account a newer pull has dropped and it comes back a second
+       time through the gross-up: a fully cancelled account would be counted twice.
+       The properties the incremental rule actually asks for all hold: re-uploading a file
+       reproduces the same day exactly (idempotent), an overlapping range updates only the
+       days it covers and leaves the rest alone, and a corrected row replaces its own
+       predecessor instead of joining it.
+       What that leaves is a PARTIAL pull — one filtered to a campaign or a team — which
+       would legitimately shrink a day it has no business shrinking. That cannot be told
+       apart from real cancellation by the data, so it is not guessed at: it is counted and
+       said out loud, the same treatment every other dropped record gets here. */
+    const shrunk=[];
     for(const d of dates){
+      const prev=S.sales[d]||{};
+      let had=0; for(const o in prev) if(prev[o]&&prev[o].a) had+=Object.keys(prev[o].a).length;
+      let now=0; for(const o in byDate[d]) now+=Object.keys(byDate[d][o]).length;
+      if(had&&now<had) shrunk.push({d,lost:had-now,had});
       S.sales[d]={};
       for(const owner in byDate[d]) S.sales[d][owner]={a:byDate[d][owner],n:0,gwp:0,canc:0};
+    }
+    if(shrunk.length){
+      const tot=shrunk.reduce((t,x)=>t+x.lost,0);
+      toast('"'+name+'" carries fewer accounts than were already stored on '+shrunk.length+' day(s) — '
+        +tot+' account(s) gone. Expected if they cancelled (the Inactive export adds them back); '
+        +'if this was a filtered pull, re-upload the full export. Days: '
+        +shrunk.slice(0,4).map(x=>x.d+' (−'+x.lost+')').join(', ')+(shrunk.length>4?' +'+(shrunk.length-4)+' more':''),12000);
     }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
     grossUpSales();
@@ -1112,10 +1218,31 @@ const INGEST={
       /* dsp/st feed checks V20-V22: an UPHELD dispute means a recorded score was wrong, so
          the period's QA is provisional, and an evaluation that is not closed can still
          change both score and outcome. Stored per evaluation so the panel can name them. */
-      (bk[code]=bk[code]||[]).push({s:sc,dec:r['Escalation Decision']||'',cat:r['Coaching Category']||r['Critical Fail Category']||'',pri:r['Priority']||'',camp:r['Campaign']||'',
+      (bk[code]=bk[code]||[]).push({s:sc,rid,f:name,dec:r['Escalation Decision']||'',cat:r['Coaching Category']||r['Critical Fail Category']||'',pri:r['Priority']||'',camp:r['Campaign']||'',
         dsp:(parseFloat(r['Dispute Count'])||0),dspSt:r['Dispute Status']||'',st:r['Status']||''});
     }
-    for(const d of dates) S.evals[d]=byDate[d];
+    /* MERGE BY RECORD ID, never replace the day. The QA export is pulled by whatever window
+       or filter the QA team happened to use, so two exports can both cover 3 August and hold
+       different evaluations — one per campaign, one re-pulled after a dispute closed. This
+       used to assign the day outright, so the second export silently deleted every
+       evaluation the first one carried that it did not repeat.
+       The Record ID is the evaluation's identity: an ID already stored is UPDATED in place
+       (a re-export carries the corrected score, dispute status and outcome) and an ID not
+       stored is added. Rows with no Record ID — older exports predate the column — fall back
+       to their content and position, which keeps a re-upload of the same file idempotent. */
+    for(const d of dates){
+      const cur=S.evals[d]||{}, next=byDate[d]||{};
+      const keyOf=(e,i)=>e.rid?'#'+e.rid:'~'+[e.s,e.dec,e.cat,e.camp,i].join('|');
+      const out={};
+      for(const c of new Set([...Object.keys(cur),...Object.keys(next)])){
+        const m=new Map();
+        // blobs written before evaluations carried detail stored bare numbers
+        (cur[c]||[]).forEach((e,i)=>{ const o=(typeof e==='number')?{s:e}:e; m.set(keyOf(o,i),o); });
+        (next[c]||[]).forEach((e,i)=>m.set(keyOf(e,i),e));   // the newer export wins on the same evaluation
+        const arr=[...m.values()]; if(arr.length) out[c]=arr;
+      }
+      S.evals[d]=out;
+    }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
     return regFile(name,'evals',dates,recs.length,{skip,dupes});
   },
@@ -1161,11 +1288,24 @@ const INGEST={
     if(rosterCovered&&[...covered].every(c=>rosterCovered.has(c))) return null;
     if(rosterCovered) covered.forEach(c=>rosterCovered.add(c));
     S.roster=S.roster.filter(a=>!covered.has(a.campaign)).concat(out);
+    /* STAMP THE SNAPSHOT INTO HISTORY BEFORE IT BECOMES "current". The roster above is the
+       live picture and is replaced wholesale on every upload; this is the part that has to
+       survive it. Each agent's assignment is filed against the date this list describes, so
+       a later list that moves them opens a NEW segment instead of rewriting the old one —
+       Month 1 keeps its team leader when the agent moves in Month 2. */
+    const asOf=rosterAsOf(name); let moved=0, fresh=0;
+    for(const a of out){
+      const had=!!(S.orgHist[a.code]||[]).length;
+      if(recordOrg(a.code,asOf,{tl:a.tl,campaign:a.campaign,tenure:a.tenure},'agent-list')&&had) moved++;
+      else if(!had) fresh++;
+    }
+    if(moved) toast(moved+' agent(s) moved team leader in "'+name+'" — recorded from '+asOf+
+      '. Earlier activity keeps the team leader it was worked under.',9000);
     // the agent list is a LIVE SNAPSHOT, not history — a new upload supersedes any earlier
     // agent-list file in the registry (kept per-file, so a multi-sheet workbook's own roster
     // sheets don't wipe each other). Upload a fresh list as often as agents join/leave/move.
     S.files=S.files.filter(f=>!(/^roster/.test(f.type) && f.name!==name));
-    return regFile(name,'roster'+(sheet?' ('+sheet+')':''),[],out.length);
+    return regFile(name,'roster'+(sheet?' ('+sheet+')':''),[],out.length,{asOf,moved,fresh});
   },
   trackerDaily(recs,name,sheet){
     const dates=new Set();
@@ -1181,6 +1321,11 @@ const INGEST={
         talk:durSecs(r['Talk Time']), gwpT:parseFloat(r['GWP Target'])||0, gwp:parseFloat(r['GWP Achieved'])||0,
         opt:parseFloat(r['Insurance Opt In'])||0, ref:parseFloat(r['Referrals'])||0
       };
+      /* The tracker daily sheet is the one source that states the team leader PER DAY, so it
+         is a dated observation of the org, not a snapshot of today — file it as history too.
+         It also backfills the months that happened before the first Agent List was ever
+         uploaded, which nothing else can do. */
+      recordOrg(code,d,{tl:r['Team Leader'],campaign:campOf(r['Campaign']),tenure:r['Tenure']},'tracker');
     }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
     return regFile(name,'tracker daily'+(sheet?' ('+sheet+')':''),dates,recs.length,{skip});
@@ -1319,6 +1464,16 @@ function removeFile(idx){
     if(st==='calls'){
       if(S.callsMeta&&S.callsMeta[d]&&S.callsMeta[d].f&&S.callsMeta[d].f!==f.name) continue; // a fuller file owns this day now
       delete S.calls[d]; if(S.callsMeta) delete S.callsMeta[d];
+    }else if(st==='evals'){
+      /* QA days MERGE across files now, so a day can hold two exports' evaluations and
+         deleting it would take the other file's with it. Each evaluation remembers the file
+         it came from — drop exactly those, and the day only when nothing is left. */
+      const bk=S.evals[d]; if(!bk) continue;
+      for(const c in bk){
+        const keep=(bk[c]||[]).filter(e=>!(e&&e.f===f.name));
+        if(keep.length) bk[c]=keep; else delete bk[c];
+      }
+      if(!Object.keys(bk).length) delete S.evals[d];
     }else{
       if(claimedElsewhere(d)) continue;
       delete S[st][d];
@@ -1741,7 +1896,14 @@ function buildModel(range, periodKey){
          a silent hole in the head count. */
       if(S.settings.applyExclusions!==false && MTD_RULES.excludeAgents[code]) continue;
       const a=metaOf[code], tr=trk[code];
-      const camp=campOf((tr&&tr.campaign)||(a&&a.campaign));
+      /* WHO OWNED THIS AGENT ON THIS DAY — never who owns them now. `a` is the live roster
+         row and is the wrong answer for any date before the last reorganisation; asking it
+         is what used to move an agent's whole sales history to their new team leader the
+         moment a fresh Agent List landed. Order: the day's own tracker row (it states the
+         team leader for that date), then the effective-dated history, then the live roster
+         as the last resort for an agent we have never observed being assigned. */
+      const oh=orgAt(code,d);
+      const camp=campOf((tr&&tr.campaign)||(oh&&oh.campaign)||(a&&a.campaign));
       if(!CAMPS.includes(camp)){
         // not a reported campaign — tally what is being left out, then drop the row
         const sd0=salesBy[d][code];
@@ -1808,10 +1970,11 @@ function buildModel(range, periodKey){
       const gwpT=trackerIsSource?tr.gwpT:(target*S.gwpPerUnit);
       if(!emp&&!act&&!sales&&!talk&&!opt) continue;
       facts.push({date:d,week:weekOf[d],code,
-        tl:(tr?.tl)||a?.tl||'',
+        tl:(tr?.tl)||(oh&&oh.tl)||a?.tl||'',
+        tlNow:a?.tl||'',                        // current owner, for the "who reports to whom today" views
         campaign:camp,
         agent:a?.name||tr?.agent||code,
-        tenure:(tr?.tenure)||a?.tenure||'',
+        tenure:(tr?.tenure)||(oh&&oh.tenure)||a?.tenure||'',
         emp,act,target,sales,gwp,gwpT,talk,opt,ref,canc,provisional,calls:ncalls,ans:nans});
     }
   }
@@ -1859,8 +2022,11 @@ function buildModel(range, periodKey){
       own.forEach(f=>{ f.talk=0; f.calls=0; f.ans=0; f.opt=0; }); // one dialler per agent, never the sum
       (diallerDays[rc]=diallerDays[rc]||new Set());
       overlap.forEach(d=>diallerDays[rc].add(d));
-      facts.push({date:last,week:weekOf[last]||1,code:rc,tl:a.tl||'',campaign:campOf(a.campaign),
-        agent:a.name||rc,tenure:a.tenure||'',emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,
+      // attributed to the org as it stood on the day the range is booked against, not today's
+      const oh=orgAt(rc,last);
+      facts.push({date:last,week:weekOf[last]||1,code:rc,tl:(oh&&oh.tl)||a.tl||'',tlNow:a.tl||'',
+        campaign:campOf((oh&&oh.campaign)||a.campaign),
+        agent:a.name||rc,tenure:(oh&&oh.tenure)||a.tenure||'',emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,
         talk,opt:Math.round((r.opt||0)*share),ref:0,canc:0,provisional:partial,calls,ans:calls,
         rangeAgg:true,rangeFrom:v.from,rangeTo:v.to,apportioned:partial?share:null});
     }
@@ -1925,13 +2091,27 @@ function buildModel(range, periodKey){
   const byAgentDay={}; facts.forEach(f=>{ (byAgentDay[f.code]=byAgentDay[f.code]||[]).push(f); });
 
   // agent identity list (roster order, then tracker-only codes) — for pivot & adjustments
+  /* The team leader shown beside a PERIOD's figures is the one who owned the agent during
+     that period — taken from the last day of it we hold activity for — not whoever owns them
+     today. `tlNow` carries the current assignment alongside, and `movedInPeriod` marks the
+     agents whose work in this very window is split across two leaders, so a report can say
+     so instead of quietly picking one. */
   const seen=new Set(), agents=[];
-  for(const a of S.roster) if(byAgentDay[a.code]){ agents.push(a); seen.add(a.code); }
+  const lastFact={}, tlsIn={};
+  facts.forEach(f=>{ const p=lastFact[f.code]; if(!p||f.date>=p.date) lastFact[f.code]=f;
+    if(f.tl) (tlsIn[f.code]=tlsIn[f.code]||new Set()).add(f.tl); });
+  const tlSplit=c=>((tlsIn[c]&&tlsIn[c].size)||0)>1;
+  for(const a of S.roster) if(byAgentDay[a.code]){ const lf=lastFact[a.code];
+    agents.push({...a, tl:(lf&&lf.tl)||a.tl, tlNow:a.tl, movedInPeriod:tlSplit(a.code)}); seen.add(a.code); }
   for(const f of facts) if(!seen.has(f.code)){ seen.add(f.code);
-    agents.push({code:f.code,name:f.agent,tl:f.tl,campaign:f.campaign,tenure:f.tenure,target:0,start:''}); }
+    agents.push({code:f.code,name:f.agent,tl:f.tl,tlNow:f.tlNow||f.tl,movedInPeriod:tlSplit(f.code),
+      campaign:f.campaign,tenure:f.tenure,target:0,start:''}); }
 
   // aggregate by agent × campaign (an agent can appear in both tabs, like the workbook)
-  const meta=rows=>{ const l=rows[rows.length-1]; return {tl:l.tl,tenure:l.tenure,agent:l.agent,code:l.code}; };
+  // meta reads the LATEST day in the period, not the last row pushed: ViciDial range
+  // aggregates are appended after the per-day loop and would otherwise decide attribution
+  const meta=rows=>{ const l=rows.reduce((b,r)=>(!b||r.date>=b.date)?r:b,null);
+    return {tl:l.tl,tlNow:l.tlNow||l.tl,movedInPeriod:tlSplit(l.code),tenure:l.tenure,agent:l.agent,code:l.code}; };
   // built from CAMPS so a campaign added to the rule book cannot be silently dropped here
   const byCC={}; CAMPS.forEach(c=>byCC[c]={});
   facts.forEach(f=>{ (byCC[f.campaign][f.code]=byCC[f.campaign][f.code]||[]).push(f); });
@@ -2010,6 +2190,10 @@ function buildModel(range, periodKey){
   const noDialler=[...workedDays].filter(d=>!talkDays.has(d)).sort();
   return {range,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
     viciSkipped,talkDays,noDialler,attDates,diallingDays,
+     /* Agents whose work in THIS period sits under a leader who no longer owns them. Not an
+        error — it is the historical rule doing its job — but it is the one thing a reader of
+        an old month needs told, because the org chart on screen elsewhere disagrees. */
+     tlMoved:agents.filter(a=>a.tlNow&&a.tl&&a.tlNow!==a.tl).map(a=>({code:a.code,name:a.name,was:a.tl,now:a.tlNow})),
      offCampaign:Object.fromEntries(Object.entries(offCampaign).map(([k,v])=>[k,{agents:v.agents.size,sales:v.sales,gwp:Math.round(v.gwp)}])),
      qaAvg:qa?qs/qa:null,qaN:qn,qaAgents:qa,periodKey,
      dailyByDate:(()=>{ const o={}; facts.forEach(f=>{ const t=o[f.date]=o[f.date]||Object.fromEntries(CAMPS.map(c=>[c,0])); t[f.campaign]+=f.sales; }); return o; })()};
@@ -3364,7 +3548,7 @@ PAGES.adjust=()=>{
   const adj=S.adjust[M.periodKey]||{};
   const rows=filteredAgents().map(a=>({a,c:(adj[a.code]||{}).c||0,r:(adj[a.code]||{}).r||0}));
   return `<div class="page-head"><h2>Adjustments</h2>
-    <div class="sub">referrals for ${S.ui.month} — no upload carries those, so key them here. ${Object.keys(S.canc).length?'<b>Cancellations now come from the Cancellations (BI Inactive) upload</b>, so anything keyed below is ignored for cancellations — it cannot be counted twice.':'Cancellations are read from the Cancellations (BI Inactive) upload; key them here only until that file is uploaded.'}</div></div>
+    <div class="sub">referrals for ${S.ui.month} — no upload carries those, so key them here. ${Object.keys(S.cancRows||{}).length?'<b>Cancellations now come from the Cancellations (BI Inactive) upload</b>, so anything keyed below is ignored for cancellations — it cannot be counted twice.':'Cancellations are read from the Cancellations (BI Inactive) upload; key them here only until that file is uploaded.'}</div></div>
   <div class="card" style="padding:0;overflow:hidden"><div class="tablewrap" style="border:none"><table class="data"><thead><tr>
     <th class="l">Team Leader</th><th class="l">Agent</th><th class="l">Campaign</th><th>Cancellations</th><th>Referrals</th></tr></thead><tbody>
   ${rows.map(r=>`<tr><td class="l">${esc(r.a.tl)}</td>
@@ -3408,17 +3592,47 @@ PAGES.settings=()=>{
     A call counts as a <b>fallback sale</b> (used only on days without a Power BI - Active Cases upload, shown with a ± badge)
     when the disposition contains “sale” and isn’t “no sale”/“after sales”. Re-upload call files after changing rules.</p></div>
   <div class="card mt"><div class="cardhead"><div><h3>Agent list</h3><div class="sub">${S.roster.length} agents — upload a new Agent List file to replace</div></div></div>
+    <div class="formrow"><label>Snapshot effective from</label>
+      <input type="date" class="cell" value="${esc((S.settings.rosterAsOf)||'')}" style="max-width:170px"
+        onchange="S.settings.rosterAsOf=this.value||'';save();renderPage()">
+      <span class="note" style="flex:1;min-width:220px">The date the <b>next</b> Agent List you upload describes — it applies to that one file and then clears itself. Leave blank for the date in the filename, or today. Set it when you are loading a list late; activity before that date keeps the team leader it was worked under either way.</span></div>
     <div class="tablewrap" style="max-height:300px"><table class="data"><thead><tr><th class="l">TL</th><th class="l">Code</th><th class="l">Agent</th><th class="l">Campaign</th><th class="l">Tenure</th><th>Daily target</th><th class="l">Start</th></tr></thead><tbody>
     ${S.roster.map((a,i)=>`<tr><td class="l">${esc(a.tl)}</td><td class="l">${a.code}</td><td class="l">${esc(a.name)}</td><td class="l">${a.campaign}</td><td class="l">${esc(a.tenure)}</td>
       <td><input type="number" class="cell" step="0.5" value="${a.target}" onchange="S.roster[${i}].target=parseFloat(this.value)||0;save();rebuild();"></td>
       <td class="l">${a.start||''}</td></tr>`).join('')}
     </tbody></table></div></div>
+  ${orgHistCard()}
   <div class="card mt"><div class="cardhead"><div><h3>Danger zone</h3></div></div>
     <div class="formrow" style="border:none">
       <button class="btn danger" onclick="if(confirm('Remove all uploaded data (keeps agent list and settings)?')){DATA_STORES.forEach(k=>S[k]={});S.files=[];S.opencases=null;save();rebuild();renderAll();}">Clear uploaded data</button>
       <button class="btn danger" onclick="if(confirm('Reset EVERYTHING to factory defaults?')){localStorage.removeItem(STORE_KEY);location.reload();}">Full reset</button>
     </div></div>`;
 };
+
+/* THE MOVEMENT REGISTER. Every organisational change the uploads have ever shown, and the
+   answer to "why does last month still say Nadine when he reports to Renolan now". Only
+   agents with more than one segment appear — everyone else has never moved. */
+function orgHistCard(){
+  const rows=[];
+  for(const code of Object.keys(S.orgHist||{})){
+    const h=S.orgHist[code]; if(!h||h.length<2) continue;
+    const nm=(S.roster.find(a=>a.code===code)||{}).name||code;
+    for(let i=1;i<h.length;i++) if(h[i].tl!==h[i-1].tl)
+      rows.push({d:h[i].d,code,nm,from:h[i-1].tl,to:h[i].tl,src:h[i].src});
+  }
+  rows.sort((a,b)=>b.d.localeCompare(a.d)||a.nm.localeCompare(b.nm));
+  const body=rows.length
+    ? `<div class="tablewrap" style="max-height:300px"><table class="data"><thead><tr>
+        <th class="l">Effective</th><th class="l">Agent</th><th class="l">Code</th><th class="l">From</th><th class="l">To</th><th class="l">Recorded by</th></tr></thead><tbody>
+       ${rows.map(r=>`<tr><td class="l">${r.d}</td><td class="l">${esc(r.nm)}</td><td class="l">${r.code}</td>
+        <td class="l">${esc(r.from||'—')}</td><td class="l">${esc(r.to||'—')}</td><td class="l">${esc(r.src||'')}</td></tr>`).join('')}
+       </tbody></table></div>`
+    : `<p class="note">No team-leader movements recorded yet. One is recorded the first time an Agent List assigns an agent to a different leader than the last one did.</p>`;
+  return `<div class="card mt"><div class="cardhead"><div><h3>Team leader movements</h3>
+    <div class="sub">${rows.length} movement${rows.length===1?'':'s'} across ${Object.keys(S.orgHist||{}).length} agents on record</div></div></div>
+    <p class="note">Reports are attributed to the leader who owned the agent <b>on the day the work happened</b>. A move recorded here changes future activity only — it never rewrites a month that has already been reported.</p>
+    ${body}</div>`;
+}
 
 /* ================= agent profile drawer ================= */
 let drawerCode=null;
@@ -3445,6 +3659,17 @@ function escClose(e){ if(e.key==='Escape') closeDrawer(); }
 window.closeDrawer=()=>{ $('#drawer').classList.remove('open'); $('#scrim').classList.remove('open');
   document.removeEventListener('keydown',escClose); drawerCode=null; };
 
+/* The agent's org movements, oldest first. Shown only when there IS a movement — for the
+   overwhelming majority of agents the current assignment is the whole story and a one-row
+   "history" is noise. This is the visible half of the historical rule: the figures above are
+   attributed to whoever owned the agent on the day, and this says who that was. */
+function orgHistLine(code){
+  const h=(S.orgHist&&S.orgHist[code])||[];
+  if(h.length<2) return '';
+  return `<div class="sub" style="margin-top:3px;font-size:11.5px">Team history: `
+    +h.map(s=>`<span title="recorded from the ${esc(s.src||'agent list')}">${esc(s.tl||'—')} <span style="color:var(--muted)">from ${s.d}</span></span>`).join(' → ')
+    +`</div>`;
+}
 function drawerHTML(code){
   const a=M.agents.find(x=>x.code===code); if(!a||!M) return '';
   const g=primaryAgg(code)||{};
@@ -3497,7 +3722,8 @@ function drawerHTML(code){
     <div class="meta">
       <h2>${esc(a.name)} <span class="pill ${r.cls}">${r.level} risk</span>
         ${t.dir!=='flat'?`<span class="pill ${t.dir==='up'?'pgood':'pcrit'}">${t.dir==='up'?'▲ improving':'▼ declining'}</span>`:''}</h2>
-      <div class="sub">${code} · ${campChip(camp)} · ${esc(a.tenure)} · reports to <b>${esc(a.tl)}</b>${a.start?' · since '+a.start:''}${M.term[code]?' · <b style="color:var(--crit)">terminated '+M.term[code]+'</b>':''}</div>
+      <div class="sub">${code} · ${campChip(camp)} · ${esc(a.tenure)} · ${a.movedInPeriod?'worked this period under':'reports to'} <b>${esc(a.tl)}</b>${(a.tlNow&&a.tlNow!==a.tl)?' <span style="color:var(--muted)">(now '+esc(a.tlNow)+')</span>':''}${a.start?' · since '+a.start:''}${M.term[code]?' · <b style="color:var(--crit)">terminated '+M.term[code]+'</b>':''}</div>
+      ${orgHistLine(code)}
       <div class="badges">${badges.map(b=>`<span class="badge gold">${b[0]} ${b[1]}</span>`).join('')||'<span class="badge">No badges yet this period</span>'}</div>
     </div>
     ${ringSVG(sc,{color:scoreColor})}
@@ -3910,7 +4136,13 @@ async function handleFiles(list, expected){
     try{ buf=await f.arrayBuffer(); }catch(e){ toast('Could not read '+f.name+' — '+(e.message||e)); continue; }
     const hash=await hashBuf(buf);
     const dup=(S.files||[]).find(x=>x.hash&&x.hash===hash);
-    if(dup&&dupStillLive(dup)){ skipped++; toast('Skipped '+f.name+' — already uploaded'+(dup.name!==f.name?' (as "'+dup.name+'")':'')); continue; }
+    if(dup&&dupStillLive(dup)){ skipped++; toast('Skipped '+f.name+' — already uploaded'+(dup.name!==f.name?' (as "'+dup.name+'")':''));
+      /* A SKIPPED agent list still spends the one-shot "effective from". The date was set for
+         this upload; leaving it armed because the file turned out to be a duplicate means the
+         NEXT list — a real reorganisation, weeks later — is filed against a date in the past,
+         which is precisely the failure this control exists to prevent. */
+      if(/^roster/.test(dup.type||'')&&S.settings.rosterAsOf){ S.settings.rosterAsOf=''; save(); }
+      continue; }
     if(dup) S.files=S.files.filter(x=>x!==dup);   // stale entry, its data is gone — drop it and re-ingest
     if(f.size>4*1048576){ // big export: sticky progress toast — the parse itself runs in a background thread
       toast('Reading '+f.name+' ('+Math.round(f.size/1048576)+' MB) — the app stays usable while this loads…',600000);
@@ -3953,6 +4185,8 @@ window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
   setPreset:p=>{ S.ui.preset=p; save(); rebuild(); renderAll(); },
   setAsAt:d=>{ S.ui.asAt=d||''; save(); rebuild(); renderAll(); },
   sourceEnds,
+  orgAt, orgHist:()=>S.orgHist,             // historical attribution, for the harness
+  setRosterAsOf:d=>{ S.settings.rosterAsOf=d||''; save(); },
   checks:()=>VCHK, rules:()=>MTD_RULES,     // §11 rule checks + the rule book, for the harness
   rebuild:()=>{rebuild();renderAll();}, openDrawer, go };
 </script>

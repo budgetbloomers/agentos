@@ -19,8 +19,10 @@ Each uses its own port so they can run back to back.
 | Suite | Checks | What it protects |
 |---|---|---|
 | `audit-dupes.mjs` | 15 | Nothing is ever counted twice: re-uploads, renamed copies, reversed upload order, a multi-day ViciDial pull against its own single days (both orders), a QA export with every row duplicated, an agent list repeating agents, and both dialler orders. |
+| `verify-history.mjs` | 34 | **Historical attribution.** A three-month simulation on synthetic fixtures (written in the real header contracts): an agent sells 100 under Leader Alpha in month 1, moves to Leader Bravo in month 2, and works on under Bravo in month 3. Month 1 must still read "Leader Alpha — 100" from month 2, from month 3, after the agent list is re-uploaded, and when the months are loaded backwards. Also carries the incremental half — re-upload, renamed copy, overlapping range, corrected record, narrower QA re-pull. Needs no drop; run it anywhere. **Its own control:** run it against the pre-change build and 16 checks fail, with all 100 sales moved to the wrong leader — that is the bug it exists to keep out. |
 | `audit-removal.mjs` | 14 | Every source is fully removable, removing one file never takes another's data, clear-all leaves nothing, an Open Cases export is refused. Removing the cancellations file releases the gross-up it contributed to GWP — and only that — and re-adding it restores the same figure to the rand. |
 | `audit-hydrate.mjs` | 7 | Adopting an OLDER cloud blob does not kill the app. `hydrate()` deletes every key on `S` and adopts the blob wholesale, so any store added later must be re-seeded by `normalizeState()`. |
+| `verify-render.mjs` | 35 | **Every page actually renders**, with a real drop loaded — all fourteen tabs plus the agent drawer, failing on the first uncaught error. Every other suite drives the model and reads numbers out of it; none of them look at a page, and that gap hid a crash on Adjustments for as long as a template kept reading the renamed `S.canc` store. Also asserts the historical-attribution UI is on screen (movement register, "effective from", the drawer's team history). |
 | `verify-generator.mjs` | 15 | The generated MTD tracker matches the hand-built workbook: sheet names and order, every column, every TL MTD metric row, and grand totals that reconcile against their own agent rows. |
 | `verify-mtd-values.mjs` | 26 | The generated tracker matches the workbook's **numbers**, agent by agent — shifts, targets, sales, GWP, Ave GWP, cancellations — over the window the workbook actually covers. Guards the two money rules the daily read depends on: sales and GWP are GROSS of cancellation (Active ∪ Inactive by account), and GWP rounds to the rand PER ACCOUNT before summing. The handful of rows that legitimately differ are listed by name in the file's header with the reason. |
 | `verify-asat.mjs` | 20 | The **as at** cut-off: it caps where the period ends without reshaping the month, the ragged-coverage note appears only while the sources disagree, clearing it restores the full period, a date outside the period is ignored rather than obeyed into an empty page — and with it set to the day the workbook was cut, the dashboard reproduces the workbook's Cohen Govender row to the rand. |
@@ -44,6 +46,23 @@ the dialler covered the day, then the MTD roll-up — in both the calendar-month
 window the hand-built workbook covers. When someone says "this agent's numbers are wrong",
 run this first: it shows in one screen whether the gap is a formula or a period.
 
+## What identifies a record, per source
+
+Every upload is an incremental update, so each source needs a key that says "this is the same
+record I already hold" — never the filename, which says nothing. These are the keys in force;
+`audit-dupes.mjs` and `verify-history.mjs` are what hold them to it.
+
+| Source | Record identity | On a repeat |
+|---|---|---|
+| Power BI - Active Cases | date + owner + **account number** | The day is re-derived from the file. Replacing it *is* the merge here: `a` means "accounts created that day that are still active", and `grossUpSales()` rebuilds the rest from the Inactive export — keep an account a newer pull dropped and the gross-up counts it a second time. A pull that shrinks a day is counted and named in a toast, because a filtered pull and a real cancellation look identical in the data. |
+| Cancellations (BI Inactive) | account + contract + deactivate date | Keyed per contract in `S.cancRows`; a repeat overwrites its own row. |
+| Call records (CallX) | date, then fullest-file-wins | Per day the file that recorded more calls keeps it; the same file re-uploaded always wins over itself. Provenance in `S.callsMeta`. |
+| ViciDial | its own `from..to` range, or the single day | A range whose days arrived as single-day exports contributes nothing — the finer data wins, in either upload order. |
+| Attendance | date + employee code | Merged per employee-day; the newer file wins that cell and leaves the rest. |
+| QA evaluations | **Record ID** | Merged across files, never replaced by day: an ID already stored is updated in place (corrected score, closed dispute), an ID not stored is added. Two exports can both cover one day. |
+| Agent list | employee code | A live snapshot — replaced for the campaigns it covers. Its *organisational* content is filed into `S.orgHist` against the date the snapshot describes, and that is append-on-change only. |
+| Tracker daily | date + employee code | Merged per agent-day; also a dated statement of the team leader, so it feeds `S.orgHist` too. |
+
 ## When you add a data source
 
 Adding one means touching several places that each hold their own copy of "what sources
@@ -58,6 +77,11 @@ exist". Miss one and you get a bug that only shows up in production:
 7. `removeFile()`'s **own** `storeOf` — a *second*, separate map
 8. `normalizeState()`'s store list — **miss this and an older cloud blob kills the app**
 9. the "Clear uploaded data" button's list
+
+If the source carries an organisational assignment (team leader, campaign, team), also call
+`recordOrg(code, date, {...}, 'your-source')` from its `INGEST` function. A source that states
+who owned an agent **on a date** is historical evidence and belongs in `S.orgHist`; a source
+that only says who owns them **now** must never be read for a past date.
 
 Items 6-9 are four separate copies of the same knowledge. Consolidating them into one
 registry is the single highest-value refactor available in this file.
