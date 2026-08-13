@@ -98,6 +98,18 @@ await page.evaluate(() => window.__mtd.setPeriod('2026-08', 'calendar'));
 await page.waitForTimeout(800);
 ok('renders clean with August data', errors.length === 0, errors.slice(0, 4).join(' | '));
 
+// ---- a hydrate that emptied S.vici must not leave the registry blocking the repair upload.
+// The cancellations twin of this bug is in hot.md; this is the vici-range case: the file's
+// hash is registered, the store is empty, and re-uploading the same file used to be skipped
+// with "already uploaded" — 0:00:00 Cuddle talk with no way back short of DevTools.
+await page.evaluate(() => { const S = window.__mtd.state(); S.vici = {}; });
+await page.setInputFiles('#fileInput', [j(UP, 'Vici - Cuddle Agents - 3 - 5 Aug.csv')], { timeout: 60000 });
+await page.waitForTimeout(6000);
+const s5 = await snap();
+ok('re-upload repairs an emptied vici store instead of "already uploaded"',
+  s5.vici.length === 1 && s5.vici[0] === '2026-08-03..2026-08-05', JSON.stringify(s5.vici));
+ok('and the repaired range carries its agents', s5.viciRows === 24, `got ${s5.viciRows}`);
+
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 failures.forEach(f => console.log('FAIL: ' + f));
 errors.slice(0, 6).forEach(e => console.log('  ' + e));

@@ -4384,6 +4384,13 @@ function dupStillLive(f){
      and then blocked the re-upload that would have repaired it, with "already uploaded" as
      the only explanation. They are live only while rows this file contributed are still there. */
   if(ty.startsWith('cancellations')) return Object.values(S.cancRows||{}).some(r=>r.f===f.name);
+  /* Multi-day ViciDial ranges live in S.vici keyed by their own from..to, which the type
+     string carries — they are not in STORE_OF and fell through to "always live", the same
+     hole the cancellations case above plugs. A registry entry that survived a cloud hydrate
+     with an emptied S.vici blocked the one upload that would repair it, with "already
+     uploaded" as the only explanation — and Cuddle talk time read 0:00:00 with the file
+     sitting right there in the registry. Live only while the range's rows are still stored. */
+  if(ty.startsWith('vici range')){ const v=(S.vici||{})[ty.split(' ')[2]||'']; return !!(v&&v.rows&&v.rows.length); }
   const st=STORE_OF[ty.split(' ')[0]];
   if(!st) return true;
   const ds=f.dates||[];
