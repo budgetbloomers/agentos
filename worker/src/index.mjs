@@ -83,7 +83,7 @@ export default {
       // Outdated app copies (old tabs / bookmarked preview URLs) show stale ghost
       // data, and used to bulk-repush stale caches and resurrect wiped data. Refuse
       // to authenticate them, and refuse their writes — read-only until refreshed.
-      const stale = req.headers.get('x-cbx-client') !== 'v4';
+      const stale = req.headers.get('x-cbx-client') !== 'v5';
       const OUTDATED = { error: 'This tab is an OUTDATED copy of AgentOS. Close it, go to https://chatterbox-agentos.pages.dev and press Ctrl+Shift+R.' };
       const GATED_WRITES = ['POST /api/kv', 'DELETE /api/kv', 'POST /api/eod', 'POST /api/bi', 'DELETE /api/bi', 'POST /api/bi/raw'];
 

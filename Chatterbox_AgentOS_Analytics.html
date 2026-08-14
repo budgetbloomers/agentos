@@ -534,6 +534,10 @@ const SOURCES = {
     headers:['Date & Time','Caller ID','Source','Destination','Outbound CLI','Call Type','Campaign','Agent','Bridge','Lead Disposition','Reporting classification','Wrap-up','Duration','Billable Seconds','Branch','Recording link','Channel','Destination Channel','Application'],
     required:['Date & Time','Call Type'],snapshot:false,dateH:'Date & Time',
     purpose:'Dialler productivity: total and unique calls, billable talk time, and the call-type bands (No Answer / Customer Service / Pitch / Closing). Inbound queue legs load too; agents map to the roster via the Call x alias or the CB code inside the agent string.'},
+  VICI_CALL_REPORT:{label:'ViciDial · Call Report',system:'ViciDial (dialler)',fmt:'.xlsx / .txt (tab-separated) / .csv',color:'violet',
+    headers:['call_date','phone_number_dialed','status','user','full_name','campaign_id','list_id','lead_id','length_in_sec','list_name','status_name'],
+    required:['call_date','user','length_in_sec'],snapshot:false,dateH:'call_date',
+    purpose:'The ViciDial per-call export (EXPORT_CALL_REPORT / Call Report). The VAS-analytics treatment: talk time = Σ length_in_sec grouped on the CB number (the "user" login), which runs dial-to-hangup and so INCLUDES ringing; average talk time (AHT) = talk ÷ answered, where answered = status outside the no-contact rule ("A" is Answering Machine, not answered). System logins (VDAD/VDCL/CBT…) are excluded and counted, never silently dropped. A call is call_date + user + lead_id + status — repeats inside a file count once, and across files the newer export supersedes its own record keys, never stacks.'},
   SF_INACTIVE:{label:'Salesforce · Cancellations (Inactive)',system:'Salesforce',fmt:'.xlsx',color:'red',
     headers:['Account Number','Contract Status','Account Name','Owner','Consultant','Contract Deactivate Date','Contract Create Date','Product Bundle','Merged Product Bundle','Case Number','Charge Amount','Marketing Type'],
     required:['Account Number','Contract Status','Contract Create Date'],snapshot:false,dateH:'Contract Create Date',
@@ -590,6 +594,8 @@ const DEFAULT_RULES = {
   cycleTargets:{label:'Cycle GWP targets by campaign (name:rand)',vals:['Cuddle:389285.16','Courtesy:375092.52'],help:'One panel per entry. Campaign matches each agent&#39;s roster queue. Add Matrix Vehicle Tracking here the day it gets a cycle target.'},
   vatRate:{label:'VAT rate (%)',vals:['15'],numeric:true,help:'Required per Day incl VAT = ex-VAT × (1 + this). Also grosses up the BI money model: Power BI Charge Amounts are EX-VAT, so GWP incl = Σ charge × (1 + this). Zero-safe — set 0 and ex equals incl.'},
   leadWindow:{label:'Lead window basis (snapshot | opened)',vals:['snapshot'],help:'How OPEN cases answer the date range. "snapshot" = open cases ignore the window — the rules pack default (R-TIME-06 "snapshot reads ignore W"; F-LEAD-01 "leads = open(snapshot) ∪ closed(W)"). "opened" = window open cases by the date each case was opened, so conversion moves with the date picker. Closed cases always window by close date, either way. Note: on "snapshot" the lead denominator is partly window-invariant, so narrowing the range lifts conversion without the floor changing. Switching to "opened" is a deliberate deviation from the pack and needs a version bump under §8 change control.'},
+  viciNoContact:{label:'ViciDial status codes that mean NOBODY WAS REACHED',vals:['N','NA','B','AB','A','VM','DC','DNE','DROP','PDROP','TIMEOT','INCALL','UC','UCNUM','DA','FAIL','DUPL'],help:'ViciDial status CODES meaning the call reached no one — note "A" is Answering Machine in this export, NOT answered. These set Answered, Answer % and AHT on the ViciDial tiles and the per-agent dial table. Talk time itself stays the full length_in_sec (dial-to-hangup, ringing included) — the VAS rule book\'s talkFrom "all", decided by Nick 2026-08-13.'},
+  viciSystemUsers:{label:'ViciDial logins that are SYSTEM/TEST, not agents',vals:['VDAD','VDCL','VDLB','CBT001','CBT003','CBT005','CBT007'],help:'ViciDial internal accounts (auto-dial, closer) and the CBT… training/test bank. Their rows are excluded from every ViciDial metric and per-agent table but stay counted in the honest-remainder note — excluded and counted, never silently dropped.'},
   qaDisputeStatuses:{label:'QA statuses that count as DISPUTED',vals:['closed_retracted','qa_review'],help:'Evaluations in these statuses count in the Disputed column on QA & Compliance: retracted = challenged and overturned; qa_review = challenge in progress. closed_mitigated is the normal terminal state (95% of evals) and is not a dispute by default — edit here if Jared disagrees.'},
   gwpMult:{label:'GWP target multiplier (R per target sale)',vals:['89'],help:'GWP target = Sales target × this rand value. Edit when the average-premium assumption moves; every scorecard percentage recomputes instantly.',numeric:true},
   staleDays:{label:'Days before a source is flagged STALE',vals:['7'],help:'Amber after this many days without a successful upload; red after double.',numeric:true},
@@ -612,6 +618,14 @@ const DEFAULT_KPIS = [
   interp:'Sum of billable seconds. The occupancy signal — pair with attendance before judging agents.',red:'Compare against present days; low talk time with full attendance = floor management issue.'},
  {id:'outbound_calls',name:'Outbound Calls',domain:'Sales',icon:'phone',src:'CALLX_CALL_RECORDS',type:'count',num:[{f:'call_type',op:'ne',v:'inbound'}],format:'int',dir:'higher',green:null,amber:null,owner:'Leon',
   interp:'Agent-driven dial attempts. Inbound rows carry no agent, so per-agent maths uses outbound only.',red:'If outbound collapsed, check campaign loading in the dialler.'},
+ {id:'vici_dials',name:'Vici Dials',domain:'Sales',icon:'phone',src:'VICI_CALL_REPORT',type:'count',special:'viciDials',format:'int',dir:'higher',green:null,amber:null,owner:'Ryan',
+  interp:'ViciDial dial attempts in the window, system/test logins (VDAD, VDCL, CBT…) excluded by the viciSystemUsers rule. One row per call, dated per call.',red:'Dials collapsing while CallX holds = the Vici floor stopped dialling — check campaign loading in ViciDial.'},
+ {id:'vici_talk',name:'Vici Talk Time',domain:'Sales',icon:'clock',src:'VICI_CALL_REPORT',type:'count',special:'viciTalk',format:'hours',dir:'higher',green:null,amber:null,owner:'Ryan',
+  interp:'Σ length_in_sec grouped on the CB number (the VAS rule book, Nick 2026-08-13). length_in_sec runs dial-to-hangup, so ringing is INCLUDED — ~38% of seconds on the August reference pull reached no one. Read beside Vici Answer Rate before judging agents.',red:'Talk falling with dials flat = shorter calls, not fewer — check the no-contact mix and lead quality with Ryan.'},
+ {id:'vici_answer',name:'Vici Answer Rate',domain:'Sales',icon:'target',src:'VICI_CALL_REPORT',type:'count',special:'viciAnswer',format:'pct',dir:'higher',green:30,amber:20,owner:'Ryan',
+  interp:'Dials whose ViciDial status sits outside the viciNoContact rule ÷ all agent dials. "A" is Answering Machine in this export and counts as NOT answered.',red:'Low answer rate is a lead-list or dialling-window problem — review list quality and CLI reputation with Ryan.'},
+ {id:'vici_aht',name:'Vici Avg Talk (AHT)',domain:'Sales',icon:'clock',src:'VICI_CALL_REPORT',type:'count',special:'viciAht',format:'mmss',dir:'higher',green:null,amber:null,owner:'Ryan',
+  interp:'Average talk time per ANSWERED call: Σ length_in_sec ÷ answered dials — the PULSE aht formula on the CB number. Zero answered calls reads —, never 0:00.',red:'AHT collapsing usually means answered calls die at the intro — pair with QA coaching categories before coaching.'},
  {id:'activations',name:'Sales (Unique Accounts)',domain:'Sales',icon:'cart',src:'BI_ACTIVE_CASES',type:'distinct',field:'account_number',format:'int',dir:'higher',green:null,amber:null,owner:'Nick',
   interp:'F-MONEY-04 — distinct Account Numbers carrying at least one Power BI charge row in the window, dated per row by Contract Create Date. One customer, one sale, however many charge lines it carries. Attribution is cbOfOwner(Owner). Supersedes the old Activated-Services count, which is now session-only.',red:'Cross-check the Power BI Active Cases export covers the right period — monthly uploads ACCUMULATE, and a re-upload supersedes only its own Contract-Create-Date span; other months are kept.'},
  {id:'lead_conversion',name:'Sales Conversion',domain:'Sales',icon:'target',src:'SF_CLOSED_CASES',type:'ratio',special:'leadConv',format:'pct',dir:'higher',green:10,amber:8,owner:'Nick',
@@ -765,6 +779,7 @@ function fmtVal(v,f){
     case 'num1':return (Math.round(v*10)/10).toLocaleString();
     case 'num2':return (Math.round(v*100)/100).toLocaleString();
     case 'hours':{const h=Math.floor(v/3600),m=Math.round((v%3600)/60);return h>0?h.toLocaleString()+'h '+m+'m':m+'m'}
+    case 'mmss':{const s=Math.round(v),m=Math.floor(s/60);return m+':'+String(s%60).padStart(2,'0')}
     case 'hoursnum':return Math.round(v).toLocaleString()+' hrs';
     default:return String(Math.round(v*100)/100);
   }
@@ -917,6 +932,20 @@ function hcol(row,header){ // header-insensitive fetch
 }
 
 /* ---------------- CANONICAL TRANSFORMS (raw row -> fact row) ---------------- */
+/* ViciDial call_date canonicaliser — the record key must read IDENTICALLY whatever the
+   container: an xlsx date cell arrives as a Date (cellDates) or serial, the txt/csv as
+   "YYYY-MM-DD HH:MM:SS". Same call, same key, or the cross-format supersede silently
+   fails and a daily txt stacks on top of the range xlsx. UTC getters on purpose —
+   SheetJS encodes sheet-local wall time into the UTC fields. */
+function viciDT(v){
+  if(v==null||v==='')return'';
+  const p=n=>String(n).padStart(2,'0');
+  if(v instanceof Date)return v.getUTCFullYear()+'-'+p(v.getUTCMonth()+1)+'-'+p(v.getUTCDate())+' '+p(v.getUTCHours())+':'+p(v.getUTCMinutes())+':'+p(v.getUTCSeconds());
+  if(typeof v==='number'&&v>20000&&v<60000)return viciDT(new Date(Math.round((v-25569)*86400000)));
+  const m=String(v).trim().match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+  if(m)return m[1]+' '+m[2];
+  return String(v).trim();
+}
 const TRANSFORM={
   /* R-ING-BI-04. charge_amount stays EX-VAT here — the gross-up lives in the money
      formula so the vatRate rule stays live (R-ING-BI-05). contract_status/charge_amount
@@ -998,6 +1027,20 @@ const TRANSFORM_EXTRA={
     queue:hcol(r,'Que')||hcol(r,'Queue')||hcol(r,'Campaign'),tenure:hcol(r,'Tenure'),
     callx_alias:String(hcol(r,'Call x')||'').trim(),sf_name:String(hcol(r,'Sales Force')||'').trim(),
     target:parseNum(hcol(r,'Target')),start_date:isoDay(parseDT(hcol(r,'Start Date'))),_d:null}},
+  VICI_CALL_REPORT(r){const rawLen=hcol(r,'length_in_sec');let len=parseNum(rawLen);
+    // negative or unparseable-garbage lengths are corrupt, not a credit — zeroed AND counted
+    const bad=(len==null&&String(rawLen??'').trim()!=='')||(len!=null&&len<0);
+    if(len==null||isNaN(len)||len<0)len=0;
+    // phone / status_name / list_name deliberately NOT stored: no metric reads them, and
+    // customer numbers do not belong in browser storage (data minimisation; PULSE carries
+    // the disposition-level analysis). ~13k rows/upload — every field costs quota.
+    return{user_raw:String(hcol(r,'user')||'').trim(),
+      user_cb:extractCB(hcol(r,'user'))||normCB(hcol(r,'user'))||null,   // extractCB strips zero-padding: CB016 ≡ CB16
+      full_name:String(hcol(r,'full_name')||'').trim(),
+      status:String(hcol(r,'status')||'').trim().toUpperCase(),
+      lead_id:String(hcol(r,'lead_id')||'').trim(),
+      call_dt:viciDT(hcol(r,'call_date')),   // canonical FULL timestamp — the record key (day-only collapses same-day redials; raw cells differ per container)
+      length_in_sec:len,neg_len:bad?1:0,_d:isoDay(parseDT(hcol(r,'call_date')))}},
   SF_INACTIVE(r){const dd=parseDT(hcol(r,'Contract Deactivate Date'));return{
     account_number:String(hcol(r,'Account Number')||'').trim(),account_name:hcol(r,'Account Name'),
     contract_status:hcol(r,'Contract Status'),owner:String(hcol(r,'Owner')||'').trim(),owner_norm:normName(hcol(r,'Owner')),
@@ -1090,7 +1133,7 @@ async function _pushBI(batch,file,ep,t){
     consultant:r.consultant,product_bundle:r.product_bundle,merged_bundle:r.merged_bundle,
     sales_vertical:r.sales_vertical,batch_id:batch.batch_id}));
   if(!rows.length)return;
-  const H={'Authorization':'Bearer '+t,'x-cbx-client':'v4'};
+  const H={'Authorization':'Bearer '+t,'x-cbx-client':'v5'};
   try{
     if(file){   // archive the exact bytes first, so the batch can record where they live
       const ar=await fetch(ep+'/api/bi/raw?name='+encodeURIComponent(batch.batch_id+'_'+file.name),
@@ -1221,6 +1264,20 @@ function applyLoad(srcKey,file,parsed,notes){
       const keep=prev.filter(r=>{const k=rkey(r);return !k||!nk.has(k)});
       replaced=prev.length-keep.length;prev=keep;
       if(replaced)batch.superseded_prev_rows=replaced}
+    if(srcKey==='VICI_CALL_REPORT'&&loaded.length){
+      // The rule book's record identity: call_date + user + lead_id + status — unique across
+      // the reference pull. Repeats WITHIN a file count once, and across files the newer
+      // export supersedes its own record keys (a daily txt overlapping a range xlsx must
+      // never stack 13 Aug twice). Keyed on the export's OWN login (user_raw), exactly as
+      // Pulse does — identity resolution must not change what counts as one call.
+      const vkey=r=>(r.call_dt||r._d||'')+'|'+(r.user_raw||'')+'|'+(r.lead_id||'')+'|'+(r.status||'');
+      const inFile=new Map();loaded.forEach((r,i)=>{inFile.set(vkey(r)||('#row'+i),r)});
+      if(inFile.size<loaded.length){batch.deduped_in_file=loaded.length-inFile.size;
+        loaded=[...inFile.values()];batch.loaded_row_count=loaded.length}
+      const nk=new Set(loaded.map(vkey));
+      const keep=prev.filter(r=>!nk.has(vkey(r)));
+      replaced=prev.length-keep.length;prev=keep;
+      if(replaced)batch.superseded_prev_rows=replaced}
     if(srcKey==='CALLX_CALL_RECORDS'&&loaded.length){
       // Dialler exports overlap (a growing date-range re-export lands next to earlier
       // chunks; call rows carry no unique ID). Same doctrine as Pulse: FULLEST-DAY-WINS —
@@ -1271,25 +1328,29 @@ function detectSource(parsed){
     if(score>0)cands.push({k,score});
   }
   if(!cands.length)return null;
-  const top=Math.max(...cands.map(c=>c.score));
-  cands=cands.filter(c=>c.score>=top-1e-9).map(c=>c.k);
-  if(cands.length===1)return cands[0];
   // The two Power BI exports are the one header-identical pair — both carry 40+ columns
-  // that satisfy BOTH contracts. The data itself disambiguates: an Inactive export is
-  // rows of cancelled contracts, an Active export is not. Majority of Contract Status
-  // over a sample decides; any other tie stays unrecognised — routed by hand, never guessed.
-  if(cands.length===2&&cands.includes('BI_ACTIVE_CASES')&&cands.includes('SF_INACTIVE')){
+  // that satisfy BOTH contracts, and header-overlap SCORE cannot separate them (either
+  // export can carry a few more of either contract's optional columns, and picking the
+  // higher score once routed an Inactive file into the money source, where the BI
+  // supersede-by-date-span then WIPED the month's charges). So the moment both requireds
+  // are satisfied the DATA decides: an Inactive export is rows of cancelled contracts, an
+  // Active export is not. Majority of Contract Status over a sample; a header-only file
+  // stays unrecognised — routed by hand, never guessed.
+  if(cands.some(c=>c.k==='BI_ACTIVE_CASES')&&cands.some(c=>c.k==='SF_INACTIVE')){
     const sample=parsed.data.slice(0,500);
-    if(!sample.length)return null;   // header-only file: no data to decide with — don't guess
+    if(!sample.length)return null;
     const inact=sample.filter(r=>/inactive/i.test(String(hcol(r,'Contract Status')||''))).length;
     return inact>=sample.length/2?'SF_INACTIVE':'BI_ACTIVE_CASES';
   }
+  const top=Math.max(...cands.map(c=>c.score));
+  cands=cands.filter(c=>c.score>=top-1e-9).map(c=>c.k);
+  if(cands.length===1)return cands[0];
   return null;
 }
 /* Load order for a bulk batch: identity base first so every later join resolves, money
    and workforce next, high-volume dialler last. Within a source, files load oldest
    period first so where two files DO overlap, the fresher export is the one that wins. */
-const BULK_ORDER=['AGENT_LIST','ATTENDANCE','BI_ACTIVE_CASES','SF_OPEN_CASES','SF_CLOSED_CASES','SF_INACTIVE','CALLX_CALL_RECORDS','QA_EVALUATIONS'];
+const BULK_ORDER=['AGENT_LIST','ATTENDANCE','BI_ACTIVE_CASES','SF_OPEN_CASES','SF_CLOSED_CASES','SF_INACTIVE','CALLX_CALL_RECORDS','VICI_CALL_REPORT','QA_EVALUATIONS'];
 // (REFERRALS is absent by design: its contract has no required headers, so it cannot be
 // header-detected — referral exports load via their own slot, never through bulk.)
 let pendingBulk=null;
@@ -1407,7 +1468,7 @@ function autoMapAgents(){
 async function deleteBIRows(){
   const ep=workerBase(),t=(()=>{try{return sessionStorage.getItem('cbx_token')}catch(e){return null}})();
   if(!ep||!t)return;
-  try{await fetch(ep+'/api/bi',{method:'DELETE',headers:{'Authorization':'Bearer '+t,'x-cbx-client':'v4'}})}catch(e){}
+  try{await fetch(ep+'/api/bi',{method:'DELETE',headers:{'Authorization':'Bearer '+t,'x-cbx-client':'v5'}})}catch(e){}
 }
 function dropStore(k){return (window.storage&&window.storage.delete)?Promise.resolve(window.storage.delete('cb-facts-'+k)).catch(()=>{}):Promise.resolve()}
 async function clearSource(k){
@@ -1588,6 +1649,7 @@ function rowsForRaw(src,win,sc){
     case 'BI_ACTIVE_CASES':return cbOfOwner(r.owner);
     case 'SF_OPEN_CASES':case 'SF_CLOSED_CASES':return cbOfOwner(r.case_owner);
     case 'SF_INACTIVE':return cbOfOwner(r.owner);
+    case 'VICI_CALL_REPORT':return viciCbOf(r);   // name wins the login (spec §3); unmapped stays null → flagged, not invented
     case 'REFERRALS':return normCB(r.employee_code)||cbOf(r.agent);
     default:return null}};
   /* Resolve each row's agent (CB) + campaign bucket once per data version, cached on the row.
@@ -1704,6 +1766,18 @@ function cancelPremiums(win){
   M.forEach(e=>{e.gwp=e.ex*mult});
   return[...M.values()];
 }
+/* ViciDial helpers — the VAS-analytics treatment. Both sets are live rules, read at eval
+   time so a rule edit recomputes every tile and table instantly (never baked at load). */
+function viciSysSet(){return new Set((state.rules.viciSystemUsers?.vals||[]).map(s=>String(s).toUpperCase()))}
+function viciNcSet(){return new Set((state.rules.viciNoContact?.vals||[]).map(s=>String(s).toUpperCase()))}
+function viciAgentRows(win){const sys=viciSysSet();
+  return rowsFor('VICI_CALL_REPORT',win).filter(r=>!sys.has(String(r.user_raw||'').toUpperCase()))}
+/* Roster identity for a Vici row: the row's own full_name resolved against the Agent List
+   WINS any disagreement with the login (spec §3 — a dialler login is not always the
+   employee code; ViciDial ships Kyle Kisten as CB138, the roster's CB137). */
+function viciCbOf(r){const byName=state.sfOwnerMap?.[normName(r.full_name)]||null;
+  if(byName)return byName;
+  return (r.user_cb&&state.cbInfo[r.user_cb])?r.user_cb:null}
 function evalKPI(k,win){
   if(k.type==='cross'){
     const n=agg(rowsFor(k.num.src,win),k.num.agg,k.num.field,k.num.filter);
@@ -1715,6 +1789,13 @@ function evalKPI(k,win){
   if(k.special==='gwpTotalEx'){return biLoaded()?accountPremiums(win).reduce((s,e)=>s+(e.ex||0),0):null}
   if(k.special==='gwpAvg'){const ps=accountPremiums(win);return ps.length?ps.reduce((s,e)=>s+(e.gwp||0),0)/ps.length:null}
   if(k.special==='gwpLost'){return cancelPremiums(win).reduce((s,e)=>s+(e.gwp||0),0)}
+  if(k.special==='viciDials'){return viciAgentRows(win).length}
+  if(k.special==='viciTalk'){return viciAgentRows(win).reduce((s,r)=>s+(r.length_in_sec||0),0)}
+  if(k.special==='viciAnswer'){const rs=viciAgentRows(win);if(!rs.length)return null;
+    const nc=viciNcSet();return rs.filter(r=>!nc.has(r.status)).length/rs.length*100}
+  if(k.special==='viciAht'){const rs=viciAgentRows(win);const nc=viciNcSet();
+    const ans=rs.filter(r=>!nc.has(r.status)).length;
+    return ans?rs.reduce((s,r)=>s+(r.length_in_sec||0),0)/ans:null}
   if(k.special==='slaBreach'){
     const a=isoDay(anchorDate());
     return rows.filter(r=>!/closed/i.test(r.qa_status||'')&&r.sla_deadline&&((isoDay(parseDT(r.sla_deadline))||'9999')<a)).length;
@@ -2396,6 +2477,22 @@ function pageSales(win){
     a.bands[r.call_band]=(a.bands[r.call_band]||0)+1});
   const agRows=Object.values(AG).sort((x,y)=>y.t-x.t).slice(0,15);
   const unmappedCallAgents=Object.values(AG).filter(a=>a.unmapped).length;
+  /* ViciDial per-agent dial table — the VAS-analytics treatment: talk = Σ length_in_sec on
+     the CB number, AHT = talk ÷ answered (no-contact rule), system logins excluded+counted. */
+  const vAll=rowsFor('VICI_CALL_REPORT',win),vSys=viciSysSet(),vNc=viciNcSet();
+  const vSysRows=vAll.length-vAll.filter(r=>!vSys.has(String(r.user_raw||'').toUpperCase())).length;
+  const VG={};let vNeg=0;
+  vAll.forEach(r=>{if(vSys.has(String(r.user_raw||'').toUpperCase()))return;
+    vNeg+=r.neg_len||0;
+    const cb=viciCbOf(r);const key=cb||('RAW::'+(r.user_raw||r.full_name));
+    const a=VG[key]=VG[key]||{name:cb?((state.cbInfo[cb]?.name)||r.full_name):((r.user_raw?r.user_raw+' ':'')+r.full_name),cb,unmapped:!cb,t:0,ans:0,talk:0,days:new Set()};
+    a.t++;a.talk+=r.length_in_sec||0;
+    if(!vNc.has(r.status))a.ans++;
+    if(r._d)a.days.add(r._d)});
+  const vgRows=Object.values(VG).sort((x,y)=>y.talk-x.talk).slice(0,15);
+  const vUnmapped=Object.values(VG).filter(a=>a.unmapped).length;
+  const vRing=vAll.reduce((s,r)=>(!vSys.has(String(r.user_raw||'').toUpperCase())&&vNc.has(r.status))?s+(r.length_in_sec||0):s,0);
+  const vTalkAll=vAll.reduce((s,r)=>!vSys.has(String(r.user_raw||'').toUpperCase())?s+(r.length_in_sec||0):s,0);
   const cStatFreq=groupCount(closed,'status');
   const cTop=cStatFreq.map(e=>e[0]);
   const cOrder=['Closed','Closed - No feedback'].filter(x=>cTop.some(t=>t.toLowerCase()===x.toLowerCase()))
@@ -2470,6 +2567,20 @@ function pageSales(win){
      +'</tbody></table></div>'+(unmappedCallAgents?'<div class="stale-banner" style="margin-top:8px">⚠ '+unmappedCallAgents+' dialler agent string(s) matched no roster entry (no CB code found or code not on today\'s list) — flagged above, fix in Mappings or the daily Agent List.</div>':''):'<div class="empty">Upload CallX call records.</div>')
    +'</div>'
    +'<div class="card"><div class="card-h"><span class="t">Call type mix</span><span class="s">band rule applied live</span></div><div class="chart-wrap short"><canvas id="chS11"></canvas></div></div></div>'
+   +(vAll.length?'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">ViciDial dial report by agent</span>'
+     +'<span class="info" title="The VAS-analytics treatment: talk time = Σ length_in_sec grouped on the CB number (the dialler login, with the Agent List&#39;s name resolution winning any clash). AHT = talk ÷ answered, where answered = status outside the viciNoContact rule (&quot;A&quot; is Answering Machine, not answered). length_in_sec runs dial-to-hangup, so talk INCLUDES ringing — the split is stated below. System logins are excluded and counted.">i</span>'
+     +'<span class="s">top 15 by talk · '+fmtVal(vTalkAll,'hours')+' total</span></div>'
+     +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Agent (login → roster)</th><th class="noclick">Days</th><th class="noclick">Dials</th><th class="noclick">Answered</th><th class="noclick">Answer %</th><th class="noclick">Talk</th><th class="noclick">Avg talk (AHT)</th></tr></thead><tbody>'
+     +vgRows.map(a=>'<tr><td><b>'+aName(a.cb,maskName(a.name))+'</b>'+(a.unmapped?' <span class="pill a" style="padding:1px 6px">unmapped</span>':'')+'</td>'
+       +'<td class="num">'+a.days.size+'</td><td class="num">'+a.t.toLocaleString()+'</td><td class="num">'+a.ans.toLocaleString()+'</td>'
+       +'<td class="num">'+(a.t?fmtVal(a.ans/a.t*100,'pct'):'—')+'</td>'
+       +'<td class="num" style="font-weight:800">'+fmtVal(a.talk,'hours')+'</td>'
+       +'<td class="num">'+(a.ans?fmtVal(a.talk/a.ans,'mmss'):'—')+'</td></tr>').join('')
+     +'</tbody></table></div>'
+     +'<div style="font-size:11px;color:var(--muted);margin-top:6px">'+fmtVal(vRing,'hours')+' of '+fmtVal(vTalkAll,'hours')+' ('+(vTalkAll?Math.round(vRing/vTalkAll*100):0)+'%) sits on no-contact statuses — ringing, voicemail, answering machines (talk is billed dial-to-hangup by rule).'
+     +(vSysRows?' '+vSysRows.toLocaleString()+' system/test-login row(s) excluded and counted.':'')+(vNeg?' '+vNeg+' corrupt length(s) zeroed, never subtracted.':'')+'</div>'
+     +(vUnmapped?'<div class="stale-banner" style="margin-top:8px">⚠ '+vUnmapped+' Vici login(s) matched no roster entry — their dials are flagged above and excluded from per-agent roll-ups elsewhere, never invented onto the roster.</div>':'')
+     +'</div>':'')
    +'<div class="grid g2">'
    +'<div class="card"><div class="card-h"><span class="t">Lead inflow vs outflow</span><span class="info" title="Inflow = cases opened per day (open + closed files). Outflow = cases closed per day. The gap is the backlog trend.">i</span></div><div class="chart-wrap short"><canvas id="chS8"></canvas></div></div>'
    +'<div class="card"><div class="card-h"><span class="t">Open leads by agent × attempt status</span><span class="s">top 12 owners</span></div>'

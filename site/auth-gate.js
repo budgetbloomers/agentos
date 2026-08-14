@@ -48,7 +48,7 @@
     };
   }
   function api(path, body) {
-    var opt = { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', 'X-Cbx-Client': 'v4' } };
+    var opt = { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', 'X-Cbx-Client': 'v5' } };
     var tok = sessionStorage.getItem(TKEY); if (tok) opt.headers.Authorization = 'Bearer ' + tok;
     if (body) opt.body = JSON.stringify(body);
     return fetch(WORKER + path, opt).then(function (r) { return r.json().then(function (j) { return Object.assign({ _status: r.status, ok: r.ok }, j); }); })

@@ -417,7 +417,7 @@
     } : { date: iso, "delete": true };
     fetch(BASE + "/api/eod", {
       method: "POST",
-      headers: { "Authorization": "Bearer " + t, "Content-Type": "application/json", "X-Cbx-Client": "v4" },
+      headers: { "Authorization": "Bearer " + t, "Content-Type": "application/json", "X-Cbx-Client": "v5" },
       body: JSON.stringify(body)
     }).then(function (r) {
       if (!r.ok) warn("Cloud save failed (" + r.status + ") — this entry is NOT in the database. Try again or re-login.");
@@ -429,7 +429,7 @@
     var t = tok(); if (!t || !hydrated) return;
     fetch(BASE + "/api/kv?key=" + KV_KEY, {
       method: "POST",
-      headers: { "Authorization": "Bearer " + t, "Content-Type": "text/plain", "X-Cbx-Client": "v4" },
+      headers: { "Authorization": "Bearer " + t, "Content-Type": "text/plain", "X-Cbx-Client": "v5" },
       body: localStorage.getItem(STORE_KEY) || "{}"
     }).then(function (r) {
       if (!r.ok) warn("Cloud save failed (" + r.status + ") — this entry is NOT in the database. Try again or re-login.");

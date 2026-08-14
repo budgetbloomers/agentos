@@ -86,7 +86,7 @@ if (!window.storage) {
         var h = authHdr();
         if (!h) { cbxSaveWarn('Not signed in — this data was NOT saved to the database.'); return; }
         try {
-          var r = await fetch(API + '?key=' + encodeURIComponent(k), { method: 'POST', headers: { 'Authorization': h.Authorization, 'Content-Type': 'text/plain', 'X-Cbx-Client': 'v4' }, body: v });
+          var r = await fetch(API + '?key=' + encodeURIComponent(k), { method: 'POST', headers: { 'Authorization': h.Authorization, 'Content-Type': 'text/plain', 'X-Cbx-Client': 'v5' }, body: v });
           if (!r.ok) cbxSaveWarn('Cloud save failed (' + r.status + ') — this data is NOT in the database. Try again or re-login.');
         } catch (e) { cbxSaveWarn('Cloud save failed (network) — this data is NOT in the database. Check your connection and retry.'); }
       },
@@ -100,7 +100,7 @@ if (!window.storage) {
         var h = authHdr();
         if (!h) { cbxSaveWarn('Not signed in — delete was NOT applied to the database.'); return; }
         try {
-          var r = await fetch(API + '?key=' + encodeURIComponent(k), { method: 'DELETE', headers: { 'Authorization': h.Authorization, 'X-Cbx-Client': 'v4' } });
+          var r = await fetch(API + '?key=' + encodeURIComponent(k), { method: 'DELETE', headers: { 'Authorization': h.Authorization, 'X-Cbx-Client': 'v5' } });
           if (!r.ok) cbxSaveWarn('Delete not synced to the database (' + r.status + ') — the file may still be there. Retry or re-login.');
         } catch (e) { cbxSaveWarn('Delete not synced to the database (network) — retry when back online.'); }
       }

@@ -66,7 +66,7 @@
         var tk = sessionStorage.getItem('cbx_token'); if (!tk) return;
         if (C.guard && !C.guard()) return;
         var t = C.ctx(); if (!t || t === last) return; last = t;
-        fetch(API + '/api/kv?key=' + encodeURIComponent(C.digestKey), { method: 'POST', headers: { 'Content-Type': 'text/plain', 'Authorization': 'Bearer ' + tk, 'X-Cbx-Client': 'v4' }, body: t }).catch(function () { });
+        fetch(API + '/api/kv?key=' + encodeURIComponent(C.digestKey), { method: 'POST', headers: { 'Content-Type': 'text/plain', 'Authorization': 'Bearer ' + tk, 'X-Cbx-Client': 'v5' }, body: t }).catch(function () { });
       } catch (e) { }
     };
     setInterval(push, 90000);
