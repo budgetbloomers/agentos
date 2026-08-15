@@ -77,6 +77,10 @@ const ATT = ['Date,Employee Code,Employee Name,Employee Type,Status,Status Code'
   '2026-08-03,CB129,Nosipho Shange,Call Agent,Present,P',
   '2026-08-04,CB131,Sechaba Mlambo,Call Agent,Present,P',
 ].join('\n');
+// period-aggregated ViciDial (Agent Performance Detail): Theo 2h over 03–04 → 1h/day ESTIMATE
+const VICI = 'Agent Performance Detail\ntime range: 2026-08-03 00:00:00 to 2026-08-04 23:59:59\n'
+  + '"USER NAME","ID","CURRENT USER GROUP","CALLS","TALK","SALE","VASNP","VASKP"\n'
+  + '"Theo Chetty","CB136","CBX","100","2:00:00","3","0","0"\n';
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
@@ -97,10 +101,11 @@ const loaded = await page.evaluate(async fx => {
   r.push(await window.__mtd.ingest('Manual Stats August.xlsx', fx.BOARD));
   r.push(await window.__mtd.ingest('call_records.csv', fx.CALLS));
   r.push(await window.__mtd.ingest('attendance_2026-08-03_to_2026-08-04.csv', fx.ATT));
+  r.push(await window.__mtd.ingest('Vici - Cuddle Agents - 3 - 4 Aug.csv', fx.VICI));
   window.__mtd.rebuild();
   return r;
-}, { ACTIVE, INACTIVE, BOARD, CALLS, ATT });
-ok('all five fixtures ingested', loaded.every(Boolean), JSON.stringify(loaded));
+}, { ACTIVE, INACTIVE, BOARD, CALLS, ATT, VICI });
+ok('all six fixtures ingested', loaded.every(Boolean), JSON.stringify(loaded));
 
 const types = await page.evaluate(() => window.__mtd.state().files.map(f => f.type));
 ok('board sheets registered per day (2 board entries)', types.filter(t => t.startsWith('board')).length === 2, types.join(', '));
@@ -145,6 +150,9 @@ ok('DV03 Thulani sales variance still exact (0 vs 0)', thul && thul.salesVar ===
 const noth = row('CB162', '2026-08-03');
 ok('DV03 flag 3 (warning): present but not dialling', noth && noth.flags.some(f => f.sev === 'warning' && /Present but not dialling/.test(f.f)), JSON.stringify(noth && noth.flags));
 ok('DV03 Cuddle talk unknown without day-level ViciDial (null, checks skipped)', theo && theo.talk === null && theo.flags.some(f => f.sev === 'info'));
+ok('Cuddle talk ESTIMATE from period ViciDial: 2h over 03–04 → 3600s/day, flagged, never used for DV03',
+  theo && theo.talkEst === 3600 && theo.flags.some(f => /estimated/i.test(f.f)) && !theo.flags.some(f => f.sev === 'error'),
+  JSON.stringify(theo && [theo.talkEst, theo.flags]));
 const zand = row('CB150', '2026-08-04');
 ok('talk=0-with-sale names the ADJACENT dial day (sale dated to Contract Create Date, dialled 03)',
   zand && zand.talk === 0 && zand.flags.some(f => f.sev === 'warning' && /2026-08-03/.test(f.f) && /Contract Create Date/.test(f.f)), JSON.stringify(zand && zand.flags));

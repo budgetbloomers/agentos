@@ -3226,6 +3226,26 @@ function buildVariance(range){
 
   /* ---- dialler + attendance, per day per agent (DV03) ---- */
   const dayHasCallX=d=>{ const bk=S.calls[d]; if(!bk) return false; for(const k in bk) if(!bk[k].v) return true; return false; };
+  /* Cuddle talk usually arrives as a PERIOD-AGGREGATED ViciDial export (one row per agent,
+     no per-day split). The spec's own rule for it: "Cuddle daily talk time must be
+     allocated or estimated, and flagged as such." So: the range total is allocated EVENLY
+     across the agent's employed (attendance-weighted) days in the range — workdays where
+     the register is absent — shown with a ~ and an estimate flag, and NEVER used for the
+     DV03 activity checks: an allocation is not evidence of dialling on a specific day.
+     Day-level dialler rows always win over an estimate. */
+  const viciEst={};                              // code -> {per,days:Set,from,to}
+  for(const key in (S.vici||{})){
+    const v=S.vici[key]; if(!v||!v.rows) continue;
+    const rDays=[]; { const dt=new Date(v.from+'T00:00:00Z');
+      while(dkey(dt)<=v.to&&rDays.length<400){ rDays.push(dkey(dt)); dt.setUTCDate(dt.getUTCDate()+1); } }
+    for(const r of v.rows){
+      const rc=resolveKey(r.name); if(!rc||!(r.talk>0)) continue;
+      let emp=rDays.filter(dd=>{ const st=(S.att[dd]||{})[rc]; return st!=null&&attWeight(st)>0; });
+      if(!emp.length) emp=rDays.filter(dd=>{ const g=new Date(dd+'T00:00:00Z').getUTCDay(); return g!==0&&g!==6; });
+      if(!emp.length) emp=rDays;
+      viciEst[rc]={per:(r.talk||0)/emp.length,days:new Set(emp),from:v.from,to:v.to};
+    }
+  }
 
   /* ---- rows: one per agent per day, for every day either compared system covers ---- */
   const days=[...new Set([...Object.keys(sf),...Object.keys(bd)])].sort();
@@ -3273,6 +3293,8 @@ function buildVariance(range){
       let talk=(code in talkMap)?talkMap[code]:null;
       const talkKnown=talk!=null||(camp==='Courtesy'&&dayHasCallX(d));
       if(talk==null&&talkKnown) talk=0;
+      let talkEst=null;                            // allocated estimate — display only, never evidence
+      if(!talkKnown){ const e=viciEst[code]; if(e&&e.days.has(d)) talkEst=Math.round(e.per); }
       const dlSales=talkKnown?(saleMap[code]||0):null;   // dialler-side sales: null when the dialler cannot answer for this agent-day
       const st=(S.att[d]||{})[code];
       const present=st!=null&&attWeight(st)>=1;
@@ -3294,7 +3316,8 @@ function buildVariance(range){
         }
         if(talk>VARIANCE_RULES.talkNoSaleSecs&&sfSales===0) flags.push({sev:'warning',f:'Talk > 2h, no sales',dv:'DV03'});
         if(talk===0&&present) flags.push({sev:'warning',f:'Present but not dialling',dv:'DV03'});
-      }else if((sfSales||0)>0||present){ flags.push({sev:'info',f:'Dialler coverage missing — activity checks skipped',dv:'DV03'}); }
+      }else if(talkEst!=null){ flags.push({sev:'info',f:'Talk estimated — ViciDial period export allocated evenly across employed days; activity checks skipped',dv:'DV03'}); }
+      else if((sfSales||0)>0||present){ flags.push({sev:'info',f:'Dialler coverage missing — activity checks skipped',dv:'DV03'}); }
       if(bdr&&bdr.ts!=null&&bdr.cells>0&&bdr.ts!==bdr.cells)
         flags.push({sev:'warning',f:'Board states '+bdr.ts+' sales but '+bdr.cells+' Sale cells are populated',dv:'DV01'});
       // tolerance verdicts — bands declared in VARIANCE_RULES.tolerance, applied blind
@@ -3323,7 +3346,7 @@ function buildVariance(range){
         if(vv!=='exact'&&vv!=='rounding'&&rc.rc)VR.rcCounts[rc.rc]++;
       }
       VR.rows.push({d,code,agent:m.name,camp,tl,sfSales,sfGwp,bdSales,bdGwp,bdRef,dlSales,
-        salesVar,gwpVar,talk:talkKnown?talk:null,talkAdj,att:st??null,present,flags,v,
+        salesVar,gwpVar,talk:talkKnown?talk:null,talkEst,talkAdj,att:st??null,present,flags,v,
         rcSales:rcS.rc,rcSalesAuto:rcS.auto,rcGwp:rcG.rc,rcGwpAuto:rcG.auto,skew,
         accts:sfr?sfr.n:0,chargeSum:sfr?sfr.sum:null});
     }
@@ -4331,7 +4354,7 @@ function vrDailyTab(VR,rows){
         <td>${fmtN(r.bdSales)}</td><td>${fmtN(r.bdGwp)}</td>
         <td title="Sale dispositions counted by the dialler itself — a third system's view, informational (no tolerance defined in the spec)">${fmtN(r.dlSales)}</td>
         ${cell(r.salesVar,r.v.sales)}${cell(r.gwpVar,r.v.gwp)}
-        <td>${r.talk!=null?fmtDur(r.talk):'–'}</td>
+        <td>${r.talk!=null?fmtDur(r.talk):(r.talkEst!=null?`<span style="color:var(--amber)" title="ESTIMATE — a period-aggregated ViciDial export allocated evenly across this agent's employed days (spec: allocated or estimated, and flagged as such). Upload the day-level EXPORT_CALL_REPORT for measured talk.">~${fmtDur(r.talkEst)}</span>`:'–')}</td>
         <td class="l">${fl||'–'}</td>
         <td>${vrStatusPill(vrRowStat(r))}</td>
         <td class="l">${rc.length?rc.map(x=>`<code>${x}</code>`).join(' '):((r.v.sales==='material'||r.v.gwp==='material')?'<span class="pill pcrit">unclassified</span>':'–')}</td></tr>`;
@@ -4426,7 +4449,7 @@ window.__vrAudit=i=>{
     <tr><td class="l" style="color:var(--muted)">Inputs</td><td class="l" style="color:var(--muted)">${r.accts} distinct account(s)${r.chargeSum!=null?' · Σ Charge Amount (ex-VAT) R '+fmtNum(r.chargeSum,2):''}</td></tr>
     ${dvRow('DV02','GWP variance',c2.formulaA,c2.formulaB,r.sfGwp,r.bdGwp,r.gwpVar,r.v.gwp,VARIANCE_RULES.gwpTolerance,rcSel('gwp'))}
     <tr class="subtotal"><td class="l" colspan="2"><b><code>DV03</code> Activity variance — flag rather than subtract</b></td></tr>
-    <tr><td class="l">Talk time</td><td>${r.talk!=null?fmtDur(r.talk):'– (dialler coverage missing)'}${r.talkAdj?' · dialled '+fmtDur(r.talkAdj.talk)+' on '+r.talkAdj.d:''}</td></tr>
+    <tr><td class="l">Talk time</td><td>${r.talk!=null?fmtDur(r.talk):(r.talkEst!=null?'~'+fmtDur(r.talkEst)+' (ESTIMATE — allocated evenly from a period-aggregated ViciDial export)':'– (dialler coverage missing)')}${r.talkAdj?' · dialled '+fmtDur(r.talkAdj.talk)+' on '+r.talkAdj.d:''}</td></tr>
     <tr><td class="l">Dialler sales (dispositions)</td><td>${r.dlSales!=null?fmtNum(r.dlSales):'– (dialler coverage missing)'}</td></tr>
     <tr><td class="l">Attendance</td><td class="l">${r.att!=null?esc(String(r.att))+(r.present?' (Present)':''):'– (no register row)'}</td></tr>
     <tr><td class="l">Flags</td><td class="l">${r.flags.length?r.flags.map(f=>`<span class="pill ${f.sev==='error'?'pcrit':f.sev==='warning'?'pwarn':'pmuted'}">${esc(f.f)}</span>`).join(' '):'none'}</td></tr>
@@ -4469,7 +4492,8 @@ function exportVariance(){
   const dv=[['Date','Agent','Emp Code','Campaign','Team Leader','SF Sales','SF GWP','Board Sales','Board GWP','Dialler Sales','Sales Variance','GWP Variance','Talk Time','Flags','Status','Root Cause']];
   rows.slice().sort((a,b)=>a.d.localeCompare(b.d)||a.agent.localeCompare(b.agent)).forEach(r=>dv.push([
     r.d,r.agent,r.code,r.camp,r.tl,r.sfSales,r.sfGwp,r.bdSales,r.bdGwp,r.dlSales,r.salesVar,r.gwpVar,
-    r.talk!=null?dur(r.talk):null,r.flags.map(f=>f.f).join(' | '),vrRowStat(r),[r.rcSales,r.rcGwp].filter(Boolean).join(' ')||'']));
+    r.talk!=null?dur(r.talk):(r.talkEst!=null?dur(r.talkEst):null),
+    r.flags.map(f=>f.f).join(' | '),vrRowStat(r),[r.rcSales,r.rcGwp].filter(Boolean).join(' ')||'']));
   XLSX.utils.book_append_sheet(wb,xlSheet(dv,{12:XF.dur}),'Daily Variance');
   const un=[['Identity in file','Source','Records','GWP at stake','Days']];
   Object.values(VR.unmapped).forEach(u=>un.push([u.key,u.src,u.n,u.gwp||0,[...u.days].sort().join(', ')]));
