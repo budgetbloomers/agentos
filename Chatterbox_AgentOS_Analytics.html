@@ -461,7 +461,7 @@ kbd{background:rgba(148,182,255,.12);border-color:rgba(148,182,255,.20);color:va
   </aside>
   <main class="main">
     <div class="topbar">
-      <button class="btn menu-btn" title="Toggle sidebar" onclick="cbxSideToggle()">☰</button>
+      <button class="btn menu-btn" title="Toggle sidebar" onclick="cbxSideToggle()">❮</button>
       <div>
         <div class="page-title" id="pgTitle"></div>
         <div class="page-sub" id="pgSub"></div>
@@ -2084,11 +2084,14 @@ function renderNav(){
   });
   $('#nav').innerHTML=html;
 }
-/* ☰ does two different jobs by viewport: mobile slides the off-canvas drawer,
-   desktop collapses the sidebar to an icon rail. Presentational only — not state. */
+/* The arrow does two different jobs by viewport: mobile slides the off-canvas drawer,
+   desktop collapses the sidebar to an icon rail. It points where it takes you — ❮ to
+   tuck the sidebar away, ❯ to bring it back. Presentational only — not state. */
 function cbxSideToggle(){
   if(matchMedia('(max-width:860px)').matches) document.getElementById('sidebar').classList.toggle('open');
   else document.body.classList.toggle('side-collapsed');
+  const c=document.body.classList.contains('side-collapsed');
+  document.querySelectorAll('.menu-btn').forEach(b=>b.textContent=c?'❯':'❮');
 }
 function go(id){
   if(id==='vas'){location.href='pulse/index.html';return}

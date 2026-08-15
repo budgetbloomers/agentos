@@ -2746,6 +2746,8 @@ const I={
   eye:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
   target:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>',
   scale:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M8 21h8M12 6l7 2M12 6 5 8"/><path d="M2 13a3 3 0 0 0 6 0L5 8ZM16 15a3 3 0 0 0 6 0l-3-7Z"/></svg>',
+  chevL:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></svg>',
+  chevR:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>',
 };
 
 /* ---------- misc helpers ---------- */
@@ -3443,9 +3445,9 @@ function renderSide(){
     ${NAV.map(g=>`<div class="navgroup"><span class="lab">${g.lab}</span>
       ${g.items.map(([id,label,ic])=>`<button class="navitem ${S.ui.tab===id?'on':''}" data-page="${id}" title="${label}">${ic}<span>${label}</span>${id==='data'?dataBadge():''}</button>`).join('')}
     </div>`).join('')}
-    <div class="foot"><button class="navitem collapse-btn" id="collapseBtn" title="Collapse sidebar">${I.menu}<span>Collapse</span></button></div>`;
+    <div class="foot"><button class="navitem collapse-btn" id="collapseBtn" title="Collapse sidebar">${document.getElementById('app').classList.contains('collapsed')?I.chevR:I.chevL}<span>Collapse</span></button></div>`;
   el.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{ go(b.dataset.page); document.getElementById('app').classList.remove('sideopen'); });
-  $('#collapseBtn').onclick=()=>{ document.getElementById('app').classList.toggle('collapsed'); };
+  $('#collapseBtn').onclick=()=>{ document.getElementById('app').classList.toggle('collapsed'); sideChevrons(); };
 }
 function renderTop(){
   const tls=[...new Set(S.roster.map(a=>a.tl))].sort();
@@ -3491,18 +3493,28 @@ function renderTop(){
     res.querySelectorAll('button').forEach(b=>b.onclick=()=>{ res.style.display='none'; inp.value=''; openDrawer(b.dataset.code); });
   };
   inp.onblur=()=>setTimeout(()=>res.style.display='none',200);
-  /* ☰ is always on: mobile slides the sidebar in, desktop collapses it to the icon
-     rail — the same toggle the sidebar-foot Collapse button drives, surfaced where
+  /* The arrow is always on: mobile slides the sidebar in, desktop collapses it to the
+     icon rail — the same toggle the sidebar-foot Collapse button drives, surfaced where
      it can be seen without scrolling the nav. */
   const burger=$('#burger');
   burger.style.display='inline-flex';
   burger.title='Toggle sidebar';
+  sideChevrons();
   burger.onclick=()=>{ const app=document.getElementById('app');
     if(matchMedia('(max-width:900px)').matches) app.classList.toggle('sideopen');
-    else app.classList.toggle('collapsed'); };
+    else app.classList.toggle('collapsed');
+    sideChevrons(); };
 }
 function go(page){ S.ui.tab=page; save(); renderSide(); renderPage(); }
 function renderAll(){ renderSide(); renderTop(); renderPage(); }
+/* the collapse control is an ARROW that points where it will take you: « to tuck the
+   sidebar into the icon rail, » to bring it back. Both toggles (topbar + sidebar foot)
+   share this so they never disagree. */
+function sideChevrons(){
+  const c=document.getElementById('app').classList.contains('collapsed');
+  const b=$('#burger'); if(b) b.innerHTML=c?I.chevR:I.chevL;
+  const f=$('#collapseBtn'); if(f) f.innerHTML=(c?I.chevR:I.chevL)+'<span>Collapse</span>';
+}
 
 /* global filter helpers */
 function gFilter(f){
