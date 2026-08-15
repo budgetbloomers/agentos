@@ -75,7 +75,7 @@ try{
 }catch(e){ ok('the build records organisational movements at all', false, e.message.split('\n')[0]); }
 if(!moved) moved=await page.evaluate(()=>window.__mtd.state().roster[0].code);
 
-const TABS=['dashboard','mtd','weekly','daily','pivot','attend','agents','leaderboard','coaching','compare','manual','data','adjust','settings'];
+const TABS=['dashboard','mtd','weekly','daily','pivot','attend','variance','agents','leaderboard','coaching','compare','manual','data','adjust','settings'];
 const text={};
 for(const t of TABS){
   stage='tab:'+t;

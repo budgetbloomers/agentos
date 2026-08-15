@@ -23,6 +23,16 @@ const server = http.createServer((req, res) => {
 await new Promise(r => server.listen(8129, '127.0.0.1', r));
 
 const j = (...p) => path.join(...p);
+const REFCSV = fs.readdirSync(path.join(REPO, 'uploads')).filter(n => /^referrals-highlevel-.*\.csv$/.test(n)).sort().pop();
+// Manual Stats (daily board) fixture — the 9th source. Written fresh each run so the
+// trust chip reads "today"; the DD.MM.YYYY in the filename dates the board day.
+const BOARD_FIX = j(REPO, 'nicks_code', 'diagnostics', 'fixtures', 'Manual Stats 13.08.2026.csv');
+fs.mkdirSync(path.dirname(BOARD_FIX), { recursive: true });
+fs.writeFileSync(BOARD_FIX, [
+  'Agent Name,Sale 1,Sale 2,Sale 3,Total Sales,Total GWP,Average GWP,Referrals',
+  'Theo Chetty,99,115,,2,214,107,1',
+  'Enoch Pillay,88,,,1,88,88,0',
+].join('\n'));
 const FILES = [
   j(UP, 'Matrix - Agent List.xlsx'),
   j(UP, 'attendance_2026-08-06_to_2026-08-13.csv'),
@@ -33,6 +43,8 @@ const FILES = [
   j(UP, 'evaluations-full-export-2026-08-13.csv'),
   j(UP, 'SF Open Cases 5 - 13.xls'),
   j(UP, 'SF Closed 5 - 13.xls'),
+  BOARD_FIX,
+  ...(REFCSV ? [j(REPO, 'uploads', REFCSV)] : []),
 ];
 
 let pass = 0, fail = 0; const failures = [];
@@ -61,6 +73,7 @@ const snap = await page.evaluate(() => {
     cancRows: Object.keys(S.cancRows || {}).length,
     evals: Object.keys(S.evals || {}).length,
     opencases: !!S.opencases,
+    refs: S.refs ? { agents: Object.keys(S.refs.by || {}).length, total: S.refs.total || 0 } : null,
   };
 });
 console.log(JSON.stringify(snap, null, 1));
@@ -75,20 +88,27 @@ ok('attendance loaded', has(/^attendance/) && snap.attDays > 0, 'attDays=' + sna
 ok('evaluations loaded', has(/^evals/));
 ok('Open Cases refused as Ops file (ignored, NOT stored)', !snap.opencases, 'S.opencases=' + snap.opencases);
 ok('sales days present from BI', snap.salesDays > 0, 'salesDays=' + snap.salesDays);
+ok('referrals loaded from HighLevel pull (55+ agents, 1500+ referrals)', !!snap.refs && snap.refs.agents >= 55 && snap.refs.total >= 1500, JSON.stringify(snap.refs));
+// MTD referrals column reads the upload (V16 turns from warn to pass)
+await page.evaluate(() => { window.__mtd.setPeriod('2026-08', 'calendar'); go('mtd'); });
+await page.waitForTimeout(1200);
+const mtdTxt = await page.evaluate(() => document.getElementById('view')?.innerText || '');
+ok('MTD page renders with referrals loaded', /REFERRALS/i.test(mtdTxt), mtdTxt.slice(0, 100));
 
 // force the trust bar to rebuild now (it ticks every 10s)
 await page.evaluate(() => { window.__vasTrustToggle(); window.__vasTrustToggle(); });
 await page.waitForTimeout(400);
 const trust = await page.evaluate(() => (document.getElementById('vasTrust') || {}).innerText || '');
 console.log('TRUST BAR: ' + trust.replace(/\n/g, ' · '));
-ok('trust bar counts 7/7 sources', /7\/7 sources/.test(trust), trust);
+ok('Manual Stats (board) loaded', has(/^board/), snap.files.join(' || '));
+ok('trust bar counts 9/9 sources', /9\/9 sources/.test(trust), trust);
 ok('trust bar reads All sources fresh', /All sources fresh/.test(trust), trust);
 
 // open the chips and confirm every one of the seven names is present and fresh
 await page.evaluate(() => window.__vasTrustToggle());
 await page.waitForTimeout(400);
 const chips = await page.evaluate(() => (document.getElementById('vasTrust') || {}).innerText || '');
-for (const name of ['Power BI - Active Cases', 'Call Records', 'ViciDial', 'Attendance', 'QA Evaluations', 'Agent List', 'Cancellations (BI Inactive)'])
+for (const name of ['Power BI - Active Cases', 'Call Records', 'ViciDial', 'Attendance', 'QA Evaluations', 'Agent List', 'Cancellations (BI Inactive)', 'Referrals', 'Manual Stats'])
   ok('chip present: ' + name, chips.includes(name), chips);
 ok('no chip reads "none"', !/· none/.test(chips), chips);
 

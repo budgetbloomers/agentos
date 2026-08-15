@@ -717,11 +717,139 @@ function monthFromFilename(name){
   return null;
 }
 function addDays(k,n){ const d=new Date(k+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+/* The day a Manual Stats sheet describes. The DD.MM sheet name is the record
+   (VARIANCE_RULES.boardSheetRe — one day per sheet); it carries no year, so: the current
+   year, unless that would put the board further in the future than the spec's window —
+   then it is last year's sheet. A sheet not named DD.MM falls back to a full date in the
+   filename; with neither, the file is refused rather than guessed at. */
+function boardDay(sheet,name){
+  const m=(sheet||'').trim().match(VARIANCE_RULES.boardSheetRe);
+  if(m){
+    const dd=+m[1], mm=+m[2];
+    if(mm>=1&&mm<=12&&dd>=1&&dd<=31){
+      const today=dkey(new Date());
+      const mk=y=>y+'-'+String(mm).padStart(2,'0')+'-'+String(dd).padStart(2,'0');
+      let d=mk(+today.slice(0,4));
+      if(d>addDays(today,VARIANCE_RULES.boardYearWindowDays)) d=mk(+today.slice(0,4)-1);
+      return d;
+    }
+  }
+  return dateFromFilename(name);
+}
 function mondayOf(k){ const d=new Date(k+'T00:00:00Z'); const dow=(d.getUTCDay()+6)%7; return addDays(k,-dow); }
 const fmtDay = k => { const d=new Date(k+'T00:00:00Z'); return d.toLocaleDateString('en-ZA',{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'}); };
 const esc = s => String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 /* ================= state ================= */
+/* ================= VARIANCE REPORT rules =================
+   Ported VERBATIM from sales-recon-demo build.py — the single place a recon rule
+   changes (specs/sales-recon-integration-plan.md §2.4, open decisions §4).
+   These are RECONCILIATION definitions and never touch the MTD engine's rules. */
+const RECON_RULES={
+  vicciSaleStatus:['VASNP','VASKP'],           // VAS sale / VAS insurance opt-in status CODES
+  vicciVasCampaign:'3003',                     // the only ViciDial campaign carrying VAS dispositions (asserted, reported if violated)
+  callxSaleDisp:['VAS Sale No Insurance Opt In','VAS Insurance Opt In'],
+  callxIncludeInbound:true,                    // open decision 3 — currently included
+  pbiUnit:'Account Number',                    // distinct accounts per agent…
+  pbiDateCol:'Account Create Date',            // …dated on ACCOUNT create (recon view; the money model stays on Contract Create)
+  dedupeKeys:{vicci:'phone_number_dialed',callx:'Destination'},  // repeat-disposition collapse: same agent+number+day
+  boardSheetRe:/^(\d{1,2})\.(\d{1,2})$/        // Board Stats: ONE day per sheet, named DD.MM
+};
+
+/* ================= VARIANCE REPORT rule book =================
+   Operative subset of specs/vas_variance_report_rules.json — the supplied
+   "VAS Variance Report - Rules, Framework and File Requirements" JSON (schema 1.0).
+   THAT FILE IS THE SOURCE OF TRUTH for this module; this object is what the engine
+   reads. Change both together — diagnostics/verify-variance.mjs fails on drift.
+
+   THE MODULE LIVES IN VAS ANALYTICS BUT IS NOT PART OF THE MTD ENGINE. It implements
+   artefact A of the spec (daily_system_variance): reconciling the same business events
+   as recorded by independent systems — Salesforce (BI exports) against the agent-logged
+   daily board (the Manual Stats upload) against dialler activity — per agent per day.
+   It produces no KPIs; it proves whether the KPIs can be trusted. Both sides of every
+   comparison are computed HERE from the raw stores by the formulas below; the module
+   never reads the MTD model's aggregates as an input and never writes to them.
+
+   Documented conflicts with in-app models (spec: identify → trace → document → apply
+   the most explicit JSON rule — never silently resolve):
+   · DV02 GWP = ROUND(SUM(Charge Amount) × 1.15, 0) — round ONCE after summing the
+     agent-day (spec DV02 + ER05). The money model rounds PER ACCOUNT then sums
+     (grossUpSales, reproduces the hand-built workbook). Both stand: the variance
+     engine computes its own Salesforce-side figure and never touches the money model.
+   · DV01 dates sales on CONTRACT Create Date (spec DV01 + ER04) — the same dating as
+     the money model, and deliberately different from RECON_RULES.pbiDateCol (Account
+     Create Date, the sales-recon demo's choice). Separate counters, never merged.
+   · DV04 Referrals: the spec records NO system-side referral source ("none identified").
+     The app's HighLevel referrals feed exists, but wiring it in would invent a rule the
+     spec does not contain — DV04 stays BLOCKED and emits null, never zero, until the
+     spec names a system source. */
+const VARIANCE_RULES={
+  version:'1.0',
+  vat:1.15,                                  // DV02: Charge Amount is VAT-exclusive; GWP is VAT-inclusive
+  salesTolerance:0,                          // DV01: tolerance 0 (counts are Exact-band)
+  gwpTolerance:1,                            // DV02: absolute 1 — rounding only
+  talkNoSaleSecs:7200,                       // DV03 flag 2: "talk_time > 2 hours AND sales = 0"
+  boardSheetRe:/^(\d{1,2})\.(\d{1,2})$/,     // Manual Stats: one day per sheet, named DD.MM
+  boardYearWindowDays:45,                    // DD.MM has no year: current year, unless that lands
+                                             // this far in the future — then it is last year's sheet
+  /* daily_system_variance.comparisons — formulas verbatim, displayed in the audit view
+     so every number on screen traces Source → Rule → Formula → Result. */
+  comparisons:[
+    {id:'DV01',name:'Sales variance',a:'Salesforce',b:'Agent logged (Manual Stats)',
+     formulaA:'COUNT DISTINCT Account Number from bi_active UNION bi_inactive WHERE Contract Create Date = day, GROUP BY Owner',
+     formulaB:'Manual Stats column AD "Total Sales" (fallback: populated Sale 1..27 cells)',
+     variance:'system_a − system_b',tolerance:0,
+     interpretation:'Positive = Salesforce holds sales the agent did not log. Negative = the agent claimed sales Salesforce has no record of. Negative is the material one.'},
+    {id:'DV02',name:'GWP variance',a:'Salesforce',b:'Agent logged (Manual Stats)',
+     formulaA:'ROUND(SUM(Charge Amount) × 1.15, 0) WHERE Contract Create Date = day',
+     formulaB:'Manual Stats column AE "Total GWP" (fallback: sum of Sale 1..27 cell values)',
+     variance:'system_a − system_b',tolerance:1,
+     interpretation:'Tolerance ±1: rounding only. Round AFTER multiplying.'},
+    {id:'DV03',name:'Activity variance',a:'Sales recorded',b:'Dialler activity',
+     variance:'flag rather than subtract',
+     flags:[
+       {when:'sales > 0 AND talk = 0',sev:'error',meaning:'Sale recorded with no dialler activity — identity break, back-dated capture, or a sale made outside the dialler'},
+       {when:'talk > 2h AND sales = 0',sev:'warning',meaning:'Sustained activity with no conversion'},
+       {when:'talk = 0 AND attendance = Present',sev:'warning',meaning:'Present but not dialling — the exact case that separates HR presence from productive shift'}]},
+    {id:'DV04',name:'Referrals variance',a:'Agent logged (Manual Stats column AG)',b:'System recorded',
+     status:'BLOCKED — no system-side referral source exists in the supplied files. Emit null, never zero: a zero is indistinguishable from a real result.'}
+  ],
+  /* tolerance_framework — declared BEFORE any comparison runs. A tolerance chosen after
+     seeing the result is a rationalisation. */
+  tolerance:[
+    {cls:'Exact',rule:'difference = 0',appliesTo:'counts, shifts, targets, cancellations',action:'PASS'},
+    {cls:'Rounding',rule:'absolute difference ≤ 1 unit',appliesTo:'GWP, currency',action:'PASS, note'},
+    {cls:'Immaterial',rule:'within 1 percentage point',appliesTo:'QA, percentages',action:'PASS, classify'},
+    {cls:'Ratio band',rule:'engine/reference between 0.98 and 1.02',appliesTo:'talk time',action:'PASS'},
+    {cls:'Material',rule:'anything outside the above',appliesTo:'',action:'FAIL — classify and report; do not adjust the rule'}],
+  /* root_cause_taxonomy — every non-zero variance must carry one of these. An
+     unclassified variance is an open defect, not a result. */
+  rootCauses:{
+    RC1:{name:'Snapshot drift',sig:'Small magnitude, differences run in BOTH directions, correlates with export timestamps.',fix:'Align export cut-offs. Never adjust the rule.'},
+    RC2:{name:'Wrong source system',sig:'Systematic one-directional bias, stable ratio away from 1.0 across agents.',fix:'Obtain the correct source. Do not apply a correction factor — it masks the defect.'},
+    RC3:{name:'Identity break',sig:'One agent shows a shortfall while another shows a surplus, or zero in one system with activity in others.',fix:'Correct the mapping and rerun. Fix the roster at source.'},
+    RC4:{name:'Manual override',sig:'Isolated, no pattern, contradicts every available source.',fix:'Confirm intent with the report owner. Document; do not encode as a rule.'},
+    RC5:{name:'Scope mismatch',sig:'Agents present on one side only.',fix:'Agree the scope explicitly and state it in the output header.'},
+    RC6:{name:'Calculation defect',sig:'Reproducible, directional, survives every other explanation. Assign only after RC1–RC5 are excluded.',fix:'Fix the rule and record which side was wrong.'},
+    RC7:{name:'Missing source',sig:'The metric cannot be computed at all.',fix:'Emit null, never zero. Report as blocked.'}},
+  /* validation_checks VR01–VR15 — the in-app subset. VR10 (cached formula values) is
+     satisfied structurally: the export writes computed VALUES, never formulas. VR15
+     (archive sources) is answered by the file registry, which lists every source file
+     and its upload time. */
+  checkTexts:{
+    VR01:'All source files present; missing ones named and their blocked metrics listed',
+    VR02:'All sources captured within the same business day — else every affected variance downgrades to "indeterminate — snapshot skew"',
+    VR03:'Every agent resolves to an Employee Code before any variance is computed',
+    VR04:'Agent sets on both sides are set-differenced and reported before values are compared',
+    VR05:'Every non-zero variance carries a root-cause code',
+    VR06:'Tolerances were declared before the comparison ran',
+    VR07:'No rule was altered to close a variance without a documented root cause',
+    VR08:'Blocked metrics emit null, never zero',
+    VR11:'Sales variance is computed on distinct accounts, not rows',
+    VR12:'Cancellation union filters on Contract CREATE date, not Deactivate date',
+    VR13:'Unmapped view present even when empty',
+    VR15:'Source files archived for the run (file registry)'}
+};
 function freshState(){
   return {
     v:1,
@@ -735,6 +863,7 @@ function freshState(){
     att:{},      // date -> CBnnn -> status
     evals:{},    // date -> CBnnn -> [scores 0-100]
     tracker:{},  // date -> CBnnn -> imported tracker daily row
+    board:{},    // date -> normName(agent) -> {name,sales,gwp,ref,cells,cellGwp} — Manual Stats (agent-logged daily board), rows keyed RAW and resolved at report-build time so a later mapping repairs old days
     orgHist:{},  // CBnnn -> [{d,tl,campaign,tenure,src}] effective-dated org attribution, one entry per CHANGE
     adjust:{},   // periodKey -> CBnnn -> {c,r}
     map:{},      // identityKey -> CBnnn (manual mapping)
@@ -756,7 +885,7 @@ if(!S || S.v!==1) S=freshState();
 /* THE SOURCE REGISTRY - one list of what a data store is. Declared HERE, above
    normalizeState, because that runs at load time: a const declared further down would
    still be in its temporal dead zone and the whole script would die on boot. */
-const DATA_STORES=['sales','calls','callsMeta','att','evals','tracker','cancRows','vici','viciDays'];
+const DATA_STORES=['sales','calls','callsMeta','att','evals','tracker','board','cancRows','vici','viciDays'];
 function normalizeState(){
   S.settings=Object.assign({attOverride:{},onTarget:1,trainingCounts:true},S.settings);
   if(!S.coach) S.coach={};                        // periodKey -> code -> {notes,due,status}
@@ -766,11 +895,16 @@ function normalizeState(){
      does have to be seeded here — hydrate() adopts a cloud blob wholesale, so a store an
      older client never pushed comes back undefined and then gets pushed back out that way. */
   if(!S.orgHist) S.orgHist={};
+  if(S.refs===undefined) S.refs=null;   // referrals snapshot — must survive a hydrate from an older cloud blob
   // orgAt() walks the segments in date order and stops at the first one past the date it was
   // asked about, so an out-of-order list silently answers with the wrong leader rather than
   // failing. recordOrg keeps them sorted; this is the guard for anything that did not.
   for(const c in S.orgHist) if(Array.isArray(S.orgHist[c])) S.orgHist[c].sort((a,b)=>String(a.d).localeCompare(String(b.d)));
   if(!S.adjust) S.adjust={};
+  /* Variance Report root-cause classifications ('day|code|metric' -> RC1..RC7). Like
+     coach/adjust these are human judgements, not uploaded data — they survive "Clear
+     uploaded data" and must be seeded here to survive a hydrate from an older blob. */
+  if(!S.varRC) S.varRC={};
   if(!S.map) S.map={};
   if(!Array.isArray(S.files)) S.files=[];
   if(!Array.isArray(S.roster)) S.roster=[];
@@ -929,6 +1063,17 @@ function detectType(header, sheetName, recs){
   if(has('qa agent','sales agent cb')) return 'evals';
   if(has('date/time closed')) return 'closedIgnored';   // closed-cases export would otherwise overwrite the open-cases snapshot
   if(has('case number','case owner')) return 'opencasesIgnored';   // VAS dropped the Open Cases view - not stored
+  /* Manual Stats — the agent-logged daily board that feeds the Variance Report
+     (spec vas_daily_tracker layout: Agent Name + Sale 1..Sale 27 + Total Sales/GWP +
+     Referrals, one day per sheet named DD.MM). 'Sale 1' appears in no other export, so
+     this cannot collide with the roster/tracker/referrals detects — but it is checked
+     before them because they also key on agent-name columns. */
+  if(has('agent name','sale 1')) return 'board';
+  /* Referrals from the HighLevel pull (tools/fetch-referrals.mjs) — either shape: the
+     row-level per-contact export or the per-agent counts summary. Checked before roster:
+     both carry agent-name columns but neither has Team Leader. */
+  if(has('agent name','referral count')) return 'referrals';
+  if(has('agent_name','referrals')) return 'referralsAgg';
   if(has('team leader','agent name')&&(has('sales force')||has('call x'))) return 'roster';
   if(has('date','team leader','emp code','sales achieved')) return 'trackerDaily';
   return null;
@@ -995,7 +1140,7 @@ async function ingestText(name, text, expected, hash){
   if(!ingested.length){ toast('Could not recognise "'+name+'" — check the file headers'); return false; }
   if(expected){
     const SLOT_TYPES={bi:['bi'],calls:['calls'],attendance:['attendance'],inactive:['cancellations'],vici:['calls (ViciDial)','vici'],
-      evals:['evals'],roster:['roster'],trackerDaily:['tracker','roster']};
+      evals:['evals'],roster:['roster'],trackerDaily:['tracker','roster'],referrals:['referrals'],board:['board']};
     const want=SLOT_TYPES[expected]||[expected];
     if(!ingested.some(r=>want.some(w=>r.type.startsWith(w))))
       toast('Heads up: "'+name+'" is actually '+ingested.map(r=>r.type).join(', ')+' — filed there instead');
@@ -1011,7 +1156,7 @@ async function ingestText(name, text, expected, hash){
    normalizeState, which would have killed the app on the next hydrate against an older
    cloud blob. One list now, used by all four. */
 // file type (first word of the registry type) -> the store it owns
-const STORE_OF={bi:'sales',calls:'calls',attendance:'att',evals:'evals',tracker:'tracker'};   // cancellations key by contract, not day - removeFile handles them
+const STORE_OF={bi:'sales',calls:'calls',attendance:'att',evals:'evals',tracker:'tracker',board:'board'};   // cancellations key by contract, not day - removeFile handles them
 function regFile(name,type,dates,rows,extra){
   const nd=[...dates].sort();
   // same file re-uploaded with a SMALLER date span: days the old version stored but the
@@ -1378,6 +1523,50 @@ const INGEST={
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
     return regFile(name,'tracker daily'+(sheet?' ('+sheet+')':''),dates,recs.length,{skip});
   },
+  /* MANUAL STATS — the agent-logged daily board, the Variance Report's baseline
+     (spec vas_daily_tracker: B Agent Name · C:AC Sale 1..Sale 27 · AD Total Sales ·
+     AE Total GWP · AF Average GWP · AG Referrals). Rules carried from the spec:
+     · ONE DAY per sheet, named DD.MM — a re-upload replaces exactly its own day, so
+       overlapping uploads can never double-count (the attendance merge pattern, but
+       day-replace because the sheet IS the day's complete record).
+     · The DD.MM name carries no year: current year unless that lands the board more
+       than boardYearWindowDays in the future, then it is last year's sheet. A full
+       date in the filename overrides for sheets not named DD.MM.
+     · Stated totals (AD/AE) are the record; populated Sale 1..27 cells are the
+       fallback and the cross-check — a disagreement is counted and reported, never
+       silently reconciled (VR-style: malformed data must not silently change a number).
+     · Rows store by RAW normalised name and resolve through the Agent List at
+       report-build time — an unresolved agent is an identity defect reported in the
+       Unmapped view, never guessed at and never dropped silently. */
+  board(recs,name,sheet){
+    const d=boardDay(sheet,name);
+    if(!d){ toast('"'+name+'"'+(sheet?' sheet "'+sheet+'"':'')+' is Manual Stats but carries no usable day — name the sheet DD.MM (e.g. 13.08) or put the date in the filename.',9000); return null; }
+    // ZA comma-decimal safe, same treatment as the BI Charge Amount
+    const num=v=>{ const s=String(v??'').trim(); if(s==='') return null;
+      const n=parseFloat(s.replace(/\s/g,'').replace(/^(-?\d+),(\d+)$/,'$1.$2').replace(/[^0-9.\-]/g,'')); return isFinite(n)?n:null; };
+    const day={}; let skip=0, dupes=0, mismatch=0;
+    for(const r of recs){
+      const nm=(r['Agent Name']||r['Agent']||'').trim();
+      if(!nm||/^(grand\s+)?total/i.test(nm)){ skip++; continue; }
+      let cells=0, cellGwp=0;
+      for(const h in r){ if(/^sale\s*\d+$/i.test(h)){ const v=num(r[h]); if(v!=null){ cells++; cellGwp+=v; } } }
+      const tSales=num(r['Total Sales']), tGwp=num(r['Total GWP']), tRef=num(r['Referrals']);
+      // a board row with blank totals and no sale cells is a real zero: the agent was on
+      // the board and logged nothing. Absence from the sheet entirely is the different
+      // case (scope) and is reported by the engine's set-difference, not invented here.
+      const sales=tSales!=null?tSales:cells;
+      const gwp=tGwp!=null?tGwp:Math.round(cellGwp);
+      if(tSales!=null&&cells&&tSales!==cells) mismatch++;
+      const key=normName(nm); if(!key){ skip++; continue; }
+      const prev=day[key];
+      if(prev){ dupes++; prev.sales+=sales; prev.gwp+=gwp; prev.ref=(prev.ref||0)+(tRef||0); prev.cells+=cells; prev.cellGwp+=cellGwp; }
+      else day[key]={name:nm,sales,gwp,ref:tRef,cells,cellGwp,ts:tSales,tg:tGwp}; // ts/tg = the STATED totals, kept raw for the audit trail
+    }
+    if(!Object.keys(day).length) return null; // stored nothing -> not a load; fail loudly
+    S.board[d]=day;                           // the sheet is the day's complete record — replace
+    if(mismatch) toast(mismatch+' row(s) in "'+name+'" state a Total Sales that disagrees with the populated Sale cells — the stated total was kept and the disagreement is reported on the Variance page.',9000);
+    return regFile(name,'board'+(sheet?' ('+sheet+')':''),[d],recs.length,{skip,dupes,mismatch});
+  },
   /* VICIDIAL "EXPORT_CALL_REPORT" — the per-CALL export, tab-separated .txt, one row per
      dial. The finer-grained sibling of the Agent Performance Detail below, and it answers
      the question that one cannot: it is dated per call, so a pull covering a week splits
@@ -1639,6 +1828,56 @@ const INGEST={
     grossUpSales();
     return regFile(name,'cancellations',[...dates].sort(),recs.length,{skip,dupes,excl});
   },
+  /* Referrals (HighLevel pull) — a SNAPSHOT of per-agent referral counts, replaced
+     wholesale on every upload. The agent is matched THROUGH THE AGENT LIST (employee code
+     first, then the roster name/alias index); a name matching nobody is counted in an
+     unmatched bucket and reported, never invented onto the roster. Counts are referral
+     BLOCKS (a contact can carry up to five referred people), so totals exceed row counts
+     by design. While a referrals upload is loaded, keyed referral adjustments are ignored
+     — the same one-source doctrine as cancellations. */
+  referrals(recs,name){ return INGEST._refStore(recs,name,r=>({code:String(r['Employee Code']||'').trim(),agent:String(r['Agent Name']||'').trim(),cnt:parseInt(r['Referral Count'],10)||1})) },
+  referralsAgg(recs,name){ return INGEST._refStore(recs,name,r=>({code:String(r['cb']||'').trim(),agent:String(r['agent_name']||r['agent_name_raw']||'').trim(),cnt:parseInt(r['referrals'],10)||0})) },
+  _refStore(recs,name,pick){
+    if(!S.roster.length){
+      // Without the Agent List EVERY name is unmatched — storing that snapshot would show
+      // 0 referrals for the whole floor AND suppress keyed adjustments. Refuse; the sync
+      // watchdog retries once the roster has hydrated.
+      toast('Referrals not stored — the Agent List must load first (it maps every referral). Will retry automatically.');
+      return {type:'referrals (deferred — no roster)',rows:recs.length,dates:[]};
+    }
+    buildIndex();
+    const codes=new Set(S.roster.map(a=>String(a.code||'').toUpperCase().replace(/[^A-Z0-9]/g,'')));
+    /* Tiered name matching, UNIQUE-OR-NOTHING — the HighLevel form captures the agent as
+       free text ("ASHLEIGH", "Thulani Mbonambi", a typo'd surname). After the exact
+       resolveKey pass: token subset, then a single token, then edit-distance-1 tokens —
+       each accepted only when exactly ONE roster agent fits. Ambiguity stays unmatched. */
+    const nrm=s=>String(s||'').toLowerCase().replace(/\s+-\s*.*$|\s*-\s+.*$/,'').replace(/\s+/g,' ').trim();
+    const lev1=(a,b)=>{if(a===b)return true;if(a.length<4||b.length<4||Math.abs(a.length-b.length)>1)return false;
+      let i=0,j=0,e=0;while(i<a.length&&j<b.length){if(a[i]===b[j]){i++;j++;continue}if(++e>1)return false;
+        if(a.length>b.length)i++;else if(b.length>a.length)j++;else{i++;j++}}return e+(a.length-i)+(b.length-j)<=1};
+    const tm=(t,rt)=>{const c=s=>s.replace(/[^a-z0-9]/g,'');return t===rt||lev1(c(t),c(rt))};
+    const rn=[];S.roster.forEach(a=>{const cd=String(a.code||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+      [a.name,a.sf].forEach(nm=>{if(nm)rn.push({toks:nrm(nm).split(' '),code:cd})})});
+    const fuzzy=raw=>{const toks=nrm(raw).split(' ');if(!toks[0])return '';
+      const hits=new Set();
+      for(const r of rn){if(toks.every(t=>r.toks.some(x=>tm(t,x)))||r.toks.every(x=>toks.some(t=>tm(t,x))))hits.add(r.code)}
+      return hits.size===1?[...hits][0]:''};
+    const by={},un={};let noAgent=0,total=0;
+    for(const r of recs){
+      const p=pick(r); if(!p.cnt) continue;
+      total+=p.cnt;
+      let code=p.code.toUpperCase().replace(/[^A-Z0-9]/g,'');
+      if(!codes.has(code)) code=(p.agent&&typeof resolveKey==='function'?resolveKey(p.agent):null)||'';
+      if(!(code&&codes.has(code))&&p.agent) code=fuzzy(p.agent);
+      if(code&&codes.has(code)) by[code]=(by[code]||0)+p.cnt;
+      else if(p.agent) un[p.agent]=(un[p.agent]||0)+p.cnt;
+      else noAgent+=p.cnt;
+    }
+    S.refs={by,un,noAgent,total,f:name};
+    const unN=Object.keys(un).length;
+    toast('Referrals loaded: '+total+' across '+Object.keys(by).length+' agents'+(unN?' · '+unN+' name(s) match no one on the Agent List':'')+(noAgent?' · '+noAgent+' with no agent captured':''));
+    return regFile(name,'referrals',[],recs.length,{total,matched:Object.keys(by).length,unmatched:unN,noAgent});
+  },
   opencasesIgnored(recs,name){
     toast('"'+name+'" is an open-cases export - the VAS dashboard does not use it. Upload it in the Ops dashboard.');
     return {type:'ignored (open cases - Ops file)',rows:recs.length,dates:[]};
@@ -1694,6 +1933,7 @@ function removeFile(idx){
   // cancellations key by contract, so drop exactly the ones this file contributed
   if(f.type.startsWith('cancellations')&&S.cancRows) for(const k in S.cancRows) if(S.cancRows[k].f===f.name) delete S.cancRows[k];
   if(f.type==='open cases') S.opencases=null;
+  if(f.type==='referrals'&&S.refs&&S.refs.f===f.name) S.refs=null;
   S.files.splice(idx,1);
   grossUpSales();   // sales are gross of cancellation - dropping either file re-derives them
   save(); rebuild(); render();
@@ -2298,10 +2538,15 @@ function buildModel(range, periodKey){
   const adj=S.adjust[periodKey]||{};
   // Cancellations now arrive in the BI Inactive upload. Where the file covers a day in
   // this period, the hand-keyed cancellation top-up is IGNORED rather than added - the
-  // same cancellation must not be counted once from the file and again by hand. Referrals
-  // are untouched: no upload carries them, so the Adjustments tab is still their source.
+  // same cancellation must not be counted once from the file and again by hand.
+  // Referrals follow the same doctrine since the HighLevel pull landed (2026-08-14):
+  // with a referrals upload loaded, per-agent counts come from the FILE (matched through
+  // the Agent List at ingest) and keyed referral adjustments are ignored — one source,
+  // never both. With no upload, the Adjustments tab remains the referral source.
   const cancFromFile=Object.keys(S.cancRows||{}).length>0;
   const adjC=code=>cancFromFile?0:((adj[code]||{}).c||0);
+  const refsFromFile=!!(S.refs&&S.refs.by);
+  const refOf=code=>refsFromFile?(S.refs.by[code]||0):((adj[code]||{}).r||0);
 
   function agg(rows,code){
     const o={emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,days:0,prov:0,calls:0,ans:0,actDial:0,empDial:0};
@@ -2309,7 +2554,10 @@ function buildModel(range, periodKey){
       o.talk+=f.talk;o.opt+=f.opt;o.ref+=f.ref;o.canc+=f.canc;o.days++; o.calls+=(f.calls||0); o.ans+=(f.ans||0);
       if(f.dCov){o.actDial+=f.act; o.empDial+=f.emp;} // shifts the dialler actually observed
       if(f.provisional)o.prov++; }
-    if(code&&adj[code]){ o.canc+=adjC(code); o.ref+=adj[code].r||0; }
+    // referrals: the upload (or adjustment) is the per-agent TOTAL — it replaces, never
+    // stacks on, whatever the tracker daily rows carried for the same agent
+    if(code&&refsFromFile){ o.ref=refOf(code); }
+    if(code&&adj[code]){ o.canc+=adjC(code); if(!refsFromFile) o.ref+=adj[code].r||0; }
     o.att=o.emp?o.act/o.emp:null; o.pctT=o.target?o.sales/o.target:null;
     // SPD is =IFERROR(Sales/Actual Shifts,0) — zero, not blank, when no shift was worked
     o.spd=o.act?o.sales/o.act:0;
@@ -2401,7 +2649,8 @@ function buildModel(range, periodKey){
         const rows=campRows.filter(f=>f.tl===tl);
         const codes=[...new Set(rows.map(f=>f.code))];
         const o=agg(rows,null);
-        for(const c of codes) if(primaryCamp[c]===camp&&adj[c]){ o.canc+=adjC(c); o.ref+=adj[c].r||0; }
+        if(refsFromFile){ o.ref=0; for(const c of codes) if(primaryCamp[c]===camp) o.ref+=refOf(c); }
+        for(const c of codes) if(primaryCamp[c]===camp&&adj[c]){ o.canc+=adjC(c); if(!refsFromFile) o.ref+=adj[c].r||0; }
         o.cancPct=o.sales?o.canc/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null;
         o.hc=codes.length;
         o.onT=codes.filter(c=>mtdCC[camp][c]&&mtdCC[camp][c].pctT!=null&&mtdCC[camp][c].pctT>=S.settings.onTarget).length;
@@ -2409,7 +2658,8 @@ function buildModel(range, periodKey){
       }
       const codes=[...new Set(campRows.map(f=>f.code))];
       const o=agg(campRows,null);
-      for(const c of codes) if(primaryCamp[c]===camp&&adj[c]){ o.canc+=adjC(c); o.ref+=adj[c].r||0; }
+      if(refsFromFile){ o.ref=0; for(const c of codes) if(primaryCamp[c]===camp) o.ref+=refOf(c); }
+      for(const c of codes) if(primaryCamp[c]===camp&&adj[c]){ o.canc+=adjC(c); if(!refsFromFile) o.ref+=adj[c].r||0; }
       o.cancPct=o.sales?o.canc/o.sales:null; o.refPct=o.sales?o.ref/o.sales:null;
       o.hc=codes.length;
       o.onT=codes.filter(c=>mtdCC[camp][c]&&mtdCC[camp][c].pctT!=null&&mtdCC[camp][c].pctT>=S.settings.onTarget).length;
@@ -2418,7 +2668,8 @@ function buildModel(range, periodKey){
   }
   // headline totals stay VAS — tracker-unit sales are a different product with no GWP
   const grand=agg(facts.filter(f=>f.campaign!=='VT'),null);
-  for(const c in adj){ grand.canc+=adjC(c); grand.ref+=adj[c].r||0; }
+  if(refsFromFile){ grand.ref=0; const vasCodes=new Set(facts.filter(f=>f.campaign!=='VT').map(f=>f.code)); for(const c of vasCodes) grand.ref+=refOf(c); }
+  for(const c in adj){ grand.canc+=adjC(c); if(!refsFromFile) grand.ref+=adj[c].r||0; }
   grand.cancPct=grand.sales?grand.canc/grand.sales:null; grand.refPct=grand.sales?grand.ref/grand.sales:null;
 
   /* QA PERIOD AVERAGE — the mean of the AGENT averages, over agents on this roster.
@@ -2493,6 +2744,7 @@ const I={
   x:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>',
   eye:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
   target:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>',
+  scale:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M8 21h8M12 6l7 2M12 6 5 8"/><path d="M2 13a3 3 0 0 0 6 0L5 8ZM16 15a3 3 0 0 0 6 0l-3-7Z"/></svg>',
 };
 
 /* ---------- misc helpers ---------- */
@@ -2879,6 +3131,230 @@ function narrativeFor(code){
   return bits.join('; ')+'.'+focus;
 }
 
+/* ================= VARIANCE REPORT engine =================
+   Artefact A of specs/vas_variance_report_rules.json — the per-agent, per-day
+   reconciliation of Salesforce (BI Active ∪ Inactive) against the agent-logged board
+   (Manual Stats) against dialler activity. IN VAS Analytics, NOT part of the MTD engine:
+   both sides of every comparison are computed here from the raw stores, by the
+   VARIANCE_RULES formulas alone. Calculation layer only — no HTML in this section.
+
+   Pipeline (spec): resolve identity → filter period → compute per system → variance →
+   tolerance verdict → root-cause classification → aggregate. Identity resolves BEFORE
+   any variance is computed; an unresolved record lands in `unmapped` and is excluded
+   from every comparison, because an identity failure manufactures a false variance on
+   BOTH sides (spec identity_layer).
+
+   Snapshot discipline (VR02): the source files carry no export timestamps, so the
+   in-app assertion is on COVERAGE — when the compared sources' last covered days differ
+   inside the period, the check fails and the days at the ragged edge are marked
+   "indeterminate — snapshot skew" (auto RC1) rather than reported as real variances.
+   That is the exact mechanism the spec observed: BI exported 05 Aug vs board built
+   04 Aug accounted for nearly every residual difference. */
+function buildVariance(range){
+  const VR={range,rows:[],days:[],unmapped:{},aOnly:new Set(),bOnly:new Set(),
+    summary:{exact:0,rounding:0,material:0,blocked:0,indeterminate:0},
+    rcCounts:{RC1:0,RC2:0,RC3:0,RC4:0,RC5:0,RC6:0,RC7:0},checks:[],header:null,
+    blocked:['Referrals (DV04) — no system-side referral source in the supplied files; agent-logged referrals are shown for information only and the variance is null, never zero']};
+  if(!range) return VR;
+  if(!IDX) buildIndex();
+  const between=d=>d>=range.from&&d<=range.to;
+  const unmap=(src,key,d,n,gwp)=>{ const k=src+'|'+key;
+    const u=VR.unmapped[k]=VR.unmapped[k]||{src,key,n:0,gwp:0,days:new Set()};
+    u.n+=n||0; u.gwp+=gwp||0; if(d)u.days.add(d); };
+
+  /* ---- source coverage inside the period ---- */
+  const biDays=Object.keys(S.sales).filter(between).sort();
+  const bdDays=Object.keys(S.board).filter(between).sort();
+  const callDaysAll=Object.keys(S.calls).filter(between);
+  const attDays=Object.keys(S.att).filter(between);
+  const lastBi=biDays[biDays.length-1]||null, lastBd=bdDays[bdDays.length-1]||null;
+  // the ragged edge: when the two compared systems' coverage ends on different days, the
+  // later-pulled source saw events the earlier one had not yet captured. Days past the
+  // earlier end are one-sided anyway (blocked); the day AT the earlier end is jointly
+  // covered but snapshot-skewed — exactly the observed case (BI dated 05 Aug vs board
+  // built 04 Aug accounted for nearly every residual). Those variances are indeterminate.
+  const skewEdge=(lastBi&&lastBd&&lastBi!==lastBd)?(lastBi<lastBd?lastBi:lastBd):null;
+  const skewDay=d=>skewEdge!=null&&d>=skewEdge;
+
+  /* ---- SALESFORCE side, per day per agent (DV01/DV02 system_a) ----
+     Accounts = the day's STILL-ACTIVE accounts (S.sales[d][owner].a, per-account ex-VAT
+     charge sums, dated on Contract Create Date at ingest) UNION the accounts the
+     Inactive export says cancelled but were CREATED that day (S.cancRows, keyed on
+     contract, r.d = Contract CREATE date — VR12). Same union the money model performs;
+     the GWP formula deliberately differs: DV02 rounds ONCE after summing the agent-day,
+     where the money model rounds per account (documented conflict, VARIANCE_RULES). */
+  const backFill={};                       // d -> ownerKey -> account -> ex-VAT charge
+  for(const k in (S.cancRows||{})){ const r=S.cancRows[k];
+    if(!r||!r.a||!between(r.d)) continue;
+    const o=((backFill[r.d]=backFill[r.d]||{})[normName(r.owner)]=backFill[r.d][normName(r.owner)]||{});
+    o[r.a]=(o[r.a]||0)+(r.x||0); }
+  const sf={};                             // d -> code -> {n,gwp,accts}
+  const sfNoDetail=[];                     // days stored by an older build, no account map
+  for(const d of biDays){
+    const day=S.sales[d]||{};
+    if(!Object.values(day).some(r=>r&&r.a)){ sfNoDetail.push(d); continue; }
+    const owners={};                       // ownerKey -> accounts
+    for(const ow in day){ if(day[ow]&&day[ow].a) owners[ow]=Object.assign({},day[ow].a); }
+    const b=backFill[d]||{};
+    for(const ow in b){ owners[ow]=owners[ow]||{}; for(const a in b[ow]) owners[ow][a]=(owners[ow][a]||0)+b[ow][a]; }
+    const byCode=sf[d]={};
+    for(const ow in owners){
+      const code=resolveKey(ow);
+      const accts=owners[ow];
+      let sum=0,n=0; for(const a in accts){ n++; sum+=accts[a]; }
+      if(!code){ unmap('Salesforce (BI)',ow,d,n,Math.round(sum*VARIANCE_RULES.vat)); continue; }
+      const rec=byCode[code]=byCode[code]||{n:0,sum:0};
+      rec.n+=n; rec.sum+=sum;              // an owner alias resolving to the same code merges
+    }
+    for(const c in byCode){ byCode[c].gwp=Math.round(byCode[c].sum*VARIANCE_RULES.vat); } // DV02: round AFTER multiplying, once per agent-day
+  }
+
+  /* ---- BOARD side (DV01/DV02 system_b, DV04 system_a) ---- */
+  const bd={};                             // d -> code -> {sales,gwp,ref,...}
+  for(const d of bdDays){
+    const byCode=bd[d]={};
+    for(const raw in S.board[d]){
+      const r=S.board[d][raw];
+      const code=resolveKey(r.name)||resolveKey(raw);
+      if(!code){ unmap('Manual Stats',r.name||raw,d,1,r.gwp||0); continue; }
+      const rec=byCode[code];
+      if(rec){ rec.sales+=r.sales; rec.gwp+=r.gwp; rec.ref=(rec.ref??null)==null?r.ref:(rec.ref+(r.ref||0)); rec.cells+=r.cells; }
+      else byCode[code]={sales:r.sales,gwp:r.gwp,ref:r.ref??null,cells:r.cells,ts:r.ts,tg:r.tg,name:r.name};
+    }
+  }
+
+  /* ---- dialler + attendance, per day per agent (DV03) ---- */
+  const dayHasCallX=d=>{ const bk=S.calls[d]; if(!bk) return false; for(const k in bk) if(!bk[k].v) return true; return false; };
+  const dayHasViciDay=d=>{ if(S.viciDays&&S.viciDays[d]) return true; const bk=S.calls[d]; if(!bk) return false; for(const k in bk) if(bk[k].v) return true; return false; };
+
+  /* ---- rows: one per agent per day, for every day either compared system covers ---- */
+  const days=[...new Set([...Object.keys(sf),...Object.keys(bd)])].sort();
+  for(const d of days){
+    const sfDay=sf[d]||null, bdDay=bd[d]||null;
+    const sfCov=!!sfDay, bdCov=!!bdDay;
+    const skew=skewDay(d);
+    VR.days.push({d,bi:sfCov,board:bdCov,calls:!!S.calls[d],att:!!S.att[d],skew});
+    // the day's dialler book, resolved once (identity BEFORE variance)
+    const talkMap={}; const bk=S.calls[d];
+    if(bk) for(const k in bk){ const c=resolveKey(k); if(c) talkMap[c]=(talkMap[c]||0)+(bk[k].talk||0); }
+    // DV03 row scope: agents on either compared system, plus agents the register marks
+    // present or the dialler shows active that day (the "present but not dialling" and
+    // "activity, no conversion" flags need them even with zero sales on both sides)
+    const codes=new Set([...(sfDay?Object.keys(sfDay):[]),...(bdDay?Object.keys(bdDay):[])]);
+    if(S.att[d]) for(const c in S.att[d]){ if(attWeight(S.att[d][c])>=1&&IDX.byCode[c]) codes.add(c); }
+    for(const c in talkMap) if(talkMap[c]>0&&IDX.byCode[c]) codes.add(c);
+    for(const code of codes){
+      const a=IDX.byCode[code]||{};
+      const org=orgAt(code,d);                       // history, never the live snapshot
+      const camp=campOf((org&&org.campaign)||a.campaign);
+      const tl=(org&&org.tl)||a.tl||'';
+      const m={name:a.sf||a.name||code};
+      const sfr=sfDay?sfDay[code]:null, bdr=bdDay?bdDay[code]:null;
+      // a covered day where the agent is absent from that system is a TRUE ZERO on that
+      // side (the system holds no record) — but it is also a one-side-only agent, which
+      // VR04 requires reported before values are compared
+      const sfSales=sfCov?(sfr?sfr.n:0):null;
+      const sfGwp  =sfCov?(sfr?sfr.gwp:0):null;
+      const bdSales=bdCov?(bdr?bdr.sales:0):null;
+      const bdGwp  =bdCov?(bdr?bdr.gwp:0):null;
+      const bdRef  =bdr?(bdr.ref??null):null;
+      if(sfCov&&bdCov){ if(sfr&&!bdr) VR.aOnly.add(code); if(bdr&&!sfr) VR.bOnly.add(code); }
+      const salesVar=(sfSales!=null&&bdSales!=null)?sfSales-bdSales:null;   // DV01: system_a − system_b
+      const gwpVar  =(sfGwp!=null&&bdGwp!=null)?sfGwp-bdGwp:null;           // DV02: system_a − system_b
+      // DV03 — talk is only KNOWN when the day's dialler source can actually answer for
+      // this agent: CallX covers Courtesy/Nesting; Cuddle needs day-level ViciDial rows
+      // (the period-aggregated export cannot be split per day — spec grain warning)
+      let talk=(code in talkMap)?talkMap[code]:null;
+      const talkKnown=talk!=null||(camp==='Cuddle'?dayHasViciDay(d):dayHasCallX(d));
+      if(talk==null&&talkKnown) talk=0;
+      const st=(S.att[d]||{})[code];
+      const present=st!=null&&attWeight(st)>=1;
+      const flags=[];
+      if(talkKnown){
+        if((sfSales||0)>0&&talk===0) flags.push({sev:'error',f:'Sale recorded, no dialler activity',dv:'DV03'});
+        if(talk>VARIANCE_RULES.talkNoSaleSecs&&sfSales===0) flags.push({sev:'warning',f:'Talk > 2h, no sales',dv:'DV03'});
+        if(talk===0&&present) flags.push({sev:'warning',f:'Present but not dialling',dv:'DV03'});
+      }else if((sfSales||0)>0||present){ flags.push({sev:'info',f:'Dialler coverage missing — activity checks skipped',dv:'DV03'}); }
+      if(bdr&&bdr.ts!=null&&bdr.cells>0&&bdr.ts!==bdr.cells)
+        flags.push({sev:'warning',f:'Board states '+bdr.ts+' sales but '+bdr.cells+' Sale cells are populated',dv:'DV01'});
+      // tolerance verdicts — bands declared in VARIANCE_RULES.tolerance, applied blind
+      const v={};
+      v.sales=salesVar==null?'blocked':(skew&&salesVar!==0)?'indeterminate':(salesVar===0?'exact':'material');
+      v.gwp  =gwpVar==null?'blocked':(skew&&Math.abs(gwpVar)>VARIANCE_RULES.gwpTolerance)?'indeterminate'
+              :(gwpVar===0?'exact':(Math.abs(gwpVar)<=VARIANCE_RULES.gwpTolerance?'rounding':'material'));
+      // root cause: a saved human classification wins; the engine only SUGGESTS
+      const rcOf=metric=>{
+        const saved=S.varRC[d+'|'+code+'|'+metric]; if(saved) return {rc:saved,auto:false};
+        if(v[metric]==='blocked') return {rc:'RC7',auto:true};
+        if(v[metric]==='indeterminate') return {rc:'RC1',auto:true};
+        if(v[metric]==='material'){
+          if(sfCov&&bdCov&&((sfr&&!bdr)||(bdr&&!sfr))) return {rc:'RC5',auto:true};
+          const a=metric==='sales'?sfSales:sfGwp, b=metric==='sales'?bdSales:bdGwp;
+          if(((a===0&&b>0)||(b===0&&a>0))&&(talk||0)>0) return {rc:'RC3',auto:true};
+          return {rc:null,auto:true};                 // unclassified — an open defect, not a result
+        }
+        return {rc:null,auto:true};
+      };
+      const rcS=rcOf('sales'), rcG=rcOf('gwp');
+      for(const [vv,rc] of [[v.sales,rcS],[v.gwp,rcG]]){
+        if(vv==='exact')VR.summary.exact++; else if(vv==='rounding')VR.summary.rounding++;
+        else if(vv==='material')VR.summary.material++; else if(vv==='blocked')VR.summary.blocked++;
+        else if(vv==='indeterminate')VR.summary.indeterminate++;
+        if(vv!=='exact'&&vv!=='rounding'&&rc.rc)VR.rcCounts[rc.rc]++;
+      }
+      VR.rows.push({d,code,agent:m.name,camp,tl,sfSales,sfGwp,bdSales,bdGwp,bdRef,
+        salesVar,gwpVar,talk:talkKnown?talk:null,att:st??null,present,flags,v,
+        rcSales:rcS.rc,rcSalesAuto:rcS.auto,rcGwp:rcG.rc,rcGwpAuto:rcG.auto,skew,
+        accts:sfr?sfr.n:0,chargeSum:sfr?sfr.sum:null});
+    }
+  }
+
+  /* ---- validation checks (spec validation_checks, in-app subset) ---- */
+  const T=VARIANCE_RULES.checkTexts;
+  const put=(id,ok,sev,msg)=>VR.checks.push({id,ok,sev,msg:msg||T[id]});
+  const missing=[];
+  if(!biDays.length) missing.push('Power BI Active/Inactive — blocks Salesforce-side Sales (DV01) and GWP (DV02)');
+  if(!bdDays.length) missing.push('Manual Stats — blocks agent-logged Sales/GWP (DV01/DV02) and Referrals (DV04)');
+  if(!callDaysAll.length) missing.push('Call records / ViciDial — blocks Activity variance (DV03)');
+  if(!attDays.length) missing.push('Attendance — blocks the Present-but-not-dialling flag (DV03)');
+  put('VR01',!missing.length,'error',missing.length?('Missing sources: '+missing.join(' · ')):'All compared sources present in this period');
+  const ends=[['BI',lastBi],['Manual Stats',lastBd],['Calls',callDaysAll.sort()[callDaysAll.length-1]||null],['Attendance',attDays.sort()[attDays.length-1]||null]].filter(x=>x[1]);
+  const skewed=lastBi&&lastBd&&lastBi!==lastBd;
+  put('VR02',!skewed,'error',skewed?('Source cut-offs differ — '+ends.map(e=>e[0]+' → '+e[1]).join(' · ')+'. Variances on days from '+(lastBi<lastBd?lastBi:lastBd)+' onward are reported as indeterminate — snapshot skew (RC1), not as real differences.')
+    :('Compared sources end together'+(ends.length?(' ('+ends.map(e=>e[0]+' → '+e[1]).join(' · ')+')'):'')));
+  const unCount=Object.values(VR.unmapped).reduce((s,u)=>s+u.n,0);
+  put('VR03',!Object.keys(VR.unmapped).length,'error',Object.keys(VR.unmapped).length?
+    (Object.keys(VR.unmapped).length+' identity(ies) failed to resolve ('+unCount+' record(s)) — excluded from every comparison and listed under Unmapped. Map them in the Upload Station or upload a fresh Agent List.')
+    :'Every record resolved to an Employee Code before comparison');
+  put('VR04',true,'info','Set-difference reported before values compared: '+VR.aOnly.size+' agent(s) on Salesforce only, '+VR.bOnly.size+' on Manual Stats only (within jointly-covered days)');
+  const unclassified=VR.rows.reduce((s,r)=>s+((r.v.sales==='material'&&!r.rcSales)?1:0)+((r.v.gwp==='material'&&!r.rcGwp)?1:0),0);
+  put('VR05',!unclassified,'error',unclassified?(unclassified+' material variance(s) carry no root-cause code — an unclassified variance is an open defect, not a result. Classify them from the row audit.')
+    :'Every material variance carries a root-cause code');
+  put('VR06',true,'info','Tolerances declared in VARIANCE_RULES before any comparison ran (sales ±0 · GWP ±1 · talk ratio 0.98–1.02)');
+  put('VR07',true,'info','Formulas are fixed in VARIANCE_RULES v'+VARIANCE_RULES.version+'; no rule is tuned to close a variance (spec anti-pattern)');
+  put('VR08',true,'info','Blocked metrics emit null, never zero — a missing side shows “–”, and Referrals (DV04) has no system source');
+  put('VR11',true,'info','Sales counted as DISTINCT accounts per agent-day, never charge rows');
+  put('VR12',true,'info','Cancelled-account union filters on Contract CREATE date (the Inactive export header is a legacy caption)');
+  put('VR13',true,'info','Unmapped view exists even when empty — an empty result is visibly a result');
+  if(sfNoDetail.length) put('VR01b',false,'warning',sfNoDetail.length+' BI day(s) predate account-level storage ('+sfNoDetail.join(', ')+') — re-upload the BI export covering them to compare those days');
+
+  /* ---- output header (spec output_header_template) ---- */
+  const fReg=t=>S.files.filter(f=>f.type.split(' ')[0]===t).map(f=>f.name+' (uploaded '+f.at+')');
+  VR.header={report_type:'daily_system_variance',
+    reporting_period:{start:range.from,end:range.to,dialing_days:attDays.length},
+    build_timestamp:new Date().toISOString().slice(0,16).replace('T',' '),
+    source_export_timestamps:{bi:fReg('bi'),bi_inactive:fReg('cancellations'),manual_stats:fReg('board'),calls:fReg('calls'),attendance:fReg('attendance')},
+    snapshot_skew_detected:!!skewed,
+    agents_compared:[...new Set(VR.rows.map(r=>r.code))].length,
+    agents_source_a_only:[...VR.aOnly],agents_source_b_only:[...VR.bOnly],
+    metrics_blocked:VR.blocked.slice(),
+    variance_summary:{exact:VR.summary.exact,within_tolerance:VR.summary.rounding,material:VR.summary.material},
+    root_cause_counts:VR.rcCounts,
+    unmapped_record_count:unCount,
+    checks_failed:VR.checks.filter(c=>!c.ok).map(c=>c.id)};
+  return VR;
+}
+
 /* ================= shell: sidebar + topbar ================= */
 const NAV=[
   {lab:'Analytics',items:[
@@ -2888,6 +3364,7 @@ const NAV=[
     ['daily','Daily Reports',I.day],
     ['pivot','Sales Heatmap',I.grid],
     ['attend','Workforce',I.users],
+    ['variance','Variance Report',I.scale],
   ]},
   {lab:'People',items:[
     ['agents','Agent Performance',I.users],
@@ -3708,9 +4185,277 @@ PAGES.cases=()=>{
 };
 
 /* ---------- data / adjustments / settings ---------- */
+/* ---------- Variance Report (VAS Analytics → Variance) ----------
+   Presentation ONLY — every number comes from buildVariance(); nothing is computed in
+   this page. Filters (period from the command bar, campaign/team, variances-only)
+   re-run the same engine over the same stores, so KPI cards, tables and the export can
+   never disagree. */
+const VSTAT={exact:['pgood','Exact'],rounding:['pgood','±1'],material:['pcrit','MATERIAL'],
+  blocked:['pmuted','blocked'],indeterminate:['pwarn','skew']};
+function vrStatusPill(v){ const s=VSTAT[v]||['pmuted',v]; return `<span class="pill ${s[0]}">${s[1]}</span>`; }
+function vrRowStat(r){ // the worse of the two metric verdicts names the row
+  const rank={material:4,indeterminate:3,blocked:2,rounding:1,exact:0};
+  return rank[r.v.sales]>=rank[r.v.gwp]?r.v.sales:r.v.gwp;
+}
+function vrFilterRows(VR){
+  let rows=VR.rows.filter(r=>(S.ui.camp?r.camp===S.ui.camp:r.camp!=='VT')&&(!S.ui.team||r.tl===S.ui.team));
+  if(S.ui.varOnly) rows=rows.filter(r=>r.v.sales!=='exact'||r.v.gwp!=='exact'||r.flags.some(f=>f.sev!=='info'));
+  return rows;
+}
+function vrSummarize(rows){
+  const s={exact:0,rounding:0,material:0,blocked:0,indeterminate:0,flags:0,agents:new Set()};
+  for(const r of rows){ s.agents.add(r.code); s.flags+=r.flags.filter(f=>f.sev!=='info').length;
+    for(const v of [r.v.sales,r.v.gwp]) s[v]=(s[v]||0)+1; }
+  return s;
+}
+PAGES.variance=()=>{
+  const VR=buildVariance(periodRange());
+  window.__vr=VR;                                   // audit drawer + export read the SAME build
+  const anySrc=Object.keys(S.board).length||Object.keys(S.sales).length;
+  if(!VR.range||!anySrc) return `<div class="card"><div class="empty"><div class="big">Nothing to reconcile yet</div>
+    The Variance Report compares Salesforce (BI exports) against the agent-logged board, per agent per day.
+    Upload <b>Manual Stats</b> (the daily board, one sheet per day named DD.MM) and the BI exports in
+    <a class="linky" onclick="go('data')">Upload Station</a>.</div></div>`;
+  const sub=['summary','daily','unmapped','rules'].includes(S.ui.varSub)?S.ui.varSub:'summary';
+  const rows=vrFilterRows(VR);
+  const sum=vrSummarize(rows);
+  const H=VR.header;
+  const kpi=(lab,val,cls,note)=>`<div class="kpi2 sm"><div class="k2head"><span class="lab2">${lab}</span></div>
+    <div class="val num" ${cls?`style="color:${cls}"`:''}>${val}</div>${note?`<div class="cmp">${note}</div>`:''}</div>`;
+  const kpis=`<div class="grid kpis" style="margin-bottom:14px">
+    ${kpi('Agents compared',sum.agents.size,null,H.reporting_period.start+' → '+H.reporting_period.end)}
+    ${kpi('Exact',sum.exact,'var(--good)','difference = 0')}
+    ${kpi('Within tolerance',sum.rounding,'var(--good)','GWP ±1 — rounding only')}
+    ${kpi('Material',sum.material,sum.material?'var(--crit)':'var(--good)','outside tolerance — classify, never tune')}
+    ${kpi('Indeterminate',sum.indeterminate,sum.indeterminate?'var(--amber)':null,'snapshot skew (RC1)')}
+    ${kpi('Unmapped',Object.keys(VR.unmapped).length,Object.keys(VR.unmapped).length?'var(--crit)':'var(--good)','identity defects — never counted')}</div>`;
+  const chips=`<div class="chiprow" style="margin-bottom:14px">
+    ${[['summary','Summary'],['daily','Daily Variance'],['unmapped','Unmapped'],['rules','Rules & Audit']]
+      .map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.varSub='${t}';save();renderPage()">${l}${t==='unmapped'&&Object.keys(VR.unmapped).length?` <span class="cnt">${Object.keys(VR.unmapped).length}</span>`:''}</button>`).join('')}
+    <span style="flex:1"></span>
+    <label class="chip ${S.ui.varOnly?'on':''}" style="cursor:pointer" onclick="S.ui.varOnly=!S.ui.varOnly;save();renderPage()">Variances only</label></div>`;
+  let body='';
+  if(sub==='summary') body=vrSummaryTab(VR);
+  else if(sub==='daily') body=vrDailyTab(VR,rows);
+  else if(sub==='unmapped') body=vrUnmappedTab(VR);
+  else body=vrRulesTab(VR);
+  return `<div class="page-head"><h2>Variance Report</h2>
+    <div class="sub">Salesforce vs agent-logged board vs dialler, per agent per day — spec v${VARIANCE_RULES.version}
+      (specs/vas_variance_report_rules.json). This report produces no KPIs; it proves whether the KPIs can be trusted.</div>
+    <div class="spacer"></div><button class="btn small" onclick="exportVariance()">${I.download}<span>Export workbook</span></button></div>
+  ${kpis}${chips}${body}`;
+};
+function vrSummaryTab(VR){
+  const H=VR.header;
+  const src=Object.entries(H.source_export_timestamps).map(([k,v])=>
+    `<tr><td class="l">${esc(k)}</td><td class="l">${v.length?v.map(esc).join('<br>'):'<span class="pill pmuted">not uploaded</span>'}</td></tr>`).join('');
+  const rcRows=Object.entries(VR.rcCounts).filter(([,n])=>n).map(([rc,n])=>
+    `<tr><td class="l"><code>${rc}</code> ${esc(VARIANCE_RULES.rootCauses[rc].name)}</td><td>${n}</td></tr>`).join('');
+  const chk=VR.checks.map(v=>`<tr><td class="l"><code>${v.id}</code></td>
+    <td class="l"><span class="pill ${v.ok?'pgood':(v.sev==='error'?'pcrit':'pwarn')}">${v.ok?'pass':(v.sev==='error'?'FAIL':'note')}</span></td>
+    <td class="l">${esc(v.msg)}</td></tr>`).join('');
+  const setDiff=(H.agents_source_a_only.length||H.agents_source_b_only.length)?
+    `<p class="note" style="margin:10px 0 0"><b>Scope (VR04):</b> on jointly-covered days,
+      ${H.agents_source_a_only.length} agent(s) appear on Salesforce only${H.agents_source_a_only.length?' ('+H.agents_source_a_only.map(esc).join(', ')+')':''} and
+      ${H.agents_source_b_only.length} on Manual Stats only${H.agents_source_b_only.length?' ('+H.agents_source_b_only.map(esc).join(', ')+')':''} —
+      reported before values are compared, so a scope gap is never read as a performance gap.</p>`:'';
+  return `<div class="grid cols2">
+    <div class="card"><div class="cardhead"><div><h3>Run header</h3><div class="sub">readable without opening any other view (spec output_structure)</div></div></div>
+      <div class="tablewrap" style="border:none"><table class="data"><tbody>
+        <tr><td class="l">Report type</td><td class="l">${esc(H.report_type)}</td></tr>
+        <tr><td class="l">Period</td><td class="l">${H.reporting_period.start} → ${H.reporting_period.end} · ${H.reporting_period.dialing_days} dialling day(s)</td></tr>
+        <tr><td class="l">Built</td><td class="l">${H.build_timestamp}</td></tr>
+        <tr><td class="l">Snapshot skew</td><td class="l">${H.snapshot_skew_detected?'<span class="pill pwarn">DETECTED — affected days indeterminate (RC1)</span>':'<span class="pill pgood">none</span>'}</td></tr>
+        <tr><td class="l">Agents compared</td><td class="l">${H.agents_compared}</td></tr>
+        <tr><td class="l">Blocked metrics</td><td class="l">${H.metrics_blocked.map(esc).join('<br>')||'–'}</td></tr>
+      </tbody></table></div>${setDiff}</div>
+    <div class="card"><div class="cardhead"><div><h3>Sources for this run</h3><div class="sub">the file registry is the archive (VR15) — a live re-pull will not reproduce the report</div></div></div>
+      <div class="tablewrap" style="border:none"><table class="data"><thead><tr><th class="l">Source</th><th class="l">Files (upload time)</th></tr></thead><tbody>${src}</tbody></table></div></div>
+  </div>
+  ${rcRows?`<div class="card mt"><div class="cardhead"><div><h3>Root causes assigned</h3><div class="sub">every non-exact variance must carry one — unclassified = open defect</div></div></div>
+    <div class="tablewrap" style="border:none"><table class="data"><thead><tr><th class="l">Root cause</th><th>Count</th></tr></thead><tbody>${rcRows}</tbody></table></div></div>`:''}
+  <div class="card mt"><div class="cardhead"><div><h3>Validation checks — VR01…VR15</h3>
+    <div class="sub">spec validation_checks, re-run on every build. A FAIL must be understood before the numbers are trusted.</div></div></div>
+    <div class="tablewrap"><table class="data"><thead><tr><th class="l">Check</th><th class="l">Result</th><th class="l">Detail</th></tr></thead><tbody>${chk}</tbody></table></div></div>`;
+}
+function vrDailyTab(VR,rows){
+  if(!rows.length) return `<div class="card"><div class="empty">No rows in this period for the current filters.</div></div>`;
+  const byDay={}; rows.forEach(r=>{(byDay[r.d]=byDay[r.d]||[]).push(r);});
+  const idxOf=new Map(VR.rows.map((r,i)=>[r,i]));
+  const fmtN=x=>x==null?'–':fmtNum(x);
+  const fmtV=x=>x==null?'–':(x>0?'+':'')+fmtNum(x);
+  const cell=(x,v)=>`<td style="${v==='material'?'color:var(--crit);font-weight:700':v==='indeterminate'?'color:var(--amber)':''}">${fmtV(x)}</td>`;
+  const days=Object.keys(byDay).sort().reverse();
+  return days.map(d=>{
+    const dr=byDay[d].slice().sort((a,b)=>{
+      const rank={material:4,indeterminate:3,blocked:2,rounding:1,exact:0};
+      return (rank[vrRowStat(b)]-rank[vrRowStat(a)])||(Math.abs(b.salesVar||0)-Math.abs(a.salesVar||0));
+    });
+    const meta=VR.days.find(x=>x.d===d)||{};
+    const cov=['bi','board','calls','att'].filter(k=>!meta[k]);
+    const trs=dr.map(r=>{
+      const i=idxOf.get(r);
+      const fl=r.flags.map(f=>`<span class="pill ${f.sev==='error'?'pcrit':f.sev==='warning'?'pwarn':'pmuted'}" title="${esc(f.dv)}">${esc(f.f)}</span>`).join(' ');
+      const rc=[r.rcSales,r.rcGwp].filter(Boolean);
+      return `<tr onclick="__vrAudit(${i})" style="cursor:pointer">
+        <td class="l"><span class="agentcell">${avatarOf(r.agent,r.code)}<span class="nm">${esc(r.agent)}</span></span></td>
+        <td class="l">${campChip(r.camp)}</td>
+        <td>${fmtN(r.sfSales)}</td><td>${fmtN(r.sfGwp)}</td>
+        <td>${fmtN(r.bdSales)}</td><td>${fmtN(r.bdGwp)}</td>
+        ${cell(r.salesVar,r.v.sales)}${cell(r.gwpVar,r.v.gwp)}
+        <td>${r.talk!=null?fmtDur(r.talk):'–'}</td>
+        <td class="l">${fl||'–'}</td>
+        <td>${vrStatusPill(vrRowStat(r))}</td>
+        <td class="l">${rc.length?rc.map(x=>`<code>${x}</code>`).join(' '):((r.v.sales==='material'||r.v.gwp==='material')?'<span class="pill pcrit">unclassified</span>':'–')}</td></tr>`;
+    }).join('');
+    return `<div class="card mt"><div class="cardhead"><div><h3>${fmtDay(d)} <span class="sub" style="display:inline">· ${d}</span></h3>
+      <div class="sub">${dr.length} agent(s)${meta.skew?' · <b style="color:var(--amber)">snapshot skew — variances indeterminate (RC1)</b>':''}${cov.length?' · no coverage: '+cov.join(', '):''}</div></div></div>
+      <div class="tablewrap"><table class="data"><thead><tr>
+        <th class="l">Agent</th><th class="l">Campaign</th><th>SF Sales</th><th>SF GWP</th><th>Board Sales</th><th>Board GWP</th>
+        <th>Sales Var</th><th>GWP Var</th><th>Talk Time</th><th class="l">Flags</th><th>Status</th><th class="l">Root cause</th>
+      </tr></thead><tbody>${trs}</tbody></table></div></div>`;
+  }).join('');
+}
+function vrUnmappedTab(VR){
+  const un=Object.values(VR.unmapped);
+  const body=un.length?`<div class="tablewrap"><table class="data"><thead><tr>
+      <th class="l">Identity in file</th><th class="l">Source</th><th>Records</th><th>GWP at stake</th><th class="l">Days</th></tr></thead><tbody>
+    ${un.map(u=>`<tr><td class="l"><code>${esc(u.key)}</code></td><td class="l">${esc(u.src)}</td><td>${u.n}</td>
+      <td>${u.gwp?'R '+fmtNum(u.gwp):'–'}</td><td class="l">${[...u.days].sort().join(', ')}</td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="note" style="margin:10px 0 0">An unresolved agent is an <b>identity defect, not a data variance</b> (spec identity_layer) —
+    these records are excluded from every comparison so they cannot manufacture a false variance on both sides.
+    Map them in the <a class="linky" onclick="go('data')">Upload Station</a> or upload a fresh Agent List, then this report rebuilds itself.</p>`
+   :`<div class="empty"><div class="big">Unmapped — empty, and that is a result</div>
+    Every record in this period resolved to an Employee Code before comparison (VR03). This view exists even when empty,
+    so an empty result is visibly a result rather than an omission (VR13).</div>`;
+  return `<div class="card">${body}</div>`;
+}
+function vrRulesTab(VR){
+  const comp=VARIANCE_RULES.comparisons.map(c=>`<div class="card mt"><div class="cardhead"><div><h3><code>${c.id}</code> — ${esc(c.name)}</h3></div></div>
+    <div class="tablewrap" style="border:none"><table class="data"><tbody>
+      ${c.formulaA?`<tr><td class="l" style="white-space:nowrap">System A — ${esc(c.a)}</td><td class="l"><code>${esc(c.formulaA)}</code></td></tr>`:''}
+      ${c.formulaB?`<tr><td class="l">System B — ${esc(c.b)}</td><td class="l"><code>${esc(c.formulaB)}</code></td></tr>`:''}
+      ${c.variance?`<tr><td class="l">Variance</td><td class="l"><code>${esc(c.variance)}</code>${c.tolerance!=null?' · tolerance ±'+c.tolerance:''}</td></tr>`:''}
+      ${c.interpretation?`<tr><td class="l">Reading</td><td class="l">${esc(c.interpretation)}</td></tr>`:''}
+      ${c.flags?c.flags.map(f=>`<tr><td class="l"><span class="pill ${f.sev==='error'?'pcrit':'pwarn'}">${f.sev}</span></td><td class="l"><code>${esc(f.when)}</code> — ${esc(f.meaning)}</td></tr>`).join(''):''}
+      ${c.status?`<tr><td class="l">Status</td><td class="l">${esc(c.status)}</td></tr>`:''}
+    </tbody></table></div></div>`).join('');
+  const tol=`<div class="card mt"><div class="cardhead"><div><h3>Tolerance framework</h3>
+    <div class="sub">declared before any comparison runs — a tolerance chosen after seeing the result is a rationalisation</div></div></div>
+    <div class="tablewrap" style="border:none"><table class="data"><thead><tr><th class="l">Band</th><th class="l">Rule</th><th class="l">Applies to</th><th class="l">Action</th></tr></thead>
+    <tbody>${VARIANCE_RULES.tolerance.map(t=>`<tr><td class="l"><b>${t.cls}</b></td><td class="l">${esc(t.rule)}</td><td class="l">${esc(t.appliesTo)}</td><td class="l">${esc(t.action)}</td></tr>`).join('')}</tbody></table></div></div>`;
+  const rc=`<div class="card mt"><div class="cardhead"><div><h3>Root-cause taxonomy</h3>
+    <div class="sub">every variance must be classified — an unclassified variance is an open defect, not a result</div></div></div>
+    <div class="tablewrap" style="border:none"><table class="data"><thead><tr><th class="l">Code</th><th class="l">Name</th><th class="l">Signature / test</th><th class="l">Resolution</th></tr></thead>
+    <tbody>${Object.entries(VARIANCE_RULES.rootCauses).map(([k,v])=>`<tr><td class="l"><code>${k}</code></td><td class="l"><b>${esc(v.name)}</b></td><td class="l">${esc(v.sig)}</td><td class="l">${esc(v.fix)}</td></tr>`).join('')}</tbody></table></div></div>`;
+  const conflicts=`<div class="card mt" style="border-left:3px solid var(--amber)"><div class="cardhead"><div><h3>Documented conflicts — the spec wins here, the app's models stand elsewhere</h3></div></div>
+    <ul style="margin:0;padding-left:18px;color:var(--body);font-size:13px;line-height:1.7">
+      <li><b>DV02 GWP rounding:</b> this report rounds ONCE after summing the agent-day (<code>ROUND(SUM(Charge Amount) × 1.15, 0)</code>, spec DV02/ER05). The MTD money model rounds per account then sums — that reproduces the hand-built workbook and is untouched. The two can legitimately differ by a rand on multi-account days.</li>
+      <li><b>Sales dating:</b> DV01 dates sales on <b>Contract Create Date</b> (spec), the same dating as the money model — and deliberately different from the sales-recon demo's Account Create Date counter. Separate counters, never merged.</li>
+      <li><b>DV04 Referrals:</b> the spec records no system-side referral source, so the variance is BLOCKED and emits null — even though a HighLevel referrals feed exists in this app. Wiring it in would invent a rule the spec does not contain; it stays out until the spec names it.</li>
+      <li><b>Anti-pattern (spec):</b> never tune a calculation to hit the reference number. A rule fitting 63 agents exactly and missing 2 by one is a correct rule meeting incomplete data.</li>
+    </ul></div>`;
+  const engRec=`<div class="card mt"><div class="cardhead"><div><h3>Artefact B — engine reconciliation (ER01–ER09)</h3>
+    <div class="sub">the spec's second artefact: proving the rebuilt MTD engine reproduces the reference tracker</div></div></div>
+    <p class="note" style="margin:0">The spec records artefact B as <b>BUILT AND VERIFIED</b> (ER01 Employed Shifts 65/65 · ER02 Sales Target 65/65 · ER03 GWP Target 65/65 ·
+    ER04 Sales 63/65 · ER05 GWP 62/65 · ER06 Cancellations 62/65 · ER07 Actual Shifts 134/136 · ER08 QA 27/37 within 1pp · ER09 Talk ratio: Cuddle 0.9887 PASS, Courtesy 1.0478 FAIL = RC2 wrong source).
+    In this app that reconciliation runs continuously as the MTD engine's V01–V22 rule checks (Upload Station) and the diagnostics suites —
+    the reference workbook itself is refused as an upload by design, so artefact B lives in the checks, not in this page's tables.</p></div>`;
+  return comp+tol+rc+conflicts+engRec;
+}
+/* row audit — spec §traceability: Source → Rule → Formula → Calculation → Displayed
+   result, for every number on screen, plus the human root-cause classification. */
+window.__vrAudit=i=>{
+  const VR=window.__vr; if(!VR||!VR.rows[i]) return;
+  const r=VR.rows[i];
+  const pct=(v,b)=>(v==null||!b)?'–':fmtPct(v/b,1);
+  const rcSel=metric=>{
+    const cur=metric==='sales'?r.rcSales:r.rcGwp;
+    const key=r.d+'|'+r.code+'|'+metric;
+    return `<select onchange="__vrSetRC('${key}',this.value)" style="max-width:220px">
+      <option value="">— unclassified —</option>
+      ${Object.entries(VARIANCE_RULES.rootCauses).map(([k,v])=>`<option value="${k}" ${cur===k?'selected':''}>${k} — ${esc(v.name)}</option>`).join('')}</select>`;
+  };
+  const dvRow=(dv,name,fA,fB,a,b,v,verdict,tol,rcHtml)=>`
+    <tr class="subtotal"><td class="l" colspan="2"><b><code>${dv}</code> ${name}</b></td></tr>
+    <tr><td class="l">Formula A</td><td class="l"><code>${esc(fA)}</code></td></tr>
+    <tr><td class="l">Formula B</td><td class="l"><code>${esc(fB)}</code></td></tr>
+    <tr><td class="l">System A (Salesforce)</td><td>${a==null?'– (blocked)':fmtNum(a)}</td></tr>
+    <tr><td class="l">System B (Board)</td><td>${b==null?'– (blocked)':fmtNum(b)}</td></tr>
+    <tr><td class="l">Variance (A − B)</td><td>${v==null?'– (null, never zero)':(v>0?'+':'')+fmtNum(v)}</td></tr>
+    <tr><td class="l">Variance %</td><td>${pct(v,b)}</td></tr>
+    <tr><td class="l">Tolerance</td><td>±${tol}</td></tr>
+    <tr><td class="l">Verdict</td><td>${vrStatusPill(verdict)}</td></tr>
+    <tr><td class="l">Root cause</td><td class="l">${rcHtml}</td></tr>`;
+  const c1=VARIANCE_RULES.comparisons[0],c2=VARIANCE_RULES.comparisons[1];
+  const html=`<div class="cardhead"><div><h3>${esc(r.agent)} · ${r.code} · ${r.d}</h3>
+    <div class="sub">${campChip(r.camp)} · TL ${esc(r.tl||'–')}${r.skew?' · <b style="color:var(--amber)">snapshot skew day</b>':''}</div></div>
+    <button class="btn ghost small" onclick="__vrCloseAudit()">${I.x}</button></div>
+    <div class="tablewrap" style="border:none;max-height:60vh"><table class="data"><tbody>
+    ${dvRow('DV01','Sales variance',c1.formulaA,c1.formulaB,r.sfSales,r.bdSales,r.salesVar,r.v.sales,VARIANCE_RULES.salesTolerance,rcSel('sales'))}
+    <tr><td class="l" style="color:var(--muted)">Inputs</td><td class="l" style="color:var(--muted)">${r.accts} distinct account(s)${r.chargeSum!=null?' · Σ Charge Amount (ex-VAT) R '+fmtNum(r.chargeSum,2):''}</td></tr>
+    ${dvRow('DV02','GWP variance',c2.formulaA,c2.formulaB,r.sfGwp,r.bdGwp,r.gwpVar,r.v.gwp,VARIANCE_RULES.gwpTolerance,rcSel('gwp'))}
+    <tr class="subtotal"><td class="l" colspan="2"><b><code>DV03</code> Activity variance — flag rather than subtract</b></td></tr>
+    <tr><td class="l">Talk time</td><td>${r.talk!=null?fmtDur(r.talk):'– (dialler coverage missing)'}</td></tr>
+    <tr><td class="l">Attendance</td><td class="l">${r.att!=null?esc(String(r.att))+(r.present?' (Present)':''):'– (no register row)'}</td></tr>
+    <tr><td class="l">Flags</td><td class="l">${r.flags.length?r.flags.map(f=>`<span class="pill ${f.sev==='error'?'pcrit':f.sev==='warning'?'pwarn':'pmuted'}">${esc(f.f)}</span>`).join(' '):'none'}</td></tr>
+    <tr class="subtotal"><td class="l" colspan="2"><b><code>DV04</code> Referrals variance — BLOCKED</b></td></tr>
+    <tr><td class="l">Agent logged (board AG)</td><td>${r.bdRef!=null?fmtNum(r.bdRef):'–'}</td></tr>
+    <tr><td class="l">System recorded</td><td class="l">none identified in the spec — variance is null, never zero (RC7)</td></tr>
+    </tbody></table></div>`;
+  let el=document.getElementById('vrAudit');
+  if(!el){ el=document.createElement('div'); el.id='vrAudit';
+    el.style.cssText='position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;background:rgba(3,8,18,.66)';
+    el.onclick=e=>{ if(e.target===el) window.__vrCloseAudit(); };
+    document.body.appendChild(el); }
+  el.innerHTML=`<div class="card" style="width:min(760px,94vw);max-height:86vh;overflow:auto">${html}</div>`;
+  el.style.display='flex';
+};
+window.__vrCloseAudit=()=>{ const el=document.getElementById('vrAudit'); if(el) el.style.display='none'; };
+window.__vrSetRC=(key,val)=>{ if(val) S.varRC[key]=val; else delete S.varRC[key]; save(); renderPage(); toast(val?('Classified '+val):'Classification cleared'); };
+/* export — the workbook mirrors spec output_structure; every cell is a computed VALUE
+   (never a formula), so VR10's cached-value requirement is satisfied structurally, and
+   the exported figures are the SAME buildVariance() rows the screen shows. */
+function exportVariance(){
+  const VR=window.__vr||buildVariance(periodRange());
+  if(!VR.range){ toast('Nothing to export yet'); return; }
+  if(typeof XLSX==='undefined'||!XLSX.writeFile){ toast('Spreadsheet library not loaded - refresh and retry'); return; }
+  const rows=vrFilterRows(VR);
+  const wb=XLSX.utils.book_new();
+  const H=VR.header;
+  const sm=[['VAS Variance Report — daily system variance (artefact A)'],[],
+    ['Period',H.reporting_period.start+' → '+H.reporting_period.end],['Dialling days',H.reporting_period.dialing_days],
+    ['Built',H.build_timestamp],['Snapshot skew',H.snapshot_skew_detected?'DETECTED — affected days indeterminate (RC1)':'none'],
+    ['Agents compared',H.agents_compared],
+    ['Salesforce only',H.agents_source_a_only.join(', ')||'–'],['Manual Stats only',H.agents_source_b_only.join(', ')||'–'],
+    ['Blocked metrics',H.metrics_blocked.join(' | ')],
+    ['Variance summary','exact '+H.variance_summary.exact+' · within tolerance '+H.variance_summary.within_tolerance+' · material '+H.variance_summary.material],
+    ['Root causes',Object.entries(H.root_cause_counts).filter(([,n])=>n).map(([k,n])=>k+':'+n).join(' · ')||'none assigned'],
+    ['Unmapped records',H.unmapped_record_count],[],
+    ['Checks'],...VR.checks.map(c=>[c.id,c.ok?'pass':(c.sev==='error'?'FAIL':'note'),c.msg]),[],
+    ['Source files'],...Object.entries(H.source_export_timestamps).flatMap(([k,v])=>v.length?v.map(f=>[k,f]):[[k,'not uploaded']])];
+  XLSX.utils.book_append_sheet(wb,xlSheet(sm),'Summary');
+  const dv=[['Date','Agent','Emp Code','Campaign','Team Leader','SF Sales','SF GWP','Board Sales','Board GWP','Sales Variance','GWP Variance','Talk Time','Flags','Status','Root Cause']];
+  rows.slice().sort((a,b)=>a.d.localeCompare(b.d)||a.agent.localeCompare(b.agent)).forEach(r=>dv.push([
+    r.d,r.agent,r.code,r.camp,r.tl,r.sfSales,r.sfGwp,r.bdSales,r.bdGwp,r.salesVar,r.gwpVar,
+    r.talk!=null?dur(r.talk):null,r.flags.map(f=>f.f).join(' | '),vrRowStat(r),[r.rcSales,r.rcGwp].filter(Boolean).join(' ')||'']));
+  XLSX.utils.book_append_sheet(wb,xlSheet(dv,{11:XF.dur}),'Daily Variance');
+  const un=[['Identity in file','Source','Records','GWP at stake','Days']];
+  Object.values(VR.unmapped).forEach(u=>un.push([u.key,u.src,u.n,u.gwp||0,[...u.days].sort().join(', ')]));
+  if(un.length===1) un.push(['(empty — every record resolved: an empty result is a result)']);
+  XLSX.utils.book_append_sheet(wb,xlSheet(un),'Unmapped');           // VR13: present even when empty
+  const bs=[['Date','Agent (as written)','Sales (stated AD)','GWP (stated AE)','Referrals (AG)','Populated Sale cells','Σ Sale cell values']];
+  Object.keys(S.board).filter(d=>d>=VR.range.from&&d<=VR.range.to).sort().forEach(d=>{
+    for(const k in S.board[d]){ const r=S.board[d][k]; bs.push([d,r.name,r.ts??r.sales,r.tg??r.gwp,r.ref??'',r.cells,r.cellGwp]); }});
+  XLSX.utils.book_append_sheet(wb,xlSheet(bs),'Manual Stats');       // source extract, as stored
+  XLSX.writeFile(wb,'VAS Variance Report '+VR.range.from+' - '+VR.range.to+'.xlsx');
+  toast('Variance workbook exported — values match the screen');
+}
+
 PAGES.data=()=>{
   const typeLabel={bi:'Power BI - Active Cases',calls:'Call records',attendance:'Attendance',evals:'QA evaluations',
-    roster:'Agent list','open cases':'Open cases','tracker daily':'Tracker workbook',cancellations:'Cancellations (BI Inactive)','calls (ViciDial)':'ViciDial (Cuddle)','vici range':'ViciDial - multi-day aggregate'};
+    roster:'Agent list','open cases':'Open cases','tracker daily':'Tracker workbook',cancellations:'Cancellations (BI Inactive)','calls (ViciDial)':'ViciDial (Cuddle)','vici range':'ViciDial - multi-day aggregate',referrals:'Referrals (HighLevel)',board:'Manual Stats (daily board)'};
 
   // per-slot status from the file registry
   const statFor=prefixes=>{
@@ -3729,6 +4474,8 @@ PAGES.data=()=>{
     {t:'roster',icon:I.grid,color:'var(--violet)',name:'Agent List',desc:'Matrix agent list — team leaders, campaigns, tenure, daily targets, start dates. Replaces the current roster.',stat:`<span class="pill pgood">${S.roster.length} agents</span>`},
     {t:'inactive',icon:I.alert,color:'var(--rose)',name:'Cancellations (BI Inactive)',desc:'Power BI Inactive export — cancelled contracts, counted per agent by Contract Deactivate Date. This is where the MTD Cancellations and % of Cancellations columns come from. Upload daily; each upload replaces the days it covers, so overlapping pulls never double-count.',stat:statFor(['cancellations'])},
     {t:'vici',icon:I.phone,color:'var(--cuddle)',name:'ViciDial (Cuddle)',desc:'Two ViciDial exports land here. <b>EXPORT_CALL_REPORT</b> (tab-separated .txt) is the one to prefer — one row per call, dated per call, so any date range splits across its days correctly. Talk time is every call\'s length on the agent\'s CB number; the upload says how much of it is ringing rather than talking. The older <b>Agent Performance Detail</b> is one row per agent for the range in its own "Time range:" line — export that ONE DAY AT A TIME, because a multi-day pull is a single total per agent and cannot be split across days.',stat:statFor(['calls (ViciDial)','vici range'])},
+    {t:'board',icon:I.scale,color:'var(--courtesy)',name:'Manual Stats',desc:'The agent-logged daily board that feeds <b>VAS Analytics → Variance Report</b>: Agent Name + Sale 1..Sale 27 (cell value = GWP) + Total Sales / Total GWP / Referrals. <b>One day per sheet, named DD.MM</b> (e.g. 13.08) — re-uploading a day replaces exactly that day, and a workbook of historical DD.MM tabs loads each day separately. Agents match through the Agent List; unmatched names are reported on the Variance page, never guessed.',stat:statFor(['board'])},
+    {t:'referrals',icon:I.grid,color:'var(--violet)',name:'Referrals (HighLevel)',desc:'Referrals pull themselves from HighLevel through the API Worker — automatically on sign-in, or <button class="btn small" onclick="event.stopPropagation();window.__hlSyncVAS&&__hlSyncVAS()" style="vertical-align:1px">⟳ Sync now</button> — and a CSV drop still works. Agents are matched THROUGH THE AGENT LIST (employee code, then the roster name index); unmatched names are counted and reported, never invented. Counts are referral blocks per contact (one referrer can carry up to five), so totals can exceed rows. While loaded, keyed referral adjustments are ignored — one source, never both.',stat:statFor(['referrals'])},
   ];
   const slotCards=SLOTS.map(s=>`
     <div class="slot" data-slot="${s.t}" tabindex="0" role="button" aria-label="Upload ${s.name}">
@@ -3809,7 +4556,7 @@ PAGES.adjust=()=>{
   const adj=S.adjust[M.periodKey]||{};
   const rows=filteredAgents().map(a=>({a,c:(adj[a.code]||{}).c||0,r:(adj[a.code]||{}).r||0}));
   return `<div class="page-head"><h2>Adjustments</h2>
-    <div class="sub">referrals for ${S.ui.month} — no upload carries those, so key them here. ${Object.keys(S.cancRows||{}).length?'<b>Cancellations now come from the Cancellations (BI Inactive) upload</b>, so anything keyed below is ignored for cancellations — it cannot be counted twice.':'Cancellations are read from the Cancellations (BI Inactive) upload; key them here only until that file is uploaded.'}</div></div>
+    <div class="sub">referrals for ${S.ui.month}${S.refs&&S.refs.by?' — <b>referrals now come from the Referrals (HighLevel) upload</b> ('+(S.refs.total||0)+' across '+Object.keys(S.refs.by).length+' agents), so anything keyed below is ignored for referrals — it cannot be counted twice.':' — no referrals upload loaded, so key them here (or upload the HighLevel pull in Data &amp; Uploads).'} ${Object.keys(S.cancRows||{}).length?'<b>Cancellations now come from the Cancellations (BI Inactive) upload</b>, so anything keyed below is ignored for cancellations — it cannot be counted twice.':'Cancellations are read from the Cancellations (BI Inactive) upload; key them here only until that file is uploaded.'}</div></div>
   <div class="card" style="padding:0;overflow:hidden"><div class="tablewrap" style="border:none"><table class="data"><thead><tr>
     <th class="l">Team Leader</th><th class="l">Agent</th><th class="l">Campaign</th><th>Cancellations</th><th>Referrals</th></tr></thead><tbody>
   ${rows.map(r=>`<tr><td class="l">${esc(r.a.tl)}</td>
@@ -3865,7 +4612,7 @@ PAGES.settings=()=>{
   ${orgHistCard()}
   <div class="card mt"><div class="cardhead"><div><h3>Danger zone</h3></div></div>
     <div class="formrow" style="border:none">
-      <button class="btn danger" onclick="if(confirm('Remove all uploaded data (keeps agent list and settings)?')){DATA_STORES.forEach(k=>S[k]={});S.files=[];S.opencases=null;save();rebuild();renderAll();}">Clear uploaded data</button>
+      <button class="btn danger" onclick="if(confirm('Remove all uploaded data (keeps agent list and settings)?')){DATA_STORES.forEach(k=>S[k]={});S.files=[];S.opencases=null;S.refs=null;save();rebuild();renderAll();}">Clear uploaded data</button>
       <button class="btn danger" onclick="if(confirm('Reset EVERYTHING to factory defaults?')){localStorage.removeItem(STORE_KEY);location.reload();}">Full reset</button>
     </div></div>`;
 };
@@ -4391,6 +5138,9 @@ function dupStillLive(f){
      uploaded" as the only explanation — and Cuddle talk time read 0:00:00 with the file
      sitting right there in the registry. Live only while the range's rows are still stored. */
   if(ty.startsWith('vici range')){ const v=(S.vici||{})[ty.split(' ')[2]||'']; return !!(v&&v.rows&&v.rows.length); }
+  /* Referrals are a snapshot store, not day-keyed — same hydrate-empty trap as the two
+     cases above: live only while THIS file's snapshot is the one held. */
+  if(ty.startsWith('referrals')) return !!(S.refs&&S.refs.f===f.name&&Object.keys(S.refs.by||{}).length);
   const st=STORE_OF[ty.split(' ')[0]];
   if(!st) return true;
   const ds=f.dates||[];
@@ -4456,6 +5206,8 @@ window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
   orgAt, orgHist:()=>S.orgHist,             // historical attribution, for the harness
   setRosterAsOf:d=>{ S.settings.rosterAsOf=d||''; save(); },
   checks:()=>VCHK, rules:()=>MTD_RULES,     // §11 rule checks + the rule book, for the harness
+  variance:(from,to)=>buildVariance(from&&to?{from,to}:periodRange()),   // Variance Report engine, for the harness
+  varianceRules:()=>VARIANCE_RULES,
   rebuild:()=>{rebuild();renderAll();}, openDrawer, go };
 </script>
 
@@ -4517,9 +5269,57 @@ var SRC=[
   ["attendance","Attendance",function(t){return t.indexOf("attendance")===0}],
   ["evals","QA Evaluations",function(t){return t.indexOf("evals")===0}],
   ["roster","Agent List",function(t){return t.indexOf("roster")===0}],
-  ["cancellations","Cancellations (BI Inactive)",function(t){return t.indexOf("cancellations")===0}]
+  ["cancellations","Cancellations (BI Inactive)",function(t){return t.indexOf("cancellations")===0}],
+  ["referrals","Referrals",function(t){return t.indexOf("referrals")===0}],
+  ["board","Manual Stats",function(t){return t.indexOf("board")===0}]
 ];var open=false;function daysSince(at){if(!at)return null;var d=new Date(at.replace(" ","T"));if(isNaN(d))return null;return Math.floor((Date.now()-d.getTime())/864e5)}function fresh(days){if(days==null)return["n","#8296B5"];if(days<=7)return["g","#34D399"];if(days<=14)return["a","#FBBF24"];return["r","#FB7185"]}function build(){var host=document.getElementById("vasTrust");var view=document.getElementById("view");if(!view)return;if(!host){host=document.createElement("div");host.id="vasTrust";view.parentNode.insertBefore(host,view)}var S=(window.__mtd&&window.__mtd.state)?window.__mtd.state():null;var files=(S&&S.files)||[];var latest={};files.forEach(function(f){var t=String(f.type||"");SRC.forEach(function(s){if(s[2](t)){var d=daysSince(f.at);if(latest[s[0]]==null||(d!=null&&d<latest[s[0]]))latest[s[0]]=d}})});var worst="g";SRC.forEach(function(s){var st=fresh(latest[s[0]])[0];if(st==="r"||st==="n"){if(worst!=="r")worst=(st==="r"?"r":"a")}else if(st==="a"&&worst==="g")worst="a"});var have=SRC.filter(function(s){return latest[s[0]]!=null}).length;var wc=worst==="g"?"#34D399":worst==="a"?"#FBBF24":"#FB7185";var wl=worst==="g"?"All sources fresh":worst==="a"?"Sources need attention":"Stale or missing sources";function chip(color,label){return "<span style='display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(148,182,255,.10);color:"+color+"'><span style='width:7px;height:7px;border-radius:50%;background:"+color+"'></span>"+label+"</span>"}var chips=open?SRC.map(function(s){var d=latest[s[0]];var fr=fresh(d);var lbl=s[1]+" · "+(d==null?"none":d===0?"today":d+"d");return chip(fr[1],lbl)}).join(""):"";var html="<div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:linear-gradient(180deg,rgba(148,182,255,.05),rgba(148,182,255,.02)),#0A1730;border:1px solid rgba(148,182,255,.14);border-radius:16px;padding:10px 14px;margin:0 0 16px'>"+"<span style='font-size:11px;font-weight:800;letter-spacing:.8px;color:#8296B5'>DATA TRUST</span>"+"<span onclick='window.__vasTrustToggle()' style='cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(148,182,255,.10);color:"+wc+"'><span style='width:7px;height:7px;border-radius:50%;background:"+wc+"'></span>"+wl+" · "+have+"/"+SRC.length+" sources "+(open?"▾":"▸")+"</span>"+chips+"<button onclick='go(&quot;data&quot;)' style='margin-left:auto;border:1px solid rgba(148,182,255,.16);background:rgba(148,182,255,.07);color:#C6D3E8;border-radius:9px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer'>Manage uploads →</button>"+"</div>";if(html!==window.__vtLast){window.__vtLast=html;host.innerHTML=html}}window.__vasTrustToggle=function(){open=!open;build()};var t=setInterval(build,10000);setTimeout(build,300);})();</script>
 
+<script>(function(){/* Referrals auto-sync — pull the referral book from HighLevel through the
+   API Worker (the HL key is a Worker secret; the browser never sees it) and feed it into
+   the SAME ingest as a CSV drop: Agent-List matching, snapshot replace, registry entry.
+   Runs on sign-in and via the slot's "Sync now" button. */
+var API='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/referrals';
+var running=false;
+window.__hlSyncVAS=function(quiet){
+  if(running)return;running=true;
+  var done=function(){running=false};
+  try{
+    var t=sessionStorage.getItem('cbx_token');
+    var say=function(m){try{if(typeof toast==='function')toast(m)}catch(e){}};
+    if(!t){if(!quiet)say('Sign in first — the HighLevel sync runs through the API Worker.');return done()}
+    if(!quiet)say('Pulling referrals from HighLevel…');
+    fetch(API,{headers:{'Authorization':'Bearer '+t,'X-Cbx-Client':'v5'}}).then(function(r){
+      if(!r.ok)throw new Error('sync failed ('+r.status+')');
+      return r.json();
+    }).then(function(d){
+      if(!d.rows||!d.rows.length)throw new Error('HighLevel returned no referral rows');
+      var recs=d.rows.map(function(x){return {'Agent Name':x.agent||'','Referral Count':x.count,'Employee Code':'','Contact Id':x.id,'Created':x.created||''}});
+      if(typeof INGEST==='undefined'||!INGEST.referrals)throw new Error('app not ready');
+      INGEST.referrals(recs,'HighLevel API');   // toasts its own summary
+      if(typeof save==='function')save();if(typeof rebuild==='function')rebuild();if(typeof renderAll==='function')renderAll();
+      done();
+    }).catch(function(e){if(!quiet)say('Referrals sync failed: '+(e.message||e));done()});
+  }catch(e){done()}
+};
+/* Sync WATCHDOG — a one-shot timer raced the cloud hydrate: it could fire before the
+   roster existed (everything unmatched → an all-zero snapshot) or be wiped when hydrate
+   adopted the cloud blob wholesale. Instead: every 5s, once signed in AND hydrated AND
+   the roster is present, sync if the referrals store is missing/empty — with a 60s
+   backoff so a failing endpoint is never hammered. Idempotent: the ingest replaces the
+   snapshot wholesale, so an extra run can never double-count. */
+var lastTry=0;
+setInterval(function(){try{
+  if(!sessionStorage.getItem('cbx_token'))return;
+  if(!window.__vasHydrated)return;
+  if(!window.__mtd)return;
+  var S_=window.__mtd.state();
+  if(!S_||!S_.roster||!S_.roster.length)return;
+  if(S_.refs&&S_.refs.by&&Object.keys(S_.refs.by).length)return;   // present and populated — done
+  if(Date.now()-lastTry<60000)return;
+  lastTry=Date.now();
+  window.__hlSyncVAS(true);
+}catch(e){}},5000);
+})();</script>
 <script>(function(){
 var hydWarned=false;
 function hydRetry(){
