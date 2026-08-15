@@ -96,6 +96,25 @@ export default {
         return json({ user: r.user, token: r.token });
       }
 
+      // Referrals-pipe health: NO auth and NO data — booleans and counts only, so the
+      // route/secrets/HighLevel legs can each be verified when the column reads 0.
+      if (path === '/api/referrals/health') {
+        const out = { route: true, hl_key: !!env.HL_API_KEY, hl_location: !!env.HL_LOCATION_ID };
+        if (out.hl_key && out.hl_location) {
+          try {
+            const H = { Authorization: 'Bearer ' + env.HL_API_KEY, Version: '2021-07-28', Accept: 'application/json' };
+            const r = await fetch(`https://services.leadconnectorhq.com/contacts/?locationId=${env.HL_LOCATION_ID}&limit=1`, { headers: H });
+            out.hl_status = r.status;
+            if (r.ok) { const d = await r.json(); out.hl_total = (d.meta && d.meta.total) || (d.contacts || []).length; }
+            const cf = await fetch(`https://services.leadconnectorhq.com/locations/${env.HL_LOCATION_ID}/customFields`, { headers: H });
+            out.hl_fields_status = cf.status;
+            if (cf.ok) out.hl_fields = ((await cf.json()).customFields || []).length;
+          } catch (e) { out.hl_error = String(e.message || e).slice(0, 200); }
+        }
+        out.cache = globalThis.__hlCache ? { age_s: Math.round((Date.now() - globalThis.__hlCache.t) / 1000), rows: (globalThis.__hlCache.d.rows || []).length } : null;
+        return json(out);
+      }
+
       const user = await session(DB, req);
       if (path === '/api/me') return user ? json({ user }) : json({ error: 'not signed in' }, 401);
       if (path === '/api/logout' && req.method === 'POST') { await logout(DB, user); return json({ ok: true }); }
@@ -112,6 +131,55 @@ export default {
         if (!b.new_password || String(b.new_password).length < 10) return json({ error: 'Password must be at least 10 characters.' }, 400);
         await DB.update(`app_users?id=eq.${user.user_id}`, { password_hash: await hashPassword(String(b.new_password)), must_change_password: false });
         return json({ ok: true });
+      }
+
+      // ---------- referrals: live pull from HighLevel (LeadConnector v2) ----------
+      // The HL key is a Worker secret (HL_API_KEY + HL_LOCATION_ID) — it must never reach
+      // the browser. One contact = one referrer; the referred people sit in the base block
+      // plus "Referral 2..5", so each row's count = filled blocks (totals exceed rows by
+      // design). Both dashboards ingest these rows through their normal upload pipeline —
+      // the Worker only fetches and shapes, it never computes report numbers.
+      if (path === '/api/referrals' && req.method === 'GET') {
+        if (!env.HL_API_KEY || !env.HL_LOCATION_ID) return json({ error: 'HighLevel is not configured — set Worker secrets HL_API_KEY and HL_LOCATION_ID.' }, 503);
+        const now = Date.now();
+        if (!url.searchParams.get('fresh') && globalThis.__hlCache && now - globalThis.__hlCache.t < 600000)
+          return json(globalThis.__hlCache.d, 200, { 'X-Cbx-Cache': 'hit' });
+        const H = { Authorization: 'Bearer ' + env.HL_API_KEY, Version: '2021-07-28', Accept: 'application/json' };
+        const base = 'https://services.leadconnectorhq.com';
+        const hl = async (q) => { const r = await fetch(base + q, { headers: H }); if (!r.ok) throw new Error('HighLevel ' + q.split('?')[0] + ' → ' + r.status); return r.json(); };
+        const cf = await hl(`/locations/${env.HL_LOCATION_ID}/customFields`);
+        const fieldName = {}; (cf.customFields || []).forEach(f => fieldName[f.id] = f.name);
+        const fids = n => Object.keys(fieldName).filter(id => fieldName[id] === n);
+        const AGENT = fids('Agent Name');
+        const BLOCKS = [
+          ['Full Name and Surname', 'Referral Contact Number'],
+          ['Referral 2 Full Name', 'Referral 2 Contact Number'],
+          ['Referral 3 Full Name', 'Referral 3 Contact Number'],
+          ['Referral 4 Full Name', 'Referral 4 Contact Number'],
+          ['Referral 5 Full Name', 'Referral 5 Contact Number'],
+        ].map(pair => pair.flatMap(fids));
+        const contacts = []; let said = null, sa = null, guard = 0;
+        for (;;) {
+          let q = `/contacts/?locationId=${env.HL_LOCATION_ID}&limit=100`;
+          if (said) q += `&startAfterId=${said}&startAfter=${sa}`;
+          const r = await hl(q);
+          const batch = r.contacts || [];
+          contacts.push(...batch);
+          if (batch.length < 100 || ++guard > 300) break;
+          said = (r.meta && r.meta.startAfterId) || batch[batch.length - 1].id;
+          sa = (r.meta && r.meta.startAfter) || new Date(batch[batch.length - 1].dateAdded || 0).getTime();
+        }
+        const fval = (c, ids) => { for (const f of (c.customFields || [])) if (ids.includes(f.id) && String(f.value ?? '').trim() !== '') return String(f.value).trim(); return ''; };
+        const rows = [];
+        for (const c of contacts) {
+          let n = BLOCKS.filter(ids => fval(c, ids) !== '').length;
+          if (!n && (c.tags || []).some(t => /referral/i.test(t))) n = 1;   // tagged referral with empty blocks still counts once
+          if (!n) continue;
+          rows.push({ id: c.id, created: String(c.dateAdded || '').slice(0, 10), agent: fval(c, AGENT), referrer: c.contactName || '', count: n });
+        }
+        const d = { rows, contacts: contacts.length, pulled_at: new Date().toISOString() };
+        globalThis.__hlCache = { t: now, d };
+        return json(d, 200, { 'X-Cbx-Cache': 'miss' });
       }
 
       // ---------- shared app state (multi-user persistence for both dashboards) ----------

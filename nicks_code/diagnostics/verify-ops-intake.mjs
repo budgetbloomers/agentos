@@ -108,6 +108,34 @@ const filtered = await page.evaluate(() => {
   return n;
 });
 ok('campaign filter keeps Vici rows (identity resolved via viciCbOf)', filtered > 5000, 'VT-filtered rows=' + filtered);
+
+// ---- referrals: upload the HighLevel pull through its slot, mapping runs through the Agent List
+const fs = await import('node:fs');
+const refCsv = fs.readdirSync(UP + '\\..').filter(n => /^referrals-highlevel-.*\.csv$/.test(n)).sort().pop();
+if (refCsv) {
+  await page.evaluate(() => go('uploads'));
+  await page.waitForSelector('input[onchange*="REFERRALS"]', { state: 'attached', timeout: 30000 });
+  await page.setInputFiles('input[onchange*="REFERRALS"]', j(UP, '..', refCsv), { timeout: 60000 });
+  await page.waitForSelector('#confirmLoad', { timeout: 60000 });
+  await page.click('#confirmLoad');
+  await page.waitForTimeout(2500);
+  const ref = await page.evaluate(() => {
+    const rows = state.facts.REFERRALS || [];
+    let mapped = 0, unm = 0, total = 0, agents = new Set();
+    rows.forEach(r => { const c = refCbOf(r); const n = r.referral_count ?? 1; total += n; if (c) { mapped += n; agents.add(c); } else if (String(r.agent || '').trim()) unm += n; });
+    return { rows: rows.length, total, mapped, unm, agents: agents.size };
+  });
+  console.log('referrals:', JSON.stringify(ref));
+  ok('referral rows loaded (~1,794)', ref.rows >= 1700, 'rows=' + ref.rows);
+  ok('referral counts sum to blocks (~1,800)', ref.total >= 1750, 'total=' + ref.total);
+  ok('Agent-List mapping attributes 55+ current-roster agents / 1,100+ referrals', ref.agents >= 55 && ref.mapped >= 1100, JSON.stringify(ref));
+  ok('ambiguous names stay unmatched, never merged', ref.unm > 0 && ref.unm < 250, 'unmatched-with-name=' + ref.unm);
+  await page.evaluate(() => go('sales'));
+  await page.waitForTimeout(1500);
+  const s2 = await page.evaluate(() => document.body.innerText);
+  ok('Sales page renders Referrals by agent', /Referrals by agent/i.test(s2));
+  ok('no-agent form gap surfaced', /NO agent name at all/i.test(s2));
+} else console.log('no referrals-highlevel CSV found — skipping referral checks');
 ok('trust bar rendered with per-source freshness', /Data trust/i.test(snap.trust), snap.trust.slice(0, 120));
 ok('trust bar honest: attention flagged (closed + referrals missing)', /need attention|Stale/i.test(snap.trust), snap.trust.slice(0, 160));
 ok('no page errors', errors.length === 0, errors.slice(0, 4).join(' | '));

@@ -830,14 +830,31 @@ const COLHEX={blue:'#2563EB',green:'#158A4C',amber:'#B45309',red:'#C42D2D',viole
 const COLSOFT={blue:'var(--blue-soft)',green:'var(--green-soft)',amber:'var(--amber-soft)',red:'var(--red-soft)',violet:'var(--violet-soft)',sky:'rgba(56,189,248,.15)'};
 
 /* ---------------- PERSISTENCE (built-in artifact storage; graceful fallback) ---------------- */
+/* LOCAL SNAPSHOT CACHE (IndexedDB) — the cloud KV read is the boot bottleneck: init()
+   used to await every multi-MB fact blob over the network before the first paint, so
+   every navigation back into the app sat on a blank screen for the whole download. The
+   last-known data is mirrored here on every save and every cloud load; boot paints from
+   it INSTANTLY and the cloud refresh (still the authority) re-renders behind it.
+   localStorage cannot hold it (40k+ CallX rows alone breach the ~5MB origin cap). */
+const _idb=(()=>{let p=null;return()=>p||(p=new Promise((res,rej)=>{
+  const rq=indexedDB.open('cbx-cache',1);
+  rq.onupgradeneeded=()=>{rq.result.createObjectStore('kv')};
+  rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error)}))})();
+async function idbGet(k){try{const db=await _idb();return await new Promise((res,rej)=>{
+  const t=db.transaction('kv').objectStore('kv').get(k);
+  t.onsuccess=()=>res(t.result===undefined?null:t.result);t.onerror=()=>rej(t.error)})}catch(e){return null}}
+function idbPut(k,v){_idb().then(db=>{try{db.transaction('kv','readwrite').objectStore('kv').put(v,k)}catch(e){}}).catch(()=>{})}
 async function store(key,val){
+  idbPut(key,val);   // local mirror first — what the user sees survives a cloud hiccup
   if(!window.storage){state.persistOk=false;return}
   try{await window.storage.set(key,JSON.stringify(val))}
   catch(e){state.persistOk=false;toast('Could not persist "'+key+'" — data kept for this session only.','err')}
 }
 async function load(key){
   if(!window.storage)return null;
-  try{const r=await window.storage.get(key);return r?JSON.parse(r.value):null}catch(e){return null}
+  try{const r=await window.storage.get(key);const v=r?JSON.parse(r.value):null;
+    if(v!=null)idbPut(key,v);   // refresh the local mirror with the cloud truth
+    return v}catch(e){return null}
 }
 const saveConfig=()=>(bumpDataVer(),store('cb-config',{kpis:state.kpis,rules:state.rules,agentMap:state.agentMap,sfOwnerMap:state.sfOwnerMap,cbInfo:state.cbInfo,user:state.user}));
 const saveAudit =()=>store('cb-audit',{batches:state.batches,exceptions:state.exceptions.slice(0,600)});
@@ -1018,9 +1035,14 @@ const TRANSFORM_EXTRA={
       return{agent,employee_code:'',referred:gx(/^Full Name:\s*(.+)$/m)||String((hcol(r,'First Name')||'')+' '+(hcol(r,'Last Name')||'')).trim(),
         case_number:gx(/^Case Number:\s*(.+)$/m),tags:hcol(r,'Tags')||'',campaign:'',
         referral_count:cnt==null?1:cnt,ref_date:isoDay(d),_d:isoDay(d)||isoDay(new Date())}}
-    const d2=parseDT(hcol(r,'Date'));const cnt2=parseNum(hcol(r,'Referrals'));
+    // simple/HighLevel formats: Employee Code / Agent (Name) + Referrals or Referral Count
+    // (the HighLevel per-contact pull carries Created, Referrer and Referral Count = filled
+    // referral blocks on the contact — totals legitimately exceed row counts, Q12 doctrine)
+    const d2=parseDT(hcol(r,'Date'))||parseDT(hcol(r,'Created'));
+    const cnt2=parseNum(hcol(r,'Referrals'))??parseNum(hcol(r,'Referral Count'));
     return{employee_code:String(hcol(r,'Employee Code')||'').trim(),agent:String(hcol(r,'Agent')||hcol(r,'Agent Name')||'').trim(),
-      referred:'',case_number:'',tags:'',campaign:hcol(r,'Campaign')||'',
+      contact_id:String(hcol(r,'Contact Id')||'').trim(),   // record identity — API re-syncs supersede per contact, never stack
+      referred:String(hcol(r,'Referrer')||'').trim(),case_number:'',tags:'',campaign:hcol(r,'Campaign')||'',
       referral_count:cnt2==null?1:cnt2,ref_date:isoDay(d2),_d:isoDay(d2)||isoDay(new Date())}},
   AGENT_LIST(r){return{cb_code:String(hcol(r,'Employee Code')||'').trim(),cb_norm:normCB(hcol(r,'Employee Code')),
     agent_name:String(hcol(r,'Agent Name')||'').trim(),team_leader:hcol(r,'Team Leader'),
@@ -1248,6 +1270,15 @@ function applyLoad(srcKey,file,parsed,notes){
         replaced=prev.length-keep.length;prev=keep;
         batch.superseded_range=mn+' → '+mx;
         if(replaced)batch.superseded_prev_rows=replaced}}
+    if(srcKey==='REFERRALS'&&loaded.length){
+      // The HighLevel pull returns the FULL referral book every sync — the new pull wins
+      // per contact (its counts may have grown as more referral blocks fill in). Rows
+      // without a Contact Id (legacy simple/CSV formats) are left untouched.
+      const rk=r=>{const v=String(r.contact_id??'').trim();return v||null};
+      const nk=new Set(loaded.map(rk).filter(Boolean));
+      const keep=prev.filter(r=>{const k=rk(r);return !k||!nk.has(k)});
+      replaced=prev.length-keep.length;prev=keep;
+      if(replaced)batch.superseded_prev_rows=replaced}
     if((srcKey==='QA_EVALUATIONS'||srcKey==='SF_CLOSED_CASES'||srcKey==='SF_INACTIVE')&&loaded.length){
       // Daily exports OVERLAP by design — QA is a full history export every time, and
       // closed-case / cancellation windows get re-pulled with a later end date. Blind
@@ -1426,6 +1457,30 @@ async function bulkLoadAll(){
     <div class="modal-foot"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
 }
 
+/* ---------------- REFERRALS: live pull from HighLevel via the Worker ----------------
+   The Worker holds the HL key as a secret and returns per-contact rows; they land here
+   through applyLoad — the SAME pipeline as an upload, so the batch audit, per-contact
+   supersede, Agent-List mapping (refCbOf) and exceptions all apply identically. */
+function referralsApiUrl(){return String(state.rules.askEndpoint?.vals?.[0]||'').replace(/\/api\/ask\s*$/,'/api/referrals')}
+async function syncReferralsFromAPI(quiet){
+  try{
+    const t=sessionStorage.getItem('cbx_token');
+    const u=referralsApiUrl();
+    if(!t||!u){if(!quiet)toast('Sign in first — the HighLevel sync runs through the API Worker.','err');return}
+    if(!quiet)toast('Pulling referrals from HighLevel…','ok');
+    const r=await fetch(u,{headers:{'Authorization':'Bearer '+t,'X-Cbx-Client':'v5'}});
+    if(!r.ok){const e=await r.json().catch(()=>({}));if(!quiet)toast('Referrals sync failed ('+r.status+'): '+esc(e.error||''),'err');return}
+    const d=await r.json();
+    if(!d.rows||!d.rows.length){if(!quiet)toast('HighLevel returned no referral rows.','err');return}
+    const parsed={headers:['Contact Id','Created','Agent Name','Referrer','Referral Count'],
+      data:d.rows.map(x=>({'Contact Id':x.id,'Created':x.created,'Agent Name':x.agent,'Referrer':x.referrer,'Referral Count':x.count})),
+      textHash:hashStr('hl-referrals|'+d.rows.length+'|'+hashStr(JSON.stringify(d.rows)))};
+    const res=applyLoad('REFERRALS',{name:'HighLevel API'},parsed,'HighLevel API sync '+(d.pulled_at||'').slice(0,16));
+    (async()=>{try{await Promise.all([saveFacts('REFERRALS'),saveAudit()])}catch(e){}})();
+    autoMapAgents();render();
+    if(!quiet)toast('Referrals synced from HighLevel: '+loadMsg('REFERRALS',res),'ok');
+  }catch(e){if(!quiet)toast('Referrals sync failed: '+esc(e.message||e),'err')}
+}
 /* Rebuild identity maps from the uploaded Agent List (all systems -> CB) */
 function buildIdentity(){
   const list=state.facts.AGENT_LIST||[];
@@ -1451,6 +1506,38 @@ function cbOf(v){
   return ex;
 }
 function cbOfOwner(name){const n=normName(name);return state.sfOwnerMap?.[n]||null}
+/* ---- Referral mapping runs THROUGH THE AGENT LIST (Nick, 2026-08-14) ----
+   The HighLevel form captures the agent as free text, so referral names arrive as
+   variants: "Thulani Mbonambi" (middle name dropped), "LYDIA" (first name only),
+   "Munswami" (typo of Munsami). Tiered, UNIQUE-OR-NOTHING matching against the roster:
+     1. the exact spine (employee code / cbOf: alias map, embedded CB, sfOwnerMap)
+     2. token subset — every word of one name appears in the other, ONE candidate only
+     3. a single name token that exactly one roster agent carries
+     4. per-token edit-distance ≤1 (typo'd tokens ≥4 chars), still one candidate only
+   Two candidates = NO match ("Tessa Chetty" stays unmatched next to Threza AND Theo
+   Chetty) — ambiguity is surfaced for review, never merged. Cache resets with the roster. */
+let _refCache={},_refCacheVer=-1;
+function _refLev1(a,b){if(a===b)return true;if(a.length<4||b.length<4||Math.abs(a.length-b.length)>1)return false;
+  let i=0,j=0,e=0;
+  while(i<a.length&&j<b.length){if(a[i]===b[j]){i++;j++;continue}
+    if(++e>1)return false;
+    if(a.length>b.length)i++;else if(b.length>a.length)j++;else{i++;j++}}
+  return e+(a.length-i)+(b.length-j)<=1}
+function _refTokMatch(t,rt){if(t===rt)return true;const c=s=>s.replace(/[^a-z0-9]/g,'');return _refLev1(c(t),c(rt))}
+function refCbOf(row){
+  const exact=normCB(row.employee_code)||cbOf(row.agent);
+  if(exact&&state.cbInfo[exact])return exact;
+  const n=normName(row.agent);
+  if(!n)return null;
+  if(_refCacheVer!==_dataVer){_refCache={};_refCacheVer=_dataVer}
+  if(n in _refCache)return _refCache[n];
+  const toks=n.split(' ');
+  const cands=new Set();
+  // sfOwnerMap already carries every roster identity normalised (Agent Name + Sales Force name → CB)
+  for(const nm in (state.sfOwnerMap||{})){const rt=nm.split(' ');
+    if(toks.every(t=>rt.some(x=>_refTokMatch(t,x)))||rt.every(x=>toks.some(t=>_refTokMatch(t,x))))cands.add(state.sfOwnerMap[nm]);}
+  return (_refCache[n]=cands.size===1?[...cands][0]:null);
+}
 /* Auto-suggest dialler agent -> CB code by name match against attendance */
 function autoMapAgents(){
   const att=state.facts.ATTENDANCE||[];const byName={};
@@ -1650,7 +1737,7 @@ function rowsForRaw(src,win,sc){
     case 'SF_OPEN_CASES':case 'SF_CLOSED_CASES':return cbOfOwner(r.case_owner);
     case 'SF_INACTIVE':return cbOfOwner(r.owner);
     case 'VICI_CALL_REPORT':return viciCbOf(r);   // name wins the login (spec §3); unmapped stays null → flagged, not invented
-    case 'REFERRALS':return normCB(r.employee_code)||cbOf(r.agent);
+    case 'REFERRALS':return refCbOf(r);   // mapping runs through the Agent List, tiered unique-or-nothing
     default:return null}};
   /* Resolve each row's agent (CB) + campaign bucket once per data version, cached on the row.
      campaign/tenure/team/dept reuse it (no per-row alias re-walk = no filter lag), and every
@@ -1915,7 +2002,12 @@ function filtCountBadge(){const n=Object.values(state.filters).filter(Boolean).l
 
 /* ---------------- CHART HELPERS ---------------- */
 function killCharts(){charts.forEach(c=>{try{c.destroy()}catch(e){}});charts=[]}
-function mkChart(id,cfg){const el=document.getElementById(id);if(!el)return;const c=new Chart(el.getContext('2d'),cfg);charts.push(c);return c}
+function mkChart(id,cfg){const el=document.getElementById(id);if(!el)return;
+  // Two renders can land back-to-back (local-snapshot paint, then the cloud refresh) and
+  // both schedule their deferred chart creation — the earlier one may claim THIS render's
+  // canvas first. A canvas already bound to a chart is released before reuse, never fatal.
+  try{const prev=Chart.getChart(el);if(prev){prev.destroy();const i=charts.indexOf(prev);if(i>=0)charts.splice(i,1)}}catch(e){}
+  const c=new Chart(el.getContext('2d'),cfg);charts.push(c);return c}
 Chart.defaults.font.family="'Inter','Segoe UI',sans-serif";Chart.defaults.color='#A9BAD4';Chart.defaults.font.size=11;
 const PALETTE=['#2563EB','#38BDF8','#6D4AE0','#158A4C','#F59E0B','#DC2626','#0EA5E9','#94A3B8','#10B981','#E879F9'];
 function groupCount(rows,field,filt){const m={};rows.forEach(r=>{if(filt&&!passFilter(r,filt))return;const k=r[field]||'(none)';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1])}
@@ -2014,27 +2106,66 @@ function kpiTargetFoot(k,v,win,nowOnly){
   return nowSpan
    +'<span class="delta '+(good(proj)?'up':'down')+'" title="Projected period-end ÷ target. Counts extrapolate by workday run-rate; rates carry the trailing week forward over the remaining days.">proj '+f(proj)+'</span>';
 }
-function kpiTile(k,win){
+/* DEFERRED KPI FOOTERS — the tile VALUE paints immediately; the delta (a full extra
+   prev-period evaluation) and the 90-day sparkline (one evalKPI per DAY — the single
+   heaviest render cost with big fact tables) are computed afterwards in a yielding queue,
+   one tile per tick, and cached per (kpi, window, filters, data version) so a revisit is
+   instant. Page-render time stops scaling with sparkline cost — "no delay" doctrine. */
+const _kfCache=new Map();
+function kpiFootFull(k,win){
+  const key=k.id+'|'+win.from+'~'+win.to+'|'+JSON.stringify(state.filters)+'|'+_dataVer;
+  let h=_kfCache.get(key);
+  if(h!=null)return h;
   const v=evalKPI(k,win);
-  const rag=ragOf(k,v);
-  const snap=kpiSnapshotSrc(k);
-  const tf=kpiTargetFoot(k,v,win,snap);
+  const tf=kpiTargetFoot(k,v,win,false);
   let deltaHtml='';
-  if(snap){const fr=freshness(k.src||k.num?.src||k.den?.src);
-    deltaHtml=tf+'<span class="asof">Snapshot · as of '+(fr.batch?new Date(fr.batch.uploaded_at).toLocaleDateString():'—')+'</span>'}
-  else if(tf)deltaHtml=tf;
+  if(tf)deltaHtml=tf;
   else{const d=kpiDelta(k,win);
     if(d){const up=d.val>=0;const good=(k.dir==='higher')===up;
       deltaHtml='<span class="delta '+(Math.abs(d.val)<0.05?'flat':good?'up':'down')+'">'+(up?'↑':'↓')+' '+Math.abs(Math.round(d.val*10)/10).toLocaleString()+d.unit+'</span><span class="asof">vs prev period</span>'}
     else deltaHtml='<span class="asof">No prior period</span>'}
   const series=kpiSeries(k,win);
+  h=deltaHtml+(series?sparkSVG(series,COLHEX[DOMCOL[k.domain]||'blue']):'');
+  if(_kfCache.size>1500)_kfCache.clear();
+  _kfCache.set(key,h);
+  return h;
+}
+let _kfQueue=[];
+function scheduleKpiFoots(){
+  _kfQueue=[...document.querySelectorAll('[data-kfoot]')];
+  if(!_kfQueue.length)return;
+  (function step(){
+    const el=_kfQueue.shift();
+    if(!el)return;
+    if(el.isConnected){
+      const k=state.kpis.find(x=>x.id===el.getAttribute('data-kfoot'));
+      const w=(el.getAttribute('data-kwin')||'').split('~');
+      if(k&&w.length===2){try{el.innerHTML=kpiFootFull(k,{from:w[0],to:w[1]})}catch(e){}}
+      el.removeAttribute('data-kfoot');
+    }
+    if(_kfQueue.length)setTimeout(step,0);   // yield between tiles — first paint always wins
+  })();
+}
+function kpiTile(k,win){
+  const v=evalKPI(k,win);
+  const rag=ragOf(k,v);
+  const snap=kpiSnapshotSrc(k);
   const col=COLHEX[DOMCOL[k.domain]||'blue'];
   const unitTag=k.format==='hoursnum'?'':'';
+  let foot;
+  if(snap){const tf=kpiTargetFoot(k,v,win,snap);const fr=freshness(k.src||k.num?.src||k.den?.src);
+    foot='<div class="kpi-foot">'+tf+'<span class="asof">Snapshot · as of '+(fr.batch?new Date(fr.batch.uploaded_at).toLocaleDateString():'—')+'</span></div>'}
+  else{
+    const key=k.id+'|'+win.from+'~'+win.to+'|'+JSON.stringify(state.filters)+'|'+_dataVer;
+    const cached=_kfCache.get(key);
+    foot=cached!=null?'<div class="kpi-foot">'+cached+'</div>'
+      :'<div class="kpi-foot" data-kfoot="'+esc(k.id)+'" data-kwin="'+esc(win.from)+'~'+esc(win.to)+'"><span class="asof">…</span></div>';
+  }
   return '<div class="kpi" onclick="kpiInfo(\''+k.id+'\')" title="Click for definition & interpretation">'
     +(k.green!=null?'<span class="rag-dot '+rag+'"></span>':'')
     +'<div class="kpi-top"><span class="kpi-ic" style="background:'+(COLSOFT[DOMCOL[k.domain]]||'var(--blue-soft)')+'">'+icon(k.icon||'grid',col)+'</span><span class="kpi-name">'+esc(k.name)+'</span></div>'
     +'<div class="kpi-val num">'+(k.format==='zar'&&v!=null?zarStack(v):fmtVal(v,k.format))+unitTag+'</div>'
-    +'<div class="kpi-foot">'+deltaHtml+(series?sparkSVG(series,col):'')+'</div></div>';
+    +foot+'</div>';
 }
 function kpiRow(domain,win,ids){
   const ks=state.kpis.filter(k=>k.show&&(ids?ids.includes(k.id):k.domain===domain));
@@ -2491,6 +2622,16 @@ function pageSales(win){
     if(r._d)a.days.add(r._d)});
   const vgRows=Object.values(VG).sort((x,y)=>y.talk-x.talk).slice(0,15);
   const vUnmapped=Object.values(VG).filter(a=>a.unmapped).length;
+  /* Referrals mapped through the Agent List (refCbOf: tiered unique-or-nothing) */
+  const refRows=rowsFor('REFERRALS',win);
+  const RG={};const refUnm={};let refNoAgent=0;
+  refRows.forEach(r=>{const cb=refCbOf(r);const cnt=r.referral_count??1;
+    if(cb){const a=RG[cb]=RG[cb]||{name:(state.cbInfo[cb]?.name)||r.agent,cb,rows:0,refs:0};a.rows++;a.refs+=cnt;return}
+    if(!String(r.agent||'').trim()&&!String(r.employee_code||'').trim()){refNoAgent+=cnt;return}
+    const k=r.agent||r.employee_code;refUnm[k]=(refUnm[k]||0)+cnt});
+  const rgRows=Object.values(RG).sort((x,y)=>y.refs-x.refs);
+  const refUnmList=Object.entries(refUnm).sort((a,b)=>b[1]-a[1]);
+  const refTotal=refRows.reduce((s,r)=>s+(r.referral_count??1),0);
   const vRing=vAll.reduce((s,r)=>(!vSys.has(String(r.user_raw||'').toUpperCase())&&vNc.has(r.status))?s+(r.length_in_sec||0):s,0);
   const vTalkAll=vAll.reduce((s,r)=>!vSys.has(String(r.user_raw||'').toUpperCase())?s+(r.length_in_sec||0):s,0);
   const cStatFreq=groupCount(closed,'status');
@@ -2580,6 +2721,17 @@ function pageSales(win){
      +'<div style="font-size:11px;color:var(--muted);margin-top:6px">'+fmtVal(vRing,'hours')+' of '+fmtVal(vTalkAll,'hours')+' ('+(vTalkAll?Math.round(vRing/vTalkAll*100):0)+'%) sits on no-contact statuses — ringing, voicemail, answering machines (talk is billed dial-to-hangup by rule).'
      +(vSysRows?' '+vSysRows.toLocaleString()+' system/test-login row(s) excluded and counted.':'')+(vNeg?' '+vNeg+' corrupt length(s) zeroed, never subtracted.':'')+'</div>'
      +(vUnmapped?'<div class="stale-banner" style="margin-top:8px">⚠ '+vUnmapped+' Vici login(s) matched no roster entry — their dials are flagged above and excluded from per-agent roll-ups elsewhere, never invented onto the roster.</div>':'')
+     +'</div>':'')
+   +(refRows.length?'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Referrals by agent</span>'
+     +'<span class="info" title="Mapping runs THROUGH THE AGENT LIST: exact roster/Sales-Force name first, then a controlled tiered match (name-subset, unique single name, single-typo tolerance) that only ever accepts a UNIQUE candidate. Ambiguous or unknown names are listed below with their counts — flagged for review, never merged onto an agent. Counts are referral_count per row (one contact can carry several referred people), so totals can exceed row counts by design.">i</span>'
+     +'<span class="s">'+refTotal.toLocaleString()+' referral(s) · '+refRows.length.toLocaleString()+' row(s)</span></div>'
+     +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Agent (mapped via Agent List)</th><th class="noclick">Rows</th><th class="noclick">Referrals</th></tr></thead><tbody>'
+     +rgRows.map(a=>'<tr><td><b>'+aName(a.cb,maskName(a.name))+'</b></td><td class="num">'+a.rows.toLocaleString()+'</td><td class="num" style="font-weight:800">'+a.refs.toLocaleString()+'</td></tr>').join('')
+     +'</tbody></table></div>'
+     +((refUnmList.length||refNoAgent)?'<div class="stale-banner" style="margin-top:8px">⚠ '
+       +(refNoAgent?refNoAgent.toLocaleString()+' referral(s) carry NO agent name at all (form gap — route to Aarav). ':'')
+       +(refUnmList.length?refUnmList.length+' name(s) match no one on the Agent List (or more than one — never guessed): '+refUnmList.slice(0,8).map(([n,c])=>esc(maskNameText(n))+' ('+c+')').join(', ')+(refUnmList.length>8?' …':'')+'. Fix the name in the referral form or the Agent List.':'')
+       +'</div>':'')
      +'</div>':'')
    +'<div class="grid g2">'
    +'<div class="card"><div class="card-h"><span class="t">Lead inflow vs outflow</span><span class="info" title="Inflow = cases opened per day (open + closed files). Outflow = cases closed per day. The gap is the backlog trend.">i</span></div><div class="chart-wrap short"><canvas id="chS8"></canvas></div></div>'
@@ -2982,7 +3134,7 @@ function acCtxBuild(win){
   rowsNF('QA_EVALUATIONS',win).forEach(r=>{const cb=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];if(!cb)return;const o=C.qa[cb]=C.qa[cb]||{n:0,s:0,s0:0,sn:0,crit:0};o.n++;const isC=_CRIT.includes(r.escalation_decision);if(isC)o.crit++;if(r.score_percent!=null){o.s+=r.score_percent;o.sn++;o.s0+=isC?0:r.score_percent}else if(isC){/* crit with no score still counts as zero in the n denominator */}});
   rowsNF('ATTENDANCE',win).forEach(r=>{const cb=normCB(r.employee_code);if(!cb||r.excluded_flag)return;const o=C.att[cb]=C.att[cb]||{sched:0,p:0};o.sched++;if(r.present_flag)o.p++});
   rowsNF('CALLX_CALL_RECORDS',win).forEach(r=>{const cb=cbOf(r.agent);if(!cb)return;const o=C.call[cb]=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};o.n++;o.sec+=r.billable_seconds||0;o.bands[r.call_band]=(o.bands[r.call_band]||0)+1;if(r._d)o.days.add(r._d);const d=String(r.destination_number||'').trim();if(d&&d!=='s')o.uniq.add(d)});
-  rowsNF('REFERRALS',win).forEach(r=>{const cb=normCB(r.employee_code)||cbOf(r.agent);if(!cb)return;const o=C.ref[cb]=C.ref[cb]||{n:0};o.n+=(r.referral_count??1)});
+  rowsNF('REFERRALS',win).forEach(r=>{const cb=refCbOf(r);if(!cb)return;const o=C.ref[cb]=C.ref[cb]||{n:0};o.n+=(r.referral_count??1)});
   (function(){const f=state.filters;state.filters={};try{
     accountPremiums(win).forEach(e=>{if(!e.cb)return;const o=C.sale[e.cb]=C.sale[e.cb]||{n:0,gwp:0};o.n++;o.gwp+=e.gwp||0});
     cancelPremiums(win).forEach(e=>{if(!e.cb)return;const o=C.canc[e.cb]=C.canc[e.cb]||{n:0};o.n++});
@@ -3417,7 +3569,7 @@ function pageScorecard(win){
   accountPremiums(win).forEach(e=>{if(!e.cb)return;const a=mk(e.cb,e.owner,'');a.joins.sf=true;
     a.sales.add(e.acc);a.gwp+=e.gwp||0});
   cancelPremiums(win).forEach(e=>{if(!e.cb)return;const a=mk(e.cb,e.owner,'');a.cancels.add(e.acc)});
-  rowsFor('REFERRALS',win).forEach(r=>{const cb=normCB(r.employee_code)||cbOf(r.agent);if(!cb)return;const a=mk(cb,r.agent,'');a.refs+=(r.referral_count??1)});
+  rowsFor('REFERRALS',win).forEach(r=>{const cb=refCbOf(r);if(!cb)return;const a=mk(cb,r.agent,'');a.refs+=(r.referral_count??1)});
   qa.forEach(r=>{const c=normCB(r.sales_agent_code)||state.sfOwnerMap?.[normName(r.sales_agent)];if(!c)return;const a=mk(c,r.sales_agent,r.team_leader);
     a.joins.qa=true;a.ev++;
     if(resolveRule('$qaCoaching').includes(r.escalation_decision))a.coach=(a.coach||0)+1;
@@ -3442,7 +3594,7 @@ function pageScorecard(win){
   const th=(label,key)=>'<th onclick="sortBy(\'scorecard\',\''+key+'\',\'crit\')">'+label+(sort.k===key?(sort.asc?' ↑':' ↓'):'')+'</th>';
   const unmappedAgents=[...new Set(calls.filter(c=>c.agent&&!state.agentMap[c.agent]).map(c=>c.agent))];
   const offRoster=roster.length?rows.filter(r=>!r.joins.list):[];
-  const refUn=rowsFor('REFERRALS',win).filter(r=>!(normCB(r.employee_code)||cbOf(r.agent))).length;
+  const refUn=rowsFor('REFERRALS',win).filter(r=>!refCbOf(r)).length;
   const offNote=(offRoster.length?' · <span style="color:var(--red)">'+offRoster.length+' with activity but not on the list</span>':'')
     +(refUn?' · <span style="color:var(--red)">'+refUn+' referral(s) with an Agent name that matches no one on the list</span>':'');
   // TL rollup
@@ -3894,7 +4046,9 @@ function pageUploads(){
      +'<div><div class="slot-t">'+esc(s.label)+'</div><div class="slot-s">'+esc(s.system)+' · expects '+esc(s.fmt)+'</div></div></div>'
      +'<div class="slot-meta">'+esc(s.purpose)+'</div>'
      +'<div class="vh" style="margin-bottom:9px"><span class="chip '+f.state+'"><span class="dot"></span>'+(f.batch?'Updated '+f.label:'Never uploaded')+'</span>'+(rows?'<span class="chip n"><span class="dot"></span>'+rows.toLocaleString()+' rows loaded</span>':'')+'</div>'
-     +'<div class="slot-foot"><label class="btn primary small" style="display:inline-block">Choose file<input type="file" style="display:none" onchange="if(this.files[0]){handleFile(\''+k+'\',this.files[0]);this.value=\'\'}"></label>'
+     +'<div class="slot-foot">'
+     +(k==='REFERRALS'?'<button class="btn primary small" onclick="syncReferralsFromAPI()" title="Pull the referral book live from HighLevel through the API Worker — same pipeline as an upload: batch audit, per-contact supersede, Agent-List mapping. Also runs automatically on every sign-in.">⟳ Sync from HighLevel</button>':'')
+     +'<label class="btn '+(k==='REFERRALS'?'':'primary ')+'small" style="display:inline-block">Choose file<input type="file" style="display:none" onchange="if(this.files[0]){handleFile(\''+k+'\',this.files[0]);this.value=\'\'}"></label>'
      +(rows?'<button class="btn small danger" onclick="clearSource(\''+k+'\')">Delete file</button>':'<span class="file-note">or drag & drop here</span>')
      +'</div></div>';
   }).join('');
@@ -4127,6 +4281,7 @@ function render(){
      +'<p style="font-size:12.5px">Try a hard refresh (Ctrl+Shift+R). If it persists, screenshot this and send it to Nick — the other pages still work.</p></div>';
   }
   $('#page').innerHTML=html;
+  scheduleKpiFoots();   // deltas + sparklines fill in AFTER first paint (deferred-footer queue)
 }
 let __initGen=0, __initDone=false;
 /* Activated Sales is retired — Power BI - Active Cases is the only money source. These
@@ -4173,14 +4328,51 @@ function migrateKpis(saved){
     return d&&(d.src!==s.src||JSON.stringify(d.num??null)!==JSON.stringify(s.num??null))});
   return out;
 }
+function applyCfg(cfg){if(!cfg)return;
+  if(cfg.kpis?.length)state.kpis=migrateKpis(cfg.kpis);if(cfg.rules)state.rules=Object.assign({},structuredClone(DEFAULT_RULES),cfg.rules);
+  if(cfg.agentMap)state.agentMap=cfg.agentMap;if(cfg.sfOwnerMap)state.sfOwnerMap=cfg.sfOwnerMap;if(cfg.cbInfo)state.cbInfo=cfg.cbInfo;if(cfg.user)state.user=cfg.user}
+/* PHASE A — paint from the local IndexedDB snapshot before any network happens. The auth
+   gate still covers the screen until the session validates; this only removes the blank
+   wait AFTER login while the cloud blobs download. Aborts the moment the cloud init has
+   applied (the cloud is always the authority — local must never overwrite it). */
+let __localPainted=false;
+async function initLocal(){
+  try{
+    if(__initGen)return;                      // the cloud init owns state from the moment it starts
+    const [cfg,audit]=await Promise.all([idbGet('cb-config'),idbGet('cb-audit')]);
+    if(__initGen)return;
+    state.kpis=structuredClone(DEFAULT_KPIS);state.rules=structuredClone(DEFAULT_RULES);
+    applyCfg(cfg);
+    if(audit){state.batches=audit.batches||[];state.exceptions=audit.exceptions||[]}
+    const lf=await Promise.all([...SRC_KEYS,...SES_KEYS].map(async k=>[k,await idbGet('cb-facts-'+k)]));
+    if(__initGen)return;
+    let any=false;lf.forEach(([k,f])=>{if(f&&f.length){state.facts[k]=f;any=true}});
+    // Paint EITHER WAY: with a snapshot this is last session's data; without one it is
+    // the shell + empty states. A blank screen is never the right first frame.
+    bumpDataVer();__localPainted=any||!!cfg;
+    $('#userNm').textContent=state.user;$('#userAv').textContent=state.user[0]||'A';
+    render();
+    const fa=$('#footAsof');if(fa)fa.textContent+=__localPainted?' · showing last-loaded data — refreshing from the cloud…':' · waiting for the cloud…';
+  }catch(e){console.warn('[AgentOS] local-snapshot paint failed (cloud boot continues normally):',e)}
+}
+if(document.readyState!=='loading')initLocal();else document.addEventListener('DOMContentLoaded',initLocal);
 async function init(){
   const gen=++__initGen;
   state.kpis=structuredClone(DEFAULT_KPIS);
   state.rules=structuredClone(DEFAULT_RULES);
+  // shell first — never leave the user on a blank frame while ANY network runs
+  if(!__localPainted){try{bumpDataVer();render()}catch(e){}}
   const [cfg,audit]=await Promise.all([load('cb-config'),load('cb-audit')]); // PERF: parallel boot reads
   if(gen!==__initGen)return; // a newer (post-login) init superseded this run
-  if(cfg){if(cfg.kpis?.length)state.kpis=migrateKpis(cfg.kpis);if(cfg.rules)state.rules=Object.assign({},structuredClone(DEFAULT_RULES),cfg.rules);if(cfg.agentMap)state.agentMap=cfg.agentMap;if(cfg.sfOwnerMap)state.sfOwnerMap=cfg.sfOwnerMap;if(cfg.cbInfo)state.cbInfo=cfg.cbInfo;if(cfg.user)state.user=cfg.user}
+  applyCfg(cfg);
   if(audit){state.batches=audit.batches||[];state.exceptions=audit.exceptions||[]}
+  // FIRST PAINT NOW — the shell, nav, trust bar and whatever the local snapshot already
+  // put on screen must never wait for the fact downloads. The blank-screen-until-every-
+  // blob-arrives boot is what read as "the app is not loading" on a slow connection.
+  bumpDataVer();
+  $('#userNm').textContent=state.user;$('#userAv').textContent=state.user[0]||'A';
+  render();
+  {const fa=$('#footAsof');if(fa&&!/downloading/.test(fa.textContent))fa.textContent+=' · downloading data from the cloud…'}
   // Parallel + resilient: 15 multi-MB sources load at once; one slow or failed
   // source never blocks or serialises behind the others.
   await Promise.all([...SRC_KEYS,...SES_KEYS].map(async k=>{try{const f=await load('cb-facts-'+k);if(f&&f.length)state.facts[k]=f}catch(e){}}));
@@ -4197,6 +4389,8 @@ async function init(){
     if(U.pii_unmask||U.role==='admin'){state.unmasked=true;var sw=document.getElementById('piiSwitch');if(sw)sw.checked=true;var ps=document.getElementById('piiState');if(ps)ps.textContent='Off — authorised view';}}}catch(e){}
   $('#userNm').textContent=state.user;$('#userAv').textContent=state.user[0]||'A';
   render();
+  syncReferralsFromAPI(true);   // referrals pull themselves from HighLevel on every sign-in — no manual upload needed
+  setTimeout(function(){try{if(!(state.facts.REFERRALS||[]).length)syncReferralsFromAPI(true)}catch(e){}},20000);   // one retry if the first pull hit a transient failure
 }
 
 /* ---------------- IN-APP TRAINING GUIDE ---------------- */
