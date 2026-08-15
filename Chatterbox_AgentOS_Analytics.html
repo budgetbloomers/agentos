@@ -2414,14 +2414,50 @@ function cycleCalc(mode){
   const byTL={};tlRows.forEach(r=>byTL[r.tl]=r);
   return{mode,start,to:cw.to,totD,vat,targets,byCamp,campSales,dialDays,unatt,wdFallback,pastOf,tlRows,byTL,weeks};
 }
+/* Monthly targets editor — the Cuddle/Courtesy cycle targets change every month, so the
+   admin gets a front-door on the Sales page instead of digging through Dictionary → Rules.
+   It WRITES TO THE SAME RULES (cycleTargets / cycleStart / cycleDialingDays) — one source,
+   editable from two places, and the Dictionary stays the control room of record.
+   Hidden from scoped team leaders (same gate as the Dictionary itself). */
+function editCycleTargets(){
+  if(pageBlockedForUser('dict'))return;
+  const start=String((state.rules.cycleStart?.vals||[])[0]||'');
+  const days=String((state.rules.cycleDialingDays?.vals||[])[0]||'21');
+  const tgts=[];(state.rules.cycleTargets?.vals||[]).forEach(v=>{const i=String(v).lastIndexOf(':');
+    const t=parseFloat(String(v).slice(i+1));if(!isNaN(t))tgts.push([String(v).slice(0,i).trim(),t])});
+  if(!tgts.length)tgts.push(['Cuddle',0],['Courtesy',0]);
+  modal('<div class="modal-h">🎯 Monthly targets — Matrix VAS cycle</div>'
+   +'<p style="font-size:12px;color:var(--muted);margin:0 0 12px">These drive the Operational Performance panels below. They are the same values as Dictionary → Rules → cycleTargets / cycleStart / cycleDialingDays — set them here each month when the cycle rolls. Targets are VAT-inclusive rand.</p>'
+   +'<div class="grid g2">'
+   +'<div class="field"><label>Cycle start (first dialing day)</label><input type="date" id="ct_start" value="'+esc(start)+'"></div>'
+   +'<div class="field"><label>Dialing days in the cycle</label><input type="number" id="ct_days" min="1" max="31" value="'+esc(days)+'"></div>'
+   +tgts.map(([n,v],i)=>'<div class="field"><label>'+esc(n)+' GWP target (R, incl VAT)</label>'
+     +'<input type="number" step="0.01" id="ct_t'+i+'" data-camp="'+esc(n)+'" value="'+v+'"></div>').join('')
+   +'</div>'
+   +'<p style="font-size:11px;color:var(--muted);margin:8px 0 12px">Campaign names match each agent\'s roster queue. To add a campaign (e.g. Matrix Vehicle Tracking), add a <code>Name:rand</code> entry under Dictionary → Rules → cycleTargets.</p>'
+   +'<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="closeModal()">Cancel</button>'
+   +'<button class="btn primary" onclick="saveCycleTargets()">Save targets</button></div>');
+}
+function saveCycleTargets(){
+  const s=(document.getElementById('ct_start')?.value||'').trim();
+  const d=parseFloat(document.getElementById('ct_days')?.value);
+  if(s)state.rules.cycleStart.vals=[s];
+  if(!isNaN(d)&&d>0)state.rules.cycleDialingDays.vals=[String(d)];
+  const vals=[];document.querySelectorAll('[id^=ct_t]').forEach(inp=>{const v=parseFloat(inp.value);
+    if(!isNaN(v)&&v>=0)vals.push(inp.dataset.camp+':'+v)});
+  if(vals.length)state.rules.cycleTargets.vals=vals;
+  saveConfig();closeModal();render();toast('Monthly targets saved — panels recalculated','ok');
+}
 function cyclePanel(win){
   const mode=state.cycleView||'cycle';
   const CC=cycleCalc(mode);
-  const chips='<span class="right">'+[['cycle','Cycle'],['month','Calendar month'],['win','Main filter']]
+  const tgtBtn=pageBlockedForUser('dict')?'':'<button class="btn small" onclick="editCycleTargets()" title="Set this month\'s cycle start, dialing days and the Cuddle/Courtesy GWP targets">🎯 Set monthly targets</button>';
+  const chips='<span class="right">'+tgtBtn+' '+[['cycle','Cycle'],['month','Calendar month'],['win','Main filter']]
     .map(([m,l])=>'<button class="btn small'+(m===mode?' primary':'')+'" onclick="state.cycleView=\''+m+'\';render()">'+l+'</button>').join(' ')+'</span>';
   if(!CC)return '<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Matrix VAS — Operational Performance Overview</span>'+chips+'</div>'
-    +'<div class="empty">Set the cycleStart rule (Dictionary → Rules) for the cycle view — or switch to Calendar month / Main filter above.</div></div>';
-  if(!CC.targets.length)return '';
+    +'<div class="empty">Set the cycle start with 🎯 Set monthly targets (or Dictionary → Rules) — or switch to Calendar month / Main filter above.</div></div>';
+  if(!CC.targets.length)return '<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Matrix VAS — Operational Performance Overview</span>'+chips+'</div>'
+    +'<div class="empty">No campaign targets set for this cycle — use 🎯 Set monthly targets to key the Cuddle and Courtesy GWP targets.</div></div>';
   const{start,to,totD,vat,targets,byCamp,campSales,unatt,pastOf,tlRows,weeks}=CC;
   const showTgt=mode!=='win';   // cycle targets only make sense over a full cycle/month
   const panel=([camp,tgt])=>{
@@ -3553,8 +3589,9 @@ function pageLeads(win){
      csv:['Team Leader,Data Set,Tenure,Agent Name,'+stCols.map(q).join(',')
        +',Total Open,Closed,Closed - No feedback,Total Closed,Total Leads,Ave Closed p/d,Ave Wasted p/d,Sales,Payroll SPD,Dialing SPD,Conv % (leads),Conv % (closed),Conv % wasted,Cancelled,Canc to Sales %',
        ...rows.map(a=>csvLine(a,false)),csvLine(G,true)].join('\n')};}
-  return dailyCard
-   +'<div class="card"><div class="card-h"><span class="t">Lead management — the funnel per agent</span>'
+  /* Funnel first (Nick, 2026-08-15) — it is the page's namesake table; daily movement below. */
+  const funnelCard=''
+   +'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Lead management — the funnel per agent</span>'
    +'<span class="info" title="Working days in the selected window: '+wd+'. p/d and Payroll SPD divide by working days; Dialing SPD divides by the days the agent actually dialled (CallX). Wasted = Total Closed − Sales. Conv % (leads) = Sales ÷ Total Leads (open + closed cases = unique leads; same formula and convTarget as the scorecard Conversion — edit the target in Dictionary → NBA thresholds). Conv % (closed) = Sales ÷ Total Closed only. CONFIRM the two SPD definitions with Ryan.">i</span>'
    +'<button class="btn" style="font-size:11px;padding:5px 11px;white-space:nowrap" onclick="exportLeads()" title="Download this table as CSV — same rows, filters and masking as on screen">⬇ Export CSV</button>'
    +'<span class="s">'+rows.length+' roster agents · window '+esc(winFrom(win))+' → '+esc(win.to)+' · all global filters apply</span></div>'
@@ -3570,6 +3607,7 @@ function pageLeads(win){
    +'</tbody></table></div>'
    +((unOpen||unClosed)?'<div class="stale-banner" style="margin-top:10px">⚠ Not attributed to any roster agent (excluded here, still counted in totals on the Sales page): '+(unOpen?unOpen.toLocaleString()+' open case(s)':'')+(unOpen&&unClosed?' · ':'')+(unClosed?unClosed.toLocaleString()+' closed case(s)':'')+'.</div>':'')
    +'</div>';
+  return funnelCard+dailyCard;
 }
 
 /* ---------------- PAGE: AGENT SCORECARD ---------------- */

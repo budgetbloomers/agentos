@@ -49,6 +49,7 @@ const ACTIVE = [BI_HDR,
   'E2,Enoch Pillay - Panimax,2026-08-03,,0.30,R1',
   'N1,Nosipho Shange - Panimax,2026-08-03,,86.96,R1',
   'S1,Sechaba Mlambo - Panimax,2026-08-04,,86.96,R1',
+  'Z1,Zandile Chamane - Panimax,2026-08-04,,86.96,R1',   // sale dated 04, dialled 03 → adjacent-day case
 ].join('\n');
 const INACTIVE = [BI_HDR.replace('Charge Code', 'Charge Code,Contract Number'),
   'A9,Theo Chetty - Panimax,2026-08-03,2026-08-10,10.00,R1,C9',   // cancelled in-period: still a gross sale
@@ -68,6 +69,7 @@ const BOARD = [
 const CALLS = ['Date & Time,Agent,Duration,Billable Seconds,Lead Disposition,Bridge',
   '2026-08-03 09:00,Anele Natacia Sibisi CB-115,0:05:00,300,No Sale,ANSWERED',
   '2026-08-03 09:10,Thulani Mbonambi CB-142,2:20:00,8000,No Sale,ANSWERED',   // >2h, 0 sales
+  '2026-08-03 11:00,Zandile Chamane CB-150,0:20:00,1200,No Sale,ANSWERED',    // dialled 03; her sale is dated 04
   '2026-08-04 10:00,Sechaba Mlambo CB-131,1:00:00,3000,VAS Sale No Insurance Opt In,ANSWERED',
 ].join('\n');
 const ATT = ['Date,Employee Code,Employee Name,Employee Type,Status,Status Code',
@@ -143,6 +145,13 @@ ok('DV03 Thulani sales variance still exact (0 vs 0)', thul && thul.salesVar ===
 const noth = row('CB162', '2026-08-03');
 ok('DV03 flag 3 (warning): present but not dialling', noth && noth.flags.some(f => f.sev === 'warning' && /Present but not dialling/.test(f.f)), JSON.stringify(noth && noth.flags));
 ok('DV03 Cuddle talk unknown without day-level ViciDial (null, checks skipped)', theo && theo.talk === null && theo.flags.some(f => f.sev === 'info'));
+const zand = row('CB150', '2026-08-04');
+ok('talk=0-with-sale names the ADJACENT dial day (sale dated to Contract Create Date, dialled 03)',
+  zand && zand.talk === 0 && zand.flags.some(f => f.sev === 'warning' && /2026-08-03/.test(f.f) && /Contract Create Date/.test(f.f)), JSON.stringify(zand && zand.flags));
+ok('no adjacent talk anywhere → flag stays an ERROR (Nosipho)', nosi && nosi.flags.some(f => f.sev === 'error'), JSON.stringify(nosi && nosi.flags));
+ok('dialler sales column: Sechaba 1 disposition, Nosipho 0, Cuddle unknown (null)',
+  sech && sech.dlSales === 1 && nosi && nosi.dlSales === 0 && theo && theo.dlSales === null,
+  JSON.stringify([sech && sech.dlSales, nosi && nosi.dlSales, theo && theo.dlSales]));
 
 /* ---------- identity / scope ---------- */
 ok('unmapped board name reported, not guessed', Object.values(VR.unmapped).some(u => /Nonexistent/.test(u.key) && u.src === 'Manual Stats'), JSON.stringify(Object.keys(VR.unmapped)));
@@ -153,9 +162,9 @@ ok('VR04/RC5: board-only agent → material −1, auto RC5, listed source-b-only
   anele && anele.salesVar === -1 && anele.rcSales === 'RC5' && VR.header.agents_source_b_only.includes('CB115'), JSON.stringify(anele && [anele.salesVar, anele.rcSales]));
 
 /* ---------- aggregation / summary ---------- */
-ok('7 agent-day rows (multi-agent, DV03-only agents included)', VR.rows.length === 7, 'rows=' + VR.rows.length);
-ok('summary: 9 exact · 1 rounding · 4 material · 0 blocked · 0 indeterminate',
-  VR.summary.exact === 9 && VR.summary.rounding === 1 && VR.summary.material === 4 && VR.summary.blocked === 0 && VR.summary.indeterminate === 0,
+ok('9 agent-day rows (multi-agent, DV03-only agents included)', VR.rows.length === 9, 'rows=' + VR.rows.length);
+ok('summary: 11 exact · 1 rounding · 6 material · 0 blocked · 0 indeterminate',
+  VR.summary.exact === 11 && VR.summary.rounding === 1 && VR.summary.material === 6 && VR.summary.blocked === 0 && VR.summary.indeterminate === 0,
   JSON.stringify(VR.summary));
 ok('VR02 passes — cut-offs aligned (both end 04)', VR.checks.some(c => c.id === 'VR02' && c.ok));
 ok('VR05 fails while material variances are unclassified (Sechaba)', VR.checks.some(c => c.id === 'VR05' && !c.ok));
@@ -171,7 +180,7 @@ const again = await page.evaluate(async fx => {
   const t = v.rows.find(r => r.code === 'CB136' && r.d === '2026-08-03');
   return { n: v.rows.length, theo: [t.sfSales, t.bdSales, t.sfGwp, t.bdGwp] };
 }, { BOARD });
-ok('re-uploading the same board changes nothing (idempotent)', again.n === 7 && again.theo.join() === '3,3,225,224', JSON.stringify(again));
+ok('re-uploading the same board changes nothing (idempotent)', again.n === 9 && again.theo.join() === '3,3,225,224', JSON.stringify(again));
 
 /* ---------- board day-replace ---------- */
 const rep = await page.evaluate(async () => {

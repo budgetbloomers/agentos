@@ -3226,7 +3226,6 @@ function buildVariance(range){
 
   /* ---- dialler + attendance, per day per agent (DV03) ---- */
   const dayHasCallX=d=>{ const bk=S.calls[d]; if(!bk) return false; for(const k in bk) if(!bk[k].v) return true; return false; };
-  const dayHasViciDay=d=>{ if(S.viciDays&&S.viciDays[d]) return true; const bk=S.calls[d]; if(!bk) return false; for(const k in bk) if(bk[k].v) return true; return false; };
 
   /* ---- rows: one per agent per day, for every day either compared system covers ---- */
   const days=[...new Set([...Object.keys(sf),...Object.keys(bd)])].sort();
@@ -3235,9 +3234,11 @@ function buildVariance(range){
     const sfCov=!!sfDay, bdCov=!!bdDay;
     const skew=skewDay(d);
     VR.days.push({d,bi:sfCov,board:bdCov,calls:!!S.calls[d],att:!!S.att[d],skew});
-    // the day's dialler book, resolved once (identity BEFORE variance)
-    const talkMap={}; const bk=S.calls[d];
-    if(bk) for(const k in bk){ const c=resolveKey(k); if(c) talkMap[c]=(talkMap[c]||0)+(bk[k].talk||0); }
+    // the day's dialler book, resolved once (identity BEFORE variance). saleMap counts the
+    // dialler's own sale DISPOSITIONS (CallX VAS-sale dispositions / ViciDial Sale statuses)
+    // — a third system's view of the same events, shown beside SF and the board.
+    const talkMap={}, saleMap={}; const bk=S.calls[d];
+    if(bk) for(const k in bk){ const c=resolveKey(k); if(c){ talkMap[c]=(talkMap[c]||0)+(bk[k].talk||0); saleMap[c]=(saleMap[c]||0)+(bk[k].saleD||0); } }
     // DV03 row scope: agents on either compared system, plus agents the register marks
     // present or the dialler shows active that day (the "present but not dialling" and
     // "activity, no conversion" flags need them even with zero sales on both sides)
@@ -3262,17 +3263,35 @@ function buildVariance(range){
       if(sfCov&&bdCov){ if(sfr&&!bdr) VR.aOnly.add(code); if(bdr&&!sfr) VR.bOnly.add(code); }
       const salesVar=(sfSales!=null&&bdSales!=null)?sfSales-bdSales:null;   // DV01: system_a − system_b
       const gwpVar  =(sfGwp!=null&&bdGwp!=null)?sfGwp-bdGwp:null;           // DV02: system_a − system_b
-      // DV03 — talk is only KNOWN when the day's dialler source can actually answer for
-      // this agent: CallX covers Courtesy/Nesting; Cuddle needs day-level ViciDial rows
-      // (the period-aggregated export cannot be split per day — spec grain warning)
+      // DV03 — an agent's talk is KNOWN when they have dialler rows, or when a file that is
+      // FULL-FLOOR for their campaign covers the day and they are absent from it. Only the
+      // CallX PBX export qualifies as full-floor, and only for Courtesy — ViciDial exports
+      // are user-group FILTERED (proven on the 13-Aug package: 2,317 rows, 29 codes, the
+      // whole Cuddle floor absent), so a vici day file existing never makes an absent
+      // Cuddle/Nesting agent a true zero. Anything else would manufacture exactly the false
+      // "sale with no dialling" flag this comparison exists to catch.
       let talk=(code in talkMap)?talkMap[code]:null;
-      const talkKnown=talk!=null||(camp==='Cuddle'?dayHasViciDay(d):dayHasCallX(d));
+      const talkKnown=talk!=null||(camp==='Courtesy'&&dayHasCallX(d));
       if(talk==null&&talkKnown) talk=0;
+      const dlSales=talkKnown?(saleMap[code]||0):null;   // dialler-side sales: null when the dialler cannot answer for this agent-day
       const st=(S.att[d]||{})[code];
       const present=st!=null&&attWeight(st)>=1;
       const flags=[];
+      let talkAdj=null;
       if(talkKnown){
-        if((sfSales||0)>0&&talk===0) flags.push({sev:'error',f:'Sale recorded, no dialler activity',dv:'DV03'});
+        if((sfSales||0)>0&&talk===0){
+          /* Sales are dated on CONTRACT CREATE DATE (DV01), which is not always the day the
+             call happened — a sale captured or processed late lands on a day the agent never
+             dialled. Before reading this as an identity break, look at the neighbouring days:
+             talk found there is evidence of exactly that, and the flag says so. */
+          const talkOn=dd=>{ const b=S.calls[dd]; if(!b) return 0; let t=0; for(const k in b){ if(resolveKey(k)===code) t+=b[k].talk||0; } return t; };
+          for(const dd of [addDays(d,-1),addDays(d,1),addDays(d,-2),addDays(d,2)]){
+            const t=talkOn(dd); if(t>0){ talkAdj={d:dd,talk:t}; break; }
+          }
+          flags.push(talkAdj
+            ?{sev:'warning',f:'Sale dated to a day with no dialling — dialled '+fmtDur(talkAdj.talk)+' on '+talkAdj.d+' (Contract Create Date ≠ call day)',dv:'DV03'}
+            :{sev:'error',f:'Sale recorded, no dialler activity',dv:'DV03'});
+        }
         if(talk>VARIANCE_RULES.talkNoSaleSecs&&sfSales===0) flags.push({sev:'warning',f:'Talk > 2h, no sales',dv:'DV03'});
         if(talk===0&&present) flags.push({sev:'warning',f:'Present but not dialling',dv:'DV03'});
       }else if((sfSales||0)>0||present){ flags.push({sev:'info',f:'Dialler coverage missing — activity checks skipped',dv:'DV03'}); }
@@ -3303,8 +3322,8 @@ function buildVariance(range){
         else if(vv==='indeterminate')VR.summary.indeterminate++;
         if(vv!=='exact'&&vv!=='rounding'&&rc.rc)VR.rcCounts[rc.rc]++;
       }
-      VR.rows.push({d,code,agent:m.name,camp,tl,sfSales,sfGwp,bdSales,bdGwp,bdRef,
-        salesVar,gwpVar,talk:talkKnown?talk:null,att:st??null,present,flags,v,
+      VR.rows.push({d,code,agent:m.name,camp,tl,sfSales,sfGwp,bdSales,bdGwp,bdRef,dlSales,
+        salesVar,gwpVar,talk:talkKnown?talk:null,talkAdj,att:st??null,present,flags,v,
         rcSales:rcS.rc,rcSalesAuto:rcS.auto,rcGwp:rcG.rc,rcGwpAuto:rcG.auto,skew,
         accts:sfr?sfr.n:0,chargeSum:sfr?sfr.sum:null});
     }
@@ -3911,7 +3930,11 @@ function aggCols(opts={}){
        (intensity on the days they were there). Read together, a big gap between the two is an
        attendance problem, and a low figure in BOTH is a performance one. */
     {h:'Talk / Day Worked',f:r=>r.talkPerWorked!=null?fmtDur(r.talkPerWorked):'–',
-      csv:r=>r.talkPerWorked!=null?fmtDur(r.talkPerWorked):''},
+      csv:r=>r.talkPerWorked!=null?fmtDur(r.talkPerWorked):''}
+  );
+  /* Opt-ins are OFF the MTD view (Nick, 2026-08-15) — pass noOpt from the MTD call sites.
+     Weekly/daily keep them: the dialler opt-in dispositions are a daily coaching signal. */
+  if(!opts.noOpt) c.push(
     {h:'Opt-Ins',f:r=>fmtNum(r.opt)},
     {h:'Opt-In %',f:r=>fmtPct(r.optPct)}
   );
@@ -4041,7 +4064,6 @@ PAGES.mtd=()=>{
       ['SPD',o=>fmtNum(o.spd,2)],['Cancellations',o=>fmtNum(o.canc)],['% Canc to Sales',o=>fmtPct(o.cancPct,1)],
       ['GWP Target',o=>fmtNum(o.gwpT)],['GWP Achieved',o=>fmtNum(o.gwp)],['% To GWP Target',o=>pctPill(o.pctG)],
       ['Ave GWP',o=>fmtNum(o.aveG,1)],['Ave Talk Time',o=>o.aveTalk!=null?fmtDur(o.aveTalk):'–'],
-      ['Insurance Opt-Ins',o=>fmtNum(o.opt)],['Opt-Ins %',o=>fmtPct(o.optPct,1)],
       ['Referrals',o=>fmtNum(o.ref)],['Referrals %',o=>fmtPct(o.refPct,1)],
       ['Agents on Target',o=>fmtNum(o.onT)],['% Agents on Target',o=>fmtPct(o.hc?o.onT/o.hc:null)]];
     const cols=[{h:'Metric',l:1,f:r=>r[0]},
@@ -4055,7 +4077,7 @@ PAGES.mtd=()=>{
   <div class="chiprow" style="margin-bottom:14px">
     ${[...CAMPS.map(c=>[c,CAMPLAB[c]||c]),['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';save();renderPage()">${esc(l)}</button>`).join('')}</div>
   ${sub==='Team Leaders'?tlBlock('Courtesy')+tlBlock('Cuddle')+tlBlock('VT')
-    :`<div class="card">${campSection(sub,null,{canc:true})||'<div class="empty">No '+(CAMPLAB[sub]||sub)+' data in this period — upload the call records covering it</div>'}
+    :`<div class="card">${campSection(sub,null,{canc:true,noOpt:true})||'<div class="empty">No '+(CAMPLAB[sub]||sub)+' data in this period — upload the call records covering it</div>'}
       <p class="note" style="margin:10px 0 0">Cancellations and referrals come from the Adjustments page. QA is the average CallBi score for calls dated in the period.</p></div>`}`;
 };
 
@@ -4307,6 +4329,7 @@ function vrDailyTab(VR,rows){
         <td class="l">${campChip(r.camp)}</td>
         <td>${fmtN(r.sfSales)}</td><td>${fmtN(r.sfGwp)}</td>
         <td>${fmtN(r.bdSales)}</td><td>${fmtN(r.bdGwp)}</td>
+        <td title="Sale dispositions counted by the dialler itself — a third system's view, informational (no tolerance defined in the spec)">${fmtN(r.dlSales)}</td>
         ${cell(r.salesVar,r.v.sales)}${cell(r.gwpVar,r.v.gwp)}
         <td>${r.talk!=null?fmtDur(r.talk):'–'}</td>
         <td class="l">${fl||'–'}</td>
@@ -4317,6 +4340,7 @@ function vrDailyTab(VR,rows){
       <div class="sub">${dr.length} agent(s)${meta.skew?' · <b style="color:var(--amber)">snapshot skew — variances indeterminate (RC1)</b>':''}${cov.length?' · no coverage: '+cov.join(', '):''}</div></div></div>
       <div class="tablewrap"><table class="data"><thead><tr>
         <th class="l">Agent</th><th class="l">Campaign</th><th>SF Sales</th><th>SF GWP</th><th>Board Sales</th><th>Board GWP</th>
+        <th title="Sale dispositions counted by the dialler (CallX VAS dispositions / ViciDial Sale statuses)">Dialler Sales</th>
         <th>Sales Var</th><th>GWP Var</th><th>Talk Time</th><th class="l">Flags</th><th>Status</th><th class="l">Root cause</th>
       </tr></thead><tbody>${trs}</tbody></table></div></div>`;
   }).join('');
@@ -4402,7 +4426,8 @@ window.__vrAudit=i=>{
     <tr><td class="l" style="color:var(--muted)">Inputs</td><td class="l" style="color:var(--muted)">${r.accts} distinct account(s)${r.chargeSum!=null?' · Σ Charge Amount (ex-VAT) R '+fmtNum(r.chargeSum,2):''}</td></tr>
     ${dvRow('DV02','GWP variance',c2.formulaA,c2.formulaB,r.sfGwp,r.bdGwp,r.gwpVar,r.v.gwp,VARIANCE_RULES.gwpTolerance,rcSel('gwp'))}
     <tr class="subtotal"><td class="l" colspan="2"><b><code>DV03</code> Activity variance — flag rather than subtract</b></td></tr>
-    <tr><td class="l">Talk time</td><td>${r.talk!=null?fmtDur(r.talk):'– (dialler coverage missing)'}</td></tr>
+    <tr><td class="l">Talk time</td><td>${r.talk!=null?fmtDur(r.talk):'– (dialler coverage missing)'}${r.talkAdj?' · dialled '+fmtDur(r.talkAdj.talk)+' on '+r.talkAdj.d:''}</td></tr>
+    <tr><td class="l">Dialler sales (dispositions)</td><td>${r.dlSales!=null?fmtNum(r.dlSales):'– (dialler coverage missing)'}</td></tr>
     <tr><td class="l">Attendance</td><td class="l">${r.att!=null?esc(String(r.att))+(r.present?' (Present)':''):'– (no register row)'}</td></tr>
     <tr><td class="l">Flags</td><td class="l">${r.flags.length?r.flags.map(f=>`<span class="pill ${f.sev==='error'?'pcrit':f.sev==='warning'?'pwarn':'pmuted'}">${esc(f.f)}</span>`).join(' '):'none'}</td></tr>
     <tr class="subtotal"><td class="l" colspan="2"><b><code>DV04</code> Referrals variance — BLOCKED</b></td></tr>
@@ -4441,11 +4466,11 @@ function exportVariance(){
     ['Checks'],...VR.checks.map(c=>[c.id,c.ok?'pass':(c.sev==='error'?'FAIL':'note'),c.msg]),[],
     ['Source files'],...Object.entries(H.source_export_timestamps).flatMap(([k,v])=>v.length?v.map(f=>[k,f]):[[k,'not uploaded']])];
   XLSX.utils.book_append_sheet(wb,xlSheet(sm),'Summary');
-  const dv=[['Date','Agent','Emp Code','Campaign','Team Leader','SF Sales','SF GWP','Board Sales','Board GWP','Sales Variance','GWP Variance','Talk Time','Flags','Status','Root Cause']];
+  const dv=[['Date','Agent','Emp Code','Campaign','Team Leader','SF Sales','SF GWP','Board Sales','Board GWP','Dialler Sales','Sales Variance','GWP Variance','Talk Time','Flags','Status','Root Cause']];
   rows.slice().sort((a,b)=>a.d.localeCompare(b.d)||a.agent.localeCompare(b.agent)).forEach(r=>dv.push([
-    r.d,r.agent,r.code,r.camp,r.tl,r.sfSales,r.sfGwp,r.bdSales,r.bdGwp,r.salesVar,r.gwpVar,
+    r.d,r.agent,r.code,r.camp,r.tl,r.sfSales,r.sfGwp,r.bdSales,r.bdGwp,r.dlSales,r.salesVar,r.gwpVar,
     r.talk!=null?dur(r.talk):null,r.flags.map(f=>f.f).join(' | '),vrRowStat(r),[r.rcSales,r.rcGwp].filter(Boolean).join(' ')||'']));
-  XLSX.utils.book_append_sheet(wb,xlSheet(dv,{11:XF.dur}),'Daily Variance');
+  XLSX.utils.book_append_sheet(wb,xlSheet(dv,{12:XF.dur}),'Daily Variance');
   const un=[['Identity in file','Source','Records','GWP at stake','Days']];
   Object.values(VR.unmapped).forEach(u=>un.push([u.key,u.src,u.n,u.gwp||0,[...u.days].sort().join(', ')]));
   if(un.length===1) un.push(['(empty — every record resolved: an empty result is a result)']);
@@ -4980,7 +5005,7 @@ function exportReport(){
       sheet(`WTD - ${camp} - Week ${w.num}`,aggCols({}),[...rows,totalRow(rows,'Grand Total')]);
     }
     const rows=agentRows(camp,null).filter(teamOK);
-    if(rows.length) sheet('MTD - '+camp,aggCols({canc:true}),[...rows,totalRow(rows,'Grand Total')]);
+    if(rows.length) sheet('MTD - '+camp,aggCols({canc:true,noOpt:true}),[...rows,totalRow(rows,'Grand Total')]);   // MTD drops opt-ins on screen — the export matches
   }
   const tlKeys=Object.keys(M.tlAgg).filter(k=>{const p=k.split('|');return (!S.ui.camp||p[0]===S.ui.camp)&&(!S.ui.team||p[1]===S.ui.team)});
   const metricList=[['Employed HC','hc'],['Total Employed Shifts','emp'],['Total Actual Shifts','act'],['% Of Attendance','att'],
