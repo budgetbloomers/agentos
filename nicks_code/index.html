@@ -4342,6 +4342,17 @@ function vrDailyTab(VR,rows){
       return (rank[vrRowStat(b)]-rank[vrRowStat(a)])||(Math.abs(b.salesVar||0)-Math.abs(a.salesVar||0));
     });
     const meta=VR.days.find(x=>x.d===d)||{};
+    /* Name every blank. A dash with no explanation reads as a broken report; a dash with
+       the missing FILE named beside it reads as an instruction. Board and dialler gaps are
+       the two that actually occur: boards arrive one day at a time, and the Cuddle floor
+       is absent from the per-call ViciDial exports (user-group filtered). */
+    const missTalk={};
+    dr.forEach(r=>{ if(r.talk==null&&r.talkEst==null) missTalk[r.camp]=1; });
+    const dayNotes=[];
+    if(!meta.board) dayNotes.push('Board columns blank — no Manual Stats sheet for this day (upload the '+d.slice(8)+'.'+d.slice(5,7)+' board)');
+    if(missTalk.Courtesy) dayNotes.push('Courtesy talk blank — no CallX call-records file covers this day');
+    if(missTalk.Cuddle||missTalk.Nesting) dayNotes.push([missTalk.Cuddle?'Cuddle':'',missTalk.Nesting?'Nesting':''].filter(Boolean).join('/')
+      +' talk blank — no ViciDial export carries these agents for this day (a period export shows as an amber ~estimate; the day-level EXPORT_CALL_REPORT gives measured talk)');
     const cov=['bi','board','calls','att'].filter(k=>!meta[k]);
     const trs=dr.map(r=>{
       const i=idxOf.get(r);
@@ -4360,7 +4371,8 @@ function vrDailyTab(VR,rows){
         <td class="l">${rc.length?rc.map(x=>`<code>${x}</code>`).join(' '):((r.v.sales==='material'||r.v.gwp==='material')?'<span class="pill pcrit">unclassified</span>':'–')}</td></tr>`;
     }).join('');
     return `<div class="card mt"><div class="cardhead"><div><h3>${fmtDay(d)} <span class="sub" style="display:inline">· ${d}</span></h3>
-      <div class="sub">${dr.length} agent(s)${meta.skew?' · <b style="color:var(--amber)">snapshot skew — variances indeterminate (RC1)</b>':''}${cov.length?' · no coverage: '+cov.join(', '):''}</div></div></div>
+      <div class="sub">${dr.length} agent(s)${meta.skew?' · <b style="color:var(--amber)">snapshot skew — variances indeterminate (RC1)</b>':''}${cov.length?' · no coverage: '+cov.join(', '):''}</div>
+      ${dayNotes.length?`<div class="sub" style="color:var(--amber);margin-top:4px">${dayNotes.map(esc).join(' · ')}</div>`:''}</div></div>
       <div class="tablewrap"><table class="data"><thead><tr>
         <th class="l">Agent</th><th class="l">Campaign</th><th>SF Sales</th><th>SF GWP</th><th>Board Sales</th><th>Board GWP</th>
         <th title="Sale dispositions counted by the dialler (CallX VAS dispositions / ViciDial Sale statuses)">Dialler Sales</th>
@@ -5324,7 +5336,9 @@ var SRC=[
   ["evals","QA Evaluations",function(t){return t.indexOf("evals")===0}],
   ["roster","Agent List",function(t){return t.indexOf("roster")===0}],
   ["cancellations","Cancellations (BI Inactive)",function(t){return t.indexOf("cancellations")===0}],
-  ["referrals","Referrals",function(t){return t.indexOf("referrals")===0}],
+  /* Referrals dropped from the bar (Nick, 2026-08-15) — they arrive by API auto-sync, not a
+     daily file, so a "none" chip here read as a problem when nothing was wrong. The Upload
+     Station slot and the MTD Referrals column are untouched. */
   ["board","Manual Stats",function(t){return t.indexOf("board")===0}]
 ];var open=false;function daysSince(at){if(!at)return null;var d=new Date(at.replace(" ","T"));if(isNaN(d))return null;return Math.floor((Date.now()-d.getTime())/864e5)}function fresh(days){if(days==null)return["n","#8296B5"];if(days<=7)return["g","#34D399"];if(days<=14)return["a","#FBBF24"];return["r","#FB7185"]}function build(){var host=document.getElementById("vasTrust");var view=document.getElementById("view");if(!view)return;if(!host){host=document.createElement("div");host.id="vasTrust";view.parentNode.insertBefore(host,view)}var S=(window.__mtd&&window.__mtd.state)?window.__mtd.state():null;var files=(S&&S.files)||[];var latest={};files.forEach(function(f){var t=String(f.type||"");SRC.forEach(function(s){if(s[2](t)){var d=daysSince(f.at);if(latest[s[0]]==null||(d!=null&&d<latest[s[0]]))latest[s[0]]=d}})});var worst="g";SRC.forEach(function(s){var st=fresh(latest[s[0]])[0];if(st==="r"||st==="n"){if(worst!=="r")worst=(st==="r"?"r":"a")}else if(st==="a"&&worst==="g")worst="a"});var have=SRC.filter(function(s){return latest[s[0]]!=null}).length;var wc=worst==="g"?"#34D399":worst==="a"?"#FBBF24":"#FB7185";var wl=worst==="g"?"All sources fresh":worst==="a"?"Sources need attention":"Stale or missing sources";function chip(color,label){return "<span style='display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(148,182,255,.10);color:"+color+"'><span style='width:7px;height:7px;border-radius:50%;background:"+color+"'></span>"+label+"</span>"}var chips=open?SRC.map(function(s){var d=latest[s[0]];var fr=fresh(d);var lbl=s[1]+" · "+(d==null?"none":d===0?"today":d+"d");return chip(fr[1],lbl)}).join(""):"";var html="<div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:linear-gradient(180deg,rgba(148,182,255,.05),rgba(148,182,255,.02)),#0A1730;border:1px solid rgba(148,182,255,.14);border-radius:16px;padding:10px 14px;margin:0 0 16px'>"+"<span style='font-size:11px;font-weight:800;letter-spacing:.8px;color:#8296B5'>DATA TRUST</span>"+"<span onclick='window.__vasTrustToggle()' style='cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(148,182,255,.10);color:"+wc+"'><span style='width:7px;height:7px;border-radius:50%;background:"+wc+"'></span>"+wl+" · "+have+"/"+SRC.length+" sources "+(open?"▾":"▸")+"</span>"+chips+"<button onclick='go(&quot;data&quot;)' style='margin-left:auto;border:1px solid rgba(148,182,255,.16);background:rgba(148,182,255,.07);color:#C6D3E8;border-radius:9px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer'>Manage uploads →</button>"+"</div>";if(html!==window.__vtLast){window.__vtLast=html;host.innerHTML=html}}window.__vasTrustToggle=function(){open=!open;build()};var t=setInterval(build,10000);setTimeout(build,300);})();</script>
 

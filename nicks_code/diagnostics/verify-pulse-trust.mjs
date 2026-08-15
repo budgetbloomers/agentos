@@ -101,14 +101,14 @@ await page.waitForTimeout(400);
 const trust = await page.evaluate(() => (document.getElementById('vasTrust') || {}).innerText || '');
 console.log('TRUST BAR: ' + trust.replace(/\n/g, ' · '));
 ok('Manual Stats (board) loaded', has(/^board/), snap.files.join(' || '));
-ok('trust bar counts 9/9 sources', /9\/9 sources/.test(trust), trust);
+ok('trust bar counts 8/8 sources (referrals chip dropped — API-synced, not a daily file)', /8\/8 sources/.test(trust), trust);
 ok('trust bar reads All sources fresh', /All sources fresh/.test(trust), trust);
 
 // open the chips and confirm every one of the seven names is present and fresh
 await page.evaluate(() => window.__vasTrustToggle());
 await page.waitForTimeout(400);
 const chips = await page.evaluate(() => (document.getElementById('vasTrust') || {}).innerText || '');
-for (const name of ['Power BI - Active Cases', 'Call Records', 'ViciDial', 'Attendance', 'QA Evaluations', 'Agent List', 'Cancellations (BI Inactive)', 'Referrals', 'Manual Stats'])
+for (const name of ['Power BI - Active Cases', 'Call Records', 'ViciDial', 'Attendance', 'QA Evaluations', 'Agent List', 'Cancellations (BI Inactive)', 'Manual Stats'])
   ok('chip present: ' + name, chips.includes(name), chips);
 ok('no chip reads "none"', !/· none/.test(chips), chips);
 
