@@ -227,7 +227,17 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px}
 kbd{background:#EEF2F8;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:11px;font-weight:700}
 @media(max-width:1080px){.g2,.g3,.g21,.g12{grid-template-columns:1fr}}
 @media(max-width:860px){.sidebar{position:fixed;left:-240px;z-index:60;transition:left .18s}.sidebar.open{left:0}.main{padding:14px}.menu-btn{display:inline-flex}}
-.menu-btn{display:none;align-items:center;justify-content:center}
+.menu-btn{display:inline-flex;align-items:center;justify-content:center}
+/* Collapsible sidebar (desktop only — mobile keeps the off-canvas drawer untouched).
+   Nav labels are bare text nodes beside the svg, so font-size:0 is what hides them;
+   the icons keep their explicit px size. */
+@media(min-width:861px){
+  body.side-collapsed .sidebar{width:64px;min-width:64px;padding:14px 8px}
+  body.side-collapsed .logo-card,body.side-collapsed .app-switch,body.side-collapsed .nav-label,body.side-collapsed .sys-card,body.side-collapsed .user-card{display:none}
+  body.side-collapsed .nav-item{font-size:0;gap:0;justify-content:center;padding:10px 0}
+  body.side-collapsed .nav-item svg{width:19px;height:19px}
+  body.side-collapsed .nav-item .soon-tag{display:none}
+}
 </style>
 <style id="premium-polish">
 /* ===== PREMIUM POLISH — additive layer; palette 100% unchanged =====
@@ -451,7 +461,7 @@ kbd{background:rgba(148,182,255,.12);border-color:rgba(148,182,255,.20);color:va
   </aside>
   <main class="main">
     <div class="topbar">
-      <button class="btn menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+      <button class="btn menu-btn" title="Toggle sidebar" onclick="cbxSideToggle()">☰</button>
       <div>
         <div class="page-title" id="pgTitle"></div>
         <div class="page-sub" id="pgSub"></div>
@@ -2073,6 +2083,12 @@ function renderNav(){
     html+='<button class="nav-item '+(state.route===p.id?'active':'')+(p.soon?' soon':'')+'" onclick="go(\''+p.id+'\')">'+icon(p.icon)+p.label+(p.soon?'<span class="soon-tag">SOON</span>':'')+'</button>';
   });
   $('#nav').innerHTML=html;
+}
+/* ☰ does two different jobs by viewport: mobile slides the off-canvas drawer,
+   desktop collapses the sidebar to an icon rail. Presentational only — not state. */
+function cbxSideToggle(){
+  if(matchMedia('(max-width:860px)').matches) document.getElementById('sidebar').classList.toggle('open');
+  else document.body.classList.toggle('side-collapsed');
 }
 function go(id){
   if(id==='vas'){location.href='pulse/index.html';return}
