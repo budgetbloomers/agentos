@@ -535,7 +535,7 @@ const SOURCES = {
   SF_OPEN_CASES:{label:'Salesforce · Open Cases',system:'Salesforce',fmt:'HTML .xls',color:'blue',
     headers:['Case ID','Case Number','Subject','Date/Time Opened','Age (Hours)','Open','Account Name','Account Number','Account Mobile from Person Account','Person Account: Email','Case Record Type','Case Owner','Status'],
     required:['Case Number','Date/Time Opened'],snapshot:true,dateH:'Date/Time Opened',
-    purpose:'Open case backlog, ageing and owner workload.'},
+    purpose:'THE LEAD BOOK — every lead currently allocated to an agent. Feeds Lead Allocation (the Status field pivoted per person), the Lead Management funnel, backlog and case ageing. Case Owner is a display name, not a code, so agents resolve to the CB number through the Agent List\'s Sales Force / Agent Name columns; an owner matching nobody on the roster is listed by name on Lead Allocation, never dropped. Snapshot — a re-upload replaces the previous position rather than stacking onto it.'},
   SF_CLOSED_CASES:{label:'Salesforce · Closed Cases',system:'Salesforce',fmt:'HTML .xls',color:'blue',
     headers:['Case ID','Case Number','Subject','Date/Time Opened','Date/Time Closed','Closed','Disposition','Age (Hours)','Account Name','Account Number','Account Mobile from Person Account','Person Account: Email','Case Record Type','Case Owner','Status'],
     required:['Case Number','Date/Time Closed'],snapshot:false,dateH:'Date/Time Closed',
@@ -604,6 +604,8 @@ const DEFAULT_RULES = {
   cycleTargets:{label:'Cycle GWP targets by campaign (name:rand)',vals:['Cuddle:389285.16','Courtesy:375092.52'],help:'One panel per entry. Campaign matches each agent&#39;s roster queue. Add Matrix Vehicle Tracking here the day it gets a cycle target.'},
   vatRate:{label:'VAT rate (%)',vals:['15'],numeric:true,help:'Required per Day incl VAT = ex-VAT × (1 + this). Also grosses up the BI money model: Power BI Charge Amounts are EX-VAT, so GWP incl = Σ charge × (1 + this). Zero-safe — set 0 and ex equals incl.'},
   leadWindow:{label:'Lead window basis (snapshot | opened)',vals:['snapshot'],help:'How OPEN cases answer the date range. "snapshot" = open cases ignore the window — the rules pack default (R-TIME-06 "snapshot reads ignore W"; F-LEAD-01 "leads = open(snapshot) ∪ closed(W)"). "opened" = window open cases by the date each case was opened, so conversion moves with the date picker. Closed cases always window by close date, either way. Note: on "snapshot" the lead denominator is partly window-invariant, so narrowing the range lifts conversion without the floor changing. Switching to "opened" is a deliberate deviation from the pack and needs a version bump under §8 change control.'},
+  leadQueueOwners:{label:'Salesforce Case Owners that are QUEUES, not people',vals:['Cuddle Call','VIP Welcome Calls'],help:'Case Owner values that name a holding queue rather than an agent. Their cases are UNALLOCATED — the pool waiting to be handed out — and Lead Allocation reports them as exactly that, separately from owners it genuinely cannot place. Without this list a queue reads as a mapping defect, which sends someone hunting a roster bug that is not there. Add a queue the day Salesforce creates one; matching ignores case and surrounding spaces.'},
+  leadAllocStale:{label:'Ageing-lead share that turns red (%)',vals:['25'],numeric:true,help:'On Lead Allocation, the share of an agent&#39;s allocated leads sitting on a 3rd, 4th or 5th attempt. Above this it turns red, above four-fifths of it amber — a book that has aged past the point where the leads still convert. Lower it to tighten the dialling discipline the page enforces.'},
   viciNoContact:{label:'ViciDial status codes that mean NOBODY WAS REACHED',vals:['N','NA','B','AB','A','VM','DC','DNE','DROP','PDROP','TIMEOT','INCALL','UC','UCNUM','DA','FAIL','DUPL'],help:'ViciDial status CODES meaning the call reached no one — note "A" is Answering Machine in this export, NOT answered. These set Answered, Answer % and AHT on the ViciDial tiles and the per-agent dial table. Talk time itself stays the full length_in_sec (dial-to-hangup, ringing included) — the VAS rule book\'s talkFrom "all", decided by Nick 2026-08-13.'},
   viciSystemUsers:{label:'ViciDial logins that are SYSTEM/TEST, not agents',vals:['VDAD','VDCL','VDLB','CBT001','CBT003','CBT005','CBT007'],help:'ViciDial internal accounts (auto-dial, closer) and the CBT… training/test bank. Their rows are excluded from every ViciDial metric and per-agent table but stay counted in the honest-remainder note — excluded and counted, never silently dropped.'},
   qaDisputeStatuses:{label:'QA statuses that count as DISPUTED',vals:['closed_retracted','qa_review'],help:'Evaluations in these statuses count in the Disputed column on QA & Compliance: retracted = challenged and overturned; qa_review = challenge in progress. closed_mitigated is the normal terminal state (95% of evals) and is not a dispute by default — edit here if Jared disagrees.'},
@@ -1720,6 +1722,12 @@ function cbInScope(cb){const sc=userScopeTeam();return !sc||(state.cbInfo[cb]?.t
    defence in depth on top of the Worker's per-user tab permissions. */
 const TL_BLOCK=['uploads','sess_uploads','dict'];
 function pageBlockedForUser(id){return ((((typeof window!=='undefined'&&window.CBX_USER)||{}).role)==='tl')&&TL_BLOCK.includes(id);}
+/* An upload control placed OUTSIDE the Upload Station has to answer to the same lock, or it
+   becomes the way around it. Open Cases is snapshot:true — a re-upload replaces the whole
+   company's lead book — so a scoped team leader must not be handed a file picker just because
+   one happens to be convenient on the page they CAN reach. Tied to the Upload Station's own
+   gate, so the two can never drift apart. */
+function canUploadHere(){return !pageBlockedForUser('uploads');}
 function rowsFor(src,win){
   const sc=(_fleetCtx||src==='AGENT_LIST')?null:userScopeTeam();
   const key=src+'|'+(win?win.from+'~'+win.to:'∅')+'|'+JSON.stringify(state.filters)+'|'+_dataVer+(sc?'|@'+(sc.team||'∅'):'');
@@ -2062,6 +2070,7 @@ const PAGES=[
  {id:'exec',label:'Executive',icon:'exec',title:'Executive Command Centre',sub:'One controlled view: production, quality, people — and whether to trust it'},
  {id:'brain',label:'Visual Brain',icon:'brain',title:'Visual Brain',sub:'The floor as a living graph — agents, teams, campaigns and NBA rules, coloured by priority level'},
  {id:'sales',label:'Sales Production',icon:'phone',sect:'Sales Ops',title:'Sales Production Dashboard',sub:'Dialler activity, activations and the case pipeline'},
+ {id:'leadalloc',label:'Lead Allocation',icon:'inbox',title:'Lead Allocation',sub:'Who is holding which leads right now — the Open Cases status field pivoted per person, matched on the CB number'},
  {id:'leads',label:'Lead Management',icon:'inbox',title:'Lead Management',sub:'The funnel per agent: open attempts, closures, sales conversion and cancellations — the daily lead report, live'},
  {id:'session',label:'Session Dashboard',icon:'clock',title:'Session Dashboard',sub:'Intraday snapshots — calls, unique reach and sales per session, plus the per-agent lead position'},
  {id:'qa',label:'QA & Compliance',icon:'shield',sect:'Quality & Risk',title:'QA & Compliance Dashboard',sub:'Clean-sale control: pass rates, critical fails, coaching'},
@@ -3455,6 +3464,198 @@ function pageTL(win){
   return h;
 }
 
+/* The Open Cases Status field, in the order a lead actually travels. Lead Allocation and the
+   Lead Management funnel pivot the SAME field, so the list and the folding rule live here once —
+   two private copies drift the moment Salesforce renames a stage. canonLeadStatus folds case and
+   whitespace variants into the canonical name, so "4th Attempt" counts into the 4th-attempt
+   column instead of opening a duplicate one after Escalated. Anything unrecognised keeps its own
+   name (blank becomes "(blank)") — a new stage shows up as its own column, never silently pooled. */
+const LEAD_STATUS_CANON=['1st attempt','2nd attempt','3rd attempt','4th attempt','5th attempt','New','In Progress','Escalated'];
+function canonLeadStatus(s){const n=String(s==null?'':s).replace(/\s+/g,' ').trim();
+  return LEAD_STATUS_CANON.find(c=>c.toLowerCase()===n.toLowerCase())||(n||'(blank)')}
+/* Status columns for a set of agents: the canonical stages first (whether or not anyone is
+   sitting on them, so the shape of the table is stable between uploads), then any stage the
+   data carries that the canon does not know about, alphabetically. cap=0 means no cap. */
+function leadStatusCols(agents,cap){
+  const present=new Set();agents.forEach(a=>Object.keys(a.sts||{}).forEach(k=>present.add(k)));
+  const cols=[...LEAD_STATUS_CANON,...[...present].filter(c=>!LEAD_STATUS_CANON.includes(c)).sort()];
+  return cap?cols.slice(0,cap):cols;
+}
+
+/* ---------------- PAGE: LEAD ALLOCATION ---------------- */
+/* One question: who is holding which leads right now, and at what stage. The Salesforce Open
+   Cases snapshot matched to the roster on the CB NUMBER, with Status pivoted per person.
+   The same pivot the funnel table carries as a few squeezed columns — here it IS the table, so
+   nothing is capped and every stage gets a column. Computes no new number: an agent's Total
+   Allocated here must equal that agent's Total Open on Lead Management for the same window. */
+function pageLeadAlloc(win){
+  window.__allocCsv=null;   // every early return below must not leave the last render's file behind
+  const loaded=(state.facts.SF_OPEN_CASES||[]).length>0;
+  if(!loaded)return allocEmpty();
+  const GF=state.filters;
+  const A={};
+  const mk=cb=>A[cb]=A[cb]||{cb,name:(state.cbInfo[cb]?.name)||cb,tl:(state.cbInfo[cb]?.tl)||'(unassigned)',
+    ds:(state.cbInfo[cb]?.queue)||'—',ten:(state.cbInfo[cb]?.tenure)||'—',
+    sts:{},n:0,ageSum:0,ageN:0,ageMax:null,seen:new Set()};
+  (state.facts.AGENT_LIST||[]).forEach(a=>{if(!a.cb_norm)return;
+    if(!cbInScope(a.cb_norm))return;
+    if(GF.tenure&&a.tenure!==GF.tenure)return;
+    if(GF.team&&a.team_leader!==GF.team)return;
+    if(GF.campaign&&campBucket(a.queue)!==GF.campaign)return;
+    if(GF.agent&&normCB(a.cb_code)!==normCB(GF.agent))return;
+    mk(a.cb_norm)});
+  /* An owner that resolves to no CB is one of two completely different things, and conflating them
+     sends someone hunting a roster bug that does not exist. A QUEUE (leadQueueOwners rule) means
+     the lead is simply unallocated — the pool, and on the 13 Aug book that is most of it. Anything
+     else is a real attribution defect: a person Salesforce knows and the Agent List does not.
+     Both are counted BY NAME and reported separately; neither is spread or dropped (non-neg 7). */
+  const queues=new Set((state.rules.leadQueueOwners?.vals||[]).map(v=>String(v).toLowerCase().trim()).filter(Boolean));
+  const pool={},unmatched={};let poolN=0,unmatchedN=0;
+  rowsFor('SF_OPEN_CASES',win).forEach(r=>{
+    const cb=cbOfOwner(r.case_owner);
+    if(!cb){const who=String(r.case_owner||'').trim()||'(blank)';
+      if(queues.has(who.toLowerCase())){pool[who]=(pool[who]||0)+1;poolN++}
+      else{unmatched[who]=(unmatched[who]||0)+1;unmatchedN++}
+      return}
+    if(!A[cb])return;                                               // already excluded by rowsFor's filters
+    if(!openInWin(r,win))return;                                    // snapshot: rowsFor can't window it
+    const a=A[cb];const k=String(r.case_number||'').trim();
+    if(k){if(a.seen.has(k))return;a.seen.add(k)}                    // one row per case
+    a.sts[canonLeadStatus(r.status)]=(a.sts[canonLeadStatus(r.status)]||0)+1;a.n++;
+    const ah=r.age_hours;
+    if(ah!=null){a.ageSum+=ah;a.ageN++;if(a.ageMax==null||ah>a.ageMax)a.ageMax=ah}});
+  /* Built here, not at the bottom, because they must survive the early returns below. With no
+     Agent List loaded EVERY case is unattributed — which is precisely the Monday failure this page
+     exists to expose — so the side cards are the only thing worth showing, and hiding them behind
+     "no agents match your filters" would bury the answer. */
+  const sideCards=allocN=>{
+    const pKeys=Object.keys(pool).sort((a,b)=>pool[b]-pool[a]);
+    const uKeys=Object.keys(unmatched).sort((a,b)=>unmatched[b]-unmatched[a]);
+    const bookN=allocN+poolN;
+    const poolCard=pKeys.length?'<div class="card"><div class="card-h"><span class="t">Unallocated — sitting in a queue</span>'
+     +'<span class="info" title="Open cases whose Case Owner is a QUEUE rather than a person, per the leadQueueOwners rule (Dictionary → Rules). Nobody is working these yet — they are the pool waiting to be handed out, which is why they are counted apart from the agent table above instead of mixed into it. A queue name is not a data fault; an owner that is NOT on that list and still matches nobody IS, and gets its own card.">i</span>'
+     +'<span class="s">'+poolN.toLocaleString()+' lead(s) across '+pKeys.length+' queue(s)</span></div>'
+     +'<div style="overflow-x:auto"><table class="tbl"><thead><tr>'
+     +'<th class="noclick">Queue</th><th class="noclick">Leads waiting</th><th class="noclick">Share of book</th></tr></thead><tbody>'
+     +pKeys.map(k=>'<tr><td><b>'+esc(k)+'</b></td><td class="num" style="font-weight:800">'+pool[k].toLocaleString()+'</td><td class="num">'+(bookN?fmtVal(pool[k]/bookN*100,'pct'):'—')+'</td></tr>').join('')
+     +'</tbody></table></div>'
+     +'<div style="font-size:11px;color:var(--muted);margin-top:8px">Allocated to agents: <b>'+allocN.toLocaleString()+'</b> · waiting in a queue: <b>'+poolN.toLocaleString()+'</b> · book total: <b>'+bookN.toLocaleString()+'</b>. A queue that is really an agent belongs on the Agent List; an agent name sitting in this table belongs in the leadQueueOwners rule.</div></div>':'';
+    const unmatchedCard=uKeys.length?'<div class="card"><div class="card-h"><span class="t">Owners the roster cannot place</span>'
+     +'<span class="info" title="A Case Owner on the export that matches no Agent List row — by Sales Force name or Agent Name — and is not a known queue. Their leads are excluded from the table above and counted here, never spread across other agents or quietly dropped. Fix by adding the exact Salesforce name to that agent&#39;s Sales Force column on the Agent List and re-uploading the roster; if it is actually a queue, add it to the leadQueueOwners rule instead.">i</span>'
+     +'<span class="s">'+unmatchedN.toLocaleString()+' lead(s) across '+uKeys.length+' owner(s)</span></div>'
+     +'<div style="overflow-x:auto;max-height:340px;overflow-y:auto"><table class="tbl"><thead><tr>'
+     +'<th class="noclick">Case Owner (as exported)</th><th class="noclick">Leads held</th></tr></thead><tbody>'
+     +uKeys.map(k=>'<tr><td>'+maskName(k)+'</td><td class="num">'+unmatched[k].toLocaleString()+'</td></tr>').join('')
+     +'</tbody></table></div>'
+     +'<div style="font-size:11px;color:var(--muted);margin-top:8px">Someone is working these leads and the numbers cannot say who. Fix it on the Agent List, not here.</div></div>':'';
+    return (pKeys.length&&uKeys.length)?'<div class="grid g2">'+poolCard+unmatchedCard+'</div>':poolCard+unmatchedCard;
+  };
+  const list=Object.values(A);
+  /* No roster and no filters is a different problem to a filter that matched nobody, and the fix
+     is different too — say which one it is rather than blaming the filters for both. */
+  if(!list.length)return emptyState((state.facts.AGENT_LIST||[]).length
+    ?'No roster agents match the current filters'
+    :'Lead Allocation needs the Agent List — Case Owner is a display name, so without the roster there is no CB number to match it to')
+    +sideCards(0);
+  const stCols=leadStatusCols(list,0);   // NO cap — the pivot is the point of this page
+  /* Derived from the columns actually present, not a fixed trio: the day Salesforce adds a 6th
+     attempt it has to count as ageing too, or it would show as a column and vanish from the ratio. */
+  const LATE=stCols.filter(c=>{const m=/^(\d+)\w{0,2}\s+attempt$/i.exec(c);return m&&+m[1]>=3});
+  const lateOf=a=>LATE.reduce((s,c)=>s+(a.sts[c]||0),0);
+  const G={cb:null,name:'',tl:'',ds:'',ten:'',sts:{},n:0,ageSum:0,ageN:0,ageMax:null};
+  list.forEach(a=>{G.n+=a.n;G.ageSum+=a.ageSum;G.ageN+=a.ageN;
+    if(a.ageMax!=null&&(G.ageMax==null||a.ageMax>G.ageMax))G.ageMax=a.ageMax;
+    stCols.forEach(c=>G.sts[c]=(G.sts[c]||0)+(a.sts[c]||0))});
+  const holders=list.filter(a=>a.n>0).length, idle=list.length-holders;
+  const S=state.sort.leadalloc||{k:'n',asc:false};
+  /* Status columns sort by their INDEX, never by the status text. The text is upload data and
+     the sort key is written into an onclick attribute — a Salesforce stage containing a quote
+     would break out of it. An index cannot. */
+  const keyOf=(a,k)=>k==='n'?a.n:k==='age'?(a.ageN?a.ageSum/a.ageN:-1):k==='old'?(a.ageMax==null?-1:a.ageMax)
+    :k==='late'?(a.n?lateOf(a)/a.n:-1):k==='tl'?String(a.tl):k==='name'?String(a.name)
+    :/^st\d+$/.test(k)?(a.sts[stCols[+k.slice(2)]]||0):a.n;
+  const rows=list.slice().sort((x,y)=>{const vx=keyOf(x,S.k),vy=keyOf(y,S.k);
+    const c=(typeof vx==='string')?vx.localeCompare(vy):(vy-vx);
+    return (S.asc?-c:c)||String(x.tl).localeCompare(String(y.tl))||String(x.name).localeCompare(String(y.name))});
+  // parseFloat, not ||25 — a deliberate 0 ("any 3rd attempt is already too late") is a real setting.
+  const staleT=(v=>Number.isFinite(v)?v:25)(parseFloat(state.rules.leadAllocStale?.vals?.[0]));
+  /* Lower is better here, and the shared ragPill only reads higher-is-better — an ageing book is
+     the failure, so the bands invert: green under four-fifths of the rule, red past it. */
+  const latePill=v=>v==null?'—':'<span class="pill '+(v<=staleT*.8?'g':v<=staleT?'a':'r')+'">'+fmtVal(v,'pct')+'</span>';
+  const f1=v=>(Math.round(v*10)/10).toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1});
+  const head=(t,k,ttl)=>k?'<th onclick="sortBy(&#39;leadalloc&#39;,&#39;'+k+'&#39;,&#39;n&#39;)"'+(ttl?' title="'+esc(ttl)+'"':'')+'>'+t+(S.k===k?(S.asc?' ▲':' ▼'):'')+'</th>'
+    :'<th class="noclick"'+(ttl?' title="'+esc(ttl)+'"':'')+'>'+t+'</th>';
+  const cell=(a,gt)=>{const late=lateOf(a),lateP=a.n?late/a.n*100:null;
+    return '<tr'+(gt?' style="font-weight:800;background:#F4F8FE;border-top:2px solid var(--line)"':(a.n?'':' style="opacity:.62"'))+'>'
+     +'<td>'+(gt?'ALL AGENTS':maskName(a.tl))+'</td>'
+     +'<td style="font-size:11.5px">'+(gt?'—':esc(a.ds))+'</td>'
+     +'<td style="font-size:11.5px">'+(gt?'—':esc(a.ten))+'</td>'
+     +'<td><b>'+(gt?rows.length+' agents':aName(a.cb,maskName(a.name)))+'</b></td>'
+     +stCols.map(c=>'<td class="num">'+((a.sts[c]||0)||'·')+'</td>').join('')
+     +'<td class="num" style="font-weight:800">'+a.n.toLocaleString()+'</td>'
+     +'<td class="num">'+(G.n>0?fmtVal(a.n/G.n*100,'pct'):'—')+'</td>'
+     +'<td class="num">'+(a.ageN?fmtVal(a.ageSum/a.ageN,'hoursnum'):'—')+'</td>'
+     +'<td class="num">'+(a.ageMax==null?'—':fmtVal(a.ageMax,'hoursnum'))+'</td>'
+     +'<td>'+latePill(lateP)+'</td></tr>'};
+  /* Export mirrors the rendered rows exactly — same filters, same dedupe, same masking, same
+     totals row — so the file can never disagree with the screen. */
+  {const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+   const r1=v=>Math.round(v*10)/10;
+   const line=(a,gt)=>{const late=lateOf(a);
+     return [q(gt?'ALL AGENTS':maskName(a.tl)),q(gt?'—':a.ds),q(gt?'—':a.ten),q(gt?rows.length+' agents':maskName(a.name)),
+       ...stCols.map(c=>a.sts[c]||0),a.n,
+       G.n>0?r1(a.n/G.n*100):'',a.ageN?r1(a.ageSum/a.ageN):'',a.ageMax==null?'':r1(a.ageMax),
+       a.n?r1(late/a.n*100):''].join(',')};
+   window.__allocCsv={name:'chatterbox_lead_allocation_'+winFrom(win)+'_'+win.to+'.csv',
+     csv:['Team Leader,Data Set,Tenure,Agent Name,'+stCols.map(q).join(',')
+       +',Total Allocated,Share of book %,Avg age (h),Oldest (h),3rd+ attempt %',
+       ...rows.map(a=>line(a,false)),line(G,true)].join('\n')};}
+  const f=freshness('SF_OPEN_CASES');
+  const chip=(t,cls)=>'<span class="chip '+(cls||'n')+'"><span class="dot"></span>'+t+'</span>';
+  const strip='<div class="vh" style="margin-bottom:12px">'
+   +chip(G.n.toLocaleString()+' leads allocated')
+   +chip(holders+' agent'+(holders===1?'':'s')+' holding','g')
+   +chip(idle+' holding nothing',idle?'a':'g')
+   +chip((holders?f1(G.n/holders):'0')+' avg per holder')
+   +(poolN?chip(poolN.toLocaleString()+' unallocated in a queue ('+fmtVal(poolN/(poolN+G.n)*100,'pct')+' of the book)','a'):'')
+   +chip('Snapshot '+(f.batch?f.label:'never uploaded'),f.state)
+   +(unmatchedN?chip(unmatchedN.toLocaleString()+' lead(s) on an unmatched owner','r'):'')
+   +'</div>';
+  const allocCard='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Lead allocation — status per person</span>'
+   +'<span class="info" title="Every open case in the Salesforce snapshot, matched to an agent on the CB NUMBER: Case Owner is a display name, so it resolves through the Agent List&#39;s Sales Force / Agent Name columns (an embedded CB number is never read — four roster labels carry codes that contradict their own Employee Code). One row per case number, so a case listed twice counts once. Status variants fold into the canonical stage. Agents holding nothing stay in the table, greyed — an empty book is the signal. Share of book = this agent ÷ all allocated leads shown. 3rd+ attempt = the share of the agent&#39;s book sitting on a 3rd attempt or later (read off the columns present, so a new 6th-attempt stage counts automatically); its red line is the leadAllocStale rule, editable in Dictionary → Rules.">i</span>'
+   +'<button class="btn" style="font-size:11px;padding:5px 11px;white-space:nowrap" onclick="exportAlloc()" title="Download this table as CSV — same rows, filters and masking as on screen">⬇ Export CSV</button>'
+   +(canUploadHere()?'<label class="btn" style="font-size:11px;padding:5px 11px;white-space:nowrap;display:inline-block" title="Load a fresher Salesforce Open Cases export without leaving this page — same slot, validation and batch audit as the Upload Station">⟳ Update allocation<input type="file" style="display:none" onchange="if(this.files[0]){handleFile(&#39;SF_OPEN_CASES&#39;,this.files[0]);this.value=&#39;&#39;}"></label>':'')
+   +'<span class="s">'+rows.length+' roster agents · '+stCols.length+' status column'+(stCols.length===1?'':'s')+' · all global filters apply</span></div>'
+   +strip
+   +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr>'
+   +head('Team Leader','tl')+head('Data Set')+head('Tenure')+head('Agent Name','name')
+   +stCols.map((c,i)=>head(esc(c),'st'+i,'Open cases sitting on "'+c+'"')).join('')
+   +head('Total Allocated','n')+head('Share of book')+head('Avg age (h)','age')+head('Oldest (h)','old')
+   +head('3rd+ attempt','late',"Share of this agent's book on a 3rd attempt or later")
+   +'</tr></thead><tbody>'
+   +rows.map(a=>cell(a,false)).join('')
+   +cell(G,true)
+   +'</tbody></table></div>'
+   +'</div>';
+  return allocCard+sideCards(G.n);
+}
+/* The empty state carries its own uploader: with no snapshot there is nothing to show, and the
+   one useful action is loading the file. Routes through handleFile, so validation, the confirm
+   modal, batch audit and exceptions behave exactly as they do in the Upload Station. */
+function allocEmpty(){
+  return '<div class="card"><div class="empty"><div class="big">Lead Allocation reads the Salesforce Open Cases snapshot</div>'
+   +'<p>Each case is matched to an agent on the CB number — through the Agent List, because Case Owner is a display name — and the Status field is pivoted into a column per stage.</p>'
+   +(canUploadHere()
+     ?'<div id="slot_alloc_drop" style="margin-top:14px" ondragover="event.preventDefault();this.classList.add(&#39;drag&#39;)" ondragleave="this.classList.remove(&#39;drag&#39;)" ondrop="this.classList.remove(&#39;drag&#39;);dropFile(event,&#39;SF_OPEN_CASES&#39;)">'
+      +'<div style="display:flex;gap:8px;justify-content:center">'
+      +'<label class="btn primary" style="display:inline-block">Upload Open Cases<input type="file" style="display:none" onchange="if(this.files[0]){handleFile(&#39;SF_OPEN_CASES&#39;,this.files[0]);this.value=&#39;&#39;}"></label>'
+      +'<button class="btn" onclick="go(\'uploads\')">Open the Upload Station</button></div>'
+      +'<div style="font-size:11.5px;color:var(--muted);margin-top:9px">or drag the export onto this panel · expects the Salesforce HTML .xls</div>'
+      +'</div>'
+     :'<div style="font-size:12px;color:var(--muted);margin-top:12px">Ask Ryan or Nick to upload today\'s Open Cases export — uploading is an admin action and this view is read-only for team leaders.</div>')
+   +'</div></div>';
+}
+
 /* ---------------- PAGE: LEAD MANAGEMENT ---------------- */
 function pageLeads(win){
   if(!hasData())return emptyState('Lead Management joins the Agent List with open cases, closed cases, activations and cancellations');
@@ -3469,16 +3670,12 @@ function pageLeads(win){
     if(GF.campaign&&campBucket(a.queue)!==GF.campaign)return;
     if(GF.agent&&normCB(a.cb_code)!==normCB(GF.agent))return;
     mk(a.cb_norm)});
-  const CANON=['1st attempt','2nd attempt','3rd attempt','4th attempt','5th attempt','New','In Progress','Escalated'];
-  // Fold status variants (case/whitespace) into the canonical name so "4th Attempt" counts into
-  // the canonical 4th column instead of a duplicate appended after Escalated.
-  const canonSt=s=>{const n=String(s==null?'':s).replace(/\s+/g,' ').trim();return CANON.find(c=>c.toLowerCase()===n.toLowerCase())||(n||'(blank)')};
   let unOpen=0,unClosed=0;
   rowsFor('SF_OPEN_CASES',win).forEach(r=>{const cb=cbOfOwner(r.case_owner);if(!cb||!A[cb]){if(!cb)unOpen++;return}
     if(!openInWin(r,win))return;                                    // snapshot: rowsFor can't window it
     const a=A[cb];const k=String(r.case_number||'').trim();
     if(k){if(a.seenO.has(k))return;a.seenO.add(k)}                  // one row per case
-    const st=canonSt(r.status);a.open++;addLead(a.leads,r);a.sts[st]=(a.sts[st]||0)+1});
+    const st=canonLeadStatus(r.status);a.open++;addLead(a.leads,r);a.sts[st]=(a.sts[st]||0)+1});
   rowsFor('SF_CLOSED_CASES',win).forEach(r=>{const cb=cbOfOwner(r.case_owner);if(!cb||!A[cb]){if(!cb)unClosed++;return}
     const a=A[cb];const k=String(r.case_number||'').trim();
     if(k){if(a.seenC.has(k))return;a.seenC.add(k)}
@@ -3488,8 +3685,9 @@ function pageLeads(win){
   cancelPremiums(win).forEach(e=>{if(e.cb&&A[e.cb])A[e.cb].canc++});
   rowsFor('CALLX_CALL_RECORDS',win).forEach(r=>{const cb=cbOf(r.agent);if(cb&&A[cb]&&r._d)A[cb].dialDays.add(r._d)});
   const wd=workDays(win);
-  const present=new Set();Object.values(A).forEach(a=>Object.keys(a.sts).forEach(k=>present.add(k)));
-  const stCols=[...CANON,...[...present].filter(c=>!CANON.includes(c)).sort()].slice(0,10);
+  // Capped at 10 here because the pivot is a guest in a 21-column table; Lead Allocation shows
+  // every stage. Same helper, so the two pages can never disagree on the columns they do share.
+  const stCols=leadStatusCols(Object.values(A),10);
   const rows=Object.values(A).sort((x,y)=>String(x.tl).localeCompare(String(y.tl))||y.tc-x.tc||String(x.name).localeCompare(String(y.name)));
   const G={open:0,cl:0,nofb:0,tc:0,sales:0,canc:0,sts:{},leads:mkLeads()};
   rows.forEach(a=>{G.open+=a.open;G.cl+=a.cl;G.nofb+=a.nofb;G.tc+=a.tc;G.sales+=a.sales;G.canc+=a.canc;
@@ -3600,7 +3798,7 @@ function pageLeads(win){
    +'<span class="s">'+rows.length+' roster agents · window '+esc(winFrom(win))+' → '+esc(win.to)+' · all global filters apply</span></div>'
    +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr>'
    +head('Team Leader')+head('Data Set')+head('Tenure')+head('Agent Name')
-   +stCols.map(head).join('')
+   +stCols.map(c=>head(esc(c))).join('')   // status text is upload data — never straight into markup
    +head('Total Open')+head('Closed')+head('Closed - No feedback')+head('Total Closed')+head('Total Leads')
    +head('Ave Closed p/d')+head('Ave Wasted p/d')+head('Sales')+head('Payroll SPD')+head('Dialing SPD')
    +head('Conv % (leads)')+head('Conv % (closed)')+head('Conv % wasted')+head('Cancelled')+head('Canc to Sales %')
@@ -4112,6 +4310,24 @@ function pageSession(){
    +'<div class="card"><div class="card-h"><span class="t">Closed leads per agent — monthly</span><span class="info" title="From the DAILY Closed Cases file (not the session snapshots), one column per calendar month by close date. Scoped to your team where team-leader access applies.">i</span><span class="s">closed cases by month</span></div>'
    +mclHtml+'</div>';
 }
+/* "A file arrived" is not the same as "the file joins" — and the join is the thing that quietly
+   breaks on a Monday, when a new agent is on Salesforce but not yet on the Agent List. So the Open
+   Cases slot reports whether its owners actually resolve to CB numbers, and sends the unmatched
+   count through to Lead Allocation, which names them. Global filters are cleared: this is the
+   data page, it reports the file as loaded, not as the current view happens to be sliced. */
+function allocHealthChips(){
+  const queues=new Set((state.rules.leadQueueOwners?.vals||[]).map(v=>String(v).toLowerCase().trim()).filter(Boolean));
+  const holders=new Set();let pooled=0,un=0;
+  const win=periodWindow();   // honour leadWindow like the page does, so chip and page never disagree
+  rowsNF('SF_OPEN_CASES',win).forEach(r=>{if(!openInWin(r,win))return;
+    const cb=cbOfOwner(r.case_owner);
+    if(cb){holders.add(cb);return}
+    if(queues.has(String(r.case_owner||'').toLowerCase().trim()))pooled++;else un++});
+  const go='onclick="go(&#39;leadalloc&#39;)" style="cursor:pointer"';
+  return '<span class="chip g"><span class="dot"></span>'+holders.size+' agent'+(holders.size===1?'':'s')+' holding leads</span>'
+   +(pooled?'<span class="chip a" '+go+' title="Cases still sitting in a Salesforce queue — nobody is working them yet. Not a mapping fault; the unallocated pool."><span class="dot"></span>'+pooled.toLocaleString()+' unallocated in a queue</span>':'')
+   +(un?'<span class="chip r" '+go+' title="Case Owners matching no Agent List row and not a known queue. Their leads are counted, never spread — Lead Allocation names them."><span class="dot"></span>'+un.toLocaleString()+' on an unmatched owner</span>':'');
+}
 function pageUploads(){
   const slots=SRC_KEYS.map(k=>{
     const s=SOURCES[k];const f=freshness(k);
@@ -4120,7 +4336,7 @@ function pageUploads(){
      +'<div class="slot-h"><span class="slot-ic" style="background:'+COLSOFT[s.color]+'">'+icon(k==='REFERRALS'?'target':k==='AGENT_LIST'?'badge':k.includes('INACTIVE')?'alert':k.includes('QA')?'shield':k.includes('ATT')?'users':k.includes('CALL')?'phone':'inbox',COLHEX[s.color])+'</span>'
      +'<div><div class="slot-t">'+esc(s.label)+'</div><div class="slot-s">'+esc(s.system)+' · expects '+esc(s.fmt)+'</div></div></div>'
      +'<div class="slot-meta">'+esc(s.purpose)+'</div>'
-     +'<div class="vh" style="margin-bottom:9px"><span class="chip '+f.state+'"><span class="dot"></span>'+(f.batch?'Updated '+f.label:'Never uploaded')+'</span>'+(rows?'<span class="chip n"><span class="dot"></span>'+rows.toLocaleString()+' rows loaded</span>':'')+'</div>'
+     +'<div class="vh" style="margin-bottom:9px"><span class="chip '+f.state+'"><span class="dot"></span>'+(f.batch?'Updated '+f.label:'Never uploaded')+'</span>'+(rows?'<span class="chip n"><span class="dot"></span>'+rows.toLocaleString()+' rows loaded</span>':'')+(k==='SF_OPEN_CASES'&&rows?allocHealthChips():'')+'</div>'
      +'<div class="slot-foot">'
      +(k==='REFERRALS'?'<button class="btn primary small" onclick="syncReferralsFromAPI()" title="Pull the referral book live from HighLevel through the API Worker — same pipeline as an upload: batch audit, per-contact supersede, Agent-List mapping. Also runs automatically on every sign-in.">⟳ Sync from HighLevel</button>':'')
      +'<label class="btn '+(k==='REFERRALS'?'':'primary ')+'small" style="display:inline-block">Choose file<input type="file" style="display:none" onchange="if(this.files[0]){handleFile(\''+k+'\',this.files[0]);this.value=\'\'}"></label>'
@@ -4311,6 +4527,9 @@ function dl(name,text){const a=document.createElement('a');a.href=URL.createObje
 function exportLeads(){const x=window.__leadsCsv;   // built by pageLeads on every render
   if(!x){toast('Open the Lead Management page first','warn');return}
   dl(x.name,x.csv);toast('Lead management export downloaded','ok')}
+function exportAlloc(){const x=window.__allocCsv;   // built by pageLeadAlloc on every render
+  if(!x){toast('Open the Lead Allocation page first','warn');return}
+  dl(x.name,x.csv);toast('Lead allocation export downloaded','ok')}
 function togglePII(el){state.unmasked=el.checked;$('#piiState').textContent=el.checked?'Off — authorised view':'On';render()}
 function cbxSignOut(){
   try{ if(window.CBX_AUTH&&window.CBX_AUTH.logout){ window.CBX_AUTH.logout(); return; } }catch(e){}
@@ -4347,6 +4566,7 @@ function render(){
   else if(p.id==='uploads')html=pageUploads();
   else if(p.id==='sess_uploads')html=pageSesUploads();
   else if(p.id==='tl')html=pageTL(win);
+  else if(p.id==='leadalloc')html=pageLeadAlloc(win);
   else if(p.id==='leads')html=pageLeads(win);
   else if(p.id==='session')html=pageSession();
   else if(p.id==='dict')html=pageDict();
