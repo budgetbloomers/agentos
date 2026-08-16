@@ -3656,8 +3656,8 @@ function pageLeadAlloc(win){
      the failure, so the bands invert: green under four-fifths of the rule, red past it. */
   const latePill=v=>v==null?'—':'<span class="pill '+(v<=staleT*.8?'g':v<=staleT?'a':'r')+'">'+fmtVal(v,'pct')+'</span>';
   const f1=v=>(Math.round(v*10)/10).toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1});
-  const head=(t,k,ttl)=>k?'<th onclick="sortBy(&#39;leadalloc&#39;,&#39;'+k+'&#39;,&#39;n&#39;)"'+(ttl?' title="'+esc(ttl)+'"':'')+'>'+t+(S.k===k?(S.asc?' ▲':' ▼'):'')+'</th>'
-    :'<th class="noclick"'+(ttl?' title="'+esc(ttl)+'"':'')+'>'+t+'</th>';
+  const head=(t,k,ttl,attr)=>k?'<th'+(attr?' '+attr:'')+' onclick="sortBy(&#39;leadalloc&#39;,&#39;'+k+'&#39;,&#39;n&#39;)"'+(ttl?' title="'+esc(ttl)+'"':'')+'>'+t+(S.k===k?(S.asc?' ▲':' ▼'):'')+'</th>'
+    :'<th class="noclick"'+(attr?' '+attr:'')+(ttl?' title="'+esc(ttl)+'"':'')+'>'+t+'</th>';
   const cell=(a,gt)=>{const late=lateOf(a),lateP=a.n?late/a.n*100:null;
     return '<tr'+(gt?' style="font-weight:800;background:#F4F8FE;border-top:2px solid var(--line)"':(a.n?'':' style="opacity:.62"'))+'>'
      +'<td>'+(gt?'ALL AGENTS':maskName(a.tl))+'</td>'
@@ -3680,7 +3680,8 @@ function pageLeadAlloc(win){
        G.n>0?r1(a.n/G.n*100):'',a.ageN?r1(a.ageSum/a.ageN):'',a.ageMax==null?'':r1(a.ageMax),
        a.n?r1(late/a.n*100):''].join(',')};
    window.__allocCsv={name:'chatterbox_lead_allocation_'+winFrom(win)+'_'+win.to+'.csv',
-     csv:['Team Leader,Data Set,Tenure,Agent Name,'+stCols.map(q).join(',')
+     // the export has to stand on its own too — "Currently on" travels with the column
+     csv:['Team Leader,Data Set,Tenure,Agent Name,'+stCols.map(c=>q('Currently on: '+c)).join(',')
        +',Total Allocated,Share of book %,Avg age (h),Oldest (h),3rd+ attempt %',
        ...rows.map(a=>line(a,false)),line(G,true)].join('\n')};}
   const f=freshness('SF_OPEN_CASES');
@@ -3695,20 +3696,35 @@ function pageLeadAlloc(win){
    +(unmatchedN?chip(unmatchedN.toLocaleString()+' lead(s) on an unmatched owner','r'):'')
    +'</div>';
   const allocCard='<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">Lead allocation — status per person</span>'
-   +'<span class="info" title="Every open case in the Salesforce snapshot, matched to an agent on the CB NUMBER: Case Owner is a display name, so it resolves through the Agent List&#39;s Sales Force / Agent Name columns (an embedded CB number is never read — four roster labels carry codes that contradict their own Employee Code). One row per case number, so a case listed twice counts once. Status variants fold into the canonical stage. Agents holding nothing stay in the table, greyed — an empty book is the signal. Share of book = this agent ÷ all allocated leads shown. 3rd+ attempt = the share of the agent&#39;s book sitting on a 3rd attempt or later (read off the columns present, so a new 6th-attempt stage counts automatically); its red line is the leadAllocStale rule, editable in Dictionary → Rules.">i</span>'
+   +'<span class="info" title="Every open case in the Salesforce snapshot, matched to an agent on the CB NUMBER: Case Owner is a display name, so it resolves through the Agent List&#39;s Sales Force / Agent Name columns (an embedded CB number is never read — four roster labels carry codes that contradict their own Employee Code). One row per case number, so a case listed twice counts once. The attempt columns are where each lead SITS TODAY, not how many attempts have been made: every lead is counted in exactly one of them (which is why they total to Total Allocated), and a lead already dialled five times shows under 5th attempt only. A blank 1st attempt therefore means no fresh leads, not missing data. Status variants fold into the canonical stage. Agents holding nothing stay in the table, greyed — an empty book is the signal. Share of book = this agent ÷ all allocated leads shown. 3rd+ attempt = the share of the agent&#39;s book sitting on a 3rd attempt or later (read off the columns present, so a new 6th-attempt stage counts automatically); its red line is the leadAllocStale rule, editable in Dictionary → Rules.">i</span>'
    +'<button class="btn" style="font-size:11px;padding:5px 11px;white-space:nowrap" onclick="exportAlloc()" title="Download this table as CSV — same rows, filters and masking as on screen">⬇ Export CSV</button>'
    +(canUploadHere()?'<label class="btn" style="font-size:11px;padding:5px 11px;white-space:nowrap;display:inline-block" title="Load a fresher Salesforce Open Cases export without leaving this page — same slot, validation and batch audit as the Upload Station">⟳ Update allocation<input type="file" style="display:none" onchange="if(this.files[0]){handleFile(&#39;SF_OPEN_CASES&#39;,this.files[0]);this.value=&#39;&#39;}"></label>':'')
    +'<span class="s">'+rows.length+' roster agents · '+stCols.length+' status column'+(stCols.length===1?'':'s')+' · all global filters apply</span></div>'
    +strip
+   /* The status columns get a spanning header of their own. Laid out bare, left to right, "1st
+      attempt … 5th attempt" reads like a funnel of attempts made — and then an agent with 305 at
+      5th and nothing at 1st looks like broken data. It is not: Status is where a case IS NOW, the
+      columns are mutually exclusive, and a case dialled five times is counted ONLY under 5th.
+      An empty 1st column means no fresh leads, which is the real finding. Say so in the table. */
    +'<div style="overflow-x:auto"><table class="tbl" style="font-size:11.5px"><thead><tr>'
-   +head('Team Leader','tl')+head('Data Set')+head('Tenure')+head('Agent Name','name')
-   +stCols.map((c,i)=>head(esc(c),'st'+i,'Open cases sitting on "'+c+'"')).join('')
-   +head('Total Allocated','n')+head('Share of book')+head('Avg age (h)','age')+head('Oldest (h)','old')
-   +head('3rd+ attempt','late',"Share of this agent's book on a 3rd attempt or later")
+   +head('Team Leader','tl',null,'rowspan="2"')+head('Data Set',null,null,'rowspan="2"')
+   +head('Tenure',null,null,'rowspan="2"')+head('Agent Name','name',null,'rowspan="2"')
+   +'<th class="noclick" colspan="'+stCols.length+'" style="text-align:center;border-bottom:1px solid var(--line)" title="Where each lead is RIGHT NOW, not how many attempts have been made. Every case is counted once, in the single stage it currently sits on — a lead already dialled five times appears only under 5th attempt, never again under 1st.">Currently sitting on — each lead counted once</th>'
+   +head('Total Allocated','n',null,'rowspan="2"')+head('Share of book',null,null,'rowspan="2"')
+   +head('Avg age (h)','age',null,'rowspan="2"')+head('Oldest (h)','old',null,'rowspan="2"')
+   +head('3rd+ attempt','late',"Share of this agent's book on a 3rd attempt or later",'rowspan="2"')
+   +'</tr><tr>'
+   +stCols.map((c,i)=>head(esc(c),'st'+i,'Leads whose CURRENT stage is "'+c+'". Not a count of attempts made — a lead that has moved past this stage is counted under the stage it is on now.')).join('')
    +'</tr></thead><tbody>'
    +rows.map(a=>cell(a,false)).join('')
    +cell(G,true)
    +'</tbody></table></div>'
+   +'<div style="font-size:11px;color:var(--muted);margin-top:9px;line-height:1.6">'
+   +'<b>Reading the attempt columns:</b> they are a snapshot of where each lead stands today, not a tally of attempts made. Every lead is counted in exactly one of them, which is why they add up to Total Allocated. '
+   +'A lead that has been dialled five times sits under <b>5th attempt</b> only — it is not still counted under 1st. '
+   +'So a blank <b>1st attempt</b> beside a large <b>5th attempt</b> is not missing data: it means that agent has had no fresh leads and their whole book has already been worked. '
+   +'<b>·</b> means nothing at that stage right now.'
+   +'</div>'
    +'</div>';
   return allocCard+sideCards(G.n);
 }

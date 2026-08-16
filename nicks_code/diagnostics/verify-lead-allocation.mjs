@@ -84,8 +84,21 @@ const scrape = await page.evaluate(async () => {
     const tbl = [...document.querySelectorAll('#page table.tbl')]
       .find(t => [...t.querySelectorAll('thead th')].some(h => h.textContent.trim().replace(/ [▲▼]$/, '') === totalHeader));
     if (!tbl) return null;
-    const heads = [...tbl.querySelectorAll('thead th')].map(h => h.textContent.trim().replace(/ [▲▼]$/, ''));
-    const ti = heads.indexOf(totalHeader);
+    const clean = h => h.textContent.trim().replace(/ [▲▼]$/, '');
+    const hrows = [...tbl.querySelectorAll('thead tr')];
+    // Lead Allocation groups its status columns under a spanning header, so the status labels live
+    // on the SECOND header row and cell indices no longer match a flat header list. Rebuild the
+    // real column order: 4 fixed, then the status block, then the trailing metrics.
+    let heads, ti;
+    if (hrows.length > 1) {
+      const stat = [...hrows[1].querySelectorAll('th')].map(clean);
+      const top = [...hrows[0].querySelectorAll('th')].map(clean);
+      heads = top.slice(0, 4).concat(stat, top.slice(5));
+      ti = 4 + stat.length;
+    } else {
+      heads = [...tbl.querySelectorAll('thead th')].map(clean);
+      ti = heads.indexOf(totalHeader);
+    }
     const rows = [...tbl.querySelectorAll('tbody tr')].map(tr => {
       const tds = [...tr.querySelectorAll('td')];
       const td = tds.map(c => c.textContent.trim());
@@ -97,8 +110,10 @@ const scrape = await page.evaluate(async () => {
     return { heads, ti, rows };
   };
   const alloc = grab('leadalloc', 'Total Allocated');
+  go('leadalloc');
+  const allocTxt = document.querySelector('#page').innerText;
   const leads = grab('leads', 'Total Open');
-  return { alloc, leads, allocCsv: window.__allocCsv ? window.__allocCsv.csv.split('\n') : null,
+  return { alloc, leads, allocTxt, allocCsv: window.__allocCsv ? window.__allocCsv.csv.split('\n') : null,
            snapRows: (state.facts.SF_OPEN_CASES || []).length };
 });
 
@@ -142,6 +157,18 @@ if (A && L) {
     scrape.allocCsv && scrape.allocCsv.length === A.rows.length + 1,
     scrape.allocCsv ? scrape.allocCsv.length + ' lines vs ' + (A.rows.length + 1) : 'no csv');
   ok('CSV header carries every status column', scrape.allocCsv && statusCols.every(c => scrape.allocCsv[0].includes(c)));
+  ok('the CSV says "Currently on" so the export reads correctly on its own',
+    scrape.allocCsv && /Currently on: 1st attempt/.test(scrape.allocCsv[0]), (scrape.allocCsv || [''])[0].slice(0, 140));
+
+  /* The columns are mutually exclusive current positions, not a tally of attempts — the page has to
+     say that in place, because a blank 1st beside a big 5th otherwise reads as broken data. */
+  ok('the attempt columns sit under a "currently sitting on" group header',
+    /Currently sitting on/i.test(scrape.allocTxt));
+  ok('the table explains that a blank stage is not missing data',
+    /counted in exactly one of them/i.test(scrape.allocTxt) && /no fresh leads/i.test(scrape.allocTxt));
+  // and the claim the wording makes must actually hold: buckets partition the book
+  ok('each lead really is counted once — the stages partition Total Allocated',
+    gt.total === sumOfStatuses);
 }
 
 /* ---- 4. nothing is invented, nothing silently dropped ---- */

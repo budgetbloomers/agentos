@@ -6,7 +6,7 @@
 > Lead allocation — match to cb number to get the first table view on the status field pivoted per person.
 > And in the upload station add an upload for open cases."*
 
-*Status: **BUILT** 2026-08-16, reviewed and cleared. Guarded by `nicks_code/diagnostics/verify-lead-allocation.mjs` (55 checks).*
+*Status: **BUILT** 2026-08-16, reviewed and cleared. Guarded by `nicks_code/diagnostics/verify-lead-allocation.mjs` (59 checks).*
 
 > **What the real data changed about this plan.** Building it against the 13 Aug package turned up
 > something the plan did not anticipate: of 2,815 open cases, **1,684 (59.8%) are owned by a
@@ -369,7 +369,7 @@ Also fixed from the review:
 
 ## 6b. What the verification actually proved (2026-08-16)
 
-`node nicks_code/diagnostics/verify-lead-allocation.mjs` — 55 checks, all passing, driving the real
+`node nicks_code/diagnostics/verify-lead-allocation.mjs` — 59 checks, all passing, driving the real
 app at `file://` with `Matrix - Agent List.xlsx` + `SF Open Cases 5 - 13.xls` through the real bulk
 upload path. Highlights:
 
@@ -445,6 +445,39 @@ it, so they are leavers. Named, counted, never spread.
 **Upload order is not a factor** — verified directly. Loading Open Cases first and the Agent List
 second re-attributes every already-loaded case with no re-upload, because `buildIdentity` rebuilds
 the maps and `bumpDataVer` clears the per-row identity cache.
+
+## 6d. The attempt columns are positions, not a tally (2026-08-16, Nick)
+
+Nick, reading the live page: *"how can these guys have a 3 4 5 attempt but not a first and second,
+makes no sense."* Fair — and the data is right, the **presentation** was wrong.
+
+`Status` is where a case **is now**, not a count of attempts made. Each case carries one status and
+lands in exactly one column, which is why the columns sum to Total Allocated. A lead dialled five
+times appears under *5th attempt* only; it is not still counted under *1st*. So a blank 1st beside
+a large 5th means that agent has had **no fresh leads** and their whole book has been worked — an
+aged book, which is the real finding and exactly what the 3rd+ attempt RAG measures.
+
+Confirmed against the data before answering, not asserted:
+
+| Check | 13 Aug | 02 Aug |
+|---|---|---|
+| rows vs unique cases | 2,815 / 2,815 | 30,181 / 30,181 |
+| cases carrying two different statuses | 0 | 0 |
+| buckets sum to unique cases | ✓ | ✓ |
+| mean age by stage (1st→5th) | 4d · 5d · 6d · 6d · 6d | 46d · 49d · 54d · 57d · 49d |
+
+Mean age climbing with the stage is what proves it is a progression of position. *5th attempt* is
+also the largest attempt bucket on the older book (7,644) because it is the end of the ladder —
+cases park there until closed, while 1st–4th stay transient. Real example: CB202 Jayden Chetty
+holds 87 at 5th, 10 New, 3 at 2nd, 4 at 3rd and **nothing** at 1st.
+
+**Fixed in the UI, because the file is uploaded daily and the page must explain itself every
+morning:** the status columns now sit under a spanning header — *"Currently sitting on — each lead
+counted once"* — with a plain-English note under the table stating that a blank stage means no
+leads there now, not missing data, and that `·` means zero. Each column's own tooltip says the same,
+and the CSV exports them as `Currently on: 1st attempt` so the download stands on its own.
+Guarded by three checks, including one asserting the claim the wording makes (the stages really do
+partition Total Allocated).
 
 ## 7. Open question for Nick
 
