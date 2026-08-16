@@ -6,7 +6,7 @@
 > Lead allocation — match to cb number to get the first table view on the status field pivoted per person.
 > And in the upload station add an upload for open cases."*
 
-*Status: **BUILT** 2026-08-16, reviewed and cleared. Guarded by `nicks_code/diagnostics/verify-lead-allocation.mjs` (44 checks).*
+*Status: **BUILT** 2026-08-16, reviewed and cleared. Guarded by `nicks_code/diagnostics/verify-lead-allocation.mjs` (55 checks).*
 
 > **What the real data changed about this plan.** Building it against the 13 Aug package turned up
 > something the plan did not anticipate: of 2,815 open cases, **1,684 (59.8%) are owned by a
@@ -369,7 +369,7 @@ Also fixed from the review:
 
 ## 6b. What the verification actually proved (2026-08-16)
 
-`node nicks_code/diagnostics/verify-lead-allocation.mjs` — 44 checks, all passing, driving the real
+`node nicks_code/diagnostics/verify-lead-allocation.mjs` — 55 checks, all passing, driving the real
 app at `file://` with `Matrix - Agent List.xlsx` + `SF Open Cases 5 - 13.xls` through the real bulk
 upload path. Highlights:
 
@@ -392,6 +392,59 @@ upload path. Highlights:
 the **displayed** name, and masking collapses `Threza Chetty` and `Theo Chetty` onto the same
 `T. Ch•••` label. The app was right; the test was wrong. It now keys on the CB code from the
 row's `agentOpen(...)` handler — worth remembering for any future table diagnostic.
+
+## 6c. Matching rework — the Agent List as the spine (2026-08-16, Nick)
+
+*"The Agent List is the source of truth; when that is uploaded, match everything."* Three real
+defects came out of auditing the join across both open-cases exports.
+
+**1 · A placeholder was being treated as an identity.** The roster writes `-` in the Sales Force
+column for the four Matrix Vehicle Tracking agents (CB16, CB190, CB112, CB157 — they have no
+Salesforce account). `buildIdentity` keyed `sfOwnerMap` on it four times, last-one-wins, so
+`sfOwnerMap['-']` resolved to **CB157, Mandisa Cele** purely because she was last on the sheet.
+Any owner normalising to `-` would have been silently filed under her. Fixed: `identBlank()` /
+`IDENT_PLACEHOLDER` reject `-`, blank, `n/a`, `none`, `null`, `tbc`, `tbd`, `.` before they reach
+any map — for the dialler alias map too, which had the same exposure.
+
+**2 · A name two agents share was decided by sheet order.** The map was built by assignment, so a
+duplicate name silently overwrote. It now builds through a `claims` set per name and **only a name
+exactly one agent claims becomes a match**; the rest land in `state.ownerAmbig` and are shown on
+the page under *"Names two agents both claim"*. Ambiguity is the roster's problem to fix, not the
+software's to guess — the same doctrine `refCbOf` already applied to referrals.
+
+**3 · Matching was exact-only, so name variants fell on the floor.** Salesforce and the roster
+disagree about middle names: `"Antach Sibusisiwe Owusu-Ansah"` is the roster's
+`"Sibusisiwe Owusu-Ansah"` — **150 cases attributed to nobody**. `cbOfOwner` now runs the same
+tiered ladder as referrals: exact → token subset → per-token edit-distance-1, **unique-or-nothing**
+throughout. A bare surname like `Naidoo` fits nine agents, so it fits none of them. Every variant
+match is listed on the page under *"Matched by name variant"* with the owner, the agent and the
+lead count, because a fuzzy match is a judgement and must show its work. `refCbOf` and
+`ownerMatch` now share one `_ownerCandidates()` — one matcher, one doctrine.
+
+Also: **queue names now normalise like agent names.** The queue test compared raw text, so
+`"Courtesy call- Panimax"` never matched the rule and **1,293 waiting leads were reported as a
+roster defect**. Both sides go through `normName` now, and `leadQueueOwners` gained `Courtesy Call`
+and `EC3 Welcome Call`.
+
+### Blast radius — checked, not assumed
+
+`cbOfOwner` also resolves `BI_ACTIVE_CASES.Owner` (the money model, non-negotiable 6) and
+`SF_INACTIVE`. Measured on the 13 Aug package: **zero variant matches and zero ambiguous owners on
+both**, so GWP attribution is byte-identical — R406,116 over 4,003 accounts, 124 unattributed,
+exactly as before. The tiered tier only ever converts *unattributed* into *attributed to exactly
+one agent*; it can never move a lead or a rand from one agent to another.
+
+| Export | Allocated | Queued | Unmatched | Reconciles |
+|---|---|---|---|---|
+| 13 Aug (current) | 1,131 (all exact) | 1,684 | 0 | 1,131 + 1,684 + 0 = 2,815 ✓ |
+| 02 Aug (older) | 18,661 (18,511 exact + 150 variant) | 1,315 | 10,205 | 18,661 + 1,315 + 10,205 = 30,181 ✓ |
+
+The 02 Aug file's 10,205 unmatched are ~50 people genuinely not on the 13 Aug roster — it predates
+it, so they are leavers. Named, counted, never spread.
+
+**Upload order is not a factor** — verified directly. Loading Open Cases first and the Agent List
+second re-attributes every already-loaded case with no re-upload, because `buildIdentity` rebuilds
+the maps and `bumpDataVer` clears the per-row identity cache.
 
 ## 7. Open question for Nick
 

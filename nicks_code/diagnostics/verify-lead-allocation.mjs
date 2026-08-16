@@ -174,6 +174,80 @@ ok('allocated + queued + unmatched == every case in the snapshot',
   allocTotal + honesty.pooled + honesty.un === honesty.uniqCases,
   allocTotal + ' + ' + honesty.pooled + ' + ' + honesty.un + ' = ' + (allocTotal + honesty.pooled + honesty.un) + ' vs ' + honesty.uniqCases);
 
+/* ---- 4a. the join: the Agent List is the spine ---- */
+// Every Case Owner resolves through the roster, or it resolves to nobody. The rules that matter:
+// a placeholder is not an identity, a name two agents share is not a match, a bare surname is not
+// a match, and a queue keeps its meaning even with the business unit stuck on the end.
+console.log('\n— the join —');
+const join = await page.evaluate(() => {
+  const roster = state.facts.AGENT_LIST || [];
+  const first = roster.find(a => a.cb_norm && a.agent_name && a.agent_name.trim().split(/\s+/).length >= 2);
+  const nm = first.agent_name.trim().split(/\s+/);
+  const variantName = nm[0] + ' Zzqx ' + nm.slice(1).join(' ');   // same person, extra middle name
+  const surname = nm[nm.length - 1];
+  const surnameOwners = new Set();
+  for (const k in state.sfOwnerMap) if (k.split(' ').includes(surname.toLowerCase())) surnameOwners.add(state.sfOwnerMap[k]);
+  return {
+    placeholderKey: state.sfOwnerMap['-'] || null,
+    placeholderResolves: cbOfOwner('-'),
+    blankResolves: cbOfOwner('   '),
+    ambigNames: Object.keys(state.ownerAmbig || {}),
+    exact: ownerMatch(first.agent_name),
+    withSuffix: ownerMatch(first.agent_name + ' - Panimax'),
+    variant: ownerMatch(variantName), variantName, targetCb: first.cb_norm,
+    surname, surnameShared: surnameOwners.size, surnameMatch: ownerMatch(surname),
+    queuePlain: normName('Cuddle Call'), queueSuffixed: normName('Courtesy call- Panimax'),
+    queueRule: (state.rules.leadQueueOwners?.vals || []).map(v => normName(v)),
+  };
+});
+ok('a "-" placeholder is not an identity', join.placeholderKey === null && join.placeholderResolves === null,
+  'key=' + join.placeholderKey + ' resolves=' + join.placeholderResolves);
+ok('a blank owner resolves to nobody', join.blankResolves === null);
+ok('an exact roster name matches', join.exact.cb === join.targetCb && join.exact.via === 'exact', JSON.stringify(join.exact));
+ok('the business-unit suffix is ignored', join.withSuffix.cb === join.targetCb, JSON.stringify(join.withSuffix));
+ok('an extra middle name still resolves, flagged as a variant',
+  join.variant.cb === join.targetCb && join.variant.via === 'variant', join.variantName + ' -> ' + JSON.stringify(join.variant));
+ok('a bare surname shared by several agents matches NOBODY',
+  join.surnameShared < 2 || (join.surnameMatch.cb === null && join.surnameMatch.via === 'ambiguous'),
+  join.surname + ' shared by ' + join.surnameShared + ' -> ' + JSON.stringify(join.surnameMatch));
+ok('a queue name normalises the same way an agent name does',
+  join.queueSuffixed === 'courtesy call' && join.queueRule.includes(join.queueSuffixed),
+  join.queueSuffixed + ' · rule=' + JSON.stringify(join.queueRule));
+
+// a name two roster rows both claim must resolve to nobody, and be named as the roster's problem
+const ambig = await page.evaluate(() => {
+  const roster = state.facts.AGENT_LIST || [];
+  const a = roster.find(x => x.cb_norm), b2 = roster.find(x => x.cb_norm && x.cb_norm !== a.cb_norm);
+  const keepA = a.sf_name, keepB = b2.sf_name;
+  a.sf_name = 'Duplicated Testname'; b2.sf_name = 'Duplicated Testname';
+  buildIdentity(); bumpDataVer();
+  const res = { m: ownerMatch('Duplicated Testname'), listed: !!(state.ownerAmbig || {})['duplicated testname'] };
+  a.sf_name = keepA; b2.sf_name = keepB; buildIdentity(); bumpDataVer();
+  return res;
+});
+ok('a name two agents both claim resolves to NOBODY', ambig.m.cb === null && ambig.m.via === 'ambiguous', JSON.stringify(ambig.m));
+ok('and the roster contradiction is recorded for display', ambig.listed);
+
+/* ---- 4a-ii. re-match when the Agent List lands AFTER the cases ---- */
+// The roster is the source of truth, so uploading it must re-resolve everything already loaded —
+// not just whatever happens to be uploaded after it.
+console.log('\n— re-match on Agent List upload —');
+const rematch = await page.evaluate(() => {
+  const keep = state.facts.AGENT_LIST, cbi = state.cbInfo, sf = state.sfOwnerMap, amb = state.ownerAmbig;
+  const count = () => { let n = 0; const h = new Set();
+    (state.facts.SF_OPEN_CASES || []).forEach(r => { const cb = cbOfOwner(r.case_owner); if (cb) { n++; h.add(cb); } });
+    return { rows: n, agents: h.size }; };
+  state.facts.AGENT_LIST = []; state.cbInfo = {}; state.sfOwnerMap = {}; state.ownerAmbig = {}; bumpDataVer();
+  const without = count();
+  state.facts.AGENT_LIST = keep; state.cbInfo = cbi; state.sfOwnerMap = sf; state.ownerAmbig = amb; bumpDataVer();
+  const with_ = count();
+  go('leadalloc');
+  return { without, with_ };
+});
+ok('with no roster nothing is attributed', rematch.without.rows === 0, JSON.stringify(rematch.without));
+ok('restoring the roster re-attributes every case, no re-upload of the cases needed',
+  rematch.with_.rows > 0 && rematch.with_.agents > 0, JSON.stringify(rematch.with_));
+
 /* ---- 4b. hostile upload data ---- */
 // Status values and Case Owners are UPLOAD data that end up in table headers, title attributes,
 // onclick handlers and the CSV. A Salesforce stage containing a quote must not be able to break

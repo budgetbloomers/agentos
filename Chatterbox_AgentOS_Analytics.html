@@ -604,7 +604,7 @@ const DEFAULT_RULES = {
   cycleTargets:{label:'Cycle GWP targets by campaign (name:rand)',vals:['Cuddle:389285.16','Courtesy:375092.52'],help:'One panel per entry. Campaign matches each agent&#39;s roster queue. Add Matrix Vehicle Tracking here the day it gets a cycle target.'},
   vatRate:{label:'VAT rate (%)',vals:['15'],numeric:true,help:'Required per Day incl VAT = ex-VAT × (1 + this). Also grosses up the BI money model: Power BI Charge Amounts are EX-VAT, so GWP incl = Σ charge × (1 + this). Zero-safe — set 0 and ex equals incl.'},
   leadWindow:{label:'Lead window basis (snapshot | opened)',vals:['snapshot'],help:'How OPEN cases answer the date range. "snapshot" = open cases ignore the window — the rules pack default (R-TIME-06 "snapshot reads ignore W"; F-LEAD-01 "leads = open(snapshot) ∪ closed(W)"). "opened" = window open cases by the date each case was opened, so conversion moves with the date picker. Closed cases always window by close date, either way. Note: on "snapshot" the lead denominator is partly window-invariant, so narrowing the range lifts conversion without the floor changing. Switching to "opened" is a deliberate deviation from the pack and needs a version bump under §8 change control.'},
-  leadQueueOwners:{label:'Salesforce Case Owners that are QUEUES, not people',vals:['Cuddle Call','VIP Welcome Calls'],help:'Case Owner values that name a holding queue rather than an agent. Their cases are UNALLOCATED — the pool waiting to be handed out — and Lead Allocation reports them as exactly that, separately from owners it genuinely cannot place. Without this list a queue reads as a mapping defect, which sends someone hunting a roster bug that is not there. Add a queue the day Salesforce creates one; matching ignores case and surrounding spaces.'},
+  leadQueueOwners:{label:'Salesforce Case Owners that are QUEUES, not people',vals:['Cuddle Call','Courtesy Call','VIP Welcome Calls','EC3 Welcome Call'],help:'Case Owner values that name a holding queue rather than an agent. Their cases are UNALLOCATED — the pool waiting to be handed out — and Lead Allocation reports them as exactly that, separately from owners it genuinely cannot place. Without this list a queue reads as a mapping defect, which sends someone hunting a roster bug that is not there. Add a queue the day Salesforce creates one. Matching is on the same normalised name used for agents, so the business-unit suffix is ignored: one entry of "Courtesy Call" catches "Courtesy call- Panimax" too.'},
   leadAllocStale:{label:'Ageing-lead share that turns red (%)',vals:['25'],numeric:true,help:'On Lead Allocation, the share of an agent&#39;s allocated leads sitting on a 3rd, 4th or 5th attempt. Above this it turns red, above four-fifths of it amber — a book that has aged past the point where the leads still convert. Lower it to tighten the dialling discipline the page enforces.'},
   viciNoContact:{label:'ViciDial status codes that mean NOBODY WAS REACHED',vals:['N','NA','B','AB','A','VM','DC','DNE','DROP','PDROP','TIMEOT','INCALL','UC','UCNUM','DA','FAIL','DUPL'],help:'ViciDial status CODES meaning the call reached no one — note "A" is Answering Machine in this export, NOT answered. These set Answered, Answer % and AHT on the ViciDial tiles and the per-agent dial table. Talk time itself stays the full length_in_sec (dial-to-hangup, ringing included) — the VAS rule book\'s talkFrom "all", decided by Nick 2026-08-13.'},
   viciSystemUsers:{label:'ViciDial logins that are SYSTEM/TEST, not agents',vals:['VDAD','VDCL','VDLB','CBT001','CBT003','CBT005','CBT007'],help:'ViciDial internal accounts (auto-dial, closer) and the CBT… training/test bank. Their rows are excluded from every ViciDial metric and per-agent table but stay counted in the honest-remainder note — excluded and counted, never silently dropped.'},
@@ -1493,18 +1493,36 @@ async function syncReferralsFromAPI(quiet){
     if(!quiet)toast('Referrals synced from HighLevel: '+loadMsg('REFERRALS',res),'ok');
   }catch(e){if(!quiet)toast('Referrals sync failed: '+esc(e.message||e),'err')}
 }
-/* Rebuild identity maps from the uploaded Agent List (all systems -> CB) */
+/* A cell that means "this agent has no account on that system" is NOT an identity. The roster
+   writes "-" in Sales Force for the four Matrix Vehicle Tracking agents, and blank/n/a turn up
+   too. Keying the map on them gave four different agents the SAME key, last-one-wins, so any
+   Salesforce owner normalising to "-" silently became whichever agent happened to be last on the
+   sheet. A placeholder maps to nobody. */
+const IDENT_PLACEHOLDER=/^(-+|n\/?a|none|null|nil|tbc|tbd|\.|#n\/a)$/i;
+function identBlank(v){const s=String(v==null?'':v).trim();return !s||IDENT_PLACEHOLDER.test(s)}
+/* Rebuild identity maps from the uploaded Agent List (all systems -> CB). THE AGENT LIST IS THE
+   SPINE (non-negotiable 7): every cross-source join resolves through this, and a name two agents
+   could both claim resolves to NOTHING rather than to a guess — ambiguity is recorded in
+   state.ownerAmbig and surfaced, never silently decided by sheet order. */
 function buildIdentity(){
   const list=state.facts.AGENT_LIST||[];
   if(!list.length)return;
-  state.agentMap={};state.sfOwnerMap={};state.cbInfo={};
+  state.agentMap={};state.cbInfo={};
+  const claims={};                                   // normalised name -> the set of CBs claiming it
   list.forEach(a=>{if(!a.cb_norm)return;
     state.cbInfo[a.cb_norm]={code:a.cb_code,name:a.agent_name,tl:a.team_leader,target:a.target,queue:a.queue,tenure:a.tenure};
-    if(a.callx_alias)state.agentMap[a.callx_alias]=a.cb_norm;
-    if(a.agent_name)state.agentMap[a.agent_name]=a.cb_norm;
-    if(a.sf_name)state.sfOwnerMap[normName(a.sf_name)]=a.cb_norm;
-    if(a.agent_name)state.sfOwnerMap[normName(a.agent_name)]=a.cb_norm;
+    if(!identBlank(a.callx_alias))state.agentMap[a.callx_alias]=a.cb_norm;
+    if(!identBlank(a.agent_name))state.agentMap[a.agent_name]=a.cb_norm;
+    [a.sf_name,a.agent_name].forEach(v=>{
+      if(identBlank(v))return;
+      const k=normName(v);
+      if(!k||IDENT_PLACEHOLDER.test(k))return;       // normName can strip a name down to a placeholder
+      (claims[k]=claims[k]||new Set()).add(a.cb_norm);
+    });
   });
+  state.sfOwnerMap={};state.ownerAmbig={};
+  for(const k in claims){const s=claims[k];
+    if(s.size===1)state.sfOwnerMap[k]=[...s][0];else state.ownerAmbig[k]=[...s]}
   saveConfig();
 }
 function extractCB(str){const m=String(str||'').match(/CB[\s._-]*0*(\d{1,4})/i);return m?('CB'+m[1]):null}
@@ -1517,7 +1535,36 @@ function cbOf(v){
   if(state.sfOwnerMap&&state.sfOwnerMap[n])return state.sfOwnerMap[n];
   return ex;
 }
-function cbOfOwner(name){const n=normName(name);return state.sfOwnerMap?.[n]||null}
+/* Salesforce / Power BI owner -> CB, RESOLVED THROUGH THE AGENT LIST (non-negotiable 7).
+   Tier 1 is the exact normalised name, against either the roster's Sales Force column or its
+   Agent Name. Tiers 2-3 are the referral doctrine, because the same problem arrives here: the two
+   systems disagree about middle names and spellings — Salesforce's "Antach Sibusisiwe Owusu-Ansah"
+   is the roster's "Sibusisiwe Owusu-Ansah", 150 cases that used to attribute to nobody. Token
+   subset first, then per-token edit-distance-1 for typos, and UNIQUE-OR-NOTHING throughout: a bare
+   surname like "Naidoo" fits nine agents, so it fits none of them. Two candidates is an unmatched
+   owner for someone to fix on the Agent List — never a coin toss, never a spread.
+   Cached per data version: this runs over tens of thousands of case and charge rows, but a file
+   only ever carries a few dozen distinct owner strings. */
+let _ownCache={},_ownCacheVer=-1;
+function _ownerCandidates(n){
+  const toks=n.split(' ');const cands=new Set();
+  for(const nm in (state.sfOwnerMap||{})){const rt=nm.split(' ');
+    if(toks.every(t=>rt.some(x=>_refTokMatch(t,x)))||rt.every(x=>toks.some(t=>_refTokMatch(t,x))))cands.add(state.sfOwnerMap[nm]);}
+  return cands;
+}
+function ownerMatch(name){
+  const n=normName(name);
+  if(!n||IDENT_PLACEHOLDER.test(n))return{cb:null,via:null};
+  if(_ownCacheVer!==_dataVer){_ownCache={};_ownCacheVer=_dataVer}
+  if(n in _ownCache)return _ownCache[n];
+  let out;
+  if(state.sfOwnerMap?.[n])out={cb:state.sfOwnerMap[n],via:'exact'};
+  else if(state.ownerAmbig?.[n])out={cb:null,via:'ambiguous'};       // two roster agents carry this name
+  else{const c=_ownerCandidates(n);
+    out=c.size===1?{cb:[...c][0],via:'variant'}:{cb:null,via:c.size?'ambiguous':null}}
+  return(_ownCache[n]=out);
+}
+function cbOfOwner(name){return ownerMatch(name).cb}
 /* ---- Referral mapping runs THROUGH THE AGENT LIST (Nick, 2026-08-14) ----
    The HighLevel form captures the agent as free text, so referral names arrive as
    variants: "Thulani Mbonambi" (middle name dropped), "LYDIA" (first name only),
@@ -1543,11 +1590,8 @@ function refCbOf(row){
   if(!n)return null;
   if(_refCacheVer!==_dataVer){_refCache={};_refCacheVer=_dataVer}
   if(n in _refCache)return _refCache[n];
-  const toks=n.split(' ');
-  const cands=new Set();
   // sfOwnerMap already carries every roster identity normalised (Agent Name + Sales Force name → CB)
-  for(const nm in (state.sfOwnerMap||{})){const rt=nm.split(' ');
-    if(toks.every(t=>rt.some(x=>_refTokMatch(t,x)))||rt.every(x=>toks.some(t=>_refTokMatch(t,x))))cands.add(state.sfOwnerMap[nm]);}
+  const cands=_ownerCandidates(n);   // shared with ownerMatch — one tiered matcher, one doctrine
   return (_refCache[n]=cands.size===1?[...cands][0]:null);
 }
 /* Auto-suggest dialler agent -> CB code by name match against attendance */
@@ -3509,14 +3553,19 @@ function pageLeadAlloc(win){
      the lead is simply unallocated — the pool, and on the 13 Aug book that is most of it. Anything
      else is a real attribution defect: a person Salesforce knows and the Agent List does not.
      Both are counted BY NAME and reported separately; neither is spread or dropped (non-neg 7). */
-  const queues=new Set((state.rules.leadQueueOwners?.vals||[]).map(v=>String(v).toLowerCase().trim()).filter(Boolean));
-  const pool={},unmatched={};let poolN=0,unmatchedN=0;
+  /* Queue names normalise the SAME way agent names do — Salesforce appends the business unit, so
+     "Courtesy call- Panimax" and "Courtesy Call" are one queue. Comparing the raw strings missed
+     every suffixed queue and filed 1,293 waiting leads as a roster defect. */
+  const queues=new Set((state.rules.leadQueueOwners?.vals||[]).map(v=>normName(v)).filter(Boolean));
+  const pool={},unmatched={},variants={};let poolN=0,unmatchedN=0;
   rowsFor('SF_OPEN_CASES',win).forEach(r=>{
-    const cb=cbOfOwner(r.case_owner);
+    const m=ownerMatch(r.case_owner);const cb=m.cb;
     if(!cb){const who=String(r.case_owner||'').trim()||'(blank)';
-      if(queues.has(who.toLowerCase())){pool[who]=(pool[who]||0)+1;poolN++}
+      if(queues.has(normName(who))){pool[who]=(pool[who]||0)+1;poolN++}
       else{unmatched[who]=(unmatched[who]||0)+1;unmatchedN++}
       return}
+    if(m.via==='variant'){const who=String(r.case_owner||'').trim();
+      (variants[who]=variants[who]||{cb,n:0}).n++}   // matched, but by name variant — show the work
     if(!A[cb])return;                                               // already excluded by rowsFor's filters
     if(!openInWin(r,win))return;                                    // snapshot: rowsFor can't window it
     const a=A[cb];const k=String(r.case_number||'').trim();
@@ -3548,7 +3597,31 @@ function pageLeadAlloc(win){
      +uKeys.map(k=>'<tr><td>'+maskName(k)+'</td><td class="num">'+unmatched[k].toLocaleString()+'</td></tr>').join('')
      +'</tbody></table></div>'
      +'<div style="font-size:11px;color:var(--muted);margin-top:8px">Someone is working these leads and the numbers cannot say who. Fix it on the Agent List, not here.</div></div>':'';
-    return (pKeys.length&&uKeys.length)?'<div class="grid g2">'+poolCard+unmatchedCard+'</div>':poolCard+unmatchedCard;
+    /* A variant match is a judgement the software made, so it shows its work rather than quietly
+       folding the leads into someone's total. Every row here is one Salesforce name the Agent List
+       spells differently, resolved to exactly one agent — if any line looks wrong, the Agent List
+       is the place to fix it. */
+    const vKeys=Object.keys(variants).sort((a,b)=>variants[b].n-variants[a].n);
+    const variantCard=vKeys.length?'<div class="card"><div class="card-h"><span class="t">Matched by name variant</span>'
+     +'<span class="info" title="These Case Owners did not match the Agent List exactly — Salesforce carries an extra middle name, a dropped one, or a different spelling. Each was resolved to exactly ONE roster agent by token match then single-character typo tolerance; anything that fitted two agents was left unmatched instead. Counted in the table above under the agent named here.">i</span>'
+     +'<span class="s">'+vKeys.length+' owner(s) · '+vKeys.reduce((s,k)=>s+variants[k].n,0).toLocaleString()+' lead(s)</span></div>'
+     +'<div style="overflow-x:auto;max-height:280px;overflow-y:auto"><table class="tbl"><thead><tr>'
+     +'<th class="noclick">Salesforce Case Owner</th><th class="noclick">Resolved to</th><th class="noclick">Leads</th></tr></thead><tbody>'
+     +vKeys.map(k=>'<tr><td>'+maskName(k)+'</td><td><b>'+aName(variants[k].cb,maskName(state.cbInfo[variants[k].cb]?.name||variants[k].cb))+'</b> <span style="color:var(--muted);font-size:11px">'+esc(variants[k].cb)+'</span></td><td class="num">'+variants[k].n.toLocaleString()+'</td></tr>').join('')
+     +'</tbody></table></div>'
+     +'<div style="font-size:11px;color:var(--muted);margin-top:8px">Spell the Salesforce name into that agent&#39;s Sales Force column on the Agent List and the match becomes exact.</div></div>':'';
+    /* Two roster rows carrying one name is the Agent List contradicting itself. Neither can win, so
+       both leads stay unattributed and the sheet gets named as the thing to fix. */
+    const aKeys=Object.keys(state.ownerAmbig||{});
+    const ambigCard=aKeys.length?'<div class="card"><div class="card-h"><span class="t">Names two agents both claim</span>'
+     +'<span class="info" title="These names appear on more than one Agent List row, so a Salesforce owner carrying one cannot be attributed to either agent without guessing — and guessing is what puts a lead on the wrong scorecard. Both are left unmatched until the roster distinguishes them.">i</span>'
+     +'<span class="s">'+aKeys.length+' name(s) on the Agent List</span></div>'
+     +'<div style="overflow-x:auto;max-height:220px;overflow-y:auto"><table class="tbl"><thead><tr>'
+     +'<th class="noclick">Name</th><th class="noclick">Claimed by</th></tr></thead><tbody>'
+     +aKeys.map(k=>'<tr><td>'+maskName(k)+'</td><td>'+state.ownerAmbig[k].map(c=>esc(c)+' '+maskName(state.cbInfo[c]?.name||'')).join(' · ')+'</td></tr>').join('')
+     +'</tbody></table></div></div>':'';
+    const cards=[poolCard,unmatchedCard,variantCard,ambigCard].filter(Boolean);
+    return cards.length>1?'<div class="grid g2">'+cards.join('')+'</div>':cards.join('');
   };
   const list=Object.values(A);
   /* No roster and no filters is a different problem to a filter that matched nobody, and the fix
