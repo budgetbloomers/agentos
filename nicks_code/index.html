@@ -884,9 +884,20 @@ let S; try{ S=JSON.parse(localStorage.getItem(STORE_KEY)); }catch(e){ S=null; }
    never on a genuinely empty device and never when any facts are present. */
 try{
   if(S&&S.v===1&&Array.isArray(S.files)&&S.files.length){
-    const facts=['sales','calls','att','board','qa','cancRows','vici'];
-    const any=facts.some(k=>S[k]&&Object.keys(S[k]).length>0);
-    if(!any){ console.warn('[VAS] local cache lists '+S.files.length+' file(s) but holds no data — discarding, will re-hydrate from Supabase');
+    /* Coherence is judged REGISTRY-vs-STORE, not "is anything present at all": the broken
+       device held the file list plus one small store (a board sheet) while sales and calls
+       were gone, so an any-facts test waved it through and the dashboard sat on "No data"
+       under a trust bar reading 8/8 fresh. A coherent save is atomic — a registered BI file
+       with an empty sales store cannot honestly exist. One claimed-but-empty CORE store is
+       proof of a torn copy. (QA lives in S.evals, cancellations in S.cancRows; multi-day
+       ViciDial in S.vici — only the three core pairs are checked, so an oddly-registered
+       edge file can never condemn a good state.) */
+    const nEmpty=o=>!o||Object.keys(o).length===0;
+    const claims=t=>S.files.some(f=>String(f.type||'').startsWith(t));
+    const torn=(claims('bi')&&nEmpty(S.sales))
+      ||(claims('calls')&&nEmpty(S.calls))
+      ||(claims('attendance')&&nEmpty(S.att));
+    if(torn){ console.warn('[VAS] local cache is TORN — registry lists '+S.files.length+' file(s) but a core store is empty; discarding, will re-hydrate from Supabase');
       try{ localStorage.removeItem(STORE_KEY); }catch(e){} S=null; }
   }
 }catch(e){}
