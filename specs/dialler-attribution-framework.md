@@ -178,3 +178,57 @@ user_group census: Hezron_Courtesy_C 915 · Ryan_Digital 780 · (blank) 266
 
 A campaign with nobody marked present is reported as `—`, never a failure: the law is about a
 floor that worked and left no trace, not about a quiet day.
+
+---
+
+## 10. The roster is a REPLACEMENT, and a past day must not move (open — 2026-08-16)
+
+> Nick: *"the agent list will come with no date but when its uploaded its the latest one"* /
+> *"vas and ops doesnt need to keep the agent list because everytime ill upload a new one so the
+> old one can come out and then the new one is in place."*
+
+**Settled design:** one roster, replaced wholesale on every upload, no effective date, no history
+of prior lists. The uploaded list describes **now**.
+
+**The consequence, measured.** PULSE's Variance Report gates every row on the LIVE roster
+(`IDX.byCode`). Because the roster is replaced daily, past days silently rewrite themselves. Same
+13 Aug data, roster swapped underneath it:
+
+```
+roster A (contemporaneous)  ->  87 variance rows
+roster B (a later list)     ->  75 variance rows
+14 agents lost: CB256 CB257 CB258 CB261 CB262 CB263 CB274 CB275 CB276 CB278 CB282 CB283 CB284 CB287
+their sales diverted to unmapped: siziwethabete(1) zamamthethwa(3) bradleynaidoo(2) justinmotilall(3) busiswamathenjwa(2)
+```
+
+The data is loaded and correct. It is the *identity* that stops resolving, so the row disappears.
+
+**Why `orgAt()` cannot fix this on its own.** Non-negotiable 11's effective-dated history works
+only where earlier lists were observed. With replace-on-upload and no retention, a leaver has no
+earlier segment, and "dates before the earliest observation resolve to that earliest segment"
+returns the current roster — which does not contain them. History is the right mechanism going
+forward and the wrong one for anybody already gone.
+
+**Therefore the rule:**
+
+> An agent belongs on a day if **that day's sources carry activity for them**. The roster says who
+> they are — campaign, team leader, tenure. It does not get to say whether the day happened.
+
+**The change, in three parts:**
+
+1. **Scope gate** — admit any code with sales, board, talk or a present mark that day, whether or
+   not it is on the current roster.
+2. **Identity fallback** — `resolveKey` fails on a name that is off the live roster, which is why
+   the leavers' BI sales land in *unmapped* rather than on a row. It needs a lightweight identity
+   ledger (code → name/campaign/TL as last seen) that survives roster replacement. This is the
+   load-bearing part: the scope gate alone is not enough, because a leaver's talk never reaches
+   `talkMap` and their BI owner name never resolves.
+3. **Label, don't hide** — such rows carry an "off current roster" marker. Their sales and talk
+   count for that past day (it happened); they are excluded from present-day headcount and target
+   denominators.
+
+**The invariant, and the test:** load one day's data, swap the roster underneath it, and the day
+must not change. Today that assertion fails 87 → 75.
+
+**Status: designed, not built.** It cuts into PULSE identity resolution, guarded by
+`verify-history.mjs` (34 checks) and `verify-variance.mjs` — it needs a clean run, not a tail end.
