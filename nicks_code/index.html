@@ -933,6 +933,7 @@ function normalizeState(){
      coach/adjust these are human judgements, not uploaded data — they survive "Clear
      uploaded data" and must be seeded here to survive a hydrate from an older blob. */
   if(!S.varRC) S.varRC={};
+  if(!S.varComments) S.varComments={};   // per agent-day free text, the tracker's Comments column
   if(!S.map) S.map={};
   if(!Array.isArray(S.files)) S.files=[];
   if(!Array.isArray(S.roster)) S.roster=[];
@@ -4402,6 +4403,7 @@ function vrSummaryTab(VR){
     <div class="sub">spec validation_checks, re-run on every build. A FAIL must be understood before the numbers are trusted.</div></div></div>
     <div class="tablewrap"><table class="data"><thead><tr><th class="l">Check</th><th class="l">Result</th><th class="l">Detail</th></tr></thead><tbody>${chk}</tbody></table></div></div>`;
 }
+window.__vrComment=function(d,code){const k=d+'|'+code;const v=prompt('Comment — '+code+' · '+d,(S.varComments||{})[k]||'');if(v==null)return;if(!S.varComments)S.varComments={};if(v.trim())S.varComments[k]=v.trim();else delete S.varComments[k];save();renderPage()};
 function vrDailyTab(VR,rows){
   if(!rows.length) return `<div class="card"><div class="empty">No rows in this period for the current filters.</div></div>`;
   const byDay={}; rows.forEach(r=>{(byDay[r.d]=byDay[r.d]||[]).push(r);});
@@ -4428,9 +4430,9 @@ function vrDailyTab(VR,rows){
       const fl=r.flags.map(f=>`<span class="pill ${f.sev==='error'?'pcrit':f.sev==='warning'?'pwarn':'pmuted'}" title="${esc(f.dv)}">${esc(f.f)}</span>`).join(' ');
       const rc=[r.rcSales,r.rcGwp].filter(Boolean);
       return `<tr onclick="__vrAudit(${i})" style="cursor:pointer">
-        <td class="l"><span class="agentcell">${avatarOf(r.agent,r.code)}<span class="nm">${esc(r.agent)}</span></span></td>
+        <td class="l" style="font-size:11.5px">${esc(r.tl||'–')}</td><td class="l"><span class="agentcell">${avatarOf(r.agent,r.code)}<span class="nm">${esc(r.agent)}</span></span></td>
         <td class="l">${campChip(r.camp)}</td>
-        <td>${fmtN(r.sfSales)}</td><td>${fmtN(r.sfGwp)}</td><td>${fmtN(r.bdSales)}</td><td>${fmtN(r.bdGwp)}</td><td>${fmtN(r.dlSales)}</td>${cell(r.salesVar,r.v.sales)}${cell(r.gwpVar,r.v.gwp)}
+        <td>${fmtN(r.dlSales)}</td><td>${fmtN(r.bdSales)}</td><td>${fmtN(r.sfSales)}</td>${cell(r.salesVar,r.v.sales)}<td>${(r.sfSales!=null&&r.dlSales!=null)?fmtV(r.sfSales-r.dlSales):'–'}</td><td>${fmtN(r.sfGwp)}</td><td>${(r.sfGwp!=null&&r.sfSales)?fmtNum(Math.round(r.sfGwp/r.sfSales*10)/10):'–'}</td><td class="l" style="font-size:11px;max-width:160px;cursor:text" onclick="event.stopPropagation();__vrComment('${r.d}','${r.code}')" title="Click to edit">${esc((S.varComments||{})[r.d+'|'+r.code]||'')||'<span style="color:var(--muted)">+</span>'}</td>
         <td class="l">${fl||'–'}</td>
         <td>${vrStatusPill(vrRowStat(r))}</td>
         <td class="l">${rc.length?rc.map(x=>`<code>${x}</code>`).join(' '):((r.v.sales==='material'||r.v.gwp==='material')?'<span class="pill pcrit">unclassified</span>':'–')}</td></tr>`;
@@ -4439,7 +4441,7 @@ function vrDailyTab(VR,rows){
       <div class="sub">${dr.length} agent(s)${meta.skew?' · <b style="color:var(--amber)">snapshot skew — variances indeterminate (RC1)</b>':''}${cov.length?' · no coverage: '+cov.join(', '):''}</div>
       ${dayNotes.length?`<div class="sub" style="color:var(--amber);margin-top:4px">${dayNotes.map(esc).join(' · ')}</div>`:''}</div></div>
       <div class="tablewrap"><table class="data"><thead><tr>
-        <th class="l">Agents</th><th class="l">Campaign</th><th>Salesforce Sales</th><th>Salesforce GWP</th><th>Tracker Sales</th><th>Tracker GWP</th><th title="Sale dispositions counted by the dialler itself. ViciDial for Cuddle / Nesting / VT; the Courtesy floor dials on CallX, so their count comes from CallX dispositions. Informational — the spec defines no tolerance for a third system.">ViciDial Sales</th><th title="DV01: Salesforce − Tracker">Sales Variance</th><th title="DV02: Salesforce − Tracker, GWP">GWP Variance</th><th class="l">Flags</th><th>Status</th><th class="l">Root cause</th>
+        <th class="l">TL</th><th class="l">Agent</th><th class="l">Campaign</th><th>Total VICCI Sales</th><th>VAS Tracker</th><th>Sales Force</th><th title="Salesforce − VAS Tracker, sales (DV01 as stored)">Variance (SF vs VAS Tracker)</th><th title="Salesforce − ViciDial sale dispositions. Informational, like the dialler count itself — no tolerance band in the spec. Dash when the dialler cannot answer for this agent-day.">Variance (SF vs VICCI)</th><th title="Salesforce GWP (DV02 verdict still colours Status)">Total GWP</th><th>Ave GWP</th><th class="l" title="Click a cell to add or edit — saved with the data, synced to every device">Comments</th><th class="l">Flags</th><th>Status</th><th class="l">Root cause</th>
       </tr></thead><tbody>${trs}</tbody></table></div></div>`;
   }).join('');
 }
@@ -4566,9 +4568,9 @@ function exportVariance(){
   XLSX.utils.book_append_sheet(wb,xlSheet(sm),'Summary');
   // Column order mirrors the screen (Nick, 2026-08-17): board first, then SF, then the
   // differences AS DISPLAYED — Board−SF (sign-flipped DV01/DV02) and Board−Dialler.
-  const dv=[['Date','Agents','Emp Code','Campaign','Team Leader','Salesforce Sales','Salesforce GWP','Tracker Sales','Tracker GWP','ViciDial Sales','Sales Variance','GWP Variance','Flags','Status','Root Cause']];
+  const dv=[['Date','TL','Agent','Emp Code','Campaign','Total VICCI Sales','VAS Tracker','Sales Force','Variance (SF vs VAS Tracker)','Variance (SF vs VICCI)','Total GWP','Ave GWP','Comments','Flags','Status','Root Cause']];
   rows.slice().sort((a,b)=>a.d.localeCompare(b.d)||a.agent.localeCompare(b.agent)).forEach(r=>dv.push([
-    r.d,r.agent,r.code,r.camp,r.tl,r.sfSales,r.sfGwp,r.bdSales,r.bdGwp,r.dlSales,r.salesVar,r.gwpVar,
+    r.d,r.tl,r.agent,r.code,r.camp,r.dlSales,r.bdSales,r.sfSales,r.salesVar,(r.sfSales!=null&&r.dlSales!=null)?r.sfSales-r.dlSales:null,r.sfGwp,(r.sfGwp!=null&&r.sfSales)?Math.round(r.sfGwp/r.sfSales*10)/10:null,(S.varComments||{})[r.d+'|'+r.code]||'',
     r.flags.map(f=>f.f).join(' | '),vrRowStat(r),[r.rcSales,r.rcGwp].filter(Boolean).join(' ')||'']));
   XLSX.utils.book_append_sheet(wb,xlSheet(dv),'Daily Variance');
   const un=[['Identity in file','Source','Records','GWP at stake','Days']];

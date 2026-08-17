@@ -238,7 +238,7 @@ await page.waitForTimeout(1100);
 const txt2 = await page.evaluate(() => document.getElementById('view')?.innerText || '');
 // Column layout per Nick 2026-08-17: board first, then SF, differences displayed as
 // Board−SF (sign-flipped DV01/DV02) plus the informational Board−Dialler.
-ok('Daily Variance tab renders with variance columns', /salesforce sales/i.test(txt2) && /tracker gwp/i.test(txt2) && /gwp variance/i.test(txt2) && !/talk time/i.test(txt2), txt2.slice(0, 200));
+ok('Daily Variance tab renders with variance columns', /total vicci sales/i.test(txt2) && /vas tracker/i.test(txt2) && /variance \(sf vs vicci\)/i.test(txt2) && !/talk time/i.test(txt2), txt2.slice(0, 200));
 await page.evaluate(() => { const S = window.__mtd.state(); S.ui.varSub = 'unmapped'; renderPage(); });
 await page.waitForTimeout(900);
 const txt3 = await page.evaluate(() => document.getElementById('view')?.innerText || '');
