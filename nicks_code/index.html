@@ -4449,11 +4449,11 @@ function vrDailyTab(VR,rows){
       <div class="sub">${dr.length} agent(s)${meta.skew?' · <b style="color:var(--amber)">snapshot skew — variances indeterminate (RC1)</b>':''}${cov.length?' · no coverage: '+cov.join(', '):''}</div>
       ${dayNotes.length?`<div class="sub" style="color:var(--amber);margin-top:4px">${dayNotes.map(esc).join(' · ')}</div>`:''}</div></div>
       <div class="tablewrap"><table class="data"><thead><tr>
-        <th class="l">Agent</th><th class="l">Campaign</th><th>Board Sales</th><th>Board GWP</th><th>SF Sales</th><th>SF GWP</th>
+        <th class="l">Agents</th><th class="l">Campaign</th><th>Tracker Sales</th><th>Tracker GWP</th><th>Salesforce Sales</th><th>Salesforce GWP</th>
         <th title="Sale dispositions counted by the dialler (CallX VAS dispositions / ViciDial Sale statuses)">Dialler Sales</th>
-        <th title="Board − Salesforce. The engine stores SF−board per the rule book (DV01); the display flips the sign — Nick reads the board as the reference">Board&minus;SF Sales</th>
-        <th title="Board − Salesforce GWP (display sign of DV02)">Board&minus;SF GWP</th>
-        <th title="Board − dialler sale dispositions — informational">Board&minus;Dialler</th>
+        <th title="Sales Variance = Tracker − Salesforce. The engine stores SF−tracker per the rule book (DV01); the display flips the sign — the tracker is the floor&#39;s own record and reads as the reference">Sales Variance</th>
+        <th title="GWP Variance = Tracker − Salesforce (display sign of DV02)">GWP Variance</th>
+        <th title="Tracker − dialler sale dispositions — informational">Tracker&minus;Dialler</th>
         <th>Talk Time</th><th class="l">Flags</th><th>Status</th><th class="l">Root cause</th>
       </tr></thead><tbody>${trs}</tbody></table></div></div>`;
   }).join('');
@@ -4581,7 +4581,7 @@ function exportVariance(){
   XLSX.utils.book_append_sheet(wb,xlSheet(sm),'Summary');
   // Column order mirrors the screen (Nick, 2026-08-17): board first, then SF, then the
   // differences AS DISPLAYED — Board−SF (sign-flipped DV01/DV02) and Board−Dialler.
-  const dv=[['Date','Agent','Emp Code','Campaign','Team Leader','Board Sales','Board GWP','SF Sales','SF GWP','Dialler Sales','Board-SF Sales','Board-SF GWP','Board-Dialler','Talk Time','Flags','Status','Root Cause']];
+  const dv=[['Date','Agents','Emp Code','Campaign','Team Leader','Tracker Sales','Tracker GWP','Salesforce Sales','Salesforce GWP','Dialler Sales','Sales Variance','GWP Variance','Tracker-Dialler','Talk Time','Flags','Status','Root Cause']];
   rows.slice().sort((a,b)=>a.d.localeCompare(b.d)||a.agent.localeCompare(b.agent)).forEach(r=>dv.push([
     r.d,r.agent,r.code,r.camp,r.tl,r.bdSales,r.bdGwp,r.sfSales,r.sfGwp,r.dlSales,
     r.salesVar==null?null:-r.salesVar,r.gwpVar==null?null:-r.gwpVar,
