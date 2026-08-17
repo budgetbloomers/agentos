@@ -875,6 +875,21 @@ function freshState(){
   };
 }
 let S; try{ S=JSON.parse(localStorage.getItem(STORE_KEY)); }catch(e){ S=null; }
+/* SELF-HEAL AN INCOHERENT LOCAL COPY. A device whose cache overflowed mid-write can end up
+   holding the FILE REGISTRY without the data behind it — the trust bar then reads "8/8 sources
+   fresh" while every page says "No data for 2026-08 yet", and a hard refresh never fixes it
+   because Ctrl+Shift+R re-fetches the page and keeps localStorage. Supabase is the store, so a
+   local copy that claims files but carries no facts is not a state worth keeping: drop it and
+   let hydrate() pull the real one. Deliberately narrow — it fires only on the contradiction,
+   never on a genuinely empty device and never when any facts are present. */
+try{
+  if(S&&S.v===1&&Array.isArray(S.files)&&S.files.length){
+    const facts=['sales','calls','att','board','qa','cancRows','vici'];
+    const any=facts.some(k=>S[k]&&Object.keys(S[k]).length>0);
+    if(!any){ console.warn('[VAS] local cache lists '+S.files.length+' file(s) but holds no data — discarding, will re-hydrate from Supabase');
+      try{ localStorage.removeItem(STORE_KEY); }catch(e){} S=null; }
+  }
+}catch(e){}
 if(!S || S.v!==1) S=freshState();
 /* Re-assert every key the app expects, whatever S arrived as.
    This CANNOT be a one-off at boot: hydrate() adopts the cloud wholesale — it deletes every
@@ -3568,7 +3583,12 @@ function renderPage(){
    one whose session lapsed, showed "No data for 2026-08 yet" over a database holding 25 files.
    That reads as data loss and it is not. Until hydrate has resolved, say so. */
 function emptyState(){
-  if(!window.__vasHydrated){
+  /* Only a COLD start is "loading". If this device already holds sources, render what we have
+     — gating on the hydrate flag alone hid a working 25-file state behind a spinner whenever
+     hydrate had not resolved (no session token in this tab, slow network), which is worse than
+     the stale-data problem it was meant to replace. */
+  const haveAny=((S.files||[]).length>0)||Object.keys(S.sales||{}).length>0||Object.keys(S.calls||{}).length>0;
+  if(!haveAny&&!window.__vasHydrated){
     const signedIn=!!sessionStorage.getItem('cbx_token');
     return `<div class="card"><div class="empty"><div class="big">Loading your data from Supabase…</div>`
       +(signedIn
