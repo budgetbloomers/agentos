@@ -92,8 +92,10 @@ const th = txt[0].split('\t'); const ix = n => th.indexOf(n);
 const SYS = new Set(['VDAD', 'VDCL', 'VDLB', 'CBT001', 'CBT003', 'CBT005', 'CBT007']);
 const vici = [];
 let sysRows = 0;
+const ug = {};                       // user_group census — says what the pull actually covered
 txt.slice(1).forEach(l => { const c = l.split('\t');
   const login = String(c[ix('user')] || '').trim();
+  if (ix('user_group') >= 0) { const g = String(c[ix('user_group')] || '').trim(); ug[g] = (ug[g] || 0) + 1; }
   if (SYS.has(login.toUpperCase())) { sysRows++; return; }
   const r = resolve(login, c[ix('full_name')]);
   vici.push({ id: login, nm: c[ix('full_name')], val: Math.max(0, +c[ix('length_in_sec')] || 0), ...r }); });
@@ -160,6 +162,38 @@ GROUPS.forEach(g => {
     + String(ag.filter(c => ha.has(c)).length).padStart(13) + String(ag.filter(c => hq.has(c)).length).padStart(5)
     + String(ag.filter(c => hb.has(c)).length).padStart(9));
 });
+/* ---------- THE COVERAGE LAW (specs/dialler-attribution-framework.md §5) ----------
+   One agent at zero is ordinary — leave, training, an admin day. A WHOLE campaign group at zero
+   while its people are marked present and booking sales is a filtered export, not an idle floor.
+   That asymmetry is the whole signal, so it is the thing that fails the run. */
+console.log('\n=== COVERAGE VERDICT ===');
+let failed = 0, warned = 0;
+const groupsPresent = {};
+att13.forEach(r => { if (r.cb && !/absent|off|leave|resign|terminat/i.test(r.st || '')) {
+  const g = campOf(r.cb); if (g) (groupsPresent[g] = groupsPresent[g] || new Set()).add(r.cb); } });
+GROUPS.forEach(g => {
+  const ag = roster.filter(a => group(a.camp) === g).map(a => a.cb);
+  const present = groupsPresent[g] ? groupsPresent[g].size : 0;
+  const dialled = ag.filter(c => hv.has(c) || hc.has(c)).length;
+  const sold = ag.filter(c => hb.has(c)).length;
+  let verdict, note = '';
+  if (!present && !dialled) { verdict = 'skip'; note = 'nobody marked present — no attendance rows for this group'; }
+  else if (present >= 1 && dialled === 0) { verdict = 'FAIL'; failed++;
+    note = present + ' present' + (sold ? ' and ' + sold + ' booked sales' : '') + ' but ZERO dialler rows — the export is filtered or missing'; }
+  else if (present && dialled / present < 0.5) { verdict = 'WARN'; warned++;
+    note = 'only ' + dialled + ' of ' + present + ' present agents have dialler rows'; }
+  else { verdict = 'pass'; note = dialled + ' dialling of ' + present + ' present'; }
+  console.log('  ' + (verdict === 'FAIL' ? 'FAIL  ' : verdict === 'WARN' ? 'WARN  ' : verdict === 'skip' ? '  --  ' : '  ok  ')
+    + g.padEnd(9) + note);
+});
+console.log(failed ? '\n  ' + failed + ' group(s) FAILED — re-pull the dialler export with ALL user groups selected'
+  : warned ? '\n  ' + warned + ' group(s) on WARN — check partial coverage before trusting the day'
+  : '\n  every group with present agents has dialler coverage');
+if (ug && Object.keys(ug).length) {
+  console.log('\n  ViciDial user_group values in this pull (the evidence of what it covered):');
+  Object.keys(ug).sort((a, b) => ug[b] - ug[a]).forEach(k => console.log('    ' + String(ug[k]).padStart(6) + '  ' + (k || '(blank)')));
+}
+
 const noDial = roster.filter(a => !hv.has(a.cb) && !hc.has(a.cb));
 const presentCodes = new Set(att13.filter(r => r.cb && !/absent|off|leave|resign|terminat/i.test(r.st || '')).map(r => r.cb));
 const workedNoDial = noDial.filter(a => presentCodes.has(a.cb));
