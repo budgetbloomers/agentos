@@ -4430,7 +4430,7 @@ function vrDailyTab(VR,rows){
       return `<tr onclick="__vrAudit(${i})" style="cursor:pointer">
         <td class="l"><span class="agentcell">${avatarOf(r.agent,r.code)}<span class="nm">${esc(r.agent)}</span></span></td>
         <td class="l">${campChip(r.camp)}</td>
-        <td>${fmtN(r.sfSales)}</td><td>${fmtN(r.sfGwp)}</td><td>${fmtN(r.bdSales)}</td><td>${fmtN(r.bdGwp)}</td>${cell(r.salesVar,r.v.sales)}${cell(r.gwpVar,r.v.gwp)}
+        <td>${fmtN(r.sfSales)}</td><td>${fmtN(r.sfGwp)}</td><td>${fmtN(r.bdSales)}</td><td>${fmtN(r.bdGwp)}</td><td>${fmtN(r.dlSales)}</td>${cell(r.salesVar,r.v.sales)}${cell(r.gwpVar,r.v.gwp)}
         <td class="l">${fl||'–'}</td>
         <td>${vrStatusPill(vrRowStat(r))}</td>
         <td class="l">${rc.length?rc.map(x=>`<code>${x}</code>`).join(' '):((r.v.sales==='material'||r.v.gwp==='material')?'<span class="pill pcrit">unclassified</span>':'–')}</td></tr>`;
@@ -4439,7 +4439,7 @@ function vrDailyTab(VR,rows){
       <div class="sub">${dr.length} agent(s)${meta.skew?' · <b style="color:var(--amber)">snapshot skew — variances indeterminate (RC1)</b>':''}${cov.length?' · no coverage: '+cov.join(', '):''}</div>
       ${dayNotes.length?`<div class="sub" style="color:var(--amber);margin-top:4px">${dayNotes.map(esc).join(' · ')}</div>`:''}</div></div>
       <div class="tablewrap"><table class="data"><thead><tr>
-        <th class="l">Agents</th><th class="l">Campaign</th><th>Salesforce Sales</th><th>Salesforce GWP</th><th>Tracker Sales</th><th>Tracker GWP</th><th title="DV01: Salesforce − Tracker">Sales Variance</th><th title="DV02: Salesforce − Tracker, GWP">GWP Variance</th><th class="l">Flags</th><th>Status</th><th class="l">Root cause</th>
+        <th class="l">Agents</th><th class="l">Campaign</th><th>Salesforce Sales</th><th>Salesforce GWP</th><th>Tracker Sales</th><th>Tracker GWP</th><th title="Sale dispositions counted by the dialler itself. ViciDial for Cuddle / Nesting / VT; the Courtesy floor dials on CallX, so their count comes from CallX dispositions. Informational — the spec defines no tolerance for a third system.">ViciDial Sales</th><th title="DV01: Salesforce − Tracker">Sales Variance</th><th title="DV02: Salesforce − Tracker, GWP">GWP Variance</th><th class="l">Flags</th><th>Status</th><th class="l">Root cause</th>
       </tr></thead><tbody>${trs}</tbody></table></div></div>`;
   }).join('');
 }
@@ -4566,9 +4566,9 @@ function exportVariance(){
   XLSX.utils.book_append_sheet(wb,xlSheet(sm),'Summary');
   // Column order mirrors the screen (Nick, 2026-08-17): board first, then SF, then the
   // differences AS DISPLAYED — Board−SF (sign-flipped DV01/DV02) and Board−Dialler.
-  const dv=[['Date','Agents','Emp Code','Campaign','Team Leader','Salesforce Sales','Salesforce GWP','Tracker Sales','Tracker GWP','Sales Variance','GWP Variance','Flags','Status','Root Cause']];
+  const dv=[['Date','Agents','Emp Code','Campaign','Team Leader','Salesforce Sales','Salesforce GWP','Tracker Sales','Tracker GWP','ViciDial Sales','Sales Variance','GWP Variance','Flags','Status','Root Cause']];
   rows.slice().sort((a,b)=>a.d.localeCompare(b.d)||a.agent.localeCompare(b.agent)).forEach(r=>dv.push([
-    r.d,r.agent,r.code,r.camp,r.tl,r.sfSales,r.sfGwp,r.bdSales,r.bdGwp,r.salesVar,r.gwpVar,
+    r.d,r.agent,r.code,r.camp,r.tl,r.sfSales,r.sfGwp,r.bdSales,r.bdGwp,r.dlSales,r.salesVar,r.gwpVar,
     r.flags.map(f=>f.f).join(' | '),vrRowStat(r),[r.rcSales,r.rcGwp].filter(Boolean).join(' ')||'']));
   XLSX.utils.book_append_sheet(wb,xlSheet(dv),'Daily Variance');
   const un=[['Identity in file','Source','Records','GWP at stake','Days']];
