@@ -935,8 +935,24 @@ for(const store of ['adjust','coach']){
 }
 var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_token');if(!t)return;if(!window.__vasHydrated)return;try{window.__vasLastPush=Date.now();var b=JSON.stringify(S);fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=vas-state',{method:'POST',headers:{'Content-Type':'text/plain','Authorization':'Bearer '+t,'X-Cbx-Client':'v5'},body:b,keepalive:!!(kl&&b.length<60000)}).then(function(r){if(r&&r.ok){}else if(typeof toast==='function')toast('⚠ Cloud save failed ('+(r?r.status:'?')+') — data NOT in the database')}).catch(function(){if(typeof toast==='function')toast('⚠ Cloud save failed (network) — data NOT in the database')})}catch(e){}}
 window.addEventListener('pagehide',function(){try{clearTimeout(__cloudT);__cloudPush(true)}catch(e){}});
+/* SUPABASE IS THE STORE. localStorage is a same-device CACHE and nothing more — it caps at
+   ~5MB, and a full month of uploads passed that long ago.
+   The old code toasted "Storage full — could not save" and carried on, which was wrong twice
+   over. It read as data loss when the cloud push that follows carries the COMPLETE in-memory
+   state, so nothing was actually lost. And worse, it left the PREVIOUS, smaller blob sitting
+   in localStorage while stamping a fresh _rev — so on the next load this device could hydrate
+   that stale copy, decide it was newer than the cloud, and push it back over good data. That
+   is the mechanism behind a whole campaign appearing and disappearing between refreshes.
+   So: on overflow, DROP the local cache rather than keep a stale one, and push immediately
+   instead of after the usual debounce. */
 function save(){ S._rev=Date.now();   // revision stamp — hydrate() compares it so an older cloud blob can never overwrite newer local data
-  try{ localStorage.setItem(STORE_KEY, JSON.stringify(S)); }catch(e){ toast('Storage full — could not save'); } clearTimeout(__cloudT); __cloudT=setTimeout(__cloudPush,1500); }
+  let cached=true;
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(S)); }
+  catch(e){ cached=false;
+    try{ localStorage.removeItem(STORE_KEY); }catch(e2){}   // a stale cache is worse than none
+    toast('Local cache is full — saving straight to Supabase. Your data is safe; this device just will not keep an offline copy.',6000);
+  }
+  clearTimeout(__cloudT); __cloudT=setTimeout(__cloudPush, cached?1500:0); }
 
 /* ================= org history — historical attribution ================= *
    THE RULE: an agent's CURRENT team leader must never rewrite the team leader attached to
