@@ -1783,6 +1783,13 @@ const INGEST={
        calls to her (spec §3). So: name overrides only when it resolves to a DIFFERENT real
        agent; where the name resolves to nobody, the code is the identity. */
     const identityOf=r=>{
+      /* IDX is built LAZILY and is null until the first model build — the clash check above
+         guards for exactly that. resolveKey() dereferences IDX, so calling it unguarded here
+         threw during ingest and took the whole file down with it: the export failed to load
+         and the floor vanished from the report rather than merely mis-keying. Build the index
+         if the roster is in, otherwise fall back to the name and let model-build resolve it. */
+      if(!IDX&&S.roster&&S.roster.length){ try{ buildIndex(); }catch(e){} }
+      if(!IDX) return r.name;
       const byName=resolveKey(r.name);
       const idc=/^CB\d+$/i.test(r.id)?r.id.toUpperCase().replace(/[^A-Z0-9]/g,''):'';
       const byId=idc?resolveKey(idc):null;
