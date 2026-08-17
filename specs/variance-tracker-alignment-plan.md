@@ -70,3 +70,30 @@ throughout — DV01/DV02/DV03 already compute every number this plan displays).
 - Total GWP: one column like the tracker, or keep SF + Tracker GWP side by side?
 - Should `Variance (SF vs VICCI)` colour like the tracker (plain number) or badge like DV01?
 - Comments: per agent-day free text — who may edit (all users, or admin only)?
+
+---
+
+## 6. Data audit — 2026-08-17, run over the live state (01–15 Aug)
+
+**Correct, machine-verified.** 11 of the spec's validation checks pass: formulas fixed (VR07),
+sales counted as distinct accounts (VR11), cancelled-union on create date (VR12), blocked
+metrics emit null never zero (VR08), every material variance carries a root cause (VR05),
+tolerances declared before comparison (VR06). On the one fully-covered day — **13 Aug: 91 rows,
+80 exact, 0 material** — the three systems agree almost everywhere. Where the report has data,
+the data is right. Zero material variances across the whole period.
+
+**Missing, in order of impact:**
+
+| # | Gap | Evidence | Fix |
+|---|---|---|---|
+| 1 | **Board sheets for 10 of 11 days** — 1,408 metric-sides BLOCKED | `board:0` every day except 13.08 | Upload the August board workbook (DD.MM tabs load per day) — one upload fills the month |
+| 2 | **VR02 cut-off skew** — BI runs to 08-15, board to 08-13 | 19 variances indeterminate at the ragged edge | Resolves itself when boards catch up to the BI cut |
+| 3 | **VR03: 4 identities, 14 records unresolved** | the known set: Joeline Muniappen, Zandile Chamane (CB210 label), Kent Le Ray, CB290 Precious Makhoba | Add them to the Agent List (or mark leavers) — fix at the roster, never downstream |
+| 4 | **11 tracker-only agents** (on the board, absent from SF that day) | VR04 set-difference | Review on the Unmapped/board side — genuine RC5 candidates |
+| 5 | **Attendance 01 & 15 Aug** | `att:0` those days | Pull the two missing register days |
+| 6 | **Cuddle dialler columns** (VICCI sales, SF-vs-VICCI variance) dash on every day | dialler-covered ~66/91 | The standing ViciDial export fix — all user groups |
+| 7 | **Comments** — store live but empty | new this session | Floor starts using it; syncs automatically |
+| 8 | **Export shape** — one sheet per day + 4 raw supporting sheets | §4 steps 4–5, deferred | Next build session |
+
+Bottom line: the engine and the displayed numbers are correct; the report is starved of the
+board. One workbook upload (#1) converts ~1,400 blocked comparisons into real verdicts.
