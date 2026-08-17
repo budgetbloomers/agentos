@@ -545,7 +545,7 @@ const SOURCES = {
     required:['Date & Time','Call Type'],snapshot:false,dateH:'Date & Time',
     purpose:'Dialler productivity: total and unique calls, billable talk time, and the call-type bands (No Answer / Customer Service / Pitch / Closing). Inbound queue legs load too; agents map to the roster via the Call x alias or the CB code inside the agent string.'},
   VICI_CALL_REPORT:{label:'ViciDial · Call Report',system:'ViciDial (dialler)',fmt:'.xlsx / .txt (tab-separated) / .csv',color:'violet',
-    headers:['call_date','phone_number_dialed','status','user','full_name','campaign_id','list_id','lead_id','length_in_sec','list_name','status_name'],
+    headers:['call_date','phone_number_dialed','status','user','full_name','campaign_id','list_id','lead_id','length_in_sec','list_name','status_name','user_group'],
     required:['call_date','user','length_in_sec'],snapshot:false,dateH:'call_date',
     purpose:'The ViciDial per-call export (EXPORT_CALL_REPORT / Call Report). The VAS-analytics treatment: talk time = Σ length_in_sec grouped on the CB number (the "user" login), which runs dial-to-hangup and so INCLUDES ringing; average talk time (AHT) = talk ÷ answered, where answered = status outside the no-contact rule ("A" is Answering Machine, not answered). System logins (VDAD/VDCL/CBT…) are excluded and counted, never silently dropped. A call is call_date + user + lead_id + status — repeats inside a file count once, and across files the newer export supersedes its own record keys, never stacks.'},
   SF_INACTIVE:{label:'Salesforce · Cancellations (Inactive)',system:'Salesforce',fmt:'.xlsx',color:'red',
@@ -1071,6 +1071,10 @@ const TRANSFORM_EXTRA={
     return{user_raw:String(hcol(r,'user')||'').trim(),
       user_cb:extractCB(hcol(r,'user'))||normCB(hcol(r,'user'))||null,   // extractCB strips zero-padding: CB016 ≡ CB16
       full_name:String(hcol(r,'full_name')||'').trim(),
+      /* user_group is the EVIDENCE of what a pull covered. It is the only field that can tell a
+         filtered export from an idle floor, which is the failure that hid a whole Cuddle day on
+         13 Aug — so it is stored despite the per-field quota cost (one short repeated string). */
+      user_group:String(hcol(r,'user_group')||'').trim(),
       status:String(hcol(r,'status')||'').trim().toUpperCase(),
       lead_id:String(hcol(r,'lead_id')||'').trim(),
       call_dt:viciDT(hcol(r,'call_date')),   // canonical FULL timestamp — the record key (day-only collapses same-day redials; raw cells differ per container)
@@ -4417,6 +4421,65 @@ function allocHealthChips(){
    +(pooled?'<span class="chip a" '+go+' title="Cases still sitting in a Salesforce queue — nobody is working them yet. Not a mapping fault; the unallocated pool."><span class="dot"></span>'+pooled.toLocaleString()+' unallocated in a queue</span>':'')
    +(un?'<span class="chip r" '+go+' title="Case Owners matching no Agent List row and not a known queue. Their leads are counted, never spread — Lead Allocation names them."><span class="dot"></span>'+un.toLocaleString()+' on an unmatched owner</span>':'');
 }
+/* ---------------- THE COVERAGE LAW ----------------
+   specs/dialler-attribution-framework.md §5. One agent with no dialler row is ordinary — leave,
+   training, an admin day. A WHOLE campaign at zero while its people are on the floor is a
+   FILTERED EXPORT, and that is invisible without this check: the file parses, every row it does
+   carry attributes correctly, and the trust bar goes green while a quarter of the business has
+   no calls. It cost a fortnight on 13 Aug — 26 Cuddle agents, 24 marked present, 22 booking
+   sales, and not one dial, because the ViciDial pull was filtered by user group.
+   Campaign comes from the Agent List, never from the export (non-negotiable 7). */
+function dialCoverage(win){
+  const roster=state.facts.AGENT_LIST||[];
+  if(!roster.length)return null;
+  const G={};
+  /* campBucket only knows Cuddle/Courtesy/VT; Nesting and anything new keep their roster label
+     rather than collapsing into one bucket that hides which floor is dark. */
+  const grp=a=>campBucket(a.queue)||String(a.queue||'').trim()||'(no campaign)';
+  roster.forEach(a=>{if(!a.cb_norm)return;
+    (G[grp(a)]=G[grp(a)]||{roster:new Set(),present:new Set(),dialled:new Set()}).roster.add(a.cb_norm)});
+  const P=new Set((resolveRule('$presentCodes')||[]).map(s=>String(s).toUpperCase()));
+  rowsNF('ATTENDANCE',win).forEach(r=>{
+    if(!P.has(String(r.status_code||'').toUpperCase()))return;
+    const cb=normCB(r.employee_code);const a=state.cbInfo[cb];if(!a)return;
+    const g=grp(a);if(G[g])G[g].present.add(cb)});
+  const mark=cb=>{const a=cb&&state.cbInfo[cb];if(!a)return;
+    const g=grp(a);if(G[g])G[g].dialled.add(cb)};
+  rowsNF('CALLX_CALL_RECORDS',win).forEach(r=>mark(cbOf(r.agent)));
+  rowsNF('VICI_CALL_REPORT',win).forEach(r=>mark(viciCbOf(r)));
+  const out=Object.keys(G).sort().map(g=>{const o=G[g];
+    const present=o.present.size,dialled=o.dialled.size;
+    let v='ok',why=dialled+' dialling of '+present+' present';
+    if(!present&&!dialled){v='none';why='no attendance rows for this campaign in the window'}
+    else if(present&&!dialled){v='fail';why=present+' present but ZERO dialler rows — the export is filtered or missing'}
+    else if(present&&dialled/present<0.5){v='warn';why='only '+dialled+' of '+present+' present agents have dialler rows'}
+    return{g,roster:o.roster.size,present,dialled,v,why}});
+  return{groups:out,failed:out.filter(x=>x.v==='fail'),warned:out.filter(x=>x.v==='warn')};
+}
+/* The user_group census is the EVIDENCE for a fail: it says what the pull actually covered, so
+   the cause sits beside the symptom instead of needing a separate investigation. */
+function viciGroupCensus(win){
+  const c={};rowsNF('VICI_CALL_REPORT',win).forEach(r=>{const g=String(r.user_group||'').trim()||'(blank)';c[g]=(c[g]||0)+1});
+  return Object.keys(c).sort((a,b)=>c[b]-c[a]).map(k=>({g:k,n:c[k]}));
+}
+function coverageCard(win){
+  const cv=dialCoverage(win);
+  if(!cv)return '';
+  const bad=cv.failed.length,warn=cv.warned.length;
+  const pill=x=>'<span class="pill '+(x.v==='fail'?'r':x.v==='warn'?'a':x.v==='none'?'b':'g')+'">'+(x.v==='fail'?'FAIL':x.v==='warn'?'WARN':x.v==='none'?'—':'ok')+'</span>';
+  const census=bad?viciGroupCensus(win):[];
+  return '<div class="card" style="margin-bottom:14px'+(bad?';border-left:3px solid var(--red)':'')+'">'
+   +'<div class="card-h"><span class="t">Dialler coverage by campaign</span>'
+   +'<span class="info" title="The coverage law (specs/dialler-attribution-framework.md §5). One agent with no dialler row is ordinary. A WHOLE campaign at zero while its people are marked present is a filtered export — the file parses and every row it carries attributes correctly, so nothing else catches it. Campaign comes from the Agent List, never from the export.">i</span>'
+   +'<span class="s">'+(bad?bad+' campaign(s) FAILING':warn?warn+' on watch':'every campaign with present agents has dialler coverage')+'</span></div>'
+   +'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Campaign</th><th class="noclick">On roster</th><th class="noclick">Present</th><th class="noclick">Dialling</th><th class="noclick"></th><th class="noclick">Reading</th></tr></thead><tbody>'
+   +cv.groups.map(x=>'<tr'+(x.v==='fail'?' style="background:#FEF2F2"':'')+'><td><b>'+esc(x.g)+'</b></td><td class="num">'+x.roster+'</td><td class="num">'+x.present+'</td><td class="num">'+x.dialled+'</td><td>'+pill(x)+'</td><td style="font-size:11.5px">'+esc(x.why)+'</td></tr>').join('')
+   +'</tbody></table></div>'
+   +(bad?'<div style="font-size:11.5px;color:var(--red);margin-top:9px"><b>Re-pull the dialler export with ALL user groups selected, one day at a time.</b> Nothing downstream can recover calls that are not in the file — the numbers for this campaign are not low, they are absent.</div>':'')
+   +(census.length?'<div style="font-size:11px;color:var(--muted);margin-top:8px">ViciDial <b>user_group</b> values in what is loaded — the evidence of what the pull covered: '
+     +census.map(x=>esc(x.g)+' ('+x.n.toLocaleString()+')').join(' · ')+'</div>':'')
+   +'</div>';
+}
 function pageUploads(){
   const slots=SRC_KEYS.map(k=>{
     const s=SOURCES[k];const f=freshness(k);
@@ -4437,6 +4500,7 @@ function pageUploads(){
   return '<div class="card" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap" ondragover="event.preventDefault();this.classList.add(\'drag\')" ondragleave="this.classList.remove(\'drag\')" ondrop="event.preventDefault();this.classList.remove(\'drag\');if(event.dataTransfer.files.length)handleBulkFiles(event.dataTransfer.files)"><b>Weekly rhythm:</b><span class="pill b">Mon — Ryan uploads all sources</span><span class="pill a">Wed — Jared uploads QA</span><span class="pill v">Fri — Nick reviews Executive view</span>'
    +'<span style="margin-left:auto;display:flex;gap:8px"><label class="btn primary" style="display:inline-block" title="Drop or pick a whole day\'s exports at once — each file\'s source is detected from its headers, loaded in dependency order, duplicates superseded never stacked">Bulk upload<input type="file" multiple style="display:none" onchange="if(this.files.length){handleBulkFiles(this.files);this.value=\'\'}"></label>'
    +'<button class="btn danger" onclick="if(confirm(\'Clear all uploaded data? KPI dictionary and rules are kept.\'))clearAll()">Clear all data</button></span></div>'
+   +coverageCard(periodWindow())
    +'<div class="slot-grid">'+slots+'</div>'
    +'<div class="grid g2"><div class="card"><div class="card-h"><span class="t">Upload batch audit</span><span class="s">every load is traceable</span><span class="right"><button class="btn small" onclick="exportBatches()">Export CSV</button></span></div>'
    +(state.batches.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Batch</th><th class="noclick">Source</th><th class="noclick">File</th><th class="noclick">Loaded</th><th class="noclick">Rejected</th><th class="noclick">Data period</th><th class="noclick">Status</th><th class="noclick">By / when</th></tr></thead><tbody>'+bt+'</tbody></table></div>':'<div class="empty">No uploads yet.</div>')+'</div>'

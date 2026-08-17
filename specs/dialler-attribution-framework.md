@@ -151,3 +151,30 @@ that reached nobody, and ends on a per-group PASS/FAIL.
   then it is labelled as an estimate and never treated as measured.
 - It does not drop anything it cannot place. Unattributed is a **reported** state with a name
   attached, because that is the only version anyone ever fixes.
+
+---
+
+## 9. Where the framework is enforced (2026-08-16)
+
+| Surface | What it does |
+|---|---|
+| `Chatterbox_AgentOS_Analytics.html` → `dialCoverage()` | Computes present-vs-dialling per campaign for the selected window. Campaign from the Agent List; present from the `presentCodes` rule. |
+| Ops → **Upload Station → "Dialler coverage by campaign"** | Renders the verdict on every visit, red-bordered on a FAIL, and prints the ViciDial `user_group` census beside it as the evidence of what the pull covered. |
+| `VICI_CALL_REPORT` transform | Now stores `user_group` — the only field that separates a filtered export from an idle floor. |
+| `nicks_code/diagnostics/audit-upload-day.mjs` | Same law over the raw files, for any upload folder, before anything is loaded. |
+| `nicks_code/diagnostics/verify-coverage-law.mjs` | 15 checks. Drives the real 13 Aug package and asserts Cuddle FAILS, Courtesy passes, and a campaign with nobody present is not failed. |
+
+On the 13 Aug package Ops now reports:
+
+```
+Courtesy  r39/p39/d39  ok
+Cuddle    r26/p25/d0   FAIL  — 25 present but ZERO dialler rows
+Nesting   r8/p0/d8     ok
+VT        r22/p20/d19  ok
+
+user_group census: Hezron_Courtesy_C 915 · Ryan_Digital 780 · (blank) 266
+                   Ryan_Digital_Ref 199 · Ryan_Scheduling 131 · ADMIN 11 · LD_Training 3
+```
+
+A campaign with nobody marked present is reported as `—`, never a failure: the law is about a
+floor that worked and left no trace, not about a quiet day.
