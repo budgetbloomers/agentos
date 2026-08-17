@@ -3561,7 +3561,21 @@ function renderPage(){
     if(PAGES['_wire_'+S.ui.tab]) PAGES['_wire_'+S.ui.tab]();
   }));
 }
+/* "No data" and "not loaded yet" are different answers and must never share a screen.
+   Supabase is the store; localStorage is a cache that a month of uploads overflows, so on a
+   full-cache device the app starts EMPTY and depends entirely on hydrate() pulling the state
+   back. hydrate() needs a session token, and sessionStorage is per-tab — so a fresh tab, or
+   one whose session lapsed, showed "No data for 2026-08 yet" over a database holding 25 files.
+   That reads as data loss and it is not. Until hydrate has resolved, say so. */
 function emptyState(){
+  if(!window.__vasHydrated){
+    const signedIn=!!sessionStorage.getItem('cbx_token');
+    return `<div class="card"><div class="empty"><div class="big">Loading your data from Supabase…</div>`
+      +(signedIn
+        ? `Your uploads live in the database, not on this device. This takes a moment on a slow connection.`
+        : `<b>You are not signed in on this tab.</b> Sign in and the data loads automatically — nothing has been lost.`)
+      +`</div></div>`;
+  }
   return `<div class="card"><div class="empty"><div class="big">No data for ${S.ui.month} yet</div>
     Upload the day's exports in <a class="linky" onclick="go('data')">Data &amp; Uploads</a> — money (Power BI - Active Cases), call records, attendance and QA evaluations.</div></div>`;
 }
