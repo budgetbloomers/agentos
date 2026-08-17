@@ -210,10 +210,29 @@ export default {
         // refusal (e.g. bucket missing) fails loudly — that is a misconfiguration
         // to fix, not to paper over with an inline-row fallback.
         const objPath = 'raw/kv/' + qk;
+        /* SERVER-SIDE WIPE GUARD (17 Aug incident, twice in one hour). A tab running an old
+           build and holding an empty state pushed 20KB of nothing over 1.08MB of uploads —
+           and re-pushed it minutes after the blob was restored, because client-side guards
+           cannot reach a zombie tab that never reloads. The server is the one place every
+           tab must pass through: a drastic shrink of the state blob (new body under a tenth
+           of the stored copy, and small in absolute terms) is refused with 409 unless the
+           client explicitly declares the clear (?force=1, sent by the Danger-zone action in
+           current builds). Old tabs surface the 409 through their existing "Cloud save
+           failed" toast — loud, and harmless. */
+        const body = await req.text();
+        if (qk === 'vas-state' && body.length < 120000 && !url.searchParams.get('force')) {
+          const head = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {
+            method: 'HEAD', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY },
+          });
+          const cur = parseInt(head.headers.get('content-length') || '0', 10);
+          if (head.ok && cur > body.length * 10) {
+            return json({ error: 'wipe_blocked: refusing to replace ' + cur + 'B of stored data with ' + body.length + 'B. If this clear is deliberate, use the app\'s Danger zone.' }, 409);
+          }
+        }
         const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {
           method: 'POST',
           headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'text/plain', 'x-upsert': 'true' },
-          body: req.body,
+          body: body,
         });
         if (!sr.ok) return json({ error: 'store failed: ' + sr.status + ' ' + (await sr.text()).slice(0, 150) }, 500);
         await DB.insert('rules', [{ key: 'kv:' + qk, value: { store: objPath }, updated_by: user.username, updated_at: new Date().toISOString() }], true);
