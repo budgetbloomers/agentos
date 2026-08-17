@@ -50,9 +50,9 @@ ok('…and that is reported as a FAIL, not a low number', byG.Cuddle && byG.Cudd
 ok('Courtesy passes — CallX covers it', byG.Courtesy && byG.Courtesy.v === 'ok', JSON.stringify(byG.Courtesy));
 ok('the run reports at least one failing campaign', cv.c.failed.length >= 1, cv.c.failed.length + '');
 
-ok('the Upload Station renders the coverage card', /Dialler coverage by campaign/.test(cv.txt));
-ok('it names the fix rather than just the symptom', /ALL user groups/i.test(cv.txt));
-ok('it says the numbers are absent, not low', /not low, they are absent/i.test(cv.txt));
+ok('the coverage card is OFF the Upload Station (removed per Nick 2026-08-17)', !/Dialler coverage by campaign/.test(cv.txt));
+// card removed — the fix text lives in audit-upload-day.mjs output now
+
 
 /* the evidence trail: user_group must be stored and must show the pull was filtered */
 ok('user_group is captured from the export', cv.census.length > 0, JSON.stringify(cv.census));
@@ -60,7 +60,7 @@ const groups = cv.census.map(x => x.g.toLowerCase()).join(' ');
 ok('the census shows the groups the pull DID carry', /courtesy|ryan_digital/.test(groups), groups);
 ok('no Cuddle user group is present (Renolan_/Sharoma_) — the proof it was filtered',
   !/renolan|sharoma/.test(groups), groups);
-ok('the card prints the census as evidence beside the failure', /user_group/.test(cv.txt));
+
 
 /* a campaign that legitimately has nobody present must NOT fail */
 const none = cv.c.groups.filter(g => g.present === 0 && g.dialled === 0);
