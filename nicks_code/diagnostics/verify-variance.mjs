@@ -233,10 +233,12 @@ await page.evaluate(() => { window.__mtd.setRange('2026-08-03', '2026-08-04'); g
 await page.waitForTimeout(1200);
 const txt = await page.evaluate(() => document.getElementById('view')?.innerText || '');
 ok('Variance page renders (Summary)', /Variance Report/.test(txt) && /Validation checks/.test(txt), txt.slice(0, 120));
-await page.evaluate(() => { const S = window.__mtd.state(); S.ui.varSub = 'daily'; renderPage(); });
-await page.waitForTimeout(900);
+await page.click('#view .chip:has-text("Daily")');   // the real chip, exactly as a user switches tabs
+await page.waitForTimeout(1100);
 const txt2 = await page.evaluate(() => document.getElementById('view')?.innerText || '');
-ok('Daily Variance tab renders with variance columns', /sales var/i.test(txt2) && /gwp var/i.test(txt2), txt2.slice(0, 120));
+// Column layout per Nick 2026-08-17: board first, then SF, differences displayed as
+// Board−SF (sign-flipped DV01/DV02) plus the informational Board−Dialler.
+ok('Daily Variance tab renders with variance columns', /board.?sf sales/i.test(txt2) && /board.?sf gwp/i.test(txt2) && /board.?dialler/i.test(txt2), txt2.slice(0, 200));
 await page.evaluate(() => { const S = window.__mtd.state(); S.ui.varSub = 'unmapped'; renderPage(); });
 await page.waitForTimeout(900);
 const txt3 = await page.evaluate(() => document.getElementById('view')?.innerText || '');

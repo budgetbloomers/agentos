@@ -1,6 +1,7 @@
 <!-- Pulse — call centre performance platform for the Matrix VAS operation.
      Self-contained: upload the daily exports (sales, calls, attendance, QA) and it builds
      the month-to-date reporting suite. All data stays in this browser (localStorage). -->
+<meta charset="utf-8"><!-- PULSE must survive file:// and headerless servers — without this, every em dash and minus sign in the app mojibakes (Boardâˆ’SF instead of Board−SF) -->
 <title>Chatterbox AgentOS · VAS Analytics</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%232E7CF6'/%3E%3Cstop offset='1' stop-color='%2338C6F4'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='45' font-family='Arial,sans-serif' font-size='38' font-weight='800' text-anchor='middle' fill='%2304101F'%3EC%3C/text%3E%3C/svg%3E">
 <script src="/auth-gate.js"></script>
@@ -4434,10 +4435,11 @@ function vrDailyTab(VR,rows){
       return `<tr onclick="__vrAudit(${i})" style="cursor:pointer">
         <td class="l"><span class="agentcell">${avatarOf(r.agent,r.code)}<span class="nm">${esc(r.agent)}</span></span></td>
         <td class="l">${campChip(r.camp)}</td>
-        <td>${fmtN(r.sfSales)}</td><td>${fmtN(r.sfGwp)}</td>
         <td>${fmtN(r.bdSales)}</td><td>${fmtN(r.bdGwp)}</td>
+        <td>${fmtN(r.sfSales)}</td><td>${fmtN(r.sfGwp)}</td>
         <td title="Sale dispositions counted by the dialler itself — a third system's view, informational (no tolerance defined in the spec)">${fmtN(r.dlSales)}</td>
-        ${cell(r.salesVar,r.v.sales)}${cell(r.gwpVar,r.v.gwp)}
+        ${cell(r.salesVar==null?null:-r.salesVar,r.v.sales)}${cell(r.gwpVar==null?null:-r.gwpVar,r.v.gwp)}
+        <td title="Board − dialler sale dispositions — informational, like Dialler Sales itself (no tolerance in the spec)">${(r.bdSales!=null&&r.dlSales!=null)?fmtV(r.bdSales-r.dlSales):'–'}</td>
         <td>${r.talk!=null?fmtDur(r.talk):(r.talkEst!=null?`<span style="color:var(--amber)" title="ESTIMATE — a period-aggregated ViciDial export allocated evenly across this agent's employed days (spec: allocated or estimated, and flagged as such). Upload the day-level EXPORT_CALL_REPORT for measured talk.">~${fmtDur(r.talkEst)}</span>`:'–')}</td>
         <td class="l">${fl||'–'}</td>
         <td>${vrStatusPill(vrRowStat(r))}</td>
@@ -4447,9 +4449,12 @@ function vrDailyTab(VR,rows){
       <div class="sub">${dr.length} agent(s)${meta.skew?' · <b style="color:var(--amber)">snapshot skew — variances indeterminate (RC1)</b>':''}${cov.length?' · no coverage: '+cov.join(', '):''}</div>
       ${dayNotes.length?`<div class="sub" style="color:var(--amber);margin-top:4px">${dayNotes.map(esc).join(' · ')}</div>`:''}</div></div>
       <div class="tablewrap"><table class="data"><thead><tr>
-        <th class="l">Agent</th><th class="l">Campaign</th><th>SF Sales</th><th>SF GWP</th><th>Board Sales</th><th>Board GWP</th>
+        <th class="l">Agent</th><th class="l">Campaign</th><th>Board Sales</th><th>Board GWP</th><th>SF Sales</th><th>SF GWP</th>
         <th title="Sale dispositions counted by the dialler (CallX VAS dispositions / ViciDial Sale statuses)">Dialler Sales</th>
-        <th>Sales Var</th><th>GWP Var</th><th>Talk Time</th><th class="l">Flags</th><th>Status</th><th class="l">Root cause</th>
+        <th title="Board − Salesforce. The engine stores SF−board per the rule book (DV01); the display flips the sign — Nick reads the board as the reference">Board&minus;SF Sales</th>
+        <th title="Board − Salesforce GWP (display sign of DV02)">Board&minus;SF GWP</th>
+        <th title="Board − dialler sale dispositions — informational">Board&minus;Dialler</th>
+        <th>Talk Time</th><th class="l">Flags</th><th>Status</th><th class="l">Root cause</th>
       </tr></thead><tbody>${trs}</tbody></table></div></div>`;
   }).join('');
 }
@@ -4574,12 +4579,16 @@ function exportVariance(){
     ['Checks'],...VR.checks.map(c=>[c.id,c.ok?'pass':(c.sev==='error'?'FAIL':'note'),c.msg]),[],
     ['Source files'],...Object.entries(H.source_export_timestamps).flatMap(([k,v])=>v.length?v.map(f=>[k,f]):[[k,'not uploaded']])];
   XLSX.utils.book_append_sheet(wb,xlSheet(sm),'Summary');
-  const dv=[['Date','Agent','Emp Code','Campaign','Team Leader','SF Sales','SF GWP','Board Sales','Board GWP','Dialler Sales','Sales Variance','GWP Variance','Talk Time','Flags','Status','Root Cause']];
+  // Column order mirrors the screen (Nick, 2026-08-17): board first, then SF, then the
+  // differences AS DISPLAYED — Board−SF (sign-flipped DV01/DV02) and Board−Dialler.
+  const dv=[['Date','Agent','Emp Code','Campaign','Team Leader','Board Sales','Board GWP','SF Sales','SF GWP','Dialler Sales','Board-SF Sales','Board-SF GWP','Board-Dialler','Talk Time','Flags','Status','Root Cause']];
   rows.slice().sort((a,b)=>a.d.localeCompare(b.d)||a.agent.localeCompare(b.agent)).forEach(r=>dv.push([
-    r.d,r.agent,r.code,r.camp,r.tl,r.sfSales,r.sfGwp,r.bdSales,r.bdGwp,r.dlSales,r.salesVar,r.gwpVar,
+    r.d,r.agent,r.code,r.camp,r.tl,r.bdSales,r.bdGwp,r.sfSales,r.sfGwp,r.dlSales,
+    r.salesVar==null?null:-r.salesVar,r.gwpVar==null?null:-r.gwpVar,
+    (r.bdSales!=null&&r.dlSales!=null)?r.bdSales-r.dlSales:null,
     r.talk!=null?dur(r.talk):(r.talkEst!=null?dur(r.talkEst):null),
     r.flags.map(f=>f.f).join(' | '),vrRowStat(r),[r.rcSales,r.rcGwp].filter(Boolean).join(' ')||'']));
-  XLSX.utils.book_append_sheet(wb,xlSheet(dv,{12:XF.dur}),'Daily Variance');
+  XLSX.utils.book_append_sheet(wb,xlSheet(dv,{13:XF.dur}),'Daily Variance');
   const un=[['Identity in file','Source','Records','GWP at stake','Days']];
   Object.values(VR.unmapped).forEach(u=>un.push([u.key,u.src,u.n,u.gwp||0,[...u.days].sort().join(', ')]));
   if(un.length===1) un.push(['(empty — every record resolved: an empty result is a result)']);
