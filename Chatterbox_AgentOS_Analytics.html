@@ -532,7 +532,7 @@ const SOURCES = {
     required:['Account Number','Owner','Charge Amount','Contract Create Date'],
     snapshot:false,dateH:'Contract Create Date',
     purpose:'THE MONEY — sales and GWP come from this file only. GWP = Σ Charge Amount per account × (1 + VAT); charges are EX-VAT (proof: 30,43 + 33,91 + 21,74 = R86,08 = R99 ÷ 1,15). Agent matching is on the Owner field. Each row is dated by its own Contract Create Date — that is the date of the sale. Owners matching nobody on the Agent List land in a reported "unattributed" bucket and are never spread. Replaces the retired Activated-Services + GWP-table pricing.'},
-  SF_OPEN_CASES:{label:'Lead Allocation · Open Cases',system:'Salesforce',fmt:'HTML .xls',color:'blue',
+  SF_OPEN_CASES:{label:'Salesforce · Open Cases',system:'Salesforce',fmt:'HTML .xls',color:'blue',
     headers:['Case ID','Case Number','Subject','Date/Time Opened','Age (Hours)','Open','Account Name','Account Number','Account Mobile from Person Account','Person Account: Email','Case Record Type','Case Owner','Status'],
     required:['Case Number','Date/Time Opened'],snapshot:true,dateH:'Date/Time Opened',
     purpose:'THE LEAD BOOK — every lead currently allocated to an agent. Feeds Lead Allocation (the Status field pivoted per person), the Lead Management funnel, backlog and case ageing. Case Owner is a display name, not a code, so agents resolve to the CB number through the Agent List\'s Sales Force / Agent Name columns; an owner matching nobody on the roster is listed by name on Lead Allocation, never dropped. Snapshot — a re-upload replaces the previous position rather than stacking onto it.'},
@@ -4480,6 +4480,16 @@ function coverageCard(win){
      +census.map(x=>esc(x.g)+' ('+x.n.toLocaleString()+')').join(' · ')+'</div>':'')
    +'</div>';
 }
+function leadAllocSlot(){
+  const f=freshness('SF_OPEN_CASES');const rows=(state.facts.SF_OPEN_CASES||[]).length;
+  return '<div class="slot" id="slot_LEADALLOC" style="border-color:rgba(61,155,255,.4)" ondragover="event.preventDefault();this.classList.add(&#39;drag&#39;)" ondragleave="this.classList.remove(&#39;drag&#39;)" ondrop="this.classList.remove(&#39;drag&#39;);dropFile(event,&#39;SF_OPEN_CASES&#39;)">'
+   +'<div class="slot-h"><span class="slot-ic" style="background:'+COLSOFT.blue+'">'+icon('inbox',COLHEX.blue)+'</span>'
+   +'<div><div class="slot-t">Lead Allocation · Open Cases</div><div class="slot-s">Salesforce · expects HTML .xls</div></div></div>'
+   +'<div class="slot-meta">THE LEAD BOOK for the Lead Allocation page: every open case matched to an agent on the CB number, Status pivoted per person. Same Salesforce export as the Open Cases slot — this door exists so the lead-allocation upload has a name. Uploading here and there is the same thing; a re-upload replaces the previous position.</div>'
+   +'<div class="vh" style="margin-bottom:9px"><span class="chip '+f.state+'"><span class="dot"></span>'+(f.batch?'Updated '+f.label:'Never uploaded')+'</span>'+(rows?'<span class="chip n"><span class="dot"></span>'+rows.toLocaleString()+' rows loaded</span>'+allocHealthChips():'')+'</div>'
+   +'<div class="slot-foot"><label class="btn primary small" style="display:inline-block">Choose file<input type="file" style="display:none" onchange="if(this.files[0]){handleFile(&#39;SF_OPEN_CASES&#39;,this.files[0]);this.value=&#39;&#39;}"></label>'
+   +'<button class="btn small" onclick="go(&#39;leadalloc&#39;)">Open Lead Allocation →</button></div></div>';
+}
 function pageUploads(){
   const slots=SRC_KEYS.map(k=>{
     const s=SOURCES[k];const f=freshness(k);
@@ -4500,7 +4510,7 @@ function pageUploads(){
   return '<div class="card" style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap" ondragover="event.preventDefault();this.classList.add(\'drag\')" ondragleave="this.classList.remove(\'drag\')" ondrop="event.preventDefault();this.classList.remove(\'drag\');if(event.dataTransfer.files.length)handleBulkFiles(event.dataTransfer.files)"><b>Weekly rhythm:</b><span class="pill b">Mon — Ryan uploads all sources</span><span class="pill a">Wed — Jared uploads QA</span><span class="pill v">Fri — Nick reviews Executive view</span>'
    +'<span style="margin-left:auto;display:flex;gap:8px"><label class="btn primary" style="display:inline-block" title="Drop or pick a whole day\'s exports at once — each file\'s source is detected from its headers, loaded in dependency order, duplicates superseded never stacked">Bulk upload<input type="file" multiple style="display:none" onchange="if(this.files.length){handleBulkFiles(this.files);this.value=\'\'}"></label>'
    +'<button class="btn danger" onclick="if(confirm(\'Clear all uploaded data? KPI dictionary and rules are kept.\'))clearAll()">Clear all data</button></span></div>'
-   +'<div class="slot-grid">'+slots+'</div>'
+   +'<div class="slot-grid">'+leadAllocSlot()+slots+'</div>'
    +'<div class="grid g2"><div class="card"><div class="card-h"><span class="t">Upload batch audit</span><span class="s">every load is traceable</span><span class="right"><button class="btn small" onclick="exportBatches()">Export CSV</button></span></div>'
    +(state.batches.length?'<div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="noclick">Batch</th><th class="noclick">Source</th><th class="noclick">File</th><th class="noclick">Loaded</th><th class="noclick">Rejected</th><th class="noclick">Data period</th><th class="noclick">Status</th><th class="noclick">By / when</th></tr></thead><tbody>'+bt+'</tbody></table></div>':'<div class="empty">No uploads yet.</div>')+'</div>'
    +'<div class="card"><div class="card-h"><span class="t">Exceptions</span><span class="s">rejected rows land here, never silently dropped</span></div>'
