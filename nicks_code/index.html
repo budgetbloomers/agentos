@@ -5479,7 +5479,10 @@ function hydrate(){
        // no blob in the cloud. If THIS device holds real data (first-ever sync, or the
        // cloud copy was lost), push it up — factory-wiping local uploads loses work.
        if(S&&Array.isArray(S.files)&&S.files.length){ window.__vasHydrated=true; if(typeof __cloudPush==="function")__cloudPush(false); return; }
-       try{ if(typeof freshState==="function"){ var fr=freshState(); Object.keys(S).forEach(function(k){delete S[k]}); Object.assign(S,fr); localStorage.setItem("vas_mtd_tracker_v1",JSON.stringify(S)); if(typeof rebuild==="function")rebuild(); if(typeof renderAll==="function")renderAll(); } }catch(e){}
+       // same separation as the adopt path below: cache write is best-effort, render is not
+       try{ if(typeof freshState==="function"){ var fr=freshState(); Object.keys(S).forEach(function(k){delete S[k]}); Object.assign(S,fr); } }catch(e){}
+       try{ localStorage.setItem("vas_mtd_tracker_v1",JSON.stringify(S)); }catch(e){}
+       try{ if(typeof rebuild==="function")rebuild(); if(typeof renderAll==="function")renderAll(); }catch(e){}
        window.__vasHydrated=true; return;
      }
      var cloud; try{cloud=JSON.parse(res.txt)}catch(e){ window.__vasHydrated=true; return; }
@@ -5490,7 +5493,15 @@ function hydrate(){
          window.__vasHydrated=true; if(typeof __cloudPush==="function")__cloudPush(false); return;
        }
        // cloud is same-or-newer — adopt it wholesale
-       try{ Object.keys(S).forEach(function(k){delete S[k]}); Object.assign(S,cloud); localStorage.setItem("vas_mtd_tracker_v1",JSON.stringify(S)); if(typeof rebuild==="function")rebuild(); if(typeof renderAll==="function")renderAll(); }catch(e){}
+       /* RENDER MUST NEVER BE A CASUALTY OF CACHING. setItem used to sit BEFORE rebuild/
+          renderAll inside this one try — on a device whose origin quota is already exhausted
+          (the Ops app's cb-facts-* cache shares pages.dev storage) it threw, the catch
+          swallowed the re-render, and the freshly-adopted 25-file state sat invisible in
+          memory behind a "No data for 2026-08 yet" panel. Cache is best-effort; render is not. */
+       try{ Object.keys(S).forEach(function(k){delete S[k]}); Object.assign(S,cloud); }catch(e){}
+       try{ localStorage.setItem("vas_mtd_tracker_v1",JSON.stringify(S)); }
+       catch(e){ try{ localStorage.removeItem("vas_mtd_tracker_v1"); }catch(e2){} }   // no room -> no stale cache either
+       try{ if(typeof rebuild==="function")rebuild(); if(typeof renderAll==="function")renderAll(); }catch(e){}
      }
      window.__vasHydrated=true;
    }).catch(function(){ hydRetry(); });        // network error — keep local, warn, retry
