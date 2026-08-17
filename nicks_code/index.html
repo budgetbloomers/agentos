@@ -909,6 +909,16 @@ function normalizeState(){
   if(!S.map) S.map={};
   if(!Array.isArray(S.files)) S.files=[];
   if(!Array.isArray(S.roster)) S.roster=[];
+  /* THE IDENTITY LEDGER. S.roster is the LIVE picture and is replaced wholesale on every
+     upload — that is the agreed design (Nick: "everytime ill upload a new one so the old one
+     can come out"). But identity is not a live fact: an agent who worked on 13 August still
+     worked on 13 August after they leave. Without somewhere to remember them, the day silently
+     rewrites itself — measured at 87 variance rows falling to 75 with the SAME day's data, and
+     their sales diverting to Unmatched, because resolveKey could no longer place the name.
+     This ledger accumulates every identity ever seen on a roster and is never cleared. It does
+     NOT join S.roster, so headcount, targets and every present-day denominator are untouched —
+     it exists purely so a past day can still name the person who worked it. */
+  if(!S.idLedger||typeof S.idLedger!=='object') S.idLedger={};
   for(const k of DATA_STORES) if(!S[k]) S[k]={};
   // blobs saved before callsMeta existed: seed provenance from the data itself, so
   // fullest-day-wins protects pre-existing days instead of silently blind-replacing them
@@ -1762,6 +1772,23 @@ const INGEST={
     if(clash.length) toast(clash.length+' ViciDial row(s) carry an employee code that belongs to someone else — counted by NAME: '
       +clash.slice(0,3).map(r=>r.name+' ('+r.id+' -> '+resolveKey(r.name)+')').join(', '));
 
+    /* IDENTITY: THE CB NUMBER FIRST (Nick, 2026-08-16: "match on cb number"). This export's
+       USER NAME is abbreviated where the roster is not — "Ashleigh Naidoo" for Ashleigh
+       Alexandra Naidoo, "Thalente Xaba" for Thalente Celokuhle Xaba, "Meelindree Crowie",
+       "Sandisiwe Zungu", "Shaylene Naidoo". Keyed on the name alone those five resolve to
+       NOBODY and lose their whole day: measured on the 3-5 Aug Cuddle file, 5 of 24 rows and
+       ~63 hours of talk. The ID column carries the employee code exactly, so it leads.
+       The roster still wins a GENUINE clash — ViciDial ships Kyle Kisten as CB138, which the
+       Agent List gives to Jabu Ntombela, and matching on that number alone pays 735 of his
+       calls to her (spec §3). So: name overrides only when it resolves to a DIFFERENT real
+       agent; where the name resolves to nobody, the code is the identity. */
+    const identityOf=r=>{
+      const byName=resolveKey(r.name);
+      const idc=/^CB\d+$/i.test(r.id)?r.id.toUpperCase().replace(/[^A-Z0-9]/g,''):'';
+      const byId=idc?resolveKey(idc):null;
+      if(byName&&byId&&byName!==byId) return byName;   // documented clash — the roster decides
+      return byId||byName||r.name;                      // else the code; unresolved keeps the name
+    };
     const days=[]; { const d=new Date(from+'T00:00:00Z');
       while(dkey(d)<=to&&days.length<400){ days.push(dkey(d)); d.setUTCDate(d.getUTCDate()+1); } }
     if(days.length===1){
@@ -1770,9 +1797,10 @@ const INGEST={
       // agents. Where one agent appears in both, the fuller record wins (never the sum).
       const d=days[0]; const bk=(S.calls[d]=S.calls[d]||{}); let kept=0;
       for(const r of rows){
-        const cur=bk[r.name];
+        const key=identityOf(r);
+        const cur=bk[key];
         if(cur&&(cur.talk||0)>=r.talk){ kept++; continue; }
-        bk[r.name]={talk:r.talk,calls:r.calls,ans:r.calls,opt:r.opt,saleD:r.saleD,v:1};   // v: sourced from ViciDial
+        bk[key]={talk:r.talk,calls:r.calls,ans:r.calls,opt:r.opt,saleD:r.saleD,v:1};   // v: sourced from ViciDial
       }
       if(kept) toast(kept+' agent-day(s) already had a fuller dialler record - kept those');
       S.viciDays[d]=1;                       // day-level detail exists for this day now (bookkeeping — supersede is per agent)
@@ -1781,6 +1809,7 @@ const INGEST={
     }
     // Multi-day export: stored whole and kept out of the per-day metrics, because there is
     // no honest way to split one number across three days.
+    rows.forEach(r=>{ const k=identityOf(r); if(/^CB\d+$/i.test(k)) r.idKey=k; });   // stamp identity at ingest
     S.vici[from+'..'+to]={from,to,rows,at:new Date().toISOString().slice(0,16).replace('T',' ')};
     toast('"'+name+'" covers '+days.length+' days as one total per agent — stored, but NOT split across those days. Export one day at a time for daily talk time.',9000);
     return regFile(name,'vici range '+from+'..'+to,[],rows.length,{totals,admins,rangeOnly:true});
@@ -3241,7 +3270,9 @@ function buildVariance(range){
     const rDays=[]; { const dt=new Date(v.from+'T00:00:00Z');
       while(dkey(dt)<=v.to&&rDays.length<400){ rDays.push(dkey(dt)); dt.setUTCDate(dt.getUTCDate()+1); } }
     for(const r of v.rows){
-      const rc=resolveKey(r.name); if(!rc||!(r.talk>0)) continue;
+      // CB first, same ladder as the day-level path — an abbreviated USER NAME must not cost
+      // the agent their estimate either. r.idKey is stamped at ingest by identityOf().
+      const rc=r.idKey||resolveKey(r.name); if(!rc||!(r.talk>0)) continue;
       let emp=rDays.filter(dd=>{ const st=(S.att[dd]||{})[rc]; return st!=null&&attWeight(st)>0; });
       if(!emp.length) emp=rDays.filter(dd=>{ const g=new Date(dd+'T00:00:00Z').getUTCDay(); return g!==0&&g!==6; });
       if(!emp.length) emp=rDays;
