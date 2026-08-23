@@ -5688,7 +5688,10 @@ window.__coachHubFill=function(){try{
       +'</div>'
       +esc
       +'<div style="margin-top:14px"><div class="sub" style="font-weight:700;letter-spacing:.4px">MOST COACHED DEVELOPMENT THEMES</div>'+rows+'</div>'
-      +(T.unresolved?'<div class="sub" style="margin-top:10px;font-size:11.5px">'+T.unresolved+' sessions could not be matched to a CB number, so they are counted here but attributed to nobody.</div>':'');
+      +((T.unresolved||T.noTheme)?'<div class="sub" style="margin-top:10px;font-size:11.5px">'
+        +(T.noTheme?'<b>'+T.noTheme+'</b> session'+(T.noTheme===1?'':'s')+' were filed with no development theme picked, so they count toward nothing. ':'')
+        +(T.unresolved?T.unresolved+' could not be matched to a CB number, so they are attributed to nobody.':'')
+        +'</div>':'');
 
     /* Fill each queue card with that agent's own development themes. The queue
        says who looks like they need coaching from the numbers; this says what
@@ -5699,9 +5702,16 @@ window.__coachHubFill=function(){try{
       var code=box.id.slice(4), a=byCode[code];
       var gaps=a?a.themes.filter(function(t){return t.family==="gap"}).sort(function(x,y){return y.shown-x.shown}):[];
       if(!gaps.length){
-        box.innerHTML='<h4>Development themes</h4>'
-          +'<p class="sub">No coaching sessions in the Hub for this agent in the last '+TH.windowDays+' days'
-          +(a?'':' — and no session here is matched to '+code)+'.</p>';
+        /* Three different situations, and they need different answers. Saying
+           "nothing matched" when a session exists but carries no theme sent a
+           team leader looking for a data problem instead of asking the coach to
+           classify the session. */
+        var msg;
+        if(!a) msg='No coaching session in the Hub is matched to '+code+'. Either this agent has not been coached, or the session was filed without a CB number.';
+        else if(a.noTheme>=a.sessions) msg='<b>'+a.sessions+' coaching session'+(a.sessions===1?'':'s')+' recorded, but no development theme was picked</b> on '+(a.sessions===1?'it':'them')+'. Nothing counts toward a theme until someone chooses one on the coaching form.';
+        else msg=a.sessions+' coaching session'+(a.sessions===1?'':'s')+' recorded, but only purpose was captured — no development theme, so nothing escalates.';
+        box.innerHTML='<h4>Development themes</h4><p class="sub">'+msg+'</p>'
+          +(a?'<div class="ev">Evidence: <a class="linky" onclick="openDrawer(\''+code+'\')">open the agent to see the session'+(a.sessions===1?'':'s')+'</a></div>':'');
         return;
       }
       var s=window.__coachTierOf(a.themes);

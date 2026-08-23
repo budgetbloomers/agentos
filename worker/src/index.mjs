@@ -487,10 +487,15 @@ export default {
                 totals.byType[row.type] = (totals.byType[row.type] || 0) + 1;
                 const isScored = row.clusterSource !== 'inferred' && row.clusterConfidence >= 0.6;
                 if (isScored) totals.scored++; else totals.inferred++;
+                if (!row.clusters.length) totals.noTheme = (totals.noTheme || 0) + 1;
                 if (!row.code) { totals.unresolved++; continue; }   // never attributed to a nearest match
                 let a = agents.get(row.code);
-                if (!a) agents.set(row.code, a = { code: row.code, name: row.agentName, tl: row.teamLeader, campaign: row.campaign, themes: {} });
+                if (!a) agents.set(row.code, a = { code: row.code, name: row.agentName, tl: row.teamLeader, campaign: row.campaign, sessions: 0, noTheme: 0, themes: {} });
                 if (!a.name && row.agentName) a.name = row.agentName;
+                // Counted per agent so a card can tell "never coached" apart from
+                // "coached, but nobody picked a theme" — different problems.
+                a.sessions++;
+                if (!row.clusters.length) a.noTheme++;
                 const seen = new Set();
                 for (const c of row.clusters) {
                   if (seen.has(c.clusterKey)) continue;           // one occurrence per session per cluster
