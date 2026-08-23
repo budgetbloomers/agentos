@@ -3287,6 +3287,97 @@ function acStats(cb,win,C){
     target,sales:sale.n,gwp:sale.gwp,gwpSale,spd,ta,leads,conv,qaN:qa.n,qaS,crit:qa.crit,
     calls:ca.n,uniqCalls,uniqPerDay,closedCases,convClosed,bands:ca.bands,talkMin,talkDay,dialDays:ca.days.size,p,sched,att,canc,cancPct,attempts,attLead,refs,sc};
 }
+/* ---------- coaching layer v1.0 (Chatterbox_Coaching_Rules.json) ----------
+   The composite formula is  adjusted = composite − min(combined_cap, r2a + coaching).
+   cfTier below is the r2a half and has been here since v3.0; this is the other
+   half, and without it three ladder rules (R2B, R11, R13) can never fire.
+
+   Two things this deliberately does NOT count:
+   · classifications below the confidence floor
+   · anything marked "inferred" — read out of a coaching note by the back-classifier
+     rather than chosen by a coach. Counting those would fire R2B, a Level 1
+     compliance review, on a named person off a regex. They are shown, not scored;
+     promoting one is a human decision. */
+const COACH_TH = { windowDays:90, repeatMin:2, persistentMin:4, penRepeat:2, penPersistent:5, penCap:5, combinedCap:15, staleDays:45, minConf:0.6 };
+const COMPLIANCE_THEMES = new Set(['gap.compliance_required_wording','gap.customer_verification']);
+/* Cluster display names, lifted verbatim from Chatterbox_Coaching_Rules.json so
+   a theme reads the same here as it does on the coaching form. */
+const CLUSTER_LABELS={
+  'purpose.quality_compliance':'Quality & Compliance', 'purpose.lead_management':'Lead Management', 'purpose.objection_handling':'Objection Handling',
+  'purpose.product_knowledge':'Product Knowledge', 'purpose.sales_performance':'Sales Performance', 'purpose.process_refresher':'Process Refresher',
+  'purpose.performance_check_in':'Performance Check-In', 'purpose.other_needs_review':'Other / Needs Review', 'gap.compliance_required_wording':'Compliance & Required Wording',
+  'gap.customer_verification':'Customer Verification', 'gap.product_knowledge':'Product Knowledge', 'gap.objection_handling':'Objection Handling',
+  'gap.pitch_value_creation':'Pitch & Value Creation', 'gap.communication_call_control':'Communication & Call Control', 'gap.customer_engagement_rapport':'Customer Engagement & Rapport',
+  'gap.lead_management':'Lead Management', 'gap.call_process_systems':'Call Process & Systems', 'gap.other_needs_review':'Other / Needs Review',
+  'commitment.follow_lead_process':'Follow Lead Process', 'commitment.use_required_wording':'Use Required Wording', 'commitment.verify_customer_details':'Verify Customer Details',
+  'commitment.improve_objection_handling':'Improve Objection Handling', 'commitment.strengthen_product_pitch':'Strengthen Product Pitch', 'commitment.improve_communication':'Improve Communication',
+  'commitment.build_customer_rapport':'Build Customer Rapport', 'commitment.follow_call_process':'Follow Call Process', 'commitment.apply_coaching_targets':'Apply Coaching & Targets',
+  'commitment.other_needs_review':'Other / Needs Review', 'support.call_review_monitoring':'Call Review & Monitoring', 'support.role_play_practice':'Role-Play Practice',
+  'support.objection_handling_training':'Objection Handling Training', 'support.product_pitch_training':'Product & Pitch Training', 'support.compliance_refresher':'Compliance Refresher',
+  'support.lead_process_training':'Lead Process Training', 'support.communication_coaching':'Communication Coaching', 'support.performance_follow_up':'Performance Follow-Up',
+  'support.mixed_coaching_support':'Mixed Coaching Support', 'support.other_needs_review':'Other / Needs Review'
+};
+/* Which weighted driver each theme moves — R11 asks whether that driver is
+   still short after the theme has been coached. Themes with no driver (the
+   support family, and every Other/Needs Review) simply never trigger it. */
+const COACH_DRIVER={
+  'purpose.quality_compliance':'qa', 'purpose.lead_management':'conv', 'purpose.objection_handling':'conv',
+  'purpose.product_knowledge':'gwpSale', 'purpose.sales_performance':'targetAch', 'purpose.process_refresher':'talk',
+  'purpose.performance_check_in':'targetAch', 'gap.compliance_required_wording':'qa', 'gap.customer_verification':'qa',
+  'gap.product_knowledge':'gwpSale', 'gap.objection_handling':'conv', 'gap.pitch_value_creation':'gwpSale',
+  'gap.communication_call_control':'talk', 'gap.customer_engagement_rapport':'conv', 'gap.lead_management':'conv',
+  'gap.call_process_systems':'talk', 'commitment.follow_lead_process':'conv', 'commitment.use_required_wording':'qa',
+  'commitment.verify_customer_details':'qa', 'commitment.improve_objection_handling':'conv', 'commitment.strengthen_product_pitch':'gwpSale',
+  'commitment.improve_communication':'talk', 'commitment.build_customer_rapport':'conv', 'commitment.follow_call_process':'talk',
+  'commitment.apply_coaching_targets':'targetAch'
+};
+const clusterLabel = k => CLUSTER_LABELS[k] || String(k||'').replace(/^[a-z]+./,'').replace(/_/g,' ');
+
+/* Occurrence counting is per session per cluster — a coach naming the same theme
+   in two fields is one occurrence, not two, or a thorough team leader looks like
+   a repeat offender. */
+function coachThemes(sessions, win){
+  const to = (win && win.to) ? new Date(win.to) : new Date();
+  const from = new Date(to.getTime() - COACH_TH.windowDays*86400000);
+  const iso = d => d.toISOString().slice(0,10);
+  const themes = {};
+  (sessions||[]).forEach(s=>{
+    if(!s.date || s.date < iso(from) || s.date > iso(to)) return;
+    const scored = s.clusterSource !== 'inferred' && (s.clusterConfidence ?? 1) >= COACH_TH.minConf;
+    const seen = new Set();                                  // dedupe within the session
+    (s.clusters||[]).forEach(c=>{
+      if(seen.has(c.clusterKey)) return; seen.add(c.clusterKey);
+      const t = themes[c.clusterKey] ??= { key:c.clusterKey, family:c.family, scored:0, shown:0, last:'' };
+      t.shown++; if(scored) t.scored++;
+      if(s.date > t.last) t.last = s.date;
+    });
+  });
+  return Object.values(themes).sort((a,b)=>b.scored-a.scored || b.shown-a.shown);
+}
+
+/* Same shape as cfTier so the two penalties compose predictably. Basis is the
+   single worst LIVE theme, not the sum — a theme not raised for staleDays is
+   history, not a live pattern. */
+function coachTier(themes){
+  const to = new Date(); const staleBefore = new Date(to.getTime() - COACH_TH.staleDays*86400000).toISOString().slice(0,10);
+  let pen=0, tier='', worst=null;
+  (themes||[]).forEach(t=>{
+    if(t.scored < COACH_TH.repeatMin) return;
+    if(t.last && t.last < staleBefore) return;               // stale: stops escalating
+    const p = t.scored >= COACH_TH.persistentMin ? COACH_TH.penPersistent : COACH_TH.penRepeat;
+    if(p > pen){ pen=p; worst=t; tier = t.scored>=COACH_TH.persistentMin ? 'Persistent' : 'Repeat'; }
+  });
+  return { pen: Math.min(pen, COACH_TH.penCap), tier, worst };
+}
+
+/* Escalation is about formality, not frequency: a theme coached three times at
+   the same formality has been raised three times and escalated none. */
+function coachFormat(tier){
+  if(tier==='Persistent') return 'Formal Coaching with a documented improvement plan';
+  if(tier==='Repeat')     return 'Formal Coaching';
+  return 'Informal Coaching';
+}
+
 function cfTier(st){ // v3.0 graduated critical-fail rule: tier = highest of count or rate
   const T=k=>nbaVal(k,0);const cf=st.crit||0;const audited=st.qaN||0;
   const cfr=audited>0?cf/audited*100:0;
@@ -3295,18 +3386,35 @@ function cfTier(st){ // v3.0 graduated critical-fail rule: tier = highest of cou
   if(cf>=nbaVal('r2a2Count',2)||cfr>=nbaVal('r2a2Rate',10))return{tier:'R2A-2',lvl:2,pen:nbaVal('pen2',5),cf,cfr,elite:'Blocked'};
   return{tier:'R2A-1',lvl:3,pen:nbaVal('pen1',2),cf,cfr,elite:'Allowed'};
 }
-function acComposite(st,pctile){
+function acComposite(st,pctile,coachPen){
   const ws=compWeights();
   const parts=[];let wSum=0,acc=0;
   ws.forEach(([name,w])=>{let v=name==='GWP %ile'?pctile:st.sc[name];
     if(v==null)return;wSum+=w;acc+=v*w;parts.push({name,v:Math.round(v),w,contrib:v*w})});
   const raw=wSum?acc/wSum:0;
   const tier=cfTier(st);
-  const pen=tier.pen;   // capped tier penalty (−2 / −5 / −10) replaces the unbounded per-fail deduction
-  return{parts,wSum,raw,pen,tier,adj:Math.max(0,Math.min(100,raw-pen))};
+  // adjusted = composite − min(combined_cap, r2a_penalty + coaching_penalty).
+  // coachPen is 0 for everyone except the agent whose drill-down is open —
+  // peer ranking below calls this without coaching, because loading a whole
+  // team's coaching to sort one list would be a request per peer. So the rank
+  // is peer-relative on the r2a half only, and the coaching half shows on the
+  // agent's own card where the evidence for it is also on screen.
+  const cfPen=tier.pen;
+  const pen=Math.min(COACH_TH.combinedCap, cfPen + (coachPen||0));
+  return{parts,wSum,raw,pen,cfPen,coachPen:coachPen||0,tier,adj:Math.max(0,Math.min(100,raw-pen))};
 }
-function acNBA(st){
+function acNBA(st,coach){
   const T=k=>nbaVal(k,0);const tier=cfTier(st);
+  /* Coaching-layer rules. They sit in the ladder by order like every other rule —
+     the golden rule holds: the first rule triggered is the single next best
+     action, and coaching history changes what that action says, never which rule
+     fired. `coach` is absent unless a drill-down loaded it, in which case these
+     simply do not apply and the v3.0 ladder behaves exactly as before. */
+  const cTier = coach ? coachTier(coach.themes) : null;
+  const worst = cTier && cTier.worst;
+  /* R2B · order 4 · Level 1 — a compliance theme still recurring after four
+     coached sessions. Checked after R1/R2/R3 below, which is where order 4 sits. */
+  const r2bFires = worst && COMPLIANCE_THEMES.has(worst.key) && worst.scored >= COACH_TH.persistentMin;
   if(!(st.sched>0&&st.p===0)&&!(st.qaS!=null&&st.qaS<T('qaCritical'))&&tier.tier==='R2A-3')
     return{code:'R2A-3',lvl:1,lvlName:'Protect the Business',label:'Critical Compliance Fail',detail:tier.cf+' fails · CFR '+fmtVal(tier.cfr,'pct')+' of audited calls ('+ (tier.cf>=nbaVal('r2a3Count',4)?'count':'rate')+' trigger).',action:'P1 compliance review within 48h — audit each fail, corrective action signed, daily monitoring 10 days. Elite blocked.'};
 
@@ -3314,31 +3422,101 @@ function acNBA(st){
   if(st.sched>0&&st.p===0)return R('R1',1,'Protect the Business','Zero Attendance','Did not attend any scheduled day in the period.','Escalate to HR immediately; attempt contact within 24 hrs; start formal absence management.');
   if(st.qaS!=null&&st.qaS<T('qaCritical'))return R('R2',1,'Protect the Business','Critical QA Failure','QA score '+fmtVal(st.qaS,'pct')+' — below '+T('qaCritical')+'%.','QA intervention within 48 hrs: review calls, complete retraining, monitor daily, sign coaching plan.');
   if(st.att!=null&&st.att<T('attRisk'))return R('R3',1,'Protect the Business','Attendance Risk','Attendance '+fmtVal(st.att,'pct')+' — below '+T('attRisk')+'%.','Attendance discussion within 2 days; wellness check if needed; document and monitor weekly.');
+  if(r2bFires)return R('R2B',1,'Protect the Business','Repeat Compliance Coaching',
+    'The same compliance theme has been coached '+worst.scored+' times in the window — '+esc(clusterLabel(worst.key))+'.',
+    'Compliance review with QA within 48 hours. The theme is recurring after coaching, so review the calls behind each session, not only the last one, and agree a written commitment.');
   if(tier.tier==='R2A-2')return R('R2A-2',2,'Protect the Revenue','Compliance Risk',tier.cf+' fails · CFR '+fmtVal(tier.cfr,'pct')+' (emerging tier).','P2 structured compliance coaching 5 days — root-cause review, raised audit cadence. Elite blocked.');
   if(st.gwpSale!=null&&st.gwpSale<T('gwpFloor'))return R('R4',2,'Protect the Revenue','GWP Value Failure','GWP per sale R'+Math.round(st.gwpSale)+' — below the R'+T('gwpFloor')+' line.','Value coaching 48h: policy mix, upsell, GWP mini-target.');
   if(st.ta!=null&&st.gwpSale!=null&&st.gwpSale>=T('gwpFloor')&&st.ta<T('salesLow'))return R('R4A',2,'Protect the Revenue','Critical Sales-Volume Failure','Value clears R'+T('gwpFloor')+' but volume is '+fmtVal(st.ta,'pct')+' of target.','Start PIP: weekly 1:1, side-by-side call listening, workshops, review activity and pipeline.');
   if(st.qaS!=null&&st.qaS<T('qaTarget'))return R('R5',2,'Protect the Revenue','Moderate QA Risk','QA '+fmtVal(st.qaS,'pct')+' — between '+T('qaCritical')+'% and '+T('qaTarget')+'%.','QA refresher within 5 days; audit 5 calls per week; coach every 2 weeks.');
   if(st.ta!=null&&st.ta<T('salesNear'))return R('R6',2,'Protect the Revenue','Low Sales Achievement','Volume at '+fmtVal(st.ta,'pct')+' of target ('+T('salesLow')+'–'+T('salesNear')+'% band).','Sales coaching every 2 weeks: objection roleplays, peer pairing, activity review; add conversion training if low.');
+  /* R11 · Level 2 — a theme coached more than once while the driver it moves is
+     still short. The message is not the problem; the format is. */
+  if(coach&&(()=>{
+      const t=(coach.themes||[]).find(x=>x.scored>=COACH_TH.repeatMin&&COACH_DRIVER[x.key]);
+      if(!t)return false; coach._r11=t; const d=COACH_DRIVER[t.key];
+      const v={qa:st.qaS,conv:st.conv,gwpSale:st.gwpSale,targetAch:st.ta,talk:st.talkDay,attendance:st.att}[d];
+      const tgt={qa:T('qaTarget'),conv:T('convTarget'),gwpSale:T('gwpFloor'),targetAch:100,talk:T('talkTargetMin'),attendance:T('attTarget')}[d];
+      return v!=null&&tgt!=null&&v<tgt;})())
+    return R('R11',2,'Protect the Revenue','Coaching Not Converting',
+      esc(clusterLabel(coach._r11.key))+' has been coached '+coach._r11.scored+' times and the metric it moves is still below target.',
+      'Change the format, not the message. The same theme has been coached before and the number has not moved, so the next session is formal, with the support type named and a date to check it.');
+
   if(st.conv!=null&&st.conv<T('convTarget'))return R('R7',3,'Improve the Skill','Critical Conversion Failure','Conversion '+fmtVal(st.conv,'pct')+' — below the '+T('convTarget')+'% tenure target.','Conversion masterclass within 5 days: pipeline review, closing calls, closing skills, follow-up.');
   if(st.talkDay!=null&&st.talkDay<T('talkFloorMin'))return R('R8',3,'Improve the Skill','Talk Time Below Target','Avg talk '+Math.round(st.talkDay)+'m/day — below the '+T('talkFloorMin')+'m floor.','Engagement and discovery coaching; set a daily talk-time target; review the call-cycle profile.');
   /* R2A-1 is a logged note (−2), never the surfaced rule */
   if(st.ta!=null&&st.ta<100)return R('R9',4,'Develop & Recognise','Developing Performer','Near target ('+T('salesNear')+'–99%) with all critical checks clear.','Monthly coaching; set one improvement goal; track weekly; share best practices.');
+  /* R13 · Level 3 — the driver costing the most points has never been raised in a
+     session. Sits here, above R10, because "coach it once" beats "recognise and
+     reward" when there is an uncoached gap. Only meaningful once coaching has
+     actually loaded, hence the sessions_loaded guard the rule specifies. */
+  if(coach&&coach.loaded&&(()=>{
+      const weak=(acWeakestDriver?acWeakestDriver(st):null);
+      if(!weak||!weak.driver||!(weak.points>=1))return false;
+      const coached=(coach.themes||[]).some(t=>COACH_DRIVER[t.key]===weak.driver&&t.scored>0);
+      if(coached)return false; coach._r13=weak; return true;})())
+    return R('R13',3,'Improve the Skill','Uncoached Gap',
+      'The driver with the most points available — '+esc(coach._r13.label)+' — has never been coached in the window.',
+      'Coach it once before escalating anything. The gap costing the most points has never been raised in a session, so there is nothing to escalate from.');
+
   return R('R10',4,'Develop & Recognise','Strong / Elite Performer','Meeting or exceeding all key targets.','Recognise and reward; set a stretch goal; consider mentor / buddy roles.');
 }
-function agentOpen(cb){
+
+/* The driver with the most points still on the table — what R13 checks has never
+   been coached. Uses the same weights and scores the composite is built from, so
+   "most points available" means the same thing in both places. */
+function acWeakestDriver(st){
+  const NAME={'QA Score':'qa','Conversion':'conv','GWP / Sale':'gwpSale','Target Achievement':'targetAch','Talk Time':'talk','Attendance':'attendance'};
+  let best=null;
+  compWeights().forEach(([name,w])=>{
+    const v=st.sc?st.sc[name]:null; const key=NAME[name]; if(v==null||!key)return;
+    const points=(100-v)/100*w;                       // weight not yet earned
+    if(!best||points>best.points)best={driver:key,label:name,points};
+  });
+  return best;
+}
+/* Coaching for one agent, read live from the Coaching Hub through the Worker.
+   Never throws: if the Hub is unreachable the drill-down still opens and the
+   coaching section says so, rather than the whole modal failing. */
+async function coachFetch(cb){
+  try{
+    const ep=workerBase();
+    const t=(()=>{try{return sessionStorage.getItem('cbx_token')}catch(e){return null}})();
+    if(!t)return{loaded:false,error:'not signed in',sessions:[],themes:[]};
+    // Hard ceiling: the drill-down waits on this, so a slow or hanging Hub must
+    // never be the reason an agent's card does not open. Past the timeout the
+    // card renders with the coaching section saying it is unavailable.
+    const ac=new AbortController();
+    const timer=setTimeout(()=>ac.abort(),3000);
+    let res;
+    try{
+      res=await fetch(ep+'/api/coaching?cb='+encodeURIComponent(cb),
+        {headers:{'Authorization':'Bearer '+t,'x-cbx-client':'v5'},signal:ac.signal});
+    } finally { clearTimeout(timer); }
+    const r=await res.json();
+    if(!res.ok||!r||r.error)return{loaded:false,error:(r&&r.detail)||('HTTP '+res.status),sessions:[],themes:[]};
+    const sessions=r.sessions||[];
+    return{loaded:true,unresolved:!!r.unresolved,sessions,themes:coachThemes(sessions,periodWindow())};
+  }catch(e){return{loaded:false,error:String(e.message||e),sessions:[],themes:[]}}
+}
+
+async function agentOpen(cb){
   cb=normCB(cb);if(!state.cbInfo[cb]){toast('No roster entry for this agent');return}
   if(!cbInScope(cb)){toast('That agent is outside your team.');return}   // scoped TLs can't drill other teams
   const win=periodWindow();const C=acCtx(win);
   const st=acStats(cb,win,C);
   const T=k=>nbaVal(k,0);
+  const coach=await coachFetch(cb);
+  const cTier=coachTier(coach.themes);
   const peersCB=Object.keys(state.cbInfo).filter(k=>groupOf(k)===st.group);
   const peers=peersCB.map(k=>acStats(k,win,C));
   const gwpSorted=peers.map(p2=>p2.gwp).sort((a,b)=>a-b);
   const pct=g=>{if(peers.length<2)return 100;const below=gwpSorted.filter(x=>x<g).length;return below/(peers.length-1)*100};
+  // Peers are ranked without coaching — see the note in acComposite.
   const comps=peers.map(p2=>({cb:p2.cb,c:acComposite(p2,pct(p2.gwp)).adj})).sort((a,b)=>b.c-a.c);
   const rank=comps.findIndex(x=>x.cb===cb)+1;
-  const comp=acComposite(st,pct(st.gwp));
-  const nba=acNBA(st);
+  const comp=acComposite(st,pct(st.gwp),cTier.pen);
+  const nba=acNBA(st,coach);
   const others=peers.filter(p2=>p2.cb!==cb);
   const avg=f=>{const v=others.map(f).filter(x=>x!=null);return v.length?v.reduce((a,b)=>a+b,0)/v.length:null};
   const peer={ta:avg(p2=>p2.ta),gs:avg(p2=>p2.gwpSale),qa:avg(p2=>p2.qaS),conv:avg(p2=>p2.conv),talk:avg(p2=>p2.talkDay),att:avg(p2=>p2.att)};
@@ -3366,6 +3544,38 @@ function agentOpen(cb){
   const working=snap.filter(r=>r[3]==='pass').slice(0,3).map(r=>'<li><b>'+r[0]+'</b> at '+r[1]+' clears '+r[2]+'.</li>');
   const cmpRow=(l,you,pr,fmt)=>{const d=(you!=null&&pr!=null)?you-pr:null;
     return '<tr><td>'+l+'</td><td class="num" style="font-weight:800">'+(you==null?'—':fmt(you))+'</td><td class="num">'+(pr==null?'—':fmt(pr))+'</td><td class="num" style="color:'+(d==null?'inherit':d>=0?'var(--green,#158A4C)':'var(--red)')+'">'+(d==null?'—':(d>=0?'+':'')+fmt(Math.abs(d)*Math.sign(d)||0).replace('R-','−R'))+'</td></tr>'};
+  /* Coaching history. Inferred themes are listed but shown as not scored, so a
+     team leader can see the pattern and also see that nothing was taken off the
+     composite for it. */
+  const coachHtml=(()=>{
+    const head='<div class="ac-sec">COACHING HISTORY · LAST '+COACH_TH.windowDays+' DAYS</div>';
+    if(!coach.loaded)
+      return head+'<div class="card" style="font-size:12.5px;color:var(--muted)">Coaching is unavailable right now'
+        +(coach.error?' ('+esc(coach.error)+')':'')+'. Everything else on this card is unaffected.</div>';
+    if(!coach.sessions.length)
+      return head+'<div class="card" style="font-size:12.5px;color:var(--muted)">No coaching sessions recorded for this agent in the window.</div>';
+    const rows=coach.themes.map(t=>{
+      const scored=t.scored, shown=t.shown, inferred=shown-scored;
+      const tier=scored>=COACH_TH.persistentMin?'Persistent':scored>=COACH_TH.repeatMin?'Repeat':'First time';
+      const pill=tier==='Persistent'?'r':tier==='Repeat'?'a':'n';
+      const compliance=COMPLIANCE_THEMES.has(t.key);
+      return '<tr><td>'+esc(clusterLabel(t.key))
+        +(compliance?' <span class="pill r" style="font-size:9px">COMPLIANCE</span>':'')+'</td>'
+        +'<td class="num" style="font-weight:800">'+shown+'</td>'
+        +'<td><span class="pill '+pill+'">'+(scored?tier:'not scored')+'</span></td>'
+        +'<td style="font-size:11px;color:var(--muted)">'+(inferred?inferred+' inferred from notes · not scored':'chosen by the coach')+'</td>'
+        +'<td style="font-size:11px;color:var(--muted)">'+esc(t.last||'—')+'</td></tr>';
+    }).join('');
+    const pen=cTier.pen;
+    const note=pen
+      ? '<b>−'+pen+'</b> applied to the composite · worst live theme '+esc(clusterLabel(cTier.worst.key))+' ('+cTier.tier+') · next session should be <b>'+esc(coachFormat(cTier.tier))+'</b>'
+      : 'No composite adjustment — nothing has reached Repeat on a coach-chosen classification.';
+    return head
+      +'<table class="tbl"><thead><tr><th class="noclick">Theme</th><th class="noclick">Sessions</th><th class="noclick">Tier</th><th class="noclick">Source</th><th class="noclick">Last raised</th></tr></thead><tbody>'
+      +rows+'</tbody></table>'
+      +'<div style="font-size:12px;margin-top:6px">'+note+'</div>';
+  })();
+
   const fP=v=>fmtVal(v,'pct'),fR=v=>'R'+Math.round(v),fM=v=>Math.round(v)+'m';
   const c1=st.gwpSale!=null&&st.gwpSale>=T('gwpFloor'),c2=st.ta!=null&&st.ta>=100;
   modal('<div style="display:flex;justify-content:flex-start;margin-bottom:6px"><button class="btn small" onclick="closeModal()" style="display:flex;align-items:center;gap:6px"><span style="font-size:15px">←</span> Back</button></div>'
@@ -3386,6 +3596,7 @@ function agentOpen(cb){
    +'<b>'+esc(nba.label)+'</b><span class="pill n">'+nba.code+'</span>'
    +'<span style="font-size:12px">'+(c1?'✓':'✗')+' Check 1 Value &nbsp; '+(c2?'✓':'✗')+' Check 2 Volume</span>'
    +'<span style="margin-left:auto;font-size:12px" class="num">Total Sales <b>'+st.sales+'</b> · Total GWP <b>'+fmtVal(st.gwp,'zar')+'</b> <span class="exv" style="display:inline">('+fmtVal(exVat(st.gwp),'zar')+' ex VAT)</span> · Leads <b>'+st.leads.toLocaleString()+'</b> · Referrals <b>'+st.refs+'</b> · Days <b>'+st.p+'/'+st.sched+'</b></span></div>'
+   +coachHtml
    +'<div class="ac-sec">CALL CYCLE CLASSIFICATION · per-call billable-seconds bands (live rule)</div>'+bar
    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-top:14px">'
    +'<div><div class="ac-sec">METRIC SNAPSHOT VS TARGETS</div><table class="tbl">'

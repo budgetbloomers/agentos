@@ -392,6 +392,46 @@ export default {
         return json({ ok: true, path: objPath });
       }
 
+      // ---------- coaching: one agent's sessions, read live from the Coaching Hub ----------
+      // AgentOS holds NO copy of coaching. It reads on demand, so an edited or
+      // deleted session is reflected immediately and there is no feed that can
+      // fail silently — a missed delivery would look exactly like "this agent has
+      // no coaching", which is the one failure nobody would notice.
+      //
+      // The Hub's query is projected (no signature images), so an agent's whole
+      // history is a few KB. Cached per CB for a minute because the drill-down is
+      // reopened constantly while a team leader works through a team.
+      if (path === '/api/coaching' && req.method === 'GET') {
+        const cb = (url.searchParams.get('cb') || '').trim();
+        if (!cb) return json({ error: 'cb required' }, 400);
+        // Same key AgentOS uses everywhere else, so the cache and the Hub agree
+        const key = cb.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const HUB = env.COACHING_HUB_URL || 'https://acrobatic-setter-212.eu-west-1.convex.cloud';
+
+        const cache = (globalThis.__coachCache ??= new Map());
+        const hit = cache.get(key);
+        if (!url.searchParams.get('fresh') && hit && Date.now() - hit.t < 60000)
+          return json(hit.d, 200, { 'X-Cbx-Cache': 'hit' });
+
+        try {
+          const r = await fetch(HUB + '/api/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: 'coaching:forAgent', args: { cb } }),
+          });
+          if (!r.ok) return json({ error: 'coaching_unavailable', detail: 'hub ' + r.status }, 502);
+          const d = await r.json();
+          if (d.status !== 'success') return json({ error: 'coaching_unavailable', detail: String(d.errorMessage || '').slice(0, 140) }, 502);
+          // Keep the cache small — a team is tens of agents, not thousands.
+          if (cache.size > 400) cache.clear();
+          cache.set(key, { t: Date.now(), d: d.value });
+          return json(d.value, 200, { 'X-Cbx-Cache': 'miss' });
+        } catch (e) {
+          // Never let this break the drill-down; the modal renders without it.
+          return json({ error: 'coaching_unavailable', detail: String(e.message || e).slice(0, 140) }, 502);
+        }
+      }
+
       // ---------- ask (Phase 3: Hermes with guardrails) ----------
       if (path === '/api/ask' && req.method === 'POST') {
         const ks = await DB.select('rules?key=eq.ai_kill_switch&select=value');
