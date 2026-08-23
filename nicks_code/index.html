@@ -4409,6 +4409,7 @@ PAGES.coaching=()=>{
         <h4>${esc(r.area)} <span class="pill ${r.pri===1?'pcrit':r.pri===2?'pwarn':'pmuted'}">Priority ${r.pri}</span></h4>
         <p><b>Why:</b> ${r.why}</p><p><b>Expected impact:</b> ${r.impact}</p>
         <div class="ev">Evidence: ${r.ev}</div></div>`).join('')}
+      <div id="qct_${x.a.code}" class="coachcard p3"><h4>Development themes</h4><p class="sub">Loading from the Coaching Hub…</p></div>
       <textarea class="notes" placeholder="Manager notes / action plan…" onchange="setCoach('${x.a.code}','notes',this.value)">${esc(c.notes||'')}</textarea>
     </div>`;}).join('')}`;
 };
@@ -5688,6 +5689,42 @@ window.__coachHubFill=function(){try{
       +esc
       +'<div style="margin-top:14px"><div class="sub" style="font-weight:700;letter-spacing:.4px">MOST COACHED DEVELOPMENT THEMES</div>'+rows+'</div>'
       +(T.unresolved?'<div class="sub" style="margin-top:10px;font-size:11.5px">'+T.unresolved+' sessions could not be matched to a CB number, so they are counted here but attributed to nobody.</div>':'');
+
+    /* Fill each queue card with that agent's own development themes. The queue
+       says who looks like they need coaching from the numbers; this says what
+       they have actually been coached on, which is the thing a team leader needs
+       before deciding what the next session is about. */
+    var byCode={}; agents.forEach(function(a){byCode[a.code]=a});
+    document.querySelectorAll('[id^="qct_"]').forEach(function(box){
+      var code=box.id.slice(4), a=byCode[code];
+      var gaps=a?a.themes.filter(function(t){return t.family==="gap"}).sort(function(x,y){return y.shown-x.shown}):[];
+      if(!gaps.length){
+        box.innerHTML='<h4>Development themes</h4>'
+          +'<p class="sub">No coaching sessions in the Hub for this agent in the last '+TH.windowDays+' days'
+          +(a?'':' — and no session here is matched to '+code)+'.</p>';
+        return;
+      }
+      var s=window.__coachTierOf(a.themes);
+      var named=gaps.slice(0,4).map(function(t){
+        var comp=window.__COACH_COMPLIANCE.indexOf(t.key)>=0;
+        var tier=t.scored>=TH.persistentMin?"Persistent":t.scored>=TH.repeatMin?"Repeat":t.scored?"first time":"not scored";
+        return '<b>'+window.__coachLabel(t.key)+'</b> ×'+t.shown+(comp?' <span style="font-size:9px;font-weight:700;color:#f87171;border:1px solid #f87171;border-radius:5px;padding:0 4px">COMPLIANCE</span>':'')+' — '+tier;
+      }).join('<br>');
+      var totalShown=gaps.reduce(function(n,t){return n+t.shown},0);
+      var totalScored=gaps.reduce(function(n,t){return n+t.scored},0);
+      var means=s.pen
+        ? 'The worst live theme is <b>'+window.__coachLabel(s.worst.key)+'</b> at '+s.worst.scored+' coached sessions, which is '+s.tier
+          +' — that takes <b>−'+s.pen+'</b> off the composite and means the next session should be <b>'
+          +(s.tier==="Persistent"?'Formal Coaching with a documented improvement plan':'Formal Coaching')+'</b>, not another conversation at the same level.'
+        : totalScored
+          ? 'Nothing has been raised twice by a coach inside '+TH.windowDays+' days, so every theme is still first-time and nothing is coming off the composite. A second session on the same theme makes it a Repeat.'
+          : 'None of these were chosen by a coach — they were read from the notes of older sessions, so they are shown for context but never scored. Picking the theme on the coaching form is what starts the count.';
+      box.innerHTML='<h4>Development themes <span class="pill pmuted">Coaching Hub</span></h4>'
+        +'<p><b>Raised:</b><br>'+named+(gaps.length>4?'<br><span class="sub">+'+(gaps.length-4)+' more</span>':'')+'</p>'
+        +'<p><b>What this means:</b> '+means+'</p>'
+        +'<div class="ev">Evidence: '+totalShown+' session'+(totalShown===1?'':'s')+' in the last '+TH.windowDays+' days · '+totalScored+' chosen by a coach · '
+        +'<a class="linky" onclick="openDrawer(\''+code+'\')">open the agent to see each one</a></div>';
+    });
   })
   .catch(function(){clearTimeout(timer);var e=document.getElementById("coachHub");if(e)e.innerHTML='<div class="sub">Coaching Hub unavailable right now.</div>';});
 }catch(e){}};
