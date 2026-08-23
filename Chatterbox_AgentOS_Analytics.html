@@ -3362,6 +3362,14 @@ function coachTier(themes){
   const to = new Date(); const staleBefore = new Date(to.getTime() - COACH_TH.staleDays*86400000).toISOString().slice(0,10);
   let pen=0, tier='', worst=null;
   (themes||[]).forEach(t=>{
+    /* Only the gap family escalates. R2B's own condition filters on
+       theme.family == "gap", and the distinction is the point: gap is what the
+       agent is working on, purpose is why the session was held. Counting purpose
+       would be meaningless here — 451 of 458 historical QA sessions carry
+       purpose.quality_compliance, because the checkbox it was migrated from was
+       ticked on nearly every one. That would hand almost every agent the same
+       penalty and say nothing about any of them. */
+    if(t.family !== 'gap') return;
     if(t.scored < COACH_TH.repeatMin) return;
     if(t.last && t.last < staleBefore) return;               // stale: stops escalating
     const p = t.scored >= COACH_TH.persistentMin ? COACH_TH.penPersistent : COACH_TH.penRepeat;
@@ -3556,20 +3564,26 @@ async function agentOpen(cb){
       return head+'<div class="card" style="font-size:12.5px;color:var(--muted)">No coaching sessions recorded for this agent in the window.</div>';
     const rows=coach.themes.map(t=>{
       const scored=t.scored, shown=t.shown, inferred=shown-scored;
-      const tier=scored>=COACH_TH.persistentMin?'Persistent':scored>=COACH_TH.repeatMin?'Repeat':'First time';
+      // Only gap themes carry a tier — see the note in coachTier
+      const tiered=t.family==='gap';
+      const tier=!tiered?'—':scored>=COACH_TH.persistentMin?'Persistent':scored>=COACH_TH.repeatMin?'Repeat':'First time';
       const pill=tier==='Persistent'?'r':tier==='Repeat'?'a':'n';
       const compliance=COMPLIANCE_THEMES.has(t.key);
       return '<tr><td>'+esc(clusterLabel(t.key))
         +(compliance?' <span class="pill r" style="font-size:9px">COMPLIANCE</span>':'')+'</td>'
         +'<td class="num" style="font-weight:800">'+shown+'</td>'
-        +'<td><span class="pill '+pill+'">'+(scored?tier:'not scored')+'</span></td>'
-        +'<td style="font-size:11px;color:var(--muted)">'+(inferred?inferred+' inferred from notes · not scored':'chosen by the coach')+'</td>'
+        +'<td><span class="pill '+pill+'">'+(!tiered?'—':scored?tier:'not scored')+'</span></td>'
+        +'<td style="font-size:11px;color:var(--muted)">'
+          +(!tiered?esc(t.family)+' · does not escalate'
+            :inferred===shown?inferred+' inferred from notes · not scored'
+            :inferred?inferred+' of '+shown+' inferred · '+scored+' scored'
+            :'chosen by the coach')+'</td>'
         +'<td style="font-size:11px;color:var(--muted)">'+esc(t.last||'—')+'</td></tr>';
     }).join('');
     const pen=cTier.pen;
     const note=pen
       ? '<b>−'+pen+'</b> applied to the composite · worst live theme '+esc(clusterLabel(cTier.worst.key))+' ('+cTier.tier+') · next session should be <b>'+esc(coachFormat(cTier.tier))+'</b>'
-      : 'No composite adjustment — nothing has reached Repeat on a coach-chosen classification.';
+      : 'No composite adjustment — no development theme has reached Repeat on a classification a coach chose. Only the gap family escalates.';
     return head
       +'<table class="tbl"><thead><tr><th class="noclick">Theme</th><th class="noclick">Sessions</th><th class="noclick">Tier</th><th class="noclick">Source</th><th class="noclick">Last raised</th></tr></thead><tbody>'
       +rows+'</tbody></table>'
