@@ -4788,11 +4788,88 @@ window.__vasCoach=function(code){try{
     .then(function(r){return r.json()}).then(function(j){var e2=document.getElementById("vasAI");if(e2)e2.innerHTML=(j.answer?String(j.answer):"(AI unavailable)").replace(/\n/g,"<br>")})
     .catch(function(){var e2=document.getElementById("vasAI");if(e2)e2.textContent="AI analysis unavailable right now."});
 }catch(e){}};
+
+/* ---- coaching history, read live from the Coaching Hub via the Worker ----
+   Same source the AgentOS drill-down reads; PULSE holds no copy either. The
+   rules that matter are applied here too:
+   · only the GAP family escalates (purpose is why the session was held, not
+     what the agent is working on — and purpose.quality_compliance sits on 451
+     of 458 historical sessions, so counting it would penalise everyone equally
+     and mean nothing)
+   · "inferred" classifications were read out of a coaching note by the
+     back-classifier, not chosen by a coach. Shown, never scored — otherwise a
+     regex fires a Level 1 compliance review on a named person.
+   · one occurrence per session per cluster; a theme not raised for 45 days
+     stops escalating. */
+window.__COACH_TH={windowDays:90,repeatMin:2,persistentMin:4,penRepeat:2,penPersistent:5,penCap:5,staleDays:45,minConf:0.6};
+window.__COACH_COMPLIANCE=["gap.compliance_required_wording","gap.customer_verification"];
+window.__coachLabel=function(k){
+  var s=String(k||"").replace(/^[a-z]+\./,"").replace(/_/g," ");
+  return s.replace(/\b[a-z]/g,function(c){return c.toUpperCase()});
+};
+window.__vasCoachHist=function(code){try{
+  var el=document.getElementById("vasCoachHist"); if(!el) return;
+  var TH=window.__COACH_TH;
+  var ctrl=new AbortController(); var timer=setTimeout(function(){ctrl.abort()},3000);
+  fetch("https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/coaching?cb="+encodeURIComponent(code),
+    {headers:{"Authorization":"Bearer "+(sessionStorage.getItem("cbx_token")||"")},signal:ctrl.signal})
+  .then(function(r){return r.json()})
+  .then(function(d){
+    clearTimeout(timer);
+    var e2=document.getElementById("vasCoachHist"); if(!e2) return;
+    if(!d||d.error){e2.innerHTML='<div class="sub">Coaching is unavailable right now. Everything else on this card is unaffected.</div>';return}
+    var sessions=d.sessions||[];
+    if(!sessions.length){e2.innerHTML='<div class="sub">No coaching sessions recorded for this agent in the last '+TH.windowDays+' days.</div>';return}
+    var to=new Date(), from=new Date(to.getTime()-TH.windowDays*86400000);
+    var iso=function(x){return x.toISOString().slice(0,10)};
+    var themes={};
+    sessions.forEach(function(s){
+      if(!s.date||s.date<iso(from)) return;
+      var scored=s.clusterSource!=="inferred"&&(s.clusterConfidence==null||s.clusterConfidence>=TH.minConf);
+      var seen={};
+      (s.clusters||[]).forEach(function(c){
+        if(seen[c.clusterKey]) return; seen[c.clusterKey]=1;
+        var t=themes[c.clusterKey]||(themes[c.clusterKey]={key:c.clusterKey,family:c.family,scored:0,shown:0,last:""});
+        t.shown++; if(scored)t.scored++; if(s.date>t.last)t.last=s.date;
+      });
+    });
+    var list=Object.keys(themes).map(function(k){return themes[k]}).sort(function(a,b){return b.scored-a.scored||b.shown-a.shown});
+    var staleBefore=iso(new Date(to.getTime()-TH.staleDays*86400000));
+    var pen=0,tier="",worst=null;
+    list.forEach(function(t){
+      if(t.family!=="gap"||t.scored<TH.repeatMin) return;
+      if(t.last&&t.last<staleBefore) return;
+      var p=t.scored>=TH.persistentMin?TH.penPersistent:TH.penRepeat;
+      if(p>pen){pen=Math.min(p,TH.penCap);worst=t;tier=t.scored>=TH.persistentMin?"Persistent":"Repeat"}
+    });
+    var rows=list.map(function(t){
+      var tiered=t.family==="gap", inf=t.shown-t.scored;
+      var tl=!tiered?"—":t.scored>=TH.persistentMin?"Persistent":t.scored>=TH.repeatMin?"Repeat":t.scored?"First time":"not scored";
+      var comp=window.__COACH_COMPLIANCE.indexOf(t.key)>=0;
+      var src=!tiered?(t.family+" · does not escalate")
+             :inf===t.shown?(inf+" inferred from notes · not scored")
+             :inf?(inf+" of "+t.shown+" inferred · "+t.scored+" scored")
+             :"chosen by the coach";
+      return '<tr><td>'+window.__coachLabel(t.key)+(comp?' <span class="chip" style="font-size:9px;color:#f87171;border-color:#f87171">COMPLIANCE</span>':'')+'</td>'
+        +'<td class="num">'+t.shown+'</td><td>'+tl+'</td>'
+        +'<td class="sub" style="font-size:11px">'+src+'</td>'
+        +'<td class="sub" style="font-size:11px">'+(t.last||"—")+'</td></tr>';
+    }).join("");
+    var note=pen
+      ? "<b>−"+pen+"</b> would apply to the composite · worst live theme "+window.__coachLabel(worst.key)+" ("+tier+") · next session should be <b>"
+        +(tier==="Persistent"?"Formal Coaching with a documented improvement plan":"Formal Coaching")+"</b>"
+      : "No composite adjustment — no development theme has reached Repeat on a classification a coach chose. Only the gap family escalates.";
+    e2.innerHTML='<table class="tbl"><thead><tr><th>Theme</th><th>Sessions</th><th>Tier</th><th>Source</th><th>Last raised</th></tr></thead><tbody>'
+      +rows+'</tbody></table><div class="sub mt" style="font-size:12px">'+note+'</div>';
+  })
+  .catch(function(){clearTimeout(timer);var e2=document.getElementById("vasCoachHist");if(e2)e2.innerHTML='<div class="sub">Coaching is unavailable right now. Everything else on this card is unaffected.</div>';});
+}catch(e){}};
 window.openDrawer=code=>{
   drawerCode=code;
   const dr=$('#drawer'),sc=$('#scrim');
   dr.innerHTML=drawerHTML(code);
-  sc.classList.add('open'); dr.classList.add('open'); setTimeout(function(){window.__vasCoach(code)},60);
+  sc.classList.add('open'); dr.classList.add('open');
+  setTimeout(function(){window.__vasCoach(code);window.__vasCoachHist(code)},60);
   sc.onclick=closeDrawer;
   document.addEventListener('keydown',escClose);
 };
@@ -4885,6 +4962,7 @@ function drawerHTML(code){
     <button class="btn small" onclick="S.ui.cmpA='${code}';closeDrawer();go('compare')">${I.compare}<span>Compare</span></button>
   </div>
   <div class="card mt"><div class="cardhead"><div><h3>AI coaching analysis</h3><div class="sub">Llama · what is working & what to improve</div></div></div><div id="vasAI" style="font-size:13px;line-height:1.55;color:var(--ink2);min-height:36px">Analysing this agent…</div></div>
+  <div class="card mt"><div class="cardhead"><div><h3>Coaching history</h3><div class="sub">last 90 days · from the Coaching Hub · only development themes escalate</div></div></div><div id="vasCoachHist" style="font-size:13px;line-height:1.55;color:var(--ink2);min-height:36px">Loading coaching…</div></div>
   <div class="card mt"><div class="cardhead"><div><h3>Performance trends</h3></div><div class="spacer"></div>
     <div class="chiprow">${Object.keys(chartDefs).map(k=>`<button class="chip ${view===k?'on':''}" onclick="S.ui.drawerChart='${k}';save();openDrawer('${code}')">${k}</button>`).join('')}</div></div>
     ${chartDefs[view]()}</div>
