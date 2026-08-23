@@ -4842,25 +4842,45 @@ window.__vasCoachHist=function(code){try{
       var p=t.scored>=TH.persistentMin?TH.penPersistent:TH.penRepeat;
       if(p>pen){pen=Math.min(p,TH.penCap);worst=t;tier=t.scored>=TH.persistentMin?"Persistent":"Repeat"}
     });
+    /* One row per theme rather than a five-column table — the drawer is far too
+       narrow for that, and it wrapped "not scored" and every date onto two lines. */
+    var MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    var shortDate=function(d){
+      if(!d) return "—";
+      var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(d); if(!m) return d;
+      // every date here is inside the 90-day window, so the year is noise
+      return (+m[3])+" "+MON[(+m[2])-1];
+    };
+    var PILL={Persistent:"#f87171",Repeat:"#fbbf24","First time":"#34d399"};
     var rows=list.map(function(t){
       var tiered=t.family==="gap", inf=t.shown-t.scored;
-      var tl=!tiered?"—":t.scored>=TH.persistentMin?"Persistent":t.scored>=TH.repeatMin?"Repeat":t.scored?"First time":"not scored";
+      var tl=!tiered?"does not escalate":t.scored>=TH.persistentMin?"Persistent":t.scored>=TH.repeatMin?"Repeat":t.scored?"First time":"not scored";
+      var col=PILL[tl]||"var(--ink3,#94a3b8)";
       var comp=window.__COACH_COMPLIANCE.indexOf(t.key)>=0;
-      var src=!tiered?(t.family+" · does not escalate")
-             :inf===t.shown?(inf+" inferred from notes · not scored")
-             :inf?(inf+" of "+t.shown+" inferred · "+t.scored+" scored")
+      // the label on the right already says the outcome — don't repeat it here
+      var why=!tiered?"purpose"
+             :inf===t.shown?"inferred from notes"
+             :inf?(t.scored+" chosen · "+inf+" inferred")
              :"chosen by the coach";
-      return '<tr><td>'+window.__coachLabel(t.key)+(comp?' <span class="chip" style="font-size:9px;color:#f87171;border-color:#f87171">COMPLIANCE</span>':'')+'</td>'
-        +'<td class="num">'+t.shown+'</td><td>'+tl+'</td>'
-        +'<td class="sub" style="font-size:11px">'+src+'</td>'
-        +'<td class="sub" style="font-size:11px">'+(t.last||"—")+'</td></tr>';
+      return '<div style="display:flex;align-items:baseline;gap:8px;padding:9px 0;border-top:1px solid var(--line,rgba(255,255,255,.08))">'
+        +'<div style="flex:1;min-width:0">'
+          +'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+            +'<span style="font-weight:600;color:var(--ink,#e2e8f0)">'+window.__coachLabel(t.key)+'</span>'
+            +(comp?'<span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#f87171;border:1px solid #f87171;border-radius:5px;padding:1px 5px;white-space:nowrap">COMPLIANCE</span>':'')
+          +'</div>'
+          +'<div style="font-size:11.5px;color:var(--ink3,#94a3b8);margin-top:2px">'
+            +t.shown+(t.shown===1?" session":" sessions")+' · '+why+' · last raised '+shortDate(t.last)
+          +'</div>'
+        +'</div>'
+        +'<span style="flex:none;white-space:nowrap;font-size:11px;font-weight:700;color:'+col+'">'+tl+'</span>'
+      +'</div>';
     }).join("");
     var note=pen
-      ? "<b>−"+pen+"</b> would apply to the composite · worst live theme "+window.__coachLabel(worst.key)+" ("+tier+") · next session should be <b>"
+      ? "<b>−"+pen+"</b> applied to the composite · worst live theme "+window.__coachLabel(worst.key)+" ("+tier+") · next session should be <b>"
         +(tier==="Persistent"?"Formal Coaching with a documented improvement plan":"Formal Coaching")+"</b>"
-      : "No composite adjustment — no development theme has reached Repeat on a classification a coach chose. Only the gap family escalates.";
-    e2.innerHTML='<table class="tbl"><thead><tr><th>Theme</th><th>Sessions</th><th>Tier</th><th>Source</th><th>Last raised</th></tr></thead><tbody>'
-      +rows+'</tbody></table><div class="sub mt" style="font-size:12px">'+note+'</div>';
+      : "No composite adjustment — no development theme has reached Repeat on a classification a coach chose.";
+    e2.innerHTML=rows
+      +'<div style="font-size:11.5px;color:var(--ink3,#94a3b8);margin-top:10px;padding-top:9px;border-top:1px solid var(--line,rgba(255,255,255,.08))">'+note+'</div>';
   })
   .catch(function(){clearTimeout(timer);var e2=document.getElementById("vasCoachHist");if(e2)e2.innerHTML='<div class="sub">Coaching is unavailable right now. Everything else on this card is unaffected.</div>';});
 }catch(e){}};
