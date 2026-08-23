@@ -2118,8 +2118,11 @@ const PAGES=[
  {id:'exec',label:'Executive',icon:'exec',title:'Executive Command Centre',sub:'One controlled view: production, quality, people — and whether to trust it'},
  {id:'brain',label:'Visual Brain',icon:'brain',title:'Visual Brain',sub:'The floor as a living graph — agents, teams, campaigns and NBA rules, coloured by priority level'},
  {id:'sales',label:'Sales Production',icon:'phone',sect:'Sales Ops',title:'Sales Production Dashboard',sub:'Dialler activity, activations and the case pipeline'},
- {id:'leadalloc',label:'Lead Allocation',icon:'inbox',title:'Lead Allocation',sub:'Who is holding which leads right now — the Open Cases status field pivoted per person, matched on the CB number'},
- {id:'leads',label:'Lead Management',icon:'inbox',title:'Lead Management',sub:'The funnel per agent: open attempts, closures, sales conversion and cancellations — the daily lead report, live'},
+ /* Lead Allocation and Lead Management live in VAS Analytics, which owns the lead
+    book — they were the same two pages in two apps. Removed from the nav here so
+    there is one place to look. pageLeadAlloc/pageLeads and their exports are left
+    in the file but are now unreachable; deleting them is a separate tidy-up, and
+    keeping them means restoring these pages is a two-line change. */
  {id:'session',label:'Session Dashboard',icon:'clock',title:'Session Dashboard',sub:'Intraday snapshots — calls, unique reach and sales per session, plus the per-agent lead position'},
  {id:'qa',label:'QA & Compliance',icon:'shield',sect:'Quality & Risk',title:'QA & Compliance Dashboard',sub:'Clean-sale control: pass rates, critical fails, coaching'},
  {id:'qaperf',label:'QA Agent Performance',icon:'shield',title:'QA Agent Performance',sub:'The assessors: evaluations completed, talk time listened to, and how they classified what they heard'},
@@ -4953,8 +4956,7 @@ function render(){
   else if(p.id==='uploads')html=pageUploads();
   else if(p.id==='sess_uploads')html=pageSesUploads();
   else if(p.id==='tl')html=pageTL(win);
-  else if(p.id==='leadalloc')html=pageLeadAlloc(win);
-  else if(p.id==='leads')html=pageLeads(win);
+  // leadalloc / leads deliberately not routed — both live in VAS Analytics now
   else if(p.id==='session')html=pageSession();
   else if(p.id==='dict')html=pageDict();
   }catch(e){
