@@ -432,6 +432,89 @@ export default {
         }
       }
 
+      // ---------- coaching summary: every agent's themes, for the org views ----------
+      // The per-agent route above is one lookup; this is the whole book, which the
+      // Coaching page and the dashboard card need. The Hub pages it (a whole-table
+      // scan reads the signature images and blows Convex's 16MB limit), so the loop
+      // lives here and the aggregate is cached — the dashboards make one request.
+      //
+      // Deliberately returns COUNTS, not tiers. The window, Repeat/Persistent
+      // thresholds and the penalty live in the apps beside the rest of the NBA
+      // framework, so there is one place to change them rather than two that drift.
+      if (path === '/api/coaching/summary' && req.method === 'GET') {
+        const from = url.searchParams.get('from') || '';
+        const to   = url.searchParams.get('to') || '';
+        const ckey = 'sum:' + from + '..' + to;
+        const HUB = env.COACHING_HUB_URL || 'https://acrobatic-setter-212.eu-west-1.convex.cloud';
+        const cache = (globalThis.__coachCache ??= new Map());
+        const hit = cache.get(ckey);
+        if (!url.searchParams.get('fresh') && hit && Date.now() - hit.t < 300000)
+          return json(hit.d, 200, { 'X-Cbx-Cache': 'hit' });
+
+        const ask = async (table, cursor) => {
+          const r = await fetch(HUB + '/api/query', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            // 100 keeps the whole book to ~7 round trips instead of ~15. Pages
+            // still have to be sequential within a table (cursors), so the four
+            // tables run in parallel below to cover the rest.
+            body: JSON.stringify({ path: 'coaching:page', args: { table, cursor: cursor || undefined, batchSize: 100, from: from || undefined, to: to || undefined } }),
+          });
+          if (!r.ok) throw new Error('hub ' + r.status);
+          const d = await r.json();
+          if (d.status !== 'success') throw new Error(String(d.errorMessage || '').slice(0, 120));
+          return d.value;
+        };
+
+        try {
+          const agents = new Map();
+          const totals = { sessions: 0, scored: 0, inferred: 0, byType: {}, unresolved: 0 };
+          // Four tables in parallel; pages within a table stay sequential because
+          // each needs the previous cursor.
+          const books = await Promise.all(['qa', 'lead', 'formal', 'informal'].map(async (table) => {
+            const all = []; let cursor = null, guard = 0;
+            for (;;) {
+              const pg = await ask(table, cursor);
+              all.push(...pg.rows);
+              if (pg.isDone || ++guard > 40) break;
+              cursor = pg.continueCursor;
+            }
+            return all;
+          }));
+          for (const rows of books) {
+            {
+              for (const row of rows) {
+                totals.sessions++;
+                totals.byType[row.type] = (totals.byType[row.type] || 0) + 1;
+                const isScored = row.clusterSource !== 'inferred' && row.clusterConfidence >= 0.6;
+                if (isScored) totals.scored++; else totals.inferred++;
+                if (!row.code) { totals.unresolved++; continue; }   // never attributed to a nearest match
+                let a = agents.get(row.code);
+                if (!a) agents.set(row.code, a = { code: row.code, name: row.agentName, tl: row.teamLeader, campaign: row.campaign, themes: {} });
+                if (!a.name && row.agentName) a.name = row.agentName;
+                const seen = new Set();
+                for (const c of row.clusters) {
+                  if (seen.has(c.clusterKey)) continue;           // one occurrence per session per cluster
+                  seen.add(c.clusterKey);
+                  const t = a.themes[c.clusterKey] || (a.themes[c.clusterKey] = { key: c.clusterKey, family: c.family, scored: 0, shown: 0, last: '' });
+                  t.shown++; if (isScored) t.scored++;
+                  if (row.date > t.last) t.last = row.date;
+                }
+              }
+            }
+          }
+          const out = {
+            window: { from, to },
+            totals,
+            agents: [...agents.values()].map((a) => ({ ...a, themes: Object.values(a.themes) })),
+          };
+          if (cache.size > 400) cache.clear();
+          cache.set(ckey, { t: Date.now(), d: out });
+          return json(out, 200, { 'X-Cbx-Cache': 'miss' });
+        } catch (e) {
+          return json({ error: 'coaching_unavailable', detail: String(e.message || e).slice(0, 140) }, 502);
+        }
+      }
+
       // ---------- ask (Phase 3: Hermes with guardrails) ----------
       if (path === '/api/ask' && req.method === 'POST') {
         const ks = await DB.select('rules?key=eq.ai_kill_switch&select=value');

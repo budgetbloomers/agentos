@@ -4385,8 +4385,11 @@ PAGES.coaching=()=>{
   const queue=filteredAgents().map(a=>({a,recs:coachingFor(a.code),g:primaryAgg(a.code)}))
     .filter(x=>x.recs.length).sort((x,y)=>x.recs[0].pri-y.recs[0].pri||((x.g.pctT||0)-(y.g.pctT||0)));
   const st=(S.coach[M.periodKey]=S.coach[M.periodKey]||{});
+  setTimeout(function(){window.__coachHubFill()},40);
   return `
-  <div class="page-head"><h2>Coaching queue</h2><div class="sub">${queue.length} agents flagged · generated from this period's data</div></div>
+  <div class="page-head"><h2>Coaching</h2><div class="sub">what has actually been coached, and who the rules say to escalate</div></div>
+  <div class="card" id="coachHub"><div class="sub">Loading the Coaching Hub…</div></div>
+  <div class="page-head mt"><h2>Coaching queue</h2><div class="sub">${queue.length} agents flagged · generated from this period's data</div></div>
   ${queue.length?'':'<div class="card"><div class="empty"><div class="big">No coaching flags 🎉</div>Everyone is inside healthy thresholds for this period.</div></div>'}
   ${queue.map(x=>{
     const c=st[x.a.code]||{};
@@ -5597,10 +5600,98 @@ window.__vasCoach=function(code){try{
      stops escalating. */
 window.__COACH_TH={windowDays:90,repeatMin:2,persistentMin:4,penRepeat:2,penPersistent:5,penCap:5,staleDays:45,minConf:0.6};
 window.__COACH_COMPLIANCE=["gap.compliance_required_wording","gap.customer_verification"];
+window.__coachRow=function(id){
+  var d=document.getElementById(id), x=document.getElementById(id+'_x');
+  if(!d) return; var open=d.style.display!=='none';
+  d.style.display=open?'none':'block'; if(x)x.textContent=open?'▸':'▾';
+};
 window.__coachLabel=function(k){
   var s=String(k||"").replace(/^[a-z]+\./,"").replace(/_/g," ");
   return s.replace(/\b[a-z]/g,function(c){return c.toUpperCase()});
 };
+/* Org-wide coaching, from the Hub, with the rules applied here rather than in
+   the Worker — the thresholds live beside the rest of the framework so there is
+   one place to change them. Same two rules as the drawer: only the gap family
+   escalates, and inferred classifications are shown but never scored. */
+window.__coachTierOf=function(themes){
+  var TH=window.__COACH_TH, to=new Date();
+  var stale=new Date(to.getTime()-TH.staleDays*86400000).toISOString().slice(0,10);
+  var pen=0,tier="",worst=null;
+  (themes||[]).forEach(function(t){
+    if(t.family!=="gap"||t.scored<TH.repeatMin) return;
+    if(t.last&&t.last<stale) return;
+    var p=t.scored>=TH.persistentMin?TH.penPersistent:TH.penRepeat;
+    if(p>pen){pen=Math.min(p,TH.penCap);worst=t;tier=t.scored>=TH.persistentMin?"Persistent":"Repeat"}
+  });
+  return{pen:pen,tier:tier,worst:worst};
+};
+window.__coachHubFill=function(){try{
+  var el=document.getElementById("coachHub"); if(!el) return;
+  var TH=window.__COACH_TH;
+  var ctrl=new AbortController(), timer=setTimeout(function(){ctrl.abort()},8000);
+  fetch("https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/coaching/summary",
+    {headers:{"Authorization":"Bearer "+(sessionStorage.getItem("cbx_token")||"")},signal:ctrl.signal})
+  .then(function(r){return r.json()}).then(function(d){
+    clearTimeout(timer);
+    var e=document.getElementById("coachHub"); if(!e) return;
+    if(!d||d.error){e.innerHTML='<div class="sub">Coaching Hub unavailable right now.</div>';return}
+    var T=d.totals||{}, agents=d.agents||[];
+
+    // per-agent standing, then the escalations the ladder actually calls for
+    var repeat=[],persistent=[],r2b=[];
+    agents.forEach(function(a){
+      var s=window.__coachTierOf(a.themes); a._t=s;
+      if(s.tier==="Persistent") persistent.push(a); else if(s.tier==="Repeat") repeat.push(a);
+      if(s.worst&&window.__COACH_COMPLIANCE.indexOf(s.worst.key)>=0&&s.worst.scored>=TH.persistentMin) r2b.push(a);
+    });
+    // themes across the business
+    var th={};
+    agents.forEach(function(a){a.themes.forEach(function(t){
+      if(t.family!=="gap")return;
+      var x=th[t.key]||(th[t.key]={key:t.key,shown:0,scored:0,agents:0});
+      x.shown+=t.shown; x.scored+=t.scored; x.agents++;
+    })});
+    var themes=Object.keys(th).map(function(k){return th[k]}).sort(function(a,b){return b.shown-a.shown}).slice(0,8);
+    var maxShown=themes.length?themes[0].shown:1;
+
+    var kpi=function(lab,val,sub){return '<div class="minikpi"><span class="lab">'+lab+'</span><div class="val num">'+val+'</div><div class="sub" style="font-size:11px">'+(sub||'')+'</div></div>'};
+    var pctCoach=T.sessions?Math.round((T.scored/T.sessions)*100):0;
+
+    var esc=r2b.length
+      ? '<div style="margin-top:12px;padding:10px 12px;border:1px solid #f87171;border-radius:10px">'
+        +'<div style="font-weight:700;color:#f87171">R2B · Repeat Compliance Coaching · Level 1</div>'
+        +'<div class="sub" style="font-size:11.5px;margin:2px 0 6px">The same compliance theme coached '+TH.persistentMin+'+ times. Compliance review with QA within 48 hours.</div>'
+        +r2b.map(function(a){return '<div style="font-size:12.5px"><a class="linky" onclick="openDrawer(\''+a.code+'\')">'+(a.name||a.code)+'</a> · '+window.__coachLabel(a._t.worst.key)+' ×'+a._t.worst.scored+'</div>'}).join('')
+        +'</div>'
+      : '<div class="sub" style="margin-top:12px;font-size:12px">No compliance theme has reached '+TH.persistentMin+' coach-chosen sessions, so R2B is not firing for anyone.</div>';
+
+    var rows=themes.map(function(t){
+      var comp=window.__COACH_COMPLIANCE.indexOf(t.key)>=0;
+      var w=Math.max(3,Math.round(t.shown/maxShown*100));
+      return '<div style="padding:7px 0;border-top:1px solid var(--line,rgba(255,255,255,.08))">'
+        +'<div style="display:flex;gap:8px;align-items:baseline"><span style="flex:1;font-weight:600">'+window.__coachLabel(t.key)
+        +(comp?' <span style="font-size:9px;font-weight:700;color:#f87171;border:1px solid #f87171;border-radius:5px;padding:1px 5px">COMPLIANCE</span>':'')+'</span>'
+        +'<span class="num" style="font-weight:700">'+t.shown+'</span></div>'
+        +'<div style="height:5px;border-radius:3px;background:var(--glass2,rgba(255,255,255,.06));margin-top:4px"><div style="height:5px;border-radius:3px;width:'+w+'%;background:'+(comp?'#f87171':'#60a5fa')+'"></div></div>'
+        +'<div class="sub" style="font-size:11px;margin-top:3px">'+t.agents+' agent'+(t.agents===1?'':'s')+' · '+t.scored+' coach-chosen · '+(t.shown-t.scored)+' inferred</div>'
+      +'</div>';
+    }).join("");
+
+    e.innerHTML=
+      '<div class="cardhead"><div><h3>Coaching Hub</h3><div class="sub">last 90 days · '+(T.sessions||0)+' sessions · only development themes escalate</div></div></div>'
+      +'<div class="grid kpis" style="margin-top:8px">'
+        +kpi('SESSIONS',(T.sessions||0),(T.byType?((T.byType.qa||0)+' QA · '+(T.byType.formal||0)+' formal · '+(T.byType.informal||0)+' informal · '+(T.byType.lead||0)+' lead'):''))
+        +kpi('AGENTS COACHED',agents.length,'of the roster, in the window')
+        +kpi('COACH-CHOSEN',pctCoach+'%',(T.scored||0)+' of '+(T.sessions||0)+' · rest inferred, not scored')
+        +kpi('ESCALATING',(repeat.length+persistent.length),persistent.length+' persistent · '+repeat.length+' repeat')
+      +'</div>'
+      +esc
+      +'<div style="margin-top:14px"><div class="sub" style="font-weight:700;letter-spacing:.4px">MOST COACHED DEVELOPMENT THEMES</div>'+rows+'</div>'
+      +(T.unresolved?'<div class="sub" style="margin-top:10px;font-size:11.5px">'+T.unresolved+' sessions could not be matched to a CB number, so they are counted here but attributed to nobody.</div>':'');
+  })
+  .catch(function(){clearTimeout(timer);var e=document.getElementById("coachHub");if(e)e.innerHTML='<div class="sub">Coaching Hub unavailable right now.</div>';});
+}catch(e){}};
+
 window.__vasCoachHist=function(code){try{
   var el=document.getElementById("vasCoachHist"); if(!el) return;
   var TH=window.__COACH_TH;
@@ -5623,8 +5714,10 @@ window.__vasCoachHist=function(code){try{
       var seen={};
       (s.clusters||[]).forEach(function(c){
         if(seen[c.clusterKey]) return; seen[c.clusterKey]=1;
-        var t=themes[c.clusterKey]||(themes[c.clusterKey]={key:c.clusterKey,family:c.family,scored:0,shown:0,last:""});
+        var t=themes[c.clusterKey]||(themes[c.clusterKey]={key:c.clusterKey,family:c.family,scored:0,shown:0,last:"",sessions:[]});
         t.shown++; if(scored)t.scored++; if(s.date>t.last)t.last=s.date;
+        // keep the sessions behind the count so tapping a theme can show them
+        t.sessions.push({date:s.date,type:s.type,scored:scored,conf:s.clusterConfidence});
       });
     });
     var list=Object.keys(themes).map(function(k){return themes[k]}).sort(function(a,b){return b.scored-a.scored||b.shown-a.shown});
@@ -5656,17 +5749,43 @@ window.__vasCoachHist=function(code){try{
              :inf===t.shown?"inferred from notes"
              :inf?(t.scored+" chosen · "+inf+" inferred")
              :"chosen by the coach";
-      return '<div style="display:flex;align-items:baseline;gap:8px;padding:9px 0;border-top:1px solid var(--line,rgba(255,255,255,.08))">'
-        +'<div style="flex:1;min-width:0">'
-          +'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
-            +'<span style="font-weight:600;color:var(--ink,#e2e8f0)">'+window.__coachLabel(t.key)+'</span>'
-            +(comp?'<span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#f87171;border:1px solid #f87171;border-radius:5px;padding:1px 5px;white-space:nowrap">COMPLIANCE</span>':'')
+      /* Tapping a theme shows the sessions behind the count and what the rules
+         do with them — the number alone does not tell a team leader whether to
+         escalate, or why a theme with four sessions is not being scored. */
+      var det=t.sessions.slice().sort(function(x,y){return x.date<y.date?1:-1}).map(function(s){
+        return '<div style="display:flex;gap:8px;font-size:11.5px;padding:3px 0">'
+          +'<span style="width:58px;flex:none;color:var(--ink3,#94a3b8)">'+shortDate(s.date)+'</span>'
+          +'<span style="flex:1;text-transform:capitalize">'+s.type+'</span>'
+          +'<span style="flex:none;color:'+(s.scored?"#34d399":"var(--ink3,#94a3b8)")+'">'
+            +(s.scored?'counted':'inferred'+(s.conf!=null?' ('+Math.round(s.conf*100)+'%)':''))+'</span>'
+        +'</div>';
+      }).join("");
+      var rule=!tiered
+        ? 'Purpose says why the session was held. Only development themes escalate, so this never moves the score.'
+        : 'Counted once per session. '+TH.repeatMin+' makes it a Repeat (−'+TH.penRepeat+'), '+TH.persistentMin+' makes it Persistent (−'+TH.penPersistent+')'
+          +(comp?'. On a compliance theme, '+TH.persistentMin+' also fires R2B — a Level 1 compliance review within 48 hours':'')
+          +'. Currently '+t.scored+' counted of '+t.shown+'.'
+          +(t.scored<t.shown?' Inferred classifications were read from the notes, not chosen by a coach, so they never score.':'')
+          +(t.scored>=TH.repeatMin?' Next session should be '+(t.scored>=TH.persistentMin?'Formal Coaching with a documented improvement plan':'Formal Coaching')+'.':'');
+      var id='ct_'+t.key.replace(/[^a-z0-9]/gi,'_');
+      return '<div style="border-top:1px solid var(--line,rgba(255,255,255,.08))">'
+        +'<div onclick="window.__coachRow(\''+id+'\')" style="display:flex;align-items:baseline;gap:8px;padding:9px 0;cursor:pointer">'
+          +'<div style="flex:1;min-width:0">'
+            +'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+              +'<span style="font-weight:600;color:var(--ink,#e2e8f0)">'+window.__coachLabel(t.key)+'</span>'
+              +(comp?'<span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#f87171;border:1px solid #f87171;border-radius:5px;padding:1px 5px;white-space:nowrap">COMPLIANCE</span>':'')
+            +'</div>'
+            +'<div style="font-size:11.5px;color:var(--ink3,#94a3b8);margin-top:2px">'
+              +t.shown+(t.shown===1?" session":" sessions")+' · '+why+' · last raised '+shortDate(t.last)
+            +'</div>'
           +'</div>'
-          +'<div style="font-size:11.5px;color:var(--ink3,#94a3b8);margin-top:2px">'
-            +t.shown+(t.shown===1?" session":" sessions")+' · '+why+' · last raised '+shortDate(t.last)
-          +'</div>'
+          +'<span style="flex:none;white-space:nowrap;font-size:11px;font-weight:700;color:'+col+'">'+tl+'</span>'
+          +'<span id="'+id+'_x" style="flex:none;color:var(--ink3,#94a3b8);font-size:11px">▸</span>'
         +'</div>'
-        +'<span style="flex:none;white-space:nowrap;font-size:11px;font-weight:700;color:'+col+'">'+tl+'</span>'
+        +'<div id="'+id+'" style="display:none;padding:2px 0 10px 0">'
+          +'<div class="sub" style="font-size:11px;font-weight:700;letter-spacing:.4px;margin-bottom:2px">SESSIONS</div>'+det
+          +'<div class="sub" style="font-size:11.5px;margin-top:7px;padding-top:7px;border-top:1px solid var(--line,rgba(255,255,255,.08))">'+rule+'</div>'
+        +'</div>'
       +'</div>';
     }).join("");
     var note=pen
