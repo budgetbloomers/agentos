@@ -1,0 +1,497 @@
+/**
+ * THE CAMPAIGN MANAGER — the sales half of the third view.
+ *
+ * The rules here are Chatterbox_CampaignManager.json read as a SPECIFICATION,
+ * not pasted in as source: that file's eight modules run on the prototype's own
+ * AP.* engine over fourteen invented agents. This module computes the same
+ * fourteen measures, the projection, the reconciliation, the nine-rung
+ * diagnosis ladder and the Nikola brief — from the digest PULSE publishes,
+ * which is the only place a campaign number may come from.
+ *
+ * "Not one formula lives here" (spec, rules.sales_kpis): every measure is the
+ * team-leader measure summed over the agents on the campaign. A team is one
+ * team leader AND one campaign — the intersection, never the whole team.
+ *
+ * CONVERSION IS sales / UNIQUE LEADS, never sales per call. PULSE publishes the
+ * lead denominator (`leads`) and the dialler volume (`calls`, `ans`) since
+ * 2026-08-30, so conversion, contact rate, attempts per lead and lead volume are
+ * all computed from the real numbers here. `leads: null` means the Salesforce case
+ * books are not loaded — which is NOT the same as an agent with no leads, so it
+ * stays null and the page says so.
+ *
+ * Two measures remain genuinely unavailable: PITCHES (this suite has no pitch
+ * count — answered calls are contacts, not pitches) and BOTH-CHECKS (an Ops
+ * `twoCheck` concept the digest does not carry). They return null and the page
+ * says "not published yet" — never a zero, because an absence is not a nought
+ * (non-negotiable 6). Do not "fix" a null by inventing a number here.
+ */
+
+const norm = (v) => String(v == null ? '' : v).trim();
+export const campKey = (v) => norm(v).toLowerCase();
+
+/* ---------------------------------------------------------------------------
+   THE RULE BOOK — three rules-table rows, the spec's three workbook tabs.
+   cm:sla         → the SLA targets and the KPI thresholds
+   cm:blockages   → every blockage a team leader can raise, and where it routes
+   cm:assignments → which campaigns each manager runs
+   Defaults are the spec's own values, so the view works before the rows are
+   seeded — but a seeded row always wins (a rule must be READ, not copied).
+   --------------------------------------------------------------------------- */
+export const CM_SLA_DEFAULTS = {
+  p1_mins: 15, p2_mins: 30, p3_mins: 240, p4_mins: 1440,
+  followup_hours: 48, near_breach_pct: 75, repeat_window_days: 30, repeat_min: 2,
+  qa_target: 90, talk_target: 210, att_target: 95, cancel_watch_pct: 10, gwp_ref: 99,
+  /* Conversion is sales / UNIQUE LEADS and its target is the Lead Management tab's
+     own dial (10%), NOT the tenure-group conversion target. The spec's open decision
+     records why that matters: the 40% EXP-Cuddle tenure target made the weighted
+     campaign target read 33.3%, which is a different measure wearing the same name. */
+  conv_target: 10, attempts_low: 3, attempts_high: 5,
+};
+
+export const CM_BLOCKAGES_DEFAULTS = [
+  { key: 'skill',      label: 'Skill or behaviour',             routes_to: 'Coaching Hub',                   owner: 'Team leader → Coaching Hub', restricted: false, baseline_metric: 'conv' },
+  { key: 'knowledge',  label: 'Product or process knowledge',   routes_to: 'Training',                       owner: 'Team leader → Training',     restricted: false, baseline_metric: 'qa' },
+  { key: 'qa',         label: 'QA or compliance',               routes_to: 'QA',                             owner: 'Jared · QA',                 restricted: false, baseline_metric: 'qa' },
+  { key: 'leads',      label: 'Leads or data',                  routes_to: 'Campaign / Data',                owner: 'Campaign team · Ryan',       restricted: false, baseline_metric: 'leads' },
+  { key: 'dialler',    label: 'Dialler',                        routes_to: 'Dialler administration',         owner: 'Aarav · Systems',            restricted: false, baseline_metric: 'calls' },
+  { key: 'crm',        label: 'CRM or system',                  routes_to: 'Technical support',              owner: 'Aarav · Systems',            restricted: false, baseline_metric: 'calls' },
+  { key: 'attendance', label: 'Attendance',                     routes_to: 'Team leader / People Operations', owner: 'Claudell · People',         restricted: false, baseline_metric: 'present' },
+  { key: 'training',   label: 'Training',                       routes_to: 'Training',                       owner: 'Team leader → Training',     restricted: false, baseline_metric: 'qa' },
+  { key: 'payroll',    label: 'Commission or payroll',          routes_to: 'Payroll',                        owner: 'Ryan · Data',                restricted: false, baseline_metric: null },
+  { key: 'personal',   label: 'Personal or private',            routes_to: 'Restricted — People Operations', owner: 'Team leader (private)',      restricted: true,  baseline_metric: null },
+  { key: 'other',      label: 'Other — requires classification', routes_to: 'Campaign manager investigation', owner: 'Team leader',               restricted: false, baseline_metric: 'sales' },
+];
+
+/* Until Nick settles D1 (which campaigns each manager runs), both hold all
+   three VAS campaigns — narrowing later is a row edit, not a code change. */
+export const CM_ASSIGN_DEFAULTS = {
+  dalwin: { name: 'Dalwin Callaghan', campaigns: ['courtesy', 'cuddle', 'nesting'] },
+  ryan:   { name: 'Ryan G',           campaigns: ['courtesy', 'cuddle', 'nesting'] },
+};
+
+/**
+ * Load the campaign-manager context into the isolate: assignments, the SLA/
+ * threshold rules, the blockage table, and the team leaders' own CB codes.
+ * authorise() in portal.mjs reads globalThis.__cmCtx — it must stay a sync
+ * function for its dozen existing callers, so the async load happens once per
+ * request here (cached CACHE_MIN) and the sync read never fetches.
+ *
+ * THE LEADER CODES COME FROM app_users, NOT THE DIGEST. The digest names a
+ * leader (tl: "Renolan Pillay") but does not code them, and the assistance
+ * pipeline is keyed on the leader's CB. app_users is the provisioning record —
+ * a code that decides authorisation must not depend on whoever last had a
+ * browser tab open (the same reasoning as the kv:agent-teams floor).
+ */
+const CACHE_MIN = 5;
+export async function loadCmContext(DB, { force = false } = {}) {
+  const c = globalThis.__cmCtx;
+  if (!force && c && Date.now() - c.t < CACHE_MIN * 60000) return c;
+
+  const keys = ['cm:sla', 'cm:blockages', 'cm:assignments'].map(encodeURIComponent).join(',');
+  const [rules, tls] = await Promise.all([
+    DB.select(`rules?key=in.(${keys})&select=key,value`).catch(() => []),
+    DB.select('app_users?role=eq.team_leader&active=is.true&select=username,full_name,cb,team').catch(() => []),
+  ]);
+  const byKey = {}; for (const r of rules || []) byKey[r.key] = r.value;
+
+  const sla = { ...CM_SLA_DEFAULTS, ...(byKey['cm:sla'] || {}) };
+  const blockages = Array.isArray(byKey['cm:blockages']) && byKey['cm:blockages'].length
+    ? byKey['cm:blockages'] : CM_BLOCKAGES_DEFAULTS;
+  const assign = byKey['cm:assignments'] && typeof byKey['cm:assignments'] === 'object'
+    ? byKey['cm:assignments'] : CM_ASSIGN_DEFAULTS;
+
+  /* team-name → {cb, name}. The team_leader row's `team` column is the exact
+     Agent List spelling the digest's `tl` carries (provisioning writes both). */
+  const leaders = {};
+  for (const t of tls || []) {
+    const team = norm(t.team); if (!team) continue;
+    leaders[team] = { cb: norm(t.cb).toUpperCase(), name: t.full_name || t.username, username: t.username };
+  }
+
+  const ctx = { t: Date.now(), sla, blockages, assign, leaders };
+  globalThis.__cmCtx = ctx;
+  return ctx;
+}
+
+export const blockageOf = (ctx, key) =>
+  (ctx.blockages || []).find((b) => b.key === String(key || '')) || null;
+
+/* ---------------------------------------------------------------------------
+   AGGREGATION. One function, used for a team and for the whole campaign, so
+   the reconciliation rule — "the campaign total must equal the sum of the
+   teams shown, or the screen is lying" — holds by construction AND is asserted.
+   --------------------------------------------------------------------------- */
+function agg(rows, digest) {
+  const n = (v) => (v == null || isNaN(v) ? 0 : Number(v));
+  const o = { agents: rows.length, sales: 0, target: 0, gwp: 0, gwpT: 0, canc: 0,
+    talk: 0, act: 0, emp: 0, fails: 0, ref: 0, qaN: 0, qaSum: 0, productive: 0, noGwp: [],
+    calls: 0, ans: 0, leads: 0, leadsKnown: false };
+  for (const r of rows) {
+    o.sales += n(r.sales); o.target += n(r.target);
+    o.gwp += n(r.gwpEx); o.gwpT += n(r.gwpT); o.canc += n(r.canc);
+    o.talk += n(r.talk); o.act += n(r.act); o.emp += n(r.emp); o.ref += n(r.ref);
+    o.fails += n(r.composite && r.composite.r2a && r.composite.r2a.fails);
+    if (r.qa != null && !isNaN(r.qa)) { o.qaN++; o.qaSum += Number(r.qa); }
+    o.calls += n(r.calls); o.ans += n(r.ans);
+    /* leads is null until the case books are uploaded; one agent with a real count
+       is enough to make the campaign figure meaningful, so track that separately
+       rather than letting nulls read as zeros. */
+    if (r.leads != null) { o.leads += n(r.leads); o.leadsKnown = true; }
+    if (n(r.act) > 0) o.productive++;
+    if (n(r.sales) > 0 && !n(r.gwpEx)) o.noGwp.push(r.name || r.code);
+  }
+  const dd = Number(digest.diallingDays) || 0, wd = Number(digest.workingDays) || 0;
+  o.qa = o.qaN ? o.qaSum / o.qaN : null;                        // mean of agent means
+  o.aveG = o.sales ? o.gwp / o.sales : null;
+  o.att = o.emp ? o.act / o.emp : null;
+  o.talkPerDay = o.act ? o.talk / o.act : null;                 // secs per productive day
+  o.cancRate = (o.sales + o.canc) ? o.canc / (o.sales + o.canc) : null;
+  /* THE LEAD MEASURES. Conversion is the Lead Management rule — sales ÷ unique
+     leads — and every one of these is null rather than zero when its denominator
+     was never supplied. */
+  o.conv = (o.leadsKnown && o.leads) ? o.sales / o.leads : null;
+  o.contactRate = o.calls ? o.ans / o.calls : null;
+  o.attempts = (o.leadsKnown && o.leads) ? o.calls / o.leads : null;
+  o.leadCover = (o.leadsKnown && o.sales) ? o.leads / o.sales : null;
+  /* MTD comparison prorates the full-month target by days worked — the digest's
+     target is the whole month's, and comparing month-to-date sales to it made
+     every team read 40% behind on the 12th. */
+  o.targetMtd = wd ? o.target * Math.min(1, dd / wd) : o.target;
+  o.pct = o.targetMtd ? o.sales / o.targetMtd : null;
+  o.behind = o.pct != null && o.pct < 1;
+  /* Projection: avg GWP per completed dialling day × planned dialling days —
+     MTD only, and diallingDays/workingDays must not be confused: sending days-
+     elapsed as days-planned is the R2,012-a-day bug PULSE already documented. */
+  o.projGwp = dd ? (o.gwp / dd) * wd : null;
+  return o;
+}
+
+/* THE JOIN BETWEEN A REQUEST AND ITS TEAM ROW IS THE CB NUMBER, NOT THE NAME.
+   A card carries the name the team leader's ACCOUNT holds (full_name); the team
+   row is keyed on the name the AGENT LIST holds (the digest's `tl`, which is
+   app_users.team). Those are the same string for all nine team leaders today —
+   which is exactly why joining on them was a bug waiting for somebody to fix a
+   spelling: the register would still list the request, the control table would
+   silently read "0 open", and the ladder would call a blocked team a leadership
+   problem. CB is the identity base (non-negotiable 7), so join on that and keep
+   the name only as the fallback for a card whose CB did not parse. */
+const teamKeyOf = (tl, camp) => campKey(camp) + '|n:' + norm(tl).toLowerCase();
+const teamKeyCb = (cb, camp) => campKey(camp) + '|c:' + String(cb || '').toUpperCase();
+
+/**
+ * The nine-rung diagnosis ladder — walked in order, first match wins. Its job
+ * is to tell a leadership problem from a blockage (spec, rules.control_table).
+ * `as` is that team's assistance summary from assist.mjs (zeros when the
+ * pipeline is unreachable — a missing queue must not paint the floor green,
+ * so an assist error is carried separately and shown on the page).
+ */
+function ladder(t, as, sla) {
+  const qaT = (Number(sla.qa_target) || 90) / 100;
+  const guard = (Number(sla.cancel_watch_pct) || 10) / 100;
+  if (t.agents === 0)
+    return { rag: 'n', state: 'No agents on this campaign', next: 'Confirm the allocation — an empty team is a finding, not an absence.' };
+  if (as.outside > 0)
+    return { rag: 'r', state: 'Blocked — outside SLA', next: 'Start or finish the assistance that is outside SLA.' };
+  if (t.behind && as.open > 0)
+    return { rag: 'r', state: 'Blocked, waiting on me', next: 'Clear ' + (as.openLabels[0] || 'the blockage').toLowerCase() + ' before coaching the number.' };
+  if (t.behind && as.repeats > 0)
+    return { rag: 'r', state: 'Repeat blockage', next: 'Fix the cause — coaching it again will not hold.' };
+  if (t.behind && as.measured > 0 && as.improved < as.measured)
+    return { rag: 'a', state: 'Supported, no change', next: 'Re-diagnose before assisting again.' };
+  if (t.behind)
+    return { rag: 'a', state: 'Behind — leadership action', next: 'Work it with the team leader directly.' };
+  if ((t.qa != null && t.qa < qaT) || (t.cancRate != null && t.cancRate > guard))
+    return { rag: 'a', state: 'Selling with risk', next: 'Review before it reverses.' };
+  if (as.measured > 0 && as.improved === as.measured)
+    return { rag: 'g', state: 'Improved after support', next: 'Record what worked so the next team gets it.' };
+  return { rag: 'g', state: 'On target', next: '' };
+}
+
+/**
+ * The whole campaign-manager overview body. `assist` is assist.mjs's list body
+ * ({requests:[...], kpis:{...}} ) or {error} — the sales half must render even
+ * when HighLevel is down, with the assistance half saying so plainly.
+ */
+export function cmOverviewBody(digest, auth, assist, ctx) {
+  const sla = (ctx && ctx.sla) || CM_SLA_DEFAULTS;
+  const reqs = (assist && !assist.error && assist.requests) || [];
+  const assistErr = assist && assist.error ? String(assist.error) : null;
+
+  /* Per-team assistance summaries, keyed campaign|tl. */
+  const perTeam = {};
+  const teamAs = (k) => perTeam[k] || (perTeam[k] =
+    { open: 0, outside: 0, near: 0, top: null, repeats: 0, openLabels: [], last: '', measured: 0, improved: 0 });
+  for (const r of reqs) {
+    /* filed under BOTH keys, so a team row finds it by whichever it can offer */
+    const s = teamAs(r.cb ? teamKeyCb(r.cb, r.campaign) : teamKeyOf(r.tl, r.campaign));
+    if (!r.closed) {
+      s.open++;
+      if (r.sla && r.sla.state === 'breached') s.outside++;
+      if (r.sla && r.sla.state === 'near') s.near++;
+      if (!s.openLabels.includes(r.blockageLabel)) s.openLabels.push(r.blockageLabel);
+      if (!s.top || r.priority < s.top) s.top = r.priority;      // 'P1' < 'P2' lexically
+    }
+    if (r.repeat) s.repeats++;
+    if (r.sessionEnd && r.sessionEnd > s.last) s.last = r.sessionEnd;
+    if (r.outcome && r.outcome !== 'Not measurable') { s.measured++; if (r.outcome === 'Improved') s.improved++; }
+  }
+
+  const campaigns = [];
+  for (const key of auth.campaigns || []) {
+    const rows = (auth.rows || []).filter((a) => campKey(a.campaign) === key);
+    const label = rows.length ? norm(rows[0].campaign) : key.charAt(0).toUpperCase() + key.slice(1);
+
+    /* teams: one team leader AND one campaign — the intersection. */
+    const byTl = {};
+    for (const a of rows) { const tl = norm(a.tl) || '(no team leader)'; (byTl[tl] = byTl[tl] || []).push(a); }
+    const teams = Object.keys(byTl).sort().map((tl) => {
+      const t = agg(byTl[tl], digest);
+      const leader = (ctx && ctx.leaders && ctx.leaders[tl]) || null;
+      /* CB first, name only when this leader has no account/CB on record */
+      const as = (leader && leader.cb && perTeam[teamKeyCb(leader.cb, label)])
+        || teamAs(teamKeyOf(tl, label));
+      const lad = ladder(t, as, sla);
+      return { tl, cb: leader ? leader.cb : '', team: label + ' · ' + (tl.split(/\s+/)[0] || tl),
+        agents: t.agents, sales: t.sales, target: Math.round(t.targetMtd), targetMonth: t.target,
+        pct: t.pct, gwp: Math.round(t.gwp), aveG: t.aveG, qa: t.qa, canc: t.canc, cancRate: t.cancRate,
+        conv: t.conv, leads: t.leadsKnown ? t.leads : null, contactRate: t.contactRate,
+        att: t.att, talkPerDay: t.talkPerDay, fails: t.fails,
+        open: as.open, top: as.top, outside: as.outside, near: as.near, repeats: as.repeats,
+        lastSession: as.last || null,
+        after: as.measured ? (as.improved === as.measured ? 'Improved' : (as.improved ? 'Mixed' : 'Unchanged')) : null,
+        rag: lad.rag, state: lad.state, next: lad.next,
+        codes: byTl[tl].map((a) => a.code) };
+    });
+
+    const c = agg(rows, digest);
+
+    /* RECONCILIATION — asserted, not assumed, even though both sides sum the
+       same rows. If this ever fires the digest itself is inconsistent, and the
+       page must say so rather than print two different totals. */
+    const tSales = teams.reduce((n, t) => n + t.sales, 0);
+    const tGwp = teams.reduce((n, t) => n + t.gwp, 0);
+    const reconciled = tSales === c.sales && Math.abs(tGwp - Math.round(c.gwp)) <= teams.length; // ±1 rounding per team
+
+    /* The fourteen measures. null = not published yet; never a zero. */
+    const kpis = {
+      sales: { v: c.sales, target: Math.round(c.targetMtd), month: c.target, pct: c.pct },
+      gwp: { v: Math.round(c.gwp), target: Math.round(c.gwpT), projected: c.projGwp == null ? null : Math.round(c.projGwp) },
+      aveG: { v: c.aveG, ref: Number(sla.gwp_ref) || 99 },
+      /* No pitch count exists anywhere in this suite — answered calls are contacts,
+         not pitches — so this stays honestly empty rather than borrowing `ans`. */
+      pitches: null,
+      conv: c.conv == null ? null : { v: c.conv, target: (Number(sla.conv_target) || 10) / 100,
+        leads: c.leads, basis: 'sales \u00f7 unique leads' },
+      talk: { v: c.talkPerDay, targetMin: Number(sla.talk_target) || 210 },
+      attempts: c.attempts == null ? null : { v: c.attempts,
+        low: Number(sla.attempts_low) || 3, high: Number(sla.attempts_high) || 5 },
+      contactRate: c.contactRate == null ? null : { v: c.contactRate, contacts: c.ans, dials: c.calls },
+      leads: c.leadsKnown ? { v: c.leads, cover: c.leadCover } : null,
+      qa: { v: c.qa, target: (Number(sla.qa_target) || 90) / 100 },
+      checks: null,
+      crit: { fails: c.fails, p1Open: reqs.filter((r) => !r.closed && r.priority === 'P1' && campKey(r.campaign) === key).length },
+      canc: { v: c.canc, rate: c.cancRate, guard: (Number(sla.cancel_watch_pct) || 10) / 100 },
+      att: { v: c.att, target: (Number(sla.att_target) || 95) / 100, productive: c.productive, agents: c.agents },
+    };
+
+    const projection = c.projGwp == null ? null : {
+      perDay: Math.round(c.gwp / (Number(digest.diallingDays) || 1)),
+      diallingDays: digest.diallingDays, workingDays: digest.workingDays,
+      result: Math.round(c.projGwp),
+    };
+
+    const unattributed = {
+      agents: c.noGwp,
+      notCovered: (digest.notCovered || []).filter((n) => campKey(n.campaign) === key).map((n) => n.name),
+    };
+
+    campaigns.push({ key, label, agents: rows.length, teamLeaders: teams.length,
+      /* the expanded team roster prints NAMES; without this the page fell back
+         to printing bare CB codes at a manager who wanted to see people */
+      agentIndex: rows.map((a) => ({ code: a.code, name: a.name })),
+      teams, kpis, projection, unattributed, reconciled,
+      brief: cmBrief({ key, label, c, teams }, reqs, ctx) });
+  }
+
+  /* ---- ALL CAMPAIGNS, as one more entry -------------------------------------
+     A manager holding more than one campaign still runs ONE floor, and the
+     question "who are all my team leaders and how are they doing" has no answer
+     on a page that can only show one campaign at a time.
+
+     It is built HERE, from the same agent rows, for the same reason every other
+     figure is: the page computes nothing. Summing the per-campaign KPIs on the
+     client would be wrong anyway — an average of averages is not an average, and
+     a percentage of percentages is not a percentage.
+
+     The teams are CONCATENATED, not merged: a team is one leader AND one campaign
+     (the spec's intersection rule), so a leader running two campaigns is two rows
+     here exactly as they are two rows there. Renolan on Cuddle and Renolan on
+     Nesting are different teams with different rosters and different numbers. */
+  if (campaigns.length > 1) {
+    const rows = auth.rows || [];
+    const c = agg(rows, digest);
+    const teams = campaigns.flatMap((x) => x.teams);
+    const tSales = teams.reduce((n, t) => n + t.sales, 0);
+    const tGwp = teams.reduce((n, t) => n + t.gwp, 0);
+    const leadRows = rows.filter((r) => r.leads != null);
+    campaigns.unshift({
+      key: 'all',
+      label: 'All campaigns',
+      agents: rows.length,
+      teamLeaders: teams.length,
+      /* how many PEOPLE, as distinct from how many team rows */
+      leaders: [...new Set(teams.map((t) => t.tl))].length,
+      agentIndex: rows.map((a) => ({ code: a.code, name: a.name })),
+      teams,
+      kpis: {
+        sales: { v: c.sales, target: Math.round(c.targetMtd), month: c.target, pct: c.pct },
+        gwp: { v: Math.round(c.gwp), target: Math.round(c.gwpT), projected: c.projGwp == null ? null : Math.round(c.projGwp) },
+        aveG: { v: c.aveG, ref: Number(sla.gwp_ref) || 99 },
+        pitches: null,
+        conv: c.conv == null ? null : { v: c.conv, target: (Number(sla.conv_target) || 10) / 100,
+          leads: c.leads, basis: 'sales \u00f7 unique leads' },
+        talk: { v: c.talkPerDay, targetMin: Number(sla.talk_target) || 210 },
+        attempts: c.attempts == null ? null : { v: c.attempts,
+          low: Number(sla.attempts_low) || 3, high: Number(sla.attempts_high) || 5 },
+        contactRate: c.contactRate == null ? null : { v: c.contactRate, contacts: c.ans, dials: c.calls },
+        leads: c.leadsKnown ? { v: c.leads, cover: c.leadCover } : null,
+        qa: { v: c.qa, target: (Number(sla.qa_target) || 90) / 100 },
+        checks: null,
+        crit: { fails: c.fails, p1Open: reqs.filter((r) => !r.closed && r.priority === 'P1').length },
+        canc: { v: c.canc, rate: c.cancRate, guard: (Number(sla.cancel_watch_pct) || 10) / 100 },
+        att: { v: c.att, target: (Number(sla.att_target) || 95) / 100, productive: c.productive, agents: c.agents },
+      },
+      projection: c.projGwp == null ? null : {
+        perDay: Math.round(c.gwp / (Number(digest.diallingDays) || 1)),
+        diallingDays: digest.diallingDays, workingDays: digest.workingDays,
+        result: Math.round(c.projGwp),
+      },
+      unattributed: {
+        agents: c.noGwp,
+        notCovered: campaigns.flatMap((x) => x.unattributed.notCovered),
+      },
+      reconciled: tSales === c.sales && Math.abs(tGwp - Math.round(c.gwp)) <= teams.length,
+      brief: cmBrief({ key: 'all', label: 'All campaigns', c, teams }, reqs, ctx),
+    });
+  }
+
+  /* Freshness — the language rule is absolute: manually uploaded information is
+     never described as live. "Latest operational position", never "real time". */
+  const age = digest.updatedAt ? (Date.now() - Date.parse(digest.updatedAt)) / 3600000 : null;
+  const freshness = {
+    updatedAt: digest.updatedAt || null,
+    ageHours: age == null ? null : Math.round(age * 10) / 10,
+    label: age == null ? 'No upload loaded'
+      : age < 6 ? 'Latest operational position' : age < 26 ? 'Last uploaded earlier today' : 'Waiting on new data',
+    stale: age != null && age >= 26,
+  };
+
+  return { campaigns, freshness, sla,
+    blockages: (ctx && ctx.blockages) || CM_BLOCKAGES_DEFAULTS,
+    assistError: assistErr,
+    notPublished: ['pitches', 'checks'] };
+}
+
+/* ---------------------------------------------------------------------------
+   NIKOLA — deterministic. The rules decide what matters, the owner and the
+   deadline; this only orders and words it. Never a decision about a person;
+   every action names a human owner. Three signals, at most three actions.
+   --------------------------------------------------------------------------- */
+function cmBrief(camp, reqs, ctx) {
+  const { c, teams, label, key } = camp;
+  const mine = reqs.filter((r) => campKey(r.campaign) === key);
+  const open = mine.filter((r) => !r.closed);
+  const outside = open.filter((r) => r.sla && r.sla.state === 'breached');
+  const near = open.filter((r) => r.sla && r.sla.state === 'near');
+
+  const gap = Math.max(0, Math.round(c.targetMtd - c.sales));
+  const pctStr = c.pct == null ? null : Math.round(c.pct * 100) + '% of target';
+  const worst = teams.filter((t) => t.agents > 0).slice().sort((a, b) => (a.pct == null ? 1 : a.pct) - (b.pct == null ? 1 : b.pct))[0] || null;
+  const worstOpen = worst ? open.filter((r) => norm(r.tl) === worst.tl) : [];
+
+  const signals = [
+    gap > 0 && pctStr ? 'Sales are ' + gap + ' behind the month-to-date target (' + pctStr + ').'
+      : 'Sales are at or past the month-to-date target' + (pctStr ? ' (' + pctStr + ')' : '') + '.',
+    (outside.length + near.length) + ' assistance request' + (outside.length + near.length === 1 ? ' is' : 's are') + ' outside or close to SLA.',
+    !worst ? 'No teams on this campaign yet.'
+      : (worst.pct != null && worst.pct < 1)
+        ? (worst.team + ' is the largest single sales gap at ' + Math.round(worst.pct * 100) + '% of target'
+          + (worstOpen.length ? ' and is blocked on ' + worstOpen[0].blockageLabel.toLowerCase() : ' with no blockage raised') + '.')
+        : 'No team on this campaign is behind its month-to-date target.',
+  ];
+
+  /* Action ladder (spec, rules.nikola.action_priority) — at most three. */
+  const actions = [];
+  const ownerOf = (bk) => { const b = blockageOf(ctx || { blockages: CM_BLOCKAGES_DEFAULTS }, bk); return b ? b.owner : 'Campaign manager'; };
+  for (const r of outside.slice(0, 2)) actions.push({
+    what: 'Start assistance on ' + r.blockageLabel.toLowerCase() + ' for ' + r.team,
+    why: 'Outside its ' + r.sla.target + '-minute SLA by ' + r.sla.over + ' minutes',
+    owner: r.owner || ownerOf(r.blockage), due: 'Now — already ' + r.sla.over + ' minutes over',
+    priority: r.priority, links_to: { kind: 'req', id: r.id } });
+  for (const r of near) { if (actions.length >= 3) break; actions.push({
+    what: 'Start assistance on ' + r.blockageLabel.toLowerCase() + ' for ' + r.team,
+    why: 'Inside SLA with ' + r.sla.left + ' minutes left',
+    owner: r.owner || ownerOf(r.blockage), due: r.sla.left + ' minutes',
+    priority: r.priority, links_to: { kind: 'req', id: r.id } }); }
+  if (actions.length < 3 && worst && worst.behind !== false && worst.pct != null && worst.pct < 1 && !worstOpen.length) actions.push({
+    what: 'Work the sales gap on ' + worst.team + ' with ' + worst.tl.split(/\s+/)[0],
+    why: 'Largest gap on the campaign with no assistance request open — a leadership conversation, not a blockage',
+    owner: 'Campaign manager', due: 'Today', priority: 'P3', links_to: { kind: 'team', id: worst.tl } });
+  if (actions.length < 3) {
+    const rep = open.find((r) => r.repeat);
+    if (rep) actions.push({
+      what: 'Fix the cause of ' + rep.blockageLabel.toLowerCase() + ' on ' + rep.team,
+      why: 'The same blockage has come back inside 30 days — fixing the case again will not stop it',
+      owner: rep.owner || ownerOf(rep.blockage), due: 'This week', priority: 'P3', links_to: { kind: 'team', id: rep.tl } });
+  }
+  if (actions.length < 3) {
+    const risk = teams.find((t) => t.rag === 'a' && t.state === 'Selling with risk');
+    if (risk) actions.push({
+      what: 'Review quality and cancellations on ' + risk.team,
+      why: 'At target but creating quality or cancellation risk',
+      owner: 'Campaign manager', due: 'This week', priority: 'P4', links_to: { kind: 'team', id: risk.tl } });
+  }
+  return { signals, actions: actions.slice(0, 3) };
+}
+
+/* ---------------------------------------------------------------------------
+   THE EOD PACK — export_eod. Plain markdown a manager pastes into the evening
+   thread. Composed from the same body the screen renders, so it cannot say
+   something the screen does not.
+   --------------------------------------------------------------------------- */
+export function eodMarkdown(body, assist, who) {
+  const L = [];
+  const day = new Date().toISOString().slice(0, 10);
+  L.push('# Campaign end-of-day — ' + day, '', '_' + (who || 'Campaign Manager') + ' · '
+    + body.freshness.label + (body.freshness.updatedAt ? ' · data last uploaded ' + body.freshness.updatedAt.slice(0, 16).replace('T', ' ') : '') + '_', '');
+  for (const c of body.campaigns) {
+    const k = c.kpis;
+    L.push('## ' + c.label, '',
+      '- Sales: **' + k.sales.v + ' of ' + k.sales.target + '** month-to-date target'
+        + (k.sales.pct != null ? ' (' + Math.round(k.sales.pct * 100) + '%)' : ''),
+      '- GWP: **R' + (k.gwp.v || 0).toLocaleString('en-ZA') + '**'
+        + (k.gwp.projected != null ? ' · projected R' + k.gwp.projected.toLocaleString('en-ZA') + ' by month end' : ''),
+      '- QA: ' + (k.qa.v == null ? 'not measured' : Math.round(k.qa.v * 100) + '%')
+        + ' · Attendance: ' + (k.att.v == null ? 'not measured' : Math.round(k.att.v * 100) + '%'),
+      '');
+    L.push('| Team | Sales / target | GWP | Open | Status | Next action |', '|---|---|---|---|---|---|');
+    for (const t of c.teams) L.push('| ' + t.team + ' | ' + t.sales + ' / ' + t.target + ' | R'
+      + t.gwp.toLocaleString('en-ZA') + ' | ' + (t.open || 0) + (t.top ? ' (' + t.top + ')' : '') + ' | '
+      + t.state + ' | ' + (t.next || '—') + ' |');
+    L.push('');
+    if (c.brief.actions.length) {
+      L.push('**Next actions**');
+      c.brief.actions.forEach((a, i) => L.push((i + 1) + '. ' + a.what + ' — ' + a.why + '. Owner: ' + a.owner + '. Due: ' + a.due + '.'));
+      L.push('');
+    }
+  }
+  if (assist && assist.kpis) {
+    const a = assist.kpis;
+    L.push('## Assistance', '',
+      '- ' + a.received + ' received · ' + a.open + ' open · ' + a.withinSla + ' answered inside SLA'
+        + (a.answered ? ' (' + Math.round((a.slaPct || 0)) + '% of answered)' : ''),
+      '- Follow-ups due: ' + a.followUpsDue + ' · overdue: ' + a.followUpsOverdue,
+      '');
+  }
+  return L.join('\n');
+}

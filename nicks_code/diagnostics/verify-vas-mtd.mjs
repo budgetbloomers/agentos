@@ -89,7 +89,10 @@ await page.evaluate(()=>go('data'));
 await page.waitForFunction(()=>document.querySelectorAll('.slot[data-slot]').length>0,null,{timeout:15000});
 const slots = await page.evaluate(()=>[...document.querySelectorAll('.slot[data-slot]')].map(e=>e.dataset.slot));
 console.log('slots:', JSON.stringify(slots));
-ok('Open Cases slot removed', !slots.includes('opencases'), slots.join(','));
+/* Lead Allocation was REMOVED 2026-08-27 (Nick): its Open Cases slot must be gone, while
+   Lead Management keeps its own Open + Closed Cases slots. */
+ok('Lead Allocation — Open Cases slot removed; Lead Management keeps its own Open + Closed',
+   !slots.includes('opencases') && slots.includes('opencasesLM') && slots.includes('closedcases'), slots.join(','));
 ok('Tracker Workbook slot removed', !slots.includes('trackerDaily'), slots.join(','));
 ok('Cancellations slot added', slots.includes('inactive'), slots.join(','));
 ok('ViciDial slot added', slots.includes('vici'), slots.join(','));

@@ -50,7 +50,11 @@ const r = await page.evaluate(async () => {
   window.__mtd.state().__probe = 'current-state-marker';
   save();
   const afterLocal = localStorage.getItem(KEY);
-  await new Promise(res => realTimeout(res, 300));   // immediate push path (0ms), not the 1500ms debounce
+  /* The overflow push is DEBOUNCED, not immediate. It used to collapse to 0ms and this waited
+     300ms; the debounce was deliberately restored to 600ms (a burst of edits must not become a
+     burst of multi-MB uploads), and the wait was never moved — so this test has been reporting
+     a missing push ever since, for a push that simply had not fired yet. Wait past 600ms. */
+  await new Promise(res => realTimeout(res, 1000));
 
   Storage.prototype.setItem = realSet;
   window.__cloudPush = realPush;

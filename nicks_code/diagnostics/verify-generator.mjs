@@ -66,13 +66,17 @@ console.log('generated:', dl.suggestedFilename());
 
 const G = XLSX.read(fs.readFileSync(out),{type:'buffer',cellDates:true});
 console.log('sheets:', JSON.stringify(G.SheetNames));
-/* Back to the reference workbook's own eight sheets. Nesting briefly had its own WTD and MTD
-   sheet (spec §7 treats its absence as a coverage gap); Nick's instruction on 2026-08-09 was
-   to report Cuddle and Courtesy only, and the sheet list follows MTD_RULES.reportedCampaigns.
-   The agents are not lost in silence — the engine tallies them and the Rule checks panel names
-   them with the sales they take with them. */
-const want=['Pivot Table','August','WTD - Cuddle','WTD - Courtesy','MTD - Cuddle','MTD - Courtesy','Team Split','TL MTD'];
-ok('all 8 sheets, in the workbook\'s order', JSON.stringify(G.SheetNames)===JSON.stringify(want), JSON.stringify(G.SheetNames));
+/* The sheet list follows MTD_RULES.reportedCampaigns — one WTD and one MTD sheet per
+   reported campaign, in rule-book order. DERIVED here rather than hardcoded, because the
+   list has moved twice (Nesting out on 2026-08-09, back in when it became a reported
+   campaign) and a frozen copy just re-fails on every policy change without catching a bug. */
+const reported = await page.evaluate(() => (window.__mtd.rules().reportedCampaigns) || ['Cuddle', 'Courtesy']);
+const want=['Pivot Table','August',
+  ...reported.map(c=>'WTD - '+c),
+  ...reported.map(c=>'MTD - '+c),
+  'Team Split','TL MTD'];
+ok(`all ${want.length} sheets (2 + WTD/MTD per reported campaign), in the workbook's order`,
+  JSON.stringify(G.SheetNames)===JSON.stringify(want), JSON.stringify(G.SheetNames)+' vs '+JSON.stringify(want));
 
 // headers must match the template
 // find the header row by content, not position: the template carries extra banner rows

@@ -1,0 +1,7 @@
+[2026-08-25T03:04:18.061Z] GET https://chatterbox-agentos.pages.dev/agent/ → pending (?ms, ?B)
+[2026-08-25T03:04:20.912Z] GET https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap → pending (?ms, ?B)
+[2026-08-25T03:04:21.192Z] GET https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2 → 200 (338ms, 48807B)
+[2026-08-25T03:04:30.061Z] POST https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/login → 200 (887ms, 519B)
+[2026-08-25T03:04:30.952Z] GET https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/portal/overview → pending (?ms, ?B)
+[2026-08-25T03:04:35.942Z] GET https://chatterbox-agentos.pages.dev/build.txt?x=1787627075939 → pending (?ms, ?B)
+[2026-08-25T03:04:41.941Z] GET https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/portal/hub/coaching → pending (?ms, ?B)

@@ -203,7 +203,11 @@ ok('Month 1 gives Leader Bravo none of them',
 ok('Month 1 team totals are Alpha 130 / Bravo 20',
    tl(m1,TLA)===130 && tl(m1,TLB)===20, `Alpha ${tl(m1,TLA)} Bravo ${tl(m1,TLB)}`);
 ok('the mover\'s Month 1 row names Leader Alpha', m1.rowTL[MOVER.code]===TLA, `got ${m1.rowTL[MOVER.code]}`);
-ok('Month 1 GWP is 150 sales at R99', m1.gwp===150*GWP_PER_SALE, `got ${m1.gwp}`);
+/* GWP displays EX-VAT since 2026-08-18 (the agent comms basis), so 150 sales at the R99
+   inclusive price read as their charge total. Tolerance covers rounding once over the set. */
+ok('Month 1 GWP is 150 sales at R99 (shown ex-VAT)',
+   Math.abs(Math.round(m1.gwp*1.15) - 150*GWP_PER_SALE) <= 2,
+   `got ${m1.gwp} ex -> ${Math.round(m1.gwp*1.15)} incl, want ${150*GWP_PER_SALE}`);
 
 /* ======================= MONTH 2 — THE MOVE ============================= */
 console.log('\n— Month 2: the mover joins Bravo, and Month 1 must not notice —');
@@ -290,9 +294,10 @@ ok('an overlapping date range adds only genuinely new records',
 
 await upload([F.biM3corrected]);
 const corrected=await report(M3);
+/* the correction adds R101 inclusive, which is R88 on the ex-VAT display basis */
 ok('a corrected record UPDATES its own version rather than joining it',
-   corrected.sales===before.sales && corrected.gwp===before.gwp+101,
-   `sales ${before.sales}->${corrected.sales}, gwp ${before.gwp}->${corrected.gwp} (expected +101)`);
+   corrected.sales===before.sales && Math.abs((corrected.gwp-before.gwp)*1.15 - 101) <= 2,
+   `sales ${before.sales}->${corrected.sales}, gwp delta ${corrected.gwp-before.gwp} ex ~ ${Math.round((corrected.gwp-before.gwp)*1.15)} incl, expected +101`);
 
 await upload([F.qaM3partial]);
 const qaPartial=await report(M3);
@@ -331,8 +336,10 @@ ok('loading the months backwards gives Month 3 the same answer',
 /* The override exists for a list loaded late. It must apply to that one file and then clear:
    left armed it would back-date every list after it, so a real reorganisation weeks later
    would be filed against a date in the past — this mechanism failing through its own control.
-   The move itself is dated 20 August, after all of month 3's activity, so month 3 must stay
-   with the old leader entirely: a change applies FORWARD, never to the days already worked. */
+   The move itself is dated 20 August. THE LIST WINS ITS WHOLE MONTH (Nick, 2026-08-27,
+   recordOrgList): the new leader owns ALL of August — the segment lands on the month
+   boundary, and the days already worked in August re-read under the new leader. Months
+   before August stay exactly as they were worked. */
 console.log('\n— A move dated mid-month, and the one-shot override —');
 await page.evaluate(()=>window.__mtd.setRosterAsOf('2026-08-20'));
 await upload([F.rosterLate]);
@@ -340,11 +347,11 @@ const late=await report(M3);
 ok('the "effective from" override clears itself after the upload it was set for',
    !(await page.evaluate(()=>window.__mtd.state().settings.rosterAsOf)),
    await page.evaluate(()=>window.__mtd.state().settings.rosterAsOf));
-ok('the late move is recorded on the date it was given',
-   (late.orgHist[STAYA.code]||[]).length===2 && late.orgHist[STAYA.code][1].d==='2026-08-20',
+ok('the late move lands on ITS month\'s boundary — the list wins the whole month',
+   (late.orgHist[STAYA.code]||[]).length===2 && late.orgHist[STAYA.code][1].d==='2026-08-01',
    JSON.stringify(late.orgHist[STAYA.code]));
-ok('a move dated after the month\'s activity leaves that whole month with the old leader',
-   agentUnder(late,STAYA.code,TLA)===26 && agentUnder(late,STAYA.code,TLB)===0,
+ok('a move dated inside a month gives that WHOLE month to the new leader',
+   agentUnder(late,STAYA.code,TLB)===26 && agentUnder(late,STAYA.code,TLA)===0,
    `Alpha ${agentUnder(late,STAYA.code,TLA)} Bravo ${agentUnder(late,STAYA.code,TLB)}`);
 ok('and Month 1 is still untouched by any of it',
    agentUnder(await report(M1),MOVER.code,TLA)===100);

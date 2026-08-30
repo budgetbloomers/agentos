@@ -14,7 +14,7 @@ Ship `site/` to Cloudflare Pages. The deployable `site/index.html` is GENERATED 
    - `site/index.html` exists, contains the shim marker `cbx-storage-shim`, and `site/_headers` is present (CSP allowing cdnjs + inline).
    - Run `.claude/hooks/dashboard-guard.js` logic mentally-free: `echo '{"tool_input":{"file_path":"site/index.html"}}' | node .claude/hooks/dashboard-guard.js` — exit 0 required.
    - Grep confirms PII masking defaults ON (`unmasked:false` in state).
-   - **Access check**: ask the user to confirm Cloudflare Access (Zero Trust) is configured in front of the project domain — the app has NO auth and carries agent PII + campaign economics. First-ever deploy: walk them through it (Cloudflare dash → Zero Trust → Access → Applications → Add self-hosted app → domain = the Pages URL → policy = allow company emails). Do not skip this for a production deploy with real data.
+   - **Access check**: ask the user to confirm Cloudflare Access (Zero Trust) is configured in front of the project domain — the app has its own login (worker/src/auth.mjs + site/auth-gate.js); Cloudflare Access has never been enabled on the account, so that login is the only lock. First-ever deploy: walk them through it (Cloudflare dash → Zero Trust → Access → Applications → Add self-hosted app → domain = the Pages URL → policy = allow company emails). Do not skip this for a production deploy with real data.
 3. **Deploy**:
    - Preview (default): `npx wrangler pages deploy site --project-name chatterbox-agentos --branch preview`
    - Production (only if the user said "prod"/"production"): `npx wrangler pages deploy site --project-name chatterbox-agentos`

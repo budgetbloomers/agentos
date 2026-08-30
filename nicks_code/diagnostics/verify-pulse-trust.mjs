@@ -86,7 +86,9 @@ ok('CallX call records loaded (calls, not ViciDial)', has(/^calls \|/) || has(/^
 ok('ViciDial call report loaded per-call', has(/^calls \(ViciDial\)/));
 ok('attendance loaded', has(/^attendance/) && snap.attDays > 0, 'attDays=' + snap.attDays);
 ok('evaluations loaded', has(/^evals/));
-ok('Open Cases refused as Ops file (ignored, NOT stored)', !snap.opencases, 'S.opencases=' + snap.opencases);
+// Lead Allocation was REMOVED 2026-08-27 (page, slot and book): a plain SF Open Cases file
+// is refused now, so nothing may land in the retired S.opencases store.
+ok('plain Open Cases refused — the retired Lead Allocation book stays empty', !snap.opencases, 'S.opencases=' + snap.opencases);
 ok('sales days present from BI', snap.salesDays > 0, 'salesDays=' + snap.salesDays);
 ok('referrals loaded from HighLevel pull (55+ agents, 1500+ referrals)', !!snap.refs && snap.refs.agents >= 55 && snap.refs.total >= 1500, JSON.stringify(snap.refs));
 // MTD referrals column reads the upload (V16 turns from warn to pass)

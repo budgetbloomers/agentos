@@ -344,6 +344,7 @@ function viciRows(rows, src) {
       user: extractCB(String(cellv(r, hm, 'user') || '')) || normCB(cellv(r, hm, 'user')), // extractCB strips zero-padding: CB016 ≡ CB16
       user_raw: String(cellv(r, hm, 'user') || '').trim(),
       full_name: String(cellv(r, hm, 'full_name') || '').trim(),
+      grp: String(cellv(r, hm, 'user_group') || '').trim(),
       len: parseNum(cellv(r, hm, 'length_in_sec')) || 0, list: cellv(r, hm, 'list_name'), _row: i + 1, _src: src,
     };
     const key = rec.dt + '|' + rec.user_raw + '|' + rec.lead_id + '|' + status;   // rule-book record key
@@ -369,6 +370,22 @@ const VICI_TXT = NAMES.viciTxt ? viciRows(parseTSV(fs.readFileSync(rawPath(NAMES
 const viciDupes = VICI.stats.dupes;
 const viciKeys = new Set(VICI.map(v => v.dt + '|' + v.user_raw + '|' + v.lead_id + '|' + v.status));
 const viciOverlap = VICI_TXT.filter(v => viciKeys.has(v.dt + '|' + v.user_raw + '|' + v.lead_id + '|' + v.status)).length;
+/* CUDDLE-FLOOR COVERAGE. A ViciDial export is user-group filtered at pull time; both real
+   pulls to date carried the VT/digital/Nesting groups and not one Cuddle agent, so Cuddle
+   talk read blank in PULSE and the Variance Report skipped its DV03 checks. Caught here at
+   intake, before the upload "succeeds": if the day's Vici files hold no Cuddle-floor row,
+   name the groups that WERE in the pull so the wrong tick-boxes are visible immediately.
+   Courtesy is deliberately not checked the same way — it dials on CallX (call_records.csv). */
+{
+  const cuddleCbs = new Set([...roster.values()].filter(a => /cuddle/i.test(String(a.campaign || ''))).map(a => a.cb_norm));
+  const viciAll = [...VICI, ...VICI_TXT];
+  if (cuddleCbs.size && viciAll.length && !viciAll.some(v => v.cb && cuddleCbs.has(v.cb))) {
+    const grps = [...new Set(viciAll.map(v => v.grp).filter(Boolean))].sort();
+    finding('HIGH', 'VICI',
+      `No Cuddle-floor row in any ViciDial export (${[NAMES.vici, NAMES.viciTxt].filter(Boolean).join(', ')}) — the pull's user-group filter excludes the Cuddle floor (groups present: ${grps.join(', ') || 'none recorded'}). ` +
+      `Re-pull EXPORT_CALL_REPORT with the Cuddle user groups ticked (or all groups): Cuddle then gets day-level talk, MTD coverage and Variance DV03 checks, exactly like Courtesy.`);
+  }
+}
 const isOptIn = d => /insurance opt/i.test(d) && !/no insurance/i.test(d);
 const isSaleDisp = d => /^sale\b|^vas sale\b/i.test(String(d).trim());
 

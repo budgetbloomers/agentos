@@ -64,10 +64,18 @@ ok('as-at caps where the period ends', cut.range.to === '2026-08-04', JSON.strin
 ok('as-at does NOT move where it starts', cut.range.from === '2026-08-01', JSON.stringify(cut.range));
 ok('as-at drops the days after it', cut.days === 3, `dialling days ${cut.days}`);
 
-// the row from the screenshot, against the hand-built workbook
+/* The row from the screenshot, against the hand-built workbook. The workbook's money columns
+   are VAT-INCLUSIVE; the app displays GWP EX-VAT since 2026-08-18 (the agent comms basis), so
+   the two money figures are compared after grossing the app's back up. ±1 covers the
+   re-rounding; every other column stays exact. */
 const WB = { emp: 2, act: 2, target: 8, sales: 4, spd: 2, canc: 0, gwpT: 712, gwp: 416 };
-for (const [k, want] of Object.entries(WB))
-  ok(`Cohen Govender ${k} matches the workbook`, Math.abs((cut[k] ?? NaN) - want) < 0.005, `wb=${want} app=${cut[k]}`);
+const MONEY = new Set(['gwpT', 'gwp']);
+for (const [k, want] of Object.entries(WB)) {
+  const got = cut[k] ?? NaN;
+  const cmp = MONEY.has(k) ? Math.round(got * 1.15) : got;
+  ok(`Cohen Govender ${k} matches the workbook`, Math.abs(cmp - want) <= (MONEY.has(k) ? 1 : 0.005),
+    `wb=${want} app=${got}${MONEY.has(k) ? ' ex → ' + cmp + ' incl' : ''}`);
+}
 
 await page.evaluate(() => go('mtd'));
 await page.waitForTimeout(700);

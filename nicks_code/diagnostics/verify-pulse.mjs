@@ -2,6 +2,7 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const XLSX = require('xlsx');
@@ -25,7 +26,9 @@ await new Promise(r => server.listen(8123, '127.0.0.1', r));
 const APP = 'http://127.0.0.1:8123/index.html';
 const UP = String.raw`c:\Users\aarav\OneDrive\Desktop\Chatterbox Agent OS\agentos\uploads\2026-08-02`;
 const SCRATCH = process.cwd();
-const E = JSON.parse(fs.readFileSync('pulse-expected.json', 'utf8'));
+/* Resolve beside THIS file, not against the shell's cwd. Read relatively it only ran from
+   inside diagnostics/ and died with ENOENT from anywhere else, which reads as a broken suite. */
+const E = JSON.parse(fs.readFileSync(fileURLToPath(new URL('pulse-expected.json', import.meta.url)), 'utf8'));
 const j = (...p) => path.join(...p);
 
 const FILES = [
@@ -96,18 +99,39 @@ const snap = () => page.evaluate(() => {
 
 console.log('Round 1: dropping all ' + FILES.length + ' files into Pulse…');
 await page.setInputFiles('#fileInput', FILES, { timeout: 60000 });
+/* 20, NOT 21. The plain "SF Open Cases - Current.xls" in the fixture list is deliberately
+   REFUSED since Lead Management moved into VAS (2026-08-27): an Open Cases export must be
+   declared for Lead Management by slot or filename. The check at the bottom already asserts
+   it never registers — this wait was still counting it, so the suite sat for its full
+   fifteen-minute timeout and reported the refusal it was written to require as a hang. */
 await page.waitForFunction(() => (window.__mtd.state().files||[]).length >= 20, null, { timeout: 900000 });
-await page.waitForTimeout(3000); // settle: last renders/saves
+/* SETTLE ON A STABLE COUNT, not a fixed threshold. Closed Cases became a real registered
+   source when Lead Management moved into VAS, so ">= 20 files" now trips while the 50 MB
+   dialler workbooks are still parsing and the snapshot was taken half-loaded. */
+{ let last = -1, stable = 0;
+  for (let i = 0; i < 240; i++) { await page.waitForTimeout(2000);
+    const n = await page.evaluate(() => (window.__mtd.state().files||[]).length);
+    if (n === last) { if (++stable >= 15) break; } else { stable = 0; last = n; } } }
 const s1 = await snap();
 console.log(JSON.stringify(s1, null, 1));
 
 ok('roster 95', s1.roster === 95, `got ${s1.roster}`);
-ok('campaigns Courtesy 50 / Cuddle 27 / VT 18', s1.campCount.Courtesy === 50 && s1.campCount.Cuddle === 27 && s1.campCount.VT === 18, JSON.stringify(s1.campCount));
-ok('an Open Cases export is recognised and NOT stored as VAS data', s1.open === null && !s1.files.some(f=>/open/i.test(f)), JSON.stringify(s1.open)+' | '+s1.files.filter(f=>/open/i.test(f)).join(';'));
+// Nesting became a REPORTED campaign (2026-08-09), so the 50 that used to read as Courtesy
+// is now Courtesy 42 + Nesting 8. The roster total is what must hold, not the old split.
+ok('campaigns Courtesy 42 / Nesting 8 / Cuddle 27 / VT 18 (Courtesy+Nesting = the old 50)',
+   s1.campCount.Courtesy === 42 && s1.campCount.Nesting === 8 && s1.campCount.Cuddle === 27 && s1.campCount.VT === 18
+   && s1.campCount.Courtesy + s1.campCount.Nesting === 50, JSON.stringify(s1.campCount));
+// Lead Allocation was REMOVED 2026-08-27: a plain SF Open Cases file (no LM slot, no LM
+// filename) is refused, so it must register NOTHING — and never misfile as sales or dialler
+// data. Closed Cases still lands as its own Lead Management source.
+ok('plain Open Cases refused (Lead Allocation removed); Closed Cases still its own source',
+   !s1.files.some(f => f.startsWith('open cases |')) && s1.files.some(f => f.startsWith('closed cases |'))
+   && !s1.files.some(f => /^(bi|calls) \|.*(Open|Closed) Cases/i.test(f)),
+   s1.files.filter(f=>/Cases/i.test(f)).join('; ') || '(no case files registered)');
 // pulse-expected.json's gwpRule records how this number is derived — gross of cancellation,
-// rounded per account. A whole-rand result is part of the assertion: per-account rounding
-// means no total can ever carry cents.
-ok('GWP = independent recompute (gross of cancellation, rounded per account)',
+// rounded per CASE (the money-model unit since 2026-08-18). A whole-rand result is part of
+// the assertion: per-unit rounding means no total can ever carry cents.
+ok('GWP = independent recompute (gross of cancellation, rounded per case)',
    Math.abs(s1.gwp - E.gwpIncl) < 1 && s1.gwp === Math.round(s1.gwp), `got ${s1.gwp} want ${E.gwpIncl}`);
 ok('sales days = ' + E.biDays, s1.salesDays === E.biDays, `got ${s1.salesDays}`);
 ok('calls = agent-attributed rows ' + E.callsWithAgent, s1.calls === E.callsWithAgent, `got ${s1.calls}`);
@@ -115,8 +139,15 @@ ok('call days = ' + E.callDays, s1.callDays === E.callDays, `got ${s1.callDays}`
 ok('evals loaded (3900-3968)', s1.evalN >= 3900 && s1.evalN <= 3968, `got ${s1.evalN}`);
 ok('attendance days > 80', s1.attDays > 80, `got ${s1.attDays}`);
 ok('Inactive files load as cancellations, never as money', s1.files.filter(f=>/Inactive/i.test(f)).every(f=>/^cancellations/.test(f)), s1.files.filter(f=>/Inactive/i.test(f)).join('; '));
-ok('no Closed file in registry', !s1.files.some(f => /SF Closed/i.test(f)), s1.files.filter(f=>/Closed/i.test(f)).join('; '));
-ok('registry = 20 entries (Open Cases is no longer a VAS source)', s1.files.length === 20, `got ${s1.files.length}: ${s1.files.join(' || ')}`);
+// Closed Cases is INGESTED since Lead Management moved to VAS (2026-08-18) — it used to be
+// refused as an Ops file. It must land as 'closed cases', never as VAS sales data.
+ok('Closed Cases registers as its own source, not as sales',
+   s1.files.some(f => /^closed cases \|/.test(f)) && !s1.files.some(f => /^(bi|calls) \|.*Closed/i.test(f)),
+   s1.files.filter(f=>/Closed/i.test(f)).join('; '));
+/* 21, not 22, since 2026-08-27: the plain "SF Open Cases" file is REFUSED (Lead Allocation
+   removed — see verify-leads-vas) so it registers nothing; Closed Cases still lands. */
+ok('registry = 21 entries (plain Open Cases refused since Lead Allocation was removed)',
+   s1.files.length === 21, `got ${s1.files.length}: ` + s1.files.join(' || '));
 
 console.log('Round 2: dropping the same 21 files again (hash-skip)…');
 await page.setInputFiles('#fileInput', FILES, { timeout: 60000 });

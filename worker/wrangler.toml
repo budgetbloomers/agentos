@@ -10,6 +10,13 @@ compatibility_date = "2026-07-01"
 # Pages Functions binding later. For the test week, the Worker's own
 # workers.dev URL also works — set rules.askEndpoint accordingly.
 
+# THE ROSTER SAFETY NET (Nick, 2026-08-28). Ops keeps its own copy of the Agent List and
+# used to re-ingest only when a human opened it, so a list uploaded in VAS could sit unseen
+# there for days. The scheduled handler re-syncs the roster into every store every ten
+# minutes, with nothing open anywhere. Fingerprint-gated: no change, no writes.
+[triggers]
+crons = ["*/10 * * * *"]
+
 [ai]
 binding = "AI"                    # Workers AI — Hermes 2 Pro (Phase 3)
 

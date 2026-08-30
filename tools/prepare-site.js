@@ -52,9 +52,19 @@ if (!window.storage) {
         clearTimeout(b._t); b._t = setTimeout(function () { b.remove(); }, 12000);
       } catch (e) {}
     }
+    /* DID THIS VALUE COME FROM THE CLOUD, OR FROM THE CACHE? A get() that cannot
+       reach the cloud deliberately falls back to the local copy so the app keeps
+       working offline — but the CALLER cannot see the difference, and one caller
+       must: Ops' conditional boot records "this device holds version X" and would
+       otherwise stamp a cache-fallback as a fresh download, then serve that stale
+       copy as current on every later boot (audit round 3, 2026-08-27). Per key,
+       because boot reads run in parallel. */
+    var fresh = {};
     window.storage = {
+      fresh: fresh,
       async get(k) {
         await tokenWait;
+        fresh[k] = false;
         var h = authHdr();
         if (h) {
           try {
@@ -64,12 +74,14 @@ if (!window.storage) {
               // local copy so this device can NEVER push old data back up.
               delete mem[k];
               try { localStorage.removeItem('cbx:' + k); } catch (e) {}
+              fresh[k] = true;                 // an authoritative "nothing here" IS a cloud answer
               return null;
             }
             if (r.ok) {
               var data = await r.text();
               mem[k] = data;
               try { localStorage.setItem('cbx:' + k, data); } catch (e) { /* quota — mem cache still holds it */ }
+              fresh[k] = true;
               return { value: data };
             }
             // 401/5xx etc: don't treat as authoritative-empty; fall through to cache (no push)
@@ -86,7 +98,17 @@ if (!window.storage) {
         var h = authHdr();
         if (!h) { cbxSaveWarn('Not signed in — this data was NOT saved to the database.'); return; }
         try {
-          var r = await fetch(API + '?key=' + encodeURIComponent(k), { method: 'POST', headers: { 'Authorization': h.Authorization, 'Content-Type': 'text/plain', 'X-Cbx-Client': 'v5' }, body: v });
+          var hdrs = { 'Authorization': h.Authorization, 'Content-Type': 'text/plain', 'X-Cbx-Client': 'v5' };
+          var payload = v;
+          /* Gzip the body when the browser can (perf, 2026-08-28) — fact blobs are tens of MB
+             and compress about ten to one. The Worker decompresses, so Storage is unchanged. */
+          if (typeof CompressionStream === 'function' && v.length > 65536) {
+            try {
+              payload = await new Response(new Blob([v]).stream().pipeThrough(new CompressionStream('gzip'))).blob();
+              hdrs['Content-Encoding'] = 'gzip';
+            } catch (e) { payload = v; delete hdrs['Content-Encoding']; }
+          }
+          var r = await fetch(API + '?key=' + encodeURIComponent(k), { method: 'POST', headers: hdrs, body: payload });
           if (!r.ok) cbxSaveWarn('Cloud save failed (' + r.status + ') — this data is NOT in the database. Try again or re-login.');
         } catch (e) { cbxSaveWarn('Cloud save failed (network) — this data is NOT in the database. Check your connection and retry.'); }
       },
@@ -135,7 +157,11 @@ console.log('Wrote ' + out + ' (' + (html.length / 1024).toFixed(0) + ' KB), shi
 
 // Companion apps, copied verbatim (self-contained; these files have no <head>,
 // so the stale-guard anchors on <title>). Pulse serves at /pulse/, Tracker at /tracker/.
-for (const [srcDir, urlDir, label] of [['nicks_code', 'pulse', 'VAS'], ['tracker', 'tracker', 'Tracker Analytics']]) {
+/* agent-preview is the Chatterbox AgentOS PROTOTYPE served behind the same CB
+   login, for review only. It runs on the prototype's own fourteen sample people,
+   so it is deliberately NOT at /agent/ — putting invented commission figures in
+   front of 130 real agents would be worse than showing them nothing. */
+for (const [srcDir, urlDir, label] of [['nicks_code', 'pulse', 'VAS'], ['tracker', 'tracker', 'Tracker Analytics'], ['agent', 'agent', 'Agent Analytics'], ['agent-preview', 'agent-preview', 'Agent Analytics (prototype)']]) {
   const src = path.join(root, srcDir, 'index.html');
   if (!fs.existsSync(src)) { console.warn('NOTE: ' + srcDir + '/index.html not found — suite deploys without ' + label + '.'); continue; }
   fs.mkdirSync(path.join(outDir, urlDir), { recursive: true });

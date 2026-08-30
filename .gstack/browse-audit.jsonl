@@ -1,0 +1,15 @@
+{"ts":"2026-08-25T03:04:21.411Z","cmd":"goto","args":"https://chatterbox-agentos.pages.dev/agent/","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":3410,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:04:22.290Z","cmd":"snapshot","args":"-i","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":165,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:04:29.058Z","cmd":"fill","args":"@e1 CB267","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":126,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:04:29.543Z","cmd":"fill","args":"@e2 agentos123","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":35,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:04:30.066Z","cmd":"click","args":"@e3","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":103,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:04:34.834Z","cmd":"snapshot","args":"-i","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":55,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:04:41.950Z","cmd":"click","args":"@e3","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":99,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:04:47.571Z","cmd":"console","args":"--errors","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":3,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:04:49.558Z","cmd":"screenshot","args":"C:/Users/aarav/AppData/Local/Temp/coach.png","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":1207,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:04:50.130Z","cmd":"snapshot","args":"-i","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":136,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:05:00.527Z","cmd":"click","args":"@e9","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":215,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:05:03.130Z","cmd":"console","args":"--errors","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":0,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:05:03.867Z","cmd":"screenshot","args":"C:/Users/aarav/AppData/Local/Temp/informal.png","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":301,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:05:04.380Z","cmd":"snapshot","args":"-i","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":49,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-08-25T03:05:17.183Z","cmd":"click","args":"@e9","origin":"https://chatterbox-agentos.pages.dev/agent/","durationMs":94,"status":"ok","hasCookies":false,"mode":"launched"}

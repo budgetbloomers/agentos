@@ -1,1729 +1,1789 @@
 {
-  "$schema_version": "6.0",
-  "name": "VAS Month-to-Date Reporting Engine - Consolidated Rules",
-  "generated_from": {
-    "reference_report": "VAS_-_August_2026_MTD_Tracker_1_-_4_Aug.xlsx",
-    "reference_period": "2026-08-01 to 2026-08-04 (2 dialing days: 03.08, 04.08)",
-    "fact_table_shape": "136 rows x 20 columns (68 agents x 2 days)",
+ "$schema_version": "6.0",
+ "name": "VAS Month-to-Date Reporting Engine - Consolidated Rules",
+ "generated_from": {
+  "reference_report": "VAS_-_August_2026_MTD_Tracker_1_-_4_Aug.xlsx",
+  "reference_period": "2026-08-01 to 2026-08-04 (2 dialing days: 03.08, 04.08)",
+  "fact_table_shape": "136 rows x 20 columns (68 agents x 2 days)",
+  "verification": {
+   "sales_achieved": "EXACT, 13/13 agents",
+   "gwp_achieved": "EXACT, 13/13 agents",
+   "cancellations": "EXACT, 4/4 non-zero agents",
+   "attendance_shifts": "EXACT, 56/65 agents",
+   "qa_average": "EXACT, 27/44 agents (residual is source snapshot drift)"
+  }
+ },
+ "period_rules": {
+  "basis": "CALENDAR_MONTH",
+  "evidence": "Fact table contains only 03.08 and 04.08, both labelled 'Week 1'. No 27-31 Jul records, despite the Salesforce BI export filter 'CurrentSalesMonth is Current' returning 27 Jul onward.",
+  "mtd_start": "DATE(YEAR(report_date), MONTH(report_date), 1)",
+  "mtd_end": "MAX(distinct Date present in the attendance source, capped at report_date)",
+  "dialing_days": "COUNT(DISTINCT August[Date])",
+  "week_numbering": "Week N = Nth Monday-Sunday week of the calendar month, counting only weeks containing at least one attendance day. 01-02 Aug 2026 was a weekend, so Week 1 = 03-09 Aug.",
+  "qa_week_warning": "The QA export's own 'Week' column uses a DIFFERENT convention (it labels 01 Aug as Week 1 and 03-05 Aug as Week 2). NEVER filter QA on that column. Always filter QA on 'Date of Call'.",
+  "bi_filter_warning": "The BI exports arrive pre-filtered on the Salesforce sales-month, which is WIDER than the calendar month. Re-filter on Contract Create Date on ingest, or July activations leak into August."
+ },
+ "sources": [
+  {
+   "id": "bi_active",
+   "file_pattern": "BI_Active_-_DD_MM.xlsx",
+   "sheet": "Export",
+   "feeds": [
+    "August.L (Sales Achieved)",
+    "August.P (GWP Achieved)"
+   ],
+   "cleaning": [
+    "Drop the final 2 rows: a blank spacer and an 'Applied filters:' footer.",
+    "Headers 'Marketing Type ' and 'Subscriber Type ' carry a trailing space - strip all header whitespace on load.",
+    "'Charge Amount' and 'Charge Amount.1' are byte-identical. Use 'Charge Amount' only."
+   ],
+   "exclusions": [
+    {
+     "field": "Charge Code",
+     "equals": "TESTRR",
+     "reason": "Test charge lines"
+    },
+    {
+     "field": "Account Number",
+     "equals": "622622",
+     "reason": "Internal test account",
+     "review": true
+    }
+   ],
+   "grain": "One row per contract charge line",
+   "dedup_key": "Contract Number + Charge Code",
+   "sale_unit": "Case Number (grain stays one row per contract charge line; the CASE is the sale)"
+  },
+  {
+   "id": "bi_inactive",
+   "file_pattern": "BI_Inactive_-_DD_MM.xlsx",
+   "sheet": "Export",
+   "feeds": [
+    "August.L",
+    "August.P",
+    "Pivot Table!N:O (Cancellations)"
+   ],
+   "cleaning": "Identical to bi_active",
+   "dedup_key": "Contract Number + Charge Code",
+   "sale_unit": "Case Number (grain stays one row per contract charge line; the CASE is the sale)"
+  },
+  {
+   "id": "attendance",
+   "file_pattern": "attendance_YYYY-MM-DD_to_YYYY-MM-DD.csv",
+   "encoding": "utf-8-sig",
+   "feeds": [
+    "August.H (Employed Shifts)",
+    "August.I (Actual Shifts)",
+    "mtd_end"
+   ],
+   "filters": [
+    {
+     "field": "Employee Type",
+     "equals": "Call Agent"
+    }
+   ],
+   "grain": "One row per employee per working day",
+   "dedup_key": "Date + Employee Code"
+  },
+  {
+   "id": "qa_evaluations",
+   "file_pattern": "evaluations-full-export-YYYY-MM-DD.csv",
+   "encoding": "utf-8-sig",
+   "feeds": [
+    "Pivot Table!U:V",
+    "Pivot Table!AA:AB"
+   ],
+   "period_warning": "NOT pre-filtered - contains history back to 2026-04-30. Must be filtered on Date of Call.",
+   "cleaning": [
+    "Parse 'Score %': strip '%', cast to float, divide by 100. Values include decimals such as '93.9%'. Never aggregate as text.",
+    "Normalise 'Campaign': {'Matrix Cuddle','cuddle_calls'} -> Cuddle; {'Matrix Courtesy','courtesy_calls'} -> Courtesy; {'Matrix Tracker','tracker'} -> Tracker; 'vas' -> VAS.",
+    "'SM Escalation Reason' is 100% null - ignore."
+   ],
+   "dedup_key": "Record ID",
+   "dedup_note": "Record ID is unique. 'Call ID' is NOT - 111 Call IDs appear twice as genuine re-evaluations. Both retained by default. See open_items OI-04."
+  },
+  {
+   "id": "call_x_call",
+   "file_pattern": "Call_X_Call_report_-_D_-_D.xlsx",
+   "sheet": "Call Records",
+   "feeds": [
+    "August.N (Talk Time) for Courtesy and Nesting"
+   ],
+   "grain": "One row per call leg",
+   "join_field": "Agent (dialler label)",
+   "exclusions": [
+    {
+     "field": "Agent",
+     "matches": "^(Training \\d+|Agent Test)$"
+    },
+    {
+     "field": "Agent",
+     "in_role": "team_leader"
+    }
+   ]
+  },
+  {
+   "id": "vici_cuddle",
+   "file_pattern": "Vici_-_Cuddle_Agents_-_D_-_D_Mon.csv",
+   "feeds": [
+    "August.N (Talk Time) for Cuddle"
+   ],
+   "parse": {
+    "skip_rows": 4,
+    "drop_trailing_rows": 1,
+    "trailing_marker": "CURRENT USER GROUP == 'TOTALS'",
+    "period_line": 2
+   },
+   "grain": "PRE-AGGREGATED, one row per agent for the whole period. Cannot be stacked with call_x_call.",
+   "grain_warning": "Because this file is period-aggregated, per-DAY talk time for Cuddle agents cannot be derived from it. Either request a daily Vici export, or allocate the period total evenly across the agent's employed days and flag the estimate.",
+   "join_field": "ID",
+   "exclusions": [
+    {
+     "field": "CURRENT USER GROUP",
+     "equals": "ADMIN"
+    }
+   ]
+  },
+  {
+   "id": "vici_call_report",
+   "file_pattern": "EXPORT_CALL_REPORT_YYYYMMDD-HHMMSS.txt",
+   "added": "2026-08-13, Nick. This is the daily Vici export vici_cuddle.grain_warning asks for - it closes that open item.",
+   "format": "TAB-separated plain text, 39 columns, no preamble and no totals footer.",
+   "feeds": [
+    "August.N (Talk Time)",
+    "Calls, Answered, Insurance Opt-In and dialler Sales dispositions"
+   ],
+   "grain": "ONE ROW PER CALL, dated per call. Unlike vici_cuddle this splits across its own days, so a multi-day pull needs no apportioning and no estimate flag.",
+   "join_field": "user",
+   "join_note": "'user' carries the agent's employee code directly. NOT 'owner' - blank on 1249 of the reference pull's 2317 rows and disagreeing with 'user' on another 68. Identity still resolves through agent_roster; a code on no roster is flagged unmatched, never invented.",
+   "talk_time": {
+    "rule": "SUM(length_in_sec) GROUP BY user",
+    "decided_by": "Nick, 2026-08-13",
+    "caveat": "length_in_sec runs from dial to hangup and therefore includes ringing. On the 2026-08-13 reference pull 32% of the seconds (17h51m of 55h27m) sit on statuses that reached no one - No Answer averages 32s, Busy 102s, Answering Machine 57s. This is the same trap call_x_call documents for 'Duration' vs 'Billable Seconds'. The engine reports the split on every upload.",
+    "alternative": "talkFrom = 'contacted' bills only rows whose status is not in no_contact_statuses."
+   },
+   "record_key": [
+    "call_date",
+    "user",
+    "lead_id",
+    "status"
+   ],
+   "record_key_note": "Unique across all 2317 rows of the reference pull. Repeats within a file are counted once; across files the fuller agent-day wins, never the sum.",
+   "no_contact_statuses": [
+    "N",
+    "NA",
+    "B",
+    "AB",
+    "A",
+    "VM",
+    "DC",
+    "DNE",
+    "DROP",
+    "PDROP",
+    "TIMEOT",
+    "INCALL",
+    "UC",
+    "UCNUM",
+    "DA",
+    "FAIL",
+    "DUPL"
+   ],
+   "no_contact_note": "ViciDial status CODES meaning nobody was reached. Note 'A' is Answering Machine in this export, NOT answered. These set Answered (and so AHT and Answer %), and affect talk time only when talkFrom is 'contacted'.",
+   "dispositions": {
+    "source_field": "status_name",
+    "opt_in": "isOptIn - contains 'insurance opt' and not 'no insurance'. Verified: 'Sale Insurance Opt-In' counts, 'Sale No Insurance Opt-In' and 'VAS Sale No Insurance Opt In' do not.",
+    "sale": "isSaleDisp - all four Sale* dispositions count."
+   },
+   "exclusions": [
+    {
+     "field": "user",
+     "in": [
+      "VDAD",
+      "VDCL",
+      "VDLB",
+      "CBT001",
+      "CBT003",
+      "CBT005",
+      "CBT007",
+      "9027"
+     ],
+     "reason": "ViciDial internal accounts (auto-dial, closer) and test logins. Excluded and COUNTED, never silently dropped. CBT005 and CBT007 were added from the 01-13 Aug pull, which carries them (15 and 4 rows) where the 13 Aug pull did not - the CBT### series is the training/test bank and every member of it is a test login.",
+     "patterns": [
+      "^CBTd+$",
+      "^TRAINING ?d*$",
+      "^AGENT ?TEST$",
+      "^d{3,5}$",
+      "^VD[A-Z]{2}$"
+     ],
+     "note": "System, training and supervisor logins. Literal codes alone missed the newer pulls, which write Training001 as \"Training 1\", plus \"Agent Test\" and the bare numeric supervisor id 9027 — those landed in the unmatched bucket and read as a roster defect. The patterns catch the shapes without inviting a real agent to match. Applied at ingest AND at model build, so data stored under the old rule is classified correctly without re-uploading every file."
+    },
+    {
+     "field": "length_in_sec",
+     "condition": "< 0",
+     "reason": "ViciDial writes the occasional negative length. Zeroed and counted, never subtracted from the agent's day."
+    }
+   ]
+  },
+  {
+   "id": "agent_roster",
+   "file_pattern": "Matrix_-_Agent_List.xlsx",
+   "feeds": [
+    "August.C, .D, .E, .F, .G, .K"
+   ],
+   "sheets_of_record": [
+    "VAS",
+    "VT"
+   ],
+   "historical_sheets": [
+    "May",
+    "Reg List",
+    "Sheet1"
+   ],
+   "note": "Build the master as the UNION of all five sheets, VAS/VT taking precedence. 26 of 46 QA codes absent from VAS/VT appear on 'May'.",
+   "key": "Employee Code",
+   "dialler_label_field": "Call x"
+  },
+  {
+   "id": "vas_daily_tracker",
+   "file_pattern": "VAS Daily Tracker - Month YYYY.xlsx",
+   "sheet": "DD.MM",
+   "feeds": [
+    "August.S (Referrals)"
+   ],
+   "status": "NOT SUPPLIED - sole source of Referrals",
+   "lookup": "VLOOKUP(Agent,'DD.MM'!$B:$AG,32,FALSE)",
+   "columns": {
+    "B": "Agent Name",
+    "AD": "Total Sales",
+    "AE": "Total GWP",
+    "AF": "Average GWP",
+    "AG": "Referrals"
+   }
+  },
+  {
+   "id": "variance_report",
+   "file_pattern": "Variance Report DD.MM.YYYY.xlsx",
+   "status": "RETIRED - no longer required. Sales and GWP are now computed directly from the BI exports, verified exact.",
+   "columns": {
+    "D": "Agents",
+    "E": "Sales",
+    "F": "GWP"
+   }
+  }
+ ],
+ "identity_resolution": {
+  "principle": "Employee Code is canonical. Names are display labels. Resolve every source row to an Employee Code before grouping.",
+  "resolution_order": [
+   "1. Use the source's Employee Code, after applying code_corrections.",
+   "2. Else match the dialler label against agent_roster.'Call x' (normalised).",
+   "3. Else match the person name against agent_roster.'Agent Name', then 'Sales Force' (normalised).",
+   "4. Else route to UNMAPPED and report. Never guess."
+  ],
+  "normalisation": "lowercase, trim, strip all non-alphanumeric characters",
+  "code_corrections": {
+   "_comment": "Superseded QA codes. Later (higher) code is canonical. Offset 12-13.",
+   "CB207": "CB219",
+   "CB216": "CB229",
+   "CB210": "CB222",
+   "CB209": "CB221",
+   "CB212": "CB225",
+   "CB208": "CB220",
+   "CB214": "CB227",
+   "CB215": "CB228",
+   "_scope_warning": "Apply ONLY to qa_evaluations rows. CB207 is also the Vici ID for team leader Renolan Pillay - never apply this map to vici_cuddle."
+  },
+  "dialler_label_corrections": {
+   "Kyle Kisten CB-138": "CB137",
+   "Jabu Ntombele CB-138": "CB138",
+   "Perisha Naicker CB-145": "CB144",
+   "Denisha Pillay CB-144": "CB143",
+   "Nenekazi Mtsolo CB-178": "CB148",
+   "Shantal Munien - CB178": "CB178",
+   "Lindokuhle Phakathi CB-263": "CB263",
+   "_critical": "CB-138 is claimed by two people. Vici reports Kyle Kisten as CB138; the roster reports Jabu Ntombela as CB138 and Kyle Kisten as CB137. Matching on the embedded number misassigns 735 calls. Always match on the NAME portion."
+  },
+  "name_aliases": {
+   "Thokozile Maphumulo": "Thokozile Irene Maphumulo",
+   "Kasavani Sankarparsad": "Ashnee Kasavani Sankarparsad",
+   "Kasavani Snakarparsad": "Ashnee Kasavani Sankarparsad",
+   "Delano Rajgopaul": "Delano Rajagopal",
+   "Sabastian Manikum": "Sebastian Munikum",
+   "Jabu Ntombele": "Jabu Ntombela",
+   "Silerene Ganesan Naidoo": "Silerene Ganasen Naidoo",
+   "Thevapragasen Muniappen": "Theva Pragasen",
+   "Antach Sibusisiwe Owusu-Ansah": "Sibusisiwe Owusu-Ansah",
+   "Charmaine Orielley": "Charmaine O'rielley",
+   "Sherazaad Alexandre": "Sherazaad Alexandre'",
+   "Enoch James Pillay": "Enoch Pillay",
+   "Threza Tessa Chetty": "Threza Chetty",
+   "Ashleigh Naidoo": "Ashleigh Alexandra Naidoo",
+   "Thalente Xaba": "Thalente Celokuhle Xaba",
+   "Zinhle Ennocentia Masuku": "Zinhle Masuku",
+   "Nontokozo Nomvelo Gumede": "Nontokozo Gumede",
+   "Nomthandazo Thandazile Sibiya": "Nomthandazo Sibiya",
+   "Balungile Nolwazi Snothile Mdlalose": "Balungile Mdlalose",
+   "Asanda Anele Mthethwa": "Asanda Mthethwa",
+   "Lunga Ngongoma": "Andile Ngongoma",
+   "Olwethu Nzama": "Zanele Nzama",
+   "Thulani Mbonambi": "Thulani Greatman Mbonambi",
+   "Nomonde Ntoza": "Lindokuhle Phakathi"
+  },
+  "owner_field_parsing": {
+   "source": "bi_active / bi_inactive 'Owner'",
+   "rule": "Strip the ' - Panimax' suffix, then resolve via name_aliases.",
+   "example": "'Enoch Pillay - Panimax' -> 'Enoch Pillay' -> CB70"
+  },
+  "global_exclusions": {
+   "test_accounts": [
+    "Training 1",
+    "Training 2",
+    "Training 3",
+    "Training 4",
+    "Agent Test"
+   ],
+   "non_agent_roles": [
+    "team_leader",
+    "QA agent",
+    "support staff"
+   ],
+   "rule": "Excluded records must be counted and reported, never silently dropped."
+  }
+ },
+ "reference_data": {
+  "sales_target_matrix": {
+   "_source": "agent_roster 'Target' column, keyed Campaign|Tenure. Read at runtime - values below are the observed state.",
+   "Cuddle|Exp": 8,
+   "Courtesy|Exp": 5,
+   "Courtesy|M2": 4,
+   "Courtesy|M1": 3,
+   "Nesting|M0": 2,
+   "Nesting|*": 2
+  },
+  "gwp_rate_per_sale": {
+   "value": 89,
+   "usage": "GWP Target = Sales Target x 89"
+  },
+  "vat_multiplier": {
+   "value": 1.15,
+   "usage": "GWP Achieved = ROUND(SUM(Charge Amount) x 1.15, 0)",
+   "evidence": "Ratio of reference GWP to raw Charge Amount sum is exactly 1.150 for all 13 agents tested. Charge Amount is VAT-exclusive; GWP is VAT-inclusive.",
+   "note": "Round AFTER multiplying, to 0 decimals."
+  },
+  "attendance_shift_weights": {
+   "P": 1,
+   "HDCA": 0.5,
+   "CA": 0,
+   "UCA": 0,
+   "SL": 0,
+   "FRL": 0,
+   "AL": 0,
+   "L": 0,
+   "Suspended": 0,
+   "_default": 0,
+   "_scope": "Applied directly for Cuddle. For Courtesy/Nesting only HDCA (0.5) is used as an override on the talk-time rule.",
+   "_verification": {
+    "dialler_activity_rule": "132/136 fact rows (134/136 once the CB263 dialler label is corrected)",
+    "hr_register_rule": "123/136 fact rows",
+    "by_campaign": {
+     "Courtesy": "dialler 78/80, HR 73/80",
+     "Cuddle": "both 50/50 - HR is used because Vici has no per-day split",
+     "Nesting": "dialler 4/6, HR 0/6 - the 3 Nesting agents have no attendance record at all"
+    },
+    "remaining_overrides": [
+     "Mzwandile Masuku 04 Aug: HR Present, dialled 5,125s, reference records 0 shifts",
+     "Surprise Lucky Cwele 04 Aug: HR Uncomm Absence, dialled 4,428s, reference records 0.5 shifts"
+    ],
+    "broken_mapping_fixed": "Lindokuhle Phakathi (CB263) showed reference talk = 0 on both days because the reference VLOOKUP used the roster's wrong dialler label 'Nomonde Ntoza CB-263'. He dialled 646 calls. The corrected mapping fixes both rows."
+   }
+  }
+ },
+ "august_fact_table": {
+  "role": "SINGLE SOURCE OF TRUTH. Every pivot and every MTD/WTD/TL figure aggregates from this sheet. Nothing downstream reads a source file directly.",
+  "sheet_name": "August",
+  "grain": "One row per agent per employed day",
+  "key": "Date + Emp Code",
+  "integrity": "Zero duplicates on Date + Emp Code. Assert this on every build.",
+  "range": "A1:T{1+rows}",
+  "append_mode": "Append new day rows only. Never overwrite or re-sort prior days - the pivot cache range must grow downward.",
+  "columns": [
+   {
+    "col": "A",
+    "name": "Week",
+    "type": "text",
+    "value": "\"Week \" & week_number_within_month",
+    "source": "derived from Date",
+    "example": "Week 1",
+    "number_format": "General"
+   },
+   {
+    "col": "B",
+    "name": "Date",
+    "type": "text",
+    "format": "DD.MM.YYYY",
+    "note": "Stored as TEXT, not a date serial. Parse day-first when reading. Excel will not group this field by month/day in a pivot - that is intentional and matches the reference.",
+    "number_format": "General"
+   },
+   {
+    "col": "C",
+    "name": "Team Leader",
+    "type": "text",
+    "source": "agent_roster.Team Leader",
+    "observed_values": [
+     "Nikita Baijnath",
+     "Shane Methalal",
+     "Sharoma Rampersad",
+     "Renolan Pillay",
+     "Dhamendra Budhu",
+     "TBC"
+    ],
+    "number_format": "General"
+   },
+   {
+    "col": "D",
+    "name": "Campaign",
+    "type": "text",
+    "source": "agent_roster.Campaign",
+    "allowed_values": [
+     "Courtesy",
+     "Cuddle",
+     "Nesting"
+    ],
+    "critical": "Use exactly these three tokens. The roster sheet writes 'Courtesy - Nesting'; the fact table must write 'Nesting'. The pivot page-field items are bound to these literal strings.",
+    "number_format": "General"
+   },
+   {
+    "col": "E",
+    "name": "Agent",
+    "type": "text",
+    "source": "agent_roster.'Sales Force'",
+    "note": "This is the pivot row label AND the VLOOKUP key used by the MTD sheets for Cancellations and QA. It must be byte-identical across the fact table, the cancellations range and the QA range.",
+    "critical": "Use the 'Sales Force' column, NOT 'Agent Name'. CB156 is 'Kasavani Snakarparsad' under Agent Name but 'Ashnee Kasavani Sankarparsad' under Sales Force; the tracker uses the latter, and this string is the join key for Cancellations and QA.",
+    "number_format": "General"
+   },
+   {
+    "col": "F",
+    "name": "Emp Code",
+    "type": "text",
+    "source": "agent_roster.Employee Code",
+    "note": "Canonical identity key. Not used in the pivot, but required for all joins.",
+    "number_format": "General"
+   },
+   {
+    "col": "G",
+    "name": "Tenure",
+    "type": "text",
+    "allowed_values": [
+     "Exp",
+     "M2",
+     "M1",
+     "M0"
+    ],
+    "number_format": "General"
+   },
+   {
+    "col": "H",
+    "name": "Employed Shifts",
+    "type": "integer",
+    "formula": "1",
+    "rule": "ALWAYS literal 1. One row exists per agent per employed day, so the MTD sum equals the agent's employed day count. Never write 2 to represent two days - write two rows.",
+    "verified": "All 136 reference rows = 1",
+    "number_format": "General"
+   },
+   {
+    "col": "I",
+    "name": "Actual Shifts",
+    "type": "decimal",
+    "formula": "Courtesy/Nesting: 0.5 if attendance Status Code = HDCA, else 1.0 if Talk Time > 0, else 0.0. Cuddle: attendance_shift_weights[Status Code].",
+    "allowed_values": [
+     0,
+     0.5,
+     1
+    ],
+    "verified": "131/136 fact rows. Residual: Mzwandile Masuku (dialled 5,125s, reference shows 0) and Surprise Lucky Cwele (0.5 with no attendance record) are manual overrides.",
+    "critical": "Courtesy/Nesting shifts are DIALLER-derived, not HR-derived. The attendance register disagrees with the reference tracker for 6 Courtesy agents in both directions; the talk-time rule reproduces 131/136 rows. Cuddle must use attendance because the Vici export is period-aggregated.",
+    "number_format": "General"
+   },
+   {
+    "col": "J",
+    "name": "Att %",
+    "type": "percent",
+    "formula": "=I{r}/H{r}",
+    "reference_formula_exact": "=I2/H2",
+    "note": "The reference omits IFERROR here. Safe because H is always 1.",
+    "number_format": "0%"
+   },
+   {
+    "col": "K",
+    "name": "Sales Target",
+    "type": "integer",
+    "formula": "=VLOOKUP($F{r},Roster!$A:$J,10,FALSE)",
+    "source": "reference_data.sales_target_matrix keyed on Campaign|Tenure",
+    "note": "Daily target. MTD target = SUM over rows, so it scales automatically with employed days.",
+    "number_format": "0"
+   },
+   {
+    "col": "L",
+    "name": "Sales Achieved",
+    "type": "integer",
+    "reference_formula": "=VLOOKUP(E2,'[1]03.08'!$D:$F,2,FALSE)",
+    "replacement_formula": "COUNT DISTINCT Case Number from bi_active WHERE Owner=Agent AND Contract Create Date = this row Date (net of cancellation)",
+    "note": "The reference pulled this from the external daily Variance Report. Now computed directly from the BI exports - verified exact.",
+    "number_format": "General"
+   },
+   {
+    "col": "M",
+    "name": "% of Sales Target",
+    "type": "percent",
+    "formula": "=IFERROR((L{r}/K{r}),0)",
+    "number_format": "0%"
+   },
+   {
+    "col": "N",
+    "name": "Talk Time",
+    "type": "time",
+    "format": "[h]:mm:ss",
+    "formula": "SUM(Billable Seconds) for this Emp Code on this Date, converted to a time value",
+    "source": "DIALLER-SIDE talk metric. Cuddle: Vici 'TALK'. Courtesy/Nesting: the daily dialler export used by the Variance Report 'Call X' sheet (NOT SUPPLIED).",
+    "critical": "Use Billable Seconds, NOT Duration. Duration includes ring time and overstates by ~60%.",
+    "number_format": "h:mm:ss",
+    "fallback": "Call X Call 'Billable Seconds' is the only available Courtesy proxy but is a CARRIER measure and runs a median 4.8% high (range 1.001x to 1.306x). Use it only as an interim estimate and flag it.",
     "verification": {
-      "sales_achieved": "EXACT, 13/13 agents",
-      "gwp_achieved": "EXACT, 13/13 agents",
-      "cancellations": "EXACT, 4/4 non-zero agents",
-      "attendance_shifts": "EXACT, 56/65 agents",
-      "qa_average": "EXACT, 27/44 agents (residual is source snapshot drift)"
+     "Cuddle (Vici)": "median ratio 0.9887 vs reference - agrees within 1.1%",
+     "Courtesy (Call X Call)": "19/80 rows match, and all 19 are zero-talk rows. 0 of 61 non-zero rows match. Median ratio 1.0478.",
+     "rounding_ruled_out": "Correlation of the gap with call volume is 0.055, and billable seconds are not rounded to any billing increment. The gap is a source difference, not per-call rounding.",
+     "duration_ruled_out": "Call X Call 'Duration' includes ring time and totals 789,423s against the reference's 477,176s - far worse than billable seconds."
     }
-  },
-  "period_rules": {
-    "basis": "CALENDAR_MONTH",
-    "evidence": "Fact table contains only 03.08 and 04.08, both labelled 'Week 1'. No 27-31 Jul records, despite the Salesforce BI export filter 'CurrentSalesMonth is Current' returning 27 Jul onward.",
-    "mtd_start": "DATE(YEAR(report_date), MONTH(report_date), 1)",
-    "mtd_end": "MAX(distinct Date present in the attendance source, capped at report_date)",
-    "dialing_days": "COUNT(DISTINCT August[Date])",
-    "week_numbering": "Week N = Nth Monday-Sunday week of the calendar month, counting only weeks containing at least one attendance day. 01-02 Aug 2026 was a weekend, so Week 1 = 03-09 Aug.",
-    "qa_week_warning": "The QA export's own 'Week' column uses a DIFFERENT convention (it labels 01 Aug as Week 1 and 03-05 Aug as Week 2). NEVER filter QA on that column. Always filter QA on 'Date of Call'.",
-    "bi_filter_warning": "The BI exports arrive pre-filtered on the Salesforce sales-month, which is WIDER than the calendar month. Re-filter on Contract Create Date on ingest, or July activations leak into August."
-  },
-  "sources": [
-    {
-      "id": "bi_active",
-      "file_pattern": "BI_Active_-_DD_MM.xlsx",
-      "sheet": "Export",
-      "feeds": [
-        "August.L (Sales Achieved)",
-        "August.P (GWP Achieved)"
-      ],
-      "cleaning": [
-        "Drop the final 2 rows: a blank spacer and an 'Applied filters:' footer.",
-        "Headers 'Marketing Type ' and 'Subscriber Type ' carry a trailing space - strip all header whitespace on load.",
-        "'Charge Amount' and 'Charge Amount.1' are byte-identical. Use 'Charge Amount' only."
-      ],
-      "exclusions": [
-        {
-          "field": "Charge Code",
-          "equals": "TESTRR",
-          "reason": "Test charge lines"
-        },
-        {
-          "field": "Account Number",
-          "equals": "622622",
-          "reason": "Internal test account",
-          "review": true
-        }
-      ],
-      "grain": "One row per contract charge line",
-      "dedup_key": "Contract Number + Charge Code"
-    },
-    {
-      "id": "bi_inactive",
-      "file_pattern": "BI_Inactive_-_DD_MM.xlsx",
-      "sheet": "Export",
-      "feeds": [
-        "August.L",
-        "August.P",
-        "Pivot Table!N:O (Cancellations)"
-      ],
-      "cleaning": "Identical to bi_active",
-      "dedup_key": "Contract Number + Charge Code"
-    },
-    {
-      "id": "attendance",
-      "file_pattern": "attendance_YYYY-MM-DD_to_YYYY-MM-DD.csv",
-      "encoding": "utf-8-sig",
-      "feeds": [
-        "August.H (Employed Shifts)",
-        "August.I (Actual Shifts)",
-        "mtd_end"
-      ],
-      "filters": [
-        {
-          "field": "Employee Type",
-          "equals": "Call Agent"
-        }
-      ],
-      "grain": "One row per employee per working day",
-      "dedup_key": "Date + Employee Code"
-    },
-    {
-      "id": "qa_evaluations",
-      "file_pattern": "evaluations-full-export-YYYY-MM-DD.csv",
-      "encoding": "utf-8-sig",
-      "feeds": [
-        "Pivot Table!U:V",
-        "Pivot Table!AA:AB"
-      ],
-      "period_warning": "NOT pre-filtered - contains history back to 2026-04-30. Must be filtered on Date of Call.",
-      "cleaning": [
-        "Parse 'Score %': strip '%', cast to float, divide by 100. Values include decimals such as '93.9%'. Never aggregate as text.",
-        "Normalise 'Campaign': {'Matrix Cuddle','cuddle_calls'} -> Cuddle; {'Matrix Courtesy','courtesy_calls'} -> Courtesy; {'Matrix Tracker','tracker'} -> Tracker; 'vas' -> VAS.",
-        "'SM Escalation Reason' is 100% null - ignore."
-      ],
-      "dedup_key": "Record ID",
-      "dedup_note": "Record ID is unique. 'Call ID' is NOT - 111 Call IDs appear twice as genuine re-evaluations. Both retained by default. See open_items OI-04."
-    },
-    {
-      "id": "call_x_call",
-      "file_pattern": "Call_X_Call_report_-_D_-_D.xlsx",
-      "sheet": "Call Records",
-      "feeds": [
-        "August.N (Talk Time) for Courtesy and Nesting"
-      ],
-      "grain": "One row per call leg",
-      "join_field": "Agent (dialler label)",
-      "exclusions": [
-        {
-          "field": "Agent",
-          "matches": "^(Training \\d+|Agent Test)$"
-        },
-        {
-          "field": "Agent",
-          "in_role": "team_leader"
-        }
-      ]
-    },
-    {
-      "id": "vici_cuddle",
-      "file_pattern": "Vici_-_Cuddle_Agents_-_D_-_D_Mon.csv",
-      "feeds": [
-        "August.N (Talk Time) for Cuddle"
-      ],
-      "parse": {
-        "skip_rows": 4,
-        "drop_trailing_rows": 1,
-        "trailing_marker": "CURRENT USER GROUP == 'TOTALS'",
-        "period_line": 2
-      },
-      "grain": "PRE-AGGREGATED, one row per agent for the whole period. Cannot be stacked with call_x_call.",
-      "grain_warning": "Because this file is period-aggregated, per-DAY talk time for Cuddle agents cannot be derived from it. Either request a daily Vici export, or allocate the period total evenly across the agent's employed days and flag the estimate.",
-      "join_field": "ID",
-      "exclusions": [
-        {
-          "field": "CURRENT USER GROUP",
-          "equals": "ADMIN"
-        }
-      ]
-    },
-    {
-      "id": "vici_call_report",
-      "file_pattern": "EXPORT_CALL_REPORT_YYYYMMDD-HHMMSS.txt",
-      "added": "2026-08-13, Nick. This is the daily Vici export vici_cuddle.grain_warning asks for - it closes that open item.",
-      "format": "TAB-separated plain text, 39 columns, no preamble and no totals footer.",
-      "feeds": [
-        "August.N (Talk Time)",
-        "Calls, Answered, Insurance Opt-In and dialler Sales dispositions"
-      ],
-      "grain": "ONE ROW PER CALL, dated per call. Unlike vici_cuddle this splits across its own days, so a multi-day pull needs no apportioning and no estimate flag.",
-      "join_field": "user",
-      "join_note": "'user' carries the agent's employee code directly. NOT 'owner' - blank on 1249 of the reference pull's 2317 rows and disagreeing with 'user' on another 68. Identity still resolves through agent_roster; a code on no roster is flagged unmatched, never invented.",
-      "talk_time": {
-        "rule": "SUM(length_in_sec) GROUP BY user",
-        "decided_by": "Nick, 2026-08-13",
-        "caveat": "length_in_sec runs from dial to hangup and therefore includes ringing. On the 2026-08-13 reference pull 32% of the seconds (17h51m of 55h27m) sit on statuses that reached no one - No Answer averages 32s, Busy 102s, Answering Machine 57s. This is the same trap call_x_call documents for 'Duration' vs 'Billable Seconds'. The engine reports the split on every upload.",
-        "alternative": "talkFrom = 'contacted' bills only rows whose status is not in no_contact_statuses."
-      },
-      "record_key": [
-        "call_date",
-        "user",
-        "lead_id",
-        "status"
-      ],
-      "record_key_note": "Unique across all 2317 rows of the reference pull. Repeats within a file are counted once; across files the fuller agent-day wins, never the sum.",
-      "no_contact_statuses": [
-        "N", "NA", "B", "AB", "A", "VM", "DC", "DNE", "DROP", "PDROP",
-        "TIMEOT", "INCALL", "UC", "UCNUM", "DA", "FAIL", "DUPL"
-      ],
-      "no_contact_note": "ViciDial status CODES meaning nobody was reached. Note 'A' is Answering Machine in this export, NOT answered. These set Answered (and so AHT and Answer %), and affect talk time only when talkFrom is 'contacted'.",
-      "dispositions": {
-        "source_field": "status_name",
-        "opt_in": "isOptIn - contains 'insurance opt' and not 'no insurance'. Verified: 'Sale Insurance Opt-In' counts, 'Sale No Insurance Opt-In' and 'VAS Sale No Insurance Opt In' do not.",
-        "sale": "isSaleDisp - all four Sale* dispositions count."
-      },
-      "exclusions": [
-        {
-          "field": "user",
-          "in": ["VDAD", "VDCL", "VDLB", "CBT001", "CBT003", "CBT005", "CBT007"],
-          "reason": "ViciDial internal accounts (auto-dial, closer) and test logins. Excluded and COUNTED, never silently dropped. CBT005 and CBT007 were added from the 01-13 Aug pull, which carries them (15 and 4 rows) where the 13 Aug pull did not - the CBT### series is the training/test bank and every member of it is a test login."
-        },
-        {
-          "field": "length_in_sec",
-          "condition": "< 0",
-          "reason": "ViciDial writes the occasional negative length. Zeroed and counted, never subtracted from the agent's day."
-        }
-      ]
-    },
-    {
-      "id": "agent_roster",
-      "file_pattern": "Matrix_-_Agent_List.xlsx",
-      "feeds": [
-        "August.C, .D, .E, .F, .G, .K"
-      ],
-      "sheets_of_record": [
-        "VAS",
-        "VT"
-      ],
-      "historical_sheets": [
-        "May",
-        "Reg List",
-        "Sheet1"
-      ],
-      "note": "Build the master as the UNION of all five sheets, VAS/VT taking precedence. 26 of 46 QA codes absent from VAS/VT appear on 'May'.",
-      "key": "Employee Code",
-      "dialler_label_field": "Call x"
-    },
-    {
-      "id": "vas_daily_tracker",
-      "file_pattern": "VAS Daily Tracker - Month YYYY.xlsx",
-      "sheet": "DD.MM",
-      "feeds": [
-        "August.S (Referrals)"
-      ],
-      "status": "NOT SUPPLIED - sole source of Referrals",
-      "lookup": "VLOOKUP(Agent,'DD.MM'!$B:$AG,32,FALSE)",
-      "columns": {
-        "B": "Agent Name",
-        "AD": "Total Sales",
-        "AE": "Total GWP",
-        "AF": "Average GWP",
-        "AG": "Referrals"
-      }
-    },
-    {
-      "id": "variance_report",
-      "file_pattern": "Variance Report DD.MM.YYYY.xlsx",
-      "status": "RETIRED - no longer required. Sales and GWP are now computed directly from the BI exports, verified exact.",
-      "columns": {
-        "D": "Agents",
-        "E": "Sales",
-        "F": "GWP"
-      }
-    }
+   },
+   {
+    "col": "O",
+    "name": "GWP Target",
+    "type": "currency",
+    "formula": "=K{r}*89",
+    "reference_formula_exact": "=K2*89",
+    "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
+   },
+   {
+    "col": "P",
+    "name": "GWP Achieved",
+    "type": "currency",
+    "reference_formula": "=VLOOKUP(E2,'[2]04.08'!$D:$F,3,FALSE)",
+    "replacement_formula": "ROUND(SUM(Charge Amount) * 1.15, 0) from UNION(bi_active, bi_inactive) WHERE Owner=Agent AND Contract Create Date = this row's Date",
+    "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
+   },
+   {
+    "col": "Q",
+    "name": "% of GWP Target",
+    "type": "percent",
+    "formula": "=IFERROR((P{r}/O{r}),0)",
+    "number_format": "0%"
+   },
+   {
+    "col": "R",
+    "name": "Ave GWP",
+    "type": "currency",
+    "formula": "=IFERROR((P{r}/L{r}),0)",
+    "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
+   },
+   {
+    "col": "S",
+    "name": "Referrals",
+    "type": "integer",
+    "reference_formula": "=VLOOKUP(E2,'[3]03.08'!$B:$AG,32,FALSE)",
+    "source": "vas_daily_tracker column AG",
+    "status": "BLOCKED - source not supplied. Emit null, never 0.",
+    "number_format": "General"
+   },
+   {
+    "col": "T",
+    "name": "% Of Referrals To Sales Achieved",
+    "type": "percent",
+    "formula": "=IFERROR((S{r}/L{r}),0)",
+    "number_format": "0%"
+   }
   ],
-  "identity_resolution": {
-    "principle": "Employee Code is canonical. Names are display labels. Resolve every source row to an Employee Code before grouping.",
-    "resolution_order": [
-      "1. Use the source's Employee Code, after applying code_corrections.",
-      "2. Else match the dialler label against agent_roster.'Call x' (normalised).",
-      "3. Else match the person name against agent_roster.'Agent Name', then 'Sales Force' (normalised).",
-      "4. Else route to UNMAPPED and report. Never guess."
+  "row_inclusion_rule": {
+   "rule": "One row per roster agent per dialing day. Driven by the ROSTER, not attendance. Agents with no attendance record still get rows (the 3 Nesting agents have none). Agents with zero sales and zero talk still get rows - their zeros are required for the % Of Agents on Target denominator.",
+   "dialing_days": "Distinct dates in the attendance register within the period.",
+   "exclusions": {
+    "codes": [
+     "CB67",
+     "CB205",
+     "CB265"
     ],
-    "normalisation": "lowercase, trim, strip all non-alphanumeric characters",
-    "code_corrections": {
-      "_comment": "Superseded QA codes. Later (higher) code is canonical. Offset 12-13.",
-      "CB207": "CB219",
-      "CB216": "CB229",
-      "CB210": "CB222",
-      "CB209": "CB221",
-      "CB212": "CB225",
-      "CB208": "CB220",
-      "CB214": "CB227",
-      "CB215": "CB228",
-      "_scope_warning": "Apply ONLY to qa_evaluations rows. CB207 is also the Vici ID for team leader Renolan Pillay - never apply this map to vici_cuddle."
+    "observed_reason": {
+     "CB67": "Theva Pragasen - Sick Leave all period",
+     "CB205": "Darrien Govender - Suspended all period",
+     "CB265": "Amanda Mani - no attendance record, likely not started"
     },
-    "dialler_label_corrections": {
-      "Kyle Kisten CB-138": "CB137",
-      "Jabu Ntombele CB-138": "CB138",
-      "Perisha Naicker CB-145": "CB144",
-      "Denisha Pillay CB-144": "CB143",
-      "Nenekazi Mtsolo CB-178": "CB148",
-      "Shantal Munien - CB178": "CB178",
-      "Lindokuhle Phakathi CB-263": "CB263",
-      "_critical": "CB-138 is claimed by two people. Vici reports Kyle Kisten as CB138; the roster reports Jabu Ntombela as CB138 and Kyle Kisten as CB137. Matching on the embedded number misassigns 735 calls. Always match on the NAME portion."
-    },
-    "name_aliases": {
-      "Thokozile Maphumulo": "Thokozile Irene Maphumulo",
-      "Kasavani Sankarparsad": "Ashnee Kasavani Sankarparsad",
-      "Kasavani Snakarparsad": "Ashnee Kasavani Sankarparsad",
-      "Delano Rajgopaul": "Delano Rajagopal",
-      "Sabastian Manikum": "Sebastian Munikum",
-      "Jabu Ntombele": "Jabu Ntombela",
-      "Silerene Ganesan Naidoo": "Silerene Ganasen Naidoo",
-      "Thevapragasen Muniappen": "Theva Pragasen",
-      "Antach Sibusisiwe Owusu-Ansah": "Sibusisiwe Owusu-Ansah",
-      "Charmaine Orielley": "Charmaine O'rielley",
-      "Sherazaad Alexandre": "Sherazaad Alexandre'",
-      "Enoch James Pillay": "Enoch Pillay",
-      "Threza Tessa Chetty": "Threza Chetty",
-      "Ashleigh Naidoo": "Ashleigh Alexandra Naidoo",
-      "Thalente Xaba": "Thalente Celokuhle Xaba",
-      "Zinhle Ennocentia Masuku": "Zinhle Masuku",
-      "Nontokozo Nomvelo Gumede": "Nontokozo Gumede",
-      "Nomthandazo Thandazile Sibiya": "Nomthandazo Sibiya",
-      "Balungile Nolwazi Snothile Mdlalose": "Balungile Mdlalose",
-      "Asanda Anele Mthethwa": "Asanda Mthethwa",
-      "Lunga Ngongoma": "Andile Ngongoma",
-      "Olwethu Nzama": "Zanele Nzama",
-      "Thulani Mbonambi": "Thulani Greatman Mbonambi",
-      "Nomonde Ntoza": "Lindokuhle Phakathi"
-    },
-    "owner_field_parsing": {
-      "source": "bi_active / bi_inactive 'Owner'",
-      "rule": "Strip the ' - Panimax' suffix, then resolve via name_aliases.",
-      "example": "'Enoch Pillay - Panimax' -> 'Enoch Pillay' -> CB70"
-    },
-    "global_exclusions": {
-      "test_accounts": [
-        "Training 1",
-        "Training 2",
-        "Training 3",
-        "Training 4",
-        "Agent Test"
-      ],
-      "non_agent_roles": [
-        "team_leader",
-        "QA agent",
-        "support staff"
-      ],
-      "rule": "Excluded records must be counted and reported, never silently dropped."
-    }
+    "not_data_derivable": "No rule in the supplied data separates these from included agents. CB143 Denisha Pillay is also Sick Leave all period with zero talk and zero sales, yet IS included. Maintain as a configurable list and confirm each month."
+   }
+  }
+ },
+ "derived_column_formulas": {
+  "_comment": "The seven ratio/derived columns that must ALWAYS be formulas, never pasted numbers. Each has an explicit numerator and denominator and a zero-denominator result of 0.",
+  "Att %": {
+   "numerator": "Actual Shifts",
+   "denominator": "Employed Shifts",
+   "excel": "=IFERROR(F{r}/E{r},0)",
+   "format": "0%"
   },
-  "reference_data": {
-    "sales_target_matrix": {
-      "_source": "agent_roster 'Target' column, keyed Campaign|Tenure. Read at runtime - values below are the observed state.",
-      "Cuddle|Exp": 8,
-      "Courtesy|Exp": 5,
-      "Courtesy|M2": 4,
-      "Courtesy|M1": 3,
-      "Nesting|M0": 2
-    },
-    "gwp_rate_per_sale": {
-      "value": 89,
-      "usage": "GWP Target = Sales Target x 89"
-    },
-    "vat_multiplier": {
-      "value": 1.15,
-      "usage": "GWP Achieved = ROUND(SUM(Charge Amount) x 1.15, 0)",
-      "evidence": "Ratio of reference GWP to raw Charge Amount sum is exactly 1.150 for all 13 agents tested. Charge Amount is VAT-exclusive; GWP is VAT-inclusive.",
-      "note": "Round AFTER multiplying, to 0 decimals."
-    },
-    "attendance_shift_weights": {
-      "P": 1.0,
-      "HDCA": 0.5,
-      "CA": 0.0,
-      "UCA": 0.0,
-      "SL": 0.0,
-      "FRL": 0.0,
-      "AL": 0.0,
-      "L": 0.0,
-      "Suspended": 0.0,
-      "_default": 0.0,
-      "_scope": "Applied directly for Cuddle. For Courtesy/Nesting only HDCA (0.5) is used as an override on the talk-time rule.",
-      "_verification": {
-        "dialler_activity_rule": "132/136 fact rows (134/136 once the CB263 dialler label is corrected)",
-        "hr_register_rule": "123/136 fact rows",
-        "by_campaign": {
-          "Courtesy": "dialler 78/80, HR 73/80",
-          "Cuddle": "both 50/50 - HR is used because Vici has no per-day split",
-          "Nesting": "dialler 4/6, HR 0/6 - the 3 Nesting agents have no attendance record at all"
-        },
-        "remaining_overrides": [
-          "Mzwandile Masuku 04 Aug: HR Present, dialled 5,125s, reference records 0 shifts",
-          "Surprise Lucky Cwele 04 Aug: HR Uncomm Absence, dialled 4,428s, reference records 0.5 shifts"
-        ],
-        "broken_mapping_fixed": "Lindokuhle Phakathi (CB263) showed reference talk = 0 on both days because the reference VLOOKUP used the roster's wrong dialler label 'Nomonde Ntoza CB-263'. He dialled 646 calls. The corrected mapping fixes both rows."
-      }
-    }
+  "% of Sales Target": {
+   "numerator": "Sales Achieved",
+   "denominator": "Sales Target",
+   "excel": "=IFERROR((I{r}/H{r}),0)",
+   "format": "0%"
   },
-  "august_fact_table": {
-    "role": "SINGLE SOURCE OF TRUTH. Every pivot and every MTD/WTD/TL figure aggregates from this sheet. Nothing downstream reads a source file directly.",
-    "sheet_name": "August",
-    "grain": "One row per agent per employed day",
-    "key": "Date + Emp Code",
-    "integrity": "Zero duplicates on Date + Emp Code. Assert this on every build.",
-    "range": "A1:T{1+rows}",
-    "append_mode": "Append new day rows only. Never overwrite or re-sort prior days - the pivot cache range must grow downward.",
-    "columns": [
-      {
-        "col": "A",
-        "name": "Week",
-        "type": "text",
-        "value": "\"Week \" & week_number_within_month",
-        "source": "derived from Date",
-        "example": "Week 1",
-        "number_format": "General"
-      },
-      {
-        "col": "B",
-        "name": "Date",
-        "type": "text",
-        "format": "DD.MM.YYYY",
-        "note": "Stored as TEXT, not a date serial. Parse day-first when reading. Excel will not group this field by month/day in a pivot - that is intentional and matches the reference.",
-        "number_format": "General"
-      },
-      {
-        "col": "C",
-        "name": "Team Leader",
-        "type": "text",
-        "source": "agent_roster.Team Leader",
-        "observed_values": [
-          "Nikita Baijnath",
-          "Shane Methalal",
-          "Sharoma Rampersad",
-          "Renolan Pillay",
-          "Dhamendra Budhu",
-          "TBC"
-        ],
-        "number_format": "General"
-      },
-      {
-        "col": "D",
-        "name": "Campaign",
-        "type": "text",
-        "source": "agent_roster.Campaign",
-        "allowed_values": [
-          "Courtesy",
-          "Cuddle",
-          "Nesting"
-        ],
-        "critical": "Use exactly these three tokens. The roster sheet writes 'Courtesy - Nesting'; the fact table must write 'Nesting'. The pivot page-field items are bound to these literal strings.",
-        "number_format": "General"
-      },
-      {
-        "col": "E",
-        "name": "Agent",
-        "type": "text",
-        "source": "agent_roster.'Sales Force'",
-        "note": "This is the pivot row label AND the VLOOKUP key used by the MTD sheets for Cancellations and QA. It must be byte-identical across the fact table, the cancellations range and the QA range.",
-        "critical": "Use the 'Sales Force' column, NOT 'Agent Name'. CB156 is 'Kasavani Snakarparsad' under Agent Name but 'Ashnee Kasavani Sankarparsad' under Sales Force; the tracker uses the latter, and this string is the join key for Cancellations and QA.",
-        "number_format": "General"
-      },
-      {
-        "col": "F",
-        "name": "Emp Code",
-        "type": "text",
-        "source": "agent_roster.Employee Code",
-        "note": "Canonical identity key. Not used in the pivot, but required for all joins.",
-        "number_format": "General"
-      },
-      {
-        "col": "G",
-        "name": "Tenure",
-        "type": "text",
-        "allowed_values": [
-          "Exp",
-          "M2",
-          "M1",
-          "M0"
-        ],
-        "number_format": "General"
-      },
-      {
-        "col": "H",
-        "name": "Employed Shifts",
-        "type": "integer",
-        "formula": "1",
-        "rule": "ALWAYS literal 1. One row exists per agent per employed day, so the MTD sum equals the agent's employed day count. Never write 2 to represent two days - write two rows.",
-        "verified": "All 136 reference rows = 1",
-        "number_format": "General"
-      },
-      {
-        "col": "I",
-        "name": "Actual Shifts",
-        "type": "decimal",
-        "formula": "Courtesy/Nesting: 0.5 if attendance Status Code = HDCA, else 1.0 if Talk Time > 0, else 0.0. Cuddle: attendance_shift_weights[Status Code].",
-        "allowed_values": [
-          0,
-          0.5,
-          1
-        ],
-        "verified": "131/136 fact rows. Residual: Mzwandile Masuku (dialled 5,125s, reference shows 0) and Surprise Lucky Cwele (0.5 with no attendance record) are manual overrides.",
-        "critical": "Courtesy/Nesting shifts are DIALLER-derived, not HR-derived. The attendance register disagrees with the reference tracker for 6 Courtesy agents in both directions; the talk-time rule reproduces 131/136 rows. Cuddle must use attendance because the Vici export is period-aggregated.",
-        "number_format": "General"
-      },
-      {
-        "col": "J",
-        "name": "Att %",
-        "type": "percent",
-        "formula": "=I{r}/H{r}",
-        "reference_formula_exact": "=I2/H2",
-        "note": "The reference omits IFERROR here. Safe because H is always 1.",
-        "number_format": "0%"
-      },
-      {
-        "col": "K",
-        "name": "Sales Target",
-        "type": "integer",
-        "formula": "=VLOOKUP($F{r},Roster!$A:$J,10,FALSE)",
-        "source": "reference_data.sales_target_matrix keyed on Campaign|Tenure",
-        "note": "Daily target. MTD target = SUM over rows, so it scales automatically with employed days.",
-        "number_format": "0"
-      },
-      {
-        "col": "L",
-        "name": "Sales Achieved",
-        "type": "integer",
-        "reference_formula": "=VLOOKUP(E2,'[1]03.08'!$D:$F,2,FALSE)",
-        "replacement_formula": "COUNT DISTINCT Account Number from UNION(bi_active, bi_inactive) WHERE Owner=Agent AND Contract Create Date = this row's Date",
-        "note": "The reference pulled this from the external daily Variance Report. Now computed directly from the BI exports - verified exact.",
-        "number_format": "General"
-      },
-      {
-        "col": "M",
-        "name": "% of Sales Target",
-        "type": "percent",
-        "formula": "=IFERROR((L{r}/K{r}),0)",
-        "number_format": "0%"
-      },
-      {
-        "col": "N",
-        "name": "Talk Time",
-        "type": "time",
-        "format": "[h]:mm:ss",
-        "formula": "SUM(Billable Seconds) for this Emp Code on this Date, converted to a time value",
-        "source": "DIALLER-SIDE talk metric. Cuddle: Vici 'TALK'. Courtesy/Nesting: the daily dialler export used by the Variance Report 'Call X' sheet (NOT SUPPLIED).",
-        "critical": "Use Billable Seconds, NOT Duration. Duration includes ring time and overstates by ~60%.",
-        "number_format": "h:mm:ss",
-        "fallback": "Call X Call 'Billable Seconds' is the only available Courtesy proxy but is a CARRIER measure and runs a median 4.8% high (range 1.001x to 1.306x). Use it only as an interim estimate and flag it.",
-        "verification": {
-          "Cuddle (Vici)": "median ratio 0.9887 vs reference - agrees within 1.1%",
-          "Courtesy (Call X Call)": "19/80 rows match, and all 19 are zero-talk rows. 0 of 61 non-zero rows match. Median ratio 1.0478.",
-          "rounding_ruled_out": "Correlation of the gap with call volume is 0.055, and billable seconds are not rounded to any billing increment. The gap is a source difference, not per-call rounding.",
-          "duration_ruled_out": "Call X Call 'Duration' includes ring time and totals 789,423s against the reference's 477,176s - far worse than billable seconds."
-        }
-      },
-      {
-        "col": "O",
-        "name": "GWP Target",
-        "type": "currency",
-        "formula": "=K{r}*89",
-        "reference_formula_exact": "=K2*89",
-        "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
-      },
-      {
-        "col": "P",
-        "name": "GWP Achieved",
-        "type": "currency",
-        "reference_formula": "=VLOOKUP(E2,'[2]04.08'!$D:$F,3,FALSE)",
-        "replacement_formula": "ROUND(SUM(Charge Amount) * 1.15, 0) from UNION(bi_active, bi_inactive) WHERE Owner=Agent AND Contract Create Date = this row's Date",
-        "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
-      },
-      {
-        "col": "Q",
-        "name": "% of GWP Target",
-        "type": "percent",
-        "formula": "=IFERROR((P{r}/O{r}),0)",
-        "number_format": "0%"
-      },
-      {
-        "col": "R",
-        "name": "Ave GWP",
-        "type": "currency",
-        "formula": "=IFERROR((P{r}/L{r}),0)",
-        "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
-      },
-      {
-        "col": "S",
-        "name": "Referrals",
-        "type": "integer",
-        "reference_formula": "=VLOOKUP(E2,'[3]03.08'!$B:$AG,32,FALSE)",
-        "source": "vas_daily_tracker column AG",
-        "status": "BLOCKED - source not supplied. Emit null, never 0.",
-        "number_format": "General"
-      },
-      {
-        "col": "T",
-        "name": "% Of Referrals To Sales Achieved",
-        "type": "percent",
-        "formula": "=IFERROR((S{r}/L{r}),0)",
-        "number_format": "0%"
-      }
-    ],
-    "row_inclusion_rule": {
-      "rule": "One row per roster agent per dialing day. Driven by the ROSTER, not attendance. Agents with no attendance record still get rows (the 3 Nesting agents have none). Agents with zero sales and zero talk still get rows - their zeros are required for the % Of Agents on Target denominator.",
-      "dialing_days": "Distinct dates in the attendance register within the period.",
-      "exclusions": {
-        "codes": [
-          "CB67",
-          "CB205",
-          "CB265"
-        ],
-        "observed_reason": {
-          "CB67": "Theva Pragasen - Sick Leave all period",
-          "CB205": "Darrien Govender - Suspended all period",
-          "CB265": "Amanda Mani - no attendance record, likely not started"
-        },
-        "not_data_derivable": "No rule in the supplied data separates these from included agents. CB143 Denisha Pillay is also Sick Leave all period with zero talk and zero sales, yet IS included. Maintain as a configurable list and confirm each month."
-      }
-    }
+  "SPD": {
+   "numerator": "Sales Achieved",
+   "denominator": "Actual Shifts",
+   "excel": "=IFERROR((I{r}/F{r}),0)",
+   "format": "0.0",
+   "note": "Actual shifts, NOT employed shifts."
   },
-  "derived_column_formulas": {
-    "_comment": "The seven ratio/derived columns that must ALWAYS be formulas, never pasted numbers. Each has an explicit numerator and denominator and a zero-denominator result of 0.",
-    "Att %": {
-      "numerator": "Actual Shifts",
-      "denominator": "Employed Shifts",
-      "excel": "=IFERROR(F{r}/E{r},0)",
-      "format": "0%"
-    },
-    "% of Sales Target": {
-      "numerator": "Sales Achieved",
-      "denominator": "Sales Target",
-      "excel": "=IFERROR((I{r}/H{r}),0)",
-      "format": "0%"
-    },
-    "SPD": {
-      "numerator": "Sales Achieved",
-      "denominator": "Actual Shifts",
-      "excel": "=IFERROR((I{r}/F{r}),0)",
-      "format": "0.0",
-      "note": "Actual shifts, NOT employed shifts."
-    },
-    "% of Cancellations": {
-      "numerator": "Cancellations",
-      "denominator": "Sales Achieved",
-      "excel": "=IFERROR((L{r}/I{r}),0)",
-      "format": "0%"
-    },
-    "GWP Target": {
-      "formula": "Sales Target x 89",
-      "excel": "=H{r}*89",
-      "format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
-    },
-    "% To GWP Target": {
-      "numerator": "GWP Achieved",
-      "denominator": "GWP Target",
-      "excel": "=IFERROR((P{r}/O{r}),0)",
-      "format": "0%"
-    },
-    "Ave GWP": {
-      "numerator": "GWP Achieved",
-      "denominator": "Sales Achieved",
-      "excel": "=IFERROR((P{r}/I{r}),0)",
-      "format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
-    },
-    "% Of Referrals To Sales Achieved": {
-      "numerator": "Referrals",
-      "denominator": "Sales Achieved",
-      "excel": "=IFERROR((S{r}/I{r}),0)",
-      "format": "0%"
-    },
-    "_grand_total_rule": "On the Grand Total row every one of these is recomputed from the SUMMED numerator and denominator (e.g. =IFERROR((P{gt}/I{gt}),0)). Never average the agent-row percentages. Averaging Ave GWP across agents gives a different and wrong answer to total GWP / total sales."
+  "% of Cancellations": {
+   "numerator": "Cancellations",
+   "denominator": "Sales Achieved",
+   "excel": "=IFERROR((L{r}/I{r}),0)",
+   "format": "0%"
   },
-  "qa_rules": {
-    "source": "evaluations-full-export-YYYY-MM-DD.csv",
-    "period_filter": "Date of Call BETWEEN mtd_start AND mtd_end. NOT Date of Assessment, NOT the file's own Week column.",
-    "score_parsing": "Strip '%', cast to float, divide by 100. Values carry one decimal place (e.g. '93.9%'). Never aggregate as text.",
-    "headline_metric": {
-      "name": "QA",
-      "aggregation": "AVERAGE of parsed Score %",
-      "grouping": "Sales Agent -> Employee Code",
-      "filters": "NONE",
-      "verified": "26/44 agents exact against the reference pivot; no filter variant scored higher.",
-      "no_data_value": "\"No QA %\" (text). AVERAGE() ignores it, so agents with no evaluation are excluded from the denominator rather than counted as zero."
-    },
-    "critical_fail_equivalence": {
-      "finding": "Score % = 0% <=> Escalation Decision = 'Critical Fail'. Perfect correspondence, 24/24 in the reference period.",
-      "implication": "Zero scores are real outcomes, not missing data. Never treat 0% as null and never exclude it from the average - doing so inflates every affected agent's score."
-    },
-    "rejected_filters": {
-      "_comment": "Tested against the reference QA pivot; exact-agent match shown. Unfiltered scores 26/44 and wins.",
-      "exclude Status='Closed - Retracted'": "26/44",
-      "exclude Campaign='Tracker'": "24/44",
-      "exclude Retracted + Tracker": "24/44",
-      "Assessment Type='Sale' only": "25/44",
-      "exclude Dispute Count>0": "23/44",
-      "Status='Closed - Risk Mitigated' only": "17/44"
-    },
-    "campaign_normalisation": {
-      "Matrix Cuddle": "Cuddle",
-      "cuddle_calls": "Cuddle",
-      "Matrix Courtesy": "Courtesy",
-      "courtesy_calls": "Courtesy",
-      "Matrix Tracker": "Tracker",
-      "tracker": "Tracker",
-      "vas": "VAS",
-      "Sales Lab": "Sales Lab",
-      "_note": "QA covers Tracker (Vehicle Tracking) agents outside VAS scope. Retained in the headline average to match the reference, but flagged - see OI-13."
-    },
-    "workflow_metrics": [
-      {
-        "name": "QA Evaluations",
-        "logic": "COUNT of evaluation rows",
-        "note": "Denominator for every QA rate. An agent with one evaluation and one critical fail shows 100% - always read the rate alongside the volume."
-      },
-      {
-        "name": "Critical Fails",
-        "logic": "COUNT where Escalation Decision = 'Critical Fail'"
-      },
-      {
-        "name": "Critical Fail %",
-        "numerator": "Critical Fails",
-        "denominator": "QA Evaluations",
-        "excel": "=IFERROR((W{r}/V{r}),0)"
-      },
-      {
-        "name": "Coaching",
-        "logic": "COUNT where Escalation Decision = 'Coaching'"
-      },
-      {
-        "name": "Pass %",
-        "numerator": "QA Evaluations - Critical Fails - Coaching",
-        "denominator": "QA Evaluations",
-        "excel": "=IFERROR((V{r}-W{r}-Y{r})/V{r},0)",
-        "note": "Derived rather than counted so the three outcomes always sum to 100%."
-      },
-      {
-        "name": "P1 Priority",
-        "logic": "COUNT where Priority = 'P1'",
-        "note": "Priority is null on passes; P1/P2/P3 populate only on Critical Fail or Coaching."
-      },
-      {
-        "name": "Disputes",
-        "logic": "COUNT where Dispute Count > 0",
-        "note": "Dispute Status runs Pending / Upheld / Rejected. An UPHELD dispute means the recorded score was wrong, so the period's QA is provisional."
-      },
-      {
-        "name": "QA Open",
-        "logic": "COUNT where Status <> 'Closed - Risk Mitigated'",
-        "note": "Covers Pending TL Action, Awaiting QA Close, TL Stage 1 Complete. Open items can still change score or outcome."
-      },
-      {
-        "name": "Callback Required",
-        "logic": "COUNT where Client Callback Required = 'Yes'",
-        "note": "Operational follow-up, not a scoring metric."
-      }
-    ],
-    "status_vocabulary": [
-      "Closed - Risk Mitigated",
-      "Pending TL Action",
-      "Closed - Retracted",
-      "Awaiting QA Close",
-      "TL Stage 1 Complete"
-    ],
-    "escalation_vocabulary": [
-      "Pass",
-      "Coaching",
-      "Critical Fail"
-    ],
-    "null_columns": {
-      "SM Escalation Reason": "100% null - ignore"
-    },
-    "dedup": {
-      "key": "Record ID (unique, 4364/4364)",
-      "warning": "Call ID is NOT unique - 111 Call IDs carry two evaluations each. Both retained by default; see OI-04."
-    },
-    "verification_detail": {
-      "agents_compared": 37,
-      "exact": 23,
-      "within_1pp": 27,
-      "material_differences": 10,
-      "pattern": "Every material difference is a Cuddle agent. Zero Courtesy differences.",
-      "root_cause": "Submission timing. Evaluations by Submitted At date: 04 Aug = 26 Courtesy / 63 Cuddle / 6 Tracker; 05 Aug = 1 Courtesy / 130 Cuddle / 10 Tracker; 06 Aug = 4 Cuddle. The tracker was built on 04 Aug, before two thirds of Cuddle evaluations existed.",
-      "conclusion": "The rule is correct. Export QA on the same day the MTD is built and the differences close.",
-      "integrity": {
-        "V20 zero score = Critical Fail": "PASS 24/24",
-        "V21 Pass+Coaching+CriticalFail = total": "PASS 240 = 194+22+24",
-        "V22 upheld disputes": "0 upheld, 8 pending",
-        "evaluations not closed": "41 of 240",
-        "duplicate Call IDs": 2,
-        "evaluations on agents outside VAS roster": 19
-      }
-    },
-    "scope_warning": {
-      "finding": "7 agents in the reference QA pivot are absent from the VAS roster entirely: Avelucia Gebuza, Avesh Singh, Ismail Samuel, Nevelin Nathaniel Naicker, Ntombovuyo Sihiya, Philile Angel Magubane, Ryan Chetty. All are Vehicle Tracking.",
-      "implication": "The reference QA pivot averages the whole business, not just VAS. Because the MTD sheets look it up by agent name, VAS agents are unaffected - but the pivot's own grand total is not a VAS figure.",
-      "action": "Confirm whether the QA pivot should be scoped to VAS agents only."
-    }
+  "GWP Target": {
+   "formula": "Sales Target x 89",
+   "excel": "=H{r}*89",
+   "format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
   },
-  "qa_detail_sheet": {
-    "name": "QA Detail",
-    "role": "Per-agent QA breakdown: volume, average score, Pass/Coaching/Critical Fail split, priority, disputes, open items and callbacks.",
-    "sort": "Campaign, then Ave Score % ascending - worst scores first, so the coaching list reads from the top.",
-    "columns": [
-      "Campaign",
-      "Team Leader",
-      "Tenure",
-      "Agent",
-      "Emp Code",
-      "Evaluations",
-      "Ave Score %",
-      "Pass",
-      "Coaching",
-      "Critical Fails",
-      "Critical Fail %",
-      "P1",
-      "P2/P3",
-      "Disputes Raised",
-      "Open (not closed)",
-      "Callback Required"
-    ]
+  "% To GWP Target": {
+   "numerator": "GWP Achieved",
+   "denominator": "GWP Target",
+   "excel": "=IFERROR((P{r}/O{r}),0)",
+   "format": "0%"
   },
-  "pivot_tables": {
-    "count": 2,
-    "shared_cache": {
-      "cache_id": 92,
-      "source_type": "worksheet",
-      "source_ref": "August!A1:T137",
-      "refresh_rule": "Extend the ref to the new last row on every build, then refresh. Both pivots share one cache - refresh once."
-    },
-    "common_configuration": {
-      "row_fields_in_order": [
-        "Team Leader",
-        "Tenure",
-        "Agent"
-      ],
-      "row_field_indexes": [
-        2,
-        6,
-        4
-      ],
-      "column_fields": [
-        "<Values>"
-      ],
-      "page_fields_in_order": [
-        "Week",
-        "Campaign"
-      ],
-      "layout": {
-        "compact": false,
-        "compactData": false,
-        "form": "tabular",
-        "note": "Tabular/outline form - each row field occupies its own column (A, B, C). Not compact form."
-      },
-      "subtotals": {
-        "Team Leader": "OFF (defaultSubtotal=0)",
-        "Tenure": "OFF (defaultSubtotal=0)",
-        "Agent": "n/a (innermost)"
-      },
-      "grand_total": {
-        "rows": true,
-        "columns": false,
-        "label": "Grand Total"
-      },
-      "data_fields_in_order": [
-        {
-          "index": 0,
-          "display_name": "Sum of Employed Shifts",
-          "source_field": "Employed Shifts",
-          "subtotal": "sum"
-        },
-        {
-          "index": 1,
-          "display_name": "Sum of Actual Shifts",
-          "source_field": "Actual Shifts",
-          "subtotal": "sum"
-        },
-        {
-          "index": 2,
-          "display_name": "Sum of Sales Target",
-          "source_field": "Sales Target",
-          "subtotal": "sum"
-        },
-        {
-          "index": 3,
-          "display_name": "Sum of Sales Achieved",
-          "source_field": "Sales Achieved",
-          "subtotal": "sum"
-        },
-        {
-          "index": 4,
-          "display_name": "Average of Talk Time",
-          "source_field": "Talk Time",
-          "subtotal": "average",
-          "numFmtId": 21,
-          "format": "h:mm:ss"
-        },
-        {
-          "index": 5,
-          "display_name": "Sum of GWP Target",
-          "source_field": "GWP Target",
-          "subtotal": "sum",
-          "numFmtId": 44
-        },
-        {
-          "index": 6,
-          "display_name": "Sum of GWP Achieved",
-          "source_field": "GWP Achieved",
-          "subtotal": "sum",
-          "numFmtId": 44
-        },
-        {
-          "index": 7,
-          "display_name": "Sum of Referrals",
-          "source_field": "Referrals",
-          "subtotal": "sum"
-        }
-      ],
-      "excluded_from_pivot": [
-        "Date",
-        "Emp Code",
-        "Att %",
-        "% of Sales Target",
-        "% of GWP Target",
-        "Ave GWP",
-        "% Of Referrals To Sales Achieved"
-      ],
-      "exclusion_rationale": "Ratio columns are NEVER summed or averaged in the pivot. They are recomputed downstream in the MTD sheets from the summed numerator and denominator. This is what prevents averaging-of-averages error."
-    },
-    "definitions": [
-      {
-        "name": "PivotTable2",
-        "alias": "pivot_cuddle",
-        "sheet": "Pivot Table",
-        "range": "A4:K30",
-        "page_filters": {
-          "Week": "Week 1 (item 0 = current week)",
-          "Campaign": "Cuddle (cache item index 1)"
-        },
-        "sort": [
-          {
-            "field": "Team Leader",
-            "type": "descending",
-            "on_data_field": "Sum of GWP Achieved"
-          },
-          {
-            "field": "Tenure",
-            "type": "descending",
-            "on_data_field": "Sum of Sales Achieved"
-          },
-          {
-            "field": "Agent",
-            "type": "descending",
-            "on_data_field": "Sum of GWP Achieved"
-          }
-        ],
-        "reference_output": {
-          "team_leader_block_order": [
-            "Sharoma Rampersad",
-            "Renolan Pillay"
-          ],
-          "agent_rows": 25,
-          "grand_total": {
-            "Employed Shifts": 50,
-            "Actual Shifts": 44.5,
-            "Sales Target": 400,
-            "Sales Achieved": 470,
-            "Talk Time": "3:48:18.54",
-            "GWP Target": 35600,
-            "GWP Achieved": 47370,
-            "Referrals": 50
-          }
-        }
-      },
-      {
-        "name": "PivotTable3",
-        "alias": "pivot_courtesy",
-        "sheet": "Pivot Table",
-        "range": "A41:K82",
-        "page_filters": {
-          "Week": "Week 1 (item 0 = current week)",
-          "Campaign": "Courtesy (cache item index 0)"
-        },
-        "sort": [
-          {
-            "field": "Team Leader",
-            "type": "descending",
-            "on_data_field": "Sum of Sales Achieved"
-          },
-          {
-            "field": "Tenure",
-            "type": "manual",
-            "order": [
-              "Exp",
-              "M2",
-              "M1",
-              "M0"
-            ],
-            "note": "No autoSortScope on this field - it follows cache item order."
-          },
-          {
-            "field": "Agent",
-            "type": "descending",
-            "on_data_field": "Sum of Sales Achieved"
-          }
-        ],
-        "reference_output": {
-          "team_leader_block_order": [
-            "Shane Methalal",
-            "Nikita Baijnath",
-            "Dhamendra Budhu"
-          ],
-          "agent_rows": 40,
-          "grand_total": {
-            "Sales Achieved": 144,
-            "GWP Achieved": 14636
-          }
-        }
-      }
-    ],
-    "campaign_cache_item_order": {
-      "0": "Courtesy",
-      "1": "Cuddle",
-      "2": "Nesting"
-    },
-    "coverage_gap": {
-      "issue": "The 'Nesting' campaign (6 fact rows, 3 agents) is filtered OUT by both pivots and therefore appears in NO MTD sheet.",
-      "affected_agents": [
-        "Busiswa Mathenjwa CB262",
-        "Justin Motilall CB261",
-        "Lindokuhle Phakathi CB263"
-      ],
-      "action_required": "Confirm whether Nesting should get its own pivot + MTD sheet, be folded into Courtesy, or remain excluded by design.",
-      "resolution": "Engine now emits a third pivot block and an 'MTD - Nesting' sheet. In the reference period this recovers 3 agents and 17 sales that were dropped entirely."
-    }
+  "Ave GWP": {
+   "numerator": "GWP Achieved",
+   "denominator": "Sales Achieved",
+   "excel": "=IFERROR((P{r}/I{r}),0)",
+   "format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
   },
-  "lookup_ranges_not_pivots": {
-    "warning": "These three ranges sit on the 'Pivot Table' sheet and LOOK like pivots, but the workbook contains only two pivotTable parts. They are pasted value ranges maintained outside the workbook. The engine must generate them as sorted lookup tables.",
-    "ranges": [
-      {
-        "range": "N4:O{n}",
-        "headers": {
-          "N4": "Row Labels",
-          "O4": "Count of Contract Deactivate Date"
-        },
-        "metric": "cancellations",
-        "source": "bi_inactive",
-        "filter": "Contract Create Date BETWEEN mtd_start AND mtd_end",
-        "group_by": "Owner (with ' - Panimax' stripped)",
-        "aggregation": "COUNT DISTINCT Account Number",
-        "sort": "Agent name ascending (A-Z)",
-        "completeness_rule": "MUST list EVERY agent in the fact table, including zero-cancellation agents. The reference lists 108 agents of which only 4 are non-zero. If an agent is missing, the MTD VLOOKUP falls through to IFERROR and silently returns 0 - indistinguishable from a true zero.",
-        "critical": "Despite the header text, the filter is on Contract CREATE date, not Deactivate date. The header is a legacy pivot caption. Filtering on Deactivate Date returns 20 agents instead of 4."
-      },
-      {
-        "range": "U4:V{n}",
-        "headers": {
-          "U4": "Row Labels",
-          "V4": "Average of Score %"
-        },
-        "metric": "qa_score_mtd",
-        "source": "qa_evaluations",
-        "filter": "Date of Call BETWEEN mtd_start AND mtd_end",
-        "group_by": "Sales Agent (resolved through name_aliases)",
-        "aggregation": "AVERAGE of parsed Score %",
-        "sort": "Agent name ascending (A-Z)",
-        "reference_row_count": 44
-      },
-      {
-        "range": "AA4:AB{n}",
-        "headers": {
-          "AA3": "<Week label>",
-          "AA4": "Row Labels",
-          "AB4": "Average of Score %"
-        },
-        "metric": "qa_score_wtd",
-        "source": "qa_evaluations",
-        "filter": "Date of Call BETWEEN week_start AND week_end",
-        "group_by": "Sales Agent",
-        "aggregation": "AVERAGE of parsed Score %",
-        "note": "Identical to U:V in the reference because the MTD period contained only one week. They diverge from Week 2 onward. Generate both independently."
-      },
-      {
-        "range": "Q4:S{n}",
-        "headers": {
-          "Q4": "Agent",
-          "R4": "Comment",
-          "S4": "Issued Date"
-        },
-        "metric": "manual_commentary",
-        "source": "MANUAL - not derived from any uploaded file",
-        "action": "Preserve existing contents across rebuilds. Do not regenerate or clear."
-      }
-    ]
+  "% Of Referrals To Sales Achieved": {
+   "numerator": "Referrals",
+   "denominator": "Sales Achieved",
+   "excel": "=IFERROR((S{r}/I{r}),0)",
+   "format": "0%"
   },
-  "mtd_sheet_construction": {
-    "sheets": [
-      "MTD - Cuddle",
-      "MTD - Courtesy"
-    ],
-    "source": "The corresponding pivot, flattened to one row per agent",
-    "header_row": 3,
-    "data_start_row": 4,
-    "title_cell": {
-      "B2": "Cuddle | Courtesy"
-    },
-    "columns": [
-      {
-        "col": "B",
-        "header": "Team Leader",
-        "source": "pivot row field 1",
-        "type": "value",
-        "number_format": "General"
-      },
-      {
-        "col": "C",
-        "header": "Tenure",
-        "source": "pivot row field 2",
-        "type": "value",
-        "number_format": "General"
-      },
-      {
-        "col": "D",
-        "header": "Agent",
-        "source": "pivot row field 3",
-        "type": "value",
-        "note": "VLOOKUP key for columns L and U",
-        "number_format": "General"
-      },
-      {
-        "col": "E",
-        "header": "Employed Shifts ",
-        "source": "pivot Sum of Employed Shifts",
-        "type": "value",
-        "number_format": "General"
-      },
-      {
-        "col": "F",
-        "header": "Actual Shifts ",
-        "source": "pivot Sum of Actual Shifts",
-        "type": "value",
-        "number_format": "General"
-      },
-      {
-        "col": "G",
-        "header": "Att % ",
-        "type": "formula",
-        "formula": "=F{r}/E{r}",
-        "reference_exact": "=F4/E4",
-        "number_format": "0%"
-      },
-      {
-        "col": "H",
-        "header": "Sales Target ",
-        "source": "pivot Sum of Sales Target",
-        "type": "value",
-        "number_format": "0"
-      },
-      {
-        "col": "I",
-        "header": "Sales Achieved ",
-        "source": "pivot Sum of Sales Achieved",
-        "type": "value",
-        "number_format": "General"
-      },
-      {
-        "col": "J",
-        "header": " % of Sales Target ",
-        "type": "formula",
-        "formula": "=IFERROR((I{r}/H{r}),0)",
-        "number_format": "0%"
-      },
-      {
-        "col": "K",
-        "header": "SPD",
-        "type": "formula",
-        "formula": "=IFERROR((I{r}/F{r}),0)",
-        "note": "Denominator is ACTUAL shifts, not employed.",
-        "number_format": "0.0"
-      },
-      {
-        "col": "L",
-        "header": "Cancellations",
-        "type": "formula",
-        "formula": "=IFERROR(VLOOKUP(D{r},'Pivot Table'!N:O,2,0),0)",
-        "number_format": "General"
-      },
-      {
-        "col": "M",
-        "header": "% of Cancellations",
-        "type": "formula",
-        "formula": "=IFERROR((L{r}/I{r}),0)",
-        "number_format": "0%"
-      },
-      {
-        "col": "N",
-        "header": "Ave Talk Time",
-        "source": "pivot Average of Talk Time",
-        "type": "value",
-        "format": "h:mm:ss",
-        "number_format": "h:mm:ss"
-      },
-      {
-        "col": "O",
-        "header": "GWP Target ",
-        "source": "pivot Sum of GWP Target",
-        "type": "formula",
-        "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-",
-        "formula": "=H{r}*89",
-        "note": "Live formula, not a pasted pivot value. GWP Target is always Sales Target x 89, so it stays consistent if the target matrix changes."
-      },
-      {
-        "col": "P",
-        "header": "GWP Achieved ",
-        "source": "pivot Sum of GWP Achieved",
-        "type": "value",
-        "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
-      },
-      {
-        "col": "Q",
-        "header": "% To GWP Target",
-        "type": "formula",
-        "formula": "=IFERROR((P{r}/O{r}),0)",
-        "number_format": "0%"
-      },
-      {
-        "col": "R",
-        "header": "Ave GWP ",
-        "type": "formula",
-        "formula": "=IFERROR((P{r}/I{r}),0)",
-        "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-",
-        "note": "=IFERROR((P{r}/I{r}),0) - GWP Achieved divided by Sales Achieved. Must be computed from the underlying values, never from the rounded display figures."
-      },
-      {
-        "col": "S",
-        "header": "Referrals ",
-        "source": "pivot Sum of Referrals",
-        "type": "value",
-        "number_format": "General"
-      },
-      {
-        "col": "T",
-        "header": "% Of Referrals To Sales Achieved ",
-        "type": "formula",
-        "formula": "=IFERROR((S{r}/I{r}),0)",
-        "number_format": "0%"
-      },
-      {
-        "col": "U",
-        "header": "QA",
-        "type": "formula",
-        "formula": "=IFERROR(VLOOKUP(D{r},'Pivot Table'!U:V,2,0),\"No QA %\")",
-        "number_format": "0%"
-      }
-    ],
-    "header_whitespace_note": "Several headers carry a trailing space in the reference ('Employed Shifts ', 'Att % ') and column J carries a LEADING space (' % of Sales Target '). Reproduce exactly if downstream consumers match on header text.",
-    "sort_rule": {
-      "specified": "Sales Achieved DESC, tie-break GWP Achieved DESC",
-      "reference_deviation": "The reference sheets are NOT cleanly sorted - they were pasted and hand-sorted. MTD - Cuddle has two out-of-order rows (Maharani Munsami 12 sales placed above Lydia Naidoo 15; Thiloshini Barnard 7 above Stephanie Naidoo 11). MTD - Courtesy has several (Sechaba Mlambo 6 at the top; Mzwandile Masuku 3 among the zero rows). These are manual artefacts, not a rule. Apply the deterministic sort above."
-    },
-    "grand_total_row": {
-      "position": "last data row + 1",
-      "label_cell": "B: \"Grand Total\"",
-      "additive_columns": {
-        "E": "SUM",
-        "F": "SUM",
-        "H": "SUM",
-        "I": "SUM",
-        "O": "SUM",
-        "P": "SUM",
-        "S": "SUM"
-      },
-      "cancellations": "=SUM(L4:L{last})",
-      "talk_time": "AVERAGE of the agent rows",
-      "qa": "=AVERAGE(U4:U{last})",
-      "qa_note": "AVERAGE() ignores the text 'No QA %', so agents without an evaluation are correctly excluded from the denominator rather than counted as zero.",
-      "ratio_columns": {
-        "rule": "RECOMPUTE from the summed numerator and denominator. NEVER average the agent-row percentages.",
-        "G": "=F{gt}/E{gt}",
-        "J": "=IFERROR((I{gt}/H{gt}),0)",
-        "K": "=IFERROR((I{gt}/F{gt}),0)",
-        "M": "=IFERROR((L{gt}/I{gt}),0)",
-        "Q": "=IFERROR((P{gt}/O{gt}),0)",
-        "R": "=IFERROR((P{gt}/I{gt}),0)",
-        "T": "=IFERROR((S{gt}/I{gt}),0)"
-      }
-    },
-    "qa_extension_columns": {
-      "_comment": "Columns V-AC, appended AFTER the reference's column U (QA). The reference structure through U is untouched.",
-      "V": "QA Evaluations",
-      "W": "Critical Fails",
-      "X": "Critical Fail %  =IFERROR((W{r}/V{r}),0)",
-      "Y": "Coaching",
-      "Z": "Pass %  =IFERROR((V{r}-W{r}-Y{r})/V{r},0)",
-      "AA": "P1 Priority",
-      "AB": "Disputes",
-      "AC": "QA Open",
-      "_grand_total": "V,W,Y,AA,AB,AC = SUM. X and Z recomputed from the summed counts, never averaged."
-    }
+  "_grand_total_rule": "On the Grand Total row every one of these is recomputed from the SUMMED numerator and denominator (e.g. =IFERROR((P{gt}/I{gt}),0)). Never average the agent-row percentages. Averaging Ave GWP across agents gives a different and wrong answer to total GWP / total sales."
+ },
+ "qa_rules": {
+  "source": "evaluations-full-export-YYYY-MM-DD.csv",
+  "period_filter": "Date of Assessment BETWEEN mtd_start AND mtd_end (fallback: Submitted At, then Date of Call). NOT the file's own Week column. CHANGED 2026-08-26 by Nick, superseding the v6.0 Date-of-Call rule: QA is credited to the day the QA team did the work. Assessments lag calls by 1-4 days, so filing on call date made every fresh upload look like it had not landed ('there is data until the 25th'). The reference workbook's QA pivot was built on Date of Call, so per-period QA figures legitimately diverge from it from this date forward.",
+  "score_parsing": "Strip '%', cast to float, divide by 100. Values carry one decimal place (e.g. '93.9%'). Never aggregate as text.",
+  "headline_metric": {
+   "name": "QA",
+   "aggregation": "AVERAGE of parsed Score %",
+   "grouping": "Sales Agent -> Employee Code",
+   "filters": "NONE",
+   "verified": "26/44 agents exact against the reference pivot; no filter variant scored higher.",
+   "no_data_value": "\"No QA %\" (text). AVERAGE() ignores it, so agents with no evaluation are excluded from the denominator rather than counted as zero."
   },
-  "wtd_sheet_construction": {
-    "sheets": [
-      "WTD - Cuddle",
-      "WTD - Courtesy"
-    ],
-    "difference_from_mtd": "Identical column set MINUS Cancellations and % of Cancellations. Period filter is week_start..week_end instead of mtd_start..mtd_end. QA sources from the AA:AB range instead of U:V.",
-    "title_cell": {
-      "WTD - Cuddle": "A1: 'Cuddle Team - Week {n}'",
-      "WTD - Courtesy": "A3: 'Courtesy Teams - Week {n}'"
-    },
-    "header_row": {
-      "WTD - Cuddle": 2,
-      "WTD - Courtesy": 4
-    },
-    "columns": [
-      "Team Leader",
-      "Tenure",
-      "Agent",
-      "Employed Shifts ",
-      "Actual Shifts ",
-      "Att % ",
-      "Sales Target ",
-      "Sales Achieved ",
-      " % of Sales Target ",
-      "SPD",
-      "Ave Talk Time",
-      "GWP Target ",
-      "GWP Achieved ",
-      "% To GWP Target",
-      "Ave GWP ",
-      "Referrals ",
-      "% Of Referrals To Sales Achieved ",
-      "QA"
-    ],
-    "stale_data_warning": "In the reference workbook these sheets show 3 employed shifts against an MTD period of 2 days - they were not refreshed for the 1-4 Aug build. Rebuild from the fact table every run."
+  "critical_fail_equivalence": {
+   "finding": "Score % = 0% <=> Escalation Decision = 'Critical Fail'. Perfect correspondence, 24/24 in the reference period.",
+   "implication": "Zero scores are real outcomes, not missing data. Never treat 0% as null and never exclude it from the average - doing so inflates every affected agent's score."
   },
-  "tl_mtd_construction": {
-    "sheet": "TL MTD",
-    "layout": "Metrics down the rows, one column per Team Leader, plus a Campaign Totals column. Two blocks: Courtesy starting B2, Cuddle starting B27.",
-    "grouping": "Team Leader within Campaign",
-    "rows": [
-      {
-        "label": "Dialing Days",
-        "formula": "COUNT(DISTINCT August[Date] in period)"
-      },
-      {
-        "label": "Employed HC",
-        "formula": "COUNT(DISTINCT August[Emp Code] for this TL+Campaign)"
-      },
-      {
-        "label": "Total Employed Shifts",
-        "formula": "SUM(August[Employed Shifts])"
-      },
-      {
-        "label": "Total Actual Shifts",
-        "formula": "SUM(August[Actual Shifts])"
-      },
-      {
-        "label": "% Of Attendance",
-        "formula": "=C7/C6",
-        "type": "ratio"
-      },
-      {
-        "label": "Sales Target",
-        "formula": "SUM(August[Sales Target])"
-      },
-      {
-        "label": "Sales Achieved",
-        "formula": "SUM(August[Sales Achieved])"
-      },
-      {
-        "label": "% To Sales Target",
-        "formula": "=C10/C9",
-        "type": "ratio"
-      },
-      {
-        "label": "SPD",
-        "formula": "=C10/C5/C4",
-        "note": "Sales Achieved / Employed HC / Dialing Days. NOTE this differs from the agent-level SPD, which divides by Actual Shifts."
-      },
-      {
-        "label": "Cancellations",
-        "formula": "SUM of agent cancellations for this TL"
-      },
-      {
-        "label": "% of Cancellations to Sales",
-        "formula": "=C13/C10",
-        "type": "ratio"
-      },
-      {
-        "label": "GWP Target",
-        "formula": "SUM(August[GWP Target])"
-      },
-      {
-        "label": "GWP Achieved",
-        "formula": "SUM(August[GWP Achieved])"
-      },
-      {
-        "label": "% To GWP Target",
-        "formula": "=C16/C15",
-        "type": "ratio"
-      },
-      {
-        "label": "Ave GWP",
-        "formula": "=C16/C10",
-        "type": "ratio"
-      },
-      {
-        "label": "Ave Talk Time",
-        "formula": "AVERAGE(August[Talk Time])",
-        "format": "h:mm:ss"
-      },
-      {
-        "label": "Referrals",
-        "formula": "SUM(August[Referrals])"
-      },
-      {
-        "label": "Referrals %",
-        "formula": "=C20/C10",
-        "type": "ratio"
-      },
-      {
-        "label": "Number Of Agents on Target",
-        "formula": "COUNT of agents where SUM(Sales Achieved) >= SUM(Sales Target)"
-      },
-      {
-        "label": "% Of Agents on Target",
-        "formula": "=C22/C5",
-        "type": "ratio"
-      },
-      {
-        "label": "QA %",
-        "formula": "AVERAGE of agent QA scores for this TL, excluding 'No QA %'"
-      }
-    ],
-    "known_defect": {
-      "cell": "E38",
-      "reference_formula": "=SUM(F13:I13)",
-      "correct_formula": "=SUM(C38:D38)",
-      "description": "The Cuddle Campaign Totals cell for Cancellations points at the Courtesy block instead of summing its own two team-leader cells. Fix on rebuild."
-    },
-    "stale_data_warning": "The reference sheet shows 'Dialing Days = 8' against a 2-day period. Not refreshed for this build."
+  "rejected_filters": {
+   "_comment": "Tested against the reference QA pivot; exact-agent match shown. Unfiltered scores 26/44 and wins.",
+   "exclude Status='Closed - Retracted'": "26/44",
+   "exclude Campaign='Tracker'": "24/44",
+   "exclude Retracted + Tracker": "24/44",
+   "Assessment Type='Sale' only": "25/44",
+   "exclude Dispute Count>0": "23/44",
+   "Status='Closed - Risk Mitigated' only": "17/44"
   },
-  "processing_pipeline": [
-    {
-      "step": 1,
-      "name": "INGEST",
-      "action": "Load all sources. Assert each file's period header falls in the expected window. Record row counts."
-    },
-    {
-      "step": 2,
-      "name": "CLEAN",
-      "action": "Strip footer rows, trim headers, cast dates, parse Score % and durations, normalise campaign vocabulary."
-    },
-    {
-      "step": 3,
-      "name": "RESOLVE IDENTITY",
-      "action": "Map every row to an Employee Code. Route failures to UNMAPPED."
-    },
-    {
-      "step": 4,
-      "name": "FILTER PERIOD",
-      "action": "Apply mtd_start/mtd_end to each source on its designated date field."
-    },
-    {
-      "step": 5,
-      "name": "DEDUPLICATE",
-      "action": "Apply each source's dedup_key. Record counts removed."
-    },
-    {
-      "step": 6,
-      "name": "BUILD FACT TABLE",
-      "action": "Append one row per agent per day to 'August'. Assert uniqueness on Date+Emp Code."
-    },
-    {
-      "step": 7,
-      "name": "EXTEND CACHE",
-      "action": "Update the pivot cache ref to August!A1:T{lastrow}, then refresh both pivots once."
-    },
-    {
-      "step": 8,
-      "name": "BUILD LOOKUP RANGES",
-      "action": "Regenerate N:O, U:V and AA:AB. Preserve Q:S commentary."
-    },
-    {
-      "step": "8b",
-      "name": "BUILD QA METRICS",
-      "action": "Group filtered evaluations by Employee Code and compute the nine workflow metrics alongside the headline average."
-    },
-    {
-      "step": 9,
-      "name": "RENDER SHEETS",
-      "action": "Write MTD, WTD and TL sheets with live formulas, not pasted values."
-    },
-    {
-      "step": 10,
-      "name": "RECONCILE",
-      "action": "Run all validation checks."
-    },
-    {
-      "step": 11,
-      "name": "REPORT",
-      "action": "Emit the validation summary alongside the workbook."
-    },
-    {
-      "step": 12,
-      "name": "RECALCULATE",
-      "action": "Recalculate the saved workbook and re-save so every formula carries a cached result. MANDATORY - without it all formula cells display blank in previewers, on mobile, and in any tool that does not evaluate formulas. Headless LibreOffice round-trip is sufficient."
-    }
+  "campaign_normalisation": {
+   "Matrix Cuddle": "Cuddle",
+   "cuddle_calls": "Cuddle",
+   "Matrix Courtesy": "Courtesy",
+   "courtesy_calls": "Courtesy",
+   "Matrix Tracker": "Tracker",
+   "tracker": "Tracker",
+   "vas": "VAS",
+   "Sales Lab": "Sales Lab",
+   "_note": "QA covers Tracker (Vehicle Tracking) agents outside VAS scope. Retained in the headline average to match the reference, but flagged - see OI-13."
+  },
+  "workflow_metrics": [
+   {
+    "name": "QA Evaluations",
+    "logic": "COUNT of evaluation rows",
+    "note": "Denominator for every QA rate. An agent with one evaluation and one critical fail shows 100% - always read the rate alongside the volume."
+   },
+   {
+    "name": "Critical Fails",
+    "logic": "COUNT where Escalation Decision = 'Critical Fail'"
+   },
+   {
+    "name": "Critical Fail %",
+    "numerator": "Critical Fails",
+    "denominator": "QA Evaluations",
+    "excel": "=IFERROR((W{r}/V{r}),0)"
+   },
+   {
+    "name": "Coaching",
+    "logic": "COUNT where Escalation Decision = 'Coaching'"
+   },
+   {
+    "name": "Pass %",
+    "numerator": "QA Evaluations - Critical Fails - Coaching",
+    "denominator": "QA Evaluations",
+    "excel": "=IFERROR((V{r}-W{r}-Y{r})/V{r},0)",
+    "note": "Derived rather than counted so the three outcomes always sum to 100%."
+   },
+   {
+    "name": "P1 Priority",
+    "logic": "COUNT where Priority = 'P1'",
+    "note": "Priority is null on passes; P1/P2/P3 populate only on Critical Fail or Coaching."
+   },
+   {
+    "name": "Disputes",
+    "logic": "COUNT where Dispute Count > 0",
+    "note": "Dispute Status runs Pending / Upheld / Rejected. An UPHELD dispute means the recorded score was wrong, so the period's QA is provisional."
+   },
+   {
+    "name": "QA Open",
+    "logic": "COUNT where Status <> 'Closed - Risk Mitigated'",
+    "note": "Covers Pending TL Action, Awaiting QA Close, TL Stage 1 Complete. Open items can still change score or outcome."
+   },
+   {
+    "name": "Callback Required",
+    "logic": "COUNT where Client Callback Required = 'Yes'",
+    "note": "Operational follow-up, not a scoring metric."
+   }
   ],
-  "validation_checks": [
-    {
-      "id": "V01",
-      "check": "August fact table has zero duplicates on Date + Emp Code",
-      "severity": "error"
-    },
-    {
-      "id": "V02",
-      "check": "Every August row has Employed Shifts = 1",
-      "severity": "error"
-    },
-    {
-      "id": "V03",
-      "check": "SUM(August[Sales Achieved]) == COUNT DISTINCT (agent, date, Account Number) tuples in the filtered BI union",
-      "severity": "error",
-      "note": "NOT distinct accounts overall - distinct counts do not sum across groups. An account created under two agents, or spanning two dates, legitimately counts twice."
-    },
-    {
-      "id": "V04",
-      "check": "SUM(August[GWP Achieved]) == ROUND(SUM(filtered Charge Amount) x 1.15, 0), 1-unit tolerance",
-      "severity": "error"
-    },
-    {
-      "id": "V05",
-      "check": "SUM(August[Employed Shifts]) == COUNT of filtered attendance rows",
-      "severity": "error"
-    },
-    {
-      "id": "V06",
-      "check": "pivot_cuddle grand total + pivot_courtesy grand total + Nesting rows == August totals for the period",
-      "severity": "error",
-      "rationale": "Catches campaign values that fall outside the three allowed tokens and vanish from both pivots."
-    },
-    {
-      "id": "V07",
-      "check": "Cancellations <= Sales Achieved for every agent",
-      "severity": "error"
-    },
-    {
-      "id": "V08",
-      "check": "Every agent in the MTD sheets resolves to an Employee Code in the roster",
-      "severity": "error"
-    },
-    {
-      "id": "V09",
-      "check": "No Employee Code appears twice within one campaign sheet",
-      "severity": "error",
-      "rationale": "Guards against CB207/CB219-style code drift producing duplicate agent rows."
-    },
-    {
-      "id": "V10",
-      "check": "Cuddle and Courtesy agent sets are disjoint",
-      "severity": "error"
-    },
-    {
-      "id": "V11",
-      "check": "Grand-total ratio cells are formulas referencing the total row, not averages of the agent rows",
-      "severity": "error"
-    },
-    {
-      "id": "V12",
-      "check": "The N:O cancellations range lists every agent present in the fact table",
-      "severity": "error",
-      "rationale": "A missing agent returns 0 via IFERROR, indistinguishable from a true zero."
-    },
-    {
-      "id": "V13",
-      "check": "No source record falls outside mtd_start..mtd_end after filtering",
-      "severity": "error"
-    },
-    {
-      "id": "V14",
-      "check": "UNMAPPED bucket is empty; if not, list every unmapped record",
-      "severity": "warning"
-    },
-    {
-      "id": "V15",
-      "check": "MTD end date is consistent across sources; report any source whose coverage stops earlier",
-      "severity": "warning"
-    },
-    {
-      "id": "V16",
-      "check": "Referrals is null (not zero) while vas_daily_tracker is unavailable",
-      "severity": "warning"
-    },
-    {
-      "id": "V17",
-      "check": "Attendance rows exist for every agent with recorded calls or sales",
-      "severity": "warning",
-      "rationale": "CB263 logged 646 calls with no attendance record in the reference data."
-    },
-    {
-      "id": "V18",
-      "check": "Pivot cache ref covers the full August used range",
-      "severity": "error",
-      "rationale": "A stale ref silently drops the newest day from every downstream figure."
-    },
-    {
-      "id": "V19",
-      "check": "Every formula cell has a cached value after the recalculation step",
-      "severity": "error",
-      "rationale": "Formulas written by a library carry no cached result. Without recalculation the report looks like it has missing data even though the formulas are correct."
-    },
-    {
-      "id": "V20",
-      "check": "Every evaluation with Score % = 0 has Escalation Decision = 'Critical Fail'",
-      "severity": "warning",
-      "rationale": "Breaks the documented equivalence and usually signals a draft or incomplete evaluation."
-    },
-    {
-      "id": "V21",
-      "check": "Pass + Coaching + Critical Fail == QA Evaluations for every agent",
-      "severity": "error",
-      "rationale": "Escalation Decision must be exhaustive; a fourth value would silently vanish from Pass %."
-    },
-    {
-      "id": "V22",
-      "check": "No upheld disputes in the period",
-      "severity": "warning",
-      "rationale": "An upheld dispute retrospectively changes a score, making the period's QA provisional."
-    }
+  "status_vocabulary": [
+   "Closed - Risk Mitigated",
+   "Pending TL Action",
+   "Closed - Retracted",
+   "Awaiting QA Close",
+   "TL Stage 1 Complete"
   ],
-  "validation_output_template": {
-    "reporting_period": {
-      "start": null,
-      "end": null,
-      "dialing_days": null,
-      "week": null
-    },
-    "fact_table": {
-      "rows": null,
-      "agents": null,
-      "days": null
-    },
-    "files_processed": [],
-    "records_per_source": {},
-    "records_excluded": {
-      "test_accounts": 0,
-      "non_agents": 0,
-      "out_of_period": 0,
-      "test_charge_codes": 0
-    },
-    "duplicates_removed": {},
-    "unmapped_records": [],
-    "pivot_reconciliation": {
-      "cuddle_grand_total": {},
-      "courtesy_grand_total": {},
-      "nesting_excluded": {}
-    },
-    "kpi_reconciliation": {},
-    "conflicts_detected": [],
-    "checks_failed": []
+  "escalation_vocabulary": [
+   "Pass",
+   "Coaching",
+   "Critical Fail"
+  ],
+  "null_columns": {
+   "SM Escalation Reason": "100% null - ignore"
   },
-  "open_items": [
-    {
-      "id": "OI-01",
-      "title": "Referrals source missing",
-      "detail": "Depends solely on 'VAS Daily Tracker' column AG, not supplied. No other file contains referral data.",
-      "blocks": [
-        "August.S",
-        "August.T",
-        "MTD col S/T",
-        "TL MTD Referrals rows"
-      ],
-      "action": "Supply the file daily, or nominate an alternative source."
-    },
-    {
-      "id": "OI-03",
-      "title": "Vici is period-aggregated, not daily",
-      "detail": "Cuddle talk time cannot be split per day from the current export, but the fact table is daily-grained.",
-      "action": "Request a daily Vici export, or accept an evenly-allocated estimate flagged as such."
-    },
-    {
-      "id": "OI-04",
-      "title": "Duplicate QA evaluations",
-      "detail": "111 Call IDs carry two evaluation records each. Both are currently retained, double-weighting re-evaluated calls in the agent average.",
-      "action": "Ruling needed: count once (keep latest Submitted At) or twice?"
-    },
-    {
-      "id": "OI-05",
-      "title": "Team leader assignments conflict",
-      "detail": "Roster VAS sheet assigns Courtesy agents to Nikita Baijnath; the tracker's Team Split and TL MTD sheets assign the same agents to Kayleen Pillay. The fact table and MTD sheets use Nikita Baijnath.",
-      "impact": "TL rollups differ depending on the mapping used.",
-      "action": "Confirm the authoritative mapping."
-    },
-    {
-      "id": "OI-06",
-      "title": "Roster stale vs HR and dialler systems",
-      "detail": "18 QA codes and 18 attendance codes match no roster sheet. CB263 logged 646 calls with no attendance record. CB264 appears in calls and BI but not on the roster.",
-      "action": "Refresh Matrix - Agent List, or accept a standing UNMAPPED bucket."
-    },
-    {
-      "id": "OI-07",
-      "title": "Period basis conflict",
-      "detail": "Salesforce returns 27 Jul onward; QA labels 27-31 Jul as July Week 5; the tracker uses the calendar month. Engine follows the tracker.",
-      "action": "Confirm the calendar-month basis."
-    },
-    {
-      "id": "OI-08",
-      "title": "Attendance extends one day beyond other sources",
-      "detail": "Attendance runs to 06 Aug; calls, Vici and BI stop at 05 Aug.",
-      "action": "Align export cut-offs, or set mtd_end = MIN(coverage across sources)."
-    },
-    {
-      "id": "OI-09",
-      "title": "TL MTD E38 formula defect",
-      "detail": "Cuddle Campaign Totals for Cancellations reads '=SUM(F13:I13)' - points at the Courtesy block. Should be '=SUM(C38:D38)'.",
-      "action": "Fixed on rebuild. Noted so the reference figure is not treated as correct."
-    },
-    {
-      "id": "OI-10",
-      "title": "Agent exclusion list not data-derivable",
-      "detail": "CB67/CB205/CB265 are excluded by the reference but CB143 with identical attendance status is included.",
-      "action": "Confirm the exclusion criterion, or maintain the list manually each month."
-    },
-    {
-      "id": "OI-11",
-      "title": "Two manual shift overrides in the reference",
-      "detail": "Mzwandile Masuku dialled 5,125s on 04 Aug but the reference records 0 shifts. Surprise Lucky Cwele has 1.5 shifts with no attendance record at all.",
-      "action": "Confirm whether these were deliberate adjustments. The engine follows the data and reports 1.0 and 2.0 respectively."
-    },
-    {
-      "id": "OI-12",
-      "title": "Snapshot drift between BI export and tracker build",
-      "detail": "BI exports are dated 05 Aug; the reference tracker was built 04 Aug. Net effect: Sales 2 agents adrift by 1, GWP 3 agents, Cancellations 3 agents (all cancellations landing 05 Aug).",
-      "action": "Export BI on the same day the MTD is built. Differences close entirely once cut-offs align."
-    },
-    {
-      "id": "OI-13",
-      "title": "QA covers agents outside VAS scope",
-      "detail": "16 evaluations in the reference period are Campaign='Matrix Tracker' (Vehicle Tracking). Excluding them worsened the match (24/44 vs 26/44), so they are retained.",
-      "action": "Confirm whether Tracker evaluations should count toward a VAS agent's QA score."
-    },
-    {
-      "id": "OI-14",
-      "title": "Open QA items make the period provisional",
-      "detail": "41 of 240 evaluations in the reference period are not closed (37 Pending TL Action, 4 Awaiting QA Close) and 8 disputes are Pending.",
-      "action": "Decide whether the MTD reports QA as-at-date or restates once evaluations close."
-    },
-    {
-      "id": "OI-15",
-      "title": "Courtesy talk time source not supplied",
-      "detail": "Call X Call is a carrier report; the reference uses a dialler-side metric. Median 4.8% overstatement on Courtesy, up to 30.6% on individual agent-days.",
-      "impact": "Ave Talk Time and any talk-derived productivity measure are estimates for Courtesy. Cuddle is sound.",
-      "action": "Supply the daily Vici (or equivalent) export for Courtesy agents."
-    },
-    {
-      "id": "OI-16",
-      "title": "QA export cut-off must align with the build",
-      "detail": "Two thirds of Cuddle evaluations were submitted the day after the reference tracker was built, making every Cuddle QA figure differ.",
-      "action": "Pull the QA export at the same time the MTD is generated, or accept that QA restates."
-    }
+  "dedup": {
+   "key": "Record ID (unique, 4364/4364)",
+   "warning": "Call ID is NOT unique - 111 Call IDs carry two evaluations each. Both retained by default; see OI-04."
+  },
+  "verification_detail": {
+   "agents_compared": 37,
+   "exact": 23,
+   "within_1pp": 27,
+   "material_differences": 10,
+   "pattern": "Every material difference is a Cuddle agent. Zero Courtesy differences.",
+   "root_cause": "Submission timing. Evaluations by Submitted At date: 04 Aug = 26 Courtesy / 63 Cuddle / 6 Tracker; 05 Aug = 1 Courtesy / 130 Cuddle / 10 Tracker; 06 Aug = 4 Cuddle. The tracker was built on 04 Aug, before two thirds of Cuddle evaluations existed.",
+   "conclusion": "The rule is correct. Export QA on the same day the MTD is built and the differences close.",
+   "integrity": {
+    "V20 zero score = Critical Fail": "PASS 24/24",
+    "V21 Pass+Coaching+CriticalFail = total": "PASS 240 = 194+22+24",
+    "V22 upheld disputes": "0 upheld, 8 pending",
+    "evaluations not closed": "41 of 240",
+    "duplicate Call IDs": 2,
+    "evaluations on agents outside VAS roster": 19
+   }
+  },
+  "scope_warning": {
+   "finding": "7 agents in the reference QA pivot are absent from the VAS roster entirely: Avelucia Gebuza, Avesh Singh, Ismail Samuel, Nevelin Nathaniel Naicker, Ntombovuyo Sihiya, Philile Angel Magubane, Ryan Chetty. All are Vehicle Tracking.",
+   "implication": "The reference QA pivot averages the whole business, not just VAS. Because the MTD sheets look it up by agent name, VAS agents are unaffected - but the pivot's own grand total is not a VAS figure.",
+   "action": "Confirm whether the QA pivot should be scoped to VAS agents only."
+  },
+  "date_basis": {
+   "field": "Date of Assessment",
+   "fallbacks": [
+    "Submitted At",
+    "Date of Call"
+   ],
+   "decided_by": "Nick, 2026-08-26",
+   "dedupe": "Record ID is global across days: an upload that re-dates an evaluation MOVES it, never copies it."
+  }
+ },
+ "qa_detail_sheet": {
+  "name": "QA Detail",
+  "role": "Per-agent QA breakdown: volume, average score, Pass/Coaching/Critical Fail split, priority, disputes, open items and callbacks.",
+  "sort": "Campaign, then Ave Score % ascending - worst scores first, so the coaching list reads from the top.",
+  "columns": [
+   "Campaign",
+   "Team Leader",
+   "Tenure",
+   "Agent",
+   "Emp Code",
+   "Evaluations",
+   "Ave Score %",
+   "Pass",
+   "Coaching",
+   "Critical Fails",
+   "Critical Fail %",
+   "P1",
+   "P2/P3",
+   "Disputes Raised",
+   "Open (not closed)",
+   "Callback Required"
   ]
+ },
+ "pivot_tables": {
+  "count": 2,
+  "shared_cache": {
+   "cache_id": 92,
+   "source_type": "worksheet",
+   "source_ref": "August!A1:T137",
+   "refresh_rule": "Extend the ref to the new last row on every build, then refresh. Both pivots share one cache - refresh once."
+  },
+  "common_configuration": {
+   "row_fields_in_order": [
+    "Team Leader",
+    "Tenure",
+    "Agent"
+   ],
+   "row_field_indexes": [
+    2,
+    6,
+    4
+   ],
+   "column_fields": [
+    "<Values>"
+   ],
+   "page_fields_in_order": [
+    "Week",
+    "Campaign"
+   ],
+   "layout": {
+    "compact": false,
+    "compactData": false,
+    "form": "tabular",
+    "note": "Tabular/outline form - each row field occupies its own column (A, B, C). Not compact form."
+   },
+   "subtotals": {
+    "Team Leader": "OFF (defaultSubtotal=0)",
+    "Tenure": "OFF (defaultSubtotal=0)",
+    "Agent": "n/a (innermost)"
+   },
+   "grand_total": {
+    "rows": true,
+    "columns": false,
+    "label": "Grand Total"
+   },
+   "data_fields_in_order": [
+    {
+     "index": 0,
+     "display_name": "Sum of Employed Shifts",
+     "source_field": "Employed Shifts",
+     "subtotal": "sum"
+    },
+    {
+     "index": 1,
+     "display_name": "Sum of Actual Shifts",
+     "source_field": "Actual Shifts",
+     "subtotal": "sum"
+    },
+    {
+     "index": 2,
+     "display_name": "Sum of Sales Target",
+     "source_field": "Sales Target",
+     "subtotal": "sum"
+    },
+    {
+     "index": 3,
+     "display_name": "Sum of Sales Achieved",
+     "source_field": "Sales Achieved",
+     "subtotal": "sum"
+    },
+    {
+     "index": 4,
+     "display_name": "Average of Talk Time",
+     "source_field": "Talk Time",
+     "subtotal": "average",
+     "numFmtId": 21,
+     "format": "h:mm:ss"
+    },
+    {
+     "index": 5,
+     "display_name": "Sum of GWP Target",
+     "source_field": "GWP Target",
+     "subtotal": "sum",
+     "numFmtId": 44
+    },
+    {
+     "index": 6,
+     "display_name": "Sum of GWP Achieved",
+     "source_field": "GWP Achieved",
+     "subtotal": "sum",
+     "numFmtId": 44
+    },
+    {
+     "index": 7,
+     "display_name": "Sum of Referrals",
+     "source_field": "Referrals",
+     "subtotal": "sum"
+    }
+   ],
+   "excluded_from_pivot": [
+    "Date",
+    "Emp Code",
+    "Att %",
+    "% of Sales Target",
+    "% of GWP Target",
+    "Ave GWP",
+    "% Of Referrals To Sales Achieved"
+   ],
+   "exclusion_rationale": "Ratio columns are NEVER summed or averaged in the pivot. They are recomputed downstream in the MTD sheets from the summed numerator and denominator. This is what prevents averaging-of-averages error."
+  },
+  "definitions": [
+   {
+    "name": "PivotTable2",
+    "alias": "pivot_cuddle",
+    "sheet": "Pivot Table",
+    "range": "A4:K30",
+    "page_filters": {
+     "Week": "Week 1 (item 0 = current week)",
+     "Campaign": "Cuddle (cache item index 1)"
+    },
+    "sort": [
+     {
+      "field": "Team Leader",
+      "type": "descending",
+      "on_data_field": "Sum of GWP Achieved"
+     },
+     {
+      "field": "Tenure",
+      "type": "descending",
+      "on_data_field": "Sum of Sales Achieved"
+     },
+     {
+      "field": "Agent",
+      "type": "descending",
+      "on_data_field": "Sum of GWP Achieved"
+     }
+    ],
+    "reference_output": {
+     "team_leader_block_order": [
+      "Sharoma Rampersad",
+      "Renolan Pillay"
+     ],
+     "agent_rows": 25,
+     "grand_total": {
+      "Employed Shifts": 50,
+      "Actual Shifts": 44.5,
+      "Sales Target": 400,
+      "Sales Achieved": 470,
+      "Talk Time": "3:48:18.54",
+      "GWP Target": 35600,
+      "GWP Achieved": 47370,
+      "Referrals": 50
+     }
+    }
+   },
+   {
+    "name": "PivotTable3",
+    "alias": "pivot_courtesy",
+    "sheet": "Pivot Table",
+    "range": "A41:K82",
+    "page_filters": {
+     "Week": "Week 1 (item 0 = current week)",
+     "Campaign": "Courtesy (cache item index 0)"
+    },
+    "sort": [
+     {
+      "field": "Team Leader",
+      "type": "descending",
+      "on_data_field": "Sum of Sales Achieved"
+     },
+     {
+      "field": "Tenure",
+      "type": "manual",
+      "order": [
+       "Exp",
+       "M2",
+       "M1",
+       "M0"
+      ],
+      "note": "No autoSortScope on this field - it follows cache item order."
+     },
+     {
+      "field": "Agent",
+      "type": "descending",
+      "on_data_field": "Sum of Sales Achieved"
+     }
+    ],
+    "reference_output": {
+     "team_leader_block_order": [
+      "Shane Methalal",
+      "Nikita Baijnath",
+      "Dhamendra Budhu"
+     ],
+     "agent_rows": 40,
+     "grand_total": {
+      "Sales Achieved": 144,
+      "GWP Achieved": 14636
+     }
+    }
+   }
+  ],
+  "campaign_cache_item_order": {
+   "0": "Courtesy",
+   "1": "Cuddle",
+   "2": "Nesting"
+  },
+  "coverage_gap": {
+   "issue": "The 'Nesting' campaign (6 fact rows, 3 agents) is filtered OUT by both pivots and therefore appears in NO MTD sheet.",
+   "affected_agents": [
+    "Busiswa Mathenjwa CB262",
+    "Justin Motilall CB261",
+    "Lindokuhle Phakathi CB263"
+   ],
+   "action_required": "Confirm whether Nesting should get its own pivot + MTD sheet, be folded into Courtesy, or remain excluded by design.",
+   "resolution": "Engine now emits a third pivot block and an 'MTD - Nesting' sheet. In the reference period this recovers 3 agents and 17 sales that were dropped entirely."
+  }
+ },
+ "lookup_ranges_not_pivots": {
+  "warning": "These three ranges sit on the 'Pivot Table' sheet and LOOK like pivots, but the workbook contains only two pivotTable parts. They are pasted value ranges maintained outside the workbook. The engine must generate them as sorted lookup tables.",
+  "ranges": [
+   {
+    "range": "N4:O{n}",
+    "headers": {
+     "N4": "Row Labels",
+     "O4": "Count of Contract Deactivate Date"
+    },
+    "metric": "cancellations",
+    "source": "bi_inactive",
+    "filter": "Contract Create Date BETWEEN mtd_start AND mtd_end",
+    "group_by": "Owner (with ' - Panimax' stripped)",
+    "aggregation": "COUNT DISTINCT Case Number",
+    "sort": "Agent name ascending (A-Z)",
+    "completeness_rule": "MUST list EVERY agent in the fact table, including zero-cancellation agents. The reference lists 108 agents of which only 4 are non-zero. If an agent is missing, the MTD VLOOKUP falls through to IFERROR and silently returns 0 - indistinguishable from a true zero.",
+    "critical": "Despite the header text, the filter is on Contract CREATE date, not Deactivate date. The header is a legacy pivot caption. Filtering on Deactivate Date returns 20 agents instead of 4."
+   },
+   {
+    "range": "U4:V{n}",
+    "headers": {
+     "U4": "Row Labels",
+     "V4": "Average of Score %"
+    },
+    "metric": "qa_score_mtd",
+    "source": "qa_evaluations",
+    "filter": "Date of Call BETWEEN mtd_start AND mtd_end",
+    "group_by": "Sales Agent (resolved through name_aliases)",
+    "aggregation": "AVERAGE of parsed Score %",
+    "sort": "Agent name ascending (A-Z)",
+    "reference_row_count": 44
+   },
+   {
+    "range": "AA4:AB{n}",
+    "headers": {
+     "AA3": "<Week label>",
+     "AA4": "Row Labels",
+     "AB4": "Average of Score %"
+    },
+    "metric": "qa_score_wtd",
+    "source": "qa_evaluations",
+    "filter": "Date of Call BETWEEN week_start AND week_end",
+    "group_by": "Sales Agent",
+    "aggregation": "AVERAGE of parsed Score %",
+    "note": "Identical to U:V in the reference because the MTD period contained only one week. They diverge from Week 2 onward. Generate both independently."
+   },
+   {
+    "range": "Q4:S{n}",
+    "headers": {
+     "Q4": "Agent",
+     "R4": "Comment",
+     "S4": "Issued Date"
+    },
+    "metric": "manual_commentary",
+    "source": "MANUAL - not derived from any uploaded file",
+    "action": "Preserve existing contents across rebuilds. Do not regenerate or clear."
+   }
+  ]
+ },
+ "mtd_sheet_construction": {
+  "sheets": [
+   "MTD - Cuddle",
+   "MTD - Courtesy"
+  ],
+  "source": "The corresponding pivot, flattened to one row per agent",
+  "header_row": 3,
+  "data_start_row": 4,
+  "title_cell": {
+   "B2": "Cuddle | Courtesy"
+  },
+  "columns": [
+   {
+    "col": "B",
+    "header": "Team Leader",
+    "source": "pivot row field 1",
+    "type": "value",
+    "number_format": "General"
+   },
+   {
+    "col": "C",
+    "header": "Tenure",
+    "source": "pivot row field 2",
+    "type": "value",
+    "number_format": "General"
+   },
+   {
+    "col": "D",
+    "header": "Agent",
+    "source": "pivot row field 3",
+    "type": "value",
+    "note": "VLOOKUP key for columns L and U",
+    "number_format": "General"
+   },
+   {
+    "col": "E",
+    "header": "Employed Shifts ",
+    "source": "pivot Sum of Employed Shifts",
+    "type": "value",
+    "number_format": "General"
+   },
+   {
+    "col": "F",
+    "header": "Actual Shifts ",
+    "source": "pivot Sum of Actual Shifts",
+    "type": "value",
+    "number_format": "General"
+   },
+   {
+    "col": "G",
+    "header": "Att % ",
+    "type": "formula",
+    "formula": "=F{r}/E{r}",
+    "reference_exact": "=F4/E4",
+    "number_format": "0%"
+   },
+   {
+    "col": "H",
+    "header": "Sales Target ",
+    "source": "pivot Sum of Sales Target",
+    "type": "value",
+    "number_format": "0"
+   },
+   {
+    "col": "I",
+    "header": "Sales Achieved ",
+    "source": "pivot Sum of Sales Achieved",
+    "type": "value",
+    "number_format": "General"
+   },
+   {
+    "col": "J",
+    "header": " % of Sales Target ",
+    "type": "formula",
+    "formula": "=IFERROR((I{r}/H{r}),0)",
+    "number_format": "0%"
+   },
+   {
+    "col": "K",
+    "header": "SPD",
+    "type": "formula",
+    "formula": "=IFERROR((I{r}/F{r}),0)",
+    "note": "Denominator is ACTUAL shifts, not employed.",
+    "number_format": "0.0"
+   },
+   {
+    "col": "L",
+    "header": "Cancellations",
+    "type": "formula",
+    "formula": "=IFERROR(VLOOKUP(D{r},'Pivot Table'!N:O,2,0),0)",
+    "number_format": "General"
+   },
+   {
+    "col": "M",
+    "header": "% of Cancellations",
+    "type": "formula",
+    "formula": "=IFERROR((L{r}/I{r}),0)",
+    "number_format": "0%"
+   },
+   {
+    "col": "N",
+    "header": "Ave Talk Time",
+    "source": "pivot Average of Talk Time",
+    "type": "value",
+    "format": "h:mm:ss",
+    "number_format": "h:mm:ss"
+   },
+   {
+    "col": "O",
+    "header": "GWP Target ",
+    "source": "pivot Sum of GWP Target",
+    "type": "formula",
+    "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-",
+    "formula": "=H{r}*89",
+    "note": "Live formula, not a pasted pivot value. GWP Target is always Sales Target x 89, so it stays consistent if the target matrix changes."
+   },
+   {
+    "col": "P",
+    "header": "GWP Achieved ",
+    "source": "pivot Sum of GWP Achieved",
+    "type": "value",
+    "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-"
+   },
+   {
+    "col": "Q",
+    "header": "% To GWP Target",
+    "type": "formula",
+    "formula": "=IFERROR((P{r}/O{r}),0)",
+    "number_format": "0%"
+   },
+   {
+    "col": "R",
+    "header": "Ave GWP ",
+    "type": "formula",
+    "formula": "=IFERROR((P{r}/I{r}),0)",
+    "number_format": "_-\"R\"* #,##0.00_-;\\-\"R\"* #,##0.00_-;_-\"R\"* \"-\"??_-;_-@_-",
+    "note": "=IFERROR((P{r}/I{r}),0) - GWP Achieved divided by Sales Achieved. Must be computed from the underlying values, never from the rounded display figures."
+   },
+   {
+    "col": "S",
+    "header": "Referrals ",
+    "source": "pivot Sum of Referrals",
+    "type": "value",
+    "number_format": "General"
+   },
+   {
+    "col": "T",
+    "header": "% Of Referrals To Sales Achieved ",
+    "type": "formula",
+    "formula": "=IFERROR((S{r}/I{r}),0)",
+    "number_format": "0%"
+   },
+   {
+    "col": "U",
+    "header": "QA",
+    "type": "formula",
+    "formula": "=IFERROR(VLOOKUP(D{r},'Pivot Table'!U:V,2,0),\"No QA %\")",
+    "number_format": "0%"
+   }
+  ],
+  "header_whitespace_note": "Several headers carry a trailing space in the reference ('Employed Shifts ', 'Att % ') and column J carries a LEADING space (' % of Sales Target '). Reproduce exactly if downstream consumers match on header text.",
+  "sort_rule": {
+   "specified": "Sales Achieved DESC, tie-break GWP Achieved DESC",
+   "reference_deviation": "The reference sheets are NOT cleanly sorted - they were pasted and hand-sorted. MTD - Cuddle has two out-of-order rows (Maharani Munsami 12 sales placed above Lydia Naidoo 15; Thiloshini Barnard 7 above Stephanie Naidoo 11). MTD - Courtesy has several (Sechaba Mlambo 6 at the top; Mzwandile Masuku 3 among the zero rows). These are manual artefacts, not a rule. Apply the deterministic sort above."
+  },
+  "grand_total_row": {
+   "position": "last data row + 1",
+   "label_cell": "B: \"Grand Total\"",
+   "additive_columns": {
+    "E": "SUM",
+    "F": "SUM",
+    "H": "SUM",
+    "I": "SUM",
+    "O": "SUM",
+    "P": "SUM",
+    "S": "SUM"
+   },
+   "cancellations": "=SUM(L4:L{last})",
+   "talk_time": "AVERAGE of the agent rows",
+   "qa": "=AVERAGE(U4:U{last})",
+   "qa_note": "AVERAGE() ignores the text 'No QA %', so agents without an evaluation are correctly excluded from the denominator rather than counted as zero.",
+   "ratio_columns": {
+    "rule": "RECOMPUTE from the summed numerator and denominator. NEVER average the agent-row percentages.",
+    "G": "=F{gt}/E{gt}",
+    "J": "=IFERROR((I{gt}/H{gt}),0)",
+    "K": "=IFERROR((I{gt}/F{gt}),0)",
+    "M": "=IFERROR((L{gt}/I{gt}),0)",
+    "Q": "=IFERROR((P{gt}/O{gt}),0)",
+    "R": "=IFERROR((P{gt}/I{gt}),0)",
+    "T": "=IFERROR((S{gt}/I{gt}),0)"
+   }
+  },
+  "qa_extension_columns": {
+   "_comment": "Columns V-AC, appended AFTER the reference's column U (QA). The reference structure through U is untouched.",
+   "V": "QA Evaluations",
+   "W": "Critical Fails",
+   "X": "Critical Fail %  =IFERROR((W{r}/V{r}),0)",
+   "Y": "Coaching",
+   "Z": "Pass %  =IFERROR((V{r}-W{r}-Y{r})/V{r},0)",
+   "AA": "P1 Priority",
+   "AB": "Disputes",
+   "AC": "QA Open",
+   "_grand_total": "V,W,Y,AA,AB,AC = SUM. X and Z recomputed from the summed counts, never averaged."
+  }
+ },
+ "wtd_sheet_construction": {
+  "sheets": [
+   "WTD - Cuddle",
+   "WTD - Courtesy"
+  ],
+  "difference_from_mtd": "Identical column set MINUS Cancellations and % of Cancellations. Period filter is week_start..week_end instead of mtd_start..mtd_end. QA sources from the AA:AB range instead of U:V.",
+  "title_cell": {
+   "WTD - Cuddle": "A1: 'Cuddle Team - Week {n}'",
+   "WTD - Courtesy": "A3: 'Courtesy Teams - Week {n}'"
+  },
+  "header_row": {
+   "WTD - Cuddle": 2,
+   "WTD - Courtesy": 4
+  },
+  "columns": [
+   "Team Leader",
+   "Tenure",
+   "Agent",
+   "Employed Shifts ",
+   "Actual Shifts ",
+   "Att % ",
+   "Sales Target ",
+   "Sales Achieved ",
+   " % of Sales Target ",
+   "SPD",
+   "Ave Talk Time",
+   "GWP Target ",
+   "GWP Achieved ",
+   "% To GWP Target",
+   "Ave GWP ",
+   "Referrals ",
+   "% Of Referrals To Sales Achieved ",
+   "QA"
+  ],
+  "stale_data_warning": "In the reference workbook these sheets show 3 employed shifts against an MTD period of 2 days - they were not refreshed for the 1-4 Aug build. Rebuild from the fact table every run."
+ },
+ "tl_mtd_construction": {
+  "sheet": "TL MTD",
+  "layout": "Metrics down the rows, one column per Team Leader, plus a Campaign Totals column. Two blocks: Courtesy starting B2, Cuddle starting B27.",
+  "grouping": "Team Leader within Campaign",
+  "rows": [
+   {
+    "label": "Dialing Days",
+    "formula": "COUNT(DISTINCT August[Date] in period)"
+   },
+   {
+    "label": "Employed HC",
+    "formula": "COUNT(DISTINCT August[Emp Code] for this TL+Campaign)"
+   },
+   {
+    "label": "Total Employed Shifts",
+    "formula": "SUM(August[Employed Shifts])"
+   },
+   {
+    "label": "Total Actual Shifts",
+    "formula": "SUM(August[Actual Shifts])"
+   },
+   {
+    "label": "% Of Attendance",
+    "formula": "=C7/C6",
+    "type": "ratio"
+   },
+   {
+    "label": "Sales Target",
+    "formula": "SUM(August[Sales Target])"
+   },
+   {
+    "label": "Sales Achieved",
+    "formula": "SUM(August[Sales Achieved])"
+   },
+   {
+    "label": "% To Sales Target",
+    "formula": "=C10/C9",
+    "type": "ratio"
+   },
+   {
+    "label": "SPD",
+    "formula": "=C10/C5/C4",
+    "note": "Sales Achieved / Employed HC / Dialing Days. NOTE this differs from the agent-level SPD, which divides by Actual Shifts."
+   },
+   {
+    "label": "Cancellations",
+    "formula": "SUM of agent cancellations for this TL"
+   },
+   {
+    "label": "% of Cancellations to Sales",
+    "formula": "=C13/C10",
+    "type": "ratio"
+   },
+   {
+    "label": "GWP Target",
+    "formula": "SUM(August[GWP Target])"
+   },
+   {
+    "label": "GWP Achieved",
+    "formula": "SUM(August[GWP Achieved])"
+   },
+   {
+    "label": "% To GWP Target",
+    "formula": "=C16/C15",
+    "type": "ratio"
+   },
+   {
+    "label": "Ave GWP",
+    "formula": "=C16/C10",
+    "type": "ratio"
+   },
+   {
+    "label": "Ave Talk Time",
+    "formula": "AVERAGE(August[Talk Time])",
+    "format": "h:mm:ss"
+   },
+   {
+    "label": "Referrals",
+    "formula": "SUM(August[Referrals])"
+   },
+   {
+    "label": "Referrals %",
+    "formula": "=C20/C10",
+    "type": "ratio"
+   },
+   {
+    "label": "Number Of Agents on Target",
+    "formula": "COUNT of agents where SUM(Sales Achieved) >= SUM(Sales Target)"
+   },
+   {
+    "label": "% Of Agents on Target",
+    "formula": "=C22/C5",
+    "type": "ratio"
+   },
+   {
+    "label": "QA %",
+    "formula": "AVERAGE of agent QA scores for this TL, excluding 'No QA %'"
+   }
+  ],
+  "known_defect": {
+   "cell": "E38",
+   "reference_formula": "=SUM(F13:I13)",
+   "correct_formula": "=SUM(C38:D38)",
+   "description": "The Cuddle Campaign Totals cell for Cancellations points at the Courtesy block instead of summing its own two team-leader cells. Fix on rebuild."
+  },
+  "stale_data_warning": "The reference sheet shows 'Dialing Days = 8' against a 2-day period. Not refreshed for this build."
+ },
+ "processing_pipeline": [
+  {
+   "step": 1,
+   "name": "INGEST",
+   "action": "Load all sources. Assert each file's period header falls in the expected window. Record row counts."
+  },
+  {
+   "step": 2,
+   "name": "CLEAN",
+   "action": "Strip footer rows, trim headers, cast dates, parse Score % and durations, normalise campaign vocabulary."
+  },
+  {
+   "step": 3,
+   "name": "RESOLVE IDENTITY",
+   "action": "Map every row to an Employee Code. Route failures to UNMAPPED."
+  },
+  {
+   "step": 4,
+   "name": "FILTER PERIOD",
+   "action": "Apply mtd_start/mtd_end to each source on its designated date field."
+  },
+  {
+   "step": 5,
+   "name": "DEDUPLICATE",
+   "action": "Apply each source's dedup_key. Record counts removed."
+  },
+  {
+   "step": 6,
+   "name": "BUILD FACT TABLE",
+   "action": "Append one row per agent per day to 'August'. Assert uniqueness on Date+Emp Code."
+  },
+  {
+   "step": 7,
+   "name": "EXTEND CACHE",
+   "action": "Update the pivot cache ref to August!A1:T{lastrow}, then refresh both pivots once."
+  },
+  {
+   "step": 8,
+   "name": "BUILD LOOKUP RANGES",
+   "action": "Regenerate N:O, U:V and AA:AB. Preserve Q:S commentary."
+  },
+  {
+   "step": "8b",
+   "name": "BUILD QA METRICS",
+   "action": "Group filtered evaluations by Employee Code and compute the nine workflow metrics alongside the headline average."
+  },
+  {
+   "step": 9,
+   "name": "RENDER SHEETS",
+   "action": "Write MTD, WTD and TL sheets with live formulas, not pasted values."
+  },
+  {
+   "step": 10,
+   "name": "RECONCILE",
+   "action": "Run all validation checks."
+  },
+  {
+   "step": 11,
+   "name": "REPORT",
+   "action": "Emit the validation summary alongside the workbook."
+  },
+  {
+   "step": 12,
+   "name": "RECALCULATE",
+   "action": "Recalculate the saved workbook and re-save so every formula carries a cached result. MANDATORY - without it all formula cells display blank in previewers, on mobile, and in any tool that does not evaluate formulas. Headless LibreOffice round-trip is sufficient."
+  }
+ ],
+ "validation_checks": [
+  {
+   "id": "V01",
+   "check": "August fact table has zero duplicates on Date + Emp Code",
+   "severity": "error"
+  },
+  {
+   "id": "V02",
+   "check": "Every August row has Employed Shifts = 1",
+   "severity": "error"
+  },
+  {
+   "id": "V03",
+   "check": "SUM(August[Sales Achieved]) == COUNT DISTINCT (agent, date, Case Number) tuples in the filtered BI union",
+   "severity": "error",
+   "note": "NOT distinct cases overall - distinct counts do not sum across groups. A case belongs to exactly one account and one agent-day."
+  },
+  {
+   "id": "V04",
+   "check": "SUM(August[GWP Achieved]) == ROUND(SUM(filtered Charge Amount) x 1.15, 0), 1-unit tolerance",
+   "severity": "error"
+  },
+  {
+   "id": "V05",
+   "check": "SUM(August[Employed Shifts]) == COUNT of filtered attendance rows",
+   "severity": "error"
+  },
+  {
+   "id": "V06",
+   "check": "pivot_cuddle grand total + pivot_courtesy grand total + Nesting rows == August totals for the period",
+   "severity": "error",
+   "rationale": "Catches campaign values that fall outside the three allowed tokens and vanish from both pivots."
+  },
+  {
+   "id": "V07",
+   "check": "Cancellations <= Sales Achieved for every agent",
+   "severity": "error"
+  },
+  {
+   "id": "V08",
+   "check": "Every agent in the MTD sheets resolves to an Employee Code in the roster",
+   "severity": "error"
+  },
+  {
+   "id": "V09",
+   "check": "No Employee Code appears twice within one campaign sheet",
+   "severity": "error",
+   "rationale": "Guards against CB207/CB219-style code drift producing duplicate agent rows."
+  },
+  {
+   "id": "V10",
+   "check": "Cuddle and Courtesy agent sets are disjoint",
+   "severity": "error"
+  },
+  {
+   "id": "V11",
+   "check": "Grand-total ratio cells are formulas referencing the total row, not averages of the agent rows",
+   "severity": "error"
+  },
+  {
+   "id": "V12",
+   "check": "The N:O cancellations range lists every agent present in the fact table",
+   "severity": "error",
+   "rationale": "A missing agent returns 0 via IFERROR, indistinguishable from a true zero."
+  },
+  {
+   "id": "V13",
+   "check": "No source record falls outside mtd_start..mtd_end after filtering",
+   "severity": "error"
+  },
+  {
+   "id": "V14",
+   "check": "UNMAPPED bucket is empty; if not, list every unmapped record",
+   "severity": "warning"
+  },
+  {
+   "id": "V15",
+   "check": "MTD end date is consistent across sources; report any source whose coverage stops earlier",
+   "severity": "warning"
+  },
+  {
+   "id": "V16",
+   "check": "Referrals is null (not zero) while vas_daily_tracker is unavailable",
+   "severity": "warning"
+  },
+  {
+   "id": "V17",
+   "check": "Attendance rows exist for every agent with recorded calls or sales",
+   "severity": "warning",
+   "rationale": "CB263 logged 646 calls with no attendance record in the reference data."
+  },
+  {
+   "id": "V18",
+   "check": "Pivot cache ref covers the full August used range",
+   "severity": "error",
+   "rationale": "A stale ref silently drops the newest day from every downstream figure."
+  },
+  {
+   "id": "V19",
+   "check": "Every formula cell has a cached value after the recalculation step",
+   "severity": "error",
+   "rationale": "Formulas written by a library carry no cached result. Without recalculation the report looks like it has missing data even though the formulas are correct."
+  },
+  {
+   "id": "V20",
+   "check": "Every evaluation with Score % = 0 has Escalation Decision = 'Critical Fail'",
+   "severity": "warning",
+   "rationale": "Breaks the documented equivalence and usually signals a draft or incomplete evaluation."
+  },
+  {
+   "id": "V21",
+   "check": "Pass + Coaching + Critical Fail == QA Evaluations for every agent",
+   "severity": "error",
+   "rationale": "Escalation Decision must be exhaustive; a fourth value would silently vanish from Pass %."
+  },
+  {
+   "id": "V22",
+   "check": "No upheld disputes in the period",
+   "severity": "warning",
+   "rationale": "An upheld dispute retrospectively changes a score, making the period's QA provisional."
+  }
+ ],
+ "validation_output_template": {
+  "reporting_period": {
+   "start": null,
+   "end": null,
+   "dialing_days": null,
+   "week": null
+  },
+  "fact_table": {
+   "rows": null,
+   "agents": null,
+   "days": null
+  },
+  "files_processed": [],
+  "records_per_source": {},
+  "records_excluded": {
+   "test_accounts": 0,
+   "non_agents": 0,
+   "out_of_period": 0,
+   "test_charge_codes": 0
+  },
+  "duplicates_removed": {},
+  "unmapped_records": [],
+  "pivot_reconciliation": {
+   "cuddle_grand_total": {},
+   "courtesy_grand_total": {},
+   "nesting_excluded": {}
+  },
+  "kpi_reconciliation": {},
+  "conflicts_detected": [],
+  "checks_failed": []
+ },
+ "open_items": [
+  {
+   "id": "OI-01",
+   "title": "Referrals source missing",
+   "detail": "Depends solely on 'VAS Daily Tracker' column AG, not supplied. No other file contains referral data.",
+   "blocks": [
+    "August.S",
+    "August.T",
+    "MTD col S/T",
+    "TL MTD Referrals rows"
+   ],
+   "action": "Supply the file daily, or nominate an alternative source."
+  },
+  {
+   "id": "OI-03",
+   "title": "Vici is period-aggregated, not daily",
+   "detail": "Cuddle talk time cannot be split per day from the current export, but the fact table is daily-grained.",
+   "action": "Request a daily Vici export, or accept an evenly-allocated estimate flagged as such."
+  },
+  {
+   "id": "OI-04",
+   "title": "Duplicate QA evaluations",
+   "detail": "111 Call IDs carry two evaluation records each. Both are currently retained, double-weighting re-evaluated calls in the agent average.",
+   "action": "Ruling needed: count once (keep latest Submitted At) or twice?"
+  },
+  {
+   "id": "OI-05",
+   "title": "Team leader assignments conflict",
+   "detail": "Roster VAS sheet assigns Courtesy agents to Nikita Baijnath; the tracker's Team Split and TL MTD sheets assign the same agents to Kayleen Pillay. The fact table and MTD sheets use Nikita Baijnath.",
+   "impact": "TL rollups differ depending on the mapping used.",
+   "action": "Confirm the authoritative mapping."
+  },
+  {
+   "id": "OI-06",
+   "title": "Roster stale vs HR and dialler systems",
+   "detail": "18 QA codes and 18 attendance codes match no roster sheet. CB263 logged 646 calls with no attendance record. CB264 appears in calls and BI but not on the roster.",
+   "action": "Refresh Matrix - Agent List, or accept a standing UNMAPPED bucket."
+  },
+  {
+   "id": "OI-07",
+   "title": "Period basis conflict",
+   "detail": "Salesforce returns 27 Jul onward; QA labels 27-31 Jul as July Week 5; the tracker uses the calendar month. Engine follows the tracker.",
+   "action": "Confirm the calendar-month basis."
+  },
+  {
+   "id": "OI-08",
+   "title": "Attendance extends one day beyond other sources",
+   "detail": "Attendance runs to 06 Aug; calls, Vici and BI stop at 05 Aug.",
+   "action": "Align export cut-offs, or set mtd_end = MIN(coverage across sources)."
+  },
+  {
+   "id": "OI-09",
+   "title": "TL MTD E38 formula defect",
+   "detail": "Cuddle Campaign Totals for Cancellations reads '=SUM(F13:I13)' - points at the Courtesy block. Should be '=SUM(C38:D38)'.",
+   "action": "Fixed on rebuild. Noted so the reference figure is not treated as correct."
+  },
+  {
+   "id": "OI-10",
+   "title": "Agent exclusion list not data-derivable",
+   "detail": "CB67/CB205/CB265 are excluded by the reference but CB143 with identical attendance status is included.",
+   "action": "Confirm the exclusion criterion, or maintain the list manually each month."
+  },
+  {
+   "id": "OI-11",
+   "title": "Two manual shift overrides in the reference",
+   "detail": "Mzwandile Masuku dialled 5,125s on 04 Aug but the reference records 0 shifts. Surprise Lucky Cwele has 1.5 shifts with no attendance record at all.",
+   "action": "Confirm whether these were deliberate adjustments. The engine follows the data and reports 1.0 and 2.0 respectively."
+  },
+  {
+   "id": "OI-12",
+   "title": "Snapshot drift between BI export and tracker build",
+   "detail": "BI exports are dated 05 Aug; the reference tracker was built 04 Aug. Net effect: Sales 2 agents adrift by 1, GWP 3 agents, Cancellations 3 agents (all cancellations landing 05 Aug).",
+   "action": "Export BI on the same day the MTD is built. Differences close entirely once cut-offs align."
+  },
+  {
+   "id": "OI-13",
+   "title": "QA covers agents outside VAS scope",
+   "detail": "16 evaluations in the reference period are Campaign='Matrix Tracker' (Vehicle Tracking). Excluding them worsened the match (24/44 vs 26/44), so they are retained.",
+   "action": "Confirm whether Tracker evaluations should count toward a VAS agent's QA score."
+  },
+  {
+   "id": "OI-14",
+   "title": "Open QA items make the period provisional",
+   "detail": "41 of 240 evaluations in the reference period are not closed (37 Pending TL Action, 4 Awaiting QA Close) and 8 disputes are Pending.",
+   "action": "Decide whether the MTD reports QA as-at-date or restates once evaluations close."
+  },
+  {
+   "id": "OI-15",
+   "title": "Courtesy talk time source not supplied",
+   "detail": "Call X Call is a carrier report; the reference uses a dialler-side metric. Median 4.8% overstatement on Courtesy, up to 30.6% on individual agent-days.",
+   "impact": "Ave Talk Time and any talk-derived productivity measure are estimates for Courtesy. Cuddle is sound.",
+   "action": "Supply the daily Vici (or equivalent) export for Courtesy agents."
+  },
+  {
+   "id": "OI-16",
+   "title": "QA export cut-off must align with the build",
+   "detail": "Two thirds of Cuddle evaluations were submitted the day after the reference tracker was built, making every Cuddle QA figure differ.",
+   "action": "Pull the QA export at the same time the MTD is generated, or accept that QA restates."
+  }
+ ],
+ "money_model_unit": {
+  "unit": "Case Number",
+  "changed": "2026-08-18",
+  "rule": "Sales Achieved = COUNT DISTINCT Case Number per agent per Contract Create Date over bi_active only (NET of cancellation). GWP = SUM(Charge Amount) within the case, rounded per case, x1.15.",
+  "uncased_rows": "No Case Number = recurring feature line (Positions/Trips/Panic/Geoloc, no Case Type). Pooled per agent-day as ~uncased: counted in GWP, never a sale.",
+  "net_of_cancellation": true,
+  "supersedes": "The former COUNT DISTINCT Account Number over UNION(bi_active, bi_inactive).",
+  "net_of_cancellation_note": "TRUE since 2026-08-18 (owner directive). Sales count what is still active. The reference workbook counts gross and is knowingly superseded; the divergence is pinned per agent in verify-mtd-values.",
+  "gwp_display_basis": "ex-VAT",
+  "gwp_display_note": "Owner directive 2026-08-18: ex-VAT is the agent comms basis, so GWP Achieved / Ave GWP / GWP Target display ex-VAT on every VAS page (Enoch Aug = R11,115, the source pivot Sum of Charge Amount). The VAT-inclusive figure is kept internally (gwpIncl) and VAT remains in exactly one reporting place: the Variance Report DV02, whose comparison target — the agent-logged board — is written VAT-inclusive."
+ },
+ "reported_campaigns": [
+  "Cuddle",
+  "Courtesy",
+  "Nesting"
+ ]
 }

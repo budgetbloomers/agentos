@@ -1,6 +1,6 @@
 # Upload Station Validation — package 2026-08-13 (ops analytics)
 
-Period **2026-08-01 → 2026-08-13** · run 2026-08-14T10:25Z · engine `tools/upload-station-validate.mjs`
+Period **2026-08-01 → 2026-08-13** · run 2026-08-17T18:57Z · engine `tools/upload-station-validate.mjs`
 
 ## FINAL STATUS: FAILED VALIDATION (blocked by CRITICAL findings)
 
@@ -12,7 +12,7 @@ Period **2026-08-01 → 2026-08-13** · run 2026-08-14T10:25Z · engine `tools/u
 | Date validation | in-window filters live on every source (Sim 5) |
 | Reconciliation | 7/7 PASS |
 | Simulations | 9/10 clean |
-| Findings | 1 CRITICAL · 6 HIGH · 2 MEDIUM |
+| Findings | 1 CRITICAL · 7 HIGH · 2 MEDIUM |
 
 ## Sources ingested
 
@@ -32,6 +32,7 @@ Period **2026-08-01 → 2026-08-13** · run 2026-08-14T10:25Z · engine `tools/u
 ## Findings (severity-ordered)
 
 - **CRITICAL** [SF_CLOSED_CASES] "SF Closed 5 - 13.xls" carries ZERO case rows — it is an Excel frameset shell whose data lives in a companion "_files/sheet001.htm" folder that was not exported. Closed-case KPIs (Total Closed, Lead-Mgmt Conversion, Wasted Leads, Closure/day, No-Feedback rate) are NOT COMPUTABLE this run. Re-export closed cases (single-file HTML table like the Open Cases file).
+- **HIGH** [VICI] No Cuddle-floor row in any ViciDial export (Call Report 01 to 13 Aug.xlsx, EXPORT_CALL_REPORT_20260813-152302.txt) — the pull's user-group filter excludes the Cuddle floor (groups present: ADMIN, ADMIN_TLS_SUP_STAFF, Hezron_Courtesy_C, LD_Training, Matrix_Inbound, Ryan_Digital, Ryan_Digital_Ref, Ryan_Scheduling). Re-pull EXPORT_CALL_REPORT with the Cuddle user groups ticked (or all groups): Cuddle then gets day-level talk, MTD coverage and Variance DV03 checks, exactly like Courtesy.
 - **HIGH** [ATTENDANCE] Attendance file only covers 2026-08-06 → 2026-08-13; period weekdays with NO attendance rows: 2026-08-03, 2026-08-04, 2026-08-05 (2026-08-10 also empty — Women’s Day observed, expected). Present-day denominators (talk/day, Target Ach %) are understated for 01–05 Aug.
 - **HIGH** [COVERAGE] CALLX_CALL_RECORDS data spans 2026-08-06 → 2026-08-13 but the reporting period is 2026-08-01 → 2026-08-13 — KPIs from this source cover only its own span.
 - **HIGH** [COVERAGE] QA (Date of Call) data spans 2026-07-24 → 2026-08-12 but the reporting period is 2026-08-01 → 2026-08-13 — KPIs from this source cover only its own span.

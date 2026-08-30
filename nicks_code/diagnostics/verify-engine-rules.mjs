@@ -112,10 +112,19 @@ console.log(`\n== behaviour: ${FILES.length} source files ==`);
 /* The figures the hand-built workbook carries for 01-04 Aug, from spec §7's reference
    output. The three campaigns are checked separately because they are produced by three
    different rules; a single grand total would hide a compensating error between them. */
+/* NET OF CANCELLATION (owner directive, 2026-08-18). The §7 workbook figures are GROSS; the
+   engine now counts NET. The gap is the cancellations the workbook still carried and is
+   PINNED here to the exact rand rather than widened into drift — Cuddle loses 4 sales at R99,
+   Courtesy loses R169 of cancelled contract lines, Nesting loses one sale. Set
+   salesNetOfCancellation=false and these all become zero again. */
+const NET = !!(JSON.parse(fs.readFileSync(path.join(REPO, 'specs', 'mtd_engine_rules.json'), 'utf8'))
+  .money_model_unit || {}).net_of_cancellation;
+const NET_OFF = NET ? { cuddleGwp: 396, courtesyGwp: 169, nestingSales: 1 }
+                    : { cuddleGwp: 0, courtesyGwp: 0, nestingSales: 0 };
 const WORKBOOK = {
-  Cuddle:   { gwp: 47370 },                 // §7 pivot_cuddle grand total
-  Courtesy: { gwp: 14636, sales: 144 },     // §7 pivot_courtesy grand total
-  Nesting:  { sales: 17, agents: 3 },       // §7 coverage_gap — what used to vanish entirely
+  Cuddle:   { gwp: 47370 - NET_OFF.cuddleGwp },              // §7 pivot_cuddle grand total
+  Courtesy: { gwp: 14636 - NET_OFF.courtesyGwp, sales: 144 },// §7 pivot_courtesy grand total
+  Nesting:  { sales: 17 - NET_OFF.nestingSales, agents: 3 }, // §7 coverage_gap — what used to vanish entirely
 };
 // Sales/GWP drift by at most a couple of units against a workbook cut a day before the BI
 // pull: open item OI-12 measures it at 2 agents on sales, 3 on GWP. Anything larger is a rule
@@ -129,7 +138,8 @@ const num = v => { const n = parseFloat(String(v ?? '').replace(/\s/g, '').repla
 const FROM = '2026-08-01', TO = '2026-08-04';
 let testRows = 0;
 const acct = {};
-for (const f of ['BI Active - 05.08.xlsx', 'BI Inactive - 05.08.xlsx']) {
+// under NET the Inactive export is not unioned back in — the recompute follows the same rule
+for (const f of (NET ? ['BI Active - 05.08.xlsx'] : ['BI Active - 05.08.xlsx', 'BI Inactive - 05.08.xlsx'])) {
   if (!fs.existsSync(F(f))) continue;
   const wb = XLSX.read(fs.readFileSync(F(f)), { type: 'buffer' });
   for (const r of XLSX.utils.sheet_to_json(wb.Sheets['Export'] || wb.Sheets[wb.SheetNames[0]], { defval: '' })) {
@@ -219,13 +229,18 @@ ok('dialling days come from the register, not every dated file', R.diallingDays 
    never that Nesting must appear — it was that it disappeared SILENTLY. So the test is not
    "is it reported" but "is its absence accounted for": no fact rows, and the engine naming
    the agents and sales it dropped. */
-ok('Nesting produces no fact rows', !R.camps.Nesting.rows, `${R.camps.Nesting.rows} rows`);
+/* Nesting became a REPORTED campaign on 2026-08-20 (Nick: 'to the campaign add nesting') —
+   it now produces fact rows like Cuddle and Courtesy, and only VT stays excluded. */
+ok('Nesting produces fact rows (reported campaign since 2026-08-20)', R.camps.Nesting.rows > 0, `${R.camps.Nesting.rows} rows`);
 ok('Tracker produces no fact rows', !R.camps.VT.rows, `${R.camps.VT.rows} rows`);
-ok('the excluded campaigns are named with what they took with them',
-  (R.offCampaign.Nesting?.sales === WORKBOOK.Nesting.sales) && R.offCampaign.Nesting?.agents === WORKBOOK.Nesting.agents,
+ok('only VT is excluded now, and it is named with what it took with it',
+  !R.offCampaign.Nesting && (R.offCampaign.VT?.agents || 0) > 0,
   JSON.stringify(R.offCampaign));
 
 // §7 reference output — the figures the hand-built workbook carries
+/* These campaign figures are summed from FACT-level gwp, which stays VAT-INCLUSIVE (the
+   display-basis switch lives in agg(); facts keep both bases). The workbook constants are
+   inclusive too, so the comparison is direct — no conversion. */
 ok('Cuddle GWP matches the workbook exactly', R.camps.Cuddle.gwp === WORKBOOK.Cuddle.gwp,
   `app R${R.camps.Cuddle.gwp} vs workbook R${WORKBOOK.Cuddle.gwp}`);
 ok('Courtesy GWP within pull drift of the workbook', Math.abs(R.camps.Courtesy.gwp - WORKBOOK.Courtesy.gwp) <= DRIFT.gwp,
@@ -247,7 +262,7 @@ ok('CB156 displays the Sales Force name', R.rosterNames[0] === 'Ashnee Kasavani 
    row) must add back up to the independent recompute, to the rand. This is the check that
    would catch money quietly going missing in a transform. */
 {
-  const gwp = R.camps.Cuddle.gwp + R.camps.Courtesy.gwp;
+  const gwp = R.camps.Cuddle.gwp + R.camps.Courtesy.gwp + (R.camps.Nesting.gwp || 0);   // fact-level, VAT-inclusive; Nesting reported since 2026-08-20
   const off = Object.values(R.offCampaign).reduce((a, v) => a + (v.gwp || 0), 0);
   ok('every rand of the BI union is accounted for', Math.abs(gwp + off + R.offBook - expGwp) <= 3,
     `reported R${gwp} + unreported campaigns R${off} + off-book R${R.offBook} = R${gwp + off + R.offBook} vs recompute R${expGwp}`);
@@ -311,20 +326,30 @@ ok('Courtesy actual shifts are not simply the register', R.camps.Courtesy.act <=
   ok('every campaign in the data has a section on screen', !missing.length,
     `missing tabs: ${missing.join(', ')} (tabs: ${seen.tabs.join(', ')})`);
 
-  // and the VAS campaigns must sum to the VAS headline (VT is excluded from it by design)
+  /* The VAS campaigns must sum to the VAS headline (VT is excluded from it by design).
+     GWP is compared on the EX-VAT charge, because that is the additive quantity: since
+     2026-08-18 every level grosses ONCE off its own charge total (the source pivot's
+     formula), so adding up ~700 already-rounded per-agent-day rands cannot equal a single
+     gross-up and drifts a few rand by construction. The ex-VAT sums must still agree to the
+     cent — if THEY diverge, money really has gone missing. */
   const sums = await page.evaluate(() => {
     const M = window.__mtd.model(); const by = {};
     for (const f of M.facts) { if (f.rangeAgg) continue;
-      const t = by[f.campaign] = by[f.campaign] || { emp: 0, sales: 0, gwp: 0 };
-      t.emp += f.emp; t.sales += f.sales; t.gwp += f.gwp; }
+      const t = by[f.campaign] = by[f.campaign] || { emp: 0, sales: 0, gwpEx: 0 };
+      t.emp += f.emp; t.sales += f.sales; t.gwpEx += (f.gwpEx || 0); }
     const vas = Object.entries(by).filter(([c]) => c !== 'VT')
-      .reduce((a, [, t]) => ({ emp: a.emp + t.emp, sales: a.sales + t.sales, gwp: a.gwp + t.gwp }), { emp: 0, sales: 0, gwp: 0 });
-    return { vas, grand: { emp: M.grand.emp, sales: M.grand.sales, gwp: Math.round(M.grand.gwp) } };
+      .reduce((a, [, t]) => ({ emp: a.emp + t.emp, sales: a.sales + t.sales, gwpEx: a.gwpEx + t.gwpEx }), { emp: 0, sales: 0, gwpEx: 0 });
+    return { vas, grand: { emp: M.grand.emp, sales: M.grand.sales, gwpEx: M.grand.gwpEx, gwp: M.grand.gwp } };
   });
-  ok('the VAS campaign sections sum to the headline total',
+  ok('the VAS campaign sections sum to the headline total (ex-VAT charge, to the cent)',
     sums.vas.emp === sums.grand.emp && sums.vas.sales === sums.grand.sales
-      && Math.abs(Math.round(sums.vas.gwp) - sums.grand.gwp) <= 1,
+      && Math.abs(sums.vas.gwpEx - sums.grand.gwpEx) < 0.005,
     `campaigns ${JSON.stringify(sums.vas)} vs headline ${JSON.stringify(sums.grand)}`);
+  /* Display basis is EX-VAT since 2026-08-18 (agent comms). The headline must equal the
+     summed charge itself; the inclusive figure lives on gwpIncl. */
+  ok('the headline GWP is the ex-VAT charge total (display basis = agent comms)',
+    sums.grand.gwp === Math.round(sums.grand.gwpEx),
+    `R${sums.grand.gwp} vs ROUND(${sums.grand.gwpEx.toFixed(2)})`);
 }
 
 // §11 — the checks themselves

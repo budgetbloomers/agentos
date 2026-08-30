@@ -1,16 +1,52 @@
 {
-  "$schema_version": "1.0",
+  "$schema_version": "1.2",
   "name": "VAS Variance Report - Rules, Framework and File Requirements",
   "purpose": "Reconcile the same business events as recorded by independent systems, quantify every disagreement, and classify its root cause. The Variance Report does NOT produce KPIs - it proves whether the KPIs in the MTD report can be trusted.",
-
   "scope_note": {
     "two_artefacts_share_this_name": "Clarify which is meant before building.",
     "A_daily_variance_report": {
       "description": "The existing operational file 'Variance Report DD.MM.YYYY.xlsx', one per day, discovered as an external link inside the MTD tracker.",
       "confirmed_location": "SharePoint > Sales Optimization > Variance Report > {Month YYYY} > {DD.MM.YYYY} > Variance Report DD.MM.YYYY.xlsx",
-      "confirmed_sheets": ["DD.MM (daily output)", "SF (Salesforce extract)", "Tracker (VAS Daily Tracker extract)", "Call X (dialler extract)", "Staff List", "Sheet1", "historical DD.MM tabs"],
-      "confirmed_daily_layout": {"D1": "Agents", "E1:F1": "Salesforce (merged header)", "E2": "Sales", "F2": "GWP", "D3:D{n}": "agent names", "E3:E{n}": "Salesforce sales count", "F3:F{n}": "Salesforce GWP"},
-      "sample_cached_values": [{"agent": "Theo Chetty", "sales": 10, "gwp": 990}, {"agent": "Enoch Pillay", "sales": 14, "gwp": 1446}, {"agent": "Jeremiah Govindsamy", "sales": 17, "gwp": 1763}, {"agent": "Darrien Govender", "sales": 0, "gwp": 0}],
+      "confirmed_sheets": [
+        "DD.MM (daily output)",
+        "SF (Salesforce extract)",
+        "Tracker (VAS Daily Tracker extract)",
+        "Call X (dialler extract)",
+        "Staff List",
+        "Sheet1",
+        "historical DD.MM tabs"
+      ],
+      "confirmed_daily_layout": {
+        "D1": "Agents",
+        "E1:F1": "Salesforce (merged header)",
+        "E2": "Sales",
+        "F2": "GWP",
+        "D3:D{n}": "agent names",
+        "E3:E{n}": "Salesforce sales count",
+        "F3:F{n}": "Salesforce GWP"
+      },
+      "sample_cached_values": [
+        {
+          "agent": "Theo Chetty",
+          "sales": 10,
+          "gwp": 990
+        },
+        {
+          "agent": "Enoch Pillay",
+          "sales": 14,
+          "gwp": 1446
+        },
+        {
+          "agent": "Jeremiah Govindsamy",
+          "sales": 17,
+          "gwp": 1763
+        },
+        {
+          "agent": "Darrien Govender",
+          "sales": 0,
+          "gwp": 0
+        }
+      ],
       "inferred_purpose": "Per-agent, per-day reconciliation of Salesforce against the agent-logged Daily Tracker and against dialler activity. The 'variance' is the gap between what the system recorded and what the agent claimed.",
       "status": "NOT SUPPLIED. Structure known only from cached external-link values inside the MTD tracker."
     },
@@ -20,7 +56,6 @@
       "note": "Both are covered below: section 'daily_system_variance' specifies A, section 'engine_reconciliation' specifies B. They share the file list, identity layer and root-cause taxonomy."
     }
   },
-
   "required_files": {
     "mandatory": [
       {
@@ -29,9 +64,17 @@
         "sheet": "Export",
         "system": "Salesforce",
         "provides": "Sales count, GWP, contract and account identifiers, Owner",
-        "used_for": ["Sales variance", "GWP variance"],
+        "used_for": [
+          "Sales variance",
+          "GWP variance"
+        ],
         "status": "SUPPLIED",
-        "cleaning": ["Drop the final 2 rows (blank spacer + 'Applied filters:' footer)", "Strip trailing whitespace from headers", "Use 'Charge Amount' only - 'Charge Amount.1' is a byte-identical duplicate", "Exclude Charge Code = TESTRR and test account 622622"],
+        "cleaning": [
+          "Drop the final 2 rows (blank spacer + 'Applied filters:' footer)",
+          "Strip trailing whitespace from headers",
+          "Use 'Charge Amount' only - 'Charge Amount.1' is a byte-identical duplicate",
+          "Exclude Charge Code = TESTRR and test account 622622"
+        ],
         "critical": "Arrives pre-filtered on the Salesforce sales-month (27 Jul onward), which is WIDER than the calendar month. Re-filter on Contract Create Date or July activations contaminate the variance."
       },
       {
@@ -40,7 +83,11 @@
         "sheet": "Export",
         "system": "Salesforce",
         "provides": "Cancelled contracts",
-        "used_for": ["Sales variance (union with Active)", "GWP variance", "Cancellation variance"],
+        "used_for": [
+          "Sales variance (union with Active)",
+          "GWP variance",
+          "Cancellation variance"
+        ],
         "status": "SUPPLIED",
         "critical": "Must be unioned with bi_active for Sales and GWP. A sale made then cancelled in-period is still a gross sale; Active-only undercounts."
       },
@@ -49,7 +96,10 @@
         "file": "attendance_YYYY-MM-DD_to_YYYY-MM-DD.csv",
         "system": "HR register",
         "provides": "Status per employee per day, Employee Type, Department",
-        "used_for": ["Attendance variance", "defines the dialing-day list"],
+        "used_for": [
+          "Attendance variance",
+          "defines the dialing-day list"
+        ],
         "status": "SUPPLIED",
         "filter": "Employee Type = 'Call Agent'"
       },
@@ -58,16 +108,27 @@
         "file": "evaluations-full-export-YYYY-MM-DD.csv",
         "system": "QA platform",
         "provides": "Score %, Escalation Decision, Status, Submitted At, Dispute fields",
-        "used_for": ["QA variance", "QA timing analysis"],
+        "used_for": [
+          "QA variance",
+          "QA timing analysis"
+        ],
         "status": "SUPPLIED",
         "critical": "NOT pre-filtered - holds history back to 30 Apr. Filter on Date of Call. 'Submitted At' is mandatory for the timing root-cause test."
       },
       {
         "id": "roster",
         "file": "Matrix_-_Agent_List.xlsx",
-        "sheets": ["VAS", "VT", "May", "Reg List", "Sheet1"],
+        "sheets": [
+          "VAS",
+          "VT",
+          "May",
+          "Reg List",
+          "Sheet1"
+        ],
         "provides": "Employee Code, Sales Force name, Team Leader, Campaign, Tenure, Target, dialler label",
-        "used_for": ["identity resolution across every system"],
+        "used_for": [
+          "identity resolution across every system"
+        ],
         "status": "SUPPLIED",
         "critical": "The single join spine. Every variance is agent-level, so an unresolved agent produces a false variance. Use the UNION of all five sheets."
       }
@@ -79,7 +140,10 @@
         "sheet": "Call Records",
         "system": "Carrier",
         "provides": "Billable Seconds, call legs, dialler label",
-        "used_for": ["Talk-time variance (Courtesy/Nesting)", "dialler-activity attendance rule"],
+        "used_for": [
+          "Talk-time variance (Courtesy/Nesting)",
+          "dialler-activity attendance rule"
+        ],
         "status": "SUPPLIED",
         "warning": "This is a CARRIER report, not the dialler. It runs a median 4.8% above the reference talk time (range 1.001x to 1.306x). Usable for the attendance activity test, but only an interim proxy for talk time."
       },
@@ -88,7 +152,9 @@
         "file": "Vici_-_Cuddle_Agents_-_D_-_D_Mon.csv",
         "system": "Vici dialler",
         "provides": "TALK, CALLS, disposition counts per agent",
-        "used_for": ["Talk-time variance (Cuddle)"],
+        "used_for": [
+          "Talk-time variance (Cuddle)"
+        ],
         "status": "SUPPLIED but PERIOD-AGGREGATED",
         "warning": "One row per agent for the whole period - no per-day breakdown. Cuddle daily talk time must be allocated or estimated, and flagged as such."
       }
@@ -98,9 +164,19 @@
         "id": "vas_daily_tracker",
         "file": "VAS Daily Tracker - {Month YYYY}.xlsx",
         "sheets": "DD.MM per day",
-        "layout": {"B": "Agent Name", "C:AC": "Sale 1 .. Sale 27", "AD": "Total Sales", "AE": "Total GWP", "AF": "Average GWP", "AG": "Referrals"},
+        "layout": {
+          "B": "Agent Name",
+          "C:AC": "Sale 1 .. Sale 27",
+          "AD": "Total Sales",
+          "AE": "Total GWP",
+          "AF": "Average GWP",
+          "AG": "Referrals"
+        },
         "provides": "Agent-logged sales and referrals",
-        "blocks": ["Referrals variance entirely", "the agent-claimed vs system-recorded comparison, which is the core of the daily Variance Report"],
+        "blocks": [
+          "Referrals variance entirely",
+          "the agent-claimed vs system-recorded comparison, which is the core of the daily Variance Report"
+        ],
         "status": "NOT SUPPLIED",
         "severity": "BLOCKING for the daily variance report; PARTIAL for the engine reconciliation (Referrals only)"
       },
@@ -108,7 +184,9 @@
         "id": "courtesy_dialler_export",
         "file": "Daily dialler export for Courtesy agents (the 'Call X' sheet source)",
         "provides": "Dialler-side talk time per agent per day",
-        "blocks": ["Accurate Courtesy talk-time variance"],
+        "blocks": [
+          "Accurate Courtesy talk-time variance"
+        ],
         "status": "NOT SUPPLIED",
         "severity": "HIGH - without it Courtesy talk time carries a systematic ~4.8% overstatement that cannot be corrected, only estimated"
       },
@@ -116,7 +194,9 @@
         "id": "prior_variance_reports",
         "file": "Variance Report DD.MM.YYYY.xlsx",
         "provides": "The existing daily format and its Tracker / Call X / SF sheet structures",
-        "blocks": ["Exact reproduction of the established daily layout"],
+        "blocks": [
+          "Exact reproduction of the established daily layout"
+        ],
         "status": "NOT SUPPLIED",
         "severity": "MEDIUM - structure inferred from cached external-link values only"
       }
@@ -125,13 +205,14 @@
       {
         "id": "mtd_tracker",
         "file": "VAS - {Month YYYY} MTD Tracker.xlsx",
-        "used_for": ["engine_reconciliation baseline"],
+        "used_for": [
+          "engine_reconciliation baseline"
+        ],
         "status": "SUPPLIED",
         "note": "Required ONLY for the engine reconciliation. The daily variance report does not need it."
       }
     ]
   },
-
   "snapshot_discipline": {
     "principle": "A variance report is only meaningful if every source was captured at the same instant. Comparing a 05 Aug export against a 04 Aug build measures elapsed time, not disagreement.",
     "rules": [
@@ -142,22 +223,48 @@
     ],
     "observed_impact": "In the reference period the BI exports were dated 05 Aug and the tracker was built 04 Aug. This alone accounted for 2 sales, 3 GWP and 3 cancellation differences, plus almost every QA difference."
   },
-
   "identity_layer": {
     "principle": "Employee Code is canonical. Every variance is agent-level, so an identity failure manufactures a false variance on BOTH sides - one agent shows a shortfall, a phantom agent shows a surplus.",
-    "resolution_order": ["source Employee Code (after code corrections)", "dialler label vs roster 'Call x'", "name vs roster 'Sales Force' then 'Agent Name'", "UNMAPPED - report, never guess"],
+    "resolution_order": [
+      "source Employee Code (after code corrections)",
+      "dialler label vs roster 'Call x'",
+      "name vs roster 'Sales Force' then 'Agent Name'",
+      "UNMAPPED - report, never guess"
+    ],
     "normalisation": "lowercase, trim, strip all non-alphanumerics",
     "display_name_source": "roster column 'Sales Force', NOT 'Agent Name'",
     "dialler_label_rule": "Match on the NAME portion, never the embedded CB number. Four roster labels carry numbers that contradict their own Employee Code column; CB-138 is claimed by two people and matching on the number misassigns 735 calls.",
     "known_corrections": {
-      "dialler_labels": {"Kyle Kisten CB-138": "CB137", "Jabu Ntombele CB-138": "CB138", "Perisha Naicker CB-145": "CB144", "Denisha Pillay CB-144": "CB143", "Nenekazi Mtsolo CB-178": "CB148", "Shantal Munien - CB178": "CB178", "Lindokuhle Phakathi CB-263": "CB263"},
-      "superseded_qa_codes": {"_scope": "QA rows only - CB207 is also Renolan Pillay's Vici ID", "CB207": "CB219", "CB216": "CB229", "CB210": "CB222", "CB209": "CB221", "CB212": "CB225", "CB208": "CB220", "CB214": "CB227", "CB215": "CB228"},
+      "dialler_labels": {
+        "Kyle Kisten CB-138": "CB137",
+        "Jabu Ntombele CB-138": "CB138",
+        "Perisha Naicker CB-145": "CB144",
+        "Denisha Pillay CB-144": "CB143",
+        "Nenekazi Mtsolo CB-178": "CB148",
+        "Shantal Munien - CB178": "CB178",
+        "Lindokuhle Phakathi CB-263": "CB263"
+      },
+      "superseded_qa_codes": {
+        "_scope": "QA rows only - CB207 is also Renolan Pillay's Vici ID",
+        "CB207": "CB219",
+        "CB216": "CB229",
+        "CB210": "CB222",
+        "CB209": "CB221",
+        "CB212": "CB225",
+        "CB208": "CB220",
+        "CB214": "CB227",
+        "CB215": "CB228"
+      },
       "owner_suffix": "Strip ' - Panimax' from the BI Owner field before matching."
     },
-    "current_gap_baseline": {"attendance_call_agents_off_roster": 22, "qa_codes_off_roster": 66, "roster_labels_with_wrong_embedded_code": 4, "agents_joined_in_last_3_months": "30 of 71 (42%)"},
+    "current_gap_baseline": {
+      "attendance_call_agents_off_roster": 22,
+      "qa_codes_off_roster": 66,
+      "roster_labels_with_wrong_embedded_code": 4,
+      "agents_joined_in_last_3_months": "30 of 71 (42%)"
+    },
     "rule": "Resolve identity BEFORE computing any variance. An unresolved agent is an identity defect, not a data variance, and must be reported separately so it is not read as a performance gap."
   },
-
   "daily_system_variance": {
     "description": "Specification for artefact A - the per-agent, per-day reconciliation of Salesforce against the agent-logged Daily Tracker and against dialler activity.",
     "grain": "One row per agent per day",
@@ -165,8 +272,16 @@
       {
         "id": "DV01",
         "name": "Sales variance",
-        "system_a": {"label": "Salesforce", "source": "bi_active UNION bi_inactive", "calc": "COUNT DISTINCT Account Number WHERE Contract Create Date = day, GROUP BY Owner"},
-        "system_b": {"label": "Agent logged", "source": "vas_daily_tracker column AD 'Total Sales'", "status": "BLOCKED - file not supplied"},
+        "system_a": {
+          "label": "Salesforce",
+          "source": "bi_active UNION bi_inactive",
+          "calc": "COUNT DISTINCT Case Number from bi_active WHERE Contract Create Date = day, GROUP BY Owner (NET of cancellation; rows with no Case Number are recurring feature lines, not sales)"
+        },
+        "system_b": {
+          "label": "Agent logged",
+          "source": "vas_daily_tracker column AD 'Total Sales'",
+          "status": "BLOCKED - file not supplied"
+        },
         "variance": "system_a - system_b",
         "tolerance": 0,
         "interpretation": "Positive = Salesforce holds sales the agent did not log. Negative = the agent claimed sales Salesforce has no record of. Negative is the material one."
@@ -174,29 +289,63 @@
       {
         "id": "DV02",
         "name": "GWP variance",
-        "system_a": {"label": "Salesforce", "calc": "ROUND(SUM(Charge Amount) x 1.15, 0) WHERE Contract Create Date = day"},
-        "system_b": {"label": "Agent logged", "source": "vas_daily_tracker column AE 'Total GWP'", "status": "BLOCKED"},
+        "system_a": {
+          "label": "Salesforce",
+          "calc": "ROUND(SUM(Charge Amount) x 1.15, 0) WHERE Contract Create Date = day"
+        },
+        "system_b": {
+          "label": "Agent logged",
+          "source": "vas_daily_tracker column AE 'Total GWP'",
+          "status": "BLOCKED"
+        },
         "variance": "system_a - system_b",
-        "tolerance": {"absolute": 1, "reason": "rounding only"},
+        "tolerance": {
+          "absolute": 1,
+          "reason": "rounding only"
+        },
         "note": "Charge Amount is VAT-exclusive; GWP is VAT-inclusive. Round AFTER multiplying."
       },
       {
         "id": "DV03",
         "name": "Activity variance",
-        "system_a": {"label": "Sales recorded", "calc": "Sales count for the day"},
-        "system_b": {"label": "Dialler activity", "calc": "Talk time and call count for the day"},
+        "system_a": {
+          "label": "Sales recorded",
+          "calc": "Sales count for the day"
+        },
+        "system_b": {
+          "label": "Dialler activity",
+          "calc": "Talk time and call count for the day"
+        },
         "variance": "flag rather than subtract",
         "flags": [
-          {"condition": "sales > 0 AND talk_time = 0", "severity": "error", "meaning": "Sale recorded with no dialler activity - identity break, back-dated capture, or a sale made outside the dialler"},
-          {"condition": "talk_time > 2 hours AND sales = 0", "severity": "warning", "meaning": "Sustained activity with no conversion"},
-          {"condition": "talk_time = 0 AND attendance = Present", "severity": "warning", "meaning": "Present but not dialling - the exact case that separates HR presence from productive shift"}
+          {
+            "condition": "sales > 0 AND talk_time = 0",
+            "severity": "error",
+            "meaning": "Sale recorded with no dialler activity - identity break, back-dated capture, or a sale made outside the dialler"
+          },
+          {
+            "condition": "talk_time > 2 hours AND sales = 0",
+            "severity": "warning",
+            "meaning": "Sustained activity with no conversion"
+          },
+          {
+            "condition": "talk_time = 0 AND attendance = Present",
+            "severity": "warning",
+            "meaning": "Present but not dialling - the exact case that separates HR presence from productive shift"
+          }
         ]
       },
       {
         "id": "DV04",
         "name": "Referrals variance",
-        "system_a": {"label": "Agent logged", "source": "vas_daily_tracker column AG"},
-        "system_b": {"label": "System recorded", "source": "none identified"},
+        "system_a": {
+          "label": "Agent logged",
+          "source": "vas_daily_tracker column AG"
+        },
+        "system_b": {
+          "label": "System recorded",
+          "source": "none identified"
+        },
         "status": "BLOCKED - no system-side referral source exists in any supplied file",
         "rule": "Emit null, never zero. A zero is indistinguishable from a real result."
       }
@@ -204,26 +353,117 @@
     "output_layout": {
       "match_existing_format": true,
       "sheet_per_day": "DD.MM",
-      "columns": {"D": "Agents", "E": "Salesforce Sales", "F": "Salesforce GWP", "G": "Tracker Sales", "H": "Tracker GWP", "I": "Sales Variance", "J": "GWP Variance", "K": "Talk Time", "L": "Flags"},
-      "supporting_sheets": ["SF (Salesforce extract as pulled)", "Tracker (Daily Tracker extract as pulled)", "Call X (dialler extract as pulled)", "Staff List (roster snapshot)"],
+      "columns": {
+        "D": "Agents",
+        "E": "Salesforce Sales",
+        "F": "Salesforce GWP",
+        "G": "Tracker Sales",
+        "H": "Tracker GWP",
+        "I": "Sales Variance",
+        "J": "GWP Variance",
+        "K": "Talk Time",
+        "L": "Flags"
+      },
+      "supporting_sheets": [
+        "SF (Salesforce extract as pulled)",
+        "Tracker (Daily Tracker extract as pulled)",
+        "Call X (dialler extract as pulled)",
+        "Staff List (roster snapshot)"
+      ],
       "rule": "The supporting sheets must hold the raw extract exactly as pulled, so every variance is traceable to source rows without re-querying."
     }
   },
-
   "engine_reconciliation": {
     "description": "Specification for artefact B - proving the rebuilt MTD engine reproduces the reference MTD tracker.",
     "grain": "Per agent for KPIs; per agent per day for Talk Time and Attendance",
     "baseline": "The reference MTD tracker's 'August' fact table and MTD sheets",
     "comparisons": [
-      {"id": "ER01", "metric": "Employed Shifts", "grain": "agent", "engine": "COUNT of fact rows", "tolerance": 0, "verified": "65/65 exact"},
-      {"id": "ER02", "metric": "Sales Target", "grain": "agent", "engine": "SUM of daily target from roster Campaign|Tenure", "tolerance": 0, "verified": "65/65 exact"},
-      {"id": "ER03", "metric": "GWP Target", "grain": "agent", "engine": "Sales Target x 89", "tolerance": 0, "verified": "65/65 exact"},
-      {"id": "ER04", "metric": "Sales Achieved", "grain": "agent", "engine": "COUNT DISTINCT Account Number, BI union, Contract Create Date in period", "tolerance": 0, "verified": "63/65 exact", "residual": "2 agents 1 low - snapshot drift"},
-      {"id": "ER05", "metric": "GWP Achieved", "grain": "agent", "engine": "ROUND(SUM(Charge Amount) x 1.15, 0)", "tolerance": 1, "verified": "62/65 exact", "residual": "3 agents - snapshot drift, differences run in BOTH directions"},
-      {"id": "ER06", "metric": "Cancellations", "grain": "agent", "engine": "COUNT DISTINCT Account Number from bi_inactive, Contract CREATE Date in period", "tolerance": 0, "verified": "62/65 exact", "residual": "3 cancellations landed after the build"},
-      {"id": "ER07", "metric": "Actual Shifts", "grain": "agent-day", "engine": "0.5 if HDCA, else 1 if talk>0, else 0 (Courtesy/Nesting); attendance weight (Cuddle)", "tolerance": 0, "verified": "132/136 rows, 134/136 with the CB263 label fixed", "residual": "2 manual overrides"},
-      {"id": "ER08", "metric": "QA", "grain": "agent", "engine": "AVERAGE of parsed Score %, filtered on Date of Call, no other filters", "tolerance": {"exact": 0, "acceptable": 0.01}, "verified": "23/37 exact, 27/37 within 1pp", "residual": "all 10 material differences are Cuddle agents - submission timing"},
-      {"id": "ER09", "metric": "Talk Time", "grain": "agent-day", "engine": "Vici TALK (Cuddle); Call X Call Billable Seconds (Courtesy interim)", "tolerance": {"ratio_band": [0.98, 1.02]}, "verified": "Cuddle median ratio 0.9887 PASS; Courtesy median 1.0478 FAIL", "residual": "wrong source system for Courtesy - not a calculation fault"}
+      {
+        "id": "ER01",
+        "metric": "Employed Shifts",
+        "grain": "agent",
+        "engine": "COUNT of fact rows",
+        "tolerance": 0,
+        "verified": "65/65 exact"
+      },
+      {
+        "id": "ER02",
+        "metric": "Sales Target",
+        "grain": "agent",
+        "engine": "SUM of daily target from roster Campaign|Tenure",
+        "tolerance": 0,
+        "verified": "65/65 exact"
+      },
+      {
+        "id": "ER03",
+        "metric": "GWP Target",
+        "grain": "agent",
+        "engine": "Sales Target x 89",
+        "tolerance": 0,
+        "verified": "65/65 exact"
+      },
+      {
+        "id": "ER04",
+        "metric": "Sales Achieved",
+        "grain": "agent",
+        "engine": "COUNT DISTINCT Account Number, BI union, Contract Create Date in period",
+        "tolerance": 0,
+        "verified": "63/65 exact",
+        "residual": "2 agents 1 low - snapshot drift"
+      },
+      {
+        "id": "ER05",
+        "metric": "GWP Achieved",
+        "grain": "agent",
+        "engine": "ROUND(SUM(Charge Amount) x 1.15, 0)",
+        "tolerance": 1,
+        "verified": "62/65 exact",
+        "residual": "3 agents - snapshot drift, differences run in BOTH directions"
+      },
+      {
+        "id": "ER06",
+        "metric": "Cancellations",
+        "grain": "agent",
+        "engine": "COUNT DISTINCT Account Number from bi_inactive, Contract CREATE Date in period",
+        "tolerance": 0,
+        "verified": "62/65 exact",
+        "residual": "3 cancellations landed after the build"
+      },
+      {
+        "id": "ER07",
+        "metric": "Actual Shifts",
+        "grain": "agent-day",
+        "engine": "0.5 if HDCA, else 1 if talk>0, else 0 (Courtesy/Nesting); attendance weight (Cuddle)",
+        "tolerance": 0,
+        "verified": "132/136 rows, 134/136 with the CB263 label fixed",
+        "residual": "2 manual overrides"
+      },
+      {
+        "id": "ER08",
+        "metric": "QA",
+        "grain": "agent",
+        "engine": "AVERAGE of parsed Score %, filtered on Date of Call, no other filters",
+        "tolerance": {
+          "exact": 0,
+          "acceptable": 0.01
+        },
+        "verified": "23/37 exact, 27/37 within 1pp",
+        "residual": "all 10 material differences are Cuddle agents - submission timing"
+      },
+      {
+        "id": "ER09",
+        "metric": "Talk Time",
+        "grain": "agent-day",
+        "engine": "Vici TALK (Cuddle); Call X Call Billable Seconds (Courtesy interim)",
+        "tolerance": {
+          "ratio_band": [
+            0.98,
+            1.02
+          ]
+        },
+        "verified": "Cuddle median ratio 0.9887 PASS; Courtesy median 1.0478 FAIL",
+        "residual": "wrong source system for Courtesy - not a calculation fault"
+      }
     ],
     "comparison_procedure": [
       "1. Rebuild the fact table from source using the MTD engine rules.",
@@ -239,7 +479,6 @@
       "worked_example": "Two agents were 1 sale short. Every alternative grain was tested - distinct Case, Account+CaseType, Account+Date all returned the same figure; distinct Contract and raw rows jumped from 20 to 51. No grain produces the reference value, and 63 agents already reconcile exactly. A rule fitting 63 agents exactly and missing 2 by one is a correct rule meeting incomplete data. Changing the grain would have broken 63 to fix 2."
     }
   },
-
   "root_cause_taxonomy": {
     "principle": "Every variance must be classified. An unclassified variance is an open defect, not a result.",
     "classes": [
@@ -307,55 +546,192 @@
       }
     ]
   },
-
   "tolerance_framework": {
     "principle": "State the tolerance before running the comparison. A tolerance chosen after seeing the result is a rationalisation.",
     "bands": [
-      {"class": "Exact", "rule": "difference = 0", "applies_to": ["counts", "shifts", "targets", "cancellations"], "action": "PASS"},
-      {"class": "Rounding", "rule": "absolute difference <= 1 unit", "applies_to": ["GWP", "currency"], "action": "PASS, note"},
-      {"class": "Immaterial", "rule": "within 1 percentage point", "applies_to": ["QA", "percentages"], "action": "PASS, classify"},
-      {"class": "Ratio band", "rule": "engine/reference between 0.98 and 1.02", "applies_to": ["talk time"], "action": "PASS"},
-      {"class": "Material", "rule": "anything outside the above", "action": "FAIL - classify and report; do not adjust the rule"}
+      {
+        "class": "Exact",
+        "rule": "difference = 0",
+        "applies_to": [
+          "counts",
+          "shifts",
+          "targets",
+          "cancellations"
+        ],
+        "action": "PASS"
+      },
+      {
+        "class": "Rounding",
+        "rule": "absolute difference <= 1 unit",
+        "applies_to": [
+          "GWP",
+          "currency"
+        ],
+        "action": "PASS, note"
+      },
+      {
+        "class": "Immaterial",
+        "rule": "within 1 percentage point",
+        "applies_to": [
+          "QA",
+          "percentages"
+        ],
+        "action": "PASS, classify"
+      },
+      {
+        "class": "Ratio band",
+        "rule": "engine/reference between 0.98 and 1.02",
+        "applies_to": [
+          "talk time"
+        ],
+        "action": "PASS"
+      },
+      {
+        "class": "Material",
+        "rule": "anything outside the above",
+        "action": "FAIL - classify and report; do not adjust the rule"
+      }
     ],
     "rule": "Percentages are compared on their underlying numerator and denominator, never on rounded display values."
   },
-
   "output_structure": {
     "single_workbook": true,
     "sheets": [
-      {"name": "Summary", "content": "Period, source export timestamps, snapshot-skew assertion, per-metric pass/fail with counts, root-cause classification for every residual, and the actions required.", "rule": "Must be readable without opening any other sheet."},
-      {"name": "KPI Variance", "content": "Per agent: reference value, engine value, difference, root-cause code, verdict.", "conditional_format": "green exact, amber within tolerance, red material"},
-      {"name": "Talk Time Variance", "content": "Per agent per day: source system, call count, reference, engine, difference in seconds, ratio."},
-      {"name": "QA Variance", "content": "Per agent: evaluation count, reference QA, engine QA, difference in percentage points, status.", "extra": "Include a Submitted At distribution to evidence RC1 timing."},
-      {"name": "QA Evaluations", "content": "Every evaluation in the period with all workflow fields. Critical Fail shaded red, Coaching amber.", "filter": "auto-filter on the header row"},
-      {"name": "Attendance Variance", "content": "Per agent per day: reference shift, HR status, HR-rule result, dialler-rule result, talk time, verdict naming which rule is correct."},
-      {"name": "Unmapped", "content": "Every record that failed identity resolution, with its source, raw label and record count.", "rule": "Must exist even when empty, so an empty result is visibly a result rather than an omission."},
-      {"name": "Source Extracts", "content": "Raw extract of each source as pulled, so every variance is traceable without re-querying."}
+      {
+        "name": "Summary",
+        "content": "Period, source export timestamps, snapshot-skew assertion, per-metric pass/fail with counts, root-cause classification for every residual, and the actions required.",
+        "rule": "Must be readable without opening any other sheet."
+      },
+      {
+        "name": "KPI Variance",
+        "content": "Per agent: reference value, engine value, difference, root-cause code, verdict.",
+        "conditional_format": "green exact, amber within tolerance, red material"
+      },
+      {
+        "name": "Talk Time Variance",
+        "content": "Per agent per day: source system, call count, reference, engine, difference in seconds, ratio."
+      },
+      {
+        "name": "QA Variance",
+        "content": "Per agent: evaluation count, reference QA, engine QA, difference in percentage points, status.",
+        "extra": "Include a Submitted At distribution to evidence RC1 timing."
+      },
+      {
+        "name": "QA Evaluations",
+        "content": "Every evaluation in the period with all workflow fields. Critical Fail shaded red, Coaching amber.",
+        "filter": "auto-filter on the header row"
+      },
+      {
+        "name": "Attendance Variance",
+        "content": "Per agent per day: reference shift, HR status, HR-rule result, dialler-rule result, talk time, verdict naming which rule is correct."
+      },
+      {
+        "name": "Unmapped",
+        "content": "Every record that failed identity resolution, with its source, raw label and record count.",
+        "rule": "Must exist even when empty, so an empty result is visibly a result rather than an omission."
+      },
+      {
+        "name": "Source Extracts",
+        "content": "Raw extract of each source as pulled, so every variance is traceable without re-querying."
+      }
     ],
     "post_build": "Recalculate and re-save the workbook so every formula carries a cached value. Formulas written programmatically render BLANK in previewers and on mobile until recalculated."
   },
-
   "validation_checks": [
-    {"id": "VR01", "check": "All source files present; missing ones named and their blocked metrics listed", "severity": "error"},
-    {"id": "VR02", "check": "All sources captured within the same business day", "severity": "error", "on_fail": "Downgrade every variance to 'indeterminate - snapshot skew'"},
-    {"id": "VR03", "check": "Every agent resolves to an Employee Code before any variance is computed", "severity": "error"},
-    {"id": "VR04", "check": "Agent sets on both sides are set-differenced and reported before values are compared", "severity": "error", "rationale": "Prevents a scope mismatch being read as a performance gap"},
-    {"id": "VR05", "check": "Every non-zero variance carries a root-cause code", "severity": "error"},
-    {"id": "VR06", "check": "Tolerances were declared before the comparison ran", "severity": "error"},
-    {"id": "VR07", "check": "No rule was altered to close a variance without a documented root cause", "severity": "error"},
-    {"id": "VR08", "check": "Blocked metrics emit null, never zero", "severity": "error"},
-    {"id": "VR09", "check": "Percentages compared on underlying values, not rounded display values", "severity": "error"},
-    {"id": "VR10", "check": "Every formula cell has a cached value after recalculation", "severity": "error"},
-    {"id": "VR11", "check": "Sales variance is computed on distinct accounts, not rows", "severity": "error", "rationale": "The BI export is at charge-line grain - 8,229 rows represent only 2,627 accounts"},
-    {"id": "VR12", "check": "Cancellation variance filters on Contract CREATE date, not Deactivate date", "severity": "error", "rationale": "The pivot caption 'Count of Contract Deactivate Date' is legacy and misleading"},
-    {"id": "VR13", "check": "Unmapped sheet present even when empty", "severity": "warning"},
-    {"id": "VR14", "check": "Ratio computed per row for any metric suspected of RC2, to distinguish source mismatch from rounding", "severity": "warning"},
-    {"id": "VR15", "check": "Source files archived for the run", "severity": "warning", "rationale": "A live re-pull will not reproduce the report"}
+    {
+      "id": "VR01",
+      "check": "All source files present; missing ones named and their blocked metrics listed",
+      "severity": "error"
+    },
+    {
+      "id": "VR02",
+      "check": "All sources captured within the same business day",
+      "severity": "error",
+      "on_fail": "Downgrade every variance to 'indeterminate - snapshot skew'"
+    },
+    {
+      "id": "VR03",
+      "check": "Every agent resolves to an Employee Code before any variance is computed",
+      "severity": "error"
+    },
+    {
+      "id": "VR04",
+      "check": "Agent sets on both sides are set-differenced and reported before values are compared",
+      "severity": "error",
+      "rationale": "Prevents a scope mismatch being read as a performance gap"
+    },
+    {
+      "id": "VR05",
+      "check": "Every non-zero variance carries a root-cause code",
+      "severity": "error"
+    },
+    {
+      "id": "VR06",
+      "check": "Tolerances were declared before the comparison ran",
+      "severity": "error"
+    },
+    {
+      "id": "VR07",
+      "check": "No rule was altered to close a variance without a documented root cause",
+      "severity": "error"
+    },
+    {
+      "id": "VR08",
+      "check": "Blocked metrics emit null, never zero",
+      "severity": "error"
+    },
+    {
+      "id": "VR09",
+      "check": "Percentages compared on underlying values, not rounded display values",
+      "severity": "error"
+    },
+    {
+      "id": "VR10",
+      "check": "Every formula cell has a cached value after recalculation",
+      "severity": "error"
+    },
+    {
+      "id": "VR11",
+      "check": "Sales variance is computed on distinct CASES, not rows and not accounts",
+      "severity": "error",
+      "rationale": "The BI export is at charge-line grain - 8,229 rows represent only 2,627 accounts"
+    },
+    {
+      "id": "VR12",
+      "check": "Cancellation variance filters on Contract CREATE date, not Deactivate date",
+      "severity": "error",
+      "rationale": "The pivot caption 'Count of Contract Deactivate Date' is legacy and misleading"
+    },
+    {
+      "id": "VR13",
+      "check": "Unmapped sheet present even when empty",
+      "severity": "warning"
+    },
+    {
+      "id": "VR14",
+      "check": "Ratio computed per row for any metric suspected of RC2, to distinguish source mismatch from rounding",
+      "severity": "warning"
+    },
+    {
+      "id": "VR15",
+      "check": "Source files archived for the run",
+      "severity": "warning",
+      "rationale": "A live re-pull will not reproduce the report"
+    },
+    {
+      "id": "VR16",
+      "check": "Every reported campaign has day-level dialler rows in the period (dialler_coverage contract)",
+      "severity": "error",
+      "on_fail": "Name the campaign, its day-level source, and the user groups to tick at pull time"
+    }
   ],
-
   "output_header_template": {
     "report_type": null,
-    "reporting_period": {"start": null, "end": null, "dialing_days": null},
+    "reporting_period": {
+      "start": null,
+      "end": null,
+      "dialing_days": null
+    },
     "build_timestamp": null,
     "source_export_timestamps": {},
     "snapshot_skew_detected": null,
@@ -363,19 +739,92 @@
     "agents_source_a_only": [],
     "agents_source_b_only": [],
     "metrics_blocked": [],
-    "variance_summary": {"exact": 0, "within_tolerance": 0, "material": 0},
-    "root_cause_counts": {"RC1": 0, "RC2": 0, "RC3": 0, "RC4": 0, "RC5": 0, "RC6": 0, "RC7": 0},
+    "variance_summary": {
+      "exact": 0,
+      "within_tolerance": 0,
+      "material": 0
+    },
+    "root_cause_counts": {
+      "RC1": 0,
+      "RC2": 0,
+      "RC3": 0,
+      "RC4": 0,
+      "RC5": 0,
+      "RC6": 0,
+      "RC7": 0
+    },
     "unmapped_record_count": 0,
     "checks_failed": []
   },
-
   "open_items": [
-    {"id": "VOI-01", "title": "Confirm which Variance Report is required", "detail": "The daily system-vs-system reconciliation (artefact A), the engine-vs-reference reconciliation (artefact B), or both.", "action": "Confirm before build."},
-    {"id": "VOI-02", "title": "VAS Daily Tracker not supplied", "detail": "Blocks Referrals entirely and blocks the agent-claimed vs system-recorded comparison that is the core of the daily Variance Report.", "action": "Supply daily."},
-    {"id": "VOI-03", "title": "Courtesy dialler export not supplied", "detail": "Call X Call is a carrier report and runs a median 4.8% high. Root cause RC2 confirmed and unresolvable without the correct source.", "action": "Supply the daily Vici or equivalent export for Courtesy."},
-    {"id": "VOI-04", "title": "No prior Variance Report supplied", "detail": "Daily layout inferred from cached external-link values only. Column G onward is a proposal, not a reproduction.", "action": "Supply one example file."},
-    {"id": "VOI-05", "title": "Export cut-offs lag the build", "detail": "Root cause RC1 accounts for nearly every residual variance observed.", "action": "Pull all sources at build time and archive them."},
-    {"id": "VOI-06", "title": "Roster churn will manufacture false variances", "detail": "42% of agents joined in the last 3 months; 22 attendance codes and 66 QA codes already match no VAS roster entry.", "action": "Refresh the roster before each run; treat unresolved agents as a build-blocking defect rather than a silent bucket."},
-    {"id": "VOI-07", "title": "QA scope not agreed", "detail": "The reference QA pivot includes Vehicle Tracking agents outside VAS. Scope must be fixed or every QA variance is contestable.", "action": "Confirm intended scope."}
-  ]
+    {
+      "id": "VOI-01",
+      "title": "Confirm which Variance Report is required",
+      "detail": "The daily system-vs-system reconciliation (artefact A), the engine-vs-reference reconciliation (artefact B), or both.",
+      "action": "Confirm before build."
+    },
+    {
+      "id": "VOI-02",
+      "title": "VAS Daily Tracker not supplied",
+      "detail": "Blocks Referrals entirely and blocks the agent-claimed vs system-recorded comparison that is the core of the daily Variance Report.",
+      "action": "Supply daily."
+    },
+    {
+      "id": "VOI-03",
+      "title": "Courtesy dialler export not supplied",
+      "detail": "Call X Call is a carrier report and runs a median 4.8% high. Root cause RC2 confirmed and unresolvable without the correct source.",
+      "action": "Supply the daily Vici or equivalent export for Courtesy."
+    },
+    {
+      "id": "VOI-04",
+      "title": "No prior Variance Report supplied",
+      "detail": "Daily layout inferred from cached external-link values only. Column G onward is a proposal, not a reproduction.",
+      "action": "Supply one example file."
+    },
+    {
+      "id": "VOI-05",
+      "title": "Export cut-offs lag the build",
+      "detail": "Root cause RC1 accounts for nearly every residual variance observed.",
+      "action": "Pull all sources at build time and archive them."
+    },
+    {
+      "id": "VOI-06",
+      "title": "Roster churn will manufacture false variances",
+      "detail": "42% of agents joined in the last 3 months; 22 attendance codes and 66 QA codes already match no VAS roster entry.",
+      "action": "Refresh the roster before each run; treat unresolved agents as a build-blocking defect rather than a silent bucket."
+    },
+    {
+      "id": "VOI-07",
+      "title": "QA scope not agreed",
+      "detail": "The reference QA pivot includes Vehicle Tracking agents outside VAS. Scope must be fixed or every QA variance is contestable.",
+      "action": "Confirm intended scope."
+    }
+  ],
+  "dialler_coverage": {
+    "note": "VR16 — the always-pulls law (owner directive 2026-08-17). Each reported campaign names its DAY-LEVEL dialler source; a campaign with day-level rows on fewer than min_day_share of the compared days FAILS VR16 (error), naming the export and user groups to pull. Any-single-day is NOT coverage: the live August state held one Cuddle login with 0.0h on the 3rd and nothing else — that must fail. Period-aggregated exports are estimates, never DV03 evidence.",
+    "campaigns": {
+      "Courtesy": {
+        "day_level_source": "CallX per-call export (call_records.csv)",
+        "remedy": "Upload the day CallX call_records export."
+      },
+      "Cuddle": {
+        "day_level_source": "ViciDial EXPORT_CALL_REPORT (per-call, tab-separated .txt)",
+        "user_groups": [
+          "Renolan_Matrix_WC",
+          "Sharoma_Matrix_WC"
+        ],
+        "remedy": "Pull EXPORT_CALL_REPORT with the Cuddle floor user groups ticked (or all user groups). For past days, a SINGLE-DAY Vici - Cuddle Agents (Agent Performance Detail) export per day also counts as day-level. A multi-day aggregate is an estimate, never DV03 evidence."
+      }
+    },
+    "min_day_share": 0.5,
+    "no_pull_marker": "A reported-campaign agent-day with talk unknown and unestimated renders \"no pull\" in the Vicci columns (with the remedy as tooltip) — never a bare dash or a zero."
+  },
+  "sale_unit": {
+    "unit": "Case Number",
+    "note": "One sale is one CASE. A case bundles its charge lines (MYP C35 30.43 + FST R39 33.91 + HMDC25 21.74 = 86.08 -> R99). An ACCOUNT is the customer and can hold several cases, so account grain merged two same-day sales by one agent into a single double-value sale. Verified: no case spans two accounts (0 of 4164), and the regrain moves GWP by R0.",
+    "uncased_rows": "Pooled into one residual per agent-day, keyed ~uncased: carries GWP, never counted as a sale.",
+    "net_of_cancellation": true,
+    "net_note": "SWITCH: MTD_RULES.salesNetOfCancellation. SET TRUE 2026-08-18 on the owner directive — sales count only what is still active. This is the setting that makes Enoch Pillay August MTD read 127 rather than 130, and floor-wide 3131 -> 3071 sales / R313662 -> R306900 across 33 of 79 agents. The reference workbook counts GROSS and is therefore knowingly superseded: verify-mtd-values PINS the resulting per-agent divergence (7 agents) so it cannot drift unnoticed.",
+    "gwp_display_basis_note": "MTD pages display GWP ex-VAT (agent comms basis) since 2026-08-18. DV02 in THIS module stays VAT-inclusive by spec — the board it compares against logs inclusive values (a R99 sale is written 99). Deliberate, documented, never mixed in one comparison."
+  }
 }

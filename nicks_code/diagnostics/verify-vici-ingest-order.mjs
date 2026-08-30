@@ -27,6 +27,7 @@ await page.goto('http://127.0.0.1:8143/', { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__mtd && window.__mtd.state(), null, { timeout: 60000 });
 
 const UP = path.join(REPO, 'uploads', '2026-08-06');
+let filesSeen = 0;                 // how many registry entries the last settled drop left
 const drop = async name => {
   const buf = fs.readFileSync(path.join(UP, name));
   await page.evaluate(async ({ n, b64 }) => {
@@ -35,9 +36,22 @@ const drop = async name => {
     const inp = document.querySelector('input[type=file]');
     Object.defineProperty(inp, 'files', { value: dt.files, configurable: true });
     inp.dispatchEvent(new Event('change', { bubbles: true }));
-    await new Promise(r => setTimeout(r, 2200));
   }, { n: name, b64: buf.toString('base64') });
-  await page.waitForTimeout(2200);
+  /* WAIT ON THE STATE, NOT ON A STOPWATCH (audit round 6, 2026-08-28). Fixed 2.2s sleeps
+     held on an idle machine and broke under CPU contention — this suite reported three
+     phantom failures inside a full battery run while passing 7/7 alone. A guard that cries
+     wolf is worse than no guard: the next real failure gets waved through as "just flaky".
+     Wait for the registry to actually record the file, then for it to settle. */
+  const before = filesSeen;
+  await page.waitForFunction(n => (window.__mtd.state().files || []).length > n, before, { timeout: 120000 })
+    .catch(() => {});                                  // a refused file legitimately adds none
+  { let last = -1, stable = 0;
+    for (let i = 0; i < 60; i++) {
+      await page.waitForTimeout(250);
+      const n = await page.evaluate(() => (window.__mtd.state().files || []).length);
+      if (n === last) { if (++stable >= 3) break; } else { stable = 0; last = n; }
+    }
+    filesSeen = last; }
 };
 
 // THE ORDER THAT BROKE IT: dialler first, roster nowhere in sight.

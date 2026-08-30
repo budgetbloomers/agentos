@@ -44,7 +44,7 @@ Every route the Worker actually serves. Anything not listed here does not exist.
 | /api/bi/raw?name= | POST | session | Archive the exact export bytes → `bi-reports/` (R-FMT-06) |
 | /api/ask | POST | session | Workers AI, kill-switch checked, every Q&A logged to ask_log |
 
-**Version gate:** clients must send `X-Cbx-Client: v4`. Without it, `/api/login` and `/api/me`
+**Version gate:** clients must send `X-Cbx-Client: v5`. Without it, `/api/login` and `/api/me`
 return 426, and every write above (`POST`/`DELETE` on kv, eod, bi, bi/raw) returns 409 — outdated
 tabs stay read-only until refreshed. `GET`s, `/api/logout` and `/api/password` are not gated.
 

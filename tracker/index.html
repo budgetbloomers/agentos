@@ -1,40 +1,71 @@
 <meta charset="utf-8">
 <title>Chatterbox AgentOS · Tracker Analytics</title>
-<script>document.documentElement.dataset.theme = document.documentElement.dataset.theme || 'dark';</script>
+<script>/* per-account theme, applied pre-paint from the cache auth-gate.js keeps (the account is the record; see /api/theme) */try{var t=localStorage.getItem("cbx_theme");document.documentElement.dataset.theme=(t==="dark")?"dark":"light";}catch(e){}</script>
 <script src="/auth-gate.js"></script>
 <style>
-  /* Suite palette — matches Ops Analytics dark glass exactly */
-  :root, :root[data-theme="dark"], :root[data-theme="light"] {
-    color-scheme: dark;
-    --bg: #050D1C;
-    --panel: #0A1730;
-    --panel-2: #081A31;
-    --line: rgba(148, 182, 255, .14);
-    --line-2: rgba(148, 182, 255, .26);
-    --text: #EAF1FB;
-    --body: #C6D3E8;
-    --muted: #8296B5;
-    --accent: #2E7CF6;
-    --accent-2: #38C6F4;
-    --on-accent: #04101F;
-    --accent-soft: rgba(46, 124, 246, .16);
-    --good: #34D399;
-    --good-bg: rgba(52, 211, 153, .13);
-    --warn: #FBBF24;
-    --warn-bg: rgba(251, 191, 36, .13);
-    --bad: #FB7185;
-    --bad-bg: rgba(251, 113, 133, .13);
-    --shadow: 0 6px 24px rgba(2, 8, 20, .45);
-    --r: 16px;
+  /* Suite palette — the Agent Analytics / Ops LIGHT skin (Nick, 2026-08-26:
+     "so its all one"). White cards on #F2F5FA, #0F1E36 ink, #2563EB accent. */
+  :root, :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #F2F5FA;
+    --panel: #FFFFFF;
+    --panel-2: #F7FAFE;
+    --line: #E3E9F3;
+    --line-2: #C7D2E4;
+    --text: #0F1E36;
+    --body: #3B4A63;
+    --muted: #71809B;
+    --accent: #2563EB;
+    --accent-2: #38BDF8;
+    --on-accent: #FFFFFF;
+    --accent-soft: #EAF1FF;
+    --good: #158A4C;
+    --good-bg: #E6F6ED;
+    --warn: #B45309;
+    --warn-bg: #FCF0DD;
+    --bad: #C42D2D;
+    --bad-bg: #FBE9E9;
+    --shadow: 0 1px 2px rgba(15,30,54,.05), 0 4px 14px rgba(15,30,54,.05);
+    --r: 14px;
   }
+
+  /* ---- DARK, per account (Nick, 2026-08-30) ------------------------------
+     The same palette PULSE's dark glass uses, so a person who turns dark on
+     does not get two different dark products. Only the tokens are redefined;
+     not one component rule below is touched, which is why light is byte-for-byte
+     the skin it was before this block existed. */
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #070F1F;
+    --panel: #0E1729;
+    --panel-2: #131E34;
+    --line: #1E2A44;
+    --line-2: #2B3A58;
+    --text: #E8EEF9;
+    --body: #B7C4DA;
+    --muted: #8494B1;
+    --accent: #6E9DFF;
+    --accent-2: #38BDF8;
+    --on-accent: #06101F;
+    --accent-soft: #152547;
+    --good: #5FD196;
+    --good-bg: #0F2A1E;
+    --warn: #E0A25A;
+    --warn-bg: #2C1E0D;
+    --bad: #F08A8A;
+    --bad-bg: #2E1414;
+    --shadow: 0 1px 2px rgba(0,0,0,.40), 0 8px 24px rgba(0,0,0,.32);
+  }
+  /* The logo card keeps its white ground in both themes — the wordmark is drawn
+     for light and would disappear on navy. */
 
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   html { font-size: 14px; }
   body {
     background:
-      radial-gradient(1200px 700px at 75% -10%, rgba(46,124,246,.14), transparent 60%),
-      radial-gradient(900px 600px at -10% 110%, rgba(56,198,244,.08), transparent 55%),
+      radial-gradient(1200px 700px at 75% -10%, rgba(37,99,235,.05), transparent 60%),
+      radial-gradient(900px 600px at -10% 110%, rgba(56,189,248,.04), transparent 55%),
       var(--bg);
     color: var(--text);
     font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
@@ -42,10 +73,10 @@
     line-height: 1.45;
     -webkit-font-smoothing: antialiased;
   }
-  * { scrollbar-width: thin; scrollbar-color: #22406B transparent; }
+  * { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
   ::-webkit-scrollbar { width: 9px; height: 9px; }
-  ::-webkit-scrollbar-thumb { background: #22406B; border-radius: 8px; border: 2px solid var(--bg); }
-  ::selection { background: rgba(61, 155, 255, .30); }
+  ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 8px; border: 2px solid var(--bg); }
+  ::selection { background: rgba(37, 99, 235, .18); }
   .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
 
   /* ---------- App switcher (suite: three apps, one platform) ---------- */
@@ -56,7 +87,7 @@
   .as-select {
     flex: 1; width: 100%; border: none; border-radius: 8px; padding: 8px 10px;
     font-family: inherit; font-size: 12px; font-weight: 800; letter-spacing: 0.3px;
-    background: linear-gradient(135deg, #2E7CF6, #38C6F4); color: #04101F; cursor: pointer;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--on-accent); cursor: pointer;
   }
   .as-select option { background: var(--panel); color: var(--text); font-weight: 700; }
 
@@ -92,7 +123,7 @@
 
   /* ---------- Cards (Ops solid-navy glass) ---------- */
   .card {
-    background: linear-gradient(180deg, rgba(148,182,255,.05), rgba(148,182,255,.02)), var(--panel);
+    background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--r); padding: 22px; box-shadow: var(--shadow);
   }
@@ -111,7 +142,7 @@
   }
   .field input {
     background: var(--panel-2); color: var(--text);
-    border: 1px solid rgba(148, 182, 255, .18); border-radius: 9px;
+    border: 1px solid var(--line); border-radius: 9px;
     padding: 10px 12px; font: inherit; font-variant-numeric: tabular-nums;
     width: 100%;
   }
@@ -125,7 +156,7 @@
 
   .edit-note {
     display: none; align-items: center; gap: 8px;
-    background: var(--accent-soft); color: #9CC3FF;
+    background: var(--accent-soft); color: var(--accent);
     border: 1px solid rgba(46, 124, 246, .35);
     border-radius: 9px; padding: 9px 14px; font-size: 13.5px; font-weight: 600;
     margin-top: 14px;
@@ -153,12 +184,12 @@
 
   .actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
   .btn {
-    appearance: none; border: 1px solid rgba(148, 182, 255, .16); background: rgba(148, 182, 255, .07);
+    appearance: none; border: 1px solid var(--line); background: var(--panel-2);
     color: var(--body); font: inherit; font-weight: 700; font-size: 13px;
     padding: 10px 20px; border-radius: 9px; cursor: pointer;
     transition: background-color .18s, color .18s, border-color .18s, box-shadow .18s;
   }
-  .btn:hover { border-color: rgba(148, 182, 255, .34); color: var(--text); }
+  .btn:hover { border-color: var(--line-2); color: var(--text); }
   .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .btn.primary { background: linear-gradient(135deg, #2E7CF6, #38C6F4); border: none; color: var(--on-accent); font-weight: 800; padding: 11px 21px; }
   .btn.primary:hover { box-shadow: 0 8px 22px rgba(46, 124, 246, .45); color: var(--on-accent); }
@@ -186,12 +217,12 @@
   }
   thead th:first-child { text-align: left; }
   tbody td, tfoot td {
-    padding: 10px 12px; text-align: right; border-top: 1px solid rgba(148, 182, 255, .08);
+    padding: 10px 12px; text-align: right; border-top: 1px solid var(--line);
     white-space: nowrap; font-size: 13.5px; color: var(--body);
   }
   tbody td:first-child, tfoot td:first-child { text-align: left; font-weight: 600; color: var(--text); }
-  tbody tr:nth-child(even) { background: rgba(148, 182, 255, .03); }
-  tbody tr:hover { background: rgba(148, 182, 255, .06); }
+  tbody tr:nth-child(even) { background: var(--panel-2); }
+  tbody tr:hover { background: var(--accent-soft); }
   tfoot td { background: var(--panel-2); font-weight: 700; color: var(--text); }
   .pill {
     display: inline-block; padding: 2px 10px; border-radius: 999px;
@@ -405,10 +436,34 @@
   }
   function tok() { return sessionStorage.getItem("cbx_token"); }
   /* rows mode: one row per date — concurrent users on different dates never clobber each other */
+  /* A SAVE MADE BEFORE (OR WITHOUT) HYDRATION IS NOT DISCARDED (audit round 4, 2026-08-28).
+     This used to `return` silently while the save handler still printed "Saved ✓": an entry
+     typed in the second before the first sync landed — or at any time after a failed sync,
+     which leaves `hydrated` false for the life of the page — was written to localStorage,
+     reported as saved, and never reached the database. The user then saw their own cached
+     copy and believed it was safe. Now it is held and flushed the moment hydration
+     completes, and if that never happens the user is told plainly. */
+  var pendingRows = [];
+  function flushPending() {
+    if (!pendingRows.length) return;
+    var q = pendingRows.slice(); pendingRows = [];
+    q.forEach(function (p) { cloudRow(p[0], p[1]); });
+  }
   function cloudRow(iso, entryOrNull) {
     var t = tok();
     if (!t) { warn("Not signed in — this entry was NOT saved to the database."); return; }
-    if (!hydrated) return;
+    if (!hydrated) {
+      /* REPLACE, never skip (audit round 6, 2026-08-28). Matching on the date alone and
+         keeping the FIRST payload meant a correction typed seconds later was discarded —
+         and a DELETE (entryOrNull === null) for a date already queued was dropped entirely,
+         so the flush wrote the entry back and the deleted day reappeared. The last thing
+         the user did to a date is the thing to save. */
+      var qi = -1;
+      for (var qn = 0; qn < pendingRows.length; qn++) if (pendingRows[qn][0] === iso) { qi = qn; break; }
+      if (qi >= 0) pendingRows[qi] = [iso, entryOrNull]; else pendingRows.push([iso, entryOrNull]);
+      warn("Still connecting to the database — “" + iso + "” is held and will be saved automatically. Keep this tab open.");
+      return;
+    }
     if (mode === "kv") { clearTimeout(pushT); pushT = setTimeout(cloudPushBlob, 600); return; }
     var body = entryOrNull ? {
       date: iso, employed: entryOrNull.employed, present: entryOrNull.present,
@@ -445,13 +500,25 @@
     var t = tok(); if (!t) return;
     fetch(BASE + "/api/kv?key=" + KV_KEY, { headers: { "Authorization": "Bearer " + t } })
       .then(function (r) {
-        if (r.status === 404) { localStorage.removeItem(STORE_KEY); mode = "kv"; hydrated = true; return null; }
+        if (r.status === 404) {
+          /* The cloud has no blob yet. Clearing the local cache is right — but anything the
+             user typed while this request was in flight is in pendingRows, and kv-mode
+             pushes the CACHE, so wiping first uploaded "{}" and the entry existed nowhere
+             (audit round 6, 2026-08-28). Re-apply the held rows before the flush. */
+          localStorage.removeItem(STORE_KEY);
+          if (pendingRows.length) {
+            var m0 = {};
+            pendingRows.forEach(function (p) { if (p[1]) m0[p[0]] = p[1]; });
+            try { localStorage.setItem(STORE_KEY, JSON.stringify(m0)); } catch (e) {}
+          }
+          mode = "kv"; hydrated = true; setTimeout(flushPending, 0); return null;
+        }
         return r.ok ? r.text() : undefined;
       })
       .then(function (txt) {
         if (txt === undefined) return;
         if (txt !== null && txt !== "") { try { JSON.parse(txt); localStorage.setItem(STORE_KEY, txt); } catch (e) {} }
-        mode = "kv"; hydrated = true;
+        mode = "kv"; hydrated = true; setTimeout(flushPending, 0);
         renderTable(); loadDateIntoForm();
       })
       .catch(function () { /* offline: local read-only, no pushes */ });
@@ -471,7 +538,7 @@
             jag: row.jag, vt: row.vt, gwp: row.gwp === null ? null : Number(row.gwp), target: row.target };
         });
         var first = !hydrated;
-        mode = "rows"; hydrated = true;
+        mode = "rows"; hydrated = true; setTimeout(flushPending, 0);
         var kvLeftover = loadAll();
         if (first && !(j.rows || []).length && Object.keys(kvLeftover).length) {
           // one-time migration, FIRST hydrate only: entries captured before the table
@@ -660,8 +727,8 @@
     data[iso] = e;
     saveAll(data);
     cloudRow(iso, e);
-    msg.textContent = (existed ? "Updated " : "Saved ") + fmtDate(iso) + " ✓";
-    msg.className = "form-msg ok";
+    msg.textContent = (existed ? "Updated " : "Saved ") + fmtDate(iso) + (hydrated ? " ✓" : " — held until the database connects…");
+    msg.className = hydrated ? "form-msg ok" : "form-msg warn";
     $("edit-note").classList.add("show");
     $("btn-save").textContent = "Update entry";
     renderTable();

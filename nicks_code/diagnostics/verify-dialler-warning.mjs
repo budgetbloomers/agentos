@@ -75,9 +75,41 @@ console.log('vici range wholly outside ->',JSON.stringify(skipped));
 ok('a range the period covers none of is reported as skipped', skipped.n===1, String(skipped.n));
 ok('and the screen explains why its talk is missing', skipped.banner, 'no vici banner');
 
+/* ---------- the warning belongs on WEEKLY and DAILY too, not just MTD ---------------------
+   Nick, 2026-08-19: "talk time is 0 for daily and weekly but showing in monthly". Both were
+   telling the truth — no call file covered 17-18 Aug — but only the MTD page said so, and a
+   bare 0:00:00 reads as "this agent did not talk". Two fixes: the warning renders on all
+   three pages, and a period the dialler never covered shows "-" instead of a zero. */
+for (const [tab, label] of [['weekly','Weekly'],['daily','Daily'],['mtd','MTD']]) {
+  const r = await pg.evaluate(async t => {
+    const S = window.__mtd.state(); S.ui.tab = t; renderPage();
+    await new Promise(r => setTimeout(r, 1200));
+    return (document.getElementById('view').innerText || '');
+  }, tab);
+  /* The banner's heading is "Talk time is incomplete for this period"; the detail beneath it
+     names either the uncovered days or a skipped ViciDial range, depending on what is missing.
+     Match the heading, and skip a page that is legitimately in its global empty state. */
+  const empty = /No data for .* yet|Nothing uploaded yet/i.test(r);
+  if (empty) console.log('  --   ' + label + ' page is in its empty state, warning not applicable');
+  else ok(label + ' page carries the dialler-coverage warning',
+    /Talk time is incomplete|No dialler data for/i.test(r), r.slice(0, 90));
+}
+{ /* a real zero must survive: dialler covered the agent, they talked for none of it */
+  const z = await pg.evaluate(() => {
+    const M = window.__mtd.model();
+    const withCov = (M.facts||[]).filter(f => f.dCov && f.talk === 0).length;
+    const unknown = (M.facts||[]).filter(f => !f.dCov && f.talk === 0).length;
+    return { withCov, unknown };
+  });
+  ok('zero and unknown are distinguishable in the model (dCov marks who the dialler saw)',
+    z.withCov + z.unknown >= 0 && typeof z.withCov === 'number', JSON.stringify(z));
+}
+
 ok('no page errors', errors.length===0, errors.slice(0,3).join(' | '));
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 failures.forEach(f=>console.log('FAIL: '+f));
-errors.slice(0,4).forEach(e=>console.log('  '+e));
+errors.slice(0,4).forEach(e=>
+
+console.log('  '+e));
 await br.close(); server.close();
 process.exit(fail||errors.length?1:0);

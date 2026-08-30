@@ -46,6 +46,22 @@ const OFF_BOOK = ['thevapragasen', 'darriengovender'];                          
 // day; the app follows the register. 6 Courtesy rows, listed so the count cannot creep.
 const ATT_OVERRIDE = ['sechabamlambo', 'thulanigreatmanmbonambi', 'surpriseluckycwele',
   'mzwandilemasuku', 'nenekazimtsolo', 'bandiledlamini'];
+/* NET OF CANCELLATION (owner directive, 2026-08-18). The workbook counts sales GROSS; the
+   engine now counts NET, so for agents who had a cancellation inside 1–4 Aug the app is
+   deliberately lower. That gap is NOT slack and is not excused: each one is PINNED to the
+   exact rand below, so the app must be lower by precisely this much and any other movement
+   still fails. Four Cuddle agents lost a whole R99 sale; three Courtesy agents kept the sale
+   but lost a cancelled contract line from its GWP. Ave GWP is derived from the two and is
+   allowed to follow. Delete this block and set salesNetOfCancellation=false to go back. */
+const NET_DELTA = {
+  enochpillay:                 { 'Sales Achieved': 1, 'GWP Achieved': 99 },
+  shaylenericquelnaidoo:       { 'Sales Achieved': 1, 'GWP Achieved': 99 },
+  sylvannasgengan:             { 'Sales Achieved': 1, 'GWP Achieved': 99 },
+  sandisiweprettygirlzungu:    { 'Sales Achieved': 1, 'GWP Achieved': 99 },
+  ashneekasavanisankarparsad:  { 'GWP Achieved': 20 },
+  amahlemakhanyela:            { 'GWP Achieved': 25 },
+  makhosimavuso:               { 'GWP Achieved': 25 },
+};
 
 let pass = 0, fail = 0; const failures = [];
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; failures.push(n + (d ? ' — ' + d : '')); } };
@@ -128,12 +144,67 @@ for (const sn of ['MTD - Cuddle', 'MTD - Courtesy']) {
       if (SALES_DRIFT.includes(k) && /Sales Achieved|GWP|Ave GWP|SPD|Att/.test(col)) continue;
       if (LATE_CANC.includes(k) && col === 'Cancellations') continue;
       if (ATT_OVERRIDE.includes(k) && /Actual Shifts|Att %/.test(col)) continue;
+      // Ave GWP is GWP/Sales — it moves automatically with the two pinned columns below
+      if (col === 'Ave GWP') continue;   // derived (ex-basis GWP ÷ sales) — both inputs asserted above
+      /* CANCELLATIONS ARE DATED ON THE DAY THEY CANCELLED (2026-08-18). The workbook dates
+         them on the day the SALE was made, so it cannot see a July sale cancelled in August
+         and it does see an August sale cancelled later. The two answer different questions,
+         so this column is not compared against the workbook at all — it is checked below
+         against an independent recompute of the rule from the Inactive export itself. */
+      if (col === 'Cancellations') continue;
       const a = num(tr, col), b = num(gr, col);
       if (a == null && b == null) continue;
-      if ((a == null) !== (b == null) || Math.abs((a || 0) - (b || 0)) > 0.005)
-        bad.push(`${tr.agent} wb=${a} app=${b}`);
+      // the workbook is gross, the engine is net: subtract the PINNED cancellation, then
+      // demand an exact match on what is left
+      const adj = (NET_DELTA[k] && NET_DELTA[k][col]) || 0;
+      /* GWP columns: the workbook is VAT-INCLUSIVE, the app displays EX-VAT (agent comms,
+         2026-08-18). Convert the app figure ×1.15 before comparing; ±1 covers the
+         round(ex)→incl re-rounding. All other columns stay exact. */
+      const GWP_COL = col === 'GWP Achieved' || col === 'GWP Target';
+      const bApp = GWP_COL ? Math.round((b || 0) * 1.15) : b;
+      const tol = GWP_COL ? 1.5 : 0.005;
+      if ((a == null) !== (b == null) || Math.abs((a || 0) - adj - (bApp || 0)) > tol)
+        bad.push(`${tr.agent} wb=${a}${adj ? ' −' + adj + ' (net)' : ''} app=${b}${GWP_COL ? ' (→incl ' + bApp + ')' : ''}`);
     }
     ok(`${sn}: ${col} matches the workbook for every agent`, bad.length === 0, bad.slice(0, 5).join(' | '));
+  }
+}
+
+/* CANCELLATIONS — independent recompute, straight from the Inactive export, mirroring
+   Nick's pivot exactly (2026-08-18): filter on Contract CREATE Date, count DISTINCT Case
+   Number, and rows with a blank Case Number land in the pivot's "(blank)" row — recurring
+   lines, never counted against an agent. A cancellation is a cancelled SALE, so it uses the
+   sale's unit and the sale's date; nothing here reads the workbook. */
+{
+  const inaFile = j(UP, 'BI Inactive - 05.08.xlsx');
+  if (fs.existsSync(inaFile)) {
+    const wbI = XLSX.read(fs.readFileSync(inaFile), { type: 'buffer', cellDates: true });
+    const rowsI = XLSX.utils.sheet_to_json(wbI.Sheets['Export'] || wbI.Sheets[wbI.SheetNames[0]], { defval: '' });
+    const ser = v => { if (v instanceof Date) return v.toISOString().slice(0, 10);
+      const t = String(v ?? '').trim(); if (!t) return '';
+      if (/^\d+(\.\d+)?$/.test(t)) return new Date(Date.UTC(1899, 11, 30) + Math.floor(parseFloat(t)) * 86400000).toISOString().slice(0, 10);
+      const d = new Date(t); return isNaN(d) ? '' : d.toISOString().slice(0, 10); };
+    const want = {};
+    for (const r of rowsI) {
+      const acct = String(r['Account Number'] ?? '').trim();
+      if (!acct || /^applied filters/i.test(acct)) continue;
+      if (String(r['Charge Code'] ?? '').trim().toUpperCase() === 'TESTRR' || acct === '622622') continue;
+      if (!ser(r['Contract Deactivate Date'])) continue;               // still active, not a cancellation
+      const cd = ser(r['Contract Create Date']); if (!cd || cd < FROM || cd > TO) continue;
+      const cs = String(r['Case Number'] ?? '').trim();
+      if (!cs) continue;                                                // the pivot's "(blank)" row — not a cancelled sale
+      const ow = norm(String(r['Owner'] ?? '').replace(/-\s*panimax/ig, ''));
+      (want[ow] = want[ow] || new Set()).add(cs);
+    }
+    const got = await page.evaluate(() => { const M = window.__mtd.model(); const o = {};
+      for (const camp in (M.mtdCC || {})) for (const code in M.mtdCC[camp]) {
+        const a = M.mtdCC[camp][code]; const k = (a.agent || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        o[k] = (o[k] || 0) + (a.canc || 0); } return o; });
+    const bad = [];
+    for (const ow in want) { const g = got[ow]; if (g === undefined) continue;   // off-roster owners are reported elsewhere
+      if (g !== want[ow].size) bad.push(`${ow} calc=${want[ow].size} app=${g}`); }
+    ok('Cancellations = DISTINCT cancelled cases, dated on Contract Create Date, blank cases excluded',
+      bad.length === 0, bad.slice(0, 5).join(' | '));
   }
 }
 
@@ -141,7 +212,13 @@ for (const sn of ['MTD - Cuddle', 'MTD - Courtesy']) {
 const cud = tabulate(G, 'MTD - Cuddle');
 const cudGwp = [...cud.rows.values()].filter(r => !OFF_BOOK.includes(norm(r.agent)))
   .reduce((s, r) => s + (num(r, 'GWP Achieved') || 0), 0);
-ok('Cuddle GWP reconciles to the workbook to the rand', Math.abs(cudGwp - 47370) < 0.5, `${cudGwp} vs 47370`);
+// The workbook's R47 370 is GROSS. Under net-of-cancellation four Cuddle agents each lose a
+// cancelled R99 sale, so the reconciled figure is 47 370 − 396. Written as the arithmetic
+// rather than as a new constant, so the provenance of every rand stays visible.
+const CUD_NET = ['enochpillay', 'shaylenericquelnaidoo', 'sylvannasgengan', 'sandisiweprettygirlzungu']
+  .reduce((s, k) => s + (NET_DELTA[k]['GWP Achieved'] || 0), 0);
+ok('Cuddle GWP reconciles to the workbook to the rand (app ex-VAT ×1.15 vs gross 47370 − ' + CUD_NET + ' cancelled)',
+  Math.abs(Math.round(cudGwp * 1.15) - (47370 - CUD_NET)) <= 2, `${cudGwp} ex → ${Math.round(cudGwp * 1.15)} vs ${47370 - CUD_NET}`);
 
 // GWP must be whole rand: it is rounded per account before summing, so no total can carry cents.
 const cents = [];

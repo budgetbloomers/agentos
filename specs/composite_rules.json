@@ -1,0 +1,184 @@
+{
+  "_source": "Chatterbox_Decision_Rules.xlsx — DRIVERS, TENURE_GROUPS, THRESHOLDS, NBA_THRESHOLDS, R2A_TIERS, CX_THRESHOLDS, BANDS",
+  "version": "nba-3.0+coaching-1.0",
+  "floor": 0.5,
+  "windowSessions": 5,
+  "drivers": [
+    {
+      "k": "gwpSale",
+      "label": "Avg GWP per Sale",
+      "w": 25,
+      "note": "What the average sale you write is worth to the business."
+    },
+    {
+      "k": "targetAch",
+      "label": "Target Achievement",
+      "w": 20,
+      "note": "How close your daily sales come to your target."
+    },
+    {
+      "k": "qa",
+      "label": "QA Score",
+      "w": 20,
+      "note": "Your call quality score. A critical fail scores that call zero."
+    },
+    {
+      "k": "gwpTotal",
+      "label": "Total GWP",
+      "w": 15,
+      "note": "The total value you have written this period against your own target."
+    },
+    {
+      "k": "conv",
+      "label": "Conversion",
+      "w": 10,
+      "note": "Out of every 100 leads you get, how many become a sale."
+    },
+    {
+      "k": "talk",
+      "label": "Talk Time",
+      "w": 5,
+      "note": "Minutes on the phone on the days you work."
+    },
+    {
+      "k": "attendance",
+      "label": "Attendance",
+      "w": 5,
+      "note": "Being here, on time, for the whole session."
+    }
+  ],
+  "targets": {
+    "targetAch": 100,
+    "qa": 90,
+    "talk": 210,
+    "attendance": 95
+  },
+  "tenureGroups": [
+    {
+      "key": "m1",
+      "label": "M1",
+      "tenure": "M1",
+      "campaign": "",
+      "dailySales": 3,
+      "minGwpSale": 99,
+      "convTarget": 8
+    },
+    {
+      "key": "m2",
+      "label": "M2",
+      "tenure": "M2",
+      "campaign": "",
+      "dailySales": 4,
+      "minGwpSale": 99,
+      "convTarget": 10
+    },
+    {
+      "key": "exp_court",
+      "label": "EXP – Courtesy",
+      "tenure": "Experienced",
+      "campaign": "courtesy",
+      "dailySales": 5,
+      "minGwpSale": 99,
+      "convTarget": 12
+    },
+    {
+      "key": "exp_cudd",
+      "label": "EXP – Cuddle",
+      "tenure": "Experienced",
+      "campaign": "cuddle",
+      "dailySales": 8,
+      "minGwpSale": 99,
+      "convTarget": 40
+    }
+  ],
+  "r2aTiers": [
+    {
+      "tier": "R2A-3",
+      "rule": "Critical Compliance Fail",
+      "level": 1,
+      "failsMin": 4,
+      "failsMax": null,
+      "cfrMin": 30,
+      "cfrMax": null,
+      "penalty": 10,
+      "elite": "Blocked"
+    },
+    {
+      "tier": "R2A-2",
+      "rule": "Compliance Risk",
+      "level": 2,
+      "failsMin": 2,
+      "failsMax": 3,
+      "cfrMin": 10,
+      "cfrMax": 30,
+      "penalty": 5,
+      "elite": "Blocked"
+    },
+    {
+      "tier": "R2A-1",
+      "rule": "Compliance Note",
+      "level": 3,
+      "failsMin": 1,
+      "failsMax": 1,
+      "cfrMin": 0,
+      "cfrMax": 10,
+      "penalty": 2,
+      "elite": "Retained"
+    },
+    {
+      "tier": "Tier 0",
+      "rule": "Clean",
+      "level": 0,
+      "failsMin": 0,
+      "failsMax": 0,
+      "cfrMin": 0,
+      "cfrMax": 0,
+      "penalty": 0,
+      "elite": "Eligible"
+    }
+  ],
+  "r2aCap": 10,
+  "cx": {
+    "windowDays": 30,
+    "repeatMin": 2,
+    "persistentMin": 5,
+    "penRepeat": 2,
+    "penPersistent": 5,
+    "penCap": 5,
+    "minConf": 0.6,
+    "staleDays": 14
+  },
+  "combinedCap": 15,
+  "bands": [
+    {
+      "label": "Elite",
+      "min": 90
+    },
+    {
+      "label": "Strong",
+      "min": 80
+    },
+    {
+      "label": "On track",
+      "min": 70
+    },
+    {
+      "label": "Building",
+      "min": 60
+    },
+    {
+      "label": "Needs support",
+      "min": 0
+    }
+  ],
+  "signIn": {
+    "_note": "NOT IN THE WORKBOOK. Nick, 2026-08-28: agents earn up to 5 points for signing into Agent Analytics, weekdays only. Add a SIGN_IN block to the decision-rules workbook when it is next issued, or this rule lives only here.",
+    "points": 5,
+    "perDay": 1,
+    "weekdaysOnly": true,
+    "timezone": "Africa/Johannesburg",
+    "appliesAfterDeductions": true,
+    "scoreCap": 100,
+    "unmeasuredWhenNoLogin": true
+  }
+}

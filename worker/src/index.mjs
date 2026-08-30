@@ -7,6 +7,13 @@
 import { db } from './db.mjs';
 import { login, logout, session, hashPassword } from './auth.mjs';
 import { retrieveKB } from './kb.mjs';
+import { getCoaching, rollUp, sessionsForAgent, withinWindow } from './coaching.mjs';
+import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, listDigestMonths, overview, agentDetail, normCb } from './portal.mjs';
+import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn } from './help.mjs';
+import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
+import { loadCmContext, eodMarkdown, cmOverviewBody } from './campaign.mjs';
+import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
+import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
 
 // Hermes 2 Pro was deprecated 2026-05-30. Default: Llama 4 Scout (131k context —
 // fits the entire software's digests without truncation). Fallback: Llama 3.3 70B.
@@ -62,7 +69,207 @@ THE MANUAL TAB (both apps carry this content):
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', ...headers } });
 
+
+/* ============ ONE ROSTER, EVERY STORE — the sync spine ============================
+   Nick, 2026-08-28: "when I upload in the upload station in vas, ops must automatically
+   update — make this never happen again." It had happened because Ops keeps its own copy
+   of the Agent List and only re-ingested when a HUMAN OPENED OPS, so a list uploaded in
+   VAS could sit unseen there for days (26-Aug list still showing Renolan/Grp13 on 28-Aug).
+
+   This function is the single place that: builds the roster payload, refreshes the
+   agent->team authorisation map, and MIRRORS the roster into Ops' own fact store. It is
+   called from THREE independent triggers so no single hop can lose an update:
+     1. GET /api/roster        — any dashboard polling (and PULSE's ?fresh=1 ping on upload)
+     2. the CRON schedule      — every 10 minutes, whether or not anything is open
+     3. POST /api/kv agent-digest — the digest push that follows every roster ingest
+   Each write is fingerprint-gated, so repeat calls cost one small select and nothing else. */
+/* THE MIRROR AND THE AUTHORISATION FLOOR, shared by both roster paths. Extracted
+   2026-08-28 when the roster gained a second publisher: whichever app's list wins,
+   Ops' boot copy and kv:agent-teams must follow the SAME payload, or the app that
+   did not upload keeps painting yesterday's leaders. `roster` is payload.roster. */
+async function mirrorRoster(env, DB, payload, who) {
+  const roster = (payload && payload.roster) || [];
+  /* AGENT-TEAMS SELF-REFRESH (Nick, 2026-08-27: "everytime the agent list is uploaded
+     data must change"). kv:agent-teams is the portal's authorisation floor — merged in
+     wherever the digest lacks a tl (portal.mjs loadDigest). It used to be written only
+     by tools/provision-agent-logins.mjs, a hand-run tool, so a reorganised floor kept
+     an old map until someone remembered to run it. Now the map follows the roster:
+     whenever the fingerprint moves, it is rewritten from the same rows this payload
+     serves. The provisioning tool's remaining job is LOGINS only. Best-effort — a
+     failed write must never break /api/roster itself. */
+  /* Compared against the STORED row's fingerprint, not isolate memory (adversarial
+     review, 2026-08-27): a long-lived isolate whose memory matched could skip a
+     needed write after an A→B→A roster revert. This path already paid for a
+     multi-MB state download; one tiny select per uncached build (≤ every 120s)
+     is noise, and the DB is the only truth worth trusting. */
+  try {
+    const cur = await DB.select(`rules?key=eq.${encodeURIComponent('kv:agent-teams')}&select=value`).catch(() => null);
+    const dbFp = cur && cur[0] && cur[0].value && cur[0].value.fingerprint;
+    /* `&& roster.length` matters as much here as it does on the mirror below: an empty
+       or failed roster parse would otherwise write teams:{} and flatten the portal's
+       authorisation floor (audit round 6, second pass). */
+    if (dbFp !== payload.fingerprint && roster.length) {
+      const teams = {}; for (const a of roster) if (a.code && a.tl) teams[a.code] = a.tl;
+      await DB.insert('rules', [{ key: 'kv:agent-teams',
+        value: { teams, fingerprint: payload.fingerprint, source: 'roster-sync', updated_at: new Date().toISOString() },
+        updated_by: who || 'roster-sync', updated_at: new Date().toISOString() }], true);
+    }
+  } catch (e) {}
+
+  /* ---- MIRROR THE ROSTER INTO OPS' OWN STORE (Nick, 2026-08-28) ----------------
+     "this morning a new agent list was uploaded — agents were still in renolan and
+     still grp13 when they had a new team leader and in m0."  Root cause: Ops keeps
+     its own Agent List and only re-ingests when a HUMAN OPENS OPS. Nick uploads in
+     VAS, so Ops sat on the 26-Aug list for two days — showing the old leader and the
+     old tenure — and everything Ops publishes went with it. Its sync is correct when
+     it runs (proven); it simply was not running.
+     So the stored copy Ops PAINTS FROM on boot is kept current here, from the very
+     roster this endpoint already serves. This is a mirror, not a second parser: the
+     fields are copied across, nothing is derived. Ops still re-ingests through its
+     own applyLoad on boot (non-negotiable 11) and that remains the authority for
+     identity — this only guarantees the first frame is not two days old.
+     Written only when the roster actually changed, and best-effort: a failure here
+     must never break /api/roster itself. */
+  try {
+    const mirRow = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-mirror-fp')}&select=value`).catch(() => null);
+    const mirFp = mirRow && mirRow[0] && mirRow[0].value && mirRow[0].value.fingerprint;
+    if (mirFp !== payload.fingerprint && roster.length) {
+      const norm = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const rows = roster.map((a) => ({
+        cb_code: a.code, cb_norm: norm(a.code), agent_name: a.name,
+        team_leader: a.tl, queue: a.campaign, tenure: a.tenure,
+        callx_alias: a.callx || '-', sf_name: a.sf || a.name,
+        target: a.target, start_date: a.start || null,
+        _d: null, _batch: 'VASMIRROR',
+      }));
+      const objPath = 'raw/kv/cb-facts-AGENT_LIST';
+      const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {
+        method: 'POST',
+        headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'text/plain', 'x-upsert': 'true' },
+        body: JSON.stringify(rows),
+      });
+      if (put.ok) {
+        await DB.insert('rules', [
+          { key: 'kv:cb-facts-AGENT_LIST', value: { store: objPath }, updated_by: 'roster-mirror', updated_at: new Date().toISOString() },
+          { key: 'kv:roster-mirror-fp', value: { fingerprint: payload.fingerprint, n: rows.length, as_of: payload.as_of, updated_at: new Date().toISOString() }, updated_by: 'roster-mirror', updated_at: new Date().toISOString() },
+        ], true);
+      }
+    }
+  } catch (e) {}
+}
+
+async function rosterSync(env, DB, { fresh = false, who = 'roster-sync' } = {}) {
+        /* short per-isolate cache (review, 2026-08-26): every open dashboard polls this
+           every 10 min, and each uncached hit downloads + parses the multi-MB vas-state
+           blob. Two minutes of staleness is invisible at a 10-minute poll cadence. */
+        /* ?fresh=1 bypasses the isolate cache — PULSE pings this immediately after a roster
+           ingest so the mirror below is written at once rather than up to two minutes later. */
+        const rc = globalThis.__rosterCache;
+        if (rc && Date.now() - rc.t < 120000 && !fresh) return rc.payload;
+        /* THE ROSTER OF RECORD COMES FIRST (2026-08-28). This function also writes the Ops
+           boot mirror and the portal's authorisation floor, so if it kept deriving from
+           kv:vas-state it would quietly overwrite a list published from Ops with VAS's
+           older one — the exact drift this whole change exists to end. When a record
+           exists it IS the roster; the derivation below remains for the period before the
+           first list is posted. */
+        /* A SEEDED RECORD IS NOT A PUBLISHED ONE (audit, 2026-08-28). The cron seeds
+           kv:roster-current from this very derivation so the record path is live before
+           anyone uploads — but that seed is a COPY of kv:vas-state, not a list somebody
+           published, and it was outranking the thing it was copied from: once seeded, a
+           roster change in PULSE could never reach Ops again until a POST happened to
+           succeed. A failed publish pinned the whole suite on a stale list with no way
+           back, which is the exact fault this design exists to end. So a record wins only
+           when it was PUBLISHED; a seed keeps tracking the derivation below and is
+           rewritten whenever that moves. Guarded by verify-roster-propagation.mjs. */
+        let seeded = null;
+        {
+          const cr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-current')}&select=value,updated_at`).catch(() => null);
+          const rec = cr && cr[0] && cr[0].value;
+          if (rec && Array.isArray(rec.roster) && rec.roster.length && rec.source === 'seed') seeded = { rec, at: cr[0].updated_at || '' };
+          else if (rec && Array.isArray(rec.roster) && rec.roster.length) {
+            const payload = { fingerprint: rec.fingerprint, n: rec.roster.length, as_of: rec.as_of || '',
+              file: rec.file || '', source: rec.source || '', uploaded_by: rec.uploaded_by || '',
+              uploaded_at: rec.uploaded_at || '', state_updated_at: cr[0].updated_at || '', roster: rec.roster };
+            globalThis.__rosterCache = { t: Date.now(), payload };
+            await mirrorRoster(env, DB, payload, who);
+            return payload;
+          }
+        }
+        const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:vas-state')}&select=value,updated_at`);
+        if (!r || !r.length) return { error: 'no vas-state uploaded yet', status: 404 };
+        const v = r[0].value || {};
+        let S;
+        if (v.store) {
+          const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${v.store}`, { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY } });
+          if (!sr.ok) return { error: 'state blob unreadable: ' + sr.status, status: 500 };
+          S = JSON.parse(await sr.text());
+        } else S = JSON.parse(String(v.data || '{}'));
+        const roster = (S.roster || []).map(a => ({ code: a.code, name: a.name || '', tl: a.tl || '', campaign: a.campaign || '',
+          tenure: a.tenure || '', callx: a.callx || '', sf: a.sf || '', target: a.target || null, start: a.start || '' }));
+        let h = 0x811c9dc5;   // FNV-1a over sorted rows: stable across roster order
+        for (const s of roster.map(a => [a.code, a.name, a.tl, a.campaign, a.tenure, a.callx, a.sf, a.target, a.start].join('|')).sort())
+          for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+        const files = (S.files || []).filter(f => /^roster/.test(f.type || ''));
+        const asOf = files.map(f => f.asOf || '').filter(Boolean).sort().pop() || '';
+        const payload = { fingerprint: 'vas:' + h.toString(16), n: roster.length, as_of: asOf,
+          file: (files[0] && files[0].name) || '', state_updated_at: r[0].updated_at || '', roster };
+        globalThis.__rosterCache = { t: Date.now(), payload };
+        /* Keep a stale SEED in step with what it was seeded from. Without this the record
+           would still be serving the old roster to anything that reads it directly (the
+           GET route's own record branch, PULSE's adoptRosterFromRecord), while the mirror
+           below carried the new one — two answers to "who is on the list". */
+        if (seeded && seeded.rec.fingerprint !== payload.fingerprint && roster.length) {
+          const now = new Date().toISOString();
+          await DB.insert('rules', [{ key: 'kv:roster-current', updated_by: 'seed-refresh', updated_at: now,
+            value: { v: 1, fingerprint: payload.fingerprint, as_of: asOf, n: roster.length, roster,
+              file: payload.file, source: 'seed', uploaded_by: 'seed-refresh', uploaded_at: now,
+              replaced: { fingerprint: seeded.rec.fingerprint, as_of: seeded.rec.as_of || '', at: seeded.at } } }], true);
+        }
+  await mirrorRoster(env, DB, payload, who);
+  return payload;
+}
+
 export default {
+  /* THE SAFETY NET (Nick, 2026-08-28: "make this never happen again"). Every ten minutes,
+     with nothing open anywhere, the roster is re-synced into Ops' store and the agent->team
+     map. The browser triggers stay — this exists so that a missed ping, a closed laptop or a
+     failed request can never again leave one app running on a different Agent List from the
+     others. Fingerprint-gated: when nothing changed it is one small select and no writes. */
+  async scheduled(event, env, ctx) {
+    const DB = db(env);
+    ctx.waitUntil((async () => {
+      try {
+        const p = await rosterSync(env, DB, { fresh: true, who: 'cron' });
+        if (p && p.error) console.warn('[cron] roster sync: ' + p.error);
+        else console.info('[cron] roster synced — ' + (p && p.n) + ' agents, fingerprint ' + (p && p.fingerprint));
+        /* SEED THE ROSTER OF RECORD, ONCE, WITH NOBODY PRESENT (2026-08-28).
+           kv:roster-current is created by whichever station next publishes a list — which
+           means the new single-source path stays dormant until somebody happens to upload.
+           That is the same "waiting for a human" weakness the whole change exists to
+           remove, so the cron adopts what is already being served: the roster this sync
+           just built, unchanged, moved into the record where both apps read it. Written
+           ONLY when no record exists — a published list is never overwritten by a
+           derivation — and a later list still supersedes it by date, as normal. */
+        if (p && !p.error && Array.isArray(p.roster) && p.roster.length && !/^list:/.test(String(p.fingerprint || ''))) {
+          const have = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-current')}&select=value`).catch(() => null);
+          if (!(have && have[0] && have[0].value && (have[0].value.roster || []).length)) {
+            /* KEEP THE FINGERPRINT THE SYNC JUST PRODUCED. Re-hashing the same rows under a
+               different prefix gave the record `list:e0f9e8b3` while the mirror carried
+               `vas:e0f9e8b3` — the same hash, judged unequal, so the mirror rewrote itself
+               on every cron tick for ever. The seed IS the derived roster; it should say so.
+               A genuine publish still arrives as `list:` and correctly forces a rewrite. */
+            const now = new Date().toISOString();
+            await DB.insert('rules', [{ key: 'kv:roster-current', updated_by: 'cron-seed', updated_at: now,
+              value: { v: 1, fingerprint: p.fingerprint, as_of: p.as_of || '', n: p.roster.length,
+                roster: p.roster, file: p.file || '', source: 'seed', uploaded_by: 'cron-seed',
+                uploaded_at: now, replaced: null } }], true);
+            globalThis.__rosterCache = null;
+            console.info('[cron] roster of record seeded — ' + p.roster.length + ' agents, as of ' + (p.as_of || 'unknown'));
+          }
+        }
+      } catch (e) { console.warn('[cron] roster sync failed: ' + (e && e.message || e)); }
+    })());
+  },
   async fetch(req, env, ctx) {
     // CORS: the suite (pages.dev + preview subdomains) may call this API.
     const origin = req.headers.get('origin') || '';
@@ -90,7 +297,7 @@ export default {
       // ---------- auth ----------
       if (stale && (path === '/api/me' || (path === '/api/login' && req.method === 'POST'))) return json(OUTDATED, 426);
       if (path === '/api/login' && req.method === 'POST') {
-        const r = await login(DB, req, await req.json());
+        const r = await login(DB, req, await req.json(), ctx);   // ctx lets the audit writes finish after the response
         if (!r.ok) return json({ error: r.error }, r.status);
         // token also in body: cross-origin pages use Bearer (cookie is same-origin only)
         return json({ user: r.user, token: r.token });
@@ -116,21 +323,615 @@ export default {
       }
 
       const user = await session(DB, req);
-      if (path === '/api/me') return user ? json({ user }) : json({ error: 'not signed in' }, 401);
+      /* token_hash is the exact value stored in app_sessions — it identifies the live
+         session and has no use in a browser, so it is stripped here rather than shipped
+         into window.CBX_USER (audit round 4, 2026-08-28). */
+      if (path === '/api/me') { if (!user) return json({ error: 'not signed in' }, 401);
+        const { token_hash, ...safe } = user; return json({ user: safe }); }
       if (path === '/api/logout' && req.method === 'POST') { await logout(DB, user); return json({ ok: true }); }
+
+      /* ---------- Agent Analytics: the ONE route the share link can reach ----------
+         /agent/ is sent to the whole floor as a single link. Agents do not have accounts
+         and are never asked for a password — Nick's call: a password is the thing that
+         stops people looking, and a page nobody opens motivates nobody. So this route
+         authorises on the LINK KEY, and sits above the session gate. Staff already signed
+         in reach it on their session instead, which is how the app switcher works.
+
+         THE BOUNDARY IS THIS HANDLER. The key unlocks nothing else: every route below
+         still demands a session, so a link holder gets 401 from /api/kv, /api/bi,
+         /api/eod, /api/ask and the rest. What it returns is not the dataset — it is the
+         agent-safe digest PULSE publishes (see "AGENT ANALYTICS — THE DIGEST" in
+         nicks_code/index.html): no case rows, no contact details, no coaching, nothing
+         from Ops or Tracker.
+
+         KNOWN AND ACCEPTED: anyone holding the link can look up any colleague on the
+         roster. That is the trade for zero-friction access. Rotating the key in `rules`
+         (tools/agent-link.mjs --rotate) kills every outstanding link at once. */
+      if (path === '/api/agent-digest' && req.method === 'GET') {
+        /* THE PASSWORDLESS SHARE LINK IS RETIRED (Nick, 2026-08-24).
+           This route used to authorise on `?k=<agent_link_key>` so the whole floor
+           could open /agent/ with no password. Agent Analytics now signs people in
+           with a CB number, and the security model that requires — an agent sees
+           only their own figures — cannot hold while a single shared link still
+           returns the entire 130-agent digest to anyone holding it.
+           So the key no longer authorises anything, and `?k=` is ignored. Staff
+           sessions keep working (that is what the app switcher uses); a link
+           holder now gets the 401 below and the page shows the sign-in screen.
+           tools/agent-link.mjs --rotate was run at the same time, so no
+           outstanding link resolves either. */
+        if (!user) return json({ error: 'Please sign in with your CB number.' }, 401);
+        /* AND THE ROLE LOCKDOWN, RESTATED HERE ON PURPOSE.
+           This handler sits ABOVE the session gate — it has to, because it used to
+           authorise link holders who had no session — which means the central
+           lockdown further down never sees it. Without this line an agent's own
+           valid session walks straight into the whole 130-agent digest: every
+           colleague's name, premium and commission. Caught by the live section of
+           verify-agent-portal.mjs, which is exactly why that section exists.
+           Any future route placed above the gate needs this same line. */
+        if (PORTAL_ROLES.has(user.role)) return json({ error: 'Not permitted.' }, 403);
+
+        // Edge-cached: hundreds of agents share one 5-minute copy, so Supabase sees
+        // ~1 read per 5 minutes however many people open the link at once.
+        const cache = caches.default;
+        const ck = new Request(new URL('/__agent-digest', url.origin).toString(), { method: 'GET' });
+        const hit = await cache.match(ck);
+        if (hit) return hit;
+
+        const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:agent-digest')}&select=value`);
+        const v = r?.[0]?.value || {};
+        let payload = String(v.data || '');
+        if (!payload && v.store) payload = (await DB.storageGet('raw', v.store.replace(/^raw\//, ''))) || '';
+        if (!payload) return json({ error: 'Nothing has been published yet. Check again a little later.' }, 404);
+        const out = new Response(payload, { status: 200, headers: {
+          'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=300' } });
+        ctx.waitUntil(cache.put(ck, out.clone()));
+        return out;
+      }
 
       // Everything below requires a session.
       if (!user) return json({ error: 'Sign in required.' }, 401);
+
+      /* ---------- AGENT ANALYTICS ROLE LOCKDOWN ----------
+         THIS MUST STAY THE FIRST THING AFTER THE SESSION CHECK. Before agents
+         had logins, every route below this line answered ANY valid session —
+         which was safe only because the only sessions that existed belonged to
+         management. Issuing ~130 agent logins without this block would hand
+         every agent /api/kv, and /api/kv alone returns the entire 16.6 MB
+         vas-state: every colleague's money, case rows and contact details.
+
+         It is an ALLOW-LIST, deliberately. Deny-by-default means a route added
+         to this Worker next month is closed to agents until somebody opens it
+         on purpose — the opposite polarity (a deny-list) fails open, silently,
+         exactly once, and that once is a POPIA incident. */
+      if (PORTAL_ROLES.has(user.role) && !PORTAL_ALLOWED.has(path))
+        return json({ error: 'Not permitted.' }, 403);
+
+      /* The campaign-manager context (assignments, SLA rules, blockage table,
+         team-leader codes) — loaded once per request, read synchronously by
+         authorise(). Team leaders need it too: their raise/confirm routes read
+         the blockage table and SLA targets. */
+      if ((user.role === 'campaign_manager' || user.role === 'team_leader' || user.role === 'admin' || user.role === 'exec')
+          && (path.startsWith('/api/portal/cm/') || path === '/api/portal/overview' || path === '/api/portal/agent')) {
+        try { await loadCmContext(DB); }
+        catch (e) { if (user.role === 'campaign_manager') return json({ error: 'Could not load campaign assignments: ' + String(e.message || e).slice(0, 160) }, 503); }
+      }
+
       // Write gate stays BELOW the session check — exactly where the six copies sat,
       // so a signed-out stale tab still gets 401 first, as it does today.
       if (stale && GATED_WRITES.includes(req.method + ' ' + path))
         return json({ error: 'Outdated app version — press Ctrl+Shift+R to refresh, then retry.' }, 409);
+
+      /* ---------- PER-ACCOUNT THEME (Nick, 2026-08-30) ----------
+         The suite still wears one skin; this is a personal override of it, stored
+         on the account so it follows the person to whatever machine they sign in
+         on. Two values only — the two the stylesheets actually define — because a
+         value the apps cannot render is worse than no value at all.
+
+         It is deliberately NOT on PORTAL_ALLOWED: Agent Analytics has no dark
+         palette, so an agent saving 'dark' would get a light page and a stored
+         lie. The lockdown refuses them here, which is the honest answer until
+         that app has a dark skin of its own. */
+      if (path === '/api/theme' && req.method === 'POST') {
+        const b = await req.json().catch(() => ({}));
+        const t = String(b.theme || '');
+        if (t !== 'light' && t !== 'dark') return json({ error: 'Theme must be light or dark.' }, 400);
+        await DB.update(`app_users?username=eq.${encodeURIComponent(user.username)}`, { theme: t });
+        return json({ ok: true, theme: t });
+      }
+
+      /* ---------- Agent Analytics portal ---------- */
+      if (path === '/api/portal/me' && req.method === 'GET') {
+        return json({ user: { username: user.username, name: user.full_name || user.username,
+          role: user.role, cb: normCb(user.cb), team: user.team || '' } });
+      }
+      if (path === '/api/portal/overview' && req.method === 'GET') {
+        /* ?month=YYYY-MM opens a published past month; anything else is the live digest. */
+        const mq = url.searchParams.get('month') || '';
+        const month = /^\d{4}-\d{2}$/.test(mq) ? mq : null;
+        const digest = await loadDigest(DB, month);
+        if (!digest) return json({ error: month
+          ? 'No figures were published for ' + month + '.'
+          : 'Nothing has been published yet. Check again a little later.' }, 404);
+        /* For a campaign manager the assistance half is fetched here and handed
+           in — overview() must not import assist.mjs (assist imports authorise
+           from portal.mjs; a cycle fails at parse). HighLevel down → the sales
+           half still renders and the page says the register is unreachable. */
+        let extra;
+        if (user.role === 'campaign_manager') {
+          try { const a = await assistList(env, DB, user, digest, globalThis.__cmCtx || {});
+            extra = { assist: a.status === 200 ? a.body : { error: (a.body && a.body.error) || 'Assistance unreachable.' } }; }
+          catch (e) { extra = { assist: { error: String(e.message || e).slice(0, 200) } }; }
+        }
+        const r = await overview(env, DB, user, digest, await listDigestMonths(DB), extra);
+        return json(r.body, r.status);
+      }
+      /* ---------- NIKOLA — the assistant, scoped to the caller ----------
+         One fact, one explanation, one next action, about the caller's own
+         results only. It is built on the SAME payload /api/portal/overview
+         returns, so it cannot discuss a colleague for the simple reason that it
+         is never shown one — the scoping is the existing authorise(), not a
+         sentence in a prompt asking the model to behave.
+
+         THE IRON RULE: the model explains numbers, it never computes them. It is
+         told to quote only the figures it is given and to refuse rather than
+         estimate, and the page prints those same figures beside the answer so a
+         wrong sentence cannot become a wrong number. */
+      if (path === '/api/portal/ask' && req.method === 'POST') {
+        const ks = await DB.select('rules?key=eq.ai_kill_switch&select=value');
+        if (!ks?.[0]?.value?.enabled) return json({ answer: 'Nikola is switched off at the moment. Everything else on this page still works.' });
+        const digest = await loadDigest(DB);
+        if (!digest) return json({ error: 'Nothing has been published yet.' }, 404);
+        const r = await overview(env, DB, user, digest);
+        if (r.status !== 200) return json(r.body, r.status);
+
+        const b = await req.json().catch(() => ({}));
+        const q = String(b.q || b.question || '').slice(0, 500);
+        if (!q) return json({ error: 'Ask a question first.' }, 400);
+
+        /* Only the figures — never the coaching free text, which carries customer
+           detail and belongs on the page that already shows it, not in a prompt. */
+        const slim = JSON.stringify({
+          period: r.body.period, workingDays: r.body.workingDays,
+          me: r.body.me || null, peers: r.body.peers || null,
+          team: r.body.team || null, totals: r.body.totals || null,
+          agents: (r.body.agents || []).map((a) => ({ name: a.name, code: a.code, sales: a.sales,
+            target: a.target, pctT: a.pctT, gwpEx: a.gwpEx, qa: a.qa, att: a.att, ref: a.ref })),
+          coaching: r.body.coaching ? { sessions: r.body.coaching.totals?.sessions,
+            agentsWithCoaching: r.body.coaching.totals?.agents, byType: r.body.coaching.byType } : null,
+        }).slice(0, 24000);
+
+        const who = user.role === 'team_leader' ? 'a team leader, about their own team'
+          : (user.role === 'agent' ? 'an agent, about their own results' : 'a manager previewing the page');
+        const sys = 'You are Nikola, the assistant inside Chatterbox Agent Analytics. You are speaking to '
+          + who + '.\n'
+          + 'ANSWER IN THIS SHAPE: one fact, one short explanation, one next action. Three or four sentences, no more.\n'
+          + 'THE IRON RULE: you EXPLAIN numbers, you never CALCULATE them. Quote only figures that appear in the DATA below, '
+          + 'verbatim. Never add, average, project or estimate. If the answer needs a figure that is not there, say plainly '
+          + 'which figure is missing instead of working one out.\n'
+          + 'You can only see this person\'s own data. If asked about anyone outside it, say that you can only see their own '
+          + 'results and stop — do not speculate.\n'
+          + 'Money is South African rand. Write plainly, no jargon, no acronym they have not been taught: "GWP" is fine, '
+          + '"pctT", "composite" and "R2A" are not. Never frame anything as failure; say what would move it.\n'
+          + 'DATA (this is everything you can see):\n' + slim;
+
+        const mrow = await DB.select('rules?key=eq.ai_model&select=value');
+        let model = (mrow?.[0]?.value?.value) || DEFAULT_MODEL;
+        let ai;
+        try {
+          ai = await env.AI.run(model, { messages: [{ role: 'system', content: sys }, { role: 'user', content: q }], max_tokens: 320 });
+        } catch (e) {
+          /* THE DAILY AI ALLOWANCE IS A REAL, RECURRING STATE, NOT A CRASH.
+             Workers AI on the free plan stops at 10,000 neurons a day and throws
+             4006. Letting that fall through to the generic 500 tells the agent
+             "server error", which reads as the whole page being broken when the
+             figures above it are perfectly fine. Say what happened. */
+          const msg = String(e && (e.message || e));
+          if (/4006|neurons|daily free allocation/i.test(msg))
+            return json({ answer: 'Nikola has used up today’s question allowance and will be back tomorrow. '
+              + 'Every figure on your other tabs is unaffected.', basis: 'Daily AI allowance reached' });
+          try {
+            model = FALLBACK_MODEL;
+            ai = await env.AI.run(model, { messages: [{ role: 'system', content: sys }, { role: 'user', content: q }], max_tokens: 320 });
+          } catch (e2) {
+            const m2 = String(e2 && (e2.message || e2));
+            if (/4006|neurons|daily free allocation/i.test(m2))
+              return json({ answer: 'Nikola has used up today’s question allowance and will be back tomorrow. '
+                + 'Every figure on your other tabs is unaffected.', basis: 'Daily AI allowance reached' });
+            return json({ error: 'Nikola could not answer just now. Everything else on this page is unaffected.' }, 502);
+          }
+        }
+        const answer = (ai && (ai.response || ai.result || '')) || '';
+        if (!answer) return json({ error: 'Nikola could not answer that just now.' }, 502);
+        ctx.waitUntil(DB.insert('ask_log', [{ asked_by: user.username, question: q, answer, model }]).catch(() => {}));
+        return json({ answer, basis: 'From your own published figures · ' + (r.body.period?.from || '') + ' to ' + (r.body.period?.to || '') });
+      }
+
+      /* ---------- THE TWO HUBS, PROXIED ----------
+         The browser never reaches Convex. Neither hub authenticates: every one of
+         their functions takes the leader's id as an argument, so a caller who
+         supplies a different id reads and writes a different leader's records.
+         The id here comes from app_users.hub_ids on the SESSION, so there is no
+         request shape in which a team leader could ask for someone else's. */
+      if (path === '/api/portal/hub/coaching') {
+        const h = hubIdsOf(user);
+        if (h.error) return json({ error: h.error }, h.status);
+        try {
+          if (req.method === 'GET') return json(await coachingList(h.ids));
+          if (req.method === 'POST') {
+            const r = await coachingCreate(h.ids, user, await req.json().catch(() => ({})));
+            return json(r, r.error ? (r.status || 400) : 200);
+          }
+        } catch (e) {
+          return json({ error: 'The Coaching Hub could not be reached: ' + String(e.message || e).slice(0, 200) }, 502);
+        }
+        return json({ error: 'Method not allowed.' }, 405);
+      }
+      if (path === '/api/portal/hub/kpi') {
+        const h = hubIdsOf(user);
+        if (h.error) return json({ error: h.error }, h.status);
+        try {
+          if (req.method === 'GET') return json({ ...(await kpiList(h.ids)), titles: KPI_TITLES });
+          if (req.method === 'POST') {
+            const r = await kpiWrite(h.ids, await req.json().catch(() => ({})));
+            return json(r, r.error ? (r.status || 400) : 200);
+          }
+        } catch (e) {
+          return json({ error: 'The KPI Hub could not be reached: ' + String(e.message || e).slice(0, 200) }, 502);
+        }
+        return json({ error: 'Method not allowed.' }, 405);
+      }
+
+      /* ---------- Agent Help Center — HighLevel-backed (help.mjs) ---------- */
+      if (path.startsWith('/api/portal/help/')) {
+        const digest = await loadDigest(DB);
+        if (!digest) return json({ error: 'Nothing has been published yet.' }, 404);
+        let r;
+        try {
+          if (path === '/api/portal/help/request' && req.method === 'POST') r = await helpRequest(env, DB, user, digest, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/help/list' && req.method === 'GET') r = await helpList(env, DB, user, digest);
+          else if (path === '/api/portal/help/detail' && req.method === 'GET') r = await helpDetail(env, DB, user, digest, url.searchParams.get('id') || '');
+          else if (path === '/api/portal/help/stage' && req.method === 'POST') r = await helpStage(env, DB, user, digest, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/help/actions' && req.method === 'GET') r = await actionsList(env, DB, user, digest);
+          else if (path === '/api/portal/help/action' && req.method === 'POST') r = await actionSet(env, DB, user, digest, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/help/fails' && req.method === 'GET') r = await failsList(env, DB, user, digest);
+          else if (path === '/api/portal/help/fail-detail' && req.method === 'GET') r = await failDetail(env, DB, user, digest, { cb: url.searchParams.get('cb') || '', theme: url.searchParams.get('theme') || '' });
+          else if (path === '/api/portal/help/fail' && req.method === 'POST') r = await failSet(env, DB, user, digest, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/help/sync-coaching' && req.method === 'POST') r = await syncCoaching(env, DB, user, digest, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/help/mine' && req.method === 'GET') r = await helpMine(env, DB, user, digest);
+          else if (path === '/api/portal/help/close' && req.method === 'POST') r = await helpCloseOwn(env, DB, user, digest, await req.json().catch(() => ({})));
+          else r = { status: 404, body: { error: 'Unknown help route.' } };
+        } catch (e) { r = { status: 502, body: { error: 'HighLevel did not answer: ' + String(e.message || e).slice(0, 160) } }; }
+        return json(r.body, r.status);
+      }
+
+      /* ---------- WIMPY ORDERING — the agent's own lunch order ----------
+         The menu is served from the Worker so a price lives in exactly one file,
+         and the order is POSTed from here because the page's CSP allows it to
+         reach this Worker and nothing else. */
+      if (path === '/api/portal/wimpy/menu' && req.method === 'GET') return json(wimpyMenu());
+      if (path === '/api/portal/wimpy/order' && req.method === 'POST') {
+        const r = await submitWimpyOrder(env, user, await req.json().catch(() => ({})));
+        return json(r.body, r.status);
+      }
+
+      /* ---------- CAMPAIGN ASSISTANCE — team leader → campaign manager ---------- */
+      if (path.startsWith('/api/portal/cm/')) {
+        const digest = await loadDigest(DB);
+        if (!digest) return json({ error: 'Nothing has been published yet.' }, 404);
+        const ctx = globalThis.__cmCtx || await loadCmContext(DB);
+        try {
+          let r = { status: 404, body: { error: 'Unknown route.' } };
+          if (path === '/api/portal/cm/request' && req.method === 'POST') r = await assistCreate(env, DB, user, digest, ctx, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/cm/assist' && req.method === 'GET') r = await assistList(env, DB, user, digest, ctx);
+          else if (path === '/api/portal/cm/detail' && req.method === 'GET') r = await assistDetail(env, DB, user, digest, ctx, url.searchParams.get('id') || '');
+          else if (path === '/api/portal/cm/act' && req.method === 'POST') r = await assistAct(env, DB, user, digest, ctx, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/cm/eod' && req.method === 'GET') {
+            if (user.role !== 'campaign_manager' && user.role !== 'admin' && user.role !== 'exec')
+              return json({ error: 'The end-of-day pack is a campaign manager export.' }, 403);
+            const a = await assistList(env, DB, user, digest, ctx).catch(() => null);
+            const assist = a && a.status === 200 ? a.body : { error: 'unreachable' };
+            const ov = await overview(env, DB, user, digest, null, { assist });
+            if (ov.status !== 200 || !ov.body.cm) return json({ error: 'Could not build the pack.' }, 500);
+            r = { status: 200, body: { markdown: eodMarkdown(ov.body.cm, assist, user.full_name || user.username) } };
+          }
+          return json(r.body, r.status);
+        } catch (e) { return json({ error: String(e.message || e).slice(0, 300) }, 502); }
+      }
+
+      if (path === '/api/portal/agent' && req.method === 'GET') {
+        const digest = await loadDigest(DB, /^\d{4}-\d{2}$/.test(url.searchParams.get('month') || '') ? url.searchParams.get('month') : null);
+        if (!digest) return json({ error: 'Nothing has been published yet. Check again a little later.' }, 404);
+        const r = await agentDetail(env, DB, user, digest, url.searchParams.get('cb'));
+        return json(r.body, r.status);
+      }
+
+      /* ---------- COACHING HUB (management) ----------
+         The two routes PULSE and Ops have been calling since the coaching layer
+         shipped. They did not exist: an unknown path fell through to the session
+         gate above and answered {"error":"Sign in required."} with 401 —
+         identical to a genuine auth failure, which is why this read as an
+         expired token for weeks. Both apps catch it and print "Coaching Hub
+         unavailable right now."
+
+         Staff only. Portal roles never reach here (the lockdown above), which is
+         intentional: /api/coaching/summary is the whole floor. An agent's own
+         coaching arrives already scoped inside /api/portal/overview. */
+      if (path === '/api/coaching' && req.method === 'GET') {
+        const cb = normCb(url.searchParams.get('cb'));
+        if (!cb) return json({ error: 'No agent specified.' }, 400);
+        try {
+          const hub = await getCoaching(env, DB);
+          const { sessions, matchedBy } = sessionsForAgent(hub.sessions, cb, url.searchParams.get('name') || '');
+          /* `unresolved` (Ops reads it) says the sessions were found by NAME, not
+             by CB number — the join is a guess and the drill-down should say so
+             rather than present it as certain. */
+          return json({ cb, sessions, matchedBy, unresolved: matchedBy === 'name',
+            fetchedAt: hub.fetchedAt, stale: !!hub.stale });
+        } catch (e) {
+          /* 502, not an empty list. "No coaching for this agent" and "the Hub is
+             unreachable" must never look the same to a team leader. */
+          return json({ error: 'Coaching Hub unreachable: ' + String(e.message || e).slice(0, 200) }, 502);
+        }
+      }
+      if (path === '/api/coaching/summary' && req.method === 'GET') {
+        try {
+          const hub = await getCoaching(env, DB);
+          const hubWindowed = withinWindow(hub.sessions, 90);   // "last 90 days" must actually mean it
+          const digest = await loadDigest(DB);
+          const roster = digest
+            ? [...(digest.agents || []).map(a => ({ code: a.code, name: a.name, tl: a.tl || '' })),
+               ...(digest.notCovered || []).map(a => ({ code: a.code, name: a.name, tl: a.tl || '' }))]
+            : [];
+          /* Roll up per ROSTER agent, so the org-wide view is the org chart's
+             view. Hub records whose CB is not on the current roster are leavers
+             and historical rows: counted in `offRoster` so the number is
+             honest, never folded into a named agent. */
+          const onRoster = new Set(roster.map(r => r.code));
+          const agents = roster.map(r => {
+            const { sessions, matchedBy } = sessionsForAgent(hub.sessions, r.code, r.name);
+            return { code: r.code, name: r.name, tl: r.tl, sessions: sessions.length,
+              last: sessions.length ? sessions[0].date : '', themes: rollUp(sessions), matchedBy };
+          }).filter(a => a.sessions);
+          const offRoster = hubWindowed.filter(s => !s.cb || !onRoster.has(s.cb)).length;
+          return json({
+            totals: {
+              sessions: hubWindowed.length,
+              scored: agents.reduce((n, a) => n + a.themes.reduce((m, t) => m + t.scored, 0), 0),
+              agents: agents.length,
+              offRoster,
+            },
+            agents, themes: rollUp(hubWindowed),
+            leaders: hub.leaders, fetchedAt: hub.fetchedAt, stale: !!hub.stale, hubErrors: hub.errors || [],
+          });
+        } catch (e) {
+          return json({ error: 'Coaching Hub unreachable: ' + String(e.message || e).slice(0, 200) }, 502);
+        }
+      }
 
       if (path === '/api/password' && req.method === 'POST') {
         const b = await req.json();
         if (!b.new_password || String(b.new_password).length < 10) return json({ error: 'Password must be at least 10 characters.' }, 400);
         await DB.update(`app_users?id=eq.${user.user_id}`, { password_hash: await hashPassword(String(b.new_password)), must_change_password: false });
         return json({ ok: true });
+      }
+
+      /* The shareable link, for staff to copy out of Agent Analytics. Below the session
+         gate, so only signed-in staff ever see the key — an agent arriving on the link
+         has no session and never gets this far. Mints one on first ask so the feature
+         cannot sit silently broken waiting for someone to run a script. */
+      if (path === '/api/agent-link' && req.method === 'GET') {
+        const r = await DB.select(`rules?key=eq.agent_link_key&select=value`);
+        let key = String(r?.[0]?.value?.key || '');
+        if (!key || url.searchParams.get('rotate')) {
+          const b = new Uint8Array(24); crypto.getRandomValues(b);
+          key = btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          await DB.insert('rules', [{ key: 'agent_link_key', value: { key, issued: new Date().toISOString() },
+            updated_by: user.username, updated_at: new Date().toISOString() }], true);
+        }
+        return json({ key });
+      }
+
+      // ---------- campaign stats: Agent List (CB number) → Cuddle/Courtesy attribution ----------
+      // Nick, 2026-08-17: "create me a tool on the backend where when you upload the agent
+      // list it identifies who is in cuddle and courtesy, and then it shows the correct
+      // stats". The Worker JOINS, it never invents: classification is the roster campaign
+      // (Agent List Que column) keyed on CB number; dialler logins resolve exactly like the
+      // app (manual map override → CB code, zero-padding stripped → roster name). Reads the
+      // SAME vas-state blob the app persists, so this can never disagree with the screen.
+      // Per campaign it also names the roster CBs the dialler has NEVER seen — when Cuddle
+      // reads zero, this is the list that proves the export was pulled without that floor.
+      if (path === '/api/campaign-stats' && req.method === 'GET') {
+        const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:vas-state')}&select=value,updated_at`);
+        if (!r || !r.length) return json({ error: 'no vas-state uploaded yet' }, 404);
+        const v = r[0].value || {};
+        let S;
+        if (v.store) {
+          const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${v.store}`, { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY } });
+          if (!sr.ok) return json({ error: 'state blob unreadable: ' + sr.status }, 500);
+          S = JSON.parse(await sr.text());
+        } else S = JSON.parse(String(v.data || '{}'));
+        const normName = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        const cbOf = s => { const m = String(s || '').toUpperCase().match(/CB\s*-?\s*0*(\d+)/); return m ? 'CB' + parseInt(m[1], 10) : null; };
+        const byCode = {}, byName = {};
+        for (const a of (S.roster || [])) { byCode[a.code] = a; for (const n of [a.name, a.callx, a.sf]) { const k = normName(n); if (k) byName[k] = a; } }
+        const resolve = k => {
+          if (S.map && S.map[k] !== undefined) return S.map[k] === '__ignore__' ? null : (byCode[S.map[k]] || null);
+          if (byCode[k]) return byCode[k];
+          const z = cbOf(k); if (z && byCode[z]) return byCode[z];
+          return byName[normName(k)] || null;
+        };
+        const days = {}, seenByCamp = {};
+        for (const d of Object.keys(S.calls || {}).sort()) {
+          const day = days[d] = {};
+          for (const k in S.calls[d]) {
+            const b = S.calls[d][k];
+            const a = resolve(k);
+            const camp = a ? (a.campaign || '?') : 'unmatched';
+            const c = day[camp] = day[camp] || { agents: 0, talk_secs: 0, calls: 0, dialler_sales: 0 };
+            c.agents++; c.talk_secs += b.talk || 0; c.calls += b.calls || 0; c.dialler_sales += b.saleD || 0;
+            if (a) (seenByCamp[camp] = seenByCamp[camp] || new Set()).add(a.code);
+          }
+        }
+        const nDays = Object.keys(days).length;
+        const campaigns = {};
+        for (const a of (S.roster || [])) {
+          const c = campaigns[a.campaign] = campaigns[a.campaign] || { agents_on_roster: 0, agents_seen_in_dialler: 0, covered_days: 0, talk_secs: 0, dialler_sales: 0, missing_cbs: [] };
+          c.agents_on_roster++;
+          if (seenByCamp[a.campaign] && seenByCamp[a.campaign].has(a.code)) c.agents_seen_in_dialler++;
+          else c.missing_cbs.push(a.code + ' ' + (a.name || ''));
+        }
+        for (const d in days) for (const camp in days[d]) {
+          if (!campaigns[camp]) continue;
+          campaigns[camp].covered_days++;
+          campaigns[camp].talk_secs += days[d][camp].talk_secs;
+          campaigns[camp].dialler_sales += days[d][camp].dialler_sales;
+        }
+        for (const camp of ['Cuddle', 'Courtesy']) if (campaigns[camp])
+          campaigns[camp].verdict = campaigns[camp].covered_days * 2 >= nDays
+            ? 'OK — day-level dialler coverage on at least half the days'
+            : 'FAIL (VR16) — ' + campaigns[camp].covered_days + '/' + nDays + ' dialler days. ' + (camp === 'Cuddle'
+              ? 'Pull EXPORT_CALL_REPORT with user groups Renolan_Matrix_WC + Sharoma_Matrix_WC ticked (or all groups); a single-day "Vici - Cuddle Agents" export per past day also counts.'
+              : 'Upload the day\'s CallX call_records export.');
+        return json({ state_updated_at: r[0].updated_at || '', dialler_days: nDays, campaigns, days });
+      }
+
+      // ---------- roster: the Agent List as PULSE holds it — the sync spine for AgentOS ----------
+      // The two dashboards keep separate stores, and the Agent List arrives through the VAS
+      // Upload Station — which left AgentOS on a 13 Aug list while PULSE held 26 Aug (Nikita's
+      // dissolved team, four Nesting→Courtesy movers, 52 joiners never appearing). This serves
+      // PULSE's live roster in a payload small enough for AgentOS to check on every boot. The
+      // fingerprint is order-independent and moves ONLY when a roster field changes — never on
+      // the constant vas-state saves — so the client can compare cheaply and skip re-ingesting.
+      if (path === '/api/roster' && req.method === 'GET') {
+        /* THE ROSTER OF RECORD WINS IF THERE IS ONE. Until 2026-08-28 this route derived
+           the roster from kv:vas-state, which meant only the VAS app could ever publish
+           one: an Agent List uploaded in Ops had no way to tell anybody, and the two
+           dashboards drifted apart until someone happened to re-upload in VAS. Either app
+           now POSTs the list it ingests to kv:roster-current, and this serves that. The
+           old derivation stays as the fallback so nothing breaks before the first POST. */
+        /* ...but a SEEDED record is skipped here for the same reason rosterSync skips it:
+           it is a copy of the derivation, not a published list, so serving it would answer
+           this route from a snapshot that can no longer move. Falling through re-derives
+           and refreshes the seed in one go. */
+        const cur = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-current')}&select=value,updated_at`).catch(() => null);
+        const rec = cur && cur[0] && cur[0].value;
+        if (rec && Array.isArray(rec.roster) && rec.roster.length && rec.source !== 'seed') {
+          return json({ fingerprint: rec.fingerprint, n: rec.roster.length, as_of: rec.as_of || '',
+            file: rec.file || '', source: rec.source || '', uploaded_by: rec.uploaded_by || '',
+            uploaded_at: rec.uploaded_at || '', state_updated_at: (cur[0].updated_at || ''),
+            roster: rec.roster });
+        }
+        const payload = await rosterSync(env, DB, { fresh: !!url.searchParams.get('fresh'), who: user && user.username });
+        if (payload && payload.error) return json({ error: payload.error }, payload.status || 500);
+        return json(payload);
+      }
+
+      /* PUBLISH AN AGENT LIST FROM EITHER APP (Nick, 2026-08-28: "the list changes
+         constantly and is not updating, sometimes leaving old team leaders and agents").
+
+         The Agent List is the source of truth for every cross-source join, and it had
+         exactly one publisher. Whichever station a list is dropped into now posts it
+         here, and this decides — once, on the server — which list the whole suite is on.
+
+         THE RULES, in order, and all of them refusals rather than overwrites:
+           · a list with no rows is never stored (it would flatten the floor)
+           · a LATER as_of always wins
+           · the SAME as_of wins only if it is genuinely different and newer by upload
+             time — so re-opening a tab cannot re-publish an old list over a new one
+           · an EARLIER as_of is refused and says so, rather than silently losing
+         The caller is told which happened, so the station can say it out loud instead of
+         leaving two dashboards quietly disagreeing. */
+      if (path === '/api/roster' && req.method === 'POST') {
+        let body = null;
+        try { body = await req.json(); } catch { return json({ error: 'json body required' }, 400); }
+        const rows = Array.isArray(body && body.roster) ? body.roster : null;
+        if (!rows) return json({ error: 'roster[] required' }, 400);
+        const clean = rows.filter(a => a && String(a.code || '').trim() && String(a.name || '').trim())
+          .map(a => ({ code: String(a.code).trim(), name: String(a.name || '').trim(), tl: a.tl || '',
+            campaign: a.campaign || '', tenure: a.tenure || '', callx: a.callx || '', sf: a.sf || '',
+            target: a.target ?? null, start: a.start || '' }));
+        if (!clean.length) return json({ accepted: false, reason: 'empty roster — never stored' }, 200);
+        let h = 0x811c9dc5;                                   // same FNV-1a the GET fingerprint uses
+        for (const s of clean.map(a => [a.code, a.name, a.tl, a.campaign, a.tenure, a.callx, a.sf, a.target, a.start].join('|')).sort())
+          for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+        const fp = 'list:' + h.toString(16);
+        const asOf = /^\d{4}-\d{2}-\d{2}$/.test(String(body.as_of || '')) ? String(body.as_of) : '';
+        const now = new Date().toISOString();
+        const prevR = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-current')}&select=value`).catch(() => null);
+        const prev = prevR && prevR[0] && prevR[0].value;
+        if (prev && prev.fingerprint === fp)
+          return json({ accepted: false, reason: 'identical list already published', fingerprint: fp, as_of: prev.as_of || '' });
+        if (prev && prev.as_of && asOf && asOf < prev.as_of)
+          return json({ accepted: false, reason: 'an older list never replaces a newer one',
+            fingerprint: prev.fingerprint, as_of: prev.as_of, yours: asOf });
+        const rec = { v: 1, fingerprint: fp, as_of: asOf, n: clean.length, roster: clean,
+          file: String(body.file || '').slice(0, 120), source: String(body.source || '').slice(0, 16),
+          uploaded_by: (user && user.username) || '', uploaded_at: now,
+          replaced: prev ? { fingerprint: prev.fingerprint, as_of: prev.as_of || '', at: prev.uploaded_at || '' } : null };
+        await DB.insert('rules', [{ key: 'kv:roster-current', value: rec, updated_by: (user && user.username) || 'roster-post', updated_at: now }], true);
+        globalThis.__rosterCache = null;                      // the GET must not serve the previous list
+        /* MIRROR BEFORE ANSWERING, not afterwards. Handing this to waitUntil left the Ops
+           boot copy and the portal's authorisation map ONE PUBLISH BEHIND for as long as
+           the deferred work took — and "the other app painted the old list" is the entire
+           failure this endpoint exists to end. A publish is a human waiting on an upload,
+           not a hot path; one storage write and two upserts are worth the certainty that
+           when this returns, every consumer is already current.
+           Best-effort in the sense that matters: a mirror failure is reported, never fatal —
+           the record itself is stored, and the ten-minute cron re-mirrors regardless. */
+        let mirrored = true;
+        try { await rosterSync(env, DB, { fresh: true, who: 'roster-post' }); }
+        catch (e) { mirrored = false; }
+        return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length,
+          mirrored, replaced: rec.replaced });
+      }
+
+      // ---------- upload relay: one Upload Station feeds BOTH dashboards ----------
+      // The VAS Upload Station archives every raw file it successfully ingests (POST
+      // below); AgentOS Analytics pulls unseen files from the manifest and runs them
+      // through ITS OWN detect/parse/load pipeline. The raw bytes travel, never derived
+      // rows — PULSE aggregates at ingest (per-day call buckets, QA subsets), so a
+      // state-derived sync would silently strip columns the other app needs (QA coaching
+      // categories, per-call rows, BI charge detail). Each app keeps its own parser;
+      // nothing is implemented twice; an upload happens once.
+      if (path === '/api/upload-archive' && req.method === 'POST') {
+        const name = String(url.searchParams.get('name') || '').replace(/[^\w .()\-\[\]]/g, '_').slice(0, 120);
+        const hash = String(url.searchParams.get('hash') || '');
+        if (!name || !/^[0-9a-f]{8,64}$/i.test(hash)) return json({ error: 'name and hash required' }, 400);
+        const buf = await req.arrayBuffer();
+        if (!buf.byteLength) return json({ error: 'empty body' }, 400);
+        if (buf.byteLength > 30 * 1048576) return json({ error: 'file exceeds the 30 MB relay cap — upload it in the other dashboard by hand' }, 413);
+        // KNOWN LIMIT: this read-modify-write can lose an entry if two people archive in
+        // the same second (last writer wins). Self-healing, not silent: re-uploading the
+        // file in PULSE re-archives it — the dup-skip path checks this manifest and
+        // re-POSTs anything missing. Blobs in raw/uploads/ outlive the 300-entry cap.
+        const mr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:upload-manifest')}&select=value`);
+        const files = (mr && mr[0] && mr[0].value && mr[0].value.files) || [];
+        if (files.some(f => f.h === hash)) return json({ ok: true, dupe: true });   // same bytes already archived
+        const store = 'raw/uploads/' + hash.slice(0, 16) + '-' + name;
+        const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, {
+          method: 'POST', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/octet-stream', 'x-upsert': 'true' }, body: buf });
+        if (!put.ok) return json({ error: 'archive write failed: ' + put.status }, 500);
+        files.unshift({ n: name, h: hash, s: buf.byteLength, at: new Date().toISOString() });
+        /* 1000, not 300 (review, 2026-08-26): a file evicted from the manifest is
+           unreachable by the relay even though its blob survives — an app that fell
+           behind by >cap files developed a silent, permanent relay gap. */
+        await DB.insert('rules', [{ key: 'kv:upload-manifest', value: { files: files.slice(0, 1000) },
+          updated_by: user.username, updated_at: new Date().toISOString() }], true);
+        return json({ ok: true, archived: store });
+      }
+      if (path === '/api/upload-manifest' && req.method === 'GET') {
+        const mr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:upload-manifest')}&select=value,updated_at`);
+        return json({ files: (mr && mr[0] && mr[0].value && mr[0].value.files) || [], updated_at: (mr && mr[0] && mr[0].updated_at) || '' });
+      }
+      if (path === '/api/upload-file' && req.method === 'GET') {
+        const hash = String(url.searchParams.get('hash') || '');
+        const mr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:upload-manifest')}&select=value`);
+        const f = ((mr && mr[0] && mr[0].value && mr[0].value.files) || []).find(x => x.h === hash);
+        if (!f) return json({ error: 'not in the manifest' }, 404);
+        const store = 'raw/uploads/' + f.h.slice(0, 16) + '-' + f.n;
+        const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY } });
+        if (!sr.ok) return json({ error: 'file unreadable: ' + sr.status }, 404);
+        return new Response(sr.body, { status: 200, headers: { 'Content-Type': 'application/octet-stream', 'X-Cbx-Name': encodeURIComponent(f.n) } });
       }
 
       // ---------- referrals: live pull from HighLevel (LeadConnector v2) ----------
@@ -187,6 +988,69 @@ export default {
       // kv v2 — big-data safe. Payloads live in Supabase STORAGE (streamed
       // through, no JSON parsing — a multi-MB upload costs ~zero Worker CPU);
       // the rules row holds only a pointer + updated_at for newest-wins sync.
+      /* BULK FRESHNESS (perf audit, 2026-08-27): every source's updated_at in ONE
+         request, so the Ops boot can skip re-downloading the ~154 MB of fact blobs
+         that have not changed since its local snapshot. Same data the per-key
+         ?meta beacon serves, without 15 round-trips. Staff only — the deny-by-default
+         portal lockdown already refuses agent/team_leader here. */
+      if (path === '/api/kv-meta' && req.method === 'GET') {
+        const prefix = String(url.searchParams.get('prefix') || '').replace(/[^\w:.-]/g, '').slice(0, 40);
+        if (!prefix) return json({ error: 'prefix required' }, 400);
+        const rows = await DB.select(`rules?key=like.${encodeURIComponent('kv:' + prefix + '%')}&select=key,updated_at`);
+        const keys = {}; for (const r of rows || []) keys[String(r.key).slice(3)] = r.updated_at || '';
+        return json({ keys });
+      }
+      /* WEEKDAY SIGN-INS PER AGENT (Nick, 2026-08-28) — the source for the composite
+         score's 5-point sign-in bonus. Nothing new is tracked: every successful login
+         already writes a `login_ok` row to auth_log, and agents sign in with their CB
+         number, so agent sign-ins are already distinguishable from staff ones.
+
+         THE WEEKDAY IS DECIDED IN JOHANNESBURG, NOT IN UTC. auth_log.at is stored UTC;
+         an agent signing in at 01:00 on Monday in Durban is 23:00 Sunday in UTC, and
+         reading the weekday off the raw timestamp would pay them nothing for it. The
+         window is widened by a day at each end for the same reason, then trimmed after
+         the shift so a sign-in on the boundary is not lost.
+
+         Staff only, like every other analytics route — the portal lockdown refuses
+         agent and team_leader tokens here, so one agent can never enumerate another's
+         sign-in history. */
+      if (path === '/api/agent-signins' && req.method === 'GET') {
+        const clean = (s) => String(s || '').slice(0, 10).replace(/[^\d-]/g, '');
+        const from = clean(url.searchParams.get('from')), to = clean(url.searchParams.get('to'));
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to))
+          return json({ error: 'from and to required as YYYY-MM-DD' }, 400);
+        const TZ = 2;                                        // Africa/Johannesburg, no DST
+        const shift = (iso, days) => new Date(Date.parse(iso + 'T00:00:00Z') + days * 86400000)
+          .toISOString().slice(0, 10);
+        const rows = await DB.select(
+          `auth_log?event=eq.login_ok&at=gte.${shift(from, -1)}T00:00:00Z&at=lte.${shift(to, 1)}T23:59:59Z` +
+          `&select=username,at&order=at.asc&limit=20000`);
+        const days = {}, seen = new Set();
+        for (const r of rows || []) {
+          const u = String(r.username || '').trim().toUpperCase();
+          if (!/^CB\d{1,5}$/.test(u)) continue;              // agents only; staff logins are not scored
+          const local = new Date(Date.parse(r.at) + TZ * 3600000);
+          const d = local.toISOString().slice(0, 10);
+          if (d < from || d > to) continue;                  // trim the widened edges
+          const dow = local.getUTCDay();                     // already shifted, so this is the SAST weekday
+          if (dow === 0 || dow === 6) continue;              // weekdays only
+          const k = u + '|' + d; if (seen.has(k)) continue;  // one day pays once, however many sign-ins
+          seen.add(k);
+          (days[u] = days[u] || []).push(d);
+        }
+        /* WHO EVEN HAS A LOGIN. "Signed in on no days" and "has no account to sign in
+           with" are different facts and the score must not confuse them: an agent we
+           have never provisioned — Hezron today — has to read as UNMEASURED, not as
+           five points lost for our own backlog. Only app_users can answer that, so it
+           travels with the counts. */
+        const users = await DB.select(`app_users?select=username&limit=2000`);
+        const provisioned = [];
+        for (const u of users || []) {
+          const n = String(u.username || '').trim().toUpperCase();
+          if (/^CB\d{1,5}$/.test(n)) provisioned.push(n);
+        }
+        return json({ from, to, tz: 'Africa/Johannesburg', weekdaysOnly: true, days, provisioned });
+      }
       if (path === '/api/kv' && req.method === 'GET') {
         const key = url.searchParams.get('key') || '';
         const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:' + key)}&select=value,updated_at`);
@@ -219,7 +1083,31 @@ export default {
            client explicitly declares the clear (?force=1, sent by the Danger-zone action in
            current builds). Old tabs surface the 409 through their existing "Cloud save
            failed" toast — loud, and harmless. */
-        const body = await req.text();
+        /* GZIPPED UPLOADS (perf, 2026-08-28). Browsers compress downloads but never request
+           BODIES, so every save pushed the whole state uncompressed — 8.8 MB of VAS state
+           over a South African upload link after every change, and PULSE state is ~90%
+           repetitive case rows, so it compresses about ten to one. The client may now send
+           `Content-Encoding: gzip`; it is decompressed HERE, so what lands in Storage is
+           exactly the same plain JSON as before and every other reader (the roster mirror,
+           the other dashboards, the maintenance scripts) is untouched. A client that cannot
+           compress simply omits the header and takes the old path. */
+        let body;
+        {
+          /* Decided by the BYTES, not by the header. Some edges decompress a gzipped request
+             body before it reaches the Worker and some pass it through, so trusting
+             Content-Encoding would corrupt the store in whichever case guessed wrong — and a
+             corrupted vas-state is the whole floor's data. The gzip magic number (1f 8b) is
+             unambiguous, and plain JSON can never start with it. */
+          const buf = await req.arrayBuffer();
+          const u8 = new Uint8Array(buf);
+          if (u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
+            try {
+              body = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+            } catch (e) {
+              return json({ error: 'could not decompress the upload: ' + (e && e.message || e) }, 400);
+            }
+          } else body = new TextDecoder().decode(buf);
+        }
         if (qk === 'vas-state' && body.length < 120000 && !url.searchParams.get('force')) {
           const head = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {
             method: 'HEAD', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY },
@@ -236,6 +1124,32 @@ export default {
         });
         if (!sr.ok) return json({ error: 'store failed: ' + sr.status + ' ' + (await sr.text()).slice(0, 150) }, 500);
         await DB.insert('rules', [{ key: 'kv:' + qk, value: { store: objPath }, updated_by: user.username, updated_at: new Date().toISOString() }], true);
+        /* THE AGENT→TEAM MAP FOLLOWS THE DIGEST (audit round 3, 2026-08-27). It is the
+           authorisation FLOOR for team-leader scoping, and refreshing it only from
+           /api/roster left it stale whenever nobody happened to open Ops — measured: it
+           still named the previous leader for seven agents a day after they moved. The
+           digest is pushed by PULSE on every roster upload and carries the period-correct
+           `tl` per agent, so rebuilding the map here refreshes it at the exact moment the
+           roster changes. Only rows that actually carry a tl are written — a digest that
+           omits one must never blank an existing mapping. Best-effort: a failure here can
+           never fail the upload the user is waiting on. */
+        if (qk === 'agent-digest') {
+          try {
+            const d = JSON.parse(body);
+            const teams = {};
+            for (const a of [...(d.agents || []), ...(d.notCovered || [])])
+              if (a && a.code && a.tl) teams[a.code] = a.tl;
+            if (Object.keys(teams).length) {
+              const cur = await DB.select(`rules?key=eq.${encodeURIComponent('kv:agent-teams')}&select=value`).catch(() => null);
+              const prev = (cur && cur[0] && cur[0].value && cur[0].value.teams) || {};
+              const merged = { ...prev, ...teams };
+              if (JSON.stringify(merged) !== JSON.stringify(prev))
+                await DB.insert('rules', [{ key: 'kv:agent-teams',
+                  value: { teams: merged, source: 'agent-digest', updated_at: new Date().toISOString() },
+                  updated_by: user.username, updated_at: new Date().toISOString() }], true);
+            }
+          } catch (e) {}
+        }
         return json({ ok: true });
       }
       // Real delete (Upload Station "Delete file"): remove BOTH the Storage object and the
