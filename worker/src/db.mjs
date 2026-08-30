@@ -24,6 +24,11 @@ export function db(env) {
         : { Prefer: 'return=minimal' }),
     update: (path, patch) => q('PATCH', path, patch, { Prefer: 'return=minimal' }),
     del: (path) => q('DELETE', path),
+    /* Call a Postgres function. THE ONLY WAY TO GET A TRANSACTION from here: a
+       sequence of the calls above cannot be atomic, so anything that must apply
+       whole or not at all (sync_agent_list) is written as a function and invoked
+       through this. Args are named, matching the function's parameter names. */
+    rpc: (fn, args) => q('POST', 'rpc/' + fn, args || {}),
     storageGet: async (bucket, key) => {
       const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${bucket}/${key}`, {
         headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY },

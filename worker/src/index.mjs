@@ -13,6 +13,7 @@ import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, f
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
+import { syncAgentLogins } from './provision.mjs';
 import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
 
 // Hermes 2 Pro was deprecated 2026-05-30. Default: Llama 4 Scout (131k context —
@@ -266,6 +267,40 @@ export default {
             globalThis.__rosterCache = null;
             console.info('[cron] roster of record seeded — ' + p.roster.length + ' agents, as of ' + (p.as_of || 'unknown'));
           }
+        }
+        /* LOGINS FOLLOW THE LIST (Nick, 2026-08-30). Anyone new on the Agent List
+           gets an account they can sign in with; anyone no longer on it has theirs
+           removed, so nothing accumulates. Gated on the roster FINGERPRINT, so a
+           stable list costs one small select and this does nothing 143 ticks out of
+           144. Every guard inside fails closed — see provision.mjs. */
+        if (p && !p.error && Array.isArray(p.roster) && p.roster.length) {
+          try {
+            const g = await syncAgentLogins(DB, p.roster, p.fingerprint, { asOf: p.as_of, actor: 'cron' });
+            if (g.skipped === 'unchanged') { /* the ordinary case: say nothing */ }
+            else if (g.skipped) console.warn('[cron] agent logins NOT synced — ' + g.skipped + ' ' + JSON.stringify(g));
+            else if (g.status === 'SUCCESS') {
+              const n = (k) => (g[k] || []).length;
+              console.info('[cron] agent list synced — +' + n('created') + ' created, ' + n('updated')
+                + ' updated, -' + n('removed') + ' removed (' + g.agents_before + ' → ' + g.agents_after
+                + ' accounts, ' + g.on_list + ' on the list)'
+                + (n('created') ? ' new: ' + g.created.map((c) => c.cb).join(',') : '')
+                + (n('removed') ? ' gone: ' + g.removed.map((c) => c.cb).join(',') : ''));
+              /* Team leaders cannot be provisioned from a list that has no leader
+                 rows and no leader CB numbers, so they are REPORTED rather than
+                 invented. Silence here would let a leader with no login stay
+                 unnoticed for weeks, which is exactly what happened to Hezron. */
+              const L = g.leaders || {};
+              if ((L.unrepresented || []).length)
+                console.warn('[cron] team leaders on the list with NO account: ' + L.unrepresented.join(', '));
+              if ((L.orphaned || []).length)
+                console.warn('[cron] team leader accounts leading nobody on the list: '
+                  + L.orphaned.map((o) => o.username + ' (' + o.name + ')').join(', '));
+            }
+            /* Never silently: a refusal or a validation failure is the whole point
+               of having guards, and it must be visible in the log with its reason. */
+            else console.warn('[cron] agent list NOT synced — ' + g.status + ': '
+              + (g.detail || '') + ' ' + JSON.stringify(g.errors || g.reason || ''));
+          } catch (e) { console.warn('[cron] agent login sync failed: ' + (e && e.message || e)); }
         }
       } catch (e) { console.warn('[cron] roster sync failed: ' + (e && e.message || e)); }
     })());
@@ -881,8 +916,20 @@ export default {
         let mirrored = true;
         try { await rosterSync(env, DB, { fresh: true, who: 'roster-post' }); }
         catch (e) { mirrored = false; }
+        /* RECONCILE ON THE UPLOAD, NOT TEN MINUTES LATER. The cron is the safety
+           net, not the mechanism: a person who has just uploaded a list is
+           standing there, and "your new starters can sign in some time in the next
+           ten minutes" is not an answer. This is the same one-transaction call the
+           cron makes, so the two can never disagree — whichever runs first does the
+           work and the other finds the fingerprint unchanged.
+           Reported, never fatal: the list itself is already stored, and a sync that
+           refuses (a short list, too many deletions) must not fail the upload —
+           it must SAY SO, which is what `sync` carries back to the uploader. */
+        let sync = null;
+        try { sync = await syncAgentLogins(DB, clean, fp, { asOf, actor: (user && user.username) || 'roster-post' }); }
+        catch (e) { sync = { status: 'FAILED', errors: [String((e && e.message) || e)] }; }
         return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length,
-          mirrored, replaced: rec.replaced });
+          mirrored, replaced: rec.replaced, sync });
       }
 
       // ---------- upload relay: one Upload Station feeds BOTH dashboards ----------

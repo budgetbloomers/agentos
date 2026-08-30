@@ -1635,13 +1635,42 @@ function publishRoster(fileName){
          body:JSON.stringify({source:'ops',file:fileName||'',as_of:asOf,roster:rows})});
       const j=r.ok?await r.json():null;
       if(j&&j.accepted){ window.__rosterPublished=1;
-        toast('Agent List published to the suite — '+j.n+' agents'+(j.as_of?' (as of '+esc(j.as_of)+')':'')+'. VAS Analytics will pick it up.'); }
+        toast('Agent List published to the suite — '+j.n+' agents'+(j.as_of?' (as of '+esc(j.as_of)+')':'')+'. VAS Analytics will pick it up.');
+        reportListSync(j.sync); }
       else if(j&&/older list/.test(j.reason||''))
         toast('This Agent List is dated '+esc(asOf)+' and the suite already has one from '+esc(j.as_of||'?')
           +' — the newer list is being kept. Upload the latest list if that is wrong.','err',12000);
     }catch(e){ toast('Agent List loaded here, but could not be published to the suite — VAS may keep an older list.','err',9000); }
   })();
 }
+/* What the Agent List upload did to accounts, in a sentence. The Worker reconciles
+   app_users against the list inside one transaction and hands the result back on the
+   publish; this is the only place that result is ever shown to a human, so a refusal
+   must be as loud as a success. Shared shape with the VAS station's copy. */
+function reportListSync(sy){
+  if(!sy||sy.skipped==='unchanged') return;
+  if(sy.status==='SUCCESS'){
+    const n=k=>(sy[k]||[]).length, bits=[];
+    if(n('created')) bits.push(n('created')+' new agent'+(n('created')===1?'':'s')+' can now sign in with their CB number and agentos123');
+    if(n('removed')) bits.push(n('removed')+' account'+(n('removed')===1?'':'s')+' removed — they are off the list');
+    if(n('updated')) bits.push(n('updated')+' updated');
+    toast('Agent List synchronised'+(bits.length?' — '+esc(bits.join(', '))+'.':' — nothing changed.'));
+    const L=sy.leaders||{};
+    if((L.unrepresented||[]).length)
+      toast('On the list but with no login: '+esc(L.unrepresented.join(', '))
+        +'. A team leader has no CB number on the Agent List, so their account has to be made by hand.','err',14000);
+    if((L.orphaned||[]).length)
+      toast('Team leader'+(L.orphaned.length===1?'':'s')+' leading nobody on this list: '
+        +esc(L.orphaned.map(o=>o.name||o.username).join(', '))
+        +'. They will see an empty team until the list names them.','err',14000);
+    return;
+  }
+  /* REFUSED or FAILED: the list is stored, the accounts are NOT reconciled, and the
+     previous state stands. Never let that pass as a success. */
+  toast('Agent List stored, but accounts were NOT synchronised — '+esc(sy.detail||sy.reason||sy.status||'')
+    +' Nothing was changed; the previous list is still in force.','err',18000);
+}
+
 async function syncRosterFromVAS(){
   if(__rosterSyncBusy)return; __rosterSyncBusy=true;
   try{
