@@ -14,6 +14,7 @@ import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES
 import { loadCmContext, eodMarkdown, cmOverviewBody } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
 import { syncAgentLogins } from './provision.mjs';
+import { runHealthChecks, dailySnapshots, hygiene, logKvWrite } from './health.mjs';
 import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
 
 // Hermes 2 Pro was deprecated 2026-05-30. Default: Llama 4 Scout (131k context —
@@ -303,6 +304,25 @@ export default {
           } catch (e) { console.warn('[cron] agent login sync failed: ' + (e && e.message || e)); }
         }
       } catch (e) { console.warn('[cron] roster sync failed: ' + (e && e.message || e)); }
+
+      /* PERSISTENCE HEALTH (save-reliability-plan P2/P4, after the 28–31 Aug silent
+         save loss). Three independent jobs, each in its own try so one failure can
+         never take the others — or the roster sync above — down with it:
+           · the freshness sentinel: uploads arriving while neither state saves is
+             the incident's signature, and it becomes an admin banner in both apps
+             within one tick of starting;
+           · daily gzipped snapshots of the two state blobs — the recovery point the
+             incident never had (its data survived only because the raw-file relay
+             happens to archive uploads);
+           · hygiene: orphaned zz-* probe keys and write-log rows past 90 days. */
+      try { await runHealthChecks(DB); }
+      catch (e) { console.warn('[cron] health checks failed: ' + (e && e.message || e)); }
+      try {
+        const snaps = await dailySnapshots(env, DB);
+        if (snaps.length) console.info('[cron] state snapshots: ' + snaps.join('; '));
+      } catch (e) { console.warn('[cron] snapshots failed: ' + (e && e.message || e)); }
+      try { await hygiene(env, DB); }
+      catch (e) { console.warn('[cron] hygiene failed: ' + (e && e.message || e)); }
     })());
   },
   async fetch(req, env, ctx) {
@@ -1207,6 +1227,11 @@ export default {
             }
           } catch (e) {}
         }
+        /* THE WRITE LOG (save-reliability-plan P2a). The rules pointer holds only the
+           LATEST write; this row is the history, so "when exactly did saves stop" is a
+           query rather than an archaeology dig through Storage timestamps. Deferred and
+           best-effort — logging must never slow or fail the save it records. */
+        ctx.waitUntil(logKvWrite(DB, qk, body.length, user && user.username));
         return json({ ok: true });
       }
       // Real delete (Upload Station "Delete file"): remove BOTH the Storage object and the

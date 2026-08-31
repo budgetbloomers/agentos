@@ -335,6 +335,20 @@ if (refMode.byDay) {
 }
 
 ok('no page errors across the entire run', errors.length === 0, errors.slice(0, 3).join(' | '));
+
+/* ---- PERSISTENCE FRESHNESS (save-reliability-plan P5b) ----
+   The daily habit must cover saving as well as calculating: the 28-31 Aug loss
+   would have shown here as a red row days before any client email. Skipped when
+   running from a local state file (no supabase.env in play). */
+try {
+  const envTxt2 = fs.readFileSync(path.join(REPO, 'supabase.env'), 'utf8');
+  const env2 = Object.fromEntries(envTxt2.split(/\r?\n/).filter(l => l.includes('=')).map(l => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]));
+  const fr = await fetch(env2.SUPABASE_URL + '/rest/v1/store_freshness', {
+    headers: { apikey: env2.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env2.SUPABASE_SECRET_KEY } });
+  if (fr.ok) for (const row of await fr.json())
+    ok('freshness: ' + row.check_name, +row.failures === 0,
+      row.failures + ' failing — saves may be silently lost; run verify-live-save.mjs --live');
+} catch (e) { /* offline run — the dedicated verify-store-freshness suite covers this */ }
 console.log(`\n  ${ident.rosterN} agents on the Agent List · ${ident.factN} fact rows · ${money.agents} agents with figures · GWP basis: ${money.basis}-VAT`);
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 failures.forEach(f => console.log('FAIL: ' + f));

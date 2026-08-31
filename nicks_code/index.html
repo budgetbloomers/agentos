@@ -1287,7 +1287,45 @@ for(const store of ['adjust','coach']){
     S[store][nk]=Object.assign({},S[store][nk],S[store][k]); delete S[store][k];
   }
 }
-var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_token');/* A SILENT no-op here is how Nick's 13-Aug Cuddle upload vanished: uploaded into a tab with no token (or one that never hydrated), it rendered perfectly from memory, pushed nothing, and the next refresh erased it without a trace. If this function cannot save, it must SAY so - the user is holding a file they believe is safe. */if(!t){if(typeof toast==='function')toast('⚠ Not signed in — this upload is NOT saved to the database. Sign in and re-upload it.',9000);return}if(!window.__vasHydrated){if(typeof toast==='function')toast('⚠ Still syncing with the database — your upload is NOT saved yet. Keep this tab open; it will retry, or re-upload after the page settles.',9000);clearTimeout(__cloudT);__cloudT=setTimeout(function(){__cloudPush(kl)},5000);return}if((!S.files||!S.files.length)&&!(window.__cbxIntentionalClear&&Date.now()-window.__cbxIntentionalClear<600000)){if(typeof toast==="function")toast("⚠ Refusing to overwrite the database with an EMPTY state — your uploads in the cloud are safe. Use Danger zone → Remove all uploaded data if you really mean to clear them.",9000);return}try{window.__vasLastPush=Date.now();/* THE VIEW IS NOT DATA, AND THE BLOB IS SHARED. S.ui carries the period preset, the team and campaign filters and the open tab — one person's way of looking at the numbers. It used to ride along in this push, so whoever last uploaded a file stamped THEIR view on everyone: a 'yesterday' preset left on 24 Aug showed the whole floor a single day's figures and read as every number being wrong (Enoch 4 sales instead of 176). saveUI() already keeps ui in localStorage, which is where a per-person preference belongs. */var __ui=S.ui;var b;try{delete S.ui;b=JSON.stringify(S);}finally{S.ui=__ui;}(function(){/* GZIP THE UPLOAD (perf, 2026-08-28). The state is ~90% repetitive case rows and
+/* ---- SAVE ACKNOWLEDGEMENT (save-reliability-plan P1, after 28-31 Aug) ----
+   The state is DIRTY from the moment save() stamps S._rev until the server answers
+   200 for a push carrying that revision. Unsaved data is a STATE, not an event, so
+   past a short grace it gets persistent UI — a banner that stands until a save is
+   acknowledged — plus automatic retries with backoff and an exit warning. During
+   the incident the only signal was a transient toast, and the floor uploaded into
+   a void for four days; the banner alone turns that into ninety seconds. */
+function __saveAck(){
+  window.__vasSaveOk=Date.now(); window.__saveFailN=0;
+  /* only clean if nothing changed while the push was in flight — a newer edit's
+     own debounced push is already scheduled and will ack for itself */
+  if(S._rev===window.__vasPushRev) window.__vasDirtySince=null;
+  __unsavedBanner();
+}
+function __saveFail(msg){
+  if(typeof toast==='function') toast(msg,12000);
+  /* retry with backoff — a failed save must never wait for the user's next edit */
+  window.__saveFailN=(window.__saveFailN||0)+1;
+  var d=window.__saveRetryMs||[30000,120000,300000][Math.min(window.__saveFailN-1,2)];   // override = test hook
+  clearTimeout(__cloudT); __cloudT=setTimeout(function(){ if(window.__vasDirtySince) __cloudPush(false); },d);
+  __unsavedBanner();
+}
+function __unsavedBanner(){
+  var grace=window.__unsavedGraceMs||90000;   // overridable so the test does not wait 90s
+  var show=window.__vasDirtySince&&(Date.now()-window.__vasDirtySince>grace);
+  var el=document.getElementById('cbxUnsaved');
+  if(!show){ if(el) el.remove(); return; }
+  if(!el){ el=document.createElement('div'); el.id='cbxUnsaved'; document.body.appendChild(el); }
+  el.setAttribute('style','position:fixed;top:0;left:0;right:0;z-index:2147483000;background:#7f1d1d;color:#fecaca;border-bottom:1px solid #ef4444;padding:9px 16px;text-align:center;font:700 13px system-ui,sans-serif');
+  var t=new Date(window.__vasDirtySince).toTimeString().slice(0,5);
+  el.textContent='⚠ NOT SAVED to the database since '+t+' — retrying automatically. Keep this tab open; if this stays red, uploads are not being stored.';
+}
+setInterval(__unsavedBanner,15000);
+window.addEventListener('beforeunload',function(e){
+  /* any dirty state at all — the 90s grace is for the banner, not for data loss */
+  if(window.__vasDirtySince){ e.preventDefault(); e.returnValue=''; }
+});
+
+var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_token');/* A SILENT no-op here is how Nick's 13-Aug Cuddle upload vanished: uploaded into a tab with no token (or one that never hydrated), it rendered perfectly from memory, pushed nothing, and the next refresh erased it without a trace. If this function cannot save, it must SAY so - the user is holding a file they believe is safe. */if(!t){if(typeof toast==='function')toast('⚠ Not signed in — this upload is NOT saved to the database. Sign in and re-upload it.',9000);return}if(!window.__vasHydrated){if(typeof toast==='function')toast('⚠ Still syncing with the database — your upload is NOT saved yet. Keep this tab open; it will retry, or re-upload after the page settles.',9000);clearTimeout(__cloudT);__cloudT=setTimeout(function(){__cloudPush(kl)},5000);return}if((!S.files||!S.files.length)&&!(window.__cbxIntentionalClear&&Date.now()-window.__cbxIntentionalClear<600000)){if(typeof toast==="function")toast("⚠ Refusing to overwrite the database with an EMPTY state — your uploads in the cloud are safe. Use Danger zone → Remove all uploaded data if you really mean to clear them.",9000);return}try{window.__vasLastPush=Date.now();window.__vasPushRev=S._rev;/* THE VIEW IS NOT DATA, AND THE BLOB IS SHARED. S.ui carries the period preset, the team and campaign filters and the open tab — one person's way of looking at the numbers. It used to ride along in this push, so whoever last uploaded a file stamped THEIR view on everyone: a 'yesterday' preset left on 24 Aug showed the whole floor a single day's figures and read as every number being wrong (Enoch 4 sales instead of 176). saveUI() already keeps ui in localStorage, which is where a per-person preference belongs. */var __ui=S.ui;var b;try{delete S.ui;b=JSON.stringify(S);}finally{S.ui=__ui;}(function(){/* GZIP THE UPLOAD (perf, 2026-08-28). The state is ~90% repetitive case rows and
    compresses about ten to one; browsers never compress request bodies on their own, so every
    save pushed the full 8.8 MB up a slow link. The Worker decompresses, so what is STORED is
    unchanged. Falls back to the plain body when CompressionStream is unavailable or a
@@ -1325,14 +1363,41 @@ var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_tok
          function(){ return fetch(url,{method:'POST',headers:hdr,body:b}); });
    }
    return fetch(url,{method:'POST',headers:hdr,body:b,keepalive:keep});
- })().then(function(r){if(r&&r.ok){window.__vasSaveOk=Date.now();return}
-     if(typeof toast==='function')toast('⚠ Cloud save failed ('+(r?r.status:'?')+') — your upload is NOT in the database. Do not close this tab; re-upload after a refresh.',12000);})
-   .catch(function(){if(typeof toast==='function')toast('⚠ Cloud save failed (network) — your upload is NOT in the database. Check the connection, then refresh and upload again.',12000)})}
+ })().then(function(r){if(r&&r.ok){__saveAck();return}
+     __saveFail('⚠ Cloud save failed ('+(r?r.status:'?')+') — your upload is NOT in the database yet. Keep this tab open; it is retrying.');})
+   .catch(function(){__saveFail('⚠ Cloud save failed (network) — your upload is NOT in the database yet. Keep this tab open; it is retrying.')})}
  catch(e){ /* A THROW HERE USED TO VANISH. The outer try wraps the stringify, the gzip and
      the fetch; swallowing it silently is the same failure mode as the 13-Aug Cuddle upload —
-     the app looks fine and the data is gone. Say it. */
-   if(typeof toast==='function')toast('⚠ Could not save to the database: '+((e&&e.message)||e)+' — your upload is NOT stored.',12000); }}
+     the app looks fine and the data is gone. Say it, and keep retrying. */
+   __saveFail('⚠ Could not save to the database: '+((e&&e.message)||e)+' — your upload is NOT stored yet. Keep this tab open; it is retrying.'); }}
 window.addEventListener('pagehide',function(){try{clearTimeout(__cloudT);__cloudPush(true)}catch(e){}});
+
+/* ---- PERSISTENCE HEALTH BANNER (save-reliability-plan P2c) ----
+   The Worker cron compares the upload archive's clock against both apps' state
+   clocks and writes kv:health-alerts when files keep arriving while neither
+   state saves — the 28-31 Aug incident's signature, seen from the server side.
+   Every staff tab polls it, so the people who can act see it inside the tool
+   they already have open; the banner clears itself when the cron clears the
+   key. Distinct from the top save banner: that one is THIS tab's unsaved work,
+   this one is the whole floor's persistence. */
+function __healthPoll(){
+  try{
+    var t=sessionStorage.getItem('cbx_token'); if(!t) return;
+    fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=health-alerts',{headers:{'Authorization':'Bearer '+t,'X-Cbx-Client':'v5'}})
+      .then(function(r){return r.ok?r.text():null})
+      .then(function(x){
+        var alerts=[]; try{ alerts=(JSON.parse(x||'{}').alerts)||[]; }catch(e){}
+        var el=document.getElementById('cbxHealth');
+        if(!alerts.length){ if(el) el.remove(); return; }
+        if(!el){ el=document.createElement('div'); el.id='cbxHealth'; document.body.appendChild(el); }
+        el.setAttribute('style','position:fixed;bottom:0;left:0;right:0;z-index:2147483000;background:#7f1d1d;color:#fecaca;border-top:1px solid #ef4444;padding:9px 16px;text-align:center;font:600 12.5px system-ui,sans-serif');
+        el.textContent='\u26a0 '+alerts[0].message+(alerts.length>1?' (+'+(alerts.length-1)+' more)':'');
+      }).catch(function(){});
+  }catch(e){}
+}
+setInterval(__healthPoll,180000); setTimeout(__healthPoll,20000);
+document.addEventListener('cbx-authed',function(){setTimeout(__healthPoll,12000)});
+
 /* SUPABASE IS THE STORE. localStorage is a same-device CACHE and nothing more — it caps at
    ~5MB, and a full month of uploads passed that long ago.
    The old code toasted "Storage full — could not save" and carried on, which was wrong twice
@@ -1343,7 +1408,7 @@ window.addEventListener('pagehide',function(){try{clearTimeout(__cloudT);__cloud
    is the mechanism behind a whole campaign appearing and disappearing between refreshes.
    So: on overflow, DROP the local cache rather than keep a stale one, and push immediately
    instead of after the usual debounce. */
-function save(){ S._rev=Date.now();   // revision stamp — hydrate() compares it so an older cloud blob can never overwrite newer local data
+function save(){ S._rev=Date.now(); if(!window.__vasDirtySince)window.__vasDirtySince=Date.now();   // revision stamp — hydrate() compares it so an older cloud blob can never overwrite newer local data
   let cached=true;
   /* The cached state must not carry the view either — it is the same blob the next person on
      this browser loads, so leaving ui in it re-opens the leak the per-user key just closed. */

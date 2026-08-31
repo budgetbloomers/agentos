@@ -5446,3 +5446,31 @@ setTimeout(function(){
   document.addEventListener('visibilitychange',function(){ if(!document.hidden)check(); });
   document.addEventListener('cbx-authed',function(){ setTimeout(check,15000); });
 })();</script>
+<script>(function(){
+
+/* ---- PERSISTENCE HEALTH BANNER (save-reliability-plan P2c) ----
+   The Worker cron compares the upload archive's clock against both apps' state
+   clocks and writes kv:health-alerts when files keep arriving while neither
+   state saves — the 28-31 Aug incident's signature, seen from the server side.
+   Every staff tab polls it, so the people who can act see it inside the tool
+   they already have open; the banner clears itself when the cron clears the
+   key. Distinct from the top save banner: that one is THIS tab's unsaved work,
+   this one is the whole floor's persistence. */
+function __healthPoll(){
+  try{
+    var t=sessionStorage.getItem('cbx_token'); if(!t) return;
+    fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=health-alerts',{headers:{'Authorization':'Bearer '+t,'X-Cbx-Client':'v5'}})
+      .then(function(r){return r.ok?r.text():null})
+      .then(function(x){
+        var alerts=[]; try{ alerts=(JSON.parse(x||'{}').alerts)||[]; }catch(e){}
+        var el=document.getElementById('cbxHealth');
+        if(!alerts.length){ if(el) el.remove(); return; }
+        if(!el){ el=document.createElement('div'); el.id='cbxHealth'; document.body.appendChild(el); }
+        el.setAttribute('style','position:fixed;bottom:0;left:0;right:0;z-index:2147483000;background:#7f1d1d;color:#fecaca;border-top:1px solid #ef4444;padding:9px 16px;text-align:center;font:600 12.5px system-ui,sans-serif');
+        el.textContent='\u26a0 '+alerts[0].message+(alerts.length>1?' (+'+(alerts.length-1)+' more)':'');
+      }).catch(function(){});
+  }catch(e){}
+}
+setInterval(__healthPoll,180000); setTimeout(__healthPoll,20000);
+document.addEventListener('cbx-authed',function(){setTimeout(__healthPoll,12000)});
+})();</script>

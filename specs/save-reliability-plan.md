@@ -1,5 +1,15 @@
 # Save Reliability Plan — an upload must never be lost silently again
 
+> **STATUS: IMPLEMENTED, 31 Aug 2026.** All five phases are live. Proven by
+> `verify-save-acks.mjs` (16), `verify-store-freshness.mjs` (14),
+> `verify-live-save.mjs --live` (5), `verify-cors-headers.mjs --live` (12), and
+> the freshness rows in `verify-all-tabs.mjs` (52 total). The standing rules are
+> non-negotiable **14** in CLAUDE.md; the post-deploy smoke is step 5 of the
+> /deploy skill. One extra find during implementation: the **Ops storage shim
+> carried its own copy of the Content-Encoding bug** (invisible to the scanner
+> because the shim exists only in the generated `site/index.html`) — the shim no
+> longer sends the header and both generated file and generator are now scanned.
+
 **Incident reference:** 28–31 Aug 2026. PULSE's `vas-state` save added a
 `Content-Encoding: gzip` header; the header was not in the Worker's CORS
 allow-list, so every browser refused to *send* the save. Four days of uploads

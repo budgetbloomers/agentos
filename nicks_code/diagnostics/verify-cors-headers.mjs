@@ -41,8 +41,11 @@ head('A · WHAT THE CLIENTS ACTUALLY SEND');
 /* Scan every file that talks to the Worker for header names set on a request. Deliberately
    crude and over-inclusive: a false positive here costs one line in the allow-list, a false
    negative costs the floor its uploads. */
+/* site/index.html and prepare-site.js are BOTH here because the Ops storage shim
+   exists only in the generated file — scanning the source HTML alone is exactly how
+   the shim's own Content-Encoding copy of the 28-Aug bug went unseen. */
 const CLIENTS = ['nicks_code/index.html', 'Chatterbox_AgentOS_Analytics.html', 'agent/index.html',
-  'site/auth-gate.js', 'site/ask-widget.js'];
+  'site/auth-gate.js', 'site/ask-widget.js', 'site/index.html', 'tools/prepare-site.js'];
 const sent = new Map();          // header -> which files set it
 for (const rel of CLIENTS) {
   const p = path.join(ROOT, rel);
@@ -56,7 +59,7 @@ for (const rel of CLIENTS) {
     if (!sent.has(h)) sent.set(h, new Set());
     sent.get(h).add(rel);
   }
-  for (const m of src.matchAll(/hdr\[['"]([A-Za-z][A-Za-z0-9-]+)['"]\]\s*=/g)) {
+  for (const m of src.matchAll(/hdrs?\[['"]([A-Za-z][A-Za-z0-9-]+)['"]\]\s*=/g)) {
     const h = m[1].toLowerCase();
     if (!sent.has(h)) sent.set(h, new Set());
     sent.get(h).add(rel);

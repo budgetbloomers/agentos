@@ -52,6 +52,43 @@ if (!window.storage) {
         clearTimeout(b._t); b._t = setTimeout(function () { b.remove(); }, 12000);
       } catch (e) {}
     }
+    /* ---- SAVE ACKNOWLEDGEMENT (save-reliability-plan P1; Ops' copy of the
+       28-31 Aug lesson). A failed cloud write is QUEUED with its exact payload
+       and retried with backoff (30s -> 2m -> 5m); a persistent banner stands
+       until the queue drains; closing the tab while anything is queued warns.
+       cbxSaveWarn above stays for the moment of failure - this is for the
+       state of being unsaved, which outlives any toast. */
+    var cbxFailed = {}, cbxFailN = 0, cbxRetryT = null;
+    function cbxSaveFail(k, v) {
+      cbxFailed[k] = v; cbxUnsavedBanner();
+      if (cbxRetryT) return;
+      cbxFailN++;
+      var d = window.__cbxRetryMs || [30000, 120000, 300000][Math.min(cbxFailN - 1, 2)];   // override = test hook
+      cbxRetryT = setTimeout(function () {
+        cbxRetryT = null;
+        Object.keys(cbxFailed).forEach(function (k2) {
+          var v2 = cbxFailed[k2]; delete cbxFailed[k2];   // set() re-queues it if it fails again
+          window.storage.set(k2, v2);
+        });
+      }, d);
+    }
+    function cbxSaveOkFor(k) {
+      delete cbxFailed[k]; window.__cbxSaveOk = Date.now();
+      if (!Object.keys(cbxFailed).length) cbxFailN = 0;
+      cbxUnsavedBanner();
+    }
+    function cbxUnsavedBanner() {
+      var n = Object.keys(cbxFailed).length;
+      var el = document.getElementById('cbxUnsaved');
+      if (!n) { if (el) el.remove(); return; }
+      if (!el) { el = document.createElement('div'); el.id = 'cbxUnsaved'; (document.body || document.documentElement).appendChild(el); }
+      el.setAttribute('style', 'position:fixed;top:0;left:0;right:0;z-index:2147483000;background:#7F1D1D;color:#FECACA;border-bottom:1px solid #EF4444;padding:9px 16px;text-align:center;font:700 13px Inter,system-ui,sans-serif');
+      el.textContent = '\u26a0 ' + n + ' item' + (n === 1 ? '' : 's') + ' NOT saved to the database - retrying automatically. Keep this tab open; if this stays red, your uploads are not being stored.';
+    }
+    window.addEventListener('beforeunload', function (e) {
+      if (Object.keys(cbxFailed).length) { e.preventDefault(); e.returnValue = ''; }
+    });
+    window.__cbxFailedSaves = cbxFailed;   // test hook - verify-save-acks.mjs
     /* DID THIS VALUE COME FROM THE CLOUD, OR FROM THE CACHE? A get() that cannot
        reach the cloud deliberately falls back to the local copy so the app keeps
        working offline — but the CALLER cannot see the difference, and one caller
@@ -96,21 +133,24 @@ if (!window.storage) {
         mem[k] = v;
         try { localStorage.setItem('cbx:' + k, v); } catch (e) { /* quota — cloud still saves below */ }
         var h = authHdr();
-        if (!h) { cbxSaveWarn('Not signed in — this data was NOT saved to the database.'); return; }
+        if (!h) { cbxSaveWarn('Not signed in — this data was NOT saved to the database.'); cbxSaveFail(k, v); return; }
         try {
           var hdrs = { 'Authorization': h.Authorization, 'Content-Type': 'text/plain', 'X-Cbx-Client': 'v5' };
           var payload = v;
           /* Gzip the body when the browser can (perf, 2026-08-28) — fact blobs are tens of MB
-             and compress about ten to one. The Worker decompresses, so Storage is unchanged. */
+             and compress about ten to one. NO Content-Encoding HEADER: it is not a CORS-
+             safelisted request header, and setting it here is what silently blocked every
+             big Ops save from 28–31 Aug — the browser refused to SEND the request, the
+             same bug that froze PULSE's whole state for four days. The Worker detects
+             gzip by the magic bytes (1f 8b) and ignores the header on purpose. */
           if (typeof CompressionStream === 'function' && v.length > 65536) {
-            try {
-              payload = await new Response(new Blob([v]).stream().pipeThrough(new CompressionStream('gzip'))).blob();
-              hdrs['Content-Encoding'] = 'gzip';
-            } catch (e) { payload = v; delete hdrs['Content-Encoding']; }
+            try { payload = await new Response(new Blob([v]).stream().pipeThrough(new CompressionStream('gzip'))).blob(); }
+            catch (e) { payload = v; }
           }
           var r = await fetch(API + '?key=' + encodeURIComponent(k), { method: 'POST', headers: hdrs, body: payload });
-          if (!r.ok) cbxSaveWarn('Cloud save failed (' + r.status + ') — this data is NOT in the database. Try again or re-login.');
-        } catch (e) { cbxSaveWarn('Cloud save failed (network) — this data is NOT in the database. Check your connection and retry.'); }
+          if (!r.ok) { cbxSaveWarn('Cloud save failed (' + r.status + ') — "' + k + '" is NOT in the database yet. Keep this tab open; it is retrying.'); cbxSaveFail(k, v); return; }
+          cbxSaveOkFor(k);
+        } catch (e) { cbxSaveWarn('Cloud save failed (network) — "' + k + '" is NOT in the database yet. Keep this tab open; it is retrying.'); cbxSaveFail(k, v); }
       },
       async delete(k) {
         // real delete: drop the local copy AND remove it from the database (Storage

@@ -20,6 +20,10 @@ Ship `site/` to Cloudflare Pages. The deployable `site/index.html` is GENERATED 
    - Production (only if the user said "prod"/"production"): `npx wrangler pages deploy site --project-name chatterbox-agentos`
    - First run: `npx wrangler login` if not authenticated; `npx wrangler pages project create chatterbox-agentos` if the project doesn't exist.
 4. **Verify**: fetch the deployment URL wrangler prints (expect HTTP 200 and the `<title>` string); report the URL, deployment type (preview/prod), and the Access status.
+5. **Post-deploy smoke (REQUIRED for production — the deploy is not done until this passes).** A Node fetch proves nothing about what a browser will refuse (Node does not enforce CORS — that gap is how the 28–31 Aug save loss shipped and ran for four days), so a real browser must perform the real write through the deployed pair:
+   - `node nicks_code/diagnostics/verify-cors-headers.mjs --live` — every header any client sends is named in the Worker preflight, and a real Chromium performs a cross-origin write.
+   - `node nicks_code/diagnostics/verify-live-save.mjs --live` — real Chromium at the deployed origin saves a gzipped probe through `/api/kv`, reads back the exact bytes, and the write appears in `kv_write_log`.
+   If either fails, the deploy is broken for browsers even though every Node test passed: fix and redeploy before reporting done. When the Worker changed too, deploy the Worker (`npx wrangler deploy` in `worker/`) BEFORE running the smoke, so the pair being smoked is the pair that will serve users.
 
 ## Constraints & known limits
 
