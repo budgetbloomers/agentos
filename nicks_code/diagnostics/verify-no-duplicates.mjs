@@ -78,8 +78,14 @@ for (const src of sources) {
   ok(src + ' key matches its data', rows.length === 0 || keyed / rows.length >= 0.5,
     unkeyable + ' of ' + rows.length + ' rows cannot be keyed by (' + spec.key.join(', ') + ') — the key names fields these rows do not carry');
 
+  /* A SESSION SLOT IS ALLOWED TO BE EMPTY. SES_* holds an intraday snapshot that the next
+     upload overwrites and a cleanup may clear (2026-08-31: four of them held July data and
+     were emptied). Empty is a state, not evidence of a rewrite, so the order-of-magnitude
+     check applies to the daily stores only — the duplicate and key checks above still run
+     on every source, including these. */
+  const isSession = !!(SPEC.session_sources || {})[src];
   const claimed = (spec.measured && spec.measured.rows) || null;
-  if (claimed) ok(src + ' row count is the order the spec recorded', rows.length >= claimed / 10 && rows.length <= claimed * 10,
+  if (claimed && !isSession) ok(src + ' row count is the order the spec recorded', rows.length >= claimed / 10 && rows.length <= claimed * 10,
     rows.length + ' now vs ' + claimed + ' when the key was written');
 }
 

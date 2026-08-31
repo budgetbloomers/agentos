@@ -198,6 +198,16 @@ export async function hygiene(env, DB) {
     await DB.del(`rules?key=eq.${encodeURIComponent(r.key)}`).catch(() => {});
   }
   await DB.del(`kv_write_log?at=lt.${new Date(Date.now() - 90 * 24 * HOUR).toISOString()}`).catch(() => {});
+
+  /* EXPIRED SESSIONS ARE NOT KEPT (audit, 2026-08-31). 436 of the 451 rows in
+     app_sessions were already past their expiry: dead tokens that authenticate nobody but
+     sit in the table growing, on a table that exists to answer "is this token still good".
+     Sign-out and expiry are different things and neither was clearing them. A day of grace
+     past expiry so a token that dies mid-request is still explainable in the log, then it
+     goes. Deleting an EXPIRED row signs nobody out — the session was already over. The
+     audit trail of who signed in when lives in auth_log, which this never touches. */
+  await DB.del(`app_sessions?expires_at=lt.${new Date(Date.now() - 24 * HOUR).toISOString()}`).catch(() => {});
+
   return (stale || []).length;
 }
 
