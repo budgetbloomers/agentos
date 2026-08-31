@@ -101,7 +101,13 @@ export async function runHealthChecks(DB) {
   let prevAlerts = [];
   try { prevAlerts = JSON.parse((prev && prev[0] && prev[0].value && prev[0].value.data) || '{}').alerts || []; } catch (e) {}
 
-  const changed = JSON.stringify(alerts.map((a) => a.id + a.since))
+  /* Write when the alerts CHANGED — and once when the key does not exist yet, so
+     "the sentinel is healthy" and "the sentinel never ran" stop looking identical.
+     After that first write, a healthy tick costs one select and no write; checked_at
+     is only refreshed when something changes, so the row's updated_at going stale
+     for days while alerts sit empty is itself the sign to look at the cron. */
+  const neverWritten = !(prev && prev.length);
+  const changed = neverWritten || JSON.stringify(alerts.map((a) => a.id + a.since))
     !== JSON.stringify(prevAlerts.map((a) => a.id + a.since));
   if (changed) {
     await DB.insert('rules', [{ key: ALERTS_KEY,
