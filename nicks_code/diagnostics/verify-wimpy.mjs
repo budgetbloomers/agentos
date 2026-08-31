@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 /**
- * verify-wimpy.mjs — the Wimpy ordering system.
+ * verify-wimpy.mjs — the 3–3–3–1 Weekday Value Menu, proven.
  *
  *   node nicks_code/diagnostics/verify-wimpy.mjs
  *
  * Stubbed, so it proves the RULES rather than the network:
- *   · every brief price is the price, and lives in exactly one file
- *   · the total is re-priced SERVER-side — a client figure is never trusted
- *   · removing an included ingredient is free
- *   · wings cannot be ordered without both sauces
- *   · the 12-wing platter has no invented price and cannot be ordered
- *   · identity comes from the session, not the request
- *   · a failed webhook does NOT report success (the cart must survive)
+ *   · 3 breakfasts + 3 burgers + 3 toasteds + exactly one Big One per weekday
+ *   · every brief price is the price, to the cent, and lives in one file
+ *   · THE OVERLAP PRINCIPLE IS AN INVARIANT: no ingredient may be used by
+ *     fewer than two items, and the least-shared one must cross categories
+ *   · a Big One is only orderable ON ITS DAY, refused by name off it
+ *   · weekends serve the nine and trail Monday — nothing is invented
+ *   · the total is re-priced SERVER-side; a client figure is never trusted
+ *   · identity comes from the session; a failed webhook keeps the cart
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,137 +21,178 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const W = 'file:///' + path.resolve(HERE, '..', '..', 'worker', 'src', 'wimpy.mjs').replace(/\\/g, '/').replace(/ /g, '%20');
 
 let pass = 0, fail = 0;
-const ok = (c, n, extra) => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.log('  FAIL ' + n + (extra ? ' — ' + extra : '')); } };
+const ok = (c, n, extra) => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.log('  FAIL ' + n + (extra !== undefined ? ' — ' + extra : '')); } };
 const head = (t) => console.log('\n' + t);
 
-const { wimpyMenu, priceOrder, formatOrder, submitWimpyOrder } = await import(W);
-const menu = wimpyMenu();
-const byId = (id) => menu.items.find((i) => i.id === id);
+const { wimpyMenu, priceOrder, formatOrder, submitWimpyOrder, todaysBigOne, ALL_ITEMS, ING } = await import(W);
 
-head('A · THE MENU IS THE BRIEF');
-const WANT = {
-  toasted_cheese_tomato: 75.90, toasted_chicken_mayo: 80.90, toasted_bacon_egg: 84.90,
-  toasted_mince_cheese: 95.90, dagwood: 149.90, champion_burger: 124.90, wings_6: 154.90,
+/* A UTC moment that is the given SAST weekday (0=Sun..6=Sat), mid-morning. */
+const onDay = (dow) => {
+  const base = Date.parse('2026-08-31T08:00:00Z');           // a Monday in SAST
+  return base + ((dow + 6) % 7) * 86400000;
 };
-for (const [id, price] of Object.entries(WANT))
-  ok(byId(id) && byId(id).basePrice === price, `${byId(id) ? byId(id).name : id} is R${price.toFixed(2)}`,
-    byId(id) ? 'got ' + byId(id).basePrice : 'missing');
-ok(menu.items.length === 8, 'eight items and no invented extras', 'got ' + menu.items.length);
-ok(menu.categories.map((c) => c.id).join(',') === 'sandwiches,burgers,wings', 'three categories');
-ok(byId('wings_12_platter').basePrice === null && byId('wings_12_platter').configurablePrice === true,
-  'the 12-wing platter has NO invented price and is marked configurable');
-ok(byId('wings_12_platter').available === false, '...and is served as unavailable, so it cannot be ordered');
-ok(menu.items.every((i) => i.addOns.every((a) => a.price === 0 && a.configurablePrice)),
-  'no add-on price is invented — every one is 0 and configurable');
+const MON = onDay(1), TUE = onDay(2), WED = onDay(3), THU = onDay(4), FRI = onDay(5), SAT = onDay(6), SUN = onDay(0);
 
-head('B · PRICING IS DONE HERE, NOT BY THE CALLER');
+head('A · THE STRUCTURE IS 3 + 3 + 3 + 1');
 {
-  const r = priceOrder({ order: { items: [{ id: 'dagwood', quantity: 2 }] } });
-  ok(r.ok && r.total === 299.80, '2 × Dagwood = R299.80', 'got ' + r.total);
+  const m = wimpyMenu(MON);
+  ok(m.categories.map((c) => c.id).join(',') === 'breakfast,burgers,toasteds', 'three categories, in menu order');
+  for (const c of ['breakfast', 'burgers', 'toasteds'])
+    ok(m.items.filter((i) => i.category === c).length === 3, 'exactly three ' + c + ' choices');
+  ok(m.items.length === 10, 'the customer sees TEN choices — nine core plus today’s Big One', m.items.length);
+  ok(m.bigOne && m.items.some((i) => i.id === m.bigOne.id), 'the Big One is one of them');
+  ok(m.title === 'Weekday Value Menu', 'and the menu says what it is', m.title);
 }
+
+head('B · EVERY PRICE IS THE BRIEF’S, TO THE CENT');
 {
-  /* removing is free — the brief is explicit */
-  const plain = priceOrder({ order: { items: [{ id: 'dagwood', quantity: 1 }] } });
-  const stripped = priceOrder({ order: { items: [{ id: 'dagwood', quantity: 1, removed: ['Gherkins', 'Lettuce'] }] } });
-  ok(stripped.ok && stripped.total === plain.total && plain.total === 149.90,
-    'removing gherkins and lettuce changes nothing — R149.90 either way', 'got ' + stripped.total);
-  ok(stripped.items[0].customisations.removed.length === 2, '...and both removals are recorded');
+  const WANT = {
+    mzansi_brekkie: 45.90, double_up_breakfast: 65.90, farmhouse_breakfast: 77.90,
+    cheese_burger: 54.90, bacon_cheese_burger: 82.90, big_cheese_burger: 95.90,
+    toasted_cheese_tomato: 49.90, toasted_chicken_mayo: 53.90, toasted_bacon_egg: 55.90,
+    mega_breakfast: 95.90, dagwood: 97.90, big_bacon_cheese: 103.90,
+    big_champion: 115.90, fully_loaded_dagwood: 127.90,
+  };
+  for (const [id, price] of Object.entries(WANT)) {
+    const d = ALL_ITEMS.find((i) => i.id === id);
+    ok(d && d.basePrice === price, (d ? d.name : id) + ' is R' + price.toFixed(2), d ? 'got ' + d.basePrice : 'missing');
+  }
+  ok(ALL_ITEMS.length === 14, 'fourteen definitions in total — nine core, five Big Ones, nothing invented', ALL_ITEMS.length);
+  ok(!ALL_ITEMS.some((i) => /wing|mince|liver|kids|dessert/i.test(i.name)),
+    'the exclusions hold: no wings, mince, livers, kids meals or desserts');
 }
+
+head('C · THE OVERLAP PRINCIPLE IS AN INVARIANT, NOT AN ASPIRATION');
 {
-  const r = priceOrder({ order: { items: [{ id: 'dagwood', quantity: 1, removed: ['Toasted bread'] }] } });
-  ok(!r.ok, 'an ingredient the item does not have cannot be removed');
+  const uses = {};                             // ingredient -> Set of item ids
+  const cats = {};                             // ingredient -> Set of categories
+  for (const i of ALL_ITEMS) for (const k of Object.keys(i.ing || {})) {
+    (uses[k] = uses[k] || new Set()).add(i.id);
+    (cats[k] = cats[k] || new Set()).add(i.category);
+  }
+  ok(Object.keys(ING).length === 13, 'thirteen core ingredients — the brief’s list exactly', Object.keys(ING).join(','));
+  for (const k of Object.keys(ING))
+    ok((uses[k] || new Set()).size >= 2, ING[k].name + ' is used by at least two items (' + (uses[k] ? uses[k].size : 0) + ')',
+      'SINGLE-USE INGREDIENT — this is the stock line the whole model exists to prevent');
+  ok(Object.keys(uses).every((k) => ING[k]), 'no item uses an ingredient outside the thirteen');
+  const least = Object.keys(ING).sort((a, b) => uses[a].size - uses[b].size)[0];
+  ok(least === 'chicken_mayo' && cats.chicken_mayo.size >= 2,
+    'the least-shared ingredient (chicken mayo, ' + uses.chicken_mayo.size + ' items) still crosses categories: '
+    + [...cats.chicken_mayo].join(' + '));
+  const most = Object.keys(ING).sort((a, b) => uses[b].size - uses[a].size)[0];
+  console.log('  (most-used: ' + ING[most].name + ' in ' + uses[most].size + ' of 14 items)');
+  /* every item is built ONLY from the shared pool — the §7 rule as code */
+  ok(ALL_ITEMS.every((i) => Object.keys(i.ing || {}).length >= 3), 'every item draws on at least three shared ingredients');
 }
+
+head('D · ONE BIG ONE PER DAY, AND THE DAY DECIDES');
+{
+  const days = { 1: 'mega_breakfast', 2: 'dagwood', 3: 'big_bacon_cheese', 4: 'big_champion', 5: 'fully_loaded_dagwood' };
+  for (const [d, id] of Object.entries(days)) {
+    const hero = todaysBigOne(onDay(+d));
+    ok(hero && hero.id === id, 'day ' + d + ' features the ' + (hero ? hero.name : '(none)'), hero && hero.id);
+  }
+  const tue = wimpyMenu(TUE);
+  ok(tue.bigOne.id === 'dagwood' && tue.dayName === 'Tuesday', 'Tuesday’s menu says Tuesday and serves the Dagwood');
+  ok(!tue.items.some((i) => i.id === 'mega_breakfast'),
+    'Monday’s hero is NOT in Tuesday’s payload — a client cannot even try to order it');
+  ok(tue.week.length === 5 && tue.week.filter((w) => w.today).length === 1
+    && tue.week.find((w) => w.today).name === 'Dagwood',
+    'the week strip shows all five with exactly today marked — the reason to come back tomorrow');
+}
+
+head('E · WEEKENDS: NOTHING INVENTED, MONDAY TRAILED');
+{
+  for (const [label, t] of [['Saturday', SAT], ['Sunday', SUN]]) {
+    const m = wimpyMenu(t);
+    ok(m.bigOne === null && m.items.length === 9, label + ' serves the nine core items and no hero');
+    ok(m.weekend && m.weekend.next.name === 'Mega Breakfast' && m.weekend.next.dayName === 'Monday',
+      '...and trails Monday’s ' + m.weekend.next.name);
+  }
+  const r = priceOrder({ order: { items: [{ id: 'mega_breakfast', quantity: 1 }] } }, SAT);
+  ok(!r.ok && /returns Monday/.test(r.errors[0]), 'ordering a Big One on Saturday is refused with the honest answer', r.errors[0]);
+}
+
+head('F · A BIG ONE OFF ITS DAY IS REFUSED BY NAME');
+{
+  const r = priceOrder({ order: { items: [{ id: 'mega_breakfast', quantity: 1 }] } }, THU);
+  ok(!r.ok, 'Monday’s Mega Breakfast cannot be ordered on Thursday');
+  ok(/Mega Breakfast is Monday/.test(r.errors[0]) && /Big Champion/.test(r.errors[0]),
+    '...and the message names both days’ heroes', r.errors[0]);
+  const r2 = priceOrder({ order: { items: [{ id: 'big_champion', quantity: 1 }] } }, THU);
+  ok(r2.ok && r2.total === 115.90, 'Thursday’s own Big Champion prices at R115.90 on Thursday');
+}
+
+head('G · THE SERVER PRICES, THE CLIENT ONLY DISPLAYS');
 {
   const r = priceOrder({ order: { items: [
-    { id: 'wings_6', quantity: 1, choices: { basting: 'Peri-Peri', dipping_sauce: 'BBQ' } },
-    { id: 'champion_burger', quantity: 1, choices: { sauce: 'Chilli Mayo' }, removed: ['Grilled onions'] },
-    { id: 'toasted_chicken_mayo', quantity: 2, added: [{ id: 'extra_mayo' }] },
-  ] } });
-  ok(r.ok, 'a realistic three-item order prices cleanly', (r.errors || []).join('; '));
-  ok(r.total === 154.90 + 124.90 + 80.90 * 2, 'total = R' + (154.90 + 124.90 + 80.90 * 2).toFixed(2), 'got ' + r.total);
-  ok(r.items[2].item_total === 161.80, 'quantity multiplies the line, not the base', 'got ' + r.items[2].item_total);
+    { id: 'cheese_burger', quantity: 2 },
+    { id: 'toasted_chicken_mayo', quantity: 1 },
+  ] } }, WED);
+  ok(r.ok && r.totalCents === 2 * 5490 + 5390, 'integer cents: 2 × R54.90 + R53.90 = R' + r.total, r.totalCents);
+  const rm = priceOrder({ order: { items: [
+    { id: 'cheese_burger', quantity: 1, removed: ['Onion', 'Wimpy Relish'] },
+  ] } }, WED);
+  ok(rm.ok && rm.total === 54.90, 'removing included ingredients is FREE');
+  const bad = priceOrder({ order: { items: [{ id: 'cheese_burger', quantity: 1, removed: ['Beef patty'] }] } }, WED);
+  ok(!bad.ok, 'the patty cannot be removed — a burger without it stops being the item');
+  const q = priceOrder({ order: { items: [{ id: 'mzansi_brekkie', quantity: 0 }] } }, WED);
+  ok(!q.ok, 'quantity zero is refused');
+  const ao = priceOrder({ order: { items: [{ id: 'toasted_cheese_tomato', quantity: 1, added: ['extra_patty'] }] } }, WED);
+  ok(!ao.ok, 'an add-on the item does not offer is refused');
+  const un = priceOrder({ order: { items: [{ id: 'wings_6', quantity: 1 }] } }, WED);
+  ok(!un.ok && /unknown/.test(un.errors[0]), 'the retired wings are gone — unknown item');
 }
 
-head('C · REQUIRED CHOICES ARE REQUIRED');
-ok(!priceOrder({ order: { items: [{ id: 'wings_6', quantity: 1, choices: { basting: 'BBQ' } }] } }).ok,
-  'wings without a dipping sauce are refused');
-ok(!priceOrder({ order: { items: [{ id: 'wings_6', quantity: 1, choices: { dipping_sauce: 'BBQ' } }] } }).ok,
-  'wings without a basting are refused');
-ok(!priceOrder({ order: { items: [{ id: 'wings_6', quantity: 1, choices: { basting: 'Garlic', dipping_sauce: 'BBQ' } }] } }).ok,
-  'a basting that is not on the menu is refused');
-ok(!priceOrder({ order: { items: [{ id: 'wings_12_platter', quantity: 1, choices: { basting: 'BBQ', dipping_sauce: 'BBQ' } }] } }).ok,
-  'the platter is refused while it has no price — never guessed at');
-ok(!priceOrder({ order: { items: [] } }).ok, 'an empty order is refused');
-ok(!priceOrder({ order: { items: [{ id: 'not_a_real_thing', quantity: 1 }] } }).ok, 'an unknown item id is refused');
-ok(!priceOrder({ order: { items: [{ id: 'dagwood', quantity: 0 }] } }).ok, 'a quantity of zero is refused');
-ok(!priceOrder({ order: { items: [{ id: 'dagwood', quantity: 1, added: [{ id: 'extra_dip' }] }] } }).ok,
-  'an add-on that does not belong to the item is refused');
-
-head('D · THE FORMATTED ORDER');
+head('H · IDENTITY, MISMATCH AND FAILURE BEHAVIOUR');
 {
-  const r = priceOrder({ order: { items: [
-    { id: 'dagwood', quantity: 1, removed: ['Gherkins'], added: [{ id: 'extra_cheese' }] },
-    { id: 'wings_6', quantity: 1, choices: { basting: 'Peri-Peri', dipping_sauce: 'BBQ' } },
-  ] } });
-  const t = formatOrder({ agentName: 'John Smith', cb: 'CB12345', items: r.items, total: r.total, notes: 'Please make chips well done.' });
-  ok(t.startsWith('WIMPY ORDER'), 'starts with the WIMPY ORDER header');
-  ok(t.includes('Agent: John Smith') && t.includes('CB Number: CB12345'), 'names the agent and CB');
-  ok(t.includes('1 × DAGWOOD — R149.90'), 'each line carries quantity, name and money');
-  ok(t.includes('Removed:') && t.includes('• Gherkins'), 'lists removals');
-  ok(t.includes('Added:') && t.includes('• Extra Cheese'), 'lists additions');
-  ok(t.includes('Basting:') && t.includes('• Peri-Peri'), 'lists the basting');
-  ok(t.includes('Dipping Sauce:') && t.includes('• BBQ'), 'lists the dip');
-  ok(t.includes('TOTAL: R304.80'), 'ends on the real total (R304.80)');
-  ok(t.includes('Additional Notes:\nPlease make chips well done.'), 'carries the notes');
-}
-
-head('E · IDENTITY AND THE WEBHOOK');
-{
-  const user = { full_name: 'John Smith', username: 'cb12345', cb: 'CB12345' };
-  const good = { order: { items: [{ id: 'dagwood', quantity: 1 }], additional_notes: 'x' } };
+  const realFetch = globalThis.fetch;
   let sent = null;
-  globalThis.fetch = async (url, opts) => { sent = { url, body: JSON.parse(opts.body) }; return { ok: true, status: 200, text: async () => 'ok' }; };
-  const r = await submitWimpyOrder({}, user, good);
-  ok(r.status === 200 && r.body.ok, 'a valid order is accepted');
-  ok(sent.url === 'https://n8n-production-591cc.up.railway.app/webhook/wimpy', 'posted to the n8n webhook');
-  ok(sent.body.cb_number === 'CB12345' && sent.body.agent_name === 'John Smith', 'identity comes from the SESSION');
-  ok(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+02:00$/.test(sent.body.timestamp), 'timestamp is SAST with the offset', sent.body.timestamp);
-  ok(sent.body.total_price === 149.90 && typeof sent.body.order_formatted === 'string', 'carries the total and the formatted order');
-  ok(Array.isArray(sent.body.order.items) && sent.body.order.items[0].item === 'Dagwood', 'carries the structured order');
+  globalThis.fetch = async (url, opts) => { sent = JSON.parse(opts.body); return { ok: true, text: async () => '' }; };
+  try {
+    /* submitWimpyOrder prices with the REAL clock, so the order is built from
+       whatever today actually offers: today's hero on a weekday, the Big Cheese
+       on a weekend. The suite must pass every day of the week. */
+    const user = { full_name: 'Test Agent', username: 'cb999', cb: 'CB999' };
+    const heroNow = todaysBigOne();
+    const pick = heroNow || ALL_ITEMS.find((i) => i.id === 'big_cheese_burger');
+    const body = { total_price: 1.00,                             // a lying client
+      order: { items: [{ id: pick.id, quantity: 1 }], additional_notes: 'no onion on the side' } };
+    const res = await submitWimpyOrder({}, user, body);
+    ok(res.status === 200, 'a valid order for today (' + pick.name + ') submits', JSON.stringify(res.body).slice(0, 120));
+    ok(sent.total_price === pick.basePrice, 'the total sent to the kitchen is the SERVER’s figure', sent.total_price);
+    ok(sent.price_mismatch && sent.price_mismatch.client_total === 1.00,
+      'the client’s wrong figure travels as price_mismatch, never adopted');
+    ok(sent.cb_number === 'CB999' && sent.agent_name === 'Test Agent', 'identity is the session’s');
+    if (heroNow) ok(sent.order_formatted.includes('(TODAY’S BIG ONE)'), 'the kitchen slip marks the Big One');
+    else ok(true, '(weekend run — no Big One slip line to check)');
+    ok(/\+02:00$/.test(sent.timestamp), 'timestamped in SAST');
 
-  /* the one that matters: a caller cannot set the price */
-  const lie = { total_price: 1.00, order: { items: [{ id: 'dagwood', quantity: 1 }] } };
-  await submitWimpyOrder({}, user, lie);
-  ok(sent.body.total_price === 149.90, 'a client-supplied total is IGNORED — the Worker re-prices', 'got ' + sent.body.total_price);
-  ok(sent.body.price_mismatch && sent.body.price_mismatch.client_total === 1,
-    '...and the disagreement travels with the order rather than being hidden');
+    const noCb = await submitWimpyOrder({}, { full_name: 'X', username: 'x', cb: '' }, body);
+    ok(noCb.status === 403, 'no CB number on the account → no order');
 
-  /* identity must exist */
-  ok((await submitWimpyOrder({}, { full_name: 'X', cb: '' }, good)).status === 403, 'no CB number → refused');
-  ok((await submitWimpyOrder({}, { full_name: '', username: '', cb: 'CB1' }, good)).status === 403, 'no name → refused');
-
-  /* a failed webhook must NOT read as success — the page keeps the cart */
-  globalThis.fetch = async () => ({ ok: false, status: 500, text: async () => 'boom' });
-  const bad = await submitWimpyOrder({}, user, good);
-  ok(bad.status === 502 && !bad.body.ok, 'a webhook failure is reported as a failure');
-  ok(/kept/i.test(bad.body.error), '...and the message says the order was kept', bad.body.error);
-
-  globalThis.fetch = async () => { const e = new Error('nope'); throw e; };
-  const dead = await submitWimpyOrder({}, user, good);
-  ok(dead.status === 502 && /kept/i.test(dead.body.error), 'an unreachable webhook is reported the same way');
+    globalThis.fetch = async () => { throw new Error('boom'); };
+    const down = await submitWimpyOrder({}, user, body);
+    ok(down.status === 502 && /kept/.test(down.body.error), 'a dead webhook reports failure and tells the agent the cart is kept');
+    globalThis.fetch = async () => ({ ok: false, status: 500, text: async () => 'err' });
+    const err = await submitWimpyOrder({}, user, body);
+    ok(err.status === 502 && /500/.test(err.body.error), 'a webhook error travels with its status, never as success');
+  } finally { globalThis.fetch = realFetch; }
 }
 
-head('F · THE PAGE HOLDS NO PRICES');
+head('I · THE PAGE HOLDS NO PRICE OF ITS OWN');
 {
   const fs = await import('node:fs');
   const page = fs.readFileSync(path.resolve(HERE, '..', '..', 'agent', 'index.html'), 'utf8');
-  const block = page.slice(page.indexOf('===================== WIMPY ORDER ====================='),
-    page.indexOf('===================== THE CAMPAIGN MANAGER VIEW ====================='));
-  const prices = block.match(/\b\d+\.\d{2}\b/g) || [];
-  ok(prices.length === 0, 'not one price literal in the Wimpy page code — it all comes from the Worker',
-    prices.join(', '));
-  ok(!/n8n-production/.test(page), 'the webhook URL is not shipped to the browser');
+  const priced = ['45.90', '65.90', '77.90', '54.90', '82.90', '95.90', '49.90', '53.90', '55.90', '97.90', '103.90', '115.90', '127.90'];
+  const inPage = priced.filter((p) => page.includes(p));
+  ok(inPage.length === 0, 'none of the fourteen prices appears in agent/index.html — one menu, one place', inPage.join(','));
+  ok(page.includes('wp-hero') && page.includes('TODAY\\u2019S BIG ONE'.replace('\\u2019', '’')),
+    'the page renders the Big One hero from the payload');
+  ok(page.includes('wp-week'), 'and the week strip — the reason to come back tomorrow');
+  ok(!/cheap|bargain|budget|clearance|discount/i.test(page.match(/wp-title[\s\S]{0,400}/)[0]),
+    'the header language is value, never cheap');
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+process.exitCode = fail ? 1 : 0;

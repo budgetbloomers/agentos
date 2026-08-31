@@ -798,6 +798,25 @@ textarea.cc{font-weight:500;line-height:1.5;resize:vertical}
 .wp-who{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:11px 15px;margin-bottom:14px;box-shadow:var(--shadow)}
 .wp-who .k{font-size:10.5px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;color:var(--muted)}
 .wp-who .v{font-size:13.5px;font-weight:800;color:var(--ink);margin-left:7px}
+.wp-title{margin:2px 0 10px}
+.wp-title h2{font-size:19px;font-weight:900;letter-spacing:.2px;color:var(--ink);text-transform:uppercase}
+.wp-title .sub{display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:2px}
+.wp-hero{background:linear-gradient(135deg,#7f1d1d,#b91c1c);border-radius:var(--radius);padding:18px 20px;color:#fff;box-shadow:var(--shadow);margin-bottom:10px}
+.wp-hero.off{background:var(--card);color:var(--body);border:1px dashed var(--line);box-shadow:none}
+.wp-hero-day{font-size:11px;font-weight:900;letter-spacing:1.4px;opacity:.85}
+.wp-hero-name{font-size:24px;font-weight:900;letter-spacing:.2px;margin:4px 0 4px}
+.wp-hero-desc{font-size:12.5px;line-height:1.45;opacity:.92;max-width:60ch}
+.wp-hero-row{display:flex;align-items:center;gap:14px;margin-top:12px}
+.wp-hero-price{font-size:22px;font-weight:900}
+.wp-hero .btn.primary{background:#fff;color:#7f1d1d;border-color:#fff}
+.wp-week{display:flex;gap:6px;overflow-x:auto;margin-bottom:14px;padding-bottom:2px}
+.wp-day{flex:1;min-width:96px;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:7px 9px;display:flex;flex-direction:column;gap:1px}
+.wp-day.today{border-color:#b91c1c;box-shadow:0 0 0 1px #b91c1c inset}
+.wp-day .d{font-size:10px;font-weight:900;letter-spacing:1px;color:var(--muted);text-transform:uppercase}
+.wp-day.today .d{color:#b91c1c}
+.wp-day .n{font-size:11.5px;font-weight:800;color:var(--ink);line-height:1.2}
+.wp-day .p{font-size:11px;font-weight:700;color:var(--muted)}
+.wp-cat .ct{opacity:.55;font-weight:800}
 .wp-cats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
 .wp-cat{border:1px solid var(--line);background:#fff;color:var(--body);border-radius:20px;padding:8px 16px;font-size:12.5px;font-weight:700}
 .wp-cat.on{background:var(--blue);border-color:var(--blue);color:#fff}
@@ -3352,7 +3371,7 @@ function notReported(){
    blocked by the browser. Proxying is also how the Coaching Hub and the Help
    Center already work, and it keeps the webhook URL off 130 phones. */
 
-var WMENU=null, WCART=[], WCAT='sandwiches', WNOTE='', WEDIT=null, WSTATE='order', WERR='', WBUSY=false, WDONE=null, WOPEN=false;
+var WMENU=null, WCART=[], WCAT='breakfast', WNOTE='', WEDIT=null, WSTATE='order', WERR='', WBUSY=false, WDONE=null, WOPEN=false;
 
 function wZar(v){ return 'R'+Number(v||0).toFixed(2); }
 /* Money in cents until the last moment: adding a hundred floats is how a total
@@ -3385,8 +3404,38 @@ function wimpyPage(){
     +'<div><span class="k">Agent</span><span class="v">'+esc(D.name||'')+'</span></div>'
     +'<div><span class="k">CB Number</span><span class="v">'+esc(D.cb||'')+'</span></div></div>';
 
+  /* THE 3-3-3-1 HEADER (the weekday brief, 2026-08-31). The Big One is the
+     hero of the day and gets the strongest emphasis on the page; the week strip
+     underneath is the reason to come back tomorrow. Weekend: the nine core
+     choices stand and the hero slot trails Monday's feature instead. All of it
+     renders from the menu payload - the day, the item and the price are decided
+     by the Worker, never by this page's clock. */
+  var hero='';
+  if(WMENU.bigOne){
+    var bo=WMENU.bigOne;
+    hero='<div class="wp-hero"><div class="wp-hero-day">'+esc((bo.dayName||'').toUpperCase())+' · TODAY’S BIG ONE</div>'
+      +'<div class="wp-hero-name">'+esc(bo.name)+'</div>'
+      +'<div class="wp-hero-desc">'+esc(bo.description||'')+'</div>'
+      +'<div class="wp-hero-row"><span class="wp-hero-price">'+wZar(bo.basePrice)+'</span>'
+      +'<button class="btn primary" data-wadd="'+esc(bo.id)+'">Customise &amp; add</button></div></div>';
+  }else if(WMENU.weekend){
+    hero='<div class="wp-hero off"><div class="wp-hero-day">TODAY’S BIG ONE</div>'
+      +'<div class="wp-hero-name">Back Monday</div>'
+      +'<div class="wp-hero-desc">'+esc(WMENU.weekend.message||'')+' Monday’s feature: '
+      +esc(WMENU.weekend.next.name)+' — '+wZar(WMENU.weekend.next.basePrice)+'.</div></div>';
+  }
+  var week='';
+  if(WMENU.week&&WMENU.week.length){
+    week='<div class="wp-week">'+WMENU.week.map(function(w){
+      return '<div class="wp-day'+(w.today?' today':'')+'"><span class="d">'+esc(w.dayName.slice(0,3))+'</span>'
+        +'<span class="n">'+esc(w.name)+'</span><span class="p">'+wZar(w.basePrice)+'</span></div>';
+    }).join('')+'</div>';
+  }
+  var header='<div class="wp-title"><h2>'+esc(WMENU.title||'Weekday Value Menu')+'</h2>'
+    +'<span class="sub">3 breakfasts · 3 burgers · 3 toasteds · today’s Big One — made fresh</span></div>';
+
   var cats='<div class="wp-cats">'+(WMENU.categories||[]).map(function(c){
-    return '<button class="wp-cat'+(c.id===WCAT?' on':'')+'" data-wcat="'+esc(c.id)+'">'+esc(c.label)+'</button>';
+    return '<button class="wp-cat'+(c.id===WCAT?' on':'')+'" data-wcat="'+esc(c.id)+'">'+esc(c.label)+' <span class="ct">3</span></button>';
   }).join('')+'</div>';
 
   var grid='<div class="wp-grid">'+(WMENU.items||[]).filter(function(i){return i.category===WCAT;}).map(function(i){
@@ -3403,7 +3452,7 @@ function wimpyPage(){
       +'</div>';
   }).join('')+'</div>';
 
-  return who+'<div class="wp-wrap"><div>'+cats+grid+'<div class="wp-pad"></div></div>'+wCartHTML()+'</div>';
+  return who+header+hero+week+'<div class="wp-wrap"><div>'+cats+grid+'<div class="wp-pad"></div></div>'+wCartHTML()+'</div>';
 }
 
 function wCartHTML(){
