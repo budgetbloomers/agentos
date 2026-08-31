@@ -184,7 +184,10 @@ head('I · THE PAGE HOLDS NO PRICE OF ITS OWN');
 {
   const fs = await import('node:fs');
   const page = fs.readFileSync(path.resolve(HERE, '..', '..', 'agent', 'index.html'), 'utf8');
-  const priced = ['45.90', '65.90', '77.90', '54.90', '82.90', '95.90', '49.90', '53.90', '55.90', '97.90', '103.90', '115.90', '127.90'];
+  /* the pre-discount prices are Worker data too — a "was" typed into the page
+     would be exactly the kind of unbacked price claim this rule exists to stop */
+  const priced = ['45.90', '65.90', '77.90', '54.90', '82.90', '95.90', '49.90', '53.90', '55.90', '97.90', '103.90', '115.90', '127.90',
+    '57.90', '68.90', '75.90', '80.90', '84.90', '119.90', '129.90', '144.90', '149.90', '159.90'];
   const inPage = priced.filter((p) => page.includes(p));
   ok(inPage.length === 0, 'none of the fourteen prices appears in agent/index.html — one menu, one place', inPage.join(','));
   ok(page.includes('wp-hero') && page.includes('TODAY\\u2019S BIG ONE'.replace('\\u2019', '’')),
@@ -194,64 +197,106 @@ head('I · THE PAGE HOLDS NO PRICE OF ITS OWN');
     'the header language is value, never cheap');
 }
 
-head('J · THE OPERATING MODEL IS COMPUTED FROM THE MENU, NOT WRITTEN BESIDE IT');
+head('J · THE REAL PRICE, AND THE SAVING');
 {
-  const { wimpyModel } = await import(W);
-  const M = wimpyModel();
-  ok(M.matrix.length === 14 && M.ingredients.length === 13, 'the matrix covers all 14 builds over the 13 ingredients');
-  /* the model MUST agree with the menu it describes */
-  const cheese = M.cost.find((x) => x.id === 'cheese_burger');
-  ok(cheese && cheese.price === 54.90 && Math.abs(cheese.cost - 25.10) < 0.005,
-    'the Cheese Burger costing recomputes from ING exactly (R25.10 on stated assumptions)', cheese && cheese.cost);
-  ok(cheese.band === 'weak' && /100 g/.test(cheese.flag),
-    'its weak margin is FLAGGED with the lever, price untouched');
-  const bbc = M.cost.find((x) => x.id === 'big_bacon_cheese');
-  ok(bbc.band === 'weak' && /re-cost/.test(bbc.flag), 'Big Bacon & Cheese carries the other flag');
-  ok(M.cost.filter((x) => x.band === 'weak').length === 2, 'exactly two weak flags — no silent third');
-  ok(M.blendedFoodCostPct === 36.5, 'blended food cost 36.5% on the stated assumptions', M.blendedFoodCostPct);
-  ok(/ESTIMATES/.test(M.assumptions) && /recomputes/.test(M.assumptions),
-    'the assumptions say they are estimates and where to change them');
-  ok(M.overlap.singleUse.length === 0, 'the model reports zero single-use ingredients');
-  const times = M.speed.map((x) => x.estMin);
-  ok(times.every((t, i) => i === 0 || t >= times[i - 1]), 'the speed ranking is fastest → slowest');
-  ok(M.speed[0].id === 'toasted_cheese_tomato' && M.speed[13].id === 'fully_loaded_dagwood',
-    'toasteds head it, the Friday stack ends it');
-  ok(M.wastage.filter((x) => x.risk === 'MEDIUM').map((x) => x.id).sort().join(',') === 'banger,chicken_mayo',
-    'wastage: banger and chicken mayo are the only MEDIUM lines, each with a burn-down day',
-    JSON.stringify(M.wastage.filter((x) => x.risk === 'MEDIUM').map((x) => x.id)));
-  ok(M.strategy.length === 5 && M.verdict.length === 10, 'five-day strategy and a ten-point verdict');
+  const all = ALL_ITEMS;
+  ok(all.every((i) => i.wasPrice > i.basePrice),
+    'every one of the fourteen carries a pre-discount price above what it sells for',
+    all.filter((i) => !(i.wasPrice > i.basePrice)).map((i) => i.name).join(','));
+
+  /* The four Nick actually gave a Wimpy price for, in the first brief. These are
+     the only ones claiming a real till price, and they must match it exactly. */
+  const SUPPLIED = { toasted_cheese_tomato: 75.90, toasted_chicken_mayo: 80.90,
+    toasted_bacon_egg: 84.90, dagwood: 149.90 };
+  for (const [id, was] of Object.entries(SUPPLIED)) {
+    const d = all.find((i) => i.id === id);
+    ok(d.wasPrice === was, d.name + ' is struck through at its SUPPLIED list price R' + was.toFixed(2), d.wasPrice);
+  }
+
+  /* Everything else is the brief's own "~20% off, rounded clean" rule run
+     backwards. It must land in a tight band — a derived figure that drifted to
+     "save 31%" would be a claim nobody can stand behind. */
+  const derived = all.filter((i) => !SUPPLIED[i.id]);
+  ok(derived.length === 10, 'ten items carry a derived pre-discount price', derived.length);
+  for (const d of derived) {
+    const save = (1 - d.basePrice / d.wasPrice) * 100;
+    ok(save >= 19.5 && save <= 21, d.name + ' derives to save ' + save.toFixed(1) + '% — inside the brief’s 20% rule',
+      save.toFixed(2));
+  }
+  /* the supplied four are a DEEPER cut, and that is shown honestly rather than
+     flattened to look like the rest */
+  for (const id of Object.keys(SUPPLIED)) {
+    const d = all.find((i) => i.id === id);
+    const save = (1 - d.basePrice / d.wasPrice) * 100;
+    ok(save > 30, d.name + ' shows its true deeper cut (' + save.toFixed(1) + '%), not a uniform 20%');
+  }
+  ok(!all.some((i) => i.id === 'big_champion' && i.wasPrice === 124.90),
+    'the old single-patty Champion price is NOT reused for the two-patty Big Champion');
 }
 
-head('K · THE MODEL RENDERS INSIDE THE TAB');
+head('K · THE WEEK IS READABLE, AND STILL NOT ORDERABLE');
 {
-  /* Load the real page in a real browser and run its renderer over the real
-     model payload — a string-builder bug (unclosed tag, bad key) shows here,
-     not on an agent’s phone. */
+  const m = wimpyMenu(TUE);
+  ok(m.week.every((w) => w.description && w.wasPrice > w.basePrice),
+    'every weekday in the strip carries its description and its real price — enough to read what is on');
+  ok(m.week.find((w) => w.day === 4).name === 'Big Champion',
+    'Thursday can be read from a Tuesday session');
+  /* readable is not orderable — the day lock is unchanged */
+  const r = priceOrder({ order: { items: [{ id: 'big_champion', quantity: 1 }] } }, TUE);
+  ok(!r.ok && /Big Champion is Thursday/.test(r.errors[0]),
+    'and reading Thursday still cannot buy it on a Tuesday', r.errors[0]);
+}
+
+head('L · THE OPERATING MODEL IS GONE FROM THE TAB');
+{
+  const fs0 = await import('node:fs');
+  const pageSrc = fs0.readFileSync(path.resolve(HERE, '..', '..', 'agent', 'index.html'), 'utf8');
+  for (const gone of ['data-wsub', 'wModelHTML', 'wLoadModel', 'wm-sec', 'Ingredient matrix'])
+    ok(pageSrc.indexOf(gone) < 0, 'the tab no longer carries ' + gone);
+  const worker = fs0.readFileSync(path.resolve(HERE, '..', '..', 'worker', 'src', 'index.mjs'), 'utf8');
+  ok(worker.indexOf('wimpy/model') < 0, 'and the Worker no longer serves /api/portal/wimpy/model');
+  const portal = fs0.readFileSync(path.resolve(HERE, '..', '..', 'worker', 'src', 'portal.mjs'), 'utf8');
+  ok(portal.indexOf('wimpy/model') < 0, '...nor allows it');
+}
+
+head('M · THE TAB RENDERS THE PRICES AND THE WEEK');
+{
+  /* The real page, in a real browser, over the real menu payload — a broken
+     string builder shows here rather than on an agent’s phone. */
   const fs2 = await import('node:fs');
   const http = await import('node:http');
   const { pathToFileURL } = await import('node:url');
   const { chromium } = await import(pathToFileURL(path.join(HERE, 'node_modules', 'playwright', 'index.mjs')).href);
-  const { wimpyModel } = await import(W);
   const pageSrc = fs2.readFileSync(path.resolve(HERE, '..', '..', 'agent', 'index.html'), 'utf8');
-  ok(/data-wsub="model"/.test(pageSrc), 'the tab offers the Order / Operating model toggle');
   const srv = http.createServer((q, r) => { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end(pageSrc); });
-  await new Promise((r) => srv.listen(8297, '127.0.0.1', r));
+  await new Promise((r) => srv.listen(8298, '127.0.0.1', r));
   const b = await chromium.launch();
   try {
     const pg = await b.newPage();
     const errs = [];
     pg.on('pageerror', (e) => errs.push(String(e)));
-    await pg.goto('http://127.0.0.1:8297/', { waitUntil: 'domcontentloaded' });
-    const html = await pg.evaluate((model) => {
-      window.WMODEL = model;
-      return wModelHTML();
-    }, wimpyModel());
-    ok(errs.length === 0, 'the page booted with no errors', errs[0]);
-    for (const mark of ['B · Ingredient matrix', 'C · Ingredient overlap', 'D · Kitchen prep',
-      'E · Food cost model', 'F · Wastage risk', 'Stock complexity', 'G · The Daily Big One strategy', 'H · The verdict'])
-      ok(html.indexOf(mark) >= 0, 'renders “' + mark + '”');
-    ok(html.indexOf('36.5%') >= 0 && html.indexOf('R25.10') >= 0, 'the computed numbers reach the screen');
-    ok((html.match(/<div/g) || []).length === (html.match(/<\/div>/g) || []).length, 'every div is closed');
+    await pg.goto('http://127.0.0.1:8298/', { waitUntil: 'domcontentloaded' });
+    const out = await pg.evaluate((menu) => {
+      window.WMENU = menu; window.D = { name: 'Test Agent', cb: 'CB999' };
+      window.WDAY = null;
+      const shut = wimpyPage();
+      window.WDAY = 4;                       // read Thursday from a Tuesday session
+      const open = wimpyPage();
+      return { shut, open };
+    }, wimpyMenu(TUE));
+    ok(errs.length === 0, 'the page renders with no errors', errs[0]);
+    ok(/<s class="was">R149\.90<\/s>/.test(out.shut), 'the hero strikes through the real price');
+    ok(/save 3[0-9]%/.test(out.shut), 'and badges the actual saving');
+    ok(/data-wday="4"/.test(out.shut) && /role="button"/.test(out.shut), 'each weekday is a real button');
+    ok(out.shut.indexOf('wp-peek') < 0, 'nothing is expanded until a day is tapped');
+    ok(out.open.indexOf('wp-peek') >= 0 && /THURSDAY’S BIG ONE/.test(out.open),
+      'tapping Thursday opens Thursday to read');
+    ok(/Two patties, a fried egg/.test(out.open), '...with what is actually in it');
+    ok(/Available Thursday/.test(out.open) && /today’s is the Dagwood/.test(out.open),
+      '...and says when it can be had, and what today’s is instead');
+    ok(out.open.indexOf('data-wadd="big_champion"') < 0,
+      'and offers NO add button for an off-day item — the Worker would refuse it anyway');
+    ok((out.open.match(/<div/g) || []).length === (out.open.match(/<\/div>/g) || []).length, 'every div is closed');
   } finally { await b.close(); srv.close(); }
 }
 

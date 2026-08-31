@@ -3,14 +3,37 @@
 **Status: LIVE in the Agent Analytics Wimpy tab, 31 Aug 2026.**
 The operational source is `worker/src/wimpy.mjs` — the menu, the prices, the
 ingredient matrix and the day rotation all live there and nowhere else; the
-page renders what the Worker serves. `diagnostics/verify-wimpy.mjs` (75
+page renders what the Worker serves. `diagnostics/verify-wimpy.mjs` (116
 checks) enforces this document's core claims as invariants: every price to the
 cent, exactly 3+3+3+1 per weekday, and **no ingredient used by fewer than two
 items** — the overlap principle is a failing test, not an aspiration.
 
+**THIS DOCUMENT IS THE OPERATING MODEL; THE TAB IS FOR ORDERING LUNCH.** The
+analysis below was briefly rendered inside the tab and Nick removed it the same
+day — an agent picking a breakfast has no use for a food-cost table. Sections
+B–H live here and are maintained here. Anything in them that must not drift
+(the prices, the 3+3+3+1 shape, zero single-use ingredients, the day rotation)
+is enforced by the test suite rather than by this file being read.
+
 Prices are the brief's, exactly (≈20% off Wimpy list, rounded clean). Where
 the costing found a margin problem it is **flagged below, not fixed by moving
 a selling price** (brief §5/§13).
+
+### The struck-through price on the card
+
+Each item shows its selling price with the pre-discount price struck through
+and its own saving badge. Two provenances, and the gap between them is real:
+
+| | Items | Saving shown |
+|---|---|---|
+| **SUPPLIED** — a real Wimpy list price Nick gave in the first Wimpy brief for the same build | the three toasteds, the Dagwood | **33–35%** |
+| **DERIVED** — `basePrice ÷ 0.8` rounded up to the next .90, i.e. the brief's own "~20% off, rounded clean" rule run backwards | the other ten | **20.0–20.7%** |
+
+The badge shows each item's **actual** saving rather than a uniform claim, so
+the four that were cut harder read as cut harder. A derived figure is never
+presented as a verified till price. **If the ten derived list prices can be
+replaced with real Wimpy prices, put them in `wasPrice` and the cards update —
+the test only requires a derived one to stay inside the 20% band.**
 
 ---
 
