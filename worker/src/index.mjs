@@ -310,7 +310,17 @@ export default {
     const origin = req.headers.get('origin') || '';
     const okOrigin = origin === 'https://chatterbox-agentos.pages.dev' || /^https:\/\/[a-z0-9-]+\.chatterbox-agentos\.pages\.dev$/.test(origin);
     const cors = okOrigin ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true', 'Vary': 'Origin' } : {};
-    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...cors, 'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Cbx-Client', 'Access-Control-Max-Age': '86400' } });
+    /* EVERY HEADER A CLIENT SENDS MUST BE NAMED HERE. Content-Encoding was not, and
+       PULSE's gzipped state save (28 Aug) set it — so for four days the browser refused
+       to send the request at all and the whole floor's uploads stopped reaching the
+       database, with "Cloud save failed (network)" as the only symptom. Content-Encoding
+       is not CORS-safelisted; nor are most custom headers. Anything a client adds to a
+       write belongs in this list, and diagnostics/verify-cors-headers.mjs fails if a
+       client starts sending one that is missing.
+       Note the cache: Access-Control-Max-Age keeps a browser on the previous answer for
+       24 hours, so widening this list cannot rescue a client already being refused —
+       the client must also stop sending the header. Both were done. */
+    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...cors, 'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Cbx-Client,Content-Encoding', 'Access-Control-Max-Age': '86400' } });
     const res = await this.handle(req, env, ctx);
     const h = new Headers(res.headers); for (const [k, v] of Object.entries(cors)) h.set(k, v);
     return new Response(res.body, { status: res.status, headers: h });

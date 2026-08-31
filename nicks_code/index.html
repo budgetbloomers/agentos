@@ -1300,14 +1300,38 @@ var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_tok
       `keep` (which is false for any real-sized state, since keepalive is capped near 64KB)
       meant the unload save issued NO REQUEST AT ALL. On that path we send the plain body
       immediately, exactly as before compression existed. */
+   /* NO Content-Encoding HEADER. THIS IS THE BUG THAT ATE FOUR DAYS OF UPLOADS
+      (Ashton, 31 Aug: "not correctly updating or saving to the database/cloud").
+      Content-Encoding is NOT a CORS-safelisted request header, so adding it makes the
+      browser demand that the preflight name it — and the Worker's OPTIONS reply allows
+      Content-Type, Authorization and X-Cbx-Client only. From the moment the gzip push
+      shipped on 28 August the browser refused to SEND this request at all: it never
+      reached the Worker, and the only trace was "Cloud save failed (network)". Every
+      other write in the suite kept working (the digest, the upload relay, the Ops state)
+      because none of them set the header, which is exactly why this looked like a PULSE
+      problem rather than a CORS one.
+      The header was never needed. The Worker decides gzip by the MAGIC BYTES (1f 8b) and
+      explicitly ignores Content-Encoding, because some edges decompress a request body
+      and some pass it through — so sniffing is the only reliable answer and the header
+      was decoration that cost the floor its uploads. Sending no header also stops any
+      proxy in between deciding to "help" by decompressing.
+      The allow-list was widened server-side too, but the fix has to be HERE: a preflight
+      is cached for 24 hours (Access-Control-Max-Age), so a browser that has already
+      cached the old reply would keep refusing for another day. Sending nothing new is
+      the only change that works against a cached preflight, immediately. */
    if(!kl&&typeof CompressionStream==='function'){
      return new Response(new Blob([b]).stream().pipeThrough(new CompressionStream('gzip'))).blob()
-       .then(function(gz){ hdr['Content-Encoding']='gzip';
-         return fetch(url,{method:'POST',headers:hdr,body:gz}); },
+       .then(function(gz){ return fetch(url,{method:'POST',headers:hdr,body:gz}); },
          function(){ return fetch(url,{method:'POST',headers:hdr,body:b}); });
    }
    return fetch(url,{method:'POST',headers:hdr,body:b,keepalive:keep});
- })().then(function(r){if(r&&r.ok){}else if(typeof toast==='function')toast('⚠ Cloud save failed ('+(r?r.status:'?')+') — data NOT in the database')}).catch(function(){if(typeof toast==='function')toast('⚠ Cloud save failed (network) — data NOT in the database')})}catch(e){}}
+ })().then(function(r){if(r&&r.ok){window.__vasSaveOk=Date.now();return}
+     if(typeof toast==='function')toast('⚠ Cloud save failed ('+(r?r.status:'?')+') — your upload is NOT in the database. Do not close this tab; re-upload after a refresh.',12000);})
+   .catch(function(){if(typeof toast==='function')toast('⚠ Cloud save failed (network) — your upload is NOT in the database. Check the connection, then refresh and upload again.',12000)})}
+ catch(e){ /* A THROW HERE USED TO VANISH. The outer try wraps the stringify, the gzip and
+     the fetch; swallowing it silently is the same failure mode as the 13-Aug Cuddle upload —
+     the app looks fine and the data is gone. Say it. */
+   if(typeof toast==='function')toast('⚠ Could not save to the database: '+((e&&e.message)||e)+' — your upload is NOT stored.',12000); }}
 window.addEventListener('pagehide',function(){try{clearTimeout(__cloudT);__cloudPush(true)}catch(e){}});
 /* SUPABASE IS THE STORE. localStorage is a same-device CACHE and nothing more — it caps at
    ~5MB, and a full month of uploads passed that long ago.
