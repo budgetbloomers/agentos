@@ -1,0 +1,166 @@
+{
+  "_schema": "chatterbox.source-keys",
+  "_version": "1.0",
+  "_generated": "2026-08-31 — measured against the live store, one source at a time",
+  "_what": "THE IDENTITY RULE OF EVERY UPLOADED SOURCE: the fields that make one row one fact. Ingest keeps ONE row per key; a later upload of the same key supersedes the earlier row instead of stacking beside it. This file is the record; each app inlines an operative copy as SOURCE_KEYS because both must run from file://, and diagnostics/verify-source-keys.mjs fails on drift between the three.",
+  "_why": "The rule already existed in three places and ran in one. migration-010-source-tables.sql encodes it as a PRIMARY KEY per table (eight of those tables have never received a row), PULSE states ViciDial's as `recordKey`, and the Ops upload station applies a supersede branch to exactly three sources. Everything else appended whatever arrived: the closed-case store held the same export seven times, 141 535 rows carrying 35 463 cases.",
+  "_measure_before_you_key": "EVERY KEY HERE WAS COUNTED AGAINST THE LIVE DATA, AND TWO OF THEM WERE WRONG UNTIL IT WAS. bi_active_cases dropped R128.69 of real premium before its key gained contract_number and charge_code (restored from backup within the minute); vici_call_report would have deleted 2 016 real calls had it been keyed on the day rather than the timestamp. A key is a claim about the world. Test it against the world, and read what you are about to delete BEFORE you delete it — rows that arrive together in one batch are distinct facts, not a re-upload.",
+  "sources": {
+    "AGENT_LIST": {
+      "key": [
+        "cb_norm"
+      ],
+      "keep": "last",
+      "sql": "agent_list (as_of, employee_code) — the table keeps every dated snapshot; the blob holds only the current one",
+      "note": "One row per agent. Measured, not assumed: the blob carries _d as null on every roster row (the list is a live snapshot the app replaces wholesale), so a date component keys nothing at all — keyed on (_d, cb_norm) all 123 rows came back unkeyable. The dated history lives in the agent_list TABLE, keyed (as_of, employee_code); this key is the blob's.",
+      "measured": {
+        "rows": 123,
+        "distinct": 123,
+        "duplicate_rows": 0
+      }
+    },
+    "ATTENDANCE": {
+      "key": [
+        "_d",
+        "employee_code"
+      ],
+      "keep": "last",
+      "sql": "attendance (attendance_date, employee_code)",
+      "note": "New file wins per employee-day — a month-to-date export followed by the full month must never double-count a day into the attendance denominators. Already enforced at ingest before this file existed.",
+      "measured": {
+        "rows": 16247,
+        "distinct": 16246,
+        "duplicate_rows": 1
+      }
+    },
+    "BI_ACTIVE_CASES": {
+      "key": [
+        "case_number",
+        "account_number",
+        "contract_number",
+        "charge_code",
+        "charge_amount",
+        "_d"
+      ],
+      "keep": "last",
+      "sql": "bi_active_cases — file-hash idempotency (migration-007)",
+      "note": "THE KEY THAT WAS WRONG, AND THE MONEY PROVED IT. Keyed on (case, account, charge, date) the backfill dropped 4 rows and R128.69 of REAL premium: case 21217153 carries three separate contracts at the same charge amount, and case 21194675 carries Homedrive R49 beside MyPanic Single R49 — two products, one price, one day. All four pairs arrived in ONE batch (B0065), which is the tell: rows that appear together in a single file are distinct facts, not a re-upload. The money model is Sum of Charge Amount per account, so every contract line is its own fact and contract_number plus charge_code belong in the key. Restored from backup the same minute; the store is back at 13 434 rows and R398 414.86.",
+      "measured": {
+        "rows": 13434,
+        "distinct": 13434,
+        "duplicate_rows": 0,
+        "note": "zero duplicates on the corrected key — the 4 the coarse key found were legitimate contract lines"
+      }
+    },
+    "QA_EVALUATIONS": {
+      "key": [
+        "record_id"
+      ],
+      "keep": "last",
+      "sql": "qa_evaluations (record_id)",
+      "note": "The Hub's own record id. A re-issued evaluation carries the same id and must replace, not join, its earlier copy.",
+      "measured": {
+        "rows": 6338,
+        "distinct": 6335,
+        "duplicate_rows": 3
+      }
+    },
+    "SF_OPEN_CASES": {
+      "key": [
+        "_d",
+        "case_number"
+      ],
+      "keep": "last",
+      "sql": "sf_open_cases (snapshot_date, case_number)",
+      "note": "A snapshot source: the lead book as at a moment. The station already replaces it wholesale, and it refuses an empty file so a frameset shell cannot wipe the book.",
+      "measured": {
+        "rows": 26086,
+        "distinct": 26086,
+        "duplicate_rows": 0
+      }
+    },
+    "SF_CLOSED_CASES": {
+      "key": [
+        "case_number"
+      ],
+      "keep": "last",
+      "sql": "sf_closed_cases (case_number, closed_at)",
+      "note": "A case closes once, so the case number IS the fact. Keyed on (case_number, closed_at) the count is the same to within one row — but a case whose closed_at is corrected by a later export would then keep BOTH rows, so the case number alone is the safer key. Later export wins: it carries the current status, disposition and age.",
+      "measured": {
+        "rows": 141535,
+        "distinct": 35463,
+        "duplicate_rows": 106072,
+        "note": "seven copies of one export — batches B0043-B0048 and B0071 are each exactly 17 446 rows"
+      }
+    },
+    "SF_INACTIVE": {
+      "key": [
+        "account_number",
+        "contract_number",
+        "deactivate_date"
+      ],
+      "keep": "last",
+      "sql": "sf_inactive (account_number, contract_number, deactivate_date)",
+      "note": "Cancellations — the source that decides which sales are counted net. 394 of the 400 duplicates are byte-identical rows; the remaining 6 differ only in fields the later export refreshes.",
+      "measured": {
+        "rows": 7064,
+        "distinct": 6664,
+        "duplicate_rows": 400
+      }
+    },
+    "VICI_CALL_REPORT": {
+      "key": [
+        "call_dt",
+        "user_cb",
+        "lead_id",
+        "status"
+      ],
+      "keep": "last",
+      "sql": "vici_calls (call_date, agent_login, lead_id, status) — call_date is a TIMESTAMPTZ, so the SQL key is correct",
+      "note": "THE KEY THAT NEARLY CHANGED. Keyed on the full timestamp every one of the 29 315 live rows is distinct and there is nothing to dedupe. Keyed on the DAY — which is how the blob's own _d field and PULSE's recordKey label both read at a glance — 2 016 rows collapse, and they are not duplicates: an agent ringing the same lead twice in a day with the same disposition made two calls, each with its own length_in_sec. Talk time is the SUM of that column and is a scored driver, so the coarse key would have deleted real minutes from real agents. The SQL had it right; the trap is at blob level, where the timestamp field is call_dt and NOT _d.",
+      "measured": {
+        "rows": 29315,
+        "distinct_on_this_key": 29315,
+        "duplicate_rows": 0,
+        "distinct_on_date_only_key": 27299
+      }
+    },
+    "CALLX_CALL_RECORDS": {
+      "key": [
+        "call_datetime",
+        "agent",
+        "destination_number",
+        "duration_seconds"
+      ],
+      "keep": "last",
+      "sql": "callx_calls (row_hash)",
+      "note": "No natural id in the export. These four fields are unique across all 63 735 live rows, and match what row_hash would hash. Nothing to dedupe today; the key exists so an overlapping re-export cannot stack.",
+      "measured": {
+        "rows": 63735,
+        "distinct": 63735,
+        "duplicate_rows": 0
+      }
+    },
+    "REFERRALS": {
+      "key": [
+        "contact_id"
+      ],
+      "keep": "last",
+      "sql": "referrals (contact_id)",
+      "note": "Pulled from HighLevel rather than uploaded. 530 of 2 567 rows carry no contact_id at all: they cannot be keyed, so they are KEPT and counted rather than dropped — an unkeyable row is a reporting problem, not a duplicate.",
+      "measured": {
+        "rows": 2567,
+        "distinct_keyed": 2037,
+        "duplicate_rows": 0,
+        "unkeyable_rows": 530
+      }
+    }
+  },
+  "session_sources": {
+    "_note": "SES_* intraday snapshot slots take the key of the source they snapshot. Checked against the stored rows rather than the slot name: SES_DIAL_* holds CALLX-shaped rows (call_datetime, destination_number, agent), NOT ViciDial ones — keyed as ViciDial every row was unkeyable. They never mix into daily analytics, so they are deduped for size alone.",
+    "SES_OPEN_0800": "SF_OPEN_CASES",
+    "SES_OPEN_1000": "SF_OPEN_CASES",
+    "SES_DIAL_0800": "CALLX_CALL_RECORDS",
+    "SES_DIAL_1000": "CALLX_CALL_RECORDS"
+  }
+}

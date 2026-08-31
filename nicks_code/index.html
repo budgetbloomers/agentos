@@ -1065,8 +1065,9 @@ const VARIANCE_RULES={
    it is absent, not zero, and scoring a missing upload as zero would punish the
    agent for someone else's late file.
 
-   signIn is NOT from the workbook: it is Nick's rule of 2026-08-28 and is marked
-   as such in the spec file so the next workbook issue can absorb it. */
+   The sign-in bonus was removed on 2026-08-31 (Nick: "remove the five points that the
+   agent gets for logging in"). The adjusted score is the composite less its deductions
+   and nothing else. */
 const COMPOSITE_RULES = {
   version:'nba-3.0+coaching-1.0',
   floor:0.5,                                   // rating_floor — attainment below which a driver pays nothing
@@ -1122,12 +1123,7 @@ const COMPOSITE_RULES = {
   cx:{windowDays:30, repeatMin:2, persistentMin:5, penRepeat:2, penPersistent:5, penCap:5, minConf:0.6, staleDays:14},
   combinedCap:15,
   bands:[{label:'Elite',min:90},{label:'Strong',min:80},{label:'On track',min:70},
-         {label:'Building',min:60},{label:'Needs support',min:0}],
-  /* NICK, 2026-08-28 — not a workbook rule. Up to 5 points for signing into Agent
-     Analytics, one per weekday, added AFTER the deductions rather than weighted as
-     an eighth driver: a weight would renormalise the other seven and move every
-     agent's score whether they ever sign in or not. */
-  signIn:{ points:5, perDay:1, weekdaysOnly:true, tzOffsetHours:2, appliesAfterDeductions:true, scoreCap:100 }
+         {label:'Building',min:60},{label:'Needs support',min:0}]
 };
 
 function freshState(){
@@ -3963,7 +3959,6 @@ const I={
   users:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   trophy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>',
   coach:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
-  compare:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M8 21H3v-5M21 3l-7.5 7.5M3 21l7.5-7.5"/></svg>',
   case:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>',
   db:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>',
   sliders:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>',
@@ -4279,17 +4274,6 @@ function perfScore(a){
    window is what makes the score coachable: month-to-date stops moving by the
    20th, so an agent who turns things around sees nothing happen. Days they were
    not scheduled are not counted against them. */
-/* NULL MEANS "WE HAVE NOT BEEN TOLD", AND IT IS NOT THE SAME AS ZERO.
-   Three states, and conflating the last two is the bug this guards against:
-     · the route has not answered            -> null, unmeasured for everyone
-     · the agent has no login provisioned    -> null, unmeasured for THEM
-     · the agent has a login and never used it -> [], a real and honest zero */
-function signInsFor(code){
-  const si=window.__signIns; if(!si||!si.days) return null;
-  const k=String(code||'').toUpperCase();
-  if(si.provisioned&&!si.provisioned.has(k)) return null;   // no account to sign in with
-  return si.days[k]||si.days[code]||[];
-}
 function compositeWindow(code){
   const rows=(M&&M.byAgentDay&&M.byAgentDay[code])||[];
   const worked=rows.filter(f=>f.act>0).sort((a,b)=>a.date.localeCompare(b.date));
@@ -4466,22 +4450,19 @@ function compositeFor(code, agent){
     why:'Coaching themes are inferred, not coach-chosen, so none are scored yet.'};
   const penTotal=Math.min(+R.combinedCap||15,(r2a.penalty||0)+(cx.points||0));
   const afterPen=Math.max(0,score-penTotal);
-  /* THE SIGN-IN BONUS (Nick, 2026-08-28). One point per weekday the agent signed
-     into Agent Analytics, up to 5, added AFTER the deductions. NULL, never zero,
-     when we have not been told — an agent with no login provisioned must not lose
-     five points for our provisioning backlog. */
-  const signInDays=signInsFor(code);
-  const siCap=+R.signIn.points||5;
-  const si=(signInDays==null)?null:Math.min(siCap,signInDays.length*(+R.signIn.perDay||1));
-  const adj=Math.round(Math.min(+R.signIn.scoreCap||100, afterPen+(si||0))*10)/10;
+  /* THE SIGN-IN BONUS IS GONE (Nick, 2026-08-31: "remove the five points that the agent
+     gets for logging in"). It ran from 2026-08-28: one point per weekday an agent opened
+     Agent Analytics, up to 5, added after the deductions. The adjusted score is now the
+     composite less its deductions and nothing else — a rating measures the work, not
+     whether the person looked at the page. Every agent carrying the bonus loses up to five
+     points at the next publish; nobody's drivers change. */
+  const adj=Math.round(afterPen*10)/10;
   const band=(R.bands.find(b=>adj>=b.min)||R.bands[R.bands.length-1]).label;
   const next=R.bands.slice().reverse().find(b=>b.min>adj);
   const sorted=parts.slice().sort((x,y)=>y.available-x.available);
   return {rated:win.length>0, score, adj, band, floor:Math.round(F*100),   // the bar changes shade where points start
     nextBand:next?{label:next.label,pointsAway:Math.round((next.min-adj)*10)/10}:null,
     penalty:r2a.penalty, r2a, cx, cxPenalty:cx.points, penaltyTotal:penTotal,
-    signIn:{days:signInDays==null?null:signInDays.length, points:si, cap:siCap,
-            measured:signInDays!=null},
     parts, weightScored:wsum,
     unmeasured:parts.filter(p=>!p.measured).map(p=>(R.drivers.find(d=>d.k===p.k)||{}).label||p.k),
     onTarget:parts.filter(p=>p.onTarget).length,
@@ -4977,7 +4958,6 @@ const NAV=[
     ['mtd','Month to Date',I.cal],
     ['weekly','Weekly Reports',I.week],
     ['daily','Daily Reports',I.day],
-    ['pivot','Sales Heatmap',I.grid],
     ['attend','Workforce',I.users],
     ['variance','Variance Report',I.scale],
     ['leads','Lead Management',I.db],
@@ -4986,7 +4966,6 @@ const NAV=[
     ['agents','Agent Performance',I.users],
     ['leaderboard','Leaderboards',I.trophy],
     ['coaching','Coaching',I.coach],
-    ['compare','Compare Agents',I.compare],
     ['manual','Manual',I.book],
   ]},
   {lab:'Operations',items:[
@@ -5520,47 +5499,6 @@ PAGES.coaching=()=>{
 };
 window.setCoach=(code,k,v)=>{ const st=(S.coach[M.periodKey]=S.coach[M.periodKey]||{}); (st[code]=st[code]||{})[k]=v; save(); };
 
-/* ---------- compare ---------- */
-PAGES.compare=()=>{
-  if(!M||!M.dates.length) return emptyState();
-  const list=filteredAgents();
-  const A=S.ui.cmpA&&list.find(a=>a.code===S.ui.cmpA)?S.ui.cmpA:(list[0]||{}).code;
-  const B=S.ui.cmpB&&list.find(a=>a.code===S.ui.cmpB)?S.ui.cmpB:(list[1]||{}).code;
-  const sel=(id,cur)=>`<select class="btn" onchange="S.ui.${id}=this.value;save();renderPage()">${list.map(a=>`<option value="${a.code}" ${a.code===cur?'selected':''}>${esc(a.name)} (${a.code})</option>`).join('')}</select>`;
-  if(!A||!B) return emptyState();
-  const ga=primaryAgg(A)||{}, gb=primaryAgg(B)||{};
-  const na=(M.agents.find(x=>x.code===A)||{}).name, nb=(M.agents.find(x=>x.code===B)||{}).name;
-  const spdMax=Math.max(ga.spd||0,gb.spd||0)||1, gwpMax=Math.max(ga.aveG||0,gb.aveG||0)||1;
-  const axes=[
-    {key:'pctT',label:'% Target',fmt:v=>fmtPct(v)},
-    {key:'qa',label:'QA',fmt:v=>v!=null?fmtPct(v,0):'–'},
-    {key:'att',label:'Attendance',fmt:v=>fmtPct(v)},
-    {key:'spd',label:'SPD',fmt:v=>fmtNum(v,2)},
-    {key:'aveG',label:'Ave GWP',fmt:v=>fmtR(v,0)},
-  ];
-  const mk=g=>({pctT:Math.min(1,(g.pctT||0)/1.25),qa:g.qa?g.qa.avg:0,att:g.att||0,optPct:Math.min(1,(g.optPct||0)/0.6),spd:(g.spd||0)/spdMax,aveG:(g.aveG||0)/gwpMax});
-  const raw=g=>({pctT:g.pctT,qa:g.qa?g.qa.avg:null,att:g.att,optPct:g.optPct,spd:g.spd,aveG:g.aveG});
-  const rows=[['GWP',fmtR(ga.gwp),fmtR(gb.gwp)],['Sales',fmtNum(ga.sales),fmtNum(gb.sales)],
-    ['% to Target',fmtPct(ga.pctT),fmtPct(gb.pctT)],['SPD',fmtNum(ga.spd,2),fmtNum(gb.spd,2)],
-    ['QA',ga.qa?fmtPct(ga.qa.avg,1):'–',gb.qa?fmtPct(gb.qa.avg,1):'–'],['Attendance',fmtPct(ga.att,1),fmtPct(gb.att,1)],
-    ['Calls',fmtNum(ga.calls),fmtNum(gb.calls)],
-    ['AHT',ga.aht?fmtDur(ga.aht):'–',gb.aht?fmtDur(gb.aht):'–'],['Score',Math.round(displayScore(A,ga)*100),Math.round(displayScore(B,gb)*100)]];
-  return `
-  <div class="page-head"><h2>Compare agents</h2><div class="spacer"></div>${sel('cmpA',A)}<span class="lab">vs</span>${sel('cmpB',B)}</div>
-  <div class="grid cols2e">
-    <div class="card"><div class="cardhead"><div><h3>Profile radar</h3><div class="sub">normalised to period bests</div></div></div>
-      ${radarChart(axes,[{name:na,color:'var(--cuddle)',norm:mk(ga),raw:raw(ga)},{name:nb,color:'var(--amber)',norm:mk(gb),raw:raw(gb)}],320)}</div>
-    <div class="card"><div class="cardhead"><div><h3>Head to head</h3></div></div>
-      <div class="tablewrap" style="max-height:none;border:none;background:none"><table class="data">
-      <thead><tr><th class="l">Metric</th><th>${esc(na)}</th><th>${esc(nb)}</th></tr></thead>
-      <tbody>${rows.map(r=>`<tr><td class="l">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}</tbody></table></div></div>
-  </div>
-  <div class="card mt"><div class="cardhead"><div><h3>Daily sales</h3></div></div>
-    ${lineChart(null,{dates:M.dates,series:[
-      {name:na,color:'var(--cuddle)',values:seriesBy(f=>f.sales,f=>f.code===A).values},
-      {name:nb,color:'var(--amber)',values:seriesBy(f=>f.sales,f=>f.code===B).values}]})}</div>`;
-};
-
 /* ---------- report tables (MTD / weekly / daily / pivot) ---------- */
 function aggCols(opts={}){
   if(opts.vt) return [
@@ -5851,28 +5789,6 @@ window.dailyStep=dir=>{
   save(); renderPage();
 };
 let dfT=null; window.dailyFQ=v=>{ clearTimeout(dfT); dfT=setTimeout(()=>dailyF('q',v),320); };
-
-PAGES.pivot=()=>{
-  if(!M||!M.facts.length) return emptyState();
-  const days=M.dates;
-  const rows=filteredAgents().map(a=>{
-    const per={}; let tot=0;
-    (M.byAgentDay[a.code]||[]).forEach(f=>{ if(!gFilter(f))return; per[f.date]=(per[f.date]||0)+f.sales; tot+=f.sales; });
-    return {a,per,tot};
-  }).sort((x,y)=>y.tot-x.tot);
-  const maxCell=Math.max(1,...rows.flatMap(r=>days.map(d=>r.per[d]||0)));
-  const heat=v=>{ if(!v) return ''; const t=Math.min(1,v/maxCell);
-    return `background:color-mix(in srgb, var(--accent) ${Math.round(10+t*55)}%, transparent);border-radius:6px;`; };
-  const head='<th class="l">Agent</th>'+days.map(d=>`<th>${d.slice(8)}/${d.slice(5,7)}</th>`).join('')+'<th>Total</th>';
-  const body=rows.map(r=>`<tr class="rowlink" onclick="openDrawer('${r.a.code}')"><td class="l"><span class="agentcell">${avatarOf(r.a.name,r.a.code)}<span class="nm">${esc(r.a.name)}<small>${r.a.code}</small></span></span></td>`+
-    days.map(d=>`<td><span style="display:inline-block;min-width:22px;${heat(r.per[d])}">${r.per[d]||''}</span></td>`).join('')+`<td><b>${r.tot}</b></td></tr>`).join('');
-  const colTot=days.map(d=>rows.reduce((s,r)=>s+(r.per[d]||0),0));
-  const foot=`<tr class="total"><td class="l">Grand Total</td>${colTot.map(v=>`<td>${v}</td>`).join('')}<td>${colTot.reduce((a,b)=>a+b,0)}</td></tr>`;
-  window.__exp={name:'pivot',cols:[{h:'Agent',f:r=>r.a.name},{h:'Code',f:r=>r.a.code},...days.map(d=>({h:d,f:r=>r.per[d]||0})),{h:'Total',f:r=>r.tot}],rows};
-  return `<div class="page-head"><h2>Sales heatmap</h2><div class="sub">sales per agent per day — darker is more</div>
-    <div class="spacer"></div><button class="btn small" onclick="exportCSV('pivot_${S.ui.month}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
-    <div class="tablewrap"><table class="data"><thead><tr>${head}</tr></thead><tbody>${body}${foot}</tbody></table></div>`;
-};
 
 PAGES.attend=()=>{
   if(!M||!M.facts.length) return emptyState();
@@ -6804,7 +6720,15 @@ window.__coachHubFill=function(){try{
         +kpi('ESCALATING',(repeat.length+persistent.length),persistent.length+' persistent · '+repeat.length+' repeat')
       +'</div>'
       +esc
-      +'<div style="margin-top:14px"><div class="sub" style="font-weight:700;letter-spacing:.4px">MOST COACHED DEVELOPMENT THEMES</div>'+rows+'</div>'
+      /* A HEADING OVER NOTHING IS WORSE THAN NO HEADING (2026-08-31). When no session in
+         the window carries a gap-family theme, `rows` is an empty string and this printed
+         "MOST COACHED DEVELOPMENT THEMES" above blank space — the reader is told a list
+         exists and then shown nothing. Either the list renders, or the block says why it
+         cannot: on this Hub every theme is inferred rather than coach-chosen, which is the
+         actual reason a theme list can come back empty. */
+      +(rows
+        ? '<div style="margin-top:14px"><div class="sub" style="font-weight:700;letter-spacing:.4px">MOST COACHED DEVELOPMENT THEMES</div>'+rows+'</div>'
+        : '<div class="sub" style="margin-top:14px;font-size:12px">No development theme has been recorded on a session in this window, so there is nothing to rank. A theme is only counted once someone picks one on the coaching form.</div>')
       +((T.unresolved||T.noTheme)?'<div class="sub" style="margin-top:10px;font-size:11.5px">'
         +(T.noTheme?'<b>'+T.noTheme+'</b> session'+(T.noTheme===1?'':'s')+' were filed with no development theme picked, so they count toward nothing. ':'')
         +(T.unresolved?T.unresolved+' could not be matched to a CB number, so they are attributed to nobody.':'')
@@ -7069,8 +6993,6 @@ function drawerHTML(code){
          "#1 in team" beside a score of 43 reads as a contradiction until you know the
          rank is on premium written, not on the rating. -->
     <span class="lab">Rank by GWP</span><span class="pill pmuted">#${rankTeam||'–'} in team</span><span class="pill pmuted">#${rankCo||'–'} company-wide</span>
-    <span class="spacer" style="flex:1"></span>
-    <button class="btn small" onclick="S.ui.cmpA='${code}';closeDrawer();go('compare')">${I.compare}<span>Compare</span></button>
   </div>
   <div class="card mt"><div class="cardhead"><div><h3>AI coaching analysis</h3><div class="sub">Llama · what is working & what to improve</div></div></div><div id="vasAI" style="font-size:13px;line-height:1.55;color:var(--ink2);min-height:36px">Analysing this agent…</div></div>
   <div class="card mt"><div class="cardhead"><div><h3>Coaching history</h3><div class="sub">last 90 days · from the Coaching Hub · only development themes escalate</div></div></div><div id="vasCoachHist" style="font-size:13px;line-height:1.55;color:var(--ink2);min-height:36px">Loading coaching…</div></div>
@@ -7307,7 +7229,6 @@ function exportReport(){
   { const keep=window.__exp;
     const TAB_SHEETS=[[PAGES.daily,'Daily Reports',dCols,M.facts.filter(gFilter)],
                       [PAGES.agents,'Agent Performance',null,null],
-                      [PAGES.pivot,'Sales Heatmap',null,null],
                       [PAGES.attend,'Workforce',null,null]];
     for(const [fn,label,fbCols,fbRows] of TAB_SHEETS){
       let done=false;
@@ -8068,33 +7989,12 @@ function agentDigestPayload(){
 (function(){
   var API='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
   var last='';
-  /* THE SIGN-IN BONUS NEEDS THE WORKER BEFORE THE PAYLOAD IS BUILT. Fetched here on
-     the same cadence as the push and parked on window.__signIns, which compositeFor()
-     reads. Until it answers, sign-in is UNMEASURED for everyone — never zero, because
-     an agent with no login provisioned must not lose five points for our provisioning
-     backlog, and neither must anyone if this route is down. */
-  function pullSignIns(range){
-    try{
-      var tk=sessionStorage.getItem('cbx_token'); if(!tk||!range) return Promise.resolve();
-      return fetch(API+'/api/agent-signins?from='+range.from+'&to='+range.to,
-          {headers:{'Authorization':'Bearer '+tk}})
-        .then(function(r){return r.ok?r.json():null})
-        .then(function(j){ if(j&&j.days) window.__signIns={days:j.days,from:j.from,to:j.to,
-             provisioned:j.provisioned?new Set(j.provisioned):null}; })
-        .catch(function(){});
-    }catch(e){ return Promise.resolve(); }
-  }
   function push(){
-    /* Pull the sign-ins BEFORE building, not alongside: firing them in parallel would
-       publish one digest with the bonus unmeasured and the next one with it counted,
-       so every agent's score would visibly jump ninety seconds after an upload. The
-       pull always resolves — a failure leaves sign-in unmeasured and the push goes
-       ahead, which is the honest outcome when the route is down. */
     try{
       var tk=sessionStorage.getItem('cbx_token'); if(!tk) return;
       if(!window.__vasHydrated) return;                       // still syncing — M may be partial
       if(!S||!(S.files||[]).length) return;                   // empty session must never overwrite
-      return pullSignIns(M&&M.range).then(send);
+      return send();
     }catch(e){}
   }
   function send(){

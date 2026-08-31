@@ -12,7 +12,7 @@
  *      (R99 value floor · 100% target · QA 90% · GWP target · conv 10% · talk 210 min · att 95%)
  *   3. the "points" cells equal the published scoreParts
  *   4. the two checks: value = aveG ≥ floor, volume = pctT ≥ 70% (the R4A line)
- *   5. session dots, result tiles (talk in MINUTES — the digest's tk is seconds ÷60) and the
+ *   5. session dots, the talk driver row (MINUTES — the digest's tk is seconds ÷60) and the
  *      sales-by-session rows equal the digest's day rows
  *   6. nothing renders NaN / undefined, and no page errors, for any agent
  *
@@ -80,10 +80,14 @@ async function renderFor(me, view) {
       pts: (r.innerText.match(/([\d.,]+)\s*\/\s*(\d+)\s*pts/) || null),
     }));
     const dots = Array.from(root.querySelectorAll('.pg-dot')).map(d => d.classList.contains('on'));
-    const tiles = Array.from(root.querySelectorAll('.pg-tile')).map(t => t.innerText.replace(/\s+/g, ' '));
+    /* The "your results over N sessions" tile card was removed on 2026-08-31, so the
+       seconds-vs-minutes guard moved to the Talk Time DRIVER row, which is where a talk
+       figure is now shown — and where a seconds value would read ~13 000, not ~220. */
+    const talkRow = (Array.from(root.querySelectorAll('.pg-row'))
+      .find(r => /Talk Time/i.test(r.innerText)) || {}).innerText || undefined;
     const rows = Array.from(root.querySelectorAll('table')).map(t => t.innerText);
     const checks = (root.innerText.match(/Check 1 · value:[^\n]*/) || [''])[0] + ' | ' + (root.innerText.match(/Check 2 · volume:[^\n]*/) || [''])[0];
-    return { text, score, chips, dots, tiles, rows: rows.join('\n'), checks };
+    return { text, score, chips, dots, talkRow, rows: rows.join('\n'), checks };
   }, { me, view, base: { period: digest.period, workingDays: digest.workingDays, diallingDays: digest.diallingDays, dates: digest.dates, comm: digest.comm, groups: digest.groups, team: '' },
        nbaRow: (nbaDig && (nbaDig.agents || []).find(x => String(x.cb).toUpperCase() === me.code)) || null, th: TH });
 }
@@ -157,22 +161,30 @@ for (const me of agents) {
 
   /* 4 — the two checks */
   if (me.aveG != null && me.pctT != null) {
-    const value = me.aveG >= FLOOR_EX, volume = me.pctT * 100 >= 70;
-    if (!(new RegExp('value:[^|]*— ' + (value ? 'pass' : 'fail'))).test(r.checks)) { checkBad++; ok('value check for ' + me.code, false, r.checks); }
-    if (!(new RegExp('volume:[^|]*— ' + (volume ? 'pass' : 'fail'))).test(r.checks)) { checkBad++; ok('volume check for ' + me.code, false, r.checks); }
+    /* CHECK 2 PASSES AT 100% — Chatterbox_Decision_Rules.xlsx, NBA_THRESHOLDS: "target_ach |
+       100 | % | Check 2 passes at or above this". This guard asserted 70, which is where R4A
+       FIRES, so the page and the team leader's table were held to two different lines for the
+       same check. The page never says "fail" to an agent — the second state is "to go". */
+    const VOL = (TH.targetAch || 100);
+    const value = me.aveG >= FLOOR_EX, volume = me.pctT * 100 >= VOL;
+    if (!(new RegExp('value:[^|]*— ' + (value ? 'pass' : 'to go'))).test(r.checks)) { checkBad++; ok('value check for ' + me.code, false, r.checks); }
+    if (!(new RegExp('volume:[^|]*— ' + (volume ? 'pass' : 'to go'))).test(r.checks)) { checkBad++; ok('volume check for ' + me.code, false, r.checks); }
   }
 
-  /* 5 — dots, talk tile and session rows come from the day rows */
+  /* 5 — dots, the talk driver row and session rows come from the day rows */
   const days = me.days || [];
   if (days.length) {
     const want = days.slice(-5).map(f => (f.act || 0) > 0);
     if (r.dots.length !== want.length || r.dots.some((v, i) => v !== want[i])) { dotBad++; ok('session dots for ' + me.code, false, JSON.stringify(r.dots) + ' vs ' + JSON.stringify(want)); }
-    const talkTile = r.tiles.find(t => /Talk time/.test(t));
-    if (talkTile) {
-      const last = days.slice(-7).map(f => (f.tk || 0) / 60);
-      const avg = last.reduce((m, x) => m + x, 0) / last.length;
-      const shown = parseFloat((talkTile.match(/([\d\u00A0\u202F.,]+)\s*min/) || ['', 'x'])[1].replace(/[\u00A0\u202F,]/g, ''));
-      if (!near(shown, avg, 1.1)) { talkBad++; ok('talk tile (minutes) for ' + me.code, false, shown + ' vs ' + Math.round(avg)); }
+    /* TALK IS MINUTES ON SCREEN, ALWAYS. The digest carries seconds (tk per day, talk per
+       month) and every surface divides by 60 before printing. The rating row is the one that
+       shows it now, and it must equal the figure PULSE published on the composite part. */
+    const tp = ((me.composite && me.composite.parts) || []).find(p => p.k === "talk");
+    if (tp && tp.measured && r.talkRow) {
+      const m = String(r.talkRow).match(/([0-9][0-9 .,]*)[ ]*min/);
+      const shown = m ? parseFloat(m[1].replace(/[^0-9.,]/g, "").replace(",", ".")) : NaN;
+      if (!(shown > 0 && shown < 1000)) { talkBad++; ok("talk reads minutes, not seconds, for " + me.code, false, String(r.talkRow).slice(0, 80)); }
+      else if (!near(shown, tp.value, 1.1)) { talkBad++; ok("talk row matches the published part for " + me.code, false, shown + " vs " + tp.value); }
     }
     const lastDay = days[days.length - 1];
     if (lastDay && !(r.rows.includes(lastDay.d))) { sessBad++; ok('sessions table carries the latest day for ' + me.code, false, lastDay.d + ' missing'); }
@@ -183,9 +195,9 @@ ok('every rating equals the published VAS score', scoreBad === 0); if (!scoreBad
 ok('published scoreParts sum back to the score', partsBad === 0); if (!partsBad) say('scoreParts sum back to the score for every agent — no formula drift');
 ok('driver chips follow the rule-book thresholds', chipBad === 0); if (!chipBad) say('driver chips follow R' + FLOOR_EX.toFixed(2) + ' ex-VAT (R' + TH.gwpFloor + ' incl) / 100% / QA ' + TH.qaTarget + '% / GWP target / att ' + TH.attTarget + '% exactly');
 ok('points cells equal the published parts', ptsBad === 0); if (!ptsBad) say('points cells equal the published parts (45/25/20)');
-ok('two checks follow the value floor and the 70% volume line', checkBad === 0); if (!checkBad) say('two checks follow aveG≥R' + FLOOR_EX.toFixed(2) + ' ex-VAT and pctT≥70%');
+ok('two checks follow the value floor and the published volume line', checkBad === 0); if (!checkBad) say('two checks follow aveG≥R' + FLOOR_EX.toFixed(2) + ' ex-VAT and pctT≥' + (TH.targetAch || 100) + '%');
 ok('session dots mirror the day rows', dotBad === 0); if (!dotBad) say('session dots mirror the day rows');
-ok('talk shows MINUTES (digest carries seconds)', talkBad === 0); if (!talkBad) say('talk tiles show minutes — the seconds bug stays dead');
+ok('talk shows MINUTES (digest carries seconds)', talkBad === 0); if (!talkBad) say('the talk driver row shows minutes and matches the published part — the seconds bug stays dead');
 ok('sessions table carries the latest day', sessBad === 0); if (!sessBad) say('sessions table carries each agent\'s latest day');
 ok('no NaN/undefined for any agent', nanBad === 0); if (!nanBad) say('no NaN/undefined on screen for any of the ' + agents.length + ' agents');
 /* ---- the TODAY tab: the daily briefing renders clean for every agent ---- */

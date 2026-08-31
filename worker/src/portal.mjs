@@ -18,7 +18,7 @@
  * calculation is written twice.
  */
 
-import { getCoaching, rollUp, sessionsForAgent, withinWindow } from './coaching.mjs';
+import { getCoaching, rollUp, sessionsForAgent, withinWindow, CX_RULES } from './coaching.mjs';
 import { campKey, cmOverviewBody } from './campaign.mjs';
 
 export const PORTAL_ROLES = new Set(['agent', 'team_leader', 'campaign_manager']);
@@ -273,7 +273,10 @@ export async function coachingFor(env, DB, rows, opts = {}) {
        compliance review was computed over that lifetime set — while the agent's own drawer
        DID apply the window and quietly disagreed. One window, applied once, here. */
     const WINDOW_DAYS = 90;
-    const out = { fetchedAt: hub.fetchedAt, stale: !!hub.stale, windowDays: WINDOW_DAYS };
+    /* The coaching layer's own thresholds travel with the payload — the escalation window
+       (30 days), the repeat and persistent bands, and the staleness line (14 days) — so the
+       pages read the rule book instead of each keeping a copy of the numbers. */
+    const out = { fetchedAt: hub.fetchedAt, stale: !!hub.stale, windowDays: WINDOW_DAYS, cx: CX_RULES };
     const windowed = withinWindow(hub.sessions, WINDOW_DAYS);
     if (hub.stale) out.staleSince = hub.staleSince;
     /* A PARTIAL PULL MUST NOT READ AS A QUIET MONTH. If some of the Hub's
@@ -362,7 +365,14 @@ function teamTotals(rows) {
        Exp desk and flatters or punishes a team for its mix. */
     pctT: target ? Math.round((sales / target) * 10000) / 10000 : null,
     aveG: sales ? Math.round((gwpEx / sales) * 100) / 100 : null,
-    att: avgOf('att') == null ? null : Math.round(avgOf('att') * 10000) / 10000,
+    /* ATTENDANCE IS SHIFTS OVER SHIFTS, NOT A MEAN OF PERCENTAGES — specs/mtd_engine_rules
+       .json, tl_mtd_construction: "% Of Attendance = Total Actual Shifts / Total Employed
+       Shifts". Averaging each agent's own percentage weights a two-day starter the same as
+       a full-month desk, and it disagreed with the Grand Total row on this app's own Month
+       to date tab, which has always summed. QA below stays a mean of agent means because
+       the same rule book says so ("AVERAGE of agent QA scores, excluding No QA %"). */
+    att: (() => { const emp = sum('emp'), act = sum('act');
+      return emp ? Math.round((act / emp) * 10000) / 10000 : null; })(),
     qa: avgOf('qa') == null ? null : Math.round(avgOf('qa') * 10000) / 10000,
     ref: sum('ref'),
     onTarget: cov.filter((r) => (r.pctT || 0) >= 1).length,

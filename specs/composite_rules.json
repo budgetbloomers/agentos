@@ -1,5 +1,12 @@
 {
   "_source": "Chatterbox_Decision_Rules.xlsx — DRIVERS, TENURE_GROUPS, THRESHOLDS, NBA_THRESHOLDS, R2A_TIERS, CX_THRESHOLDS, BANDS",
+  "_generated": "2026-08-31 — regenerated from the operative COMPOSITE_RULES in nicks_code/index.html",
+  "_calibration": {
+    "note": "THE WORKBOOK IS STALE ON TWO POINTS AND THIS FILE FOLLOWS THE APP UNTIL IT IS RE-ISSUED.",
+    "conversionTargets": "Chatterbox_Decision_Rules.xlsx TENURE_GROUPS still carries 8 / 10 / 12 / 40, which pre-date this engine holding any lead data and were never calibrated against sales divided by UNIQUE LEADS — the only conversion it can compute. Measured over the live floor before the change: not one agent in any group reached the old target, so the driver was a flat penalty rather than a measure, and the spec own open decision had already flagged the EXP-Cuddle 40% as unusable. Nick, 2026-08-30: reset to what the floor actually achieves. Medians when set: Courtesy 5.4, M1 2.2, M2 3.9, Cuddle 26.4, Nesting 1.5.",
+    "nestingGroup": "The workbook has no Nesting row. Sixteen live agents sat outside every group, so they carried no GWP floor and no conversion target and were measured as nothing rather than as failing.",
+    "action": "Re-issue Chatterbox_Decision_Rules.xlsx with these values so the workbook is the source again; diagnostics/verify-composite-score.mjs now fails if this file and the app diverge on tenure groups."
+  },
   "version": "nba-3.0+coaching-1.0",
   "floor": 0.5,
   "windowSessions": 5,
@@ -8,43 +15,50 @@
       "k": "gwpSale",
       "label": "Avg GWP per Sale",
       "w": 25,
-      "note": "What the average sale you write is worth to the business."
+      "note": "What the average sale you write is worth to the business.",
+      "appNote": "Check 1, scored independently of volume."
     },
     {
       "k": "targetAch",
       "label": "Target Achievement",
       "w": 20,
-      "note": "How close your daily sales come to your target."
+      "note": "How close your daily sales come to your target.",
+      "appNote": "Check 2, daily sales against the tenure target."
     },
     {
       "k": "qa",
       "label": "QA Score",
       "w": 20,
-      "note": "Your call quality score. A critical fail scores that call zero."
+      "note": "Your call quality score. A critical fail scores that call zero.",
+      "appNote": "Critical-fail calls are scored 0 and included."
     },
     {
       "k": "gwpTotal",
       "label": "Total GWP",
       "w": 15,
-      "note": "The total value you have written this period against your own target."
+      "note": "The total value you have written this period against your own target.",
+      "appNote": "Against the agent’s own period GWP target."
     },
     {
       "k": "conv",
       "label": "Conversion",
       "w": 10,
-      "note": "Out of every 100 leads you get, how many become a sale."
+      "note": "Out of every 100 leads you get, how many become a sale.",
+      "appNote": "Against the tenure conversion target."
     },
     {
       "k": "talk",
       "label": "Talk Time",
       "w": 5,
-      "note": "Minutes on the phone on the days you work."
+      "note": "Minutes on the phone on the days you work.",
+      "appNote": "Per attended day."
     },
     {
       "k": "attendance",
       "label": "Attendance",
       "w": 5,
-      "note": "Being here, on time, for the whole session."
+      "note": "Being here, on time, for the whole session.",
+      "appNote": "Enables call days."
     }
   ],
   "targets": {
@@ -61,7 +75,7 @@
       "campaign": "",
       "dailySales": 3,
       "minGwpSale": 99,
-      "convTarget": 8
+      "convTarget": 3
     },
     {
       "key": "m2",
@@ -70,7 +84,7 @@
       "campaign": "",
       "dailySales": 4,
       "minGwpSale": 99,
-      "convTarget": 10
+      "convTarget": 5
     },
     {
       "key": "exp_court",
@@ -79,7 +93,7 @@
       "campaign": "courtesy",
       "dailySales": 5,
       "minGwpSale": 99,
-      "convTarget": 12
+      "convTarget": 7
     },
     {
       "key": "exp_cudd",
@@ -88,9 +102,19 @@
       "campaign": "cuddle",
       "dailySales": 8,
       "minGwpSale": 99,
-      "convTarget": 40
+      "convTarget": 30
+    },
+    {
+      "key": "nesting",
+      "label": "Nesting",
+      "tenure": "",
+      "campaign": "nesting",
+      "dailySales": null,
+      "minGwpSale": 99,
+      "convTarget": 3
     }
   ],
+  "gwpFloorDefault": 99,
   "r2aTiers": [
     {
       "tier": "R2A-3",
@@ -171,14 +195,6 @@
       "min": 0
     }
   ],
-  "signIn": {
-    "_note": "NOT IN THE WORKBOOK. Nick, 2026-08-28: agents earn up to 5 points for signing into Agent Analytics, weekdays only. Add a SIGN_IN block to the decision-rules workbook when it is next issued, or this rule lives only here.",
-    "points": 5,
-    "perDay": 1,
-    "weekdaysOnly": true,
-    "timezone": "Africa/Johannesburg",
-    "appliesAfterDeductions": true,
-    "scoreCap": 100,
-    "unmeasuredWhenNoLogin": true
-  }
+  "_driver_notes": "note = the workbook DRIVERS tab plain_english column, which is what an agent is shown. appNote = the app internal shorthand, kept beside it rather than overwriting the workbook prose.",
+  "_removed_signIn": "THE SIGN-IN BONUS WAS REMOVED 2026-08-31 (Nick: \"remove the five points that the agent gets for logging in\"). It ran from 2026-08-28: one point per weekday an agent opened Agent Analytics, capped at 5, added AFTER the deductions and never weighted as an eighth driver. The adjusted score is now the composite less its deductions and nothing else. Nothing in the workbook ever carried it, so there is nothing to re-issue; this line is the record that it existed and why it went."
 }

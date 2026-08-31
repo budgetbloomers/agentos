@@ -58,7 +58,7 @@ OPS ANALYTICS TABS:
 - People: Team Leader View (TL leaderboard, dual-check fleet, coaching tables — NBA v3.0) · Workforce (attendance/availability) · Agent Performance (per-agent scorecard: productivity × quality × attendance) · Manual (how to read the analytics — content below).
 - Data: Upload Station (manual source uploads, validation, batch audit, exceptions) · Session Uploads (intraday snapshot slots 08:00/10:00/12:00/15:00/16:30) · Dictionary, Rules & Thresholds (every KPI definition, RAG threshold and rule — live-editable) · Training Guide (run the system in 20 min/week).
 
-VAS ANALYTICS TABS: Dashboard · Month to Date · Weekly Reports · Daily Reports · Sales Heatmap · Workforce · Agent Performance · Leaderboards · Coaching · Compare Agents · Manual · Open Cases · Upload Station · Adjustments · Settings.
+VAS ANALYTICS TABS: Dashboard · Month to Date · Weekly Reports · Daily Reports · Workforce · Agent Performance · Leaderboards · Coaching · Manual · Open Cases · Upload Station · Adjustments · Settings.
 
 TRACKER ANALYTICS (Matrix EOD Daily Tracker): manual end-of-day capture, one row per date — Employed HC, Present HC, Afrilead/JAG/VT Sales, Avg GWP, Agents-to-Target; Attendance % (present÷employed) and SPD (VT sales÷present) calculate automatically, with day-on-day movement columns. Entries are stored in the shared database and visible to every user. Tabs: Input · Daily Tracker.
 

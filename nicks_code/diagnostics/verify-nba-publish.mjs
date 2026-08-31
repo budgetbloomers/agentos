@@ -90,9 +90,17 @@ ok('the ladder row is complete', a.nba && a.nba.code && a.nba.label && a.nba.rea
 /* THE WINDOW — the whole point */
 const day = 86400000;
 const len = (f, t) => Math.round((Date.parse(t + 'T00:00:00Z') - Date.parse(f + 'T00:00:00Z')) / day) + 1;
-ok('the window is the period on screen, not the whole data range',
-  p.period.from === out.win.from && p.period.to === out.win.to,
-  JSON.stringify(p.period) + ' vs ' + JSON.stringify(out.win));
+/* THE WINDOW IS THE REPORTING MONTH, AND THE SCREEN CANNOT REACH IT (audit, 2026-08-31).
+   This used to assert the published window equalled the period ON SCREEN, which is exactly
+   how the live payload came to run 2025-10-01 to 2026-08-28 — 238 working days — while
+   passing every check: state.range is shared UI state, somebody had "all data" selected,
+   and the contract said that was correct. A Cuddle agent at 128% of target for August read
+   17.7% on it and was handed "start a PIP". The ladder is defined over a reporting period,
+   so the publisher decides the period. */
+ok('the window starts on the first of the month it reports',
+  /^\d{4}-\d{2}-01$/.test(p.period.from), p.period.from);
+ok('the window ends inside its own month',
+  p.period.to.slice(0, 7) === p.period.from.slice(0, 7), JSON.stringify(p.period));
 ok('the window is a month, not four years (' + len(p.period.from, p.period.to) + ' days)',
   len(p.period.from, p.period.to) <= 62, JSON.stringify(p.period));
 ok('working days are plausible for one period (' + p.workDays + ')', p.workDays > 0 && p.workDays <= 45,
@@ -106,6 +114,34 @@ ok('a critical fail is carried and tiered', crit && crit.r2a && crit.r2a.fails >
   JSON.stringify(crit && crit.r2a));
 ok('the "all data" sentinel never reaches the published window',
   p.period.from >= '2000-01-01', p.period.from + ' (raw window was ' + out.rawWin.from + ')');
+
+/* the screen's range is set to the whole data set — the published window must not move */
+const wide = await page.evaluate(() => {
+  state.range = { mode: 'all', from: null, to: null };
+  let written = null;
+  window.storage = Object.assign({}, window.storage, { set: (k, v) => { if (k === 'nba-digest') written = v; } });
+  window.__nbaPush();
+  return { payload: written ? JSON.parse(written) : null, screen: periodWindow() };
+});
+ok('"all data" on screen does not widen the published review',
+  !wide.payload || (wide.payload.period.from === p.period.from && wide.payload.period.to === p.period.to),
+  JSON.stringify(wide.payload && wide.payload.period) + ' while the screen showed ' + JSON.stringify(wide.screen));
+
+/* the contract the agent page and the team leader page read, field by field */
+ok('the two-check status is one of the four the readers know',
+  ['Both Pass', 'Value Issue', 'Volume Issue', 'Both Issues'].indexOf(a.twoCheck.status) >= 0,
+  String(a.twoCheck.status));
+ok('check 2 passes at the published target line, not at the R4A trigger',
+  p.thresholds.targetAch === 100 && p.agents.every(x => x.twoCheck.ta == null
+    || x.twoCheck.volume === (x.twoCheck.ta >= p.thresholds.targetAch)),
+  'targetAch ' + p.thresholds.targetAch);
+ok('the weakest driver carries the key the reader looks it up by',
+  p.agents.filter(x => x.driver).every(x => ['gwpSale', 'targetAch', 'qa', 'conv', 'talk', 'attendance'].indexOf(x.driver.key) >= 0),
+  JSON.stringify((p.agents.find(x => x.driver) || {}).driver));
+ok("the compliance tier carries its level and the rule book's words",
+  p.agents.every(x => x.r2a && x.r2a.tier && x.r2a.lvl != null
+    && ['Eligible', 'Retained', 'Blocked'].indexOf(x.r2a.elite) >= 0),
+  JSON.stringify(p.agents[0].r2a));
 ok('the composite is on the 0-100 scale', a.composite.adj == null || (a.composite.adj >= 0 && a.composite.adj <= 100),
   String(a.composite.adj));
 ok('an unchanged payload is not re-posted', await page.evaluate(() => {

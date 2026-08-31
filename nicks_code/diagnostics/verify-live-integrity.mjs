@@ -12,8 +12,8 @@ import http from 'node:http';
 
 const REPO = String.raw`c:\Users\aarav\OneDrive\Desktop\Chatterbox Agent OS\agentos`;
 const HTML = path.join(REPO, 'site', 'pulse', 'index.html');
-const TABS = ['dashboard', 'agents', 'leaderboard', 'coaching', 'compare', 'mtd', 'weekly', 'daily',
-  'pivot', 'attend', 'leads', 'variance', 'data', 'adjust', 'hubs', 'settings', 'manual'];
+const TABS = ['dashboard', 'agents', 'leaderboard', 'coaching', 'mtd', 'weekly', 'daily',
+  'attend', 'leads', 'variance', 'data', 'adjust', 'hubs', 'settings', 'manual'];
 let pass = 0, fail = 0; const failures = [];
 const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; failures.push(n + (d ? ' — ' + d : '')); console.log('  FAIL ' + n + ' — ' + d); } };
 

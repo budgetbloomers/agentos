@@ -134,7 +134,27 @@ export async function dailySnapshots(env, DB) {
   const sHdr = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
   const today = new Date(Date.now() + 2 * HOUR).toISOString().slice(0, 10);   // SAST, no DST
   const out = [];
-  for (const key of ['vas-state', 'cb-config']) {
+  /* THE FACT STORES ARE SNAPSHOT TOO (2026-08-31). The two state blobs were the only
+     things with a way back, and they are not where the uploaded source data lives: the nine
+     cb-facts-* objects are 142 MB whose only copy was the live object — the very set the
+     dedupe backfill rewrites. One cheap select finds the ones that actually changed today,
+     so a quiet day still costs a single query and no copies. Fourteen days of history each,
+     against thirty for the state blobs: they are larger, they change far less often, and a
+     fortnight is well past the point anyone notices a bad upload. */
+  const factKeys = [];
+  try {
+    /* SAST MIDNIGHT, EXPRESSED IN UTC. `today` is the SAST date (Date.now()+2h); pasting
+       'T00:00:00Z' onto it asks for 02:00 SAST, so a store written between midnight and 2am
+       fell before the cutoff all day and the next day's cutoff had already moved past it —
+       a nightly two-hour window whose uploads were never snapshotted. */
+    const since = new Date(Date.parse(today + 'T00:00:00Z') - 2 * HOUR).toISOString();
+    const changed = await DB.select(
+      `rules?key=like.${encodeURIComponent('kv:cb-facts-%')}&updated_at=gte.${since}&select=key`).catch(() => []);
+    for (const r of (changed || [])) factKeys.push(String(r.key).replace(/^kv:/, ''));
+  } catch { /* a failed lookup must not cost the state snapshots below */ }
+
+  for (const key of ['vas-state', 'cb-config', ...factKeys]) {
+    const keep = key.startsWith('cb-facts-') ? 14 : 30;
     const ptr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:' + key)}&select=updated_at`).catch(() => null);
     const upd = ptr && ptr[0] && ptr[0].updated_at;
     if (!upd || new Date(Date.parse(upd) + 2 * HOUR).toISOString().slice(0, 10) !== today) continue;
@@ -156,7 +176,7 @@ export async function dailySnapshots(env, DB) {
       body: JSON.stringify({ prefix: `kv-history/${key}/`, limit: 100, sortBy: { column: 'name', order: 'asc' } }) });
     if (list.ok) {
       const names = ((await list.json()) || []).map((o) => o.name).filter((n) => /\.json\.gz$/.test(n));
-      for (const n of names.slice(0, Math.max(0, names.length - 30)))
+      for (const n of names.slice(0, Math.max(0, names.length - keep)))
         await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv-history/${key}/${n}`, { method: 'DELETE', headers: sHdr });
     }
   }

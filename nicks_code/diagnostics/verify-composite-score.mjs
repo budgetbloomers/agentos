@@ -69,6 +69,19 @@ if (live.r2aCap !== spec.r2aCap) drift.push('r2aCap');
 spec.drivers.forEach(d => { const l = (live.drivers || []).find(x => x.k === d.k);
   if (!l) drift.push('driver ' + d.k + ' missing'); else if (l.w !== d.w) drift.push(d.k + ' weight ' + l.w + ' vs ' + d.w); });
 for (const k of Object.keys(spec.targets)) if (live.targets[k] !== spec.targets[k]) drift.push('target ' + k);
+/* THE TENURE GROUPS ARE HALF THE RULE BOOK AND WERE NEVER CHECKED (audit, 2026-08-31).
+   The conversion targets and the GWP floor live here, and the app and the spec had drifted
+   apart on every one of them — 8/10/12/40 in the file against 3/5/7/30 in the engine, with
+   a whole Nesting group in one and not the other — while this guard passed, because it only
+   ever compared weights, targets and penalties. Every driver an agent is scored on is now
+   covered. */
+if (live.gwpFloorDefault !== spec.gwpFloorDefault) drift.push('gwpFloorDefault');
+(spec.tenureGroups || []).forEach(g => { const l = (live.tenureGroups || []).find(x => x.key === g.key);
+  if (!l) { drift.push('tenure group ' + g.key + ' missing from the app'); return; }
+  if (l.convTarget !== g.convTarget) drift.push(g.key + ' convTarget ' + l.convTarget + ' vs ' + g.convTarget);
+  if (l.minGwpSale !== g.minGwpSale) drift.push(g.key + ' minGwpSale ' + l.minGwpSale + ' vs ' + g.minGwpSale); });
+(live.tenureGroups || []).forEach(l => { if (!(spec.tenureGroups || []).some(g => g.key === l.key))
+  drift.push('tenure group ' + l.key + ' missing from the spec'); });
 spec.r2aTiers.forEach(t => { const l = (live.r2aTiers || []).find(x => x.tier === t.tier);
   if (!l || l.penalty !== t.penalty) drift.push('r2a ' + t.tier); });
 for (const k of ['windowDays', 'repeatMin', 'persistentMin', 'penRepeat', 'penPersistent', 'penCap'])
@@ -95,7 +108,10 @@ const eng = await page.evaluate(() => {
     const score = Math.round(Math.min(100, wsum ? sum / wsum * 100 : 0) * 10) / 10;
     if (Math.abs(score - c.score) > 0.15) bad.recon.push(r.code + ' score ' + c.score + ' vs ' + score);
     if (c.r2a.penalty > 10 || c.cx.points > 5 || c.penaltyTotal > 15) bad.cap.push(r.code);
-    const want = Math.round(Math.min(100, Math.max(0, c.score - c.penaltyTotal) + (c.signIn.points || 0)) * 10) / 10;
+    /* No bonus term: the sign-in points were removed on 2026-08-31. adj is the composite
+       less its deductions and nothing else. */
+    const want = Math.round(Math.max(0, c.score - c.penaltyTotal) * 10) / 10;
+    if (c.signIn !== undefined) bad.recon.push(r.code + ' still publishes a signIn block');
     if (Math.abs(want - c.adj) > 0.15) bad.recon.push(r.code + ' adj ' + c.adj + ' vs ' + want);
     /* the window is worked sessions only, and never more than the rule allows */
     const worked = (M.byAgentDay[r.code] || []).filter(f => f.act > 0);
@@ -214,36 +230,28 @@ ok('one digest row per agent', dupes.digestRows.length === 0, dupes.digestRows.s
 ok('no file registered twice', dupes.files.length === 0, dupes.files.slice(0, 2).join(', '));
 ok('every scored agent is on the Agent List', dupes.orphanCodes.length === 0, dupes.orphanCodes.slice(0, 4).join(', '));
 
-/* ---- 3 · the sign-in bonus ---------------------------------------------------------- */
+/* ---- 3 · the sign-in bonus is GONE ---------------------------------------------------
+   Removed 2026-08-31 (Nick: "remove the five points that the agent gets for logging in").
+   It paid one point per weekday an agent opened Agent Analytics, capped at five, added
+   after the deductions. What replaces the four behaviour tests is one that matters more:
+   the engine must not award it, publish it, or read the feed that fed it — a stale copy of
+   any of the three would put points back on a score nobody can explain. */
 const si = await page.evaluate(() => {
-  const out = {};
-  const set = (days, prov) => { window.__signIns = { days, provisioned: prov ? new Set(prov) : null };
-    window.__mtd.rebuild(); };
   const code = (window.__mtd.digest().agents || [])[0].code;
-  const base = window.__mtd.composite(code);
-  set({}, null);                                   // route answered, no provisioned list
-  out.noSignIns = window.__mtd.composite(code).signIn;
-  set({ [code]: ['2026-08-24', '2026-08-25', '2026-08-26', '2026-08-27', '2026-08-20', '2026-08-21'] }, [code]);
-  const many = window.__mtd.composite(code);
-  out.capped = many.signIn;
-  out.adjWithBonus = many.adj; out.scoreOnly = many.score; out.ded = many.penaltyTotal;
-  set({}, ['CB000']);                              // provisioned list that excludes this agent
-  out.unprovisioned = window.__mtd.composite(code).signIn;
+  /* the old feed, re-seeded generously: six weekday sign-ins used to be worth the cap */
+  window.__signIns = { days: { [code]: ['2026-08-24', '2026-08-25', '2026-08-26',
+    '2026-08-27', '2026-08-20', '2026-08-21'] }, provisioned: new Set([code]) };
+  window.__mtd.rebuild();
+  const c = window.__mtd.composite(code);
   window.__signIns = null; window.__mtd.rebuild();
-  out.noRoute = window.__mtd.composite(code).signIn;
-  out.code = code; out.baseScore = base.score;
-  return out;
+  return { code, adj: c.adj, score: c.score, ded: c.penaltyTotal, signIn: c.signIn,
+    reader: typeof window.signInsFor };
 });
-ok('six weekday sign-ins pay the cap of five, not six', si.capped.points === 5, JSON.stringify(si.capped));
-ok('a provisioned agent who never signed in scores a real zero',
-  si.noSignIns.measured === true && si.noSignIns.points === 0, JSON.stringify(si.noSignIns));
-ok('an agent with no login provisioned is unmeasured, not zero',
-  si.unprovisioned.measured === false && si.unprovisioned.points === null, JSON.stringify(si.unprovisioned));
-ok('with the route down, nobody is charged for it',
-  si.noRoute.measured === false && si.noRoute.points === null, JSON.stringify(si.noRoute));
-ok('the bonus lands after the adjustments and inside the cap of 100',
-  si.adjWithBonus <= 100 && Math.abs(si.adjWithBonus - Math.min(100, Math.max(0, si.scoreOnly - si.ded) + 5)) < 0.15,
-  si.scoreOnly + ' − ' + si.ded + ' + 5 = ' + si.adjWithBonus);
+ok("a seeded sign-in feed adds nothing to the score",
+  Math.abs(si.adj - Math.max(0, si.score - si.ded)) < 0.15,
+  si.score + " − " + si.ded + " should be " + si.adj);
+ok("the composite no longer publishes a signIn block", si.signIn === undefined, JSON.stringify(si.signIn));
+ok("the reader of the retired feed is gone too", si.reader === "undefined", String(si.reader));
 ok('no page errors in the engine', errs.length === 0, errs.slice(0, 2).join(' | '));
 await b.close(); srv.close();
 
@@ -307,7 +315,7 @@ const view = await p2.evaluate(() => {
     /* SA formatting: num() renders 58.1 as "58,1", so the decimal separator is a comma */
     tally: (text.match(/Composite [\d.,]+[^=]*= [\d.,]+ out of 100/) || [''])[0],
     valueAndTarget: Array.from(rows).every(r => /of /.test(r.querySelector('.pg-v') ? r.querySelector('.pg-v').textContent : '')),
-    signInLine: /signed in on 4 weekdays/i.test(text) };
+    signInRow: /Signing in/i.test(text) };
 });
 ok('seven driver rows render', view.rowCount === 7, String(view.rowCount));
 ok('every row shows value and target', view.valueAndTarget);
@@ -318,9 +326,10 @@ ok('the floor caption appears once, under the rows', view.hasFloorCaption);
 ok('both adjustment ladders show, including the clear one', view.showsBothLadders);
 ok('each adjustment says how it clears', view.clearsBoth);
 ok('the word "penalty" never appears — it is an adjustment', !view.saysPenalty);
-ok('the tally line reconciles', /Composite 58[.,]1\s+−\s+2[.,]0 adjustment\s+\+\s+4 for signing in\s+=\s+56[.,]1 out of 100/
+ok('the tally line reconciles', /Composite 58[.,]1\s+−\s+2[.,]0 adjustment\s+=\s+56[.,]1 out of 100/
   .test(view.tally.replace(/\s+/g, ' ')), JSON.stringify(view.tally));
-ok('the sign-in row states the reason beside the points', view.signInLine);
+ok('the retired sign-in row is not rendered, even from a payload that still carries it',
+  view.signInRow === false, 'the panel still draws a Signing in row');
 /* ONE SCORE, ONE NAME — the month-to-date table must not print a second, different
    figure called "Score" beside the rating card. */
 const mtd = await p2.evaluate(() => {
@@ -334,24 +343,36 @@ ok('the month-to-date Score row shows the composite when it is published',
   mtd.missing || /56/.test(String(mtd.withC)), JSON.stringify(mtd));
 ok('and falls back to the published score when it is not',
   mtd.missing || /79/.test(String(mtd.without)), JSON.stringify(mtd));
-/* ---- a review measured over the wrong period may not raise an action on a person -- */
+/* ---- THE LADDER IS THE TEAM LEADER'S, AND ONLY OVER A SANE WINDOW ------------------
+   Two rules, and the first one changed on 2026-08-31. The ladder no longer renders on an
+   agent's OWN page at all: it is computed by the Ops engine, which counts a sale by ACCOUNT
+   over days present, while the rating beside it counts by CASE over employed shifts. For
+   CB70 that read 89,7% under a rating card saying 122,5%, and no window fix reconciles a
+   different numerator AND denominator. It still renders for a team leader drilling in
+   (D.__back), where it is a management instrument on a screen that carries its own window.
+   The second rule is unchanged: even for a team leader, a review measured over the wrong
+   period may not raise an action against a named person. */
 const nbaGuard = await p2.evaluate(() => {
   window.D = window.D || {};
-  const mk = (from, to) => { window.D.period = { from: '2026-08-01', to: '2026-08-31' };
+  const mk = (from, to, asTL) => { window.D.period = { from: '2026-08-01', to: '2026-08-31' };
+    window.D.__back = asTL ? { name: 'A Team Leader' } : null;
     window.D.nba = { updatedAt: '2026-08-24', period: { from, to },
       /* nbaBy() matches on `cb`, not `code` — the digest's own key for the CB number */
       agents: [{ cb: 'CB9', code: 'CB9', nba: { code: 'R2', lvl: 1, label: 'Critical QA Failure',
         reason: 'QA score 27,2% — below 80%.', action: 'QA intervention within 48 hrs' } }] };
-    return window.pgNBA(); };
-  const sane = mk('2026-08-01', '2026-08-31');
-  const wild = mk('2022-08-27', '2026-08-22');
-  return { saneShowsAction: /Critical QA Failure/.test(sane),
-    wildShowsAction: /Critical QA Failure/.test(wild),
-    wildExplains: /out of date/.test(wild) && /2022-08-27/.test(wild) };
+    const out = window.pgNBA(); window.D.__back = null; return out; };
+  const tlSane = mk('2026-08-01', '2026-08-31', true);
+  const tlWild = mk('2022-08-27', '2026-08-22', true);
+  const agentSane = mk('2026-08-01', '2026-08-31', false);
+  return { tlSaneShowsAction: /Critical QA Failure/.test(tlSane),
+    tlWildShowsAction: /Critical QA Failure/.test(tlWild),
+    tlWildExplains: /out of date/.test(tlWild) && /2022-08-27/.test(tlWild),
+    agentSeesNothing: String(agentSane || '').trim() === '' };
 });
-ok('a review over the reported month still raises its action', nbaGuard.saneShowsAction);
-ok('a four-year-wide review raises NO action on a named agent', nbaGuard.wildShowsAction === false);
-ok('and the agent is told why, with the window that was used', nbaGuard.wildExplains);
+ok('a team leader drilling in still gets the action over the reported month', nbaGuard.tlSaneShowsAction);
+ok('a four-year-wide review raises NO action on a named agent', nbaGuard.tlWildShowsAction === false);
+ok('and the reader is told why, with the window that was used', nbaGuard.tlWildExplains);
+ok("the agent own page carries no ladder at all — one screen, one engine", nbaGuard.agentSeesNothing);
 /* ---- the page must never print a raw driver key at an agent ------------------------ */
 const labels = await p2.evaluate(() => {
   const keys = ['gwpSale', 'targetAch', 'qa', 'gwpTotal', 'conv', 'talk', 'attendance'];
@@ -376,29 +397,44 @@ ok('no raw driver key reaches the screen, even with no dictionary',
   labels.rawKeys.length === 0, 'printed: ' + labels.rawKeys.join(', '));
 ok('conversion is shown even though it is not scored', labels.convShown, labels.text.slice(0, 160));
 
-/* ---- and shown even when the payload never carried it -------------------------------- */
+/* ---- CONVERSION IS SALES OVER UNIQUE LEADS, OR IT IS NOT SHOWN AT ALL ----------------
+   Until 2026-08-31 this page filled an unmeasured Conversion row with sales over dialler
+   CALLS — about a fifth of the real figure — under the label the rule book reserves for
+   sales over unique leads. The engine has always refused that substitution (compositeFor
+   publishes conv as null rather than send sales-per-call wearing conversion's name), and
+   the page now refuses it too: the lead count travels on every digest row, so the figure
+   is either computed from leads or the row says it is not measured. */
 const convLocal = await p2.evaluate(() => {
-  /* the shape the store holds TODAY: conv measured:false with no `shown` field at all */
   const parts = [{ k: 'conv', w: 10, value: null, target: 8, measured: false, att: null, points: 0, available: 0, onTarget: false },
     { k: 'qa', w: 20, value: 77.4, target: 90, measured: true, att: 86, points: 14.4, available: 5.6, onTarget: false }];
-  window.ME = { code: 'CB287', name: 'B', tl: 'D',
+  const base = { code: 'CB287', name: 'B', tl: 'D', sales: 12, leads: 150,
     days: [{ d: '2026-08-21', s: 1, c: 40 }, { d: '2026-08-27', s: 2, c: 45 },
-           { d: '2026-08-10', s: 9, c: 10 }],       // outside the window — must not count
+           { d: '2026-08-10', s: 9, c: 10 }],
     composite: { score: 55.4, adj: 53.4, band: 'Needs support', floor: 50, window: 5,
       windowFrom: '2026-08-21', windowTo: '2026-08-27', onTarget: 0, weightScored: 20,
       unmeasured: ['Conversion'], parts, weakest: null,
       r2a: { tier: 'Tier 0', penalty: 0, fails: 0, audited: 0, rateKnown: false },
       cx: { points: 0, tier: 'Not measured' }, penalty: 0, cxPenalty: 0, penaltyTotal: 0,
       signIn: { days: 0, points: 0, cap: 5, measured: true } } };
-  const el = document.createElement('div'); el.innerHTML = window.pgComposite();
-  const row = [...el.querySelectorAll('.pg-row')].map(r => r.textContent.replace(/\s+/g, ' '))
-    .find(r => /Conversion/.test(r)) || '';
-  return { row, hasFigure: /[\d]+[.,]\d%/.test(row), notScored: /shown, not scored/.test(row),
-    windowOnly: !/23[.,]/.test(row) };   // 12/95 = 3,2% in-window; all days would be 12,4%
+  const rowFor = (me) => { window.ME = me;
+    const el = document.createElement('div'); el.innerHTML = window.pgComposite();
+    return [...el.querySelectorAll('.pg-row')].map(r => r.textContent.replace(/\s+/g, ' '))
+      .find(r => /Conversion/.test(r)) || ''; };
+  const withLeads = rowFor(JSON.parse(JSON.stringify(base)));
+  const noLeads = rowFor(Object.assign(JSON.parse(JSON.stringify(base)), { leads: null }));
+  return { withLeads, noLeads,
+    onLeads: /8[.,]0%/.test(withLeads),
+    notPerCall: !/3[.,]2%/.test(withLeads) && !/12[.,]4%/.test(withLeads),
+    notScored: /shown, not scored/.test(withLeads),
+    /* the row still prints its TARGET ("of 8,0%"); what must be absent is a VALUE — the
+       dash is the whole point, so anchor on the label and the chip. */
+    blankWithoutLeads: /Conversion—/.test(noLeads) && /not measured/.test(noLeads) };
 });
-ok('conversion shows even when the digest never carried it', convLocal.hasFigure, convLocal.row);
-ok('and it is computed over the rating window, not the whole month', convLocal.windowOnly, convLocal.row);
-ok('it still says it is not scored', convLocal.notScored, convLocal.row);
+ok('conversion is shown from the lead count the digest carries', convLocal.onLeads, convLocal.withLeads);
+ok('and never from dialler calls', convLocal.notPerCall, convLocal.withLeads);
+ok('it still says it is not scored', convLocal.notScored, convLocal.withLeads);
+ok('with no lead count it reads not measured, not a call-based stand-in',
+  convLocal.blankWithoutLeads, convLocal.noLeads);
 ok('and it is labelled as shown rather than scored', labels.convNotScored);
 /* ---- the state pills must carry their state in colour, not only in the word -------- */
 const pills = await p2.evaluate(() => {

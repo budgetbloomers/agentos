@@ -272,24 +272,63 @@ export async function getCoaching(env, DB, { force = false } = {}) {
    on the coaching form. Do not "fix" it by scoring inferred rows — that would fire
    a Level 1 compliance review at a named person on the strength of a regex.
    --------------------------------------------------------------------------- */
-export function rollUp(sessions, minConf = 0.6) {
+/* THE COACHING LAYER'S OWN THRESHOLDS — Chatterbox_Coaching_Rules.json (schema
+   chatterbox.coaching-rules 1.0), the file the Coaching Hub's framework ships with.
+   The escalation window is THIRTY days, not the ninety the session record covers, and a
+   theme not raised for fourteen days is history rather than a live pattern — the rule
+   book says so in as many words: "Sessions older than this stay in the record but stop
+   escalating", "A theme not raised for longer than this is history, not a live pattern."
+   Both numbers were being ignored by the agent's own page, which counted over ninety days
+   and chipped anything seen three times as "Persistent". */
+const CX = { windowDays: 30, repeatMin: 2, persistentMin: 5, staleDays: 14, minConf: 0.6 };
+
+export function rollUp(sessions, minConf = CX.minConf, today = null) {
+  /* THE CONFIDENCE FLOOR IS READ FROM THE RULE BOOK, NOT COPIED BESIDE IT. This defaulted
+     to a literal 0.6 while CX.minConf sat next to it holding the same number and governing
+     nothing: raising the rule book's floor would have changed no behaviour and passed every
+     test. Same trap as MTD_VAT (non-negotiable 12) — one value, read once. */
   const isScored = (s) =>
     s.clusterSource && s.clusterSource !== 'inferred' &&
     (s.clusterConfidence == null || s.clusterConfidence >= minConf);
 
+  const now = today || new Date().toISOString().slice(0, 10);
+  const dayDiff = (d) => (!d ? null : Math.round((Date.parse(now) - Date.parse(d)) / 86400000));
+  const winFrom = new Date(Date.parse(now) - CX.windowDays * 86400000).toISOString().slice(0, 10);
+
   const themes = {};
   for (const s of sessions) {
     const scored = isScored(s);
+    const inWin = !s.date || String(s.date) >= winFrom;
     for (const c of s.clusters) {
       const t = themes[c.clusterKey] || (themes[c.clusterKey] =
-        { key: c.clusterKey, family: c.family, shown: 0, scored: 0, last: '' });
+        { key: c.clusterKey, family: c.family, shown: 0, scored: 0, win: 0, scoredWin: 0, last: '' });
       t.shown++;
       if (scored) t.scored++;
+      /* The window figures are what the tier is allowed to read. Everything else on the
+         row is the record, which is longer on purpose — an agent should be able to see a
+         theme they were coached on two months ago without it counting against them. */
+      if (inWin) { t.win++; if (scored) t.scoredWin++; }
       if (s.date > t.last) t.last = s.date;
     }
   }
-  return Object.values(themes).sort((a, b) => b.scored - a.scored || b.shown - a.shown);
+  for (const t of Object.values(themes)) {
+    t.daysSince = dayDiff(t.last);
+    /* STALE IS A STATE, NOT A DELETION. The theme keeps its place in the record; what it
+       loses is the right to be presented as something the agent is currently working on. */
+    t.stale = t.daysSince != null && t.daysSince > CX.staleDays;
+    /* THE TIER READS SCORED OCCURRENCES IN THE WINDOW, AND NOTHING ELSE. On this Hub every
+       classification is inferred, so scoredWin is 0 for everyone and no tier is earned —
+       which is the correct answer, not a gap. Chipping an inferred count as "Persistent"
+       told 97 agents they had a persistent problem that no rule in the book supports. */
+    t.tier = t.scoredWin >= CX.persistentMin ? 'Persistent'
+           : t.scoredWin >= CX.repeatMin ? 'Repeat' : '';
+  }
+  return Object.values(themes).sort((a, b) =>
+    b.scoredWin - a.scoredWin || b.win - a.win || b.scored - a.scored || b.shown - a.shown);
 }
+
+/** The thresholds, published so a page never hardcodes its own copy of them. */
+export const CX_RULES = CX;
 
 /** Only the sessions inside the stated window. The payload has always ADVERTISED
  *  "last 90 days" while every count behind it was lifetime (audit, 2026-08-28): an agent

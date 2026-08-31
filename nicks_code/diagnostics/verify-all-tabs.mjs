@@ -254,7 +254,7 @@ const wbook = await page.evaluate(async () => {
 if (wbook.skip) console.log('  --   workbook export skipped (XLSX not available)');
 else {
   ok('the workbook has one sheet per dashboard tab',
-    ['Daily Reports', 'Agent Performance', 'Sales Heatmap', 'Workforce'].every(n => wbook.names.includes(n)),
+    ['Daily Reports', 'Agent Performance', 'Workforce'].every(n => wbook.names.includes(n)),
     wbook.names.join(', '));
   ok('the Daily Reports sheet has EXACTLY the columns the Daily tab shows',
     JSON.stringify(wbook.dailyHdr) === JSON.stringify(wbook.screen),
@@ -302,7 +302,7 @@ ok('the page says these are separate apps, not VAS views',
    shows "-" rather than 0, which would read as "referred nobody today". */
 const optRef = await page.evaluate(async () => {
   const S = window.__mtd.state(); const hits = {};
-  for (const t of ['dashboard','mtd','weekly','daily','agents','leaderboard','coaching','compare']) {
+  for (const t of ['dashboard','mtd','weekly','daily','agents','leaderboard','coaching']) {
     S.ui.tab = t; renderPage();
     await new Promise(r => setTimeout(r, 800));
     const txt = document.getElementById('view').innerText || '';

@@ -1511,6 +1511,12 @@ function nbaMissingCard(){
     +'the management dashboard, which has not published them yet. Everything else on this page is unaffected — '
     +(n&&n.error?'it reported: '+esc(n.error):'ask Nick to open it once and this fills in on its own')+'.</p></div>';
 }
+/* THE STATUS STRINGS THE PUBLISHER ACTUALLY EMITS (audit, 2026-08-31). This page tested for
+   'On Target' — the words the Ops manual uses in prose — while the publisher has always
+   written 'Both Pass'. Nothing ever matched: the banner and the "agents reaching target"
+   card read 0 of N on every team every day, and every passing agent's pill rendered amber
+   beside it. Both spellings are accepted so an older payload still reads correctly. */
+function TWO_PASS(st){ return st==='Both Pass'||st==='On Target'; }
 function byDeadline(h){ return h==null?'—':(h<=24?'Within 24 hours':h<=48?'Within 48 hours':h<=72?'This week':'Within '+Math.round(h/24)+' days'); }
 
 /* ---- SCREEN 1 · MY TEAM — who needs you now ----
@@ -1548,6 +1554,22 @@ function pageMyTeam(){
     +'</div>';
 
   if(!list.length) return head+cards+nbaMissingCard();
+
+  /* THE SAME GUARD TEAM RESULTS HAS, ON THE SCREEN A TEAM LEADER ACTUALLY LANDS ON.
+     Found 2026-08-31: nbaWindowSane() suppressed the agent's own next best action and
+     warned on Team Results, but My Team — the triage list, the hero card, "do this" —
+     rendered a review computed over eleven months with nothing said. The publisher no
+     longer lets that window out; this is what says so if it ever does again. */
+  if(!nbaWindowSane()) return head+cards
+    +'<div class="card"><h3>This list is out of date</h3>'
+    +'<p class="why">The weekly review it is built from last ran over '
+    +esc((D.nba&&D.nba.period&&D.nba.period.from)||'?')+' to '
+    +esc((D.nba&&D.nba.period&&D.nba.period.to)||'?')+' — far wider than the month you are '
+    +'looking at, so the actions below would be measured over the wrong period. Your agents '
+    +'are not being shown next best actions from it either.</p>'
+    +'<p class="why">Everything on your Month to date, Weekly and Daily tabs is this month&rsquo;s '
+    +'real data and is unaffected. Ask Nick to open the management dashboard once and this '
+    +'refreshes on its own.</p></div>';
 
   /* The one at the top gets the full card — the ladder says it is the single
      most important thing this team leader can do next. Every OTHER row expands
@@ -1607,7 +1629,7 @@ function pageTeamResults(){
     +'<p class="why">Agents on target, the next best action for each, and what is coming off the score.</p></div>'
     +nbaMissingCard();
 
-  var onTarget=list.filter(function(a){return a.twoCheck.status==='On Target';}).length;
+  var onTarget=list.filter(function(a){return TWO_PASS(a.twoCheck.status);}).length;
   var th=(D.nba&&D.nba.thresholds)||{};
 
   var banner='<div class="banner">'+num(onTarget)+' of '+num(list.length)+' agents are on target. '
@@ -1652,12 +1674,13 @@ function pageTeamResults(){
   /* TWO-CHECK: value is checked BEFORE volume, and the wording says which. */
   var two='<div class="card"><h3>Two-Check status</h3>'
     +'<p class="why">Value is checked before volume. GWP per sale must clear R'+num(th.gwpFloor||99)
-    +' incl VAT (R'+num(gwpFloorEx(),2)+' ex — the basis the agents\' own pages show); sales must reach 100% of target.</p>'
+    +' incl VAT (R'+num(gwpFloorEx(),2)+' ex — the basis the agents\' own pages show); sales must reach '
+    +num(th.targetAch||100)+'% of target — the same line the agent sees on their own page.</p>'
     +'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Agent</th>'
     +'<th>Check 1 — value</th><th>Check 2 — volume</th><th>Status</th></tr></thead><tbody>'
     +list.map(function(a){
       var st=a.twoCheck.status;
-      var p=st==='On Target'?'g':st==='Both Issues'?'r':'a';
+      var p=TWO_PASS(st)?'g':st==='Both Issues'?'r':'a';
       return '<tr><td class="l">'+esc(a.name)+'</td>'
         +'<td class="num">'+(a.twoCheck.gwpSale==null?'—':'R'+num(a.twoCheck.gwpSale))+'</td>'
         +'<td class="num">'+(a.twoCheck.ta==null?'—':num(a.twoCheck.ta,1)+'%')+'</td>'
@@ -1675,7 +1698,7 @@ function pageTeamResults(){
       var t=a.r2a.tier||'Tier 0';
       return '<tr><td class="l">'+esc(a.name)+'</td>'
         +'<td class="num">'+num(a.r2a.fails)+'</td>'
-        +'<td class="num"><span class="pill '+(t==='Tier 0'?'n':(a.r2a.lvl===1?'r':'a'))+'">'+esc(t)+'</span></td>'
+        +'<td class="num"><span class="pill '+(t==='Tier 0'?'n':((a.r2a.lvl===1||t==='R2A-3')?'r':'a'))+'">'+esc(t)+'</span></td>'
         +'<td class="num">'+(a.composite.pen?'−'+num(a.composite.pen):'0')+'</td>'
         +'<td class="num"><span class="pill '+(a.r2a.elite==='Blocked'?'r':'g')+'">'+esc(a.r2a.elite)+'</span></td></tr>';
     }).join('')+'</tbody></table></div></div>';
@@ -4712,7 +4735,12 @@ function agentKpis(a,c){
     +(a.rankCo?'<div class="ac-box"><div class="v">#'+num(a.rankCo)+'</div><div class="k">OF '+num(a.nCo)+' ON FLOOR · BY GWP</div></div>':'')
     +'</div>';
 
-  var perDayTarget=(a.target&&DAYS())?a.target/DAYS():null;
+  /* THE AGENT'S OWN DAILY TARGET. Dividing the period target by the month's working days
+     answered a different question — Jolene read "target 7.6/day" against a tenure target of
+     8, because she was employed for 20 of the month's 21 weekdays. The engine builds the
+     period target as the daily target summed over the agent's own employed shifts, so those
+     shifts are what turns it back into a daily figure. */
+  var perDayTarget=(a.target&&a.emp)?a.target/a.emp:((a.target&&DAYS())?a.target/DAYS():null);
   var tiles='<div class="ac-tiles">'
     +acTile('TARGET ACHIEVED', a.pctT==null?'—':pct(a.pctT,0),
         num(a.spd,2)+' sales a day'+(perDayTarget?' · target '+num(perDayTarget,1)+'/day':''),
@@ -4848,7 +4876,69 @@ function pgHead(){
     +'<div class="sub2" style="margin-top:3px">'+esc(ME.code||'')+(ME.campaign?' · '+esc(ME.campaign):'')+(ME.tenure?' · '+esc(ME.tenure):'')+'</div></div>';
 }
 function pgPct(v,t){ return (v!=null&&t)?Math.max(3,Math.min(100,(v/t)*100)):0; }
-function pgTheme(k){ return String(k||'').replace(/[_-]+/g,' ').replace(/\b\w/g,function(m){return m.toUpperCase();}); }
+/* THE CLUSTER NAMES THE RULE BOOK GIVES THEM (Chatterbox_Coaching_Rules.json, families.*
+   .options[].cluster). The agent's page was printing the raw key — "Purpose.Quality
+   Compliance", "Gap.Objection Handling" — which is an internal identifier, not a name
+   anybody has been taught, and the page's own language rule forbids exactly that. All 38
+   clusters are defined in the rule book; nothing here is invented. */
+var COACH_CLUSTER={"purpose.quality_compliance":"Quality & Compliance","purpose.lead_management":"Lead Management","purpose.objection_handling":"Objection Handling","purpose.product_knowledge":"Product Knowledge","purpose.sales_performance":"Sales Performance","purpose.process_refresher":"Process Refresher","purpose.performance_check_in":"Performance Check-In","purpose.other_needs_review":"Other / Needs Review","gap.compliance_required_wording":"Compliance & Required Wording","gap.customer_verification":"Customer Verification","gap.product_knowledge":"Product Knowledge","gap.objection_handling":"Objection Handling","gap.pitch_value_creation":"Pitch & Value Creation","gap.communication_call_control":"Communication & Call Control","gap.customer_engagement_rapport":"Customer Engagement & Rapport","gap.lead_management":"Lead Management","gap.call_process_systems":"Call Process & Systems","gap.other_needs_review":"Other / Needs Review","commitment.follow_lead_process":"Follow Lead Process","commitment.use_required_wording":"Use Required Wording","commitment.verify_customer_details":"Verify Customer Details","commitment.improve_objection_handling":"Improve Objection Handling","commitment.strengthen_product_pitch":"Strengthen Product Pitch","commitment.improve_communication":"Improve Communication","commitment.build_customer_rapport":"Build Customer Rapport","commitment.follow_call_process":"Follow Call Process","commitment.apply_coaching_targets":"Apply Coaching & Targets","commitment.other_needs_review":"Other / Needs Review","support.call_review_monitoring":"Call Review & Monitoring","support.role_play_practice":"Role-Play Practice","support.objection_handling_training":"Objection Handling Training","support.product_pitch_training":"Product & Pitch Training","support.compliance_refresher":"Compliance Refresher","support.lead_process_training":"Lead Process Training","support.communication_coaching":"Communication Coaching","support.performance_follow_up":"Performance Follow-Up","support.mixed_coaching_support":"Mixed Coaching Support","support.other_needs_review":"Other / Needs Review"};
+/* families.*.label — what the column actually holds. "purpose" and "gap" are the rule
+   book's internal family keys and mean nothing to the person reading their own page. */
+var COACH_FAMILY={purpose:'Coaching purpose',gap:'Development area',commitment:'Agent commitment',support:'Support provided'};
+function pgTheme(k){ return COACH_CLUSTER[k]
+  || String(k||'').replace(/^[a-z]+\./,'').replace(/[_-]+/g,' ').replace(/\b\w/g,function(m){return m.toUpperCase();}); }
+function pgCoaching(){
+  var co=D.coaching, mine=null;
+  if(co&&co.agents)for(var i=0;i<co.agents.length;i++)if(co.agents[i].code===ME.code){mine=co.agents[i];break;}
+  if(!mine) return '';
+  /* The rule book's own numbers, published on the payload. Fallbacks match
+     Chatterbox_Coaching_Rules.json so an older payload still reads correctly. */
+  var CX=(co&&co.cx)||{}, STALE=CX.staleDays||14, WIN=CX.windowDays||30,
+      REPEAT=CX.repeatMin||2, PERSIST=CX.persistentMin||5;
+  var h='<div class="card"><h2>Your support and coaching</h2>';
+  if(co.stale)h+='<div class="note-done">The Coaching Hub has not answered since '+esc(String(co.staleSince||'').slice(0,10))+' — this list may be behind.</div>';
+  var daysAgo=mine.last?Math.round((Date.now()-new Date(mine.last+'T00:00:00Z').getTime())/86400000):null;
+  h+='<p class="why">'+num(mine.count)+' session'+(mine.count===1?'':'s')+' in the last 90 days'
+    +(mine.last?', the last one '+(daysAgo<=0?'today':num(daysAgo)+' day'+(daysAgo===1?'':'s')+' ago'):'')
+    +'. This is what was talked about — support, never a mark against you.</p>';
+  /* WHAT IS LIVE, AND WHAT IS HISTORY (Nick, 2026-08-31: "the latest data must always be
+     showing, stale data must be removed"). The rule book draws the line for us: a theme not
+     raised inside the staleness window "is history, not a live pattern". Those rows came off
+     this table — 147 of them across 54 agents on the day this was written, several last
+     raised over a month before. They are still in the record, and the line under the table
+     says how many, so nothing has been hidden — it simply is not presented as something the
+     agent is working on now. */
+  var all=(mine.themes||[]).slice();
+  var live=all.filter(function(t){ return !t.stale; });
+  var gone=all.length-live.length;
+  if(live.length){
+    h+='<div class="scroller"><table class="tbl"><thead><tr><th>What came up</th><th>Times</th><th>Area</th><th>Last raised</th></tr></thead><tbody>'
+      +live.map(function(t){
+        /* THE TIER IS THE RULE BOOK'S, AND IT READS COACH-CHOSEN OCCURRENCES INSIDE THE
+           WINDOW. This used to chip anything seen three times over ninety days as
+           "Persistent" — on inferred classifications, which the framework says are never
+           scored. It told 97 agents they had a persistent problem no rule supports. */
+        var tier=t.tier||'';
+        var chip=tier==='Persistent'
+          ? ' <span class="chip2" style="background:var(--red-soft);color:var(--red)"><i style="background:var(--red)"></i>Persistent</span>'
+          : tier==='Repeat'
+            ? ' <span class="chip2" style="background:var(--amber-soft);color:var(--amber)"><i style="background:var(--amber)"></i>Repeat</span>'
+            : '';
+        return '<tr><td class="l" style="white-space:nowrap"><b>'+esc(pgTheme(t.key))+'</b>'+chip+'</td>'
+          +'<td class="num">'+num(t.win!=null?t.win:t.shown)+'</td>'
+          +'<td class="l">'+esc(COACH_FAMILY[t.family]||t.family||'—')+'</td>'
+          +'<td class="num">'+esc(t.last||'—')+'</td></tr>';
+      }).join('')+'</tbody></table></div>'
+      +'<p class="why" style="margin-top:8px">Times counted over the last '+num(WIN)+' days. '
+      +'A theme is marked Repeat at '+num(REPEAT)+' and Persistent at '+num(PERSIST)+', and only when '
+      +'your coach picked it on the form — themes read out of session notes are shown here for '
+      +'context and never counted against you.</p>';
+  } else h+='<p class="why">Nothing has come up in the last '+num(STALE)+' days.</p>';
+  if(gone) h+='<p class="why" style="margin-top:6px">'+num(gone)+' earlier theme'+(gone===1?'':'s')
+    +' from your record '+(gone===1?'is':'are')+' not shown — nothing raised in the last '
+    +num(STALE)+' days, so '+(gone===1?'it is':'they are')+' history rather than something you are working on now.</p>';
+  h+='</div>'; return h;
+}
 /* THE DRIVER ROWS RUN ON VAS ANALYTICS (Nick, 2026-08-26: "the data must come from
    the vas analytics"). Every value is this month's digest figure — the same numbers
    the VAS dashboard shows — never the weekly review's snapshot, which is run on its
@@ -4863,10 +4953,29 @@ function pgTheme(k){ return String(k||'').replace(/[_-]+/g,' ').replace(/\b\w/g,
    "fail" here. The floor converts to ex-VAT in exactly one place. */
 function gwpFloorEx(){ var th=(D&&D.nba&&D.nba.thresholds)||{}; return (th.gwpFloor!=null?th.gwpFloor:99)/1.15; }
 function pgDrivers(){
+  /* THE DRIVERS ARE THE RATING'S OWN PARTS WHEREVER THERE IS A RATING.
+     Performance_Tab_View.json binds this section to c.parts, and for good reason: a second
+     table built from month figures against a second set of thresholds could — and did —
+     print one number for a driver while the rating card above printed another. Where a
+     composite exists its parts ARE these rows. The month-figure table below survives only
+     for an agent the composite cannot rate. */
+  var comp=ME.composite;
+  if(comp&&comp.rated&&comp.parts&&comp.parts.length){
+    var KEY={gwpSale:'gwpSale',targetAch:'ta',qa:'qa',gwpTotal:'gwp',conv:'conv',talk:'talk',attendance:'att'};
+    return comp.parts.map(function(p){
+      return {k:KEY[p.k]||p.k, l:cLabel(p), v:cFmt(p), t:cFmtT(p),
+        met:p.measured?p.onTarget:null,
+        pct:p.measured?Math.max(0,Math.min(100,p.att)):0,
+        pts:p.measured?{p:p.points,w:p.w}:null};
+    });
+  }
   var th=(D.nba&&D.nba.thresholds)||{}, sp=ME.scoreParts||null;
   var days=ME.days||[], sSum=0,cSum=0;
   for(var i=0;i<days.length;i++){ if((days[i].c||0)>0){ sSum+=days[i].s||0; cSum+=days[i].c; } }
-  var conv=cSum>0?(sSum/cSum)*100:null;                                  // month sales ÷ month calls, dialler-covered days only
+  /* CONVERSION IS SALES DIVIDED BY UNIQUE LEADS — the rule the Lead Management book states
+     and the only conversion this business has. This row used to divide by dialler calls,
+     which reads about a fifth of the real figure. leads travels on every digest row. */
+  var conv=(ME.leads&&ME.sales!=null)?(ME.sales/ME.leads)*100:null;   // sales / unique leads, month to date
   var talkDay=(ME.talk!=null&&ME.act>0)?(ME.talk/60)/ME.act:null;        // digest talk is SECONDS for the month
   var ta=ME.pctT!=null?ME.pctT*100:null, qa=ME.qa!=null?ME.qa*100:null, att=ME.att!=null?ME.att*100:null;
   var pts=function(k){ return (sp&&sp[k]&&sp[k].pts!=null)?{p:sp[k].pts,w:sp[k].w}:null; };
@@ -4893,7 +5002,14 @@ function pgAdviceText(key){
     return shortR!=null&&shortR>0?('You are '+R(shortR)+' short of your value target this month'
       +(ME.aveG?' — at '+R(ME.aveG)+' a sale that is about '+num(Math.ceil(shortR/ME.aveG))+' more sale'+(Math.ceil(shortR/ME.aveG)===1?'':'s')+'.':'.'))
       :'You have passed your value target — every further rand is pure upside.'; }
-  if(key==='conv') return 'Lifting conversion from '+(by.conv?by.conv.v:'—')+' toward '+num(th.convTarget||0)+'% — the same calls, with more of them becoming sales.';
+  if(key==='conv'){
+    /* The target is the tenure group's, published on the rating's own conv part — the Ops
+       convTarget rule is a different number for a different denominator, and quoting it
+       here told an agent to chase 10% while their card scored them against 30%. */
+    var cp=((ME.composite&&ME.composite.parts)||[]).filter(function(p){return p.k==='conv';})[0];
+    var ct=(cp&&cp.target!=null)?cp.target:(th.convTarget||0);
+    return 'Lifting conversion from '+(by.conv?by.conv.v:'—')+' toward '+num(ct,ct%1?1:0)+'% — the same leads, with more of them becoming sales.';
+  }
   if(key==='qa') return 'QA sits at '+(by.qa?by.qa.v:'—')+' against '+num(th.qaTarget||0)+'% — one clean week of calls moves this.';
   if(key==='att') return 'Attendance is at '+(by.att?by.att.v:'—')+' against '+num(th.attTarget||0)+'% — every day on the floor protects the rest of your card.';
   if(key==='talk') return 'Talk time is at '+(by.talk?by.talk.v:'—')+' against '+num(th.talkTargetMin||0)+' minutes — more time in conversation is more chances to close.';
@@ -4923,30 +5039,36 @@ function pgAdviceText(key){
    month, or the number would not belong beside the rest of the row. */
 function cShown(p){
   if(p.shown!=null) return p.shown;
-  if(p.k!=='conv') return null;
-  var c=ME.composite||{}, from=c.windowFrom, to=c.windowTo;
-  var days=(ME.days||[]).filter(function(f){ return !from||!to||(f.d>=from&&f.d<=to); });
-  var s=0,n=0;
-  for(var i=0;i<days.length;i++){ if((days[i].c||0)>0){ s+=days[i].s||0; n+=days[i].c; } }
-  return n>0?Math.round((s/n)*1000)/10:null;
+  /* CONVERSION IS SALES DIVIDED BY UNIQUE LEADS, AND NOTHING ELSE MAY WEAR THE NAME
+     (audit, 2026-08-31). This used to fall back to sales divided by dialler calls — about a
+     fifth of the real figure — and print it in the Conversion row as "shown, not scored".
+     That is the exact substitution the engine refuses to make: compositeFor() publishes
+     conv as null rather than sending sales-per-call under conversion's label. An agent
+     whose lead book is not loaded is unmeasured, and the row now says so. */
+  if(p.k==='conv'&&ME.leads&&ME.sales!=null) return Math.round((ME.sales/ME.leads)*1000)/10;
+  return null;
 }
+/* Money that is compared against a small target carries its cents; a period total does
+   not need them. gwpSale is R86-ish against an R86,09 floor — round it and the reader
+   cannot see which side of the line they are on. */
+function cMoney(p,v){ return R(v, p.k==='gwpSale'?2:0); }
 function cFmt(p){
   /* A figure we can show but must not score. The row still reads "shown, not scored" in
      the points column, so the number is information, never a mark. */
   if(p.value==null&&cShown(p)!=null){
     p=Object.assign({},p,{shown:cShown(p)});
-    if(p.k==='gwpSale'||p.k==='gwpTotal') return R(p.shown);
+    if(p.k==='gwpSale'||p.k==='gwpTotal') return cMoney(p,p.shown);
     if(p.k==='talk') return num(p.shown)+' min';
     return num(p.shown,1)+'%';
   }
   if(p.value==null) return '—';
-  if(p.k==='gwpSale'||p.k==='gwpTotal') return R(p.value);
+  if(p.k==='gwpSale'||p.k==='gwpTotal') return cMoney(p,p.value);
   if(p.k==='talk') return num(p.value)+' min';
   return num(p.value,1)+'%';
 }
 function cFmtT(p){
   if(p.target==null) return '—';
-  if(p.k==='gwpSale'||p.k==='gwpTotal') return R(p.target);
+  if(p.k==='gwpSale'||p.k==='gwpTotal') return cMoney(p,p.target);
   if(p.k==='talk') return num(p.target)+' min';
   return num(p.target,1)+'%';
 }
@@ -5026,7 +5148,7 @@ function pgComposite(){
   h+='<div class="tiny2" style="margin-top:6px">Each bar changes shade at half of your target. '
     +'Points only start there, so the solid part is what you are being paid for.'
     +(c.parts.some(function(p){return !p.measured&&cShown(p)!=null;})
-      ? ' Conversion is shown as sales per call and is not scored — your lead counts are not in this report yet, '
+      ? ' A figure shown without points is one we can show you but cannot score for this window, '
         +'so it carries none of your points rather than counting against you.' : '')+'</div>';
 
   /* ---- levers: the three biggest unclaimed, named with what it would take ---- */
@@ -5061,22 +5183,14 @@ function pgComposite(){
     +'<div class="tiny2">It comes back on its own once the theme stops coming up for 30 days.</div></span>'
     +'<span class="off '+(cx.points?'neg':'zero')+'">'+(cx.points?'−'+num(cx.points):'0')+'</span></div>';
 
-  /* the sign-in bonus reads by the same grammar, inverted — a reason on its own row
-     and how it is earned, so five points never appear from nowhere */
-  var si=c.signIn||{};
-  h+='<div class="pg-ded"><span class="pg-l">Signing in</span>'
-    +'<span class="lad-cell"><div>'+(si.measured
-        ? (si.days?'You signed in on '+num(si.days)+' weekday'+(si.days===1?'':'s')+' in this window'
-                  :'You have not signed in on a weekday in this window')
-        : 'Not measured — there is no Agent Analytics login for you yet')+'</div>'
-    +'<div class="tiny2">One point for each weekday you sign in, up to '+num(si.cap||5)+'. '
-    +'Weekends do not count, and signing in twice in a day counts once.</div></span>'
-    +'<span class="off '+(si.points?'plus':'zero')+'">'+(si.measured?(si.points?'+'+num(si.points):'0'):'—')+'</span></div>';
+  /* THE SIGN-IN ROW IS GONE (Nick, 2026-08-31: "remove the five points that the agent
+     gets for logging in"). It paid one point per weekday an agent opened this page, up to
+     five, on top of the composite. A payload published before the change still carries the
+     figure; this panel ignores it, so nobody sees a bonus the engine no longer awards. */
 
   /* the tally reconciles, unrounded — the rounded figure belongs in the box and nowhere else */
   var bits='Composite '+num(c.score,1);
   if(c.penaltyTotal) bits+='  −  '+num(c.penaltyTotal,1)+' adjustment';
-  if(si.points) bits+='  +  '+num(si.points)+' for signing in';
   h+='<div class="pg-tally">'+bits+'  =  '+num(c.adj,1)+' out of 100</div>';
   if(c.penalty&&cx.points) h+='<div class="tiny2" style="text-align:right">Capped at 15 together — '
     +(c.penaltyTotal>=15?'reached':'not reached')+'.</div>';
@@ -5177,6 +5291,25 @@ function nbaWindowSane(){
   return nl<=dl*3;                       // a review three times wider than the period is not this period
 }
 function pgNBA(){
+  /* THE LADDER BELONGS TO THE TEAM LEADER, NOT TO THE AGENT'S OWN PAGE (Nick, 2026-08-31:
+     "all this needs to make sense right now it isnt").
+
+     The two panels were computed by two different engines and disagreed on both halves of
+     the same fraction. For CB70 on 31 August the rating card read "Target Achievement
+     122,5% — at target, 20 of 20 points" while the ladder underneath it said "89,7% of
+     target" and named a Low Sales Achievement rule. Neither was broken: VAS counts a sale
+     as a CASE and takes the agent's employed shifts (211 over 21), Ops counts by ACCOUNT
+     and takes days present from the register (122 over 17). Both are documented models —
+     AGENTIC-OS-PLAN §9b keeps the reconciliation register precisely because they differ —
+     and no window fix reconciles them, because it is the numerator AND the denominator.
+
+     One screen, one engine. The agent's page runs on VAS throughout. The ladder still
+     renders for a TEAM LEADER drilling into that agent, where it is what it was designed
+     to be — a management instrument, on a screen that also carries its window and the
+     staleness guard. This restores the rule this file opened with: no NBA ladder code on
+     an agent's own page, because "an agent reading R4 GWP Value Failure learns a code,
+     not what to do". */
+  if(!D.__back) return '';
   var n=nbaBy(ME.code); if(!n||!n.nba) return '';
   if(!nbaWindowSane()) return '<div class="card"><h2>Next best action</h2>'
     +'<p class="why">Your next best action is out of date, so it is not being shown. '
@@ -5201,8 +5334,20 @@ function pgChecks(){
      floor; volume = this month's percent-to-target against the ladder's 70% line
      (the R4A volume trigger — a constant of the rule book, not of this page). */
   var th=(D.nba&&D.nba.thresholds)||{};
-  if(ME.aveG==null||ME.pctT==null||!th.gwpFloor) return '';
-  var value=ME.aveG>=gwpFloorEx(), volume=(ME.pctT*100)>=70;   // ex-VAT vs ex-VAT — see gwpFloorEx()
+  /* THE TWO CHECKS DO NOT DEPEND ON THE OPS DIGEST ARRIVING (audit, 2026-08-31). This
+     returned nothing whenever th.gwpFloor was absent, so the whole card vanished — with no
+     line saying why — any time the management app had not published. Both lines are rule
+     book constants the page already carries its own defaults for (gwpFloorEx falls back to
+     R99, the volume line to 100), and now that the ladder no longer renders here this was
+     the last thing tying an agent's own page to the other engine. The agent's figures are
+     the only inputs that can genuinely be missing. */
+  if(ME.aveG==null||ME.pctT==null) return '';
+  /* CHECK 2 PASSES AT THE PUBLISHED LINE — Chatterbox_Decision_Rules.xlsx, NBA_THRESHOLDS:
+     "target_ach | 100 | % | Check 2 passes at or above this". This page used 70, which is
+     where R4A FIRES, so an agent at 80% of target read "pass" here while their team leader's
+     screen read the same person as short. One line, published once, read by both. */
+  var volLine=th.targetAch||100;
+  var value=ME.aveG>=gwpFloorEx(), volume=(ME.pctT*100)>=volLine;   // ex-VAT vs ex-VAT — see gwpFloorEx()
   var status=value&&volume?'Healthy':(value?'Volume Issue':(volume?'Value Issue':'Both Issues'));
   var map={'Both Issues':['bad','Value and volume both need work — your team leader has this on the plan above.'],
     'Volume Issue':['warn','Good value, but not enough sales. Coach on activity, pipeline and closing.'],
@@ -5211,8 +5356,14 @@ function pgChecks(){
   var sm=map[status];
   return '<div class="card"><h2>The two checks on every sale</h2>'
     +'<div class="pg-status '+sm[0]+'"><b>'+esc(status.toUpperCase())+'</b>'+esc(sm[1])+'</div>'
-    +'<p class="why"><b>Check 1 · value:</b> '+R(ME.aveG)+' a sale against R'+num(gwpFloorEx(),2)+' ex VAT (R'+num(th.gwpFloor)+' incl) — '+(value?'pass':'fail')+'</p>'
-    +'<p class="why"><b>Check 2 · volume:</b> '+num(ME.pctT*100,1)+'% of your sales target against 70% — '+(volume?'pass':'fail')+'</p></div>';
+    +'<p class="why"><b>Check 1 · value:</b> '+R(ME.aveG,2)+' a sale against '+R(gwpFloorEx(),2)+' ex VAT ('+R(th.gwpFloor!=null?th.gwpFloor:99)+' incl) — '+(value?'pass':'to go')+'</p>'
+    +'<p class="why"><b>Check 2 · volume:</b> '+num(ME.pctT*100,1)+'% of your sales target against '+num(volLine)+'% — '+(volume?'pass':'to go')+'</p>'
+    /* THE TWO PERCENTAGES ON THIS PAGE COVER DIFFERENT WINDOWS, AND BOTH ARE TRUE. The
+       rating above is the last five worked sessions; these checks are the whole month. Said
+       out loud they are two facts; left unlabelled they read as the page contradicting
+       itself, which is exactly how it read. */
+    +'<p class="why" style="margin-top:6px;color:var(--muted)">These two checks cover your whole month. '
+    +'The rating above is your last five worked sessions, so the percentages differ — both are your real figures, over different stretches of time.</p></div>';
 }
 function pgRun(){
   var days=(ME.days||[]).slice(-5);
@@ -5225,21 +5376,14 @@ function pgRun(){
   return '<div class="card"><h2>Your last five sessions</h2><div class="pg-dots">'+dots+'</div>'
     +'<p class="why">A filled day is a day you worked. A session is never counted against you for approved leave, system downtime, incorrect data, poor lead quality, or time spent waiting for your team leader.</p></div>';
 }
-function pgTiles(){
-  var days=(ME.days||[]); if(days.length<2) return '';
-  var last=days.slice(-7);
-  var avg=function(a){var v=a.filter(function(x){return x!=null;});return v.length?v.reduce(function(m,x){return m+x;},0)/v.length:null;};
-  var tile=function(name,val,ser,color){ return '<div class="pg-tile"><div class="lab">'+name+'</div>'+spark(ser,color)+'<div class="pg-tv"><b class="num">'+val+'</b> <small>last '+num(Math.min(7,days.length))+' sessions</small></div></div>'; };
-  var conv=function(f){return (f.c>0)?(f.s/f.c)*100:null;};
-  /* day rows carry talk in SECONDS (the digest's tk) — minutes on screen, always */
-  var aS=avg(last.map(function(f){return f.s||0;})), aC=avg(last.map(conv)), aX=avg(last.map(function(f){return f.x||0;})), aT=avg(last.map(function(f){return (f.tk||0)/60;}));
-  return '<div class="card"><h2>Your results over '+num(days.length)+' sessions</h2><div class="pg-tiles">'
-    +tile('Sales written',aS!=null?num(aS,1):'—',days.map(function(f){return f.s||0;}),'var(--blue)')
-    +tile('Conversion',aC!=null?num(aC,1)+'%':'—',days.map(conv),'var(--blue)')
-    +tile('Premium written',aX!=null?R(aX):'—',days.map(function(f){return f.x||0;}),'var(--green)')
-    +tile('Talk time',aT!=null?num(aT)+' min':'—',days.map(function(f){return (f.tk||0)/60;}),'var(--green)')
-    +'</div><p class="why" style="margin-top:10px">Each little chart is your whole month, day by day; the number is your average over the last few sessions.</p></div>';
-}
+/* THE "YOUR RESULTS OVER N SESSIONS" TILE CARD IS GONE (Nick, 2026-08-31: "remove this,
+   is not needed for agent view and for team leader view"). Four sparklines — sales, sales
+   per 100 calls, premium, talk — each one an average the page already states somewhere it
+   means something: sales and premium sit on the month card, talk is a scored driver on the
+   rating, and sales-per-call is not a measure this business coaches on. A chart that
+   repeats a number the reader has already been given is decoration, and this page is read
+   in twenty seconds. Nothing else consumed it; the day rows it drew from still feed the
+   session dots and the sessions table below. */
 function pgSessions(){
   var days=(ME.days||[]).slice(-7).reverse();
   if(!days.length) return '';
@@ -5259,30 +5403,7 @@ function pgSessions(){
         +'<td>'+(hit==null?'—':(hit?'<span class="chip2 beat"><i></i>Yes</span>':'<span class="chip2 next"><i></i>No</span>'))+'</td></tr>';
     }).join('')+'</tbody></table></div></div>';
 }
-function pgCoaching(){
-  var co=D.coaching, mine=null;
-  if(co&&co.agents)for(var i=0;i<co.agents.length;i++)if(co.agents[i].code===ME.code){mine=co.agents[i];break;}
-  if(!mine) return '';
-  var h='<div class="card"><h2>Your support and coaching</h2>';
-  if(co.stale)h+='<div class="note-done">The Coaching Hub has not answered since '+esc(String(co.staleSince||'').slice(0,10))+' — this list may be behind.</div>';
-  var daysAgo=mine.last?Math.round((Date.now()-new Date(mine.last+'T00:00:00Z').getTime())/86400000):null;
-  h+='<p class="why">'+num(mine.count)+' session'+(mine.count===1?'':'s')+' in the last 90 days'
-    +(mine.last?', the last one '+(daysAgo<=0?'today':num(daysAgo)+' day'+(daysAgo===1?'':'s')+' ago'):'')
-    +'. This is what was talked about — support, never a mark against you.</p>';
-  if(mine.themes&&mine.themes.length){
-    h+='<div class="scroller"><table class="tbl"><thead><tr><th>What came up</th><th>Times</th><th>Area</th><th>Last raised</th></tr></thead><tbody>'
-      +mine.themes.map(function(t){
-        return '<tr><td class="l" style="white-space:nowrap"><b>'+esc(pgTheme(t.key))+'</b>'
-          +(t.shown>=3?' <span class="chip2" style="background:var(--red-soft);color:var(--red)"><i style="background:var(--red)"></i>Persistent</span>':'')+'</td>'
-          +'<td class="num">'+num(t.shown)+'</td><td class="l">'+esc(t.family||'—')+'</td><td class="num">'+esc(t.last||'—')+'</td></tr>';
-      }).join('')+'</tbody></table></div>';
-  } else h+='<p class="why">No coaching themes recorded yet this quarter.</p>';
-  h+='</div>'; return h;
-}
-/* THE AGENT'S OWN REQUESTS (Nick, 2026-08-26: "when the agent closes it off remove
-   it from the dashboard for them but it will be in highlevel"). Open requests only —
-   each shows where it stands; "Close it off" is for "sorted it, thanks": it leaves
-   this page AND the team leader's queue, and the record stays in the pipeline. */
+/* My Progress's help panel state. Declared beside the loader that owns it. */
 var MYHELP=null, MYHELP_AT=0, MYHELP_BUSY=false;
 function myHelpLoad(){
   if(MYHELP_BUSY) return;                 // one in-flight fetch — render() re-fires this while it loads (audit, 2026-08-27)
@@ -5325,7 +5446,7 @@ function wireMyHelp(){
   });
 }
 function progressPage(c){
-  var out=pgHead()+pgRating()+pgMyHelp()+pgNBA()+pgChecks()+pgRun()+pgTiles()+pgSessions()+pgCoaching();
+  var out=pgHead()+pgRating()+pgMyHelp()+pgNBA()+pgChecks()+pgRun()+pgSessions()+pgCoaching();
   if(out===pgHead()) out+='<div class="card"><p class="why">Your figures for this period have not been published yet — check back after the next upload.</p></div>';
   return out;
 }
