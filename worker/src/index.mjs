@@ -13,7 +13,7 @@ import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, f
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
-import { syncAgentLogins } from './provision.mjs';
+import { syncAgentLogins, syncTeamLeaders } from './provision.mjs';
 import { runHealthChecks, dailySnapshots, hygiene, logKvWrite } from './health.mjs';
 import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
 
@@ -302,6 +302,23 @@ export default {
             else console.warn('[cron] agent list NOT synced — ' + g.status + ': '
               + (g.detail || '') + ' ' + JSON.stringify(g.errors || g.reason || ''));
           } catch (e) { console.warn('[cron] agent login sync failed: ' + (e && e.message || e)); }
+
+          /* LEADERS FOLLOW THE SAME LIST. Cheap when nothing has moved: one query over
+             the current list and the leader accounts, no writes. */
+          try {
+            const t = await syncTeamLeaders(DB, { actor: 'cron' });
+            const n = (k) => (t[k] || []).length;
+            if (t.status === 'SUCCESS' && (n('created') || n('removed')))
+              console.info('[cron] team leaders synced — +' + n('created') + ' created, -' + n('removed') + ' removed'
+                + (n('created') ? ' new: ' + t.created.map((c) => c.username).join(',') : '')
+                + (n('removed') ? ' gone: ' + t.removed.map((c) => c.username).join(',') : ''));
+            else if (t.status && t.status !== 'SUCCESS')
+              console.warn('[cron] team leaders NOT synced — ' + t.status + ': ' + (t.detail || ''));
+            /* A leader on the list with no CB on file cannot be provisioned and must not
+               vanish into a log nobody reads — this is how Hezron Pillay stayed invisible. */
+            if ((t.unrepresented || []).length)
+              console.warn('[cron] team leaders on the list with NO CB on file: ' + t.unrepresented.join(', '));
+          } catch (e) { console.warn('[cron] team leader sync failed: ' + (e && e.message || e)); }
         }
       } catch (e) { console.warn('[cron] roster sync failed: ' + (e && e.message || e)); }
 
@@ -958,8 +975,15 @@ export default {
         let sync = null;
         try { sync = await syncAgentLogins(DB, clean, fp, { asOf, actor: (user && user.username) || 'roster-post' }); }
         catch (e) { sync = { status: 'FAILED', errors: [String((e && e.message) || e)] }; }
+        /* LEADERS ON THE SAME UPLOAD. A leader who has stopped leading anyone is off this
+           list as surely as an agent whose row has gone, and the person who just uploaded
+           it should be told so in the same answer rather than finding out ten minutes
+           later. Reported, never fatal — same as the agent half above. */
+        let leaders = null;
+        try { leaders = await syncTeamLeaders(DB, { actor: (user && user.username) || 'roster-post' }); }
+        catch (e) { leaders = { status: 'FAILED', errors: [String((e && e.message) || e)] }; }
         return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length,
-          mirrored, replaced: rec.replaced, sync });
+          mirrored, replaced: rec.replaced, sync, leaders });
       }
 
       // ---------- upload relay: one Upload Station feeds BOTH dashboards ----------

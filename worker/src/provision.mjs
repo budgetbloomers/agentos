@@ -128,3 +128,31 @@ export async function syncAgentLogins(DB, roster, fp, opts = {}) {
 
   return out || { status: 'FAILED', errors: ['the synchronisation returned nothing'] };
 }
+
+/**
+ * THE LEADER HALF OF THE SAME RULE (Nick, 2026-08-31). migration-014 reconciles agents
+ * against the Agent List and deliberately left leaders alone, because the list names a
+ * leader but never carries their CB — an account could not be created without inventing a
+ * login. migration-018 removes that obstacle without inventing anything: team_leader_cbs
+ * holds the name→CB map a human maintains, and a leader is only ever created from a code
+ * written down there. Removal needs no map at all: a team_leader who leads NOBODY on the
+ * current list has no evidence of belonging to it.
+ *
+ * Same posture as the agent path throughout: the function guards fail-closed (a short list
+ * refuses whole, more than p_max_delete removals refuses whole, only role 'team_leader' is
+ * ever touched), and hashing happens HERE because Postgres cannot reproduce WebCrypto
+ * PBKDF2 — NEEDS_HASHES comes back having written nothing, we hash exactly the CB numbers
+ * it names, and call again.
+ */
+export async function syncTeamLeaders(DB, opts = {}) {
+  const call = (hashes, apply) => DB.rpc('sync_team_leaders', {
+    p_hashes: hashes, p_actor: opts.actor || 'cron', p_apply: apply,
+  });
+  let out = await call({}, true);
+  if (out && out.status === 'NEEDS_HASHES') {
+    const hashes = {};
+    for (const cb of out.needs_hashes || []) hashes[cb] = await hashPassword(START_PASSWORD);
+    out = await call(hashes, true);
+  }
+  return out || { status: 'FAILED', errors: ['the leader synchronisation returned nothing'] };
+}
