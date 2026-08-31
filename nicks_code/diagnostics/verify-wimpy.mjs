@@ -194,5 +194,66 @@ head('I · THE PAGE HOLDS NO PRICE OF ITS OWN');
     'the header language is value, never cheap');
 }
 
+head('J · THE OPERATING MODEL IS COMPUTED FROM THE MENU, NOT WRITTEN BESIDE IT');
+{
+  const { wimpyModel } = await import(W);
+  const M = wimpyModel();
+  ok(M.matrix.length === 14 && M.ingredients.length === 13, 'the matrix covers all 14 builds over the 13 ingredients');
+  /* the model MUST agree with the menu it describes */
+  const cheese = M.cost.find((x) => x.id === 'cheese_burger');
+  ok(cheese && cheese.price === 54.90 && Math.abs(cheese.cost - 25.10) < 0.005,
+    'the Cheese Burger costing recomputes from ING exactly (R25.10 on stated assumptions)', cheese && cheese.cost);
+  ok(cheese.band === 'weak' && /100 g/.test(cheese.flag),
+    'its weak margin is FLAGGED with the lever, price untouched');
+  const bbc = M.cost.find((x) => x.id === 'big_bacon_cheese');
+  ok(bbc.band === 'weak' && /re-cost/.test(bbc.flag), 'Big Bacon & Cheese carries the other flag');
+  ok(M.cost.filter((x) => x.band === 'weak').length === 2, 'exactly two weak flags — no silent third');
+  ok(M.blendedFoodCostPct === 36.5, 'blended food cost 36.5% on the stated assumptions', M.blendedFoodCostPct);
+  ok(/ESTIMATES/.test(M.assumptions) && /recomputes/.test(M.assumptions),
+    'the assumptions say they are estimates and where to change them');
+  ok(M.overlap.singleUse.length === 0, 'the model reports zero single-use ingredients');
+  const times = M.speed.map((x) => x.estMin);
+  ok(times.every((t, i) => i === 0 || t >= times[i - 1]), 'the speed ranking is fastest → slowest');
+  ok(M.speed[0].id === 'toasted_cheese_tomato' && M.speed[13].id === 'fully_loaded_dagwood',
+    'toasteds head it, the Friday stack ends it');
+  ok(M.wastage.filter((x) => x.risk === 'MEDIUM').map((x) => x.id).sort().join(',') === 'banger,chicken_mayo',
+    'wastage: banger and chicken mayo are the only MEDIUM lines, each with a burn-down day',
+    JSON.stringify(M.wastage.filter((x) => x.risk === 'MEDIUM').map((x) => x.id)));
+  ok(M.strategy.length === 5 && M.verdict.length === 10, 'five-day strategy and a ten-point verdict');
+}
+
+head('K · THE MODEL RENDERS INSIDE THE TAB');
+{
+  /* Load the real page in a real browser and run its renderer over the real
+     model payload — a string-builder bug (unclosed tag, bad key) shows here,
+     not on an agent’s phone. */
+  const fs2 = await import('node:fs');
+  const http = await import('node:http');
+  const { pathToFileURL } = await import('node:url');
+  const { chromium } = await import(pathToFileURL(path.join(HERE, 'node_modules', 'playwright', 'index.mjs')).href);
+  const { wimpyModel } = await import(W);
+  const pageSrc = fs2.readFileSync(path.resolve(HERE, '..', '..', 'agent', 'index.html'), 'utf8');
+  ok(/data-wsub="model"/.test(pageSrc), 'the tab offers the Order / Operating model toggle');
+  const srv = http.createServer((q, r) => { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end(pageSrc); });
+  await new Promise((r) => srv.listen(8297, '127.0.0.1', r));
+  const b = await chromium.launch();
+  try {
+    const pg = await b.newPage();
+    const errs = [];
+    pg.on('pageerror', (e) => errs.push(String(e)));
+    await pg.goto('http://127.0.0.1:8297/', { waitUntil: 'domcontentloaded' });
+    const html = await pg.evaluate((model) => {
+      window.WMODEL = model;
+      return wModelHTML();
+    }, wimpyModel());
+    ok(errs.length === 0, 'the page booted with no errors', errs[0]);
+    for (const mark of ['B · Ingredient matrix', 'C · Ingredient overlap', 'D · Kitchen prep',
+      'E · Food cost model', 'F · Wastage risk', 'Stock complexity', 'G · The Daily Big One strategy', 'H · The verdict'])
+      ok(html.indexOf(mark) >= 0, 'renders “' + mark + '”');
+    ok(html.indexOf('36.5%') >= 0 && html.indexOf('R25.10') >= 0, 'the computed numbers reach the screen');
+    ok((html.match(/<div/g) || []).length === (html.match(/<\/div>/g) || []).length, 'every div is closed');
+  } finally { await b.close(); srv.close(); }
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exitCode = fail ? 1 : 0;

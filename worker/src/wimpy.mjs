@@ -427,3 +427,130 @@ export async function submitWimpyOrder(env, user, body) {
 
 /* Exported for the spec's models and the overlap test — never for the page. */
 export const ALL_ITEMS = [...ITEMS, ...Object.values(BIG_ONES)];
+
+/* ============================================================================
+ * THE OPERATING MODEL, COMPUTED — GET /api/portal/wimpy/model.
+ *
+ * Nick, 2026-08-31 second pass: "all this must be in the wimpy tab". The
+ * ingredient matrix, overlap analysis, food cost, wastage, speed ranking and
+ * verdict render INSIDE the tab — and they are computed HERE, from the same
+ * ITEMS/ING tables the menu and the pricer use, so the analysis on screen can
+ * never drift from the menu being sold. Change a recipe or a unitCost and
+ * every table updates together; specs/wimpy-3331-menu.md is the narrative
+ * copy of the same numbers.
+ *
+ * Authored (not derived) pieces are labelled: the margin-flag explanations,
+ * the wastage reasons, the stock comparison and the verdict are judgement,
+ * and pretending judgement is arithmetic would be its own kind of lie.
+ * ========================================================================== */
+
+/* Estimated execution minutes — model data, not menu data, so it lives beside
+   the model rather than on the customer-facing items. */
+const EST_MIN = {
+  toasted_cheese_tomato: 4, toasted_chicken_mayo: 4, toasted_bacon_egg: 5,
+  mzansi_brekkie: 5, cheese_burger: 6, double_up_breakfast: 7,
+  bacon_cheese_burger: 7, big_cheese_burger: 7, big_champion: 8,
+  big_bacon_cheese: 8, farmhouse_breakfast: 9, mega_breakfast: 10,
+  dagwood: 10, fully_loaded_dagwood: 12,
+};
+
+/* §13's flags, authored. The prices stay the brief's — these say WHY the
+   margin is weak and which lever exists, exactly as the brief asked. */
+const MARGIN_FLAGS = {
+  cheese_burger: 'Patty + chips against the entry price. It stays: the door price that makes the board read as value, and its buyers trade up. Levers: strict 100 g patty spec; a 100 g chip portion takes it to ~43.9%.',
+  big_bacon_cheese: 'R30.40 of protein in one build (double patty + three rashers). Wednesday’s hero buys mid-week traffic with it. Two rashers would give 43.3%; first item to re-cost on real supplier prices.',
+};
+
+const WASTAGE_WHY = {
+  banger: 'Breakfast-side only. A slow breakfast day strands the line — Monday’s Mega Breakfast burns the stock into the week. Order small, twice weekly.',
+  chicken_mayo: 'A prepared mix with a short fridge life, on two items. Friday’s Fully Loaded Dagwood clears the week’s mix. Batch small, mix daily.',
+};
+
+export function wimpyModel() {
+  const dayName = (d) => DAY_NAMES[d];
+
+  /* ---- utilisation, derived ---- */
+  const uses = {}, cats = {};
+  for (const i of ALL_ITEMS) for (const k of Object.keys(i.ing || {})) {
+    (uses[k] = uses[k] || []).push(i.id);
+    (cats[k] = cats[k] || new Set()).add(i.category);
+  }
+  const utilisation = Object.keys(ING).map((k) => ({
+    id: k, name: ING[k].name, items: (uses[k] || []).length, categories: [...(cats[k] || [])],
+  })).sort((a, b) => b.items - a.items);
+
+  /* ---- food cost, derived from ING + OVERHEAD ---- */
+  const cost = ALL_ITEMS.map((i) => {
+    let c = OVERHEAD_PER_MEAL;
+    for (const [k, n] of Object.entries(i.ing || {})) c += ING[k].unitCost * n;
+    const fc = c / i.basePrice * 100;
+    const band = fc <= 35 ? 'strong' : fc <= 43 ? 'acceptable' : 'weak';
+    return {
+      id: i.id, name: i.name, category: i.category, day: i.day ? dayName(i.day) : null,
+      price: i.basePrice, cost: Math.round(c * 100) / 100,
+      foodCostPct: Math.round(fc * 10) / 10,
+      grossProfit: Math.round((i.basePrice - c) * 100) / 100,
+      marginPct: Math.round((100 - fc) * 10) / 10,
+      band, flag: MARGIN_FLAGS[i.id] || null,
+    };
+  }).sort((a, b) => a.foodCostPct - b.foodCostPct);
+  const blended = Math.round(cost.reduce((n, r) => n + r.foodCostPct, 0) / cost.length * 10) / 10;
+
+  /* ---- speed, derived ---- */
+  const speed = ALL_ITEMS.map((i) => ({
+    id: i.id, name: i.name, prep: i.prep, estMin: EST_MIN[i.id] || null,
+    day: i.day ? dayName(i.day) : null,
+  })).sort((a, b) => (a.estMin || 99) - (b.estMin || 99));
+
+  /* ---- wastage, risk derived from spread, reasons authored ---- */
+  const wastage = utilisation.map((u) => ({
+    ...u,
+    risk: u.items >= 5 ? 'LOW' : 'MEDIUM',
+    why: WASTAGE_WHY[u.id] || (u.items >= 5 ? 'Wide spread — stock turns daily.' : 'Thin spread — watch it.'),
+  }));
+
+  return {
+    computedFrom: 'worker/src/wimpy.mjs — the same tables the menu and pricer use',
+    assumptions: 'Ingredient costs are ESTIMATES, not supplier invoices: '
+      + Object.values(ING).map((g) => g.name + ' R' + g.unitCost.toFixed(2)).join(' · ')
+      + ' · overhead R' + OVERHEAD_PER_MEAL.toFixed(2) + '/meal (butter, oil, gas, wrap). '
+      + 'Replace with real costs in the ING table and every figure here recomputes.',
+    ingredients: Object.keys(ING).map((k) => ({ id: k, name: ING[k].name })),
+    matrix: ALL_ITEMS.map((i) => ({ id: i.id, name: i.name, category: i.category,
+      day: i.day ? dayName(i.day) : null, ing: i.ing })),
+    utilisation,
+    overlap: {
+      singleUse: utilisation.filter((u) => u.items < 2).map((u) => u.name),   // enforced empty
+      most: utilisation[0], least: utilisation[utilisation.length - 1],
+      note: 'Zero single-use ingredients — enforced by verify-wimpy: an item that adds a fourteenth stock line fails the build. The two thinnest lines each have a weekly burn-down day (Mega Breakfast for bangers, Fully Loaded Dagwood for chicken mayo).',
+    },
+    cost, blendedFoodCostPct: blended,
+    speed,
+    wastage,
+    stock: {   /* authored comparison */
+      thisMenu: { ingredients: 13, sauces: 1, proteins: 5, breads: 2, stations: 3 },
+      fullMenu: { ingredients: '45+', sauces: '8+', proteins: '10+', breads: '5+', stations: '6+' },
+      note: 'One flat-top runs every protein; chips fry in parallel and gate nothing. Batch-prepped each morning: the salad line, chicken-mayo mix, cheese and relish portions.',
+    },
+    strategy: [1, 2, 3, 4, 5].map((d) => ({ day: dayName(d), name: BIG_ONES[d].name,
+      price: BIG_ONES[d].basePrice,
+      pitch: [null, 'Start-the-week plate; burns the weekend’s breakfast stock into service.',
+        'The classic triple-decker; first patty day.',
+        'Mid-week peak; the indulgence bump.',
+        'The heavyweight — best gross profit on the board.',
+        'The week’s finale; everything on the board in one stack.'][d] })),
+    verdict: [   /* authored */
+      ['Menu simplicity', '10 visible choices, 3 decisions.'],
+      ['Ingredient overlap', '13 lines, zero single-use — test-enforced.'],
+      ['Kitchen speed', '9 of 14 items LOW/MEDIUM; every HIGH item is a Big One, one per day.'],
+      ['Food cost', blended + '% blended on stated assumptions.'],
+      ['Gross profit', 'R29.80–R76.30 a plate; Thursday’s promotion peak is also the margin peak.'],
+      ['Wastage', 'Two MEDIUM lines, each cleared by its own weekly hero day.'],
+      ['Stock complexity', '13 ingredients, 1 sauce, 2 breads, 3 stations.'],
+      ['Value perception', 'Clean price points, premium copy — never "cheap".'],
+      ['Big One potential', 'The weekly rhythm is the marketing engine; day-locking makes it real.'],
+      ['Overall viability', 'Sound. Two known margin flags are priced-in strategy, first in line for re-costing.'],
+    ],
+    chain: 'Fewer ingredients → fewer prep steps → faster kitchen → less wastage → easier stock control → stronger margins → simple decisions → strong weekday value.',
+  };
+}

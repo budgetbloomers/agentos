@@ -77,6 +77,7 @@ export const PORTAL_ALLOWED = new Set([
      Worker and nothing else, and the agent's name and CB come from the SESSION so
      an order cannot be placed in somebody else's name. */
   '/api/portal/wimpy/menu',
+  '/api/portal/wimpy/model',
   '/api/portal/wimpy/order',
 ]);
 

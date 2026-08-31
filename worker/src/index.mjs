@@ -12,7 +12,7 @@ import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, listDigestMonths, overview, a
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn } from './help.mjs';
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody } from './campaign.mjs';
-import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
+import { wimpyMenu, wimpyModel, submitWimpyOrder } from './wimpy.mjs';
 import { syncAgentLogins } from './provision.mjs';
 import { runHealthChecks, dailySnapshots, hygiene, logKvWrite } from './health.mjs';
 import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
@@ -674,6 +674,10 @@ export default {
          and the order is POSTed from here because the page's CSP allows it to
          reach this Worker and nothing else. */
       if (path === '/api/portal/wimpy/menu' && req.method === 'GET') return json(wimpyMenu());
+      /* The operating model behind the menu, rendered inside the tab (Nick,
+         2026-08-31: "all this must be in the wimpy tab") — computed from the
+         same tables as the menu, so the analysis can never drift from it. */
+      if (path === '/api/portal/wimpy/model' && req.method === 'GET') return json(wimpyModel());
       if (path === '/api/portal/wimpy/order' && req.method === 'POST') {
         const r = await submitWimpyOrder(env, user, await req.json().catch(() => ({})));
         return json(r.body, r.status);

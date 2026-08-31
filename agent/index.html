@@ -817,6 +817,39 @@ textarea.cc{font-weight:500;line-height:1.5;resize:vertical}
 .wp-day .n{font-size:11.5px;font-weight:800;color:var(--ink);line-height:1.2}
 .wp-day .p{font-size:11px;font-weight:700;color:var(--muted)}
 .wp-cat .ct{opacity:.55;font-weight:800}
+.wp-sub{display:flex;gap:8px;margin:10px 0 12px}
+.wm-wrap{display:flex;flex-direction:column;gap:12px;max-width:980px}
+.wm-sec h3{font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:.6px;color:#b91c1c;margin-bottom:10px}
+.wm-scroll{overflow-x:auto}
+.wm-tbl{border-collapse:collapse;width:100%;font-size:12px}
+.wm-tbl th{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;padding:5px 10px 5px 0;border-bottom:2px solid var(--ink);white-space:nowrap}
+.wm-tbl th.r,.wm-tbl td.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.wm-tbl td{padding:6px 10px 6px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.wm-tbl td.nm{font-weight:700;white-space:nowrap}
+.wm-tbl td.c{text-align:center;font-weight:800;color:#b91c1c;min-width:26px}
+.wm-tbl th.rot{height:86px;vertical-align:bottom}
+.wm-tbl th.rot span{writing-mode:vertical-rl;transform:rotate(180deg);font-size:10px;display:inline-block}
+.wm-tbl td.why{font-size:11.5px;color:var(--muted);min-width:220px}
+.wm-tbl tr.weak td{background:rgba(185,28,28,.05)}
+.wm-day{font-size:9.5px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#b91c1c;border:1px solid #b91c1c;border-radius:99px;padding:1px 6px;margin-left:5px}
+.wm-band{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;min-width:150px}
+tr.strong .wm-band{color:#15803d}tr.acceptable .wm-band{color:var(--muted)}tr.weak .wm-band{color:#b45309}
+.wm-flag{font-weight:500;text-transform:none;letter-spacing:0;font-size:11.5px;color:var(--muted);margin-top:3px;max-width:34ch}
+.wm-pill{display:inline-block;font-size:9.5px;font-weight:900;letter-spacing:.6px;border-radius:99px;padding:2px 8px;background:rgba(0,0,0,.05)}
+.wm-pill.low{color:#15803d}.wm-pill.medium{color:#b45309}.wm-pill.high{color:#b91c1c}
+.wm-bars{display:flex;flex-direction:column;gap:5px}
+.wm-bar{display:grid;grid-template-columns:110px 1fr 26px;align-items:center;gap:8px;font-size:12px}
+.wm-bar .tr{background:rgba(0,0,0,.06);border-radius:99px;height:9px;overflow:hidden}
+.wm-bar .fl{background:#b91c1c;height:100%;border-radius:99px}
+.wm-bar.warn .fl{background:#d97706}
+.wm-bar .n{text-align:right;font-weight:800;color:var(--muted);font-variant-numeric:tabular-nums}
+.wm-note{font-size:11.5px;color:var(--muted);margin-top:9px;line-height:1.5;max-width:75ch}
+.wm-strat{display:grid;grid-template-columns:44px 170px 70px 1fr;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.wm-strat .d{font-size:10px;font-weight:900;letter-spacing:.6px;text-transform:uppercase;color:#b91c1c}
+.wm-strat .p{font-weight:800;font-variant-numeric:tabular-nums}
+.wm-strat .pitch{color:var(--muted);font-size:11.5px}
+@media (max-width:640px){.wm-strat{grid-template-columns:44px 1fr 70px}.wm-strat .pitch{grid-column:1/-1}}
+.wm-chain{font-size:12.5px;font-weight:700;margin-top:10px;color:var(--ink)}
 .wp-cats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
 .wp-cat{border:1px solid var(--line);background:#fff;color:var(--body);border-radius:20px;padding:8px 16px;font-size:12.5px;font-weight:700}
 .wp-cat.on{background:var(--blue);border-color:var(--blue);color:#fff}
@@ -3371,7 +3404,7 @@ function notReported(){
    blocked by the browser. Proxying is also how the Coaching Hub and the Help
    Center already work, and it keeps the webhook URL off 130 phones. */
 
-var WMENU=null, WCART=[], WCAT='breakfast', WNOTE='', WEDIT=null, WSTATE='order', WERR='', WBUSY=false, WDONE=null, WOPEN=false;
+var WMENU=null, WMODEL=null, WSUB='order', WCART=[], WCAT='breakfast', WNOTE='', WEDIT=null, WSTATE='order', WERR='', WBUSY=false, WDONE=null, WOPEN=false;
 
 function wZar(v){ return 'R'+Number(v||0).toFixed(2); }
 /* Money in cents until the last moment: adding a hundred floats is how a total
@@ -3432,7 +3465,13 @@ function wimpyPage(){
     }).join('')+'</div>';
   }
   var header='<div class="wp-title"><h2>'+esc(WMENU.title||'Weekday Value Menu')+'</h2>'
-    +'<span class="sub">3 breakfasts · 3 burgers · 3 toasteds · today’s Big One — made fresh</span></div>';
+    +'<span class="sub">3 breakfasts · 3 burgers · 3 toasteds · today’s Big One — made fresh</span></div>'
+    /* ORDER / OPERATING MODEL. The whole 3-3-3-1 analysis lives behind the
+       second tab (Nick: "all this must be in the wimpy tab") — computed by
+       the Worker from the same tables as the menu, never duplicated here. */
+    +'<div class="wp-sub"><button class="wp-cat'+(WSUB==='order'?' on':'')+'" data-wsub="order">Order</button>'
+    +'<button class="wp-cat'+(WSUB==='model'?' on':'')+'" data-wsub="model">The operating model</button></div>';
+  if(WSUB==='model') return who+header+wModelHTML();
 
   var cats='<div class="wp-cats">'+(WMENU.categories||[]).map(function(c){
     return '<button class="wp-cat'+(c.id===WCAT?' on':'')+'" data-wcat="'+esc(c.id)+'">'+esc(c.label)+' <span class="ct">3</span></button>';
@@ -3591,6 +3630,100 @@ function wConfirmPage(){
     +'</div></div>';
 }
 
+/* ---------- THE OPERATING MODEL, rendered from /api/portal/wimpy/model.
+   Everything numeric is computed by the Worker from the same ITEMS/ING tables
+   the menu and the pricer use, so what this shows can never drift from what is
+   being sold. This function only lays it out. ---------- */
+function wLoadModel(){
+  api('/api/portal/wimpy/model').then(function(r){
+    WMODEL = r.ok ? r.json : {error:(r.json&&r.json.error)||'The model could not be loaded.'};
+    if(VIEW==='wimpy') render();
+  });
+}
+function wModelHTML(){
+  if(!WMODEL){ wLoadModel(); return '<div class="card"><p class="why">Working out the model…</p></div>'; }
+  if(WMODEL.error) return '<div class="card"><p class="why">'+esc(WMODEL.error)+'</p></div>';
+  var M=WMODEL, h='';
+  function sec(t,body){ return '<div class="card wm-sec"><h3>'+t+'</h3>'+body+'</div>'; }
+
+  /* B · ingredient matrix */
+  var ings=M.ingredients||[];
+  var mrows=(M.matrix||[]).map(function(it){
+    return '<tr><td class="nm">'+esc(it.name)+(it.day?' <span class="wm-day">'+esc(it.day)+'</span>':'')+'</td>'
+      +ings.map(function(g){ var n=(it.ing||{})[g.id];
+        return '<td class="c">'+(n?(n>1?n:'●'):'')+'</td>'; }).join('')+'</tr>';
+  }).join('');
+  h+=sec('B · Ingredient matrix','<div class="wm-scroll"><table class="wm-tbl"><tr><th></th>'
+    +ings.map(function(g){return '<th class="rot"><span>'+esc(g.name)+'</span></th>';}).join('')+'</tr>'+mrows+'</table></div>'
+    +'<p class="wm-note">● = one portion; a number is how many. Thirteen core ingredients, fourteen builds.</p>');
+
+  /* C · overlap */
+  var maxU=(M.utilisation&&M.utilisation[0]&&M.utilisation[0].items)||1;
+  var bars=(M.utilisation||[]).map(function(u){
+    return '<div class="wm-bar'+(u.items<5?' warn':'')+'"><span>'+esc(u.name)+'</span>'
+      +'<div class="tr"><div class="fl" style="width:'+Math.round(u.items/maxU*100)+'%"></div></div>'
+      +'<span class="n">'+u.items+'</span></div>';
+  }).join('');
+  h+=sec('C · Ingredient overlap','<div class="wm-bars">'+bars+'</div>'
+    +'<p class="wm-note"><b>Single-use ingredients: '
+    +((M.overlap&&M.overlap.singleUse&&M.overlap.singleUse.length)?esc(M.overlap.singleUse.join(', ')):'none')+'.</b> '
+    +esc((M.overlap&&M.overlap.note)||'')+'</p>');
+
+  /* D · prep & speed */
+  var srows=(M.speed||[]).map(function(x){
+    return '<tr><td>'+esc(x.name)+(x.day?' <span class="wm-day">'+esc(x.day)+'</span>':'')+'</td>'
+      +'<td><span class="wm-pill '+esc(String(x.prep||'').toLowerCase())+'">'+esc(x.prep||'')+'</span></td>'
+      +'<td class="r">~'+x.estMin+' min</td></tr>';
+  }).join('');
+  h+=sec('D · Kitchen prep &amp; speed — fastest to slowest',
+    '<div class="wm-scroll"><table class="wm-tbl"><tr><th>Item</th><th>Complexity</th><th class="r">Est. time</th></tr>'+srows+'</table></div>'
+    +'<p class="wm-note">'+esc((M.stock&&M.stock.note)||'')+'</p>');
+
+  /* E · food cost */
+  var crows=(M.cost||[]).map(function(x){
+    return '<tr class="'+esc(x.band)+'"><td>'+esc(x.name)+(x.day?' <span class="wm-day">'+esc(x.day)+'</span>':'')+'</td>'
+      +'<td class="r">'+wZar(x.price)+'</td><td class="r">'+wZar(x.cost)+'</td>'
+      +'<td class="r">'+x.foodCostPct+'%</td><td class="r">'+wZar(x.grossProfit)+'</td>'
+      +'<td class="r">'+x.marginPct+'%</td>'
+      +'<td class="wm-band">'+esc(x.band)+(x.flag?'<div class="wm-flag">'+esc(x.flag)+'</div>':'')+'</td></tr>';
+  }).join('');
+  h+=sec('E · Food cost model — blended '+M.blendedFoodCostPct+'%',
+    '<div class="wm-scroll"><table class="wm-tbl"><tr><th>Item</th><th class="r">Sell</th><th class="r">Cost</th><th class="r">Food %</th><th class="r">GP</th><th class="r">Margin</th><th>Call</th></tr>'+crows+'</table></div>'
+    +'<p class="wm-note">'+esc(M.assumptions||'')+'</p>'
+    +'<p class="wm-note">Weak margins are FLAGGED and the selling prices stay as given — each flag says why, and which lever exists.</p>');
+
+  /* F · wastage */
+  var wrows=(M.wastage||[]).map(function(x){
+    return '<tr><td>'+esc(x.name)+'</td><td><span class="wm-pill '+(x.risk==='LOW'?'low':'medium')+'">'+esc(x.risk)+'</span></td>'
+      +'<td class="r">'+x.items+'</td><td class="why">'+esc(x.why)+'</td></tr>';
+  }).join('');
+  h+=sec('F · Wastage risk','<div class="wm-scroll"><table class="wm-tbl"><tr><th>Ingredient</th><th>Risk</th><th class="r">Items</th><th>Why</th></tr>'+wrows+'</table></div>');
+
+  /* stock complexity */
+  var st=M.stock||{}, sa=st.thisMenu||{}, sb=st.fullMenu||{};
+  var srows2=[['Core ingredients','ingredients'],['Sauces','sauces'],['Proteins','proteins'],['Breads','breads'],['Stations','stations']]
+    .map(function(p2){return '<tr><td>'+p2[0]+'</td><td class="r"><b>'+esc(String(sa[p2[1]]))+'</b></td><td class="r">'+esc(String(sb[p2[1]]))+'</td></tr>';}).join('');
+  h+=sec('Stock complexity — this menu vs a full board',
+    '<div class="wm-scroll"><table class="wm-tbl"><tr><th></th><th class="r">3–3–3–1</th><th class="r">Full menu</th></tr>'+srows2+'</table></div>');
+
+  /* G · big one strategy */
+  var grows=(M.strategy||[]).map(function(x){
+    return '<div class="wm-strat"><span class="d">'+esc(x.day)+'</span><b>'+esc(x.name)+'</b>'
+      +'<span class="p">'+wZar(x.price)+'</span><span class="pitch">'+esc(x.pitch)+'</span></div>';
+  }).join('');
+  h+=sec('G · The Daily Big One strategy',grows
+    +'<p class="wm-note">One hero per weekday, day-locked by the Worker — the week’s rhythm is the reason to come back tomorrow. Prices climb Monday→Friday; Thursday’s promotion peak is also the margin peak.</p>');
+
+  /* H · verdict */
+  var vrows=(M.verdict||[]).map(function(v){
+    return '<tr><td class="nm">'+esc(v[0])+'</td><td>'+esc(v[1])+'</td></tr>';
+  }).join('');
+  h+=sec('H · The verdict','<div class="wm-scroll"><table class="wm-tbl">'+vrows+'</table></div>'
+    +'<p class="wm-chain">'+esc(M.chain||'')+'</p>');
+
+  return '<div class="wm-wrap">'+h+'</div>';
+}
+
 function wDonePage(){
   return '<div class="card wp-ok" style="max-width:520px">'
     +'<div class="big">✅</div><h3>Order submitted</h3>'
@@ -3641,6 +3774,7 @@ function wSubmit(){
 }
 
 function wireWimpy(){
+  document.querySelectorAll('[data-wsub]').forEach(function(b){ b.onclick=function(){ WSUB=b.getAttribute('data-wsub'); render(); }; });
   document.querySelectorAll('[data-wcat]').forEach(function(b){ b.onclick=function(){ WCAT=b.getAttribute('data-wcat'); render(); }; });
   document.querySelectorAll('[data-wadd]').forEach(function(b){ b.onclick=function(){ wOpen(b.getAttribute('data-wadd')); }; });
   document.querySelectorAll('[data-wedit]').forEach(function(b){ b.onclick=function(){ wOpen(WCART[+b.getAttribute('data-wedit')].id, +b.getAttribute('data-wedit')); }; });
