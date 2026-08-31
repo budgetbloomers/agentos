@@ -5101,11 +5101,20 @@ function pgComposite(){
   if(c.rated===false) return '<div class="card"><h2>Agent rating</h2>'
     +'<p class="why">You have not worked a session in this period yet, so there is nothing to rate. '
     +'Your rating appears after your first session.</p></div>';
-  var band=c.band||'', adj=Math.round(c.adj);
+  /* THE BOX CARRIES ITS DECIMAL (Nick, 2026-08-31: "shouldn't this be 97.8").
+     Performance_Tab_View.json made this the one rounded figure on the panel, written before
+     the band label sat beside it. Rounding can cross a band edge: an agent on 89,6 would
+     read "90" in the box while the label under it says Strong and the line beside it says
+     "0,4 points from Elite" — the box and the words contradicting each other, which is the
+     one thing this panel cannot afford. Nobody is over that edge today; four agents are
+     within half a point of one. The tally below already reconciles unrounded, so showing
+     the same figure here costs nothing and removes the trap. Banding still reads the real
+     value, never the displayed one. */
+  var band=c.band||'', adj=c.adj;
   var cls=adj>=80?'good':(adj>=65?'mid':'low');
   var floor=c.floor||50;
   var h='<div class="card"><h2>Agent rating</h2>'
-    +'<div class="pg-score '+cls+'"><b class="num">'+num(adj)+'</b><small>out of 100</small></div>';
+    +'<div class="pg-score '+cls+'"><b class="num">'+num(adj,1)+'</b><small>out of 100</small></div>';
 
   h+='<h3 class="pg-verdict">'+esc(band)
     +(c.nextBand?' — '+num(c.nextBand.pointsAway,1)+' points from '+esc(c.nextBand.label):'')+'</h3>';
@@ -5216,12 +5225,12 @@ function pgRating(){
      (the leaderboard's Score chip, published as ME.score) and the points come from
      its published breakdown — the weekly review's composite is NOT used here: it
      runs on its own window and once rated a top agent 68 on stale figures. */
-  var score=ME.score!=null?Math.round(ME.score*100):null;
+  var score=ME.score!=null?Math.round(ME.score*1000)/10:null;   // one decimal, like the composite box
   if(score==null) return '';
   var cls=score>=80?'good':(score>=65?'mid':'low');
   var sp=ME.scoreParts||null;
   var h='<div class="card"><h2>Agent rating</h2>'
-    +'<div class="pg-score '+cls+'"><b class="num">'+num(score)+'</b><small>out of 100</small></div>';
+    +'<div class="pg-score '+cls+'"><b class="num">'+num(score,1)+'</b><small>out of 100</small></div>';
   var drv=pgDrivers();
   var met=drv.filter(function(d){return d.met===true;}).length;
   var known=drv.filter(function(d){return d.met!=null;}).length;

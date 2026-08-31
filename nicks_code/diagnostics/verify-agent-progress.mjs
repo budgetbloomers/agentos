@@ -73,7 +73,9 @@ async function renderFor(me, view) {
     window.show(me);
     const root = document.getElementById('root');
     const text = root.innerText;
-    const score = (text.match(/(\d+)\s*out of 100/) || [])[1] || null;
+    /* one decimal since 2026-08-31: rounding the box could cross a band edge and
+       contradict the label beside it (an agent on 89,6 reading "90" under "Strong"). */
+    const score = (text.match(/([0-9.,]+)[^0-9]{0,3}out of 100/) || [])[1] || null;
     const chips = Array.from(root.querySelectorAll('.pg-row')).map(r => ({
       label: r.querySelector('.pg-l') ? r.querySelector('.pg-l').innerText.trim() : '',
       chip: /At target/.test(r.innerText) ? 'at' : (/To go/.test(r.innerText) ? 'togo' : '—'),
@@ -108,8 +110,9 @@ for (const me of agents) {
        number the engine published, never a second calculation — but the composite
        is now that number, and its parts are checked against their own weights below. */
     const wantScore = (me.composite && me.composite.rated !== false && me.composite.adj != null)
-      ? Math.round(me.composite.adj) : Math.round(me.score * 100);
-    if (!near(parseInt(r.score, 10), wantScore, 0)) { scoreBad++; ok('score for ' + me.code, false, r.score + ' vs ' + wantScore); }
+      ? me.composite.adj : Math.round(me.score * 1000) / 10;
+    const shown = parseFloat(String(r.score).replace(/[^0-9.,]/g, "").replace(",", "."));
+    if (!near(shown, wantScore, 0.06)) { scoreBad++; ok("score for " + me.code, false, r.score + " vs " + wantScore); }
     /* the composite's own parts must reconcile to the composite it is printed beside */
     if (me.composite && me.composite.parts) {
       const c = me.composite;
