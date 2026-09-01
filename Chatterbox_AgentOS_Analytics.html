@@ -499,6 +499,12 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(37,99,235,.12)
    ===================================================================== */
 
 /* ---------------- SOURCE CONTRACTS (exact headers from real exports) ---------------- */
+/* CALLX RETIRED — from this date the whole floor dials on ViciDial (Nick, 2026-09-01).
+   A source-contract date, not a tunable threshold: mirrored in specs/mtd_engine_rules.json
+   sources[id=call_x_call].retired and in PULSE's MTD_RULES.callxRetired. It gates the
+   CallX intake (rows on/after refused) and the scoring engine's Vici union (rows before
+   it stay out of C.call so August scoring never moves). */
+const CALLX_RETIRED='2026-09-01';
 const SOURCES = {
   /* S5 · THE MONEY SOURCE (rules pack §1 R-ING-BI-*). Listed FIRST because sales and GWP
      now come from here and nowhere else.
@@ -526,7 +532,7 @@ const SOURCES = {
     headers:['Case ID','Case Number','Subject','Date/Time Opened','Date/Time Closed','Closed','Disposition','Age (Hours)','Account Name','Account Number','Account Mobile from Person Account','Person Account: Email','Case Record Type','Case Owner','Status'],
     required:['Case Number','Date/Time Closed'],snapshot:false,dateH:'Date/Time Closed',
     purpose:'Closure throughput, dispositions, owner performance.'},
-  CALLX_CALL_RECORDS:{label:'CallX · Call Records',system:'CallX (dialler)',fmt:'.xlsx',color:'violet',
+  CALLX_CALL_RECORDS:{label:'CallX · Call Records (retired 1 Sep 2026)',system:'CallX (dialler)',fmt:'.xlsx',color:'violet',
     headers:['Date & Time','Caller ID','Source','Destination','Outbound CLI','Call Type','Campaign','Agent','Bridge','Lead Disposition','Reporting classification','Wrap-up','Duration','Billable Seconds','Branch','Recording link','Channel','Destination Channel','Application'],
     required:['Date & Time','Call Type'],snapshot:false,dateH:'Date & Time',
     purpose:'Dialler productivity: total and unique calls, billable talk time, and the call-type bands (No Answer / Customer Service / Pitch / Closing). Inbound queue legs load too; agents map to the roster via the Call x alias or the CB code inside the agent string.'},
@@ -1398,6 +1404,18 @@ function applyLoad(srcKey,file,parsed,notes){
       const keep=prev.filter(r=>!nk.has(vkey(r)));
       replaced=prev.length-keep.length;prev=keep;
       if(replaced)batch.superseded_prev_rows=replaced}
+    if(srcKey==='CALLX_CALL_RECORDS'&&loaded.length){
+      /* CALLX RETIRED — the whole floor dials on ViciDial from this date (Nick, 2026-09-01).
+         Rows on/after it are refused HERE TOO, not only in PULSE's station, because uploads
+         relay between the apps as raw files: a file PULSE refused still archives and would
+         land its retired rows through this parser. Earlier days keep loading as history.
+         Mirror of specs/mtd_engine_rules.json sources[id=call_x_call].retired. */
+      const b4r=loaded.length;loaded=loaded.filter(r=>!r._d||r._d<CALLX_RETIRED);
+      if(b4r>loaded.length){batch.callx_retired_rows=b4r-loaded.length;batch.loaded_row_count=loaded.length;
+        if(typeof toast==='function')toast('CallX retired '+CALLX_RETIRED+' — '+(b4r-loaded.length).toLocaleString()
+          +' row(s) dated on/after the cutover refused. The floor dials on ViciDial now: upload EXPORT_CALL_REPORT with every user group ticked.');}
+      if(!loaded.length){/* nothing pre-cutover survived — fall through with zero rows; the batch audit says why */}
+    }
     if(srcKey==='CALLX_CALL_RECORDS'&&loaded.length){
       // Dialler exports overlap (a growing date-range re-export lands next to earlier
       // chunks; call rows carry no unique ID). Same doctrine as Pulse: FULLEST-DAY-WINS —
@@ -2325,6 +2343,21 @@ function viciAgentRows(win){const sys=viciSysSet();
 function viciCbOf(r){const byName=state.sfOwnerMap?.[normName(r.full_name)]||null;
   if(byName)return byName;
   return (r.user_cb&&state.cbInfo[r.user_cb])?r.user_cb:null}
+/* ONE DIALLER SERIES ACROSS THE CUTOVER — for the pages that chart activity (dashboard
+   call trend, Sales Production, phase drop-off, cycle dialling days): CallX rows as-is,
+   plus post-cutover ViciDial rows normalised to the fields those pages read. Scoring does
+   NOT read this — acCtx builds C.call with its own gated union. System logins are
+   excluded; answered derives from the status against the no-contact rule; _cb carries the
+   resolved agent because cbOf() maps CallX dialler labels, never Vici names. */
+function diallerRows(win){
+  const cx=rowsFor('CALLX_CALL_RECORDS',win);
+  const sys=viciSysSet(),nc=viciNcSet();
+  const vi=rowsFor('VICI_CALL_REPORT',win)
+    .filter(r=>r._d&&r._d>=CALLX_RETIRED&&!sys.has(String(r.user_raw||'').toUpperCase()))
+    .map(r=>({agent:r.full_name||r.user_raw,_cb:viciCbOf(r),billable_seconds:r.length_in_sec||0,
+      answered:nc.has(r.status)?0:1,campaign:r.user_group||'(ViciDial)',call_type:'outbound',_d:r._d,_vici:1}));
+  return cx.length?cx.concat(vi):vi;
+}
 function evalKPI(k,win){
   if(k.type==='cross'){
     const n=agg(rowsFor(k.num.src,win),k.num.agg,k.num.field,k.num.filter);
@@ -2743,7 +2776,7 @@ function pageExec(win){
     ...coachOpen.slice(0,3).map(r=>({p:'a',t:'Coaching pending — '+maskName(r.sales_agent),d:esc(r.coaching_category||'Coaching'),own:r.team_leader,date:r.call_date})),
     ...stale.map(k=>({p:'a',t:'Upload needed — '+esc(SOURCES[k].label),d:'Source is stale or missing',own:'Ryan',date:''}))
   ];
-  const callRows=rowsFor('CALLX_CALL_RECORDS',win);
+  const callRows=diallerRows(win);   // both diallers across the 2026-09-01 cutover
   const ds=dailySeries(callRows,win,rs=>rs.length);
   const dsAns=dailySeries(callRows,win,rs=>rs.filter(r=>r.answered).length);   // the row's own flag, not the band LABEL (renaming a band must not move this line)
   /* Client 2026-07-20: headline QA metric is the AVERAGE SCORE, not pass rate. */
@@ -2871,7 +2904,7 @@ function cycleCalc(mode){
     cw={from:start,to:'2099-12-31'};
   }
   const prem=(function(){const f=state.filters;try{return accountPremiums(cw)}finally{state.filters=f}})();
-  const dial=rowsFor('CALLX_CALL_RECORDS',cw);
+  const dial=diallerRows(cw);   // both diallers across the 2026-09-01 cutover
   /* Fold the raw roster queue to the campaign key the targets are written in, exactly as every
      other campaign view in the app does. This was the one place that keyed on the RAW queue, so
      it depended on the Agent List's Campaign-format tab winning the preferHeader race: on a
@@ -2901,7 +2934,7 @@ function cycleCalc(mode){
     const q=campOfAcc[r.account_number];if(!q||!r._d)return;
     (moneyDays[q]=moneyDays[q]||new Set()).add(r._d)});
   const weeks=Object.keys(WK).sort().map(k=>({wk:k,gwp:WK[k].ex*(1+vat),sales:WK[k].acc.size}));
-  dial.forEach(r=>{const cb=cbOf(r.agent);if(!cb||!r._d)return;const q=state.cbInfo[cb]?.queue;if(!q)return;(dialDays[campKey(q)]=dialDays[campKey(q)]||new Set()).add(r._d)});
+  dial.forEach(r=>{const cb=r._cb||cbOf(r.agent);if(!cb||!r._d)return;const q=state.cbInfo[cb]?.queue;if(!q)return;(dialDays[campKey(q)]=dialDays[campKey(q)]||new Set()).add(r._d)});
   const anc=isoDay(anchorDate());
   const wdFallback=workDays({from:start,to:cw.to<anc?cw.to:anc});
   /* A campaign worked a day if it banked money OR dialled on it — the union, so neither a
@@ -3142,7 +3175,7 @@ function pageBIMoney(win){
 }
 function pageSales(win){
   if(!hasData())return emptyState('Sales Production needs its first upload');
-  const calls=rowsFor('CALLX_CALL_RECORDS',win);
+  const calls=diallerRows(win);   // both diallers across the 2026-09-01 cutover
   const acts=rowsFor('BI_ACTIVE_CASES',win);   // product mix reads the money source, not the retired activations
   const open=rowsFor('SF_OPEN_CASES',win);
   const closed=rowsFor('SF_CLOSED_CASES',win);
@@ -3342,9 +3375,9 @@ function phaseLabels(){return (state.rules.callPhases?.vals||[]).map(v=>String(v
 /* Drop-off by call phase: of OUTBOUND dial attempts, how many ended in each phase
    (= where the agent was cut off). Optionally scoped to one campaign bucket. */
 function callPhaseDropoff(win,campFilter){
-  const calls=rowsFor('CALLX_CALL_RECORDS',win).filter(c=>c.agent&&c.call_type!=='inbound');
+  const calls=diallerRows(win).filter(c=>c.agent&&c.call_type!=='inbound');
   const labels=phaseLabels();const dist={};labels.forEach(l=>dist[l]=0);let total=0;
-  calls.forEach(c=>{if(campFilter){const cb=cbOf(c.agent);const cc=cb?campBucket(state.cbInfo[cb]?.queue):null;if(cc!==campFilter)return}
+  calls.forEach(c=>{if(campFilter){const cb=c._cb||cbOf(c.agent);const cc=cb?campBucket(state.cbInfo[cb]?.queue):null;if(cc!==campFilter)return}
     const ph=phaseBandFor(c.billable_seconds);dist[ph]=(dist[ph]||0)+1;total++});
   return{labels,dist,total};
 }
@@ -3727,6 +3760,27 @@ function acCtxBuild(win){
     else if(isC){o.sd++}});
   rowsNF('ATTENDANCE',win).forEach(r=>{const cb=normCB(r.employee_code);if(!cb||r.excluded_flag)return;const o=C.att[cb]=C.att[cb]||{sched:0,p:0};o.sched++;if(r.present_flag)o.p++});
   rowsNF('CALLX_CALL_RECORDS',win).forEach(r=>{const cb=cbOf(r.agent);if(!cb)return;const o=C.call[cb]=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};o.n++;o.sec+=r.billable_seconds||0;o.bands[r.call_band]=(o.bands[r.call_band]||0)+1;if(r._d)o.days.add(r._d);const d=String(r.destination_number||'').trim();if(d&&d!=='s')o.uniq.add(d)});
+  /* THE FLOOR DIALS ON VICIDIAL from CALLX_RETIRED (2026-09-01) — without this union the
+     talk driver, R8 and calls/day read only CallX and every Courtesy agent's September
+     would score "no dialler rows", which the 31 Aug audit established is a coaching
+     instruction generated by a missing join. Gated to the cutover so no closed month's
+     scoring moves: before it, Cuddle talk stays out of Ops scoring exactly as it always
+     was (the registered Ops/VAS divergence), and CallX rows after it cannot exist — the
+     intake refuses them. Seconds are length_in_sec (ringing included, the 13 Aug
+     decision); bands run the same band rules over those seconds; lead_id stands in for
+     the destination number the Vici transform deliberately does not store; system logins
+     are excluded exactly as every Vici page excludes them. */
+  (function(){const sys=viciSysSet();
+    rowsNF('VICI_CALL_REPORT',win).forEach(r=>{
+      if(!r._d||r._d<CALLX_RETIRED)return;
+      if(sys.has(String(r.user_raw||'').toUpperCase()))return;
+      const cb=viciCbOf(r);if(!cb)return;
+      const o=C.call[cb]=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};
+      o.n++;o.sec+=r.length_in_sec||0;
+      const b=callBandForRow({billable_seconds:r.length_in_sec});if(b)o.bands[b]=(o.bands[b]||0)+1;
+      o.days.add(r._d);
+      if(r.lead_id)o.uniq.add('L'+r.lead_id);});
+  })();
   rowsNF('REFERRALS',win).forEach(r=>{const cb=refCbOf(r);if(!cb)return;const o=C.ref[cb]=C.ref[cb]||{n:0};o.n+=(r.referral_count??1)});
   (function(){const f=state.filters;state.filters={};try{
     accountPremiums(win).forEach(e=>{if(!e.cb)return;const o=C.sale[e.cb]=C.sale[e.cb]||{n:0,gwp:0};o.n++;o.gwp+=e.gwp||0});
@@ -4588,7 +4642,8 @@ function cbxContext(){
       var cc=F.SF_CLOSED_CASES||[]; if(cc.length)out.push("Closed Cases: "+cc.length+" rows · closed "+rng(cc,function(r){return r.closed_at})+" · by disposition → "+top(cnt(cc,function(r){return r.disposition})));
       var bi=F.BI_ACTIVE_CASES||[]; if(bi.length){var bex=0,bacc={};bi.forEach(function(r){bex+=(+r.charge_amount||0);if(r.account_number)bacc[r.account_number]=1});
         out.push("Power BI - Active Cases (THE money source): "+bi.length+" charge rows · "+Object.keys(bacc).length+" unique accounts = sales · GWP R"+Math.round(bex*(1+vatPct()))+" incl / R"+Math.round(bex)+" ex-VAT · sale dates "+rng(bi,function(r){return r._d})+" · by product → "+top(cnt(bi,function(r){return r.product_bundle})));}
-      var ca=F.CALLX_CALL_RECORDS||[]; if(ca.length){var tsec=0;ca.forEach(function(r){tsec+=(+r.billable_seconds||0)});out.push("Calls: "+ca.length+" rows · "+Math.round(tsec/3600)+"h billable talk · dates "+rng(ca,function(r){return r._d})+" · by campaign → "+top(cnt(ca,function(r){return r.campaign}))+" · by type → "+top(cnt(ca,function(r){return r.call_type}),4));}
+      var ca=F.CALLX_CALL_RECORDS||[]; if(ca.length){var tsec=0;ca.forEach(function(r){tsec+=(+r.billable_seconds||0)});out.push("CallX calls (retired 2026-09-01): "+ca.length+" rows · "+Math.round(tsec/3600)+"h billable talk · dates "+rng(ca,function(r){return r._d})+" · by campaign → "+top(cnt(ca,function(r){return r.campaign}))+" · by type → "+top(cnt(ca,function(r){return r.call_type}),4));}
+      var vi=(F.VICI_CALL_REPORT||[]); if(vi.length){var vsec=0;vi.forEach(function(r){vsec+=(+r.length_in_sec||0)});out.push("ViciDial calls: "+vi.length+" rows · "+Math.round(vsec/3600)+"h on-phone (ringing included) · dates "+rng(vi,function(r){return r._d})+" · by user group → "+top(cnt(vi,function(r){return r.user_group})));}
       var inc=F.SF_INACTIVE||[]; if(inc.length)out.push("Cancellations: "+inc.length+" rows · contract-create dates "+rng(inc,function(r){return r._d}));
       var qa=F.QA_EVALUATIONS||[]; if(qa.length)out.push("QA Evaluations: "+qa.length+" rows · call dates "+rng(qa,function(r){return r._d}));
       var at=F.ATTENDANCE||[]; if(at.length)out.push("Attendance: "+at.length+" rows · dates "+rng(at,function(r){return r._d})+" · by status → "+top(cnt(at,function(r){return r.status}),6));

@@ -106,6 +106,8 @@
    "id": "call_x_call",
    "file_pattern": "Call_X_Call_report_-_D_-_D.xlsx",
    "sheet": "Call Records",
+   "retired": "2026-09-01",
+   "retired_note": "The whole floor dials on ViciDial from 1 Sep 2026 (Nick, 2026-09-01: 'there is no longer a need for call x/call records all the agents will be on vicci now'). The upload intake refuses rows dated on/after this date and points at the ViciDial slot; earlier days still load as history corrections. Courtesy/Nesting talk time and dialler-derived Actual Shifts read ViciDial from the cutover — the shift rule itself (talk>0 -> 1) is unchanged, only where the talk comes from. NOTE the talk-time definition changes with the source: CallX billed Billable Seconds (connected leg only), ViciDial bills length_in_sec (ringing included, ~38%, per the 2026-08-13 decision) — September Courtesy talk therefore reads higher than August for the same work.",
    "feeds": [
     "August.N (Talk Time) for Courtesy and Nesting"
    ],

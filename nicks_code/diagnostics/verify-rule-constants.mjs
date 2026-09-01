@@ -84,6 +84,12 @@ await page.goto('http://127.0.0.1:8216/', { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__mtd && window.__mtd.rules(), null, { timeout: 30000 });
 if (blob) await page.evaluate(x => { const S = window.__mtd.state(); const o = JSON.parse(x);
   for (const k of Object.keys(o)) S[k] = o[k]; window.__mtd.rebuild(); }, blob);
+/* PIN THE PERIOD TO THE LATEST MONTH THAT HOLDS DATA. On the 1st of a month the live
+   state's current month is empty, the digest builds null, and this guard failed on the
+   calendar rather than on the arithmetic it exists to check (first seen 2026-09-01). */
+await page.evaluate(() => { const S = window.__mtd.state();
+  const days = [...Object.keys(S.sales || {}), ...Object.keys(S.calls || {})].sort();
+  if (days.length) window.__mtd.setPeriod(days[days.length - 1].slice(0, 7), 'month'); });
 
 /* ---- the engine grosses up with the rule ---------------------------------------- */
 const v = await page.evaluate(() => ({ rule: window.__mtd.rules().vat, used: window.__mtd.vat() }));

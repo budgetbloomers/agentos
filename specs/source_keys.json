@@ -134,6 +134,8 @@
       ],
       "keep": "last",
       "sql": "callx_calls (row_hash)",
+      "retired": "2026-09-01",
+      "retired_note": "RETIRED WITH HISTORY, never deleted: the whole floor dials on ViciDial from 1 Sep 2026 (Nick), both apps refuse CallX rows dated on/after the cutover, and no new rows should ever appear here. The store stays, keeps this identity rule and stays under the duplicate guard, because every month through August 2026 reads its talk from these rows. A row count that GROWS after the retirement date is a defect.",
       "note": "No natural id in the export. These four fields are unique across all 63 735 live rows, and match what row_hash would hash. Nothing to dedupe today; the key exists so an overlapping re-export cannot stack.",
       "measured": {
         "rows": 63735,

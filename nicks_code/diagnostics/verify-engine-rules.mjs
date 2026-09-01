@@ -54,6 +54,13 @@ ok('VAT multiplier matches', inlined.vat === SPEC.reference_data.vat_multiplier.
   ok('sales target matrix matches', !drift.length, drift.join(','));
 }
 {
+  /* CallX retirement (2026-09-01, whole floor on ViciDial). The date gates the calls()
+     intake, so the two copies drifting apart would silently re-open or widen the refusal. */
+  const cx = (SPEC.sources || []).find(s => s.id === 'call_x_call');
+  ok('CallX retirement date matches', !!cx && cx.retired === inlined.callxRetired,
+    `spec ${cx && cx.retired} vs inlined ${inlined.callxRetired}`);
+}
+{
   const c = SPEC.identity_resolution.code_corrections;
   const drift = Object.keys(inlined.qaCodeCorrections).filter(k => c[k] !== inlined.qaCodeCorrections[k]);
   const missing = Object.keys(c).filter(k => !k.startsWith('_') && !inlined.qaCodeCorrections[k]);

@@ -293,10 +293,18 @@ for (let i = 1; i < attRaw.length; i++) {
 }
 const attDupes = findDupes('ATTENDANCE', ATT.filter(a => a.day), a => a.code + '|' + a.day, 'employee-day');
 
-/* CALLX call records */
+/* CALLX call records — RETIRED 2026-09-01 (the whole floor dials on ViciDial; mirror of
+   specs/mtd_engine_rules.json sources[id=call_x_call].retired). A daily dir WITHOUT
+   call_records.csv is the expected state now, not a missing upload. One carrying it is
+   still validated — its pre-cutover days are history corrections — and any post-cutover
+   day is flagged, because both apps refuse those rows at intake. */
+const CALLX_RETIRED = '2026-09-01';
+const CX = [];
+if (!NAMES.callx) {
+  console.log('  (call_records.csv absent — CallX retired ' + CALLX_RETIRED + '; every campaign\'s talk comes from the ViciDial exports)');
+} else {
 const cxRaw = parseCSV(fs.readFileSync(rawPath(NAMES.callx), 'utf8'));
 const cxHm = hmapOf(cxRaw[0]);
-const CX = [];
 for (let i = 1; i < cxRaw.length; i++) {
   const r = cxRaw[i];
   const agentRaw = String(cellv(r, cxHm, 'Agent') || '').trim();
@@ -318,6 +326,9 @@ for (let i = 1; i < cxRaw.length; i++) {
     if (rec.person === 'VALID_AGENT') recordMatch('CALLX', agentRaw, rec.cb, agentMap[agentRaw] ? 'alias/name' : 'code', 'VALID_AGENT');
   } else rec.person = rec.call_type === 'inbound' ? 'INBOUND_NO_AGENT' : 'NO_AGENT';
   CX.push(rec);
+}
+const cxPostCut = CX.filter(c => c.day && c.day >= CALLX_RETIRED).length;
+if (cxPostCut) finding('HIGH', 'CALLX', `${cxPostCut} row(s) in ${NAMES.callx} are dated on/after ${CALLX_RETIRED} — CallX is retired and both apps REFUSE those rows at intake. The floor dials on ViciDial: those days must come from EXPORT_CALL_REPORT with every user group ticked.`);
 }
 const cxOut = CX.filter(c => !inWindow(c.day));
 const cxDupes = findDupes('CALLX', CX, c => [c.dt, c.destination, c.agent_raw, c.duration_s, c.channel].join('|'), 'exact call');
@@ -377,13 +388,21 @@ const viciOverlap = VICI_TXT.filter(v => viciKeys.has(v.dt + '|' + v.user_raw + 
    name the groups that WERE in the pull so the wrong tick-boxes are visible immediately.
    Courtesy is deliberately not checked the same way — it dials on CallX (call_records.csv). */
 {
-  const cuddleCbs = new Set([...roster.values()].filter(a => /cuddle/i.test(String(a.campaign || ''))).map(a => a.cb_norm));
   const viciAll = [...VICI, ...VICI_TXT];
-  if (cuddleCbs.size && viciAll.length && !viciAll.some(v => v.cb && cuddleCbs.has(v.cb))) {
-    const grps = [...new Set(viciAll.map(v => v.grp).filter(Boolean))].sort();
-    finding('HIGH', 'VICI',
-      `No Cuddle-floor row in any ViciDial export (${[NAMES.vici, NAMES.viciTxt].filter(Boolean).join(', ')}) — the pull's user-group filter excludes the Cuddle floor (groups present: ${grps.join(', ') || 'none recorded'}). ` +
-      `Re-pull EXPORT_CALL_REPORT with the Cuddle user groups ticked (or all groups): Cuddle then gets day-level talk, MTD coverage and Variance DV03 checks, exactly like Courtesy.`);
+  const grps = [...new Set(viciAll.map(v => v.grp).filter(Boolean))].sort();
+  /* Post-cutover, EVERY reported campaign must appear in the pull — CallX is retired, so a
+     campaign the user-group filter excludes doesn't error anywhere, it just reads as a
+     floor that never dialled. Pre-cutover pulls keep the original Cuddle-only rule
+     (Courtesy dialled on CallX then, so its absence from Vici proved nothing). */
+  const postCut = viciAll.some(v => v.day && v.day >= CALLX_RETIRED);
+  const camps = postCut ? ['Cuddle', 'Courtesy', 'Nesting'] : ['Cuddle'];
+  for (const camp of camps) {
+    const cbs = new Set([...roster.values()].filter(a => new RegExp(camp, 'i').test(String(a.campaign || ''))).map(a => a.cb_norm));
+    if (cbs.size && viciAll.length && !viciAll.some(v => v.cb && cbs.has(v.cb))) {
+      finding('HIGH', 'VICI',
+        `No ${camp}-floor row in any ViciDial export (${[NAMES.vici, NAMES.viciTxt].filter(Boolean).join(', ')}) — the pull's user-group filter excludes that floor (groups present: ${grps.join(', ') || 'none recorded'}). ` +
+        `Re-pull EXPORT_CALL_REPORT with every user group ticked: an unticked group reads as agents who never dialled — blank talk, zero dialler-derived shifts.`);
+    }
   }
 }
 const isOptIn = d => /insurance opt/i.test(d) && !/no insurance/i.test(d);

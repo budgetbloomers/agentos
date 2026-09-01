@@ -57,6 +57,12 @@ await page.goto('http://127.0.0.1:8232/', { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__mtd && window.__mtd.compositeRules, null, { timeout: 30000 });
 await page.evaluate(x => { const S = window.__mtd.state(); const o = JSON.parse(x);
   for (const k of Object.keys(o)) S[k] = o[k]; window.__mtd.rebuild(); }, blob);
+/* PIN THE PERIOD TO THE LATEST MONTH THAT HOLDS DATA. On the 1st of a month the live
+   state's current month is empty, the digest builds null, and this guard failed on the
+   calendar rather than on the arithmetic it exists to check (first seen 2026-09-01). */
+await page.evaluate(() => { const S = window.__mtd.state();
+  const days = [...Object.keys(S.sales || {}), ...Object.keys(S.calls || {})].sort();
+  if (days.length) window.__mtd.setPeriod(days[days.length - 1].slice(0, 7), 'month'); });
 
 /* ---- 1 · drift against the workbook-generated spec --------------------------------- */
 const spec = JSON.parse(fs.readFileSync(path.join(AGENTOS, 'specs', 'composite_rules.json'), 'utf8'));
@@ -172,7 +178,12 @@ ok('an agent the composite cannot rate shows no score rather than another measur
 const chain = await page.evaluate(() => {
   const S = window.__mtd.state(), M0 = window.__mtd.model();
   const d = window.__mtd.digest();
-  const t = (d.agents || []).find(r => r.campaign === 'Courtesy' && r.composite && r.composite.rated);
+  /* Prefer an agent scoring ABOVE the floor: one floored in BOTH tenure groups scores the
+     same 50 on each side, and "the score must move" then fails on a data coincidence, not
+     on the chain it checks (first seen 2026-09-01, on the closed August state). */
+  const floor = (window.__mtd.compositeRules().floor || 0) * 100;
+  const cands = (d.agents || []).filter(r => r.campaign === 'Courtesy' && r.composite && r.composite.rated);
+  const t = cands.find(r => r.composite.score > floor + 2) || cands[0];
   if (!t) return { skip: true };
   const code = t.code;
   const get = () => { const c = window.__mtd.composite(code), M = window.__mtd.model();
@@ -195,7 +206,7 @@ const chain = await page.evaluate(() => {
   const after = get();
   if (kept === undefined) delete S.orgHist[code]; else S.orgHist[code] = kept;
   window.__mtd.rebuild();
-  return { before, rosterOnly, after };
+  return { before, rosterOnly, after, floor };
 });
 if (chain.skip) ok('the Agent List drives the composite', true);
 else {
@@ -206,8 +217,11 @@ else {
     JSON.stringify(chain.after));
   ok('and the composite follows it — tenure group, targets and score',
     chain.after.group !== chain.before.group && chain.after.conv !== chain.before.conv &&
-    chain.after.gwpTotal !== chain.before.gwpTotal && chain.after.score !== chain.before.score,
-    JSON.stringify({ before: chain.before, after: chain.after }));
+    chain.after.gwpTotal !== chain.before.gwpTotal &&
+    /* both sides pinned to the floor is a legitimate equal score, not a broken chain */
+    (chain.after.score !== chain.before.score ||
+      (chain.before.score === chain.floor && chain.after.score === chain.floor)),
+    JSON.stringify({ before: chain.before, after: chain.after, floor: chain.floor }));
 }
 
 /* ---- no duplicate data ------------------------------------------------------------- */

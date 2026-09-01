@@ -52,6 +52,12 @@ await page.goto('http://127.0.0.1:8175/index.html', { waitUntil: 'domcontentload
 await page.waitForFunction(() => window.__mtd && window.__mtd.state(), null, { timeout: 30000 });
 await page.evaluate(b => { const S = window.__mtd.state(); const blob = JSON.parse(b);
   for (const k of Object.keys(blob)) S[k] = blob[k]; window.__mtd.rebuild(); }, blob);
+/* PIN THE PERIOD TO THE LATEST MONTH THAT HOLDS DATA. On the 1st of a month the current
+   month is empty: the workbook export builds no sheets, the guard-agreement check reads
+   null, and this suite failed on the calendar, not the app (first seen 2026-09-01). */
+await page.evaluate(() => { const S = window.__mtd.state();
+  const days = [...Object.keys(S.sales || {}), ...Object.keys(S.calls || {})].sort();
+  if (days.length) window.__mtd.setPeriod(days[days.length - 1].slice(0, 7), 'month'); });
 
 /* ---------- 1. the Agent List is the identity source ---------- */
 const ident = await page.evaluate(() => {

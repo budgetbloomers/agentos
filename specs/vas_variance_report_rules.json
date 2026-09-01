@@ -804,8 +804,8 @@
     "note": "VR16 — the always-pulls law (owner directive 2026-08-17). Each reported campaign names its DAY-LEVEL dialler source; a campaign with day-level rows on fewer than min_day_share of the compared days FAILS VR16 (error), naming the export and user groups to pull. Any-single-day is NOT coverage: the live August state held one Cuddle login with 0.0h on the 3rd and nothing else — that must fail. Period-aggregated exports are estimates, never DV03 evidence.",
     "campaigns": {
       "Courtesy": {
-        "day_level_source": "CallX per-call export (call_records.csv)",
-        "remedy": "Upload the day CallX call_records export."
+        "day_level_source": "ViciDial EXPORT_CALL_REPORT (per-call, tab-separated .txt) — CallX retired 2026-09-01",
+        "remedy": "Pull EXPORT_CALL_REPORT with EVERY user group ticked (Courtesy and Nesting groups included — an unticked group reads as agents who never dialled) and drop it on the ViciDial slot. Days before 2026-09-01 may still be evidenced by the CallX call_records export."
       },
       "Cuddle": {
         "day_level_source": "ViciDial EXPORT_CALL_REPORT (per-call, tab-separated .txt)",

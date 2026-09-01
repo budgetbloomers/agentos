@@ -365,9 +365,9 @@
   .slot .shead .kic{width:30px;height:30px}
   .slot .shead b{font-size:13.5px}
   .slot .sdesc{font-size:12px;color:var(--muted);line-height:1.45}
-  .slot .sstat{font-size:11.5px;margin-top:auto;padding-top:6px;border-top:1px solid var(--grid-line);color:var(--ink2);display:flex;gap:6px;align-items:center;min-height:30px}
+  .slot .sstat{font-size:11.5px;margin-top:auto;padding-top:6px;border-top:1px solid var(--grid-line);color:var(--ink2);display:flex;gap:4px 6px;align-items:center;flex-wrap:wrap;min-height:30px}
 /* the last-upload stamp sits at the far right of the slot footer: it answers "did my file go in?", which the coverage span cannot, and must not compete with it for attention */
-.sstat .smuted{margin-left:auto;color:var(--muted);opacity:.85;white-space:nowrap;font-size:11px}
+.sstat .smuted{flex-basis:100%;color:var(--muted);opacity:.85;font-size:11px}  /* own line — nowrap+auto-margin overflowed the card when the middle span was long (Agent List, 1 Sep) */
   .slot .sstat .pill{font-size:10.5px}
   .slot.builtin{border-style:solid;cursor:default}
   .slot.builtin:hover{transform:none;border-color:var(--stroke);background:var(--glass)}
@@ -553,6 +553,13 @@ const MTD_RULES = {
      Verified 134/136 fact rows against the register's 123/136. Cuddle must stay on the
      register because the ViciDial export is period-aggregated and has no per-day split. */
   actualShiftsFrom: { Courtesy:'dialler', Nesting:'dialler', Cuddle:'register', VT:'register' },
+
+  /* CallX retired — the whole floor dials on ViciDial from this date (Nick, 2026-09-01).
+     The calls() intake refuses rows on/after it and points at the ViciDial slot; earlier
+     days still load as history corrections. The dialler-derived shift rule is untouched —
+     it reads the merged call book, which ViciDial rows fill for every campaign now.
+     Mirror of specs/mtd_engine_rules.json sources[id=call_x_call].retired. */
+  callxRetired: '2026-09-01',
 
   /* §2 — source cleaning. Charge Amount and Charge Amount_1 are byte-identical duplicates;
      summing both doubles GWP. TESTRR and account 622622 are test data. */
@@ -981,8 +988,8 @@ const VARIANCE_RULES={
        ONE Cuddle login with 0.0h on the 3rd and nothing else, which must fail, not pass. */
     minDayShare:0.5,
     campaigns:{
-      Courtesy:{source:'CallX per-call export (call_records.csv)',
-        remedy:'Upload the day’s CallX call_records export.'},
+      Courtesy:{source:'ViciDial EXPORT_CALL_REPORT (per-call, tab-separated .txt) — CallX retired 2026-09-01',
+        remedy:'Pull EXPORT_CALL_REPORT with EVERY user group ticked (Courtesy and Nesting groups included — an unticked group reads as agents who never dialled) and drop it on the ViciDial slot. Days before 2026-09-01 may still be evidenced by the CallX call_records export.'},
       Cuddle:{source:'ViciDial EXPORT_CALL_REPORT (per-call, tab-separated .txt)',
         groups:['Renolan_Matrix_WC','Sharoma_Matrix_WC'],
         remedy:'Pull EXPORT_CALL_REPORT with the Cuddle floor’s user groups ticked (or all user groups). For past days, a SINGLE-DAY "Vici - Cuddle Agents" (Agent Performance Detail) export per day also counts as day-level. A multi-day aggregate is an estimate, never DV03 evidence.'}}},
@@ -2040,9 +2047,12 @@ const INGEST={
   calls(recs,name){
     const dates=new Set();
     const buckets={};
-    let skip=0;
+    let skip=0, retired=0;
     for(const r of recs){
       const d=parseDateLoose(r['Date & Time']); if(!d){ skip++; continue; }
+      /* CALLX IS RETIRED for days on/after the cutover — the whole floor is on ViciDial.
+         Earlier days still load, so an August correction can always land. */
+      if(MTD_RULES.callxRetired&&d>=MTD_RULES.callxRetired){ retired++; continue; }
       const agent=(r['Agent']||'').trim(); if(!agent){ skip++; continue; }  // before dates.add: a day of only agent-less rows must not claim the date with an empty bucket
       dates.add(d);
       const key=agent;   // resolved to an employee code at report-build time
@@ -2090,9 +2100,12 @@ const INGEST={
       stored.push(d);
     }
     if(kept) toast(kept+' day'+(kept>1?'s':'')+' in '+name+' already covered more fully — kept the fuller data');
-    if(!stored.length&&dates.size) return regFile(name,'calls',[],recs.length,{skip}); // recognised, but every day was fuller elsewhere
-    if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    return regFile(name,'calls',stored,recs.length,{skip});
+    if(retired) toast('CallX retired '+MTD_RULES.callxRetired+' — '+fmtNum(retired)+' row(s) in "'+name
+      +'" dated on/after the cutover were refused. The whole floor dials on ViciDial now: pull EXPORT_CALL_REPORT '
+      +'with every user group ticked and drop it on the ViciDial slot.'+(dates.size?' Earlier days in this file loaded as history.':''),12000);
+    if(!stored.length&&dates.size) return regFile(name,'calls',[],recs.length,{skip,retired}); // recognised, but every day was fuller elsewhere
+    if(!dates.size) return retired?regFile(name,'calls',[],recs.length,{skip,retired}):null;   // all-retired file: acknowledged, nothing stored; otherwise not a load — fail loudly
+    return regFile(name,'calls',stored,recs.length,{skip,retired});
   },
   attendance(recs,name){
     const dates=new Set();
@@ -2649,9 +2662,10 @@ const INGEST={
     const days=[]; { const d=new Date(from+'T00:00:00Z');
       while(dkey(d)<=to&&days.length<400){ days.push(dkey(d)); d.setUTCDate(d.getUTCDate()+1); } }
     if(days.length===1){
-      // Single-day export: merge onto the day. MERGE, not replace — Courtesy is still on
-      // CallX, so the same day legitimately holds rows from both diallers for DIFFERENT
-      // agents. Where one agent appears in both, the fuller record wins (never the sum).
+      // Single-day export: merge onto the day. MERGE, not replace — before the 2026-09-01
+      // cutover the same day legitimately holds CallX rows beside Vici rows for DIFFERENT
+      // agents, and after it two partial Vici pulls of one day can still coexist.
+      // Where one agent appears in both, the fuller record wins (never the sum).
       const d=days[0]; const bk=(S.calls[d]=S.calls[d]||{}); let kept=0;
       for(const r of rows){
         const cur=bk[r.name];
@@ -6325,8 +6339,8 @@ function exportVariance(){
 }
 
 PAGES.data=()=>{
-  const typeLabel={bi:'Power BI - Active Cases',calls:'Call records',attendance:'Attendance',evals:'QA evaluations',
-    roster:'Agent list','open cases':'Open cases — Lead Allocation (removed)','open cases (lead mgmt)':'Open cases — Lead Management','closed cases':'Closed cases (lead funnel)','tracker daily':'Tracker workbook',cancellations:'Cancellations (BI Inactive)','calls (ViciDial)':'ViciDial (Cuddle)','vici range':'ViciDial - multi-day aggregate',referrals:'Referrals (HighLevel)',board:'Manual Stats (daily board)'};
+  const typeLabel={bi:'Power BI - Active Cases',calls:'Call records — CallX (retired 1 Sep)',attendance:'Attendance',evals:'QA evaluations',
+    roster:'Agent list','open cases':'Open cases — Lead Allocation (removed)','open cases (lead mgmt)':'Open cases — Lead Management','closed cases':'Closed cases (lead funnel)','tracker daily':'Tracker workbook',cancellations:'Cancellations (BI Inactive)','calls (ViciDial)':'ViciDial','vici range':'ViciDial - multi-day aggregate',referrals:'Referrals (HighLevel)',board:'Manual Stats (daily board)'};
 
   // per-slot status from the file registry
   /* "IT IS NOT UPDATING" — the slot used to show only what the DATA covers, so an upload that
@@ -6359,7 +6373,11 @@ PAGES.data=()=>{
   };
   const SLOTS=[
     {t:'bi',icon:I.money,color:'var(--accent)',name:'Power BI - Active Cases',desc:'THE money source. GWP = Σ Charge Amount per account × VAT (charges are ex-VAT); sales are unique accounts, dated by Contract Create Date, agent from Owner. Upload monthly — months accumulate and you can filter to any month.',stat:statFor(['bi','sales'])},
-    {t:'calls',icon:I.phone,color:'var(--cuddle)',name:'Call Records',desc:'Dialer/PBX export — talk time, answered calls and opt-in dispositions per agent. Can cover one or many days.',stat:statFor(['calls'])},
+    /* CALL RECORDS (CallX) RETIRED 2026-09-01 (Nick: "there is no longer a need for call
+       x/call records all the agents will be on vicci now"). The slot is gone; the parser
+       still loads pre-cutover days (history corrections) and refuses anything on or after
+       the cutover with a pointer at the ViciDial slot — same doctrine as Lead Allocation:
+       a retired pull must not silently land anywhere. */
     {t:'attendance',icon:I.users,color:'var(--amber)',name:'Attendance',desc:'Attendance register export — shifts, leave, terminations. Exports cap at 1,000 rows, so pull short ranges.',stat:statFor(['attendance'])},
     {t:'evals',icon:I.shield,color:'var(--good)',name:'QA Evaluations',desc:'CallBi full evaluations export — scores, decisions and coaching categories per call.',stat:statFor(['evals'])},
     {t:'roster',icon:I.grid,color:'var(--violet)',name:'Agent List',desc:'Matrix agent list — team leaders, campaigns, tenure, daily targets, start dates. Replaces the current roster, and the assignments apply to the WHOLE current month the moment it lands.',
@@ -6368,7 +6386,7 @@ PAGES.data=()=>{
           +(fe?`<span>as of ${esc(String(fe.asOf||''))} · applied to whole of ${esc(String(fe.asOf||'').slice(0,7))}</span>
             <span class="smuted" title="${esc(String(fe.file||''))}">${fmtNum(fe.moved)} moved · ${fmtNum(fe.fresh)} new · ${fmtNum(fe.left)} left · last upload ${esc(String(fe.at||''))}</span>`:'');})()},
     {t:'inactive',icon:I.alert,color:'var(--rose)',name:'Cancellations (BI Inactive)',desc:'Power BI Inactive export — cancelled contracts, counted per agent by Contract Deactivate Date. This is where the MTD Cancellations and % of Cancellations columns come from. Upload daily; each upload replaces the days it covers, so overlapping pulls never double-count.',stat:statFor(['cancellations'])},
-    {t:'vici',icon:I.phone,color:'var(--cuddle)',name:'ViciDial (Cuddle)',desc:'Two ViciDial exports land here. <b>EXPORT_CALL_REPORT</b> (tab-separated .txt) is the one to prefer — one row per call, dated per call, so any date range splits across its days correctly. Talk time is every call\'s length on the agent\'s CB number; the upload says how much of it is ringing rather than talking. The older <b>Agent Performance Detail</b> is one row per agent for the range in its own "Time range:" line — export that ONE DAY AT A TIME, because a multi-day pull is a single total per agent and cannot be split across days.',stat:statFor(['calls (ViciDial)','vici range'])},
+    {t:'vici',icon:I.phone,color:'var(--cuddle)',name:'ViciDial — all agents',desc:'<b>The one dialler source for the whole floor since 1 Sep 2026</b> — Courtesy and Nesting included, CallX retired. Pull <b>EXPORT_CALL_REPORT</b> (tab-separated .txt) with <b>every user group ticked</b>: an unticked group doesn\'t error, its agents just read as never having dialled. One row per call, dated per call, so any date range splits across its days correctly. Talk time is every call\'s length on the agent\'s CB number; the upload says how much of it is ringing rather than talking. The older <b>Agent Performance Detail</b> is one row per agent for the range in its own "Time range:" line — export that ONE DAY AT A TIME, because a multi-day pull is a single total per agent and cannot be split across days.',stat:statFor(['calls (ViciDial)','vici range'])},
     {t:'board',icon:I.scale,color:'var(--courtesy)',name:'Manual Stats',desc:'The agent-logged daily board that feeds <b>VAS Analytics → Variance Report</b>: Agent Name + Sale 1..Sale 27 (cell value = GWP) + Total Sales / Total GWP / Referrals. <b>One day per sheet, named DD.MM</b> (e.g. 13.08) — re-uploading a day replaces exactly that day, and a workbook of historical DD.MM tabs loads each day separately. Agents match through the Agent List; unmatched names are reported on the Variance page, never guessed.',stat:statFor(['board'])},
     /* The lead book. Lead Management moved here from Ops on 2026-08-18; the Lead Allocation
        page and its own Open Cases slot were removed 2026-08-27 (Nick), so only the Lead
@@ -6376,7 +6394,15 @@ PAGES.data=()=>{
        because a point-in-time position cannot be merged); Closed Cases accumulates. */
     {t:'opencasesLM',icon:I.db,color:'var(--accent)',name:'Lead Management — Open Cases',desc:'The open half of the <b>Lead Management</b> funnel — the Salesforce <b>Open Cases</b> export named for Lead Management. A <b>snapshot</b>, so each upload replaces the whole book rather than merging; one row per Case Number, owners matched through the Agent List on the CB number. Open attempts, the attempt-stage pivot and the unique-lead conversion denominator all come from here; closures come from the slot below.',stat:statFor(['open cases (lead mgmt)'])},
     {t:'closedcases',icon:I.db,color:'var(--good)',name:'Lead Management — Closed Cases',desc:'Feeds <b>Lead Management</b>, together with the Open Cases book above (open attempts come from there, closures from here — one snapshot, two views, which is what keeps Total Allocated equal to Total Open). Salesforce <b>Closed Cases</b> export: total closed, no-feedback, wasted leads and conversion. Keyed on Case Number and dated on Date/Time Closed, so pulls <b>accumulate</b> instead of replacing. Note: a Salesforce .xls that is a frameset shell carries no rows and is refused rather than counted as zero.',stat:statFor(['closed cases'])},
-    {t:'referrals',icon:I.grid,color:'var(--violet)',name:'Referrals (HighLevel)',desc:'Referrals pull themselves from HighLevel through the API Worker — automatically on sign-in, or <button class="btn small" onclick="event.stopPropagation();window.__hlSyncVAS&&__hlSyncVAS()" style="vertical-align:1px">⟳ Sync now</button> — and a CSV drop still works. Agents are matched THROUGH THE AGENT LIST (employee code, then the roster name index); unmatched names are counted and reported, never invented. Counts are referral blocks per contact (one referrer can carry up to five), so totals can exceed rows. While loaded, keyed referral adjustments are ignored — one source, never both.',stat:statFor(['referrals'])},
+    {t:'referrals',icon:I.grid,color:'var(--violet)',name:'Referrals (HighLevel)',desc:'Referrals pull themselves from HighLevel through the API Worker — automatically on sign-in, or <button class="btn small" onclick="event.stopPropagation();window.__hlSyncVAS&&__hlSyncVAS()" style="vertical-align:1px">⟳ Sync now</button> — and a CSV drop still works. Agents are matched THROUGH THE AGENT LIST (employee code, then the roster name index); unmatched names are counted and reported, never invented. Counts are referral blocks per contact (one referrer can carry up to five), so totals can exceed rows. While loaded, keyed referral adjustments are ignored — one source, never both.',
+      /* The stat reads S.refs, the store itself — not the file registry. The API sync's
+         registry entry was observed missing while the snapshot sat loaded (60 agents,
+         1 Sep), and a card claiming "Nothing yet" over live data is the same lie as a
+         save toast over a failed save. Registry is the fallback, never the authority. */
+      stat:(()=>{const rf=S.refs,n=rf&&rf.by?Object.keys(rf.by).length:0;
+        if(!n) return statFor(['referrals']);
+        return `<span class="pill pgood">${fmtNum(rf.total||0)} referrals</span><span>${n} agents · ${esc(rf.f||'HighLevel')}</span>`
+          +((rf.un&&Object.keys(rf.un).length)?`<span class="smuted">${Object.keys(rf.un).length} name(s) match no one on the Agent List</span>`:'');})()},
   ];
   const slotCards=SLOTS.map(s=>`
     <div class="slot" data-slot="${s.t}" tabindex="0" role="button" aria-label="Upload ${s.name}">
