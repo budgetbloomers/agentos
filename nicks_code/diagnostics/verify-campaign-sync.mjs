@@ -4,7 +4,8 @@
  *
  *   node nicks_code/diagnostics/verify-campaign-sync.mjs
  *
- * Runs the REAL sync_campaigns() (migration-019) against the REAL database inside
+ * Runs the REAL sync_campaigns() (migration-019, DELETE semantics since migration-020:
+ * Nick, 2026-09-03 — "if it's not in the next one it must be deleted") against the REAL database inside
  * one transaction that is always rolled back — the same posture as
  * verify-agent-sync.mjs. Every scenario mutates the current list snapshot and the
  * campaigns table, and none of it lands.
@@ -43,10 +44,10 @@ try {
   head('B · A PLAN WRITES NOTHING; A SECOND APPLY CHANGES NOTHING');
   const plan = await sync(false);
   ok(plan.status === 'PLAN' && plan.applied === false, 'plan status', JSON.stringify(plan).slice(0, 200));
-  ok((plan.would_create || []).length === 0 && (plan.would_deactivate || []).length === 0, 'a plan against the seeded state proposes no change');
+  ok((plan.would_create || []).length === 0 && (plan.would_delete || []).length === 0, 'a plan against the seeded state proposes no change', JSON.stringify(plan).slice(0, 200));
   const before = await q('select count(*)::int as n, max(updated_at) as u from campaigns');
   const again = await sync(true);
-  ok(again.status === 'SUCCESS' && again.created.length === 0 && again.deactivated.length === 0, 'idempotent: re-applying creates and deactivates nothing');
+  ok(again.status === 'SUCCESS' && again.created.length === 0 && again.deleted.length === 0, 'idempotent: re-applying creates and deletes nothing');
   const after = await q('select count(*)::int as n from campaigns');
   ok(after[0].n === before[0].n, 'row count unchanged (' + after[0].n + ')');
 
@@ -55,7 +56,7 @@ try {
   await q(`update agent_list set campaign = 'Retentions' where as_of = $1 and employee_code in
            (select employee_code from agent_list where as_of = $1 order by employee_code limit 3)`, [asof]);
   const p2 = await sync(false);
-  ok(p2.would_create.some((x) => x.key === 'retentions' && x.label === 'Retentions' && x.agents === 3),
+  ok((p2.would_create || []).some((x) => x.key === 'retentions' && x.label === 'Retentions' && x.agents === 3),
     'the plan names the new campaign with its head count', JSON.stringify(p2.would_create));
   const s2 = await sync(true);
   ok(s2.status === 'SUCCESS' && s2.created.some((x) => x.key === 'retentions'), 'apply creates it');
@@ -65,21 +66,22 @@ try {
   ok((await q(`select count(*)::int as n from campaign_sync_logs where created @> '[{"key":"retentions"}]'`))[0].n === 1,
     'the creation is on the log');
 
-  head('D · A CAMPAIGN NOBODY CARRIES IS DEACTIVATED — NEVER DELETED');
+  head('D · A CAMPAIGN NOBODY CARRIES IS DELETED — OFF THE LIST MEANS GONE (Nick, 2026-09-03)');
   await q(`update agent_list set campaign = 'Courtesy' where as_of = $1 and campaign = 'Retentions'`, [asof]);
   const s3 = await sync(true);
-  ok(s3.deactivated.some((x) => x.key === 'retentions'), 'it goes quiet when no agent carries it', JSON.stringify(s3.deactivated));
-  const row2 = (await q(`select active, agents, first_seen, last_seen from campaigns where key = 'retentions'`))[0];
-  ok(row2 && row2.active === false && row2.agents === 0, 'the row survives, inactive, head count 0', JSON.stringify(row2));
-  ok(!(await q('select key from active_campaigns')).some((r) => r.key === 'retentions'), 'and leaves active_campaigns');
+  ok(s3.deleted.some((x) => x.key === 'retentions'), 'it is deleted when no agent carries it', JSON.stringify(s3.deleted));
+  ok((await q(`select count(*)::int as n from campaigns where key = 'retentions'`))[0].n === 0, 'the row is gone');
+  ok(!(await q('select key from active_campaigns')).some((r) => r.key === 'retentions'), 'and so leaves active_campaigns');
+  ok((await q(`select count(*)::int as n from campaign_sync_logs where deleted @> '[{"key":"retentions"}]'`))[0].n === 1,
+    'the deletion is on the log — the history lives there, not in the row');
 
-  head('E · IT COMES BACK WHEN NAMED AGAIN — SAME ROW, FIRST_SEEN KEPT');
+  head('E · IT COMES BACK WHEN NAMED AGAIN — A NEW ROW, FIRST_SEEN = THIS LIST');
   await q(`update agent_list set campaign = 'Retentions' where as_of = $1 and employee_code in
            (select employee_code from agent_list where as_of = $1 order by employee_code limit 2)`, [asof]);
   const s4 = await sync(true);
-  ok(s4.reactivated.some((x) => x.key === 'retentions' && x.agents === 2), 'reactivated with the new head count');
+  ok(s4.created.some((x) => x.key === 'retentions' && x.agents === 2), 'created again with the new head count');
   const row3 = (await q(`select active, first_seen from campaigns where key = 'retentions'`))[0];
-  ok(row3.active && String(row3.first_seen).slice(0, 10) === String(row.first_seen).slice(0, 10), 'first_seen is the original date, not today');
+  ok(row3.active && String(row3.first_seen).slice(0, 10) === String(asof).slice(0, 10), 'first_seen is this list\x27s date');
 
   head('F · SPELLING: KEY IS NORMALISED, LABEL IS THE LIST\'S OWN');
   const k = await q(`select campaign_key('  Matrix   Retentions ') as a, campaign_key('matrix retentions') as b, campaign_key('   ') as c`);
@@ -90,11 +92,11 @@ try {
   ok(r1.status === 'REFUSED' && r1.reason === 'roster_too_small', 'a short list is refused whole');
   await q(`update agent_list set campaign = null where as_of = $1`, [asof]);
   const r2 = await sync(true);
-  ok(r2.status === 'REFUSED' && r2.reason === 'no_campaigns_on_list', 'a list with no campaign column is refused, nothing deactivated');
+  ok(r2.status === 'REFUSED' && r2.reason === 'no_campaigns_on_list', 'a list with no campaign column is refused, nothing deleted');
   ok((await q('select count(*)::int as n from active_campaigns'))[0].n > 0, '…and the active campaigns are all still there');
   await q(`update agent_list set campaign = 'Courtesy' where as_of = $1`, [asof]);
   const r3 = await sync(true, ', 25, 1');
-  ok(r3.status === 'REFUSED' && r3.reason === 'too_many_deactivations', 'more than the cap going quiet at once is refused whole', JSON.stringify(r3).slice(0, 160));
+  ok(r3.status === 'REFUSED' && r3.reason === 'too_many_deletions', 'more than the cap going at once is refused whole', JSON.stringify(r3).slice(0, 160));
 } finally {
   await c.query('rollback');
   await c.end();

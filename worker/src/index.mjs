@@ -13,7 +13,7 @@ import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, f
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, effPerDay } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
-import { syncAgentLogins, syncTeamLeaders, syncCampaigns } from './provision.mjs';
+import { syncAgentLogins, syncTeamLeaders, syncCampaigns, publishAgentList } from './provision.mjs';
 import { runHealthChecks, dailySnapshots, hygiene, logKvWrite } from './health.mjs';
 import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
 
@@ -305,14 +305,14 @@ export default {
 
           /* CAMPAIGNS FOLLOW THE SAME LIST (Nick, 2026-09-03). A campaign named on the
              list for the first time is CREATED and named here so somebody sets its
-             targets and owner; one no agent carries is deactivated, never deleted. */
+             targets and owner; one no agent carries is DELETED (Nick, 2026-09-03). */
           try {
             const k = await syncCampaigns(DB, { actor: 'cron' });
             const n = (x) => (k[x] || []).length;
-            if (k.status === 'SUCCESS' && (n('created') || n('reactivated') || n('deactivated')))
-              console.info('[cron] campaigns synced — +' + n('created') + ' created, ' + n('reactivated') + ' reactivated, -' + n('deactivated') + ' deactivated'
+            if (k.status === 'SUCCESS' && (n('created') || n('deleted')))
+              console.info('[cron] campaigns synced — +' + n('created') + ' created, -' + n('deleted') + ' deleted'
                 + (n('created') ? ' NEW (needs targets + owner): ' + k.created.map((c) => c.label + ' (' + c.agents + ')').join(', ') : '')
-                + (n('deactivated') ? ' quiet: ' + k.deactivated.map((c) => c.label).join(', ') : ''));
+                + (n('deleted') ? ' gone: ' + k.deleted.map((c) => c.label).join(', ') : ''));
             else if (k.status && k.status !== 'SUCCESS')
               console.warn('[cron] campaigns NOT synced — ' + k.status + ': ' + (k.detail || ''));
           } catch (e) { console.warn('[cron] campaign sync failed: ' + (e && e.message || e)); }
@@ -986,71 +986,65 @@ export default {
       if (path === '/api/roster' && req.method === 'POST') {
         let body = null;
         try { body = await req.json(); } catch { return json({ error: 'json body required' }, 400); }
-        const rows = Array.isArray(body && body.roster) ? body.roster : null;
-        if (!rows) return json({ error: 'roster[] required' }, 400);
-        const clean = rows.filter(a => a && String(a.code || '').trim() && String(a.name || '').trim())
-          .map(a => ({ code: String(a.code).trim(), name: String(a.name || '').trim(), tl: a.tl || '',
-            campaign: a.campaign || '', tenure: a.tenure || '', callx: a.callx || '', sf: a.sf || '',
-            target: a.target ?? null, start: a.start || '' }));
-        if (!clean.length) return json({ accepted: false, reason: 'empty roster — never stored' }, 200);
-        let h = 0x811c9dc5;                                   // same FNV-1a the GET fingerprint uses
-        for (const s of clean.map(a => [a.code, a.name, a.tl, a.campaign, a.tenure, a.callx, a.sf, a.target, a.start].join('|')).sort())
-          for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-        const fp = 'list:' + h.toString(16);
+        /* THE FILE IS THE RECORD (Nick, 2026-09-03: "so this never happens again"). The
+           station used to post the roster IT had derived — and PULSE's off-campaign guard
+           had been dropping the "Download & Test" rows before they ever got here, for weeks,
+           with nothing downstream able to know. Now the station posts EVERY row of EVERY
+           sheet, unclassified (`rows`), and Postgres derives the roster, creates the logins,
+           the leader views and the campaigns and removes the ones that are gone — in ONE
+           transaction (publish_agent_list, migration-020). What comes back is the roster the
+           whole suite adopts; what the browser thought no longer matters. The legacy
+           `roster` shape (older tabs, tools) is accepted as already-classified rows. */
+        const raw = Array.isArray(body && body.rows) ? body.rows
+          : Array.isArray(body && body.roster) ? body.roster.map((a) => Object.assign({ sheet: '' }, a)) : null;
+        if (!raw) return json({ error: 'rows[] required' }, 400);
+        if (!raw.length) return json({ accepted: false, reason: 'empty file — never stored' }, 200);
         const asOf = /^\d{4}-\d{2}-\d{2}$/.test(String(body.as_of || '')) ? String(body.as_of) : '';
+        const actor = (user && user.username) || 'roster-post';
         const now = new Date().toISOString();
         const prevR = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-current')}&select=value`).catch(() => null);
         const prev = prevR && prevR[0] && prevR[0].value;
-        if (prev && prev.fingerprint === fp)
-          return json({ accepted: false, reason: 'identical list already published', fingerprint: fp, as_of: prev.as_of || '' });
+        /* an EARLIER as_of is refused BEFORE anything is derived or written — an older list
+           must never reconcile anyone's login, even for a moment */
         if (prev && prev.as_of && asOf && asOf < prev.as_of)
           return json({ accepted: false, reason: 'an older list never replaces a newer one',
             fingerprint: prev.fingerprint, as_of: prev.as_of, yours: asOf });
+        /* PLAN: derive the roster, nothing written */
+        const plan = await publishAgentList(DB, raw, { asOf, actor, planOnly: true });
+        if (!plan || (plan.status !== 'PLAN' && plan.status !== 'NEEDS_HASHES'))
+          return json({ accepted: false, reason: (plan && (plan.reason || plan.status)) || 'the publish returned nothing',
+            stage: plan && plan.stage, detail: plan && plan.detail, publish: plan }, 200);
+        const clean = Array.isArray(plan.roster) ? plan.roster : [];
+        if (!clean.length) return json({ accepted: false, reason: 'no agent rows in the file — never stored', publish: plan }, 200);
+        let h = 0x811c9dc5;                                   // same FNV-1a the GET fingerprint uses
+        for (const s of clean.map((a) => [a.code, a.name, a.tl, a.campaign, a.tenure, a.callx, a.sf, a.target, a.start].join('|')).sort())
+          for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+        const fp = 'list:' + h.toString(16);
+        if (prev && prev.fingerprint === fp)
+          return json({ accepted: false, reason: 'identical list already published', fingerprint: fp, as_of: prev.as_of || '',
+            on_file: plan.on_file, dropped: plan.dropped || [] });
+        /* APPLY: logins, leader views, campaigns — all or nothing */
+        const out = await publishAgentList(DB, raw, { asOf, actor, fingerprint: fp });
+        if (!out || out.status !== 'SUCCESS')
+          return json({ accepted: false, reason: (out && (out.reason || out.status)) || 'the publish returned nothing',
+            stage: out && out.stage, detail: out && out.detail, on_file: out && out.on_file, dropped: (out && out.dropped) || [],
+            publish: out }, 200);
         const rec = { v: 1, fingerprint: fp, as_of: asOf, n: clean.length, roster: clean,
+          on_file: out.on_file, dropped: (out.dropped || []).length,
           file: String(body.file || '').slice(0, 120), source: String(body.source || '').slice(0, 16),
-          uploaded_by: (user && user.username) || '', uploaded_at: now,
+          uploaded_by: actor, uploaded_at: now,
           replaced: prev ? { fingerprint: prev.fingerprint, as_of: prev.as_of || '', at: prev.uploaded_at || '' } : null };
-        await DB.insert('rules', [{ key: 'kv:roster-current', value: rec, updated_by: (user && user.username) || 'roster-post', updated_at: now }], true);
+        await DB.insert('rules', [{ key: 'kv:roster-current', value: rec, updated_by: actor, updated_at: now }], true);
         globalThis.__rosterCache = null;                      // the GET must not serve the previous list
-        /* MIRROR BEFORE ANSWERING, not afterwards. Handing this to waitUntil left the Ops
-           boot copy and the portal's authorisation map ONE PUBLISH BEHIND for as long as
-           the deferred work took — and "the other app painted the old list" is the entire
-           failure this endpoint exists to end. A publish is a human waiting on an upload,
-           not a hot path; one storage write and two upserts are worth the certainty that
-           when this returns, every consumer is already current.
-           Best-effort in the sense that matters: a mirror failure is reported, never fatal —
-           the record itself is stored, and the ten-minute cron re-mirrors regardless. */
+        globalThis.__cmCtx = null;                            // campaigns may have come or gone; the CM context must see it now
+        /* MIRROR BEFORE ANSWERING (see the GET): the Ops boot copy and the portal's
+           authorisation map are current when this returns. Reported, never fatal. */
         let mirrored = true;
         try { await rosterSync(env, DB, { fresh: true, who: 'roster-post' }); }
         catch (e) { mirrored = false; }
-        /* RECONCILE ON THE UPLOAD, NOT TEN MINUTES LATER. The cron is the safety
-           net, not the mechanism: a person who has just uploaded a list is
-           standing there, and "your new starters can sign in some time in the next
-           ten minutes" is not an answer. This is the same one-transaction call the
-           cron makes, so the two can never disagree — whichever runs first does the
-           work and the other finds the fingerprint unchanged.
-           Reported, never fatal: the list itself is already stored, and a sync that
-           refuses (a short list, too many deletions) must not fail the upload —
-           it must SAY SO, which is what `sync` carries back to the uploader. */
-        let sync = null;
-        try { sync = await syncAgentLogins(DB, clean, fp, { asOf, actor: (user && user.username) || 'roster-post' }); }
-        catch (e) { sync = { status: 'FAILED', errors: [String((e && e.message) || e)] }; }
-        /* LEADERS ON THE SAME UPLOAD. A leader who has stopped leading anyone is off this
-           list as surely as an agent whose row has gone, and the person who just uploaded
-           it should be told so in the same answer rather than finding out ten minutes
-           later. Reported, never fatal — same as the agent half above. */
-        let leaders = null;
-        try { leaders = await syncTeamLeaders(DB, { actor: (user && user.username) || 'roster-post' }); }
-        catch (e) { leaders = { status: 'FAILED', errors: [String((e && e.message) || e)] }; }
-        /* CAMPAIGNS ON THE SAME UPLOAD (Nick, 2026-09-03). A campaign this list names
-           for the first time is created now and returned in `campaigns.created`, so the
-           uploader is told "new campaign — set its targets and owner" in the same answer. */
-        let campaigns = null;
-        try { campaigns = await syncCampaigns(DB, { actor: (user && user.username) || 'roster-post' }); }
-        catch (e) { campaigns = { status: 'FAILED', errors: [String((e && e.message) || e)] }; }
-        if (campaigns && campaigns.status === 'SUCCESS' && (campaigns.created || []).length) globalThis.__cmCtx = null;  // the CM context must see it now
-        return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length,
-          mirrored, replaced: rec.replaced, sync, leaders, campaigns });
+        return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length, on_file: out.on_file,
+          dropped: out.dropped || [], blank_campaign: out.blank_campaign || [], campaigns_on_list: out.campaigns_on_list || [],
+          mirrored, replaced: rec.replaced, sync: out.agents, leaders: out.leaders, campaigns: out.campaigns });
       }
 
       // ---------- upload relay: one Upload Station feeds BOTH dashboards ----------

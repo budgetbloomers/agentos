@@ -93,6 +93,23 @@ export function evaluateFreshness(t) {
       since: new Date(dg).toISOString(),
     });
   }
+  /* THE LIST, THE LOGINS AND THE CAMPAIGNS MUST AGREE (Nick, 2026-09-03: "so this never
+     happens again"). agent_list_integrity is the database's own sentence-checks — list vs
+     logins vs campaigns vs the roster of record. Any failing row means a person or a
+     campaign the list names is missing, or one it dropped is still here. Critical when
+     accounts, campaigns or the record disagree; a warning when a leader has no login (a
+     human has to supply the CB number). `since` is fixed so a persisting condition is
+     written once, not every tick. */
+  const integ = Array.isArray(t.integrity) ? t.integrity.filter((r) => r && r.failures > 0) : [];
+  if (integ.length) {
+    alerts.push({
+      id: 'agent-list-out-of-sync', severity: integ.some((r) => r.severity === 'critical') ? 'critical' : 'warning',
+      message: 'The Agent List, the logins and the campaigns disagree: '
+        + integ.map((r) => r.check_name + ' (' + r.failures + (r.detail ? ': ' + r.detail : '') + ')').join('; ')
+        + '. Re-upload the latest Agent List in either Upload Station; if it persists, run tools/dry-run-provision.mjs.',
+      since: 'list',
+    });
+  }
   return alerts;
 }
 
@@ -125,9 +142,13 @@ export async function runHealthChecks(DB) {
     if (payload) { const d = JSON.parse(payload); digestMonth = String((d.period || {}).from || '').slice(0, 7) || null; digestAt = d.updatedAt || null; }
   } catch (e) { /* unreadable digest: the freshness alert has nothing to say; the portal will say plenty */ }
   const curMonth = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
+  /* the database's own view of list ↔ logins ↔ campaigns; unreadable = no opinion, never a false alarm */
+  let integrity = [];
+  try { integrity = (await DB.select('agent_list_integrity?failures=gt.0&select=check_name,severity,failures,detail')) || []; }
+  catch (e) { integrity = []; }
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);

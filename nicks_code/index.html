@@ -1763,6 +1763,10 @@ let rosterCovered=null; // campaigns already replaced by an earlier sheet of the
    The FILE is the whole truth about the floor, so the union is pruned against once every
    sheet has been read. */
 let rosterFileCodes=null, rosterFileLoaded=false;
+/* THE FILE AS IT ARRIVED — every row of every sheet, unclassified — for the publisher. The
+   server derives the roster from these (publish_agent_list); this app's own classification
+   is a preview it then replaces with the record. */
+let rosterRaw=null;
 /* …and how good the sheet that replaced them was. The Agent List workbook still carries
    legacy tabs ('May' — a Que-column snapshot frozen at 83 rows) ALONGSIDE the live 'VAS'
    tab, and the legacy one sorts FIRST. Sheet order therefore cannot decide which wins: on
@@ -1795,7 +1799,7 @@ async function ingestText(name, text, expected, hash){
   const sheets=splitSheets(text);
   const names=Object.keys(sheets);
   let ingested=[];
-  rosterCovered=new Set(); rosterBestRank=-1; rosterFileCodes=null; rosterFileLoaded=false;
+  rosterCovered=new Set(); rosterBestRank=-1; rosterFileCodes=null; rosterFileLoaded=false; rosterRaw=null;
   __rosterAsOf=null;      // a fresh file, a fresh snapshot date (and a fresh one-shot override)
   if(isGeneratedTracker(names)){
     toast('"'+name+'" is a tracker workbook this dashboard GENERATED, not a data export — it was not loaded. '
@@ -2275,6 +2279,14 @@ const INGEST={
     const hasQueCol=keys.some(k=>/^que(ue)?$/i.test(String(k).trim()));
     const rank=hasCampCol?1:(hasQueCol?0:-1);
     for(const r of recs){
+      /* EVERY ROW GOES TO THE SERVER, before any filter below has an opinion (Nick, 2026-09-03:
+         the "Download & Test" rows were dropped right here for weeks). */
+      if(!rosterRaw||rosterRaw.name!==name) rosterRaw={name,rows:[]};
+      { const c0=String(r['Employee Code']||'').trim(), n0=String(r['Agent Name']||r['Agent']||'').trim(), s0=String(r['Sales Force']||'').trim();
+        if(c0||n0||s0) rosterRaw.rows.push({sheet:sheet||'',code:c0,name:n0,sf:s0,tl:String(r['Team Leader']||'').trim(),
+          campaign:String(r['Campaign']||r['Que']||r['Queue']||'').trim(),tenure:String(r['Tenure']||'').trim(),callx:String(r['Call x']||'').trim(),
+          target:r['Target'],start:parseDateLoose(r['Start Date'])||''}); }
+      window.__rosterRaw=rosterRaw;
       const code=(r['Employee Code']||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       if(!code||!/^CB\d+$/.test(code)) continue;
       /* NAMED BY THE FILE, which is not the same as ACCEPTED BY THIS SHEET. The workbook
@@ -2414,6 +2426,7 @@ const INGEST={
       fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/roster',
         {method:'POST',headers:{'Authorization':'Bearer '+t,'Content-Type':'application/json'},
          body:JSON.stringify({source:'vas',file:name,as_of:asOf||'',
+           rows:(rosterRaw&&rosterRaw.name===name)?rosterRaw.rows:undefined,   // the whole file; the server derives the roster
            roster:(S.roster||[]).map(function(a){return {code:a.code,name:a.name,tl:a.tl,
              campaign:a.campaign,tenure:a.tenure,callx:a.callx,sf:a.sf,target:a.target,start:a.start};})})})
         .then(function(r){return r.ok?r.json():null})
@@ -2421,7 +2434,12 @@ const INGEST={
           if(j&&j.accepted===false&&/older list/.test(j.reason||''))
             toast('This Agent List is dated '+(asOf||'?')+' and the suite already has one from '
               +(j.as_of||'?')+' — the newer list is being kept. Upload the latest list if that is wrong.',12000);
-          else if(j&&j.accepted) reportListSync(j.sync);
+          else if(j&&j.accepted){ reportListSync(j.sync); reportListPublish(j);
+            /* ADOPT THE RECORD. The server derived the roster from the whole file; what this
+               tab classified is a preview. Pull the record now so this screen shows exactly
+               what every other app shows. */
+            setTimeout(function(){try{adoptRosterFromRecord()}catch(e){}},800); }
+          else if(j&&j.accepted===false&&j.publish) reportListRefused(j);
         }).catch(function(){});
     }catch(e){} },3000);
     // the agent list is a LIVE SNAPSHOT, not history — a new upload supersedes any earlier
@@ -7657,6 +7675,36 @@ function reportListSync(sy){
      previous state stands. Never let that pass as a success. */
   toast('Agent List stored, but accounts were NOT synchronised — '+(sy.detail||sy.reason||sy.status)
     +' Nothing was changed; the previous list is still in force.',18000);
+}
+
+/* What the publish did beyond agents' logins: campaigns created or removed, team leader
+   logins created or removed, and every row of the file that did NOT become an agent, with
+   the reason. The uploader is the only person who can act on any of it. */
+function reportListPublish(j){
+  try{
+    var n=function(o,k){return ((o&&o[k])||[]).length};
+    var C=j.campaigns||{};
+    if(C.status==='SUCCESS'&&(n(C,'created')||n(C,'deleted')))
+      toast('Campaigns follow the list — '
+        +(n(C,'created')?'new: '+C.created.map(function(c){return c.label+' ('+c.agents+')'}).join(', ')+(n(C,'deleted')?'; ':''):'')
+        +(n(C,'deleted')?'removed, nobody on the list carries them: '+C.deleted.map(function(c){return c.label}).join(', '):'')
+        +(n(C,'created')?'. Set the new campaign\'s targets and owner in the Campaign Manager view.':'.'),14000);
+    var L=j.leaders||{};
+    if(L.status==='SUCCESS'&&(n(L,'created')||n(L,'removed')))
+      toast('Team leader logins follow the list — '+(n(L,'created')?'created: '+L.created.map(function(c){return c.username+' ('+c.name+')'}).join(', '):'')
+        +(n(L,'created')&&n(L,'removed')?'; ':'')+(n(L,'removed')?'removed: '+L.removed.map(function(c){return c.username}).join(', '):''),12000);
+    var D=j.dropped||[];
+    if(D.length)
+      toast(D.length+' row'+(D.length===1?'':'s')+' in the file did not become an agent — '
+        +D.slice(0,4).map(function(d){return (d.code||d.name||('row '+d.row))+' ('+d.why+')'}).join(', ')+(D.length>4?' +'+(D.length-4)+' more':'')
+        +'. Every other row is on the roster: '+j.n+' of '+j.on_file+'.',14000);
+  }catch(e){}
+}
+/* The server refused the whole publish — all or nothing, so NOTHING moved: not the roster,
+   not a login, not a campaign. Said as loudly as a success, with the stage and the reason. */
+function reportListRefused(j){
+  toast('Agent List NOT published'+(j.stage?' (refused at the '+j.stage+' stage)':'')+' — '+(j.detail||j.reason||'refused')
+    +' No roster, login or campaign was changed; the previous list is still in force.',20000);
 }
 
 async function adoptRosterFromRecord(){

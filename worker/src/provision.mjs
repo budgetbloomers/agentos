@@ -160,7 +160,7 @@ export async function syncTeamLeaders(DB, opts = {}) {
 /**
  * THE THIRD THING THE LIST CREATES: CAMPAIGNS (Nick, 2026-09-03). migration-019 gives
  * campaigns a table fed by the current list — a campaign named on it is created (or
- * reactivated), one no agent carries is deactivated, never deleted. No passwords, so no
+ * created), one no agent carries is DELETED (Nick, 2026-09-03). No passwords, so no
  * hash handshake; the function's own guards refuse a short or campaign-less list and
  * more than two campaigns going quiet at once. Runs beside the agent and leader syncs
  * on every publish and every cron tick; nothing here decides a target or an owner —
@@ -169,4 +169,40 @@ export async function syncTeamLeaders(DB, opts = {}) {
 export async function syncCampaigns(DB, opts = {}) {
   const out = await DB.rpc('sync_campaigns', { p_actor: opts.actor || 'cron', p_apply: true });
   return out || { status: 'FAILED', errors: ['the campaign synchronisation returned nothing'] };
+}
+
+/**
+ * THE FILE IS THE RECORD (Nick, 2026-09-03: "to make sure this problem never happens
+ * again"). Every row of every sheet of the uploaded list, unclassified, goes to
+ * publish_agent_list() (migration-020), which derives the roster, then runs the agent,
+ * leader and campaign syncs inside ONE transaction. Two calls: a PLAN that derives the
+ * roster and names every password hash the apply will need (new agents AND new
+ * leaders, hashed here because Postgres cannot), then the APPLY. A refusal anywhere
+ * returns with nothing written; the caller gets the stage and the reason.
+ *
+ * @param rows   [{sheet, code, name, sf, tl, campaign, tenure, callx, target, start}]
+ * @param opts   {asOf, fingerprint, actor, planOnly}
+ * @returns      the function's own object: status SUCCESS | PLAN | REFUSED | FAILED |
+ *               NEEDS_HASHES, stage, roster[], dropped[], agents, leaders, campaigns
+ */
+export async function publishAgentList(DB, rows, opts = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.asOf || '')) ? String(opts.asOf) : new Date().toISOString().slice(0, 10);
+  const call = (hashes, apply) => DB.rpc('publish_agent_list', {
+    p_as_of: asOf, p_rows: list, p_fingerprint: opts.fingerprint || null,
+    p_actor: opts.actor || 'roster-post', p_hashes: hashes, p_apply: apply, p_min_roster: MIN_ROSTER,
+  });
+  const plan = await call({}, false);
+  if (!plan || !plan.status) return { status: 'FAILED', errors: ['the publish returned nothing'] };
+  if (opts.planOnly || (plan.status !== 'PLAN' && plan.status !== 'NEEDS_HASHES')) return plan;
+  const hashes = {};
+  for (const cb of new Set(plan.needs_hashes || [])) hashes[cb] = await hashPassword(START_PASSWORD);
+  let out = await call(hashes, true);
+  /* the list moved between the two calls, or a leader's hash was only knowable now:
+     hash what it names and go once more — nothing has been written */
+  if (out && out.status === 'NEEDS_HASHES') {
+    for (const cb of out.needs_hashes || []) hashes[cb] = await hashPassword(START_PASSWORD);
+    out = await call(hashes, true);
+  }
+  return out || { status: 'FAILED', errors: ['the publish returned nothing'] };
 }

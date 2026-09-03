@@ -77,3 +77,43 @@ settings page lists new campaigns from the table with "set targets" prompts, and
 
 `node nicks_code/diagnostics/verify-campaign-sync.mjs` · `verify-agent-sync.mjs` (unchanged,
 80) · Worker deploy · a plan-only call against live (`sync_campaigns('audit', false)`).
+
+## Phase 1b — the file is the record (built 2026-09-03, migration-020)
+
+Nick, after the "Download & Test" campaign (five agents) turned out to have been dropped
+from every publish for weeks: "to make sure this problem never happens again — when the
+agent list is uploaded I want agent view, team leader view created, new campaigns
+automatically created, and if it's not in the next one it must be deleted; build this
+logic in Supabase."
+
+**Assessment.** The Supabase side (014 agents, 018 leaders, 019 campaigns) had done its job
+on every publish. The rows never reached it: PULSE classified rows in the browser and
+posted only the ones it recognised. A client that classifies before it publishes can drop
+anything, and nothing downstream can know. So the fix is not more logic in the browser —
+it is to stop trusting the browser's roster at all.
+
+**What was built.**
+
+| Piece | Where | What it does |
+|---|---|---|
+| `campaign_label(raw, sheet)` | SQL | The one place a row is classified: campOf's vocabulary + "a row on the VT sheet is VT". |
+| `publish_agent_list(as_of, rows, …)` | SQL | Takes EVERY row of EVERY sheet, unclassified; derives the roster; runs sync_agent_list → sync_team_leaders → sync_campaigns in ONE transaction. PLAN names every hash the apply needs; APPLY is all-or-nothing (a refusal at the leaders stage rolls back the agents' writes — proven). Returns the roster, `dropped[]` with reasons, `blank_campaign[]`, and each sync's result. |
+| `agent_list_raw` | SQL | The whole file per as_of with accepted/why — the audit trail that would have shown five rows with accepted=false. |
+| `sync_campaigns` | SQL | DELETE semantics (Nick): a campaign nobody on the list carries is removed; `campaign_sync_logs.deleted` is the history; cap `p_max_delete` 2 per run. |
+| `agent_list_integrity` | SQL view | Six sentence-checks: list ↔ logins (both ways) ↔ campaigns (both ways) ↔ leaders ↔ roster of record. |
+| `/api/roster` POST | Worker | Accepts `rows` (raw, with `sheet`); PLAN → fingerprint over the SQL-derived roster → APPLY; the record only moves on SUCCESS; legacy `roster` payloads are treated as already-classified rows. |
+| health cron | Worker | Reads the integrity view every ten minutes → `agent-list-out-of-sync` alert (critical / warning) in both apps while any row fails; clears itself. |
+| PULSE / Ops stations | clients | Post every raw row alongside their own roster; report campaigns created/deleted, leader logins created/removed and dropped rows; PULSE adopts the returned record so its screen equals the suite's. |
+| `tools/publish-agent-list.mjs` | tool | Headless publish of an xlsx through the same path. |
+
+**Proof.** `verify-publish-agent-list.mjs` (45 checks, rolled back): unknown campaign lands
+under its own name with its head count; VT queue labels fold to VT; blank cell → Courtesy
+and named; three non-agent rows returned with reasons; NEEDS_HASHES writes nothing; apply
+creates every login and the campaigns; a second list deletes an uncarried campaign; a
+phantom leader on every row is REFUSED at the leaders stage with the agent floor untouched;
+the integrity view counts a vanished login and a phantom campaign. `verify-campaign-sync`
+(22) and `verify-agent-sync` (80) still pass.
+
+**Still Nick's.** Leaders are created only from `team_leader_cbs` (the list carries no
+leader CB); an unrepresented leader is now an ALERT, but the CB still has to come from a
+human. Phase 2 (targets, owner, PULSE reporting of a new campaign) unchanged.

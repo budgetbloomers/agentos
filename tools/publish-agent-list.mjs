@@ -65,6 +65,7 @@ const res = await page.evaluate(async ([nm, b64, h]) => {
   window.toast = t0;
   const S = window.__mtd.state(); const c = {}; (S.roster || []).forEach((a) => { c[a.campaign] = (c[a.campaign] || 0) + 1; });
   return { ok, toasts, n: (S.roster || []).length, c, asOf: S.settings && S.settings.rosterAsOf,
+    rows: (window.__rosterRaw && window.__rosterRaw.rows) || null,          // the whole file, unclassified — the server derives the roster
     roster: (S.roster || []).map((a) => ({ code: a.code, name: a.name, tl: a.tl, campaign: a.campaign, tenure: a.tenure, callx: a.callx, sf: a.sf, target: a.target, start: a.start })) };
 }, [name, bytes.toString('base64'), hash]);
 await b.close(); server.close();
@@ -83,14 +84,17 @@ await fetch(REST + 'app_sessions', { method: 'POST', headers: { ...H, Prefer: 'r
   body: JSON.stringify([{ token_hash: th, user_id: admin.id, expires_at: new Date(Date.now() + 300000).toISOString(), user_agent: 'publish-agent-list' }]) });
 try {
   const r = await fetch(API + '/api/roster', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'vas', file: name, as_of: asOf, roster: res.roster }) });
+    body: JSON.stringify({ source: 'vas', file: name, as_of: asOf, rows: res.rows || undefined, roster: res.roster }) });
   const j = await r.json();
-  console.log('\nPOST /api/roster -> ' + r.status + ' accepted=' + j.accepted + (j.reason ? ' (' + j.reason + ')' : '') + ' as_of=' + j.as_of + ' n=' + j.n);
+  console.log('\nPOST /api/roster -> ' + r.status + ' accepted=' + j.accepted + (j.reason ? ' (' + j.reason + ')' : '') + (j.stage ? ' stage=' + j.stage : '') + ' as_of=' + j.as_of + ' n=' + j.n + (j.on_file ? ' of ' + j.on_file + ' rows in the file' : ''));
+  if (j.detail) console.log('  ' + j.detail);
+  if ((j.dropped || []).length) console.log('  dropped:   ' + j.dropped.map((d) => (d.code || d.name || 'row ' + d.row) + ' (' + d.why + ')').join(', '));
+  if ((j.campaigns_on_list || []).length) console.log('  on list:   ' + j.campaigns_on_list.map((c) => c.label + ' ' + c.agents).join(' · '));
   const n = (o, k) => ((o && o[k]) || []).length;
   if (j.sync) console.log('  agents:    ' + j.sync.status + ' +' + n(j.sync, 'created') + ' created, ' + n(j.sync, 'updated') + ' updated, -' + n(j.sync, 'removed') + ' removed'
     + (n(j.sync, 'created') ? ' new: ' + j.sync.created.map((c) => c.cb).join(',') : '') + (n(j.sync, 'removed') ? ' gone: ' + j.sync.removed.map((c) => c.cb).join(',') : '') + (j.sync.detail ? ' -- ' + j.sync.detail : ''));
   if (j.leaders) console.log('  leaders:   ' + j.leaders.status + ' +' + n(j.leaders, 'created') + ' -' + n(j.leaders, 'removed') + (n(j.leaders, 'unrepresented') ? ' unrepresented: ' + j.leaders.unrepresented.join(', ') : ''));
-  if (j.campaigns) console.log('  campaigns: ' + j.campaigns.status + ' created ' + JSON.stringify((j.campaigns.created || []).map((c) => c.label + ' (' + c.agents + ')')) + ' deactivated ' + JSON.stringify((j.campaigns.deactivated || []).map((c) => c.label)) + (j.campaigns.detail ? ' -- ' + j.campaigns.detail : ''));
+  if (j.campaigns) console.log('  campaigns: ' + j.campaigns.status + ' created ' + JSON.stringify((j.campaigns.created || []).map((c) => c.label + ' (' + c.agents + ')')) + ' deleted ' + JSON.stringify((j.campaigns.deleted || []).map((c) => c.label)) + (j.campaigns.detail ? ' -- ' + j.campaigns.detail : ''));
 } finally {
   await fetch(REST + 'app_sessions?token_hash=eq.' + th, { method: 'DELETE', headers: H });
 }

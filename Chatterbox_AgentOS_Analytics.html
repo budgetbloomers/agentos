@@ -1650,16 +1650,38 @@ function publishRoster(fileName){
       const asOf=String((b&&b.uploaded_at)||new Date().toISOString()).slice(0,10);
       const r=await fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/roster',
         {method:'POST',headers:{'Authorization':'Bearer '+t,'Content-Type':'application/json'},
-         body:JSON.stringify({source:'ops',file:fileName||'',as_of:asOf,roster:rows})});
+         body:JSON.stringify({source:'ops',file:fileName||'',as_of:asOf,rows:rows,roster:rows})});   // rows = the file's rows; the server derives the roster
       const j=r.ok?await r.json():null;
       if(j&&j.accepted){ window.__rosterPublished=1;
         toast('Agent List published to the suite — '+j.n+' agents'+(j.as_of?' (as of '+esc(j.as_of)+')':'')+'. VAS Analytics will pick it up.');
-        reportListSync(j.sync); }
+        reportListSync(j.sync); reportListPublish(j); }
+      else if(j&&j.accepted===false&&j.publish)
+        toast('Agent List NOT published'+(j.stage?' (refused at the '+esc(j.stage)+' stage)':'')+' — '+esc(j.detail||j.reason||'refused')
+          +' No roster, login or campaign was changed; the previous list is still in force.','err',20000);
       else if(j&&/older list/.test(j.reason||''))
         toast('This Agent List is dated '+esc(asOf)+' and the suite already has one from '+esc(j.as_of||'?')
           +' — the newer list is being kept. Upload the latest list if that is wrong.','err',12000);
     }catch(e){ toast('Agent List loaded here, but could not be published to the suite — VAS may keep an older list.','err',9000); }
   })();
+}
+/* Beyond agents' logins: campaigns created or removed, team leader logins created or
+   removed, and every row of the file that did NOT become an agent, with the reason.
+   Shared shape with the VAS station's copy. */
+function reportListPublish(j){
+  try{
+    const n=(o,k)=>((o&&o[k])||[]).length, C=j.campaigns||{}, L=j.leaders||{}, D=j.dropped||[];
+    if(C.status==='SUCCESS'&&(n(C,'created')||n(C,'deleted')))
+      toast('Campaigns follow the list — '+(n(C,'created')?'new: '+esc(C.created.map(c=>c.label+' ('+c.agents+')').join(', '))+(n(C,'deleted')?'; ':''):'')
+        +(n(C,'deleted')?'removed, nobody on the list carries them: '+esc(C.deleted.map(c=>c.label).join(', ')):'')
+        +(n(C,'created')?'. Set the new campaign\'s targets and owner in the Campaign Manager view.':'.'),'ok',14000);
+    if(L.status==='SUCCESS'&&(n(L,'created')||n(L,'removed')))
+      toast('Team leader logins follow the list — '+(n(L,'created')?'created: '+esc(L.created.map(c=>c.username+' ('+c.name+')').join(', ')):'')
+        +(n(L,'created')&&n(L,'removed')?'; ':'')+(n(L,'removed')?'removed: '+esc(L.removed.map(c=>c.username).join(', ')):''),'ok',12000);
+    if(D.length)
+      toast(D.length+' row'+(D.length===1?'':'s')+' in the file did not become an agent — '
+        +esc(D.slice(0,4).map(d=>(d.code||d.name||('row '+d.row))+' ('+d.why+')').join(', '))+(D.length>4?' +'+(D.length-4)+' more':'')
+        +'. Every other row is on the roster: '+j.n+' of '+j.on_file+'.','err',14000);
+  }catch(e){}
 }
 /* What the Agent List upload did to accounts, in a sentence. The Worker reconciles
    app_users against the list inside one transaction and hands the result back on the
