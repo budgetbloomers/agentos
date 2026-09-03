@@ -24,14 +24,18 @@ let pass = 0, fail = 0;
 const ok = (c, n, extra) => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.log('  FAIL ' + n + (extra !== undefined ? ' — ' + extra : '')); } };
 const head = (t) => console.log('\n' + t);
 
-const { wimpyMenu, priceOrder, formatOrder, submitWimpyOrder, todaysBigOne, ALL_ITEMS, ING } = await import(W);
+const { wimpyMenu, priceOrder, formatOrder, submitWimpyOrder, todaysBigOne, wimpyWindowOpen, ALL_ITEMS, ING } = await import(W);
 
-/* A UTC moment that is the given SAST weekday (0=Sun..6=Sat), mid-morning. */
+/* A UTC moment that is the given SAST weekday (0=Sun..6=Sat), mid-morning
+   (10:00 SAST — OUTSIDE the ordering window, deliberately: pricing and menu
+   structure must not depend on the window). */
 const onDay = (dow) => {
   const base = Date.parse('2026-08-31T08:00:00Z');           // a Monday in SAST
   return base + ((dow + 6) % 7) * 86400000;
 };
 const MON = onDay(1), TUE = onDay(2), WED = onDay(3), THU = onDay(4), FRI = onDay(5), SAT = onDay(6), SUN = onDay(0);
+/* The same weekday at 08:30 SAST — inside the ordering window. */
+const inWindow = (dow) => onDay(dow) - 90 * 60000;
 
 head('A · THE STRUCTURE IS 3 + 3 + 3 + 1');
 {
@@ -130,16 +134,21 @@ head('G · THE SERVER PRICES, THE CLIENT ONLY DISPLAYS');
     { id: 'toasted_chicken_mayo', quantity: 1 },
   ] } }, WED);
   ok(r.ok && r.totalCents === 2 * 5490 + 5390, 'integer cents: 2 × R54.90 + R53.90 = R' + r.total, r.totalCents);
+  /* ORDERS ARE AS-IS (Nick, 2026-09-02): any customisation — a removal, an
+     add-on, a choice — is refused in words, never silently stripped (stripping
+     would hand the kitchen a different order than the agent believes they placed). */
   const rm = priceOrder({ order: { items: [
     { id: 'cheese_burger', quantity: 1, removed: ['Onion', 'Wimpy Relish'] },
   ] } }, WED);
-  ok(rm.ok && rm.total === 54.90, 'removing included ingredients is FREE');
-  const bad = priceOrder({ order: { items: [{ id: 'cheese_burger', quantity: 1, removed: ['Beef patty'] }] } }, WED);
-  ok(!bad.ok, 'the patty cannot be removed — a burger without it stops being the item');
+  ok(!rm.ok && /as it is/.test(rm.errors[0]), 'a removal is refused — every item comes as it is', rm.errors[0]);
   const q = priceOrder({ order: { items: [{ id: 'mzansi_brekkie', quantity: 0 }] } }, WED);
   ok(!q.ok, 'quantity zero is refused');
   const ao = priceOrder({ order: { items: [{ id: 'toasted_cheese_tomato', quantity: 1, added: ['extra_patty'] }] } }, WED);
-  ok(!ao.ok, 'an add-on the item does not offer is refused');
+  ok(!ao.ok && /as it is/.test(ao.errors[0]), 'an add-on is refused the same way', ao.errors[0]);
+  const plain = priceOrder({ order: { items: [{ id: 'cheese_burger', quantity: 1, removed: [], added: [], choices: {} }] } }, WED);
+  ok(plain.ok && plain.total === 54.90, 'empty customisation fields from an old client still price fine');
+  ok(!wimpyMenu(WED).items.some((i) => (i.addOns || []).length),
+    'the menu advertises no add-ons — the page has nothing to build a sheet from');
   const un = priceOrder({ order: { items: [{ id: 'wings_6', quantity: 1 }] } }, WED);
   ok(!un.ok && /unknown/.test(un.errors[0]), 'the retired wings are gone — unknown item');
 }
@@ -150,32 +159,30 @@ head('H · IDENTITY, MISMATCH AND FAILURE BEHAVIOUR');
   let sent = null;
   globalThis.fetch = async (url, opts) => { sent = JSON.parse(opts.body); return { ok: true, text: async () => '' }; };
   try {
-    /* submitWimpyOrder prices with the REAL clock, so the order is built from
-       whatever today actually offers: today's hero on a weekday, the Big Cheese
-       on a weekend. The suite must pass every day of the week. */
+    /* Submitted at 08:30 SAST on a Wednesday — inside the ordering window, so
+       these tests prove the order path; the window itself is proven in N. */
+    const NOW = inWindow(3);
     const user = { full_name: 'Test Agent', username: 'cb999', cb: 'CB999' };
-    const heroNow = todaysBigOne();
-    const pick = heroNow || ALL_ITEMS.find((i) => i.id === 'big_cheese_burger');
+    const pick = todaysBigOne(NOW);
     const body = { total_price: 1.00,                             // a lying client
-      order: { items: [{ id: pick.id, quantity: 1 }], additional_notes: 'no onion on the side' } };
-    const res = await submitWimpyOrder({}, user, body);
+      order: { items: [{ id: pick.id, quantity: 1 }], additional_notes: 'collect at reception' } };
+    const res = await submitWimpyOrder({}, user, body, NOW);
     ok(res.status === 200, 'a valid order for today (' + pick.name + ') submits', JSON.stringify(res.body).slice(0, 120));
     ok(sent.total_price === pick.basePrice, 'the total sent to the kitchen is the SERVER’s figure', sent.total_price);
     ok(sent.price_mismatch && sent.price_mismatch.client_total === 1.00,
       'the client’s wrong figure travels as price_mismatch, never adopted');
     ok(sent.cb_number === 'CB999' && sent.agent_name === 'Test Agent', 'identity is the session’s');
-    if (heroNow) ok(sent.order_formatted.includes('(TODAY’S BIG ONE)'), 'the kitchen slip marks the Big One');
-    else ok(true, '(weekend run — no Big One slip line to check)');
+    ok(sent.order_formatted.includes('(TODAY’S BIG ONE)'), 'the kitchen slip marks the Big One');
     ok(/\+02:00$/.test(sent.timestamp), 'timestamped in SAST');
 
-    const noCb = await submitWimpyOrder({}, { full_name: 'X', username: 'x', cb: '' }, body);
+    const noCb = await submitWimpyOrder({}, { full_name: 'X', username: 'x', cb: '' }, body, NOW);
     ok(noCb.status === 403, 'no CB number on the account → no order');
 
     globalThis.fetch = async () => { throw new Error('boom'); };
-    const down = await submitWimpyOrder({}, user, body);
+    const down = await submitWimpyOrder({}, user, body, NOW);
     ok(down.status === 502 && /kept/.test(down.body.error), 'a dead webhook reports failure and tells the agent the cart is kept');
     globalThis.fetch = async () => ({ ok: false, status: 500, text: async () => 'err' });
-    const err = await submitWimpyOrder({}, user, body);
+    const err = await submitWimpyOrder({}, user, body, NOW);
     ok(err.status === 502 && /500/.test(err.body.error), 'a webhook error travels with its status, never as success');
   } finally { globalThis.fetch = realFetch; }
 }
@@ -298,6 +305,43 @@ head('M · THE TAB RENDERS THE PRICES AND THE WEEK');
       'and offers NO add button for an off-day item — the Worker would refuse it anyway');
     ok((out.open.match(/<div/g) || []).length === (out.open.match(/<\/div>/g) || []).length, 'every div is closed');
   } finally { await b.close(); srv.close(); }
+}
+
+head('N · THE WINDOW: 08:00–09:00 SAST, MONDAY TO FRIDAY');
+{
+  ok(wimpyWindowOpen(inWindow(3)) === true, 'Wednesday 08:30 SAST is inside the window');
+  ok(wimpyWindowOpen(WED) === false, 'Wednesday 10:00 SAST is outside — the tab is hidden and orders refuse');
+  ok(wimpyWindowOpen(inWindow(3) - 3600000) === false, 'Wednesday 07:30 SAST is before opening');
+  ok(wimpyWindowOpen(inWindow(6)) === false, 'Saturday 08:30 SAST is a weekend — closed');
+  ok(wimpyWindowOpen(inWindow(0)) === false, 'Sunday too');
+  const m = wimpyMenu(inWindow(2));
+  ok(m.window && m.window.open === true && m.window.hours === '08:00–09:00',
+    'the menu payload carries the window, so the page never guesses from its own clock');
+  ok(wimpyMenu(TUE).window.open === false, '...and says closed at 10:00');
+
+  /* An out-of-window submit is refused BEFORE identity, pricing or the webhook. */
+  const realFetch = globalThis.fetch;
+  let reached = false;
+  globalThis.fetch = async () => { reached = true; return { ok: true, text: async () => '' }; };
+  try {
+    const user = { full_name: 'Test Agent', username: 'cb999', cb: 'CB999' };
+    const body = { total_price: 54.90, order: { items: [{ id: 'cheese_burger', quantity: 1 }] } };
+    const late = await submitWimpyOrder({}, user, body, WED);
+    ok(late.status === 403 && /08:00 and 09:00/.test(late.body.error),
+      'an order at 10:00 is refused and the message names the hours', late.body.error);
+    const sat = await submitWimpyOrder({}, user, body, inWindow(6));
+    ok(sat.status === 403, 'a Saturday order is refused even at 08:30');
+    ok(reached === false, 'the webhook was never called for a refused order');
+  } finally { globalThis.fetch = realFetch; }
+
+  /* The page's half: the tab is conditional and the sheet machinery is gone. */
+  const fs3 = await import('node:fs');
+  const pageSrc = fs3.readFileSync(path.resolve(HERE, '..', '..', 'agent', 'index.html'), 'utf8');
+  ok(pageSrc.includes('wimpyOpenNow'), 'the page decides the tab by the SAST window');
+  ok(/wimpyOpenNow\(\)\?\[\['wimpy'/.test(pageSrc), 'the nav only offers Wimpy inside the window');
+  ok(pageSrc.indexOf('Customise') < 0 && pageSrc.indexOf('data-wch') < 0 && pageSrc.indexOf('data-wao') < 0
+    && pageSrc.indexOf('data-wrm') < 0, 'the customisation sheet is gone from the page entirely');
+  ok(pageSrc.includes('Add to order'), 'items add as they come');
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

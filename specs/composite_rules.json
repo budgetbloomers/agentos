@@ -5,11 +5,18 @@
     "note": "THE WORKBOOK IS STALE ON TWO POINTS AND THIS FILE FOLLOWS THE APP UNTIL IT IS RE-ISSUED.",
     "conversionTargets": "Chatterbox_Decision_Rules.xlsx TENURE_GROUPS still carries 8 / 10 / 12 / 40, which pre-date this engine holding any lead data and were never calibrated against sales divided by UNIQUE LEADS — the only conversion it can compute. Measured over the live floor before the change: not one agent in any group reached the old target, so the driver was a flat penalty rather than a measure, and the spec own open decision had already flagged the EXP-Cuddle 40% as unusable. Nick, 2026-08-30: reset to what the floor actually achieves. Medians when set: Courtesy 5.4, M1 2.2, M2 3.9, Cuddle 26.4, Nesting 1.5.",
     "nestingGroup": "The workbook has no Nesting row. Sixteen live agents sat outside every group, so they carried no GWP floor and no conversion target and were measured as nothing rather than as failing.",
-    "action": "Re-issue Chatterbox_Decision_Rules.xlsx with these values so the workbook is the source again; diagnostics/verify-composite-score.mjs now fails if this file and the app diverge on tenure groups."
+    "action": "Re-issue Chatterbox_Decision_Rules.xlsx with these values so the workbook is the source again; diagnostics/verify-composite-score.mjs now fails if this file and the app diverge on tenure groups.",
+    "gwpFloorCentBasis": "2026-09-03 scoring audit: min_gwp_per_sale is R99 INCL VAT, but Salesforce books a R99 product's ex-VAT charge as R86,08 while R99 ÷ 1.15 = 86,0869. Compared raw, an agent whose every sale WAS the R99 product read 'To go' at 25/25 points (30 of 59 rated agents) and Total GWP fell cents short of a met target; on the Ops side R4 GWP Value Failure would fire on the same people. Both engines now take the floor down to the cent ex-VAT (Math.floor(99/1.15*100)/100) — the basis the money is stored on — and the Ops ladder grosses that back up through vatRate. The rule value (99) is unchanged."
   },
   "version": "nba-3.0+coaching-1.0",
   "floor": 0.5,
   "windowSessions": 5,
+  "attendanceWindow": "scheduled",
+  "convMinDataDays": 5,
+  "_scoringNotes": {
+    "attendanceWindow": "2026-09-03 audit: attendance is averaged over the last windowSessions SCHEDULED shifts (rows with an employed shift, worked or not). Over WORKED sessions it was 100% for every agent by construction — a driver that could not fail.",
+    "convMinDataDays": "2026-09-03 audit: conversion (MTD sales ÷ the month's open leads) is SHOWN but not scored until the month carries this many working days of data; on day 2 of a month 56 of 59 agents failed it by construction. The other drivers renormalise, as for any unmeasured driver."
+  },
   "drivers": [
     {
       "k": "gwpSale",

@@ -235,8 +235,23 @@ export function todaysBigOne(now = Date.now()) {
   return BIG_ONES[d] || null;
 }
 
-const withAddOns = (i) => ({ ...i, available: i.basePrice != null,
-  addOns: (i.addOns || []).map((k) => ADD_ONS[k]).filter(Boolean) });
+/* THE ORDERING WINDOW (Nick, 2026-09-02: the tab "must only show for 8am to
+   9am, from monday to friday, south african time"). The page hides the tab,
+   but a page's clock is nobody's authority — THIS is the lock: the menu says
+   whether the window is open and submit refuses outside it, so a tab left
+   open past nine cannot buy lunch at ten. SAST is UTC+2, no daylight saving. */
+export function wimpyWindowOpen(now = Date.now()) {
+  const d = new Date(now + 2 * 3600000);
+  const dow = d.getUTCDay();
+  return dow >= 1 && dow <= 5 && d.getUTCHours() === 8;
+}
+
+/* ORDERS ARE AS-IS (Nick, 2026-09-02: "remove the part to customize and
+   condements, it must be as is") — the menu advertises no add-ons any more, so
+   the page has nothing to build a customisation sheet from. The items' own
+   addOns/ADD_ONS definitions stay above as the record of what the kitchen can
+   hold, but none of it travels. */
+const withAddOns = (i) => ({ ...i, available: i.basePrice != null, addOns: [] });
 
 /**
  * The menu the page renders. Prices travel from here and nowhere else.
@@ -251,6 +266,9 @@ export function wimpyMenu(now = Date.now()) {
     currency: 'ZAR',
     title: 'Weekday Value Menu',
     dayName: DAY_NAMES[d],
+    /* the window travels with the menu so a page that fetched it can say when
+       ordering opens rather than guessing from its own clock */
+    window: { open: wimpyWindowOpen(now), hours: '08:00–09:00', days: 'Monday to Friday' },
     categories: CATEGORIES,
     items: [...ITEMS, ...(hero ? [BIG_ONES[d]] : [])].map(withAddOns),
     bigOne: hero ? { ...withAddOns(hero), dayName: DAY_NAMES[d] } : null,
@@ -321,42 +339,24 @@ export function priceOrder(body, now = Date.now()) {
     const qty = Math.floor(Number(row.quantity));
     if (!Number.isFinite(qty) || qty < 1 || qty > 20) { errors.push(def.name + ': quantity must be between 1 and 20.'); return; }
 
-    const choices = {};
-    for (const ch of (def.choices || [])) {
-      const picked = String((row.choices || {})[ch.id] || '');
-      if (!picked) { if (ch.required) errors.push(def.name + ': choose a ' + ch.label.toLowerCase() + '.'); continue; }
-      if (!ch.options.includes(picked)) { errors.push(def.name + ': "' + picked + '" is not a ' + ch.label.toLowerCase() + ' option.'); continue; }
-      choices[ch.id] = picked;
+    /* EVERY ITEM COMES AS IT IS (Nick, 2026-09-02). A request still carrying a
+       customisation is an old cached tab — and silently stripping it would hand
+       the kitchen a different order than the agent believes they placed (their
+       "no onions" would arrive WITH onions), so it is refused in words instead. */
+    if ((Array.isArray(row.removed) && row.removed.length)
+      || (Array.isArray(row.added) && row.added.length)
+      || (row.choices && Object.keys(row.choices).length)) {
+      errors.push(def.name + ' comes as it is — customisations are no longer taken. Remove the item and add it back.');
+      return;
     }
 
-    /* removals must be things the item actually has, and REMOVING IS FREE */
-    const removable = def.includedIngredients.filter((g) => g.removable).map((g) => g.name);
-    const removed = [];
-    for (const r of (Array.isArray(row.removed) ? row.removed : [])) {
-      const name = String(r || '');
-      if (!removable.includes(name)) { errors.push(def.name + ': "' + name + '" cannot be removed.'); continue; }
-      if (!removed.includes(name)) removed.push(name);
-    }
-
-    const allowed = def.addOns || [];
-    const added = [];
-    let addCents = 0;
-    for (const a of (Array.isArray(row.added) ? row.added : [])) {
-      const aid = String((a && a.id) || a || '');
-      if (!allowed.includes(aid) || !ADD_ONS[aid]) { errors.push(def.name + ': "' + aid + '" is not an add-on for this item.'); continue; }
-      if (added.some((x) => x.id === aid)) continue;
-      const ao = ADD_ONS[aid];
-      added.push({ id: ao.id, name: ao.name, price: ao.price });
-      addCents += cents(ao.price);
-    }
-
-    const unit = cents(def.basePrice) + addCents;
+    const unit = cents(def.basePrice);
     const line = unit * qty;
     totalCents += line;
     items.push({
       id: def.id, item: def.name, category: def.category, quantity: qty,
       base_price: rands(cents(def.basePrice)),
-      customisations: { ...choices, removed, added },
+      customisations: { removed: [], added: [] },
       unit_total: rands(unit),
       item_total: rands(line),
     });
@@ -397,13 +397,18 @@ function sastNow() {
  * The identity is the SESSION's, never the request's: an order cannot be placed
  * in somebody else's name because there is no field in which to say a name.
  */
-export async function submitWimpyOrder(env, user, body) {
+export async function submitWimpyOrder(env, user, body, now = Date.now()) {
+  /* THE WINDOW IS ENFORCED HERE, not only hidden on the page — a tab left open
+     since 08:55 does not get to order at half past ten. */
+  if (!wimpyWindowOpen(now)) return { status: 403, body: {
+    error: 'Wimpy orders are taken between 08:00 and 09:00, Monday to Friday (SA time). The window is closed now — the tab will be back tomorrow morning.' } };
+
   const agentName = String(user.full_name || user.username || '').trim();
   const cb = String(user.cb || '').trim().toUpperCase();
   if (!agentName) return { status: 403, body: { error: 'This account has no name on it, so an order cannot be placed. Ask Nick to check your profile.' } };
   if (!cb) return { status: 403, body: { error: 'This account has no CB number, so an order cannot be placed. Ask your team leader.' } };
 
-  const priced = priceOrder(body);
+  const priced = priceOrder(body, now);
   if (!priced.ok) return { status: 400, body: { error: priced.errors[0], errors: priced.errors } };
 
   const notes = String((body.order && body.order.additional_notes) || '').trim().slice(0, 1000);

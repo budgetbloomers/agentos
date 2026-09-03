@@ -61,9 +61,15 @@ async function floor(n, from = 1, tl = 'Test Leader One') {
       [r.code, r.name, tl, HASH]);
 }
 
+/* THE FIXTURE LIST MUST BE THE NEWEST SNAPSHOT. agent_list_current is max(as_of), and
+   the integrity view compares accounts against THAT — so a hardcoded fixture date
+   silently became "older than the real list" the day a newer real list landed, and
+   every scenario failed with "107 agents on the list with no account" (seen 3 Sep).
+   One day past the newest real snapshot, computed at run time. Rolled back anyway. */
+const ASOF = (await one(`select to_char(coalesce(max(as_of), current_date) + 1, 'YYYY-MM-DD') d from agent_list`)).d;
 const sync = async (rows, opts = {}) => (await one(
   `select sync_agent_list($1::date, $2::jsonb, $3, $4, $5, $6::jsonb, $7, $8, $9) as out`,
-  ['2026-08-28', JSON.stringify(rows), opts.batch || ('test-' + Math.random().toString(36).slice(2, 9)),
+  [ASOF, JSON.stringify(rows), opts.batch || ('test-' + Math.random().toString(36).slice(2, 9)),
    'test-fp', 'verify-agent-sync', JSON.stringify(opts.hashes ?? hashesFor(rows)),
    opts.apply !== false, opts.min ?? 25, opts.cap ?? 0.25])).out;
 
@@ -131,7 +137,7 @@ try {
     await sync(listRows(29));
     const kept = +(await one(`select count(*)::int n from auth_log where user_id = $1`, [u.id])).n;
     ok(kept === 1, 'their sign-in history is still readable — auth_log has no foreign key');
-    const named = await one(`select agent_name from agent_list where employee_code = $1 and as_of = '2026-08-28'`, [CB(30)]);
+    const named = await one(`select agent_name from agent_list where employee_code = $1 and as_of = '${ASOF}'`, [CB(30)]);
     ok(!named, 'and they are correctly absent from the current dated snapshot');
     await c.query(`delete from auth_log where user_id = $1`, [u.id]);
   });
@@ -189,7 +195,7 @@ try {
     ok(n1 === n2 && n2 === 33, 'nine more runs leave exactly 33 accounts — no copies', n1 + ' → ' + n2);
     const dup = await one(`select count(*)::int n from (select cb from app_users where role='agent' group by cb having count(*) > 1) d`);
     ok(+dup.n === 0, 'no duplicate CB number exists');
-    const snap = await one(`select count(*)::int n from agent_list where as_of = '2026-08-28'`);
+    const snap = await one(`select count(*)::int n from agent_list where as_of = '${ASOF}'`);
     ok(+snap.n === 33, 'and one dated snapshot row per agent, not ten', snap.n);
   });
 
@@ -235,7 +241,9 @@ try {
       ok(r.status === 'FAILED', label + ' → FAILED', JSON.stringify(r).slice(0, 140));
       ok(await agentCount() === before, '...and the floor is untouched');
     }
-    const staged = await one(`select count(*)::int n from agent_list_import`);
+    /* ITS OWN rows: the function deliberately keeps the last five real batches for
+       inspection, so the table is never empty in production — count the test batches. */
+    const staged = await one(`select count(*)::int n from agent_list_import where batch_id like 'test-%'`);
     ok(+staged.n === 0, 'a failed sync clears its own staging rows', staged.n);
   });
 
@@ -316,7 +324,7 @@ try {
     ok(plan.status === 'PLAN', 'a dry run returns a PLAN', plan.status);
     ok(nOf(plan, 'create') === 2 && nOf(plan, 'remove') === 0, 'it says what WOULD happen', nOf(plan, 'create'));
     ok(await agentCount() === before, '...having created nobody');
-    ok(+(await one(`select count(*)::int n from agent_list_import`)).n === 0, '...and having cleared its own staging rows');
+    ok(+(await one(`select count(*)::int n from agent_list_import where batch_id like 'test-%'`)).n === 0, '...and having cleared its own staging rows');
 
     const nh = await sync(listRows(32), { hashes: {} });
     ok(nh.status === 'NEEDS_HASHES', 'applying without a password hash returns NEEDS_HASHES', nh.status);

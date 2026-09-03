@@ -156,3 +156,17 @@ export async function syncTeamLeaders(DB, opts = {}) {
   }
   return out || { status: 'FAILED', errors: ['the leader synchronisation returned nothing'] };
 }
+
+/**
+ * THE THIRD THING THE LIST CREATES: CAMPAIGNS (Nick, 2026-09-03). migration-019 gives
+ * campaigns a table fed by the current list — a campaign named on it is created (or
+ * reactivated), one no agent carries is deactivated, never deleted. No passwords, so no
+ * hash handshake; the function's own guards refuse a short or campaign-less list and
+ * more than two campaigns going quiet at once. Runs beside the agent and leader syncs
+ * on every publish and every cron tick; nothing here decides a target or an owner —
+ * `created` is what a human reads to make those decisions.
+ */
+export async function syncCampaigns(DB, opts = {}) {
+  const out = await DB.rpc('sync_campaigns', { p_actor: opts.actor || 'cron', p_apply: true });
+  return out || { status: 'FAILED', errors: ['the campaign synchronisation returned nothing'] };
+}

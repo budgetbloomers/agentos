@@ -74,13 +74,16 @@ const ident = await page.evaluate(() => {
     const norm = c => /nest/i.test(c) ? 'Nesting' : /cuddle/i.test(c) ? 'Cuddle' : /track|vehicle|vision|^vt$/i.test(c) ? 'VT' : 'Courtesy';
     if (norm(want) !== f.campaign && bad.length < 5) bad.push(`${f.code} ${f.date}: fact=${f.campaign} roster=${norm(want)}`);
   }
-  return { bad, noRoster, camps, rosterN: S.roster.length, factN: (M.facts || []).length };
+  return { bad, noRoster, camps, rosterN: S.roster.length, factN: (M.facts || []).length, extra: M.newCampaigns || [] };
 });
 ok('every fact resolves to an agent on the Agent List', ident.noRoster.length === 0, ident.noRoster.join(', '));
 ok('every fact carries the campaign the Agent List gives that agent (via effective-dated history)',
   ident.bad.length === 0, ident.bad.join(' | '));
-ok('campaigns present are only the four the roster defines',
-  Object.keys(ident.camps).every(c => ['Cuddle', 'Courtesy', 'Nesting', 'VT'].includes(c)), JSON.stringify(ident.camps));
+/* since 2026-09-03 a campaign the list names and the rule book does not is reported under
+   its own label (M.newCampaigns) — anything else in the fact table is still a leak */
+ok('campaigns present are the four the rule book defines plus any the list has created',
+  Object.keys(ident.camps).every(c => ['Cuddle', 'Courtesy', 'Nesting', 'VT'].concat(ident.extra).includes(c)),
+  JSON.stringify(ident.camps) + ' new: ' + JSON.stringify(ident.extra));
 
 /* ---------- 1b. the Agent List owns the current month (Nick, 2026-08-27) ----------
    "everytime the agent list is uploaded data must change": recordOrgList gives the latest

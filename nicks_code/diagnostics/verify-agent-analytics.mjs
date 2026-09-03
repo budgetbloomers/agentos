@@ -109,10 +109,12 @@ const ORIG_SALE_VALUE = (() => {
 })();
 
 const PLANS = ['M1', 'M2', 'EXP_COURTESY', 'EXP_CUDDLE'];
+/* September 2026: EXP_CUDDLE grew to 10 brackets (SPD 6–15); the rest stay at 8. */
+const PLAN_SIZES = { M1: 8, M2: 8, EXP_COURTESY: 8, EXP_CUDDLE: 10 };
 for (const p of PLANS) {
-  (ORIG_BRACKETS[p] || []).length === 8
-    ? ok(`${p}: 8 brackets read from the original`)
-    : bad(`${p}: expected 8 brackets, read ${(ORIG_BRACKETS[p] || []).length}`);
+  (ORIG_BRACKETS[p] || []).length === PLAN_SIZES[p]
+    ? ok(`${p}: ${PLAN_SIZES[p]} brackets read from the original`)
+    : bad(`${p}: expected ${PLAN_SIZES[p]} brackets, read ${(ORIG_BRACKETS[p] || []).length}`);
 }
 
 /* PULSE republishes those brackets in COMM_RULES so the agent page can use them
@@ -143,7 +145,7 @@ else {
   }
   drift.length
     ? bad('COMM_RULES has drifted from the original brackets', drift.join('\n      '))
-    : ok('COMM_RULES brackets match the original exactly (32 values)');
+    : ok('COMM_RULES brackets match the original exactly (34 values)');
   Math.abs(pulseComm.saleValue - ORIG_SALE_VALUE) < 1e-12
     ? ok('COMM_RULES.saleValue matches the original (89 ÷ 1.15)')
     : bad(`COMM_RULES.saleValue ${pulseComm.saleValue} vs original ${ORIG_SALE_VALUE}`);
@@ -248,7 +250,7 @@ function diffObj(a, b, trail, out) {
   for (const k of keys) diffObj(a[k], b[k], trail ? trail + '.' + k : k, out);
 }
 
-const GRID_GWP = [0, 1, 500, 3869.57, 4000, 6191.3, 9286.96, 13930.43, 15000, 20121.74, 25000, 99999];
+const GRID_GWP = [0, 1, 500, 4063.04, 4000, 6500.87, 9751.3, 14626.96, 15000, 21127.83, 24378.26, 25000, 99999];
 const GRID_TDAYS = [20, 21, 22];
 const GRID_EXTRA = [1, 2, 3];
 const ALL_PLANS = [...PLANS, 'M0'];
@@ -373,6 +375,10 @@ const CODE = PAGE
        role-gated in the handlers. In the Worker's PORTAL_ALLOWED deliberately. */
     '/api/portal/cm/request', '/api/portal/cm/assist', '/api/portal/cm/detail',
     '/api/portal/cm/act', '/api/portal/cm/eod',
+    /* Campaign target settings (Nick, 2026-09-01) — Dalwin's dials. GET is the
+       page, POST is one validated change; both live in the Worker's cm block and
+       are refused for every role but campaign_manager and admin. */
+    '/api/portal/cm/settings',
     /* Wimpy ordering (2026-08-30). The menu is served BY the Worker so a price
        lives in one file, and the order is POSTed through it because the CSP lets
        this page reach the Worker and nothing else — a direct call to the n8n
@@ -647,6 +653,9 @@ const DIGEST = {
   v: 1, updatedAt: new Date().toISOString(),
   period: { from: '2026-08-01', to: '2026-08-31' }, diallingDays: 20,
   dates: ['2026-08-01', '2026-08-02', '2026-08-03'],
+  /* days whose files have landed — the cap on "days worked" (2026-09-03); the
+     fixtures' act values are all ≤ 16 so nothing here is capped by accident */
+  daysWithData: 16,
   comm: { saleValue: ORIG_SALE_VALUE, brackets: ORIG_BRACKETS },
   groups: { 'Cuddle|Exp': { n: 4, gwpEx: 11500, sales: 16, pctT: 1.06 } },
   agents: [], notCovered: [],
@@ -841,9 +850,23 @@ const BELOW = { code: 'CB262', name: 'Busiswa Mathenjwa', campaign: 'Courtesy', 
 const MAXED = { ...BELOW, code: 'CB1', name: 'Top Earner', gwpEx: 30000, sales: 380, pctT: 2.1 };
 const DIG = { ...DIGEST, workingDays: 21, diallingDays: 14 };
 
+/* Since 2026-09-03 the money hero is NOT on Today (one home per figure — Nick: "why
+   are we repeating the agent's tracking on each page"); it renders on a team leader's
+   drilldown and its copy rules are checked on the function itself. Today carries a
+   pointer to the Projected Commission tab instead. */
 try {
-  P.setD({ ...DIG, agents: [BELOW] }); P.setMe(BELOW); P.show(BELOW);
-  const html = N.root.innerHTML, text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  P.setD({ ...DIG, agents: [BELOW] }); P.setMe(BELOW); P.setView('month'); P.show(BELOW);
+  const today = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (/Projected commission this month|On track to earn/i.test(today)) throw new Error('the money hero is still repeated on Today');
+  if (!/Open Projected Commission/.test(today)) throw new Error('Today does not point at the Projected Commission tab');
+  if (/pick your rung|Three ways to win/i.test(today)) throw new Error('the rungs are still on Today');
+  ok('Today carries no money hero — one pointer to Projected Commission, no rungs');
+} catch (e) { bad('one home per figure', e.message); }
+
+try {
+  P.setD({ ...DIG, agents: [BELOW] }); P.setMe(BELOW);
+  const c = P.commCalc('M1', 13, 21, 1857.3, 1, DIG.comm);
+  const html = P.heroHTML(c), text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   if (/R\s?0\b/.test(text.slice(0, 400))) throw new Error('a bare "R 0" is still the headline');
   if (!/first payout/i.test(text)) throw new Error('no reachable target offered');
   if (!/more sales?/i.test(text)) throw new Error('the gap is not expressed in sales');
@@ -858,16 +881,65 @@ try {
   if (!/hard one/i.test(text)) throw new Error('the "first one is the hard one" framing is gone');
   ok('the hero shows the ladder accelerating past the first bracket');
 
-  if (!/\d+ sales/.test(text)) throw new Error('the bracket ladder has no sales column');
-  ok('the bracket ladder is priced in sales as well as rand');
+  if (!/\d+ more sales?/.test(text)) throw new Error('the hero does not price the gap in sales');
+  ok('the hero prices the gap in sales as well as rand');
 } catch (e) { bad('zero-case hero', e.message); }
 
 try {
-  P.setD({ ...DIG, agents: [MAXED] }); P.setMe(MAXED); P.show(MAXED);
-  const text = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  P.setD({ ...DIG, agents: [MAXED] }); P.setMe(MAXED);
+  const c = P.commCalc('M1', 13, 21, 30000, 1, DIG.comm);
+  const text = P.heroHTML(c).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   if (!/top of the scale|top bracket/i.test(text)) throw new Error('a maxed agent is not told they are at the top');
   ok('at the top bracket: "top of the scale" appears where it is actually true');
 } catch (e) { bad('top-bracket message', e.message); }
+
+/* ═══ 2026-09-03 testing round (Agent OS testing.docx) — Today must be PRECISE ═══
+   · days worked never include a day whose files have not landed (A2)
+   · one statement replaces the rungs: month target, per-day, days left with dates (A3)
+   · last session and momentum read the SAME worked day (A5)
+   · headings name their scope (A6); agents see no data-assurance chrome (C4);
+     Nikola is off the agent nav (C2) */
+try {
+  const SEP = { ...DIGEST, period: { from: '2026-09-01', to: '2026-09-30' }, workingDays: 21, diallingDays: 2,
+    dates: ['2026-09-01', '2026-09-02'], role: 'agent', updatedAt: new Date().toISOString(),
+    coaching: { stale: true, agents: [] } };
+  delete SEP.daysWithData;                                   // an older publisher: the page must count for itself
+  const ENOCH = { code: 'CB70', name: 'Enoch Pillay', campaign: 'Cuddle', tenure: 'Exp', plan: 'EXP_CUDDLE',
+    gwpEx: 1800, sales: 20, target: 24, pctT: 0.83, spd: 6.7, att: 1, qa: 0.98, aveG: 90, ref: 2,
+    act: 3, emp: 3, rankCo: 1, nCo: 62, rankTeam: 1, nTeam: 15, trend: 'up', trendPct: 0.1, badges: [], spark: [8, 12],
+    days: [ { d: '2026-09-01', s: 8, x: 600, t: 8, act: 1 }, { d: '2026-09-02', s: 12, x: 900, t: 8, act: 1 },
+            { d: '2026-09-03', s: 0, x: 0, t: 8, act: 1, p: true } ] };   // the register says today; no files yet
+  P.setTeam(null); P.setD({ ...SEP, agents: [ENOCH] }); P.setMe(ENOCH); P.setView('month'); P.show(ENOCH);
+  const html = N.root.innerHTML, text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/2 of 21 working days worked/.test(text)) throw new Error('days worked still counts today (register 3, files 2): ' + (text.match(/\d+ of 21 working days worked/) || ['not found'])[0]);
+  if (!/target of 168 sales/.test(text)) throw new Error('the month target is not stated (8 a day × 21 = 168)');
+  if (!/about 8 a day over the 19 working days left \(3 – 30 September\)/.test(text)) throw new Error('the per-day statement is wrong or undated: ' + (text.match(/about .{0,80}/) || [''])[0]);
+  if (/pick your rung|Three ways to win/i.test(text)) throw new Error('the rungs are back');
+  if (!/Your last session · 2026-09-02/.test(text)) throw new Error('last session is not the last WORKED day');
+  if (!/2 sessions in a row on target/.test(text)) throw new Error('momentum does not agree with the last session card');
+  if (!/2026-09-03 is still landing/.test(text)) throw new Error('the provisional day is not named as still landing');
+  if (!/How you are tracking — September to date/.test(text)) throw new Error('the tracking heading does not name its scope');
+  if (!/A projection of how your month is going so far/.test(text)) throw new Error('Today does not say it is a projection');
+  if (/Numbers last refreshed|Up to date|older copy|Numbers updated/.test(text)) throw new Error('data-assurance chrome is still shown to an agent');
+  if (/>Nikola</.test(html) || /data-view="nik"/.test(html)) throw new Error('Nikola is still on the agent nav');
+  if (!/Projected Commission</.test(html)) throw new Error('the nav tab is not "Projected Commission"');
+  ok('Today is precise: 2 of 21 days, 168 target, 8 a day over 19 days (3 – 30 Sep), same last session in both cards, no chrome, no Nikola');
+
+  /* the contradiction Nick saw: a short last session must read as short in BOTH cards */
+  const SHORT = { ...ENOCH, days: [ { d: '2026-09-01', s: 8, x: 600, t: 8, act: 1 }, { d: '2026-09-02', s: 3, x: 220, t: 8, act: 1 } ] };
+  P.setD({ ...SEP, agents: [SHORT] }); P.setMe(SHORT); P.show(SHORT);
+  const t2 = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/Your last session · 2026-09-02 .{0,60}Short of target/.test(t2)) throw new Error('last session card does not say short');
+  if (!/last session \(2026-09-02\) was short of target/.test(t2)) throw new Error('momentum contradicts the last session card');
+  ok('a short last session reads as short in both cards — no contradiction possible');
+
+  /* a team leader still gets the freshness card and footer stamp */
+  P.setTeam({ name: 'Lead', role: 'team_leader' }); P.setD({ ...SEP, role: 'team_leader', agents: [ENOCH], __back: { name: 'Lead' } }); P.setMe(ENOCH); P.show(ENOCH);
+  const t3 = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/Numbers last refreshed/.test(t3)) throw new Error('a team leader lost the freshness card');
+  ok('team leaders keep the data-assurance chrome');
+  P.setTeam(null);
+} catch (e) { bad('Today precision (2026-09-03 round)', e.message); }
 
 /* A STALE DIGEST MUST NOT COST AN AGENT MONEY.
    A PULSE tab running the old build publishes no workingDays, so the page fell
@@ -883,12 +955,19 @@ try {
     gwpEx: 14472, sales: 166, target: 128, pctT: 1.30, spd: 10.38, att: 1, qa: 0.98, aveG: 87.18, ref: 48,
     act: 16, emp: 16, rankCo: 2, nCo: 84, rankTeam: 1, nTeam: 11, trend: 'down', trendPct: -0.12,
     badges: [], spark: [8, 10, 12] };
-  P.setD({ ...STALE, agents: [ENOCH] }); P.setMe(ENOCH); P.show(ENOCH);
+  /* the money now lives on the Projected Commission tab only (2026-09-03) */
+  P.setD({ ...STALE, agents: [ENOCH] }); P.setMe(ENOCH); P.setView('calc'); P.show(ENOCH);
   const text = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  P.setView('month');
 
   if (/16 .{0,30}(of|out of) 14/i.test(text)) throw new Error('days worked still exceeds the month’s working days');
-  if (/R\s?7\s?670/.test(text)) throw new Error('still showing the elapsed-days commission (R7,670)');
-  if (!/R\s?17\s?89\d/.test(text)) throw new Error('the corrected commission (R17,896) is not shown');
+  /* Figures recomputed for the September 2026 brackets (thresholds rebased 20→21
+     dial days) AND holiday-aware working days: August 2026's fallback counts 20
+     (21 weekdays − Women's Day observed Mon 10 Aug), so this fixture projects
+     18,090.00 into the 17,877.39 bracket → R14,166.19. The elapsed-days bug
+     would show ~R6,678. The August-model pair was R7,670 wrong / R17,896 right. */
+  if (/R\s?6\s?67\d/.test(text)) throw new Error('still showing the elapsed-days commission (~R6,678)');
+  if (!/R\s?14\s?16\d/.test(text)) throw new Error('the corrected commission (R14,166) is not shown');
   if (/R\s?0\b.{0,24}away/i.test(text)) throw new Error('"R 0 away from the next bracket" is back');
   if (/first bracket/i.test(text)) throw new Error('an agent mid-ladder is told he cannot clear the FIRST bracket');
   ok('a stale digest self-corrects: weekdays counted from the period, commission right, no false messages');
@@ -953,16 +1032,18 @@ try {
   const mk = (act) => ({ code: 'CB9', name: 'Test Agent', campaign: 'Courtesy', tenure: 'M1', plan: 'M1',
     gwpEx: 5200, sales: 67, target: 60, pctT: 1.1, spd: 3.2, att: 1, qa: 0.9, aveG: 77.39, ref: 0,
     act, emp: act, rankCo: 5, nCo: 84, rankTeam: 2, nTeam: 9, trend: 'flat', trendPct: 0, badges: [], spark: [2, 3] });
-  const D21 = { ...DIGEST, workingDays: 21, diallingDays: 21, comm: { saleValue: ORIG_SALE_VALUE, brackets: ORIG_BRACKETS } };
+  const D21 = { ...DIGEST, workingDays: 21, diallingDays: 21, daysWithData: 21, comm: { saleValue: ORIG_SALE_VALUE, brackets: ORIG_BRACKETS } };
 
   const mid = mk(16);
   P.setD({ ...D21, agents: [mid] }); P.setMe(mid); P.setView('calc'); P.show(mid);
   let html = N.root.innerHTML;
   let text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   if (!/What if you improve/.test(html)) throw new Error('the what-if card is missing while days remain');
-  for (const piece of ['Commission calculator', 'Bracket you are on pace for', 'Your figures for', 'Bracket gap analysis'])
+  for (const piece of ['Projected Commission Calculator', 'Bracket you are on pace for', 'Your figures for', 'Bracket gap analysis'])
     if (text.indexOf(piece) < 0) throw new Error('the commission page is missing its "' + piece + '" section');
-  if (!/id="cPlan"|id="cDays"|id="tDays"|id="cGwp"/.test(html)) throw new Error('the editable figures inputs are missing');
+  /* 2026-09-03 (Nick): the figures are the agent's REAL figures — no inputs, no reset. */
+  if (/id="cPlan"|id="cDays"|id="tDays"|id="cGwp"|id="reset"/.test(html)) throw new Error('the figures card still offers editable inputs');
+  if (!/real figures from Agent OS/.test(text)) throw new Error('the figures card does not say these are the agent’s real figures');
   if (/undefined|NaN/.test(text)) throw new Error('the commission page rendered a placeholder value');
 
   const done = mk(21);

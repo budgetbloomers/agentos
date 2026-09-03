@@ -323,23 +323,8 @@ details.tool summary .chev{margin-left:auto;color:var(--muted);font-size:11px}
 .pg-bar2 i.solid{border-radius:0 4px 4px 0}
 .pg-bar2.ok i{background:var(--green)} .pg-bar2.short i{background:var(--amber)}
 .pg-bar2 u.tick{position:absolute;top:-2px;width:1px;height:12px;background:var(--navy);opacity:.4}
-/* the deduction ladder: one segment per tier, the agent's filled, the rest outline.
-   It has to stay on one line — a ladder that wraps stops reading as a scale. */
-.pg-lad{display:flex;gap:4px;overflow-x:auto;padding-bottom:2px}
-.pg-lad span{flex:0 0 auto;font-size:10.5px;font-weight:700;border:1px solid var(--line);
-  border-radius:10px;padding:2px 8px;color:var(--muted);white-space:nowrap;background:transparent}
-.pg-lad span.on{color:#fff;border-color:transparent}
-.pg-lad span.on.t0{background:var(--green)} .pg-lad span.on.t1{background:var(--amber)}
-.pg-lad span.on.t2{background:var(--red)}
-.pg-ded{display:grid;grid-template-columns:170px 1fr 64px;gap:12px;align-items:start;
-  padding:11px 0;border-bottom:1px solid #EEF2F8}
-.pg-ded:last-of-type{border-bottom:none}
-.pg-ded .off{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
-.pg-ded .off.zero{color:var(--muted)} .pg-ded .off.neg{color:var(--red)}
-.pg-ded .off.plus{color:var(--green)}
 .pg-tally{margin-top:12px;padding-top:11px;border-top:2px solid var(--line);text-align:right;
   font-variant-numeric:tabular-nums;font-size:13px}
-@media(max-width:720px){.pg-ded{grid-template-columns:1fr 58px;gap:6px}.pg-ded .lad-cell{grid-column:1/-1}}
 .pg-chip{display:flex;align-items:center;justify-content:flex-end;gap:8px;white-space:nowrap;font-size:12px}
 .pg-chip small{color:var(--muted);font-weight:600}
 @media(max-width:720px){.pg-row{grid-template-columns:112px 1fr 130px;gap:8px}.pg-bar{display:none}}
@@ -367,14 +352,6 @@ details.tool summary .chev{margin-left:auto;color:var(--muted);font-size:11px}
 .pg-tile .lab{font-size:11px;font-weight:800;color:var(--muted)}
 .pg-tile svg{width:100%;height:40px;display:block;margin:4px 0}
 .pg-tv b{font-size:15px}.pg-tv small{font-size:11px;color:var(--muted)}
-/* ---- Today's number — the daily briefing (Nick, 2026-08-26) ---- */
-.td-rungs{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:12px}
-.td-rung{display:flex;gap:14px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:#fff}
-.td-n{min-width:56px;height:56px;border-radius:14px;background:var(--blue-soft);color:var(--blue);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;flex:none}
-.td-rung:first-child .td-n{background:var(--green-soft);color:var(--green)}
-.td-rung:last-child .td-n{background:var(--violet-soft);color:var(--violet)}
-.td-t{font-weight:800;color:var(--ink);font-size:13px}
-.td-s{font-size:12px;color:var(--body);margin-top:3px;line-height:1.45}
 /* ---- Ask-for-help modal + the TL Help Center (2026-08-26) ---- */
 .help-ov{position:fixed;inset:0;background:rgba(10,23,48,.45);z-index:60;display:flex;align-items:flex-start;justify-content:center;padding:6vh 16px}
 .help-box{background:#fff;border-radius:16px;box-shadow:0 18px 50px rgba(10,23,48,.35);max-width:720px;width:100%;padding:20px 22px}
@@ -3125,7 +3102,7 @@ function sigPad(box,path,set){
    leader four. The sidebar carries who is signed in and how fresh the numbers
    are — the Data Trust habit from the management apps, shrunk to one line. */
 
-var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:'🧮',team:'👥',agent:'👤',results:'📊',kpi:'📋',prog:'📈',nik:'✦',forms:'🗂️',wimpy:'🍔'};
+var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:'🧮',team:'👥',agent:'👤',results:'📊',kpi:'📋',prog:'📈',nik:'✦',forms:'🗂️',wimpy:'🍔',set:'⚙️'};
 
 /* The nav must match the SECTIONS actually on screen, which is decided by the
    view being rendered — not by the account. A team leader drilling into one of
@@ -3143,11 +3120,11 @@ var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:
 var TL_VIEWS=['team','help','kpihub','coach_team','forms','results','mtd_team','weekly_team','daily_team','nik_team'];
 /* The third view. Campaign · Team Leaders · Assistance · Nikola — the spec's
    four pages, nothing else. */
-var CM_VIEWS=['cm','cm_teams','cm_assist','cm_nik'];
+var CM_VIEWS=['cm','cm_teams','cm_assist','cm_nik','cm_set'];
 function navFor(active){
   if(CM_VIEWS.indexOf(active)>=0)
     return [['cm','Campaign',ICON.results],['cm_teams','Team Leaders',ICON.team],
-            ['cm_assist','Assistance',ICON.kpi],['cm_nik','Nikola',ICON.nik]];
+            ['cm_assist','Assistance',ICON.kpi],['cm_nik','Nikola',ICON.nik],['cm_set','Settings',ICON.set]];
   if(TL_VIEWS.indexOf(active)>=0)
     /* 'All Forms' is OFF the nav (Nick, 2026-08-26) — the view survives for old
        links; both hubs still carry their own forms. */
@@ -3160,10 +3137,13 @@ function navFor(active){
   /* 'My coaching' is OFF the agent nav (Nick, 2026-08-26). The view itself still
      exists — the "Ask … to help" button on My Progress deep-links to it, and the
      coaching themes still show on My Progress and Today — there is simply no tab. */
-  return [['month','Today',ICON.month],['calc','Commission',ICON.calc],
-          ['progress','My Progress',ICON.prog],
-          ['wimpy','Wimpy Order',ICON.wimpy],
-          ['nik','Nikola',ICON.nik]];
+  /* Wimpy only during its window (08:00–09:00 SAST weekdays) — see wimpyOpenNow.
+     NIKOLA IS OFF THE AGENT NAV (Nick, 2026-09-03: "Nikola to be hidden"); team
+     leaders and campaign managers keep theirs. The tab reads "Projected Commission"
+     (same instruction) because that is what the page is — a projection. */
+  return [['month','Today',ICON.month],['calc','Projected Commission',ICON.calc],
+          ['progress','My Progress',ICON.prog]]
+    .concat(wimpyOpenNow()?[['wimpy','Wimpy Order',ICON.wimpy]]:[]);
 }
 
 /* Freshness, stated plainly. A number on stale data is a confident wrong
@@ -3171,6 +3151,11 @@ function navFor(active){
    the same idea in one line an agent will actually read. */
 function freshHTML(){
   if(!D||!D.updatedAt) return '';
+  /* NO DATA-ASSURANCE CHROME FOR AGENTS (Nick, 2026-09-03). Freshness dots and
+     "coaching is showing an older copy" are for people who can act on staleness;
+     an agent cannot, so for them it is only noise under their own name. Team
+     leaders and campaign managers keep it — the same rule the footer stamp follows. */
+  if(isAgentUser()) return '';
   var age=(Date.now()-Date.parse(D.updatedAt))/3600000;
   var col=age<6?'#34D399':(age<26?'#FBBF24':'#FB7185');
   var word=age<6?'Up to date':(age<26?'Updated earlier today':'Waiting on new data');
@@ -3262,7 +3247,8 @@ function render(){
     if(TL_VIEWS.indexOf(VIEW)<0) VIEW='team';
     return teamView();
   }
-  if(['month','calc','progress','coaching','nik','wimpy'].indexOf(VIEW)<0) VIEW='month';
+  if(['month','calc','progress','coaching','wimpy'].indexOf(VIEW)<0) VIEW='month';
+  if(VIEW==='wimpy'&&!wimpyOpenNow()) VIEW='month';
   if(D.notReported) return notReported();
   if(D.me) return show(D.me);
 }
@@ -3411,6 +3397,30 @@ function notReported(){
 
 var WMENU=null, WDAY=null, WCART=[], WCAT='breakfast', WNOTE='', WEDIT=null, WSTATE='order', WERR='', WBUSY=false, WDONE=null, WOPEN=false;
 
+/* THE TAB KEEPS OFFICE HOURS (Nick, 2026-09-02): visible 08:00–09:00 SAST,
+   Monday to Friday, hidden the rest of the day. SAST is UTC+2 with no daylight
+   saving, so the arithmetic holds on any phone set to network time. The page
+   only HIDES the tab — the Worker refuses an out-of-window order regardless,
+   so a stale tab cannot buy lunch at ten. */
+function wimpyOpenNow(){
+  var d=new Date(Date.now()+2*3600000);
+  var dow=d.getUTCDay();
+  return dow>=1&&dow<=5&&d.getUTCHours()===8;
+}
+/* The tab has to APPEAR at 08:00 and VANISH at 09:00 without anyone touching
+   the page — a phone left on the Today tab all morning must still grow the
+   tab when the window opens. Checked twice a minute; re-renders only on the
+   flip, so the poll costs nothing the rest of the day. */
+var WWIN_LAST=wimpyOpenNow();
+setInterval(function(){
+  var o=wimpyOpenNow();
+  if(o!==WWIN_LAST){
+    WWIN_LAST=o;
+    if(!o&&VIEW==='wimpy') VIEW='month';
+    try{ render(); }catch(e){}
+  }
+},30000);
+
 function wZar(v){ return 'R'+Number(v||0).toFixed(2); }
 /* Money in cents until the last moment: adding a hundred floats is how a total
    ends in .0000000004. The Worker does the same, so the two agree exactly. */
@@ -3466,7 +3476,7 @@ function wimpyPage(){
       +'<div class="wp-hero-name">'+esc(bo.name)+'</div>'
       +'<div class="wp-hero-desc">'+esc(bo.description||'')+'</div>'
       +'<div class="wp-hero-row"><span class="wp-hero-price">'+wPriceInner(bo.basePrice,bo.wasPrice)+'</span>'
-      +'<button class="btn primary" data-wadd="'+esc(bo.id)+'">Customise &amp; add</button></div></div>';
+      +'<button class="btn primary" data-wadd="'+esc(bo.id)+'">Add to order</button></div></div>';
   }else if(WMENU.weekend){
     hero='<div class="wp-hero off"><div class="wp-hero-day">TODAY’S BIG ONE</div>'
       +'<div class="wp-hero-name">Back Monday</div>'
@@ -3516,7 +3526,7 @@ function wimpyPage(){
       +'<div class="d">'+esc(i.description||'')+'</div>'
       +(priced?'<div class="p">'+wPriceInner(i.basePrice,i.wasPrice)+'</div>'
               :'<div class="p na">Price not set yet</div>')
-      +(priced?'<button class="btn primary" data-wadd="'+esc(i.id)+'">Customise &amp; add</button>'
+      +(priced?'<button class="btn primary" data-wadd="'+esc(i.id)+'">Add to order</button>'
               :'<button class="btn" disabled title="This item has no price configured">Unavailable</button>')
       +'</div>';
   }).join('')+'</div>';
@@ -3527,17 +3537,12 @@ function wimpyPage(){
 function wCartHTML(){
   var lines=WCART.map(function(l,ix){
     var d=wItemDef(l.id); if(!d) return '';
-    var bits=[];
-    (d.choices||[]).forEach(function(ch){ if(l.choices&&l.choices[ch.id]) bits.push('<li class="ch">'+esc(l.choices[ch.id])+'</li>'); });
-    (l.removed||[]).forEach(function(r){ bits.push('<li class="rm">No '+esc(String(r).toLowerCase())+'</li>'); });
-    (l.added||[]).forEach(function(a){ bits.push('<li class="ad">'+esc(a.name)+(a.price?' ('+wZar(a.price)+')':'')+'</li>'); });
+    /* no chips under the line any more — every item is as the kitchen makes it */
     return '<div class="wp-line"><div class="t"><span class="n">'+l.quantity+' × '+esc(d.name)+'</span>'
       +'<span class="m">'+wZar(wLineCents(l)/100)+'</span></div>'
-      +(bits.length?'<ul>'+bits.join('')+'</ul>':'')
       +'<div class="wp-qty"><button data-wdec="'+ix+'" aria-label="One fewer">−</button>'
       +'<span class="q">'+l.quantity+'</span>'
       +'<button data-winc="'+ix+'" aria-label="One more">+</button>'
-      +'<button class="lnk" data-wedit="'+ix+'">Edit</button>'
       +'<button class="lnk" data-wdel="'+ix+'">Remove</button></div></div>';
   }).join('');
 
@@ -3548,92 +3553,24 @@ function wCartHTML(){
     +'<h3>Current order</h3>'
     +(WCART.length?lines:'<div class="wp-empty">Nothing added yet. Pick something from the menu and it will appear here with its total.</div>')
     +(WCART.length?'<div class="wp-tot"><span class="l">Total</span><span class="v">'+wZar(wTotalCents()/100)+'</span></div>'
-      +'<label style="display:block;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:14px 0 5px">Additional order notes</label>'
-      +'<textarea id="wpNote" placeholder="e.g. please make the chips well done" style="width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:12.5px;font-family:inherit;min-height:60px;resize:vertical">'+esc(WNOTE)+'</textarea>'
+      /* the free-text notes box is gone (audit, 2026-09-03): "no onions please" in a
+         notes field is a customisation by another name, and orders are as-is */
       +'<button class="btn primary" id="wpReview" style="width:100%;margin-top:10px">Submit Wimpy Order</button>':'')
     +'</div>';
 }
 
-/* ---------- the customisation sheet ---------- */
-function wOpen(id, editIx){
+/* ---------- adding an item ----------
+   THE CUSTOMISATION SHEET IS GONE (Nick, 2026-09-02: "remove the part to
+   customize and condements, it must be as is"). One tap adds one of the item
+   exactly as the kitchen makes it; the cart's +/− handles quantity. The Worker
+   refuses any order that still carries a customisation, so an old cached tab
+   cannot sneak one through either. */
+function wAdd(id){
   var d=wItemDef(id); if(!d||d.basePrice==null) return;
-  var start = editIx!=null ? JSON.parse(JSON.stringify(WCART[editIx]))
-    : { id:d.id, quantity:1, choices:{}, removed:[], added:[] };
-  var host=document.createElement('div'); host.className='cmov'; host.id='wpSheet';
-  document.body.appendChild(host);
-
-  var draw=function(){
-    var cents=wCents(d.basePrice);
-    (start.added||[]).forEach(function(a){ cents+=wCents(a.price); });
-    var total=cents*(start.quantity||1);
-    var missing=(d.choices||[]).filter(function(ch){ return ch.required && !(start.choices||{})[ch.id]; });
-
-    var choices=(d.choices||[]).map(function(ch){
-      return '<label>'+esc(ch.label)+(ch.required?' <span style="color:var(--red)">*</span>':'')+'</label>'
-        +'<div class="wp-opts">'+ch.options.map(function(o){
-          var on=(start.choices||{})[ch.id]===o;
-          return '<button class="wp-opt rd'+(on?' on':'')+'" data-wch="'+esc(ch.id)+'" data-wval="'+esc(o)+'">'
-            +'<span class="bx">'+(on?'✓':'')+'</span>'+esc(o)+'</button>';
-        }).join('')+'</div>';
-    }).join('');
-
-    var removable=(d.includedIngredients||[]).filter(function(g){return g.removable;});
-    var fixed=(d.includedIngredients||[]).filter(function(g){return !g.removable;});
-    var inc=(d.includedIngredients||[]).length?'<label>Included — untick anything to leave it out</label><div class="wp-opts">'
-      +fixed.map(function(g){ return '<button class="wp-opt on" disabled><span class="bx">✓</span>'+esc(g.name)+'</button>'; }).join('')
-      +removable.map(function(g){
-        var off=(start.removed||[]).indexOf(g.name)>=0;
-        return '<button class="wp-opt'+(off?'':' on')+'" data-wrm="'+esc(g.name)+'">'
-          +'<span class="bx">'+(off?'':'✓')+'</span><span'+(off?' class="gone"':'')+'>'+esc(g.name)+'</span>'
-          +(off?'<span class="pr">removed</span>':'')+'</button>';
-      }).join('')+'</div>':'';
-
-    var addons=(d.addOns||[]).length?'<label>Add extras</label><div class="wp-opts">'
-      +d.addOns.map(function(a){
-        var on=(start.added||[]).some(function(x){return x.id===a.id;});
-        return '<button class="wp-opt'+(on?' on':'')+'" data-wao="'+esc(a.id)+'">'
-          +'<span class="bx">'+(on?'✓':'')+'</span>'+esc(a.name)
-          +'<span class="pr">'+(a.price?'+'+wZar(a.price):'no charge')+'</span></button>';
-      }).join('')+'</div>':'';
-
-    host.innerHTML='<div class="cmpanel">'
-      +'<h3>'+esc(d.name)+'</h3>'
-      +'<div class="sub">Base price '+wZar(d.basePrice)+' · '+esc(d.description||'')+'</div>'
-      +(missing.length?'<div class="wp-err">Choose a '+missing.map(function(m){return esc(m.label.toLowerCase());}).join(' and a ')+' before adding this.</div>':'')
-      +choices+inc+addons
-      +'<label>Quantity</label>'
-      +'<div class="wp-qty"><button id="wpMinus">−</button><span class="q" id="wpQ">'+start.quantity+'</span><button id="wpPlus">+</button></div>'
-      +'<div class="wp-bar">'
-      +'<button class="btn" id="wpCancel">Cancel</button>'
-      +'<span class="v">'+wZar(total/100)+'</span>'
-      +'</div>'
-      +'<button class="btn primary" id="wpAdd" style="width:100%;margin-top:12px"'+(missing.length?' disabled':'')+'>'
-      +(editIx!=null?'Save changes':'Add to order')+'</button>'
-      +'</div>';
-
-    host.querySelectorAll('[data-wch]').forEach(function(b){ b.onclick=function(){
-      start.choices=start.choices||{}; start.choices[b.getAttribute('data-wch')]=b.getAttribute('data-wval'); draw(); }; });
-    host.querySelectorAll('[data-wrm]').forEach(function(b){ b.onclick=function(){
-      var g=b.getAttribute('data-wrm'); start.removed=start.removed||[];
-      var i=start.removed.indexOf(g); if(i>=0) start.removed.splice(i,1); else start.removed.push(g); draw(); }; });
-    host.querySelectorAll('[data-wao]').forEach(function(b){ b.onclick=function(){
-      var id2=b.getAttribute('data-wao'); start.added=start.added||[];
-      var i=-1; start.added.forEach(function(x,ix2){ if(x.id===id2) i=ix2; });
-      if(i>=0) start.added.splice(i,1);
-      else { var a=(d.addOns||[]).filter(function(x){return x.id===id2;})[0]; if(a) start.added.push({id:a.id,name:a.name,price:a.price}); }
-      draw(); }; });
-    host.querySelector('#wpMinus').onclick=function(){ start.quantity=Math.max(1,(start.quantity||1)-1); draw(); };
-    host.querySelector('#wpPlus').onclick=function(){ start.quantity=Math.min(20,(start.quantity||1)+1); draw(); };
-    host.querySelector('#wpCancel').onclick=function(){ host.remove(); };
-    var add=host.querySelector('#wpAdd');
-    if(add) add.onclick=function(){
-      if(missing.length) return;
-      if(editIx!=null) WCART[editIx]=start; else WCART.push(start);
-      host.remove(); WOPEN=true; render();
-    };
-  };
-  host.onclick=function(e){ if(e.target===host) host.remove(); };
-  draw();
+  var line=null; WCART.forEach(function(l){ if(l.id===id) line=l; });
+  if(line) line.quantity=Math.min(20,line.quantity+1);
+  else WCART.push({ id:id, quantity:1 });
+  WOPEN=true; render();
 }
 
 /* ---------- confirm ---------- */
@@ -3644,16 +3581,10 @@ function wConfirmPage(){
     +'<p class="why">Agent <b>'+esc(D.name||'')+'</b> · CB Number <b>'+esc(D.cb||'')+'</b></p>'
     +WCART.map(function(l){
       var d=wItemDef(l.id); if(!d) return '';
-      var bits=[];
-      (d.choices||[]).forEach(function(ch){ if(l.choices&&l.choices[ch.id]) bits.push(esc(l.choices[ch.id])); });
-      (l.removed||[]).forEach(function(r){ bits.push('No '+esc(String(r).toLowerCase())); });
-      (l.added||[]).forEach(function(a){ bits.push(esc(a.name)); });
       return '<div class="wp-line"><div class="t"><span class="n">'+l.quantity+' × '+esc(d.name)+'</span>'
-        +'<span class="m">'+wZar(wLineCents(l)/100)+'</span></div>'
-        +(bits.length?'<ul><li class="ch">'+bits.join('</li><li class="ch">')+'</li></ul>':'')+'</div>';
+        +'<span class="m">'+wZar(wLineCents(l)/100)+'</span></div></div>';
     }).join('')
     +'<div class="wp-tot"><span class="l">Total</span><span class="v">'+wZar(wTotalCents()/100)+'</span></div>'
-    +(WNOTE?'<p class="why" style="margin-top:10px"><b>Notes:</b> '+esc(WNOTE)+'</p>':'')
     +'<div class="cm-actions" style="margin-top:16px">'
     +'<button class="btn" id="wpBack"'+(WBUSY?' disabled':'')+'>Back &amp; edit</button>'
     +'<button class="btn primary" id="wpSend"'+(WBUSY?' disabled':'')+'>'+(WBUSY?'Submitting order…':'Confirm &amp; submit')+'</button>'
@@ -3693,9 +3624,8 @@ function wSubmit(){
   api('/api/portal/wimpy/order',{
     total_price: wTotalCents()/100,
     order:{
-      items: WCART.map(function(l){ return { id:l.id, quantity:l.quantity, choices:l.choices||{},
-        removed:l.removed||[], added:(l.added||[]).map(function(a){return {id:a.id};}) }; }),
-      additional_notes: WNOTE
+      items: WCART.map(function(l){ return { id:l.id, quantity:l.quantity }; }),
+      additional_notes: ''
     }
   }).then(function(r){
     WBUSY=false;
@@ -3716,8 +3646,7 @@ function wireWimpy(){
     b.onkeydown=function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } };
   });
   document.querySelectorAll('[data-wcat]').forEach(function(b){ b.onclick=function(){ WCAT=b.getAttribute('data-wcat'); render(); }; });
-  document.querySelectorAll('[data-wadd]').forEach(function(b){ b.onclick=function(){ wOpen(b.getAttribute('data-wadd')); }; });
-  document.querySelectorAll('[data-wedit]').forEach(function(b){ b.onclick=function(){ wOpen(WCART[+b.getAttribute('data-wedit')].id, +b.getAttribute('data-wedit')); }; });
+  document.querySelectorAll('[data-wadd]').forEach(function(b){ b.onclick=function(){ wAdd(b.getAttribute('data-wadd')); }; });
   document.querySelectorAll('[data-winc]').forEach(function(b){ b.onclick=function(){ var i=+b.getAttribute('data-winc'); WCART[i].quantity=Math.min(20,WCART[i].quantity+1); render(); }; });
   document.querySelectorAll('[data-wdec]').forEach(function(b){ b.onclick=function(){ var i=+b.getAttribute('data-wdec');
     if(WCART[i].quantity>1) WCART[i].quantity--; else WCART.splice(i,1); render(); }; });
@@ -4181,10 +4110,12 @@ function cmView(){
   var subs={cm:'Sales, team leaders and what is blocking them',
     cm_teams:'One row per team leader — the number, the blockage and the next action',
     cm_assist:'Every request, its clock, its owner and its evidence',
-    cm_nik:'One fact, one explanation, one next action'};
+    cm_nik:'One fact, one explanation, one next action',
+    cm_set:'The targets each campaign is measured against — set here, applied everywhere'};
   var body=VIEW==='cm_teams'?cmTeamsPage(c)
     :VIEW==='cm_assist'?cmAssistPage()
     :VIEW==='cm_nik'?cmNikPage(c)
+    :VIEW==='cm_set'?cmSetPage()
     :cmCmdPage(c);
   /* On "All campaigns" the team COUNT and the people count differ — a leader
      running two campaigns is two teams — so say both rather than imply six
@@ -4235,8 +4166,110 @@ function cmView(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-cb]:not(option)'),function(b){
     b.onclick=function(){ openDrawer(b.getAttribute('data-cb')); };
   });
+  if(VIEW==='cm_set') cmSetLoad();
 }
 
+
+/* ===================== CAMPAIGN TARGET SETTINGS =====================
+   Nick, 2026-09-01: Dalwin "must have a setting page to change targets of
+   different campaigns ... this is the new targets that was set by him."
+   The page edits ONE Worker row (cm:targets). A set value is a layer over the
+   rule book / the Agent List; the inherited number always shows beside it, so
+   an adjusted target can never masquerade as the rule's own. The Worker
+   validates campaign assignment and bounds; every change is signed and logged.
+   PULSE polls the row, rebuilds and republishes the digest, which is how the
+   agent, team-leader and dashboard figures follow WITHOUT this page computing
+   anything (NBA math is deterministic code elsewhere, never here). */
+function cmSetPage(){
+  return '<div id="cmSetWrap"><div class="card"><p class="why">Loading the target settings…</p></div></div>';
+}
+var CMSET_SLA_LABELS={qa_target:'QA target %',talk_target:'Talk target (min/day)',att_target:'Attendance target %',conv_target:'Conversion target %'};
+function cmSetLoad(){
+  var w=$('cmSetWrap'); if(!w) return;
+  api('/api/portal/cm/settings').then(function(r){
+    if(!r.ok){ w.innerHTML='<div class="card"><p class="why">'+esc((r.json&&r.json.error)||'Could not load the settings.')+'</p></div>'; return; }
+    var b=r.json||{};
+    var h='';
+    if(b.pendingDigest)
+      h+='<div class="card" style="border-left:3px solid #b45309"><p class="why"><b>Targets saved — the floor’s figures are recalculating.</b> '
+        +'PULSE republishes within a few minutes; until then the other tabs still show numbers computed on the previous targets.</p></div>';
+    (b.campaigns||[]).forEach(function(c){
+      var rows=(c.rows||[]).map(function(rw){
+        var inh=(rw.base!=null)?('rule book '+rw.base):'—';
+        return '<tr><td style="padding:6px 10px 6px 0"><b>'+esc(rw.tenure==='*'?'All tenures':rw.tenure)+'</b></td>'
+          +'<td style="padding:6px 10px 6px 0"><input type="number" step="0.5" min="0.5" max="20" style="width:90px" '
+          +'data-kind="matrix" data-key="'+esc(rw.k)+'" data-orig="'+(rw.set==null?'':esc(String(rw.set)))+'" '
+          +'value="'+(rw.set==null?'':esc(String(rw.set)))+'" placeholder="'+(rw.eff==null?'':esc(String(rw.eff)))+'"></td>'
+          +'<td class="why" style="padding:6px 0">'+(rw.set!=null?'<span class="pill a">set here · '+esc(inh)+'</span>':esc(inh))+'</td></tr>';
+      }).join('');
+      var slaRows=(c.sla||[]).map(function(d){
+        return '<tr><td style="padding:6px 10px 6px 0">'+esc(CMSET_SLA_LABELS[d.k]||d.k)+'</td>'
+          +'<td style="padding:6px 10px 6px 0"><input type="number" step="1" style="width:90px" '
+          +'data-kind="sla" data-key="'+esc(c.key)+':'+esc(d.k)+'" data-orig="'+(d.set==null?'':esc(String(d.set)))+'" '
+          +'value="'+(d.set==null?'':esc(String(d.set)))+'" placeholder="'+(d.base==null?'':esc(String(d.base)))+'"></td>'
+          +'<td class="why" style="padding:6px 0">'+(d.set!=null?'<span class="pill a">set here · global '+esc(String(d.base))+'</span>':'global '+esc(String(d.base)))+'</td></tr>';
+      }).join('');
+      var gm=c.gwpMonth||{};
+      h+='<div class="card"><h3>'+esc(c.label)
+        +(c.isNew&&!c.hasTargets?' <span class="pill a" title="created from the Agent List — the rule book has no row for it and nothing has been set here yet">new — targets not set</span>':'')
+        +(c.inDigest?'':' <span class="pill" title="no agent in the current digest carries this campaign">not in this month’s data</span>')+'</h3>'
+        +'<div class="sub" style="margin:2px 0 10px">Sales target per agent per day — blank inherits the rule book; a value here IS the campaign’s target, everywhere, for the whole current month.</div>'
+        +'<table style="border-collapse:collapse">'+rows+'</table>'
+        +'<div class="sub" style="margin:14px 0 6px"><b>Campaign GWP target for the month</b> — shown on the Campaign tab’s GWP dial.</div>'
+        +'<input type="number" step="1000" min="1000" style="width:140px" data-kind="gwpMonth" data-key="'+esc(c.key)+'" '
+        +'data-orig="'+(gm.set==null?'':esc(String(gm.set)))+'" value="'+(gm.set==null?'':esc(String(gm.set)))+'" placeholder="Σ agent targets"> '
+        +(gm.set!=null?'<span class="pill a">set here</span>':'<span class="why">blank = Σ of the agents’ own GWP targets</span>')
+        +'<div class="sub" style="margin:14px 0 6px"><b>Quality dials</b> — this campaign’s bars on the Campaign tab; blank inherits the global dial.</div>'
+        +'<table style="border-collapse:collapse">'+slaRows+'</table>'
+        +'<div style="margin-top:12px;display:flex;gap:10px;align-items:center">'
+        +'<button class="btn primary" data-cmsave="'+esc(c.key)+'">Save '+esc(c.label)+'</button>'
+        +'<span class="why" id="cmSetMsg-'+esc(c.key)+'"></span></div></div>';
+    });
+    var log=(b.log||[]);
+    h+='<div class="card"><h3>Change history</h3>'
+      +(log.length?'<table style="border-collapse:collapse;font-size:12.5px">'+log.map(function(l){
+          return '<tr><td style="padding:4px 10px 4px 0;white-space:nowrap" class="why">'+esc(String(l.at||'').slice(0,16).replace('T',' '))+'</td>'
+            +'<td style="padding:4px 10px 4px 0"><b>'+esc(l.by||'')+'</b></td>'
+            +'<td style="padding:4px 10px 4px 0">'+esc(l.key||'')+'</td>'
+            +'<td style="padding:4px 0">'+esc(l.old==null?'inherited':String(l.old))+' → '+esc(l['new']==null?'inherited':String(l['new']))+'</td></tr>';
+        }).join('')+'</table>'
+      :'<p class="why">No changes yet — every campaign runs on the rule book.</p>')+'</div>';
+    w.innerHTML=h;
+    Array.prototype.forEach.call(w.querySelectorAll('[data-cmsave]'),function(btn){
+      btn.onclick=function(){ cmSetSave(btn.getAttribute('data-cmsave'),btn); };
+    });
+  });
+}
+function cmSetSave(campKey,btn){
+  var w=$('cmSetWrap'); if(!w) return;
+  var msg=$('cmSetMsg-'+campKey);
+  /* every input whose value differs from what the server holds, in THIS campaign's card */
+  var card=btn.closest('.card');
+  var changes=[];
+  Array.prototype.forEach.call(card.querySelectorAll('input[data-kind]'),function(inp){
+    var cur=String(inp.value).trim(), orig=String(inp.getAttribute('data-orig')||'');
+    if(cur===orig) return;
+    changes.push({kind:inp.getAttribute('data-kind'),key:inp.getAttribute('data-key'),
+      value:cur===''?null:parseFloat(cur)});
+  });
+  if(!changes.length){ if(msg) msg.textContent='Nothing changed.'; return; }
+  btn.disabled=true; btn.textContent='Saving…';
+  var i=0, errs=[];
+  (function next(){
+    if(i>=changes.length){
+      btn.disabled=false; btn.textContent='Saved';
+      if(msg) msg.textContent=errs.length?('⚠ '+errs.join(' · ')):(changes.length+' change'+(changes.length>1?'s':'')+' saved — the floor’s figures recalculate within a few minutes.');
+      if(msg&&errs.length) msg.style.color='#b91c1c';
+      setTimeout(cmSetLoad, errs.length?2500:900);
+      return;
+    }
+    var ch=changes[i++];
+    api('/api/portal/cm/settings',ch).then(function(r){
+      if(!r.ok) errs.push((r.json&&r.json.error)||('could not save '+ch.key));
+      next();
+    });
+  })();
+}
 /* ===================== THE TEAM LEADER'S SIDE OF ASSISTANCE =====================
    The other end of the workflow, wrapped onto My Team rather than editing it:
    raise a request to the campaign manager, watch its clock, and confirm or
@@ -4629,28 +4662,85 @@ function stamp(){
    and a commission of R7,670 where the real figure was R17,896. The period is
    right there in the payload, so count the weekdays in it and only fall back
    when even that is impossible. */
+/* A PUBLIC HOLIDAY IS NOT A WORKING DAY (Nick, 2026-09-02). The list mirrors
+   SA_HOLIDAYS in PULSE's workingDays — observed dates, extended each December.
+   The fallback must agree with the publisher or a stale digest and a fresh one
+   would show two different "working days" for the same month. */
+var SA_HOLIDAYS={'2026-01-01':1,'2026-03-21':1,'2026-04-03':1,'2026-04-06':1,'2026-04-27':1,'2026-05-01':1,
+  '2026-06-16':1,'2026-08-10':1,'2026-09-24':1,'2026-12-16':1,'2026-12-25':1,'2026-12-26':1,
+  '2027-01-01':1,'2027-03-22':1,'2027-03-26':1,'2027-03-29':1,'2027-04-27':1,'2027-05-01':1,
+  '2027-06-16':1,'2027-08-09':1,'2027-09-24':1,'2027-12-16':1,'2027-12-25':1,'2027-12-27':1};
 function DAYS(){
   if(D&&D.workingDays>0) return D.workingDays;
   try{
     var n=0,d=new Date(D.period.from+'T00:00:00Z'),e=new Date(D.period.to+'T00:00:00Z');
-    while(d<=e){ var w=d.getUTCDay(); if(w>0&&w<6)n++; d.setUTCDate(d.getUTCDate()+1); }
+    while(d<=e){ var w=d.getUTCDay();
+      if(w>0&&w<6&&!SA_HOLIDAYS[d.toISOString().slice(0,10)])n++;
+      d.setUTCDate(d.getUTCDate()+1); }
     if(n>0) return n;
   }catch(e){}
   return (D&&D.diallingDays)||0;
 }
+/* DAYS WORKED, FOR EVERY PER-DAY FIGURE (Nick, 2026-09-03: "1st to 2nd is not 3
+   working days — do not include today, today's stats are not included"). ME.act is
+   the attendance register's shift count, and the register lands BEFORE the day's
+   sales files — so the page said 3 days worked against 2 days of figures, and the
+   daily average, the projection and the days-left all inherited it. A day counts
+   once its files have landed: cap the shifts at the working days that carry data.
+   The digest publishes daysWithData; an older digest falls back to counting the
+   weekdays (less holidays) up to its last data date. Attendance itself is still
+   reported from ME.act — this is only what the projections divide by. */
+function DATA_DAYS(){
+  if(D&&D.daysWithData>0) return D.daysWithData;
+  try{
+    if(!D.dates||!D.dates.length) return null;
+    var last=D.dates[D.dates.length-1];
+    var n=0,d=new Date(D.period.from+'T00:00:00Z'),e=new Date(last+'T00:00:00Z');
+    while(d<=e){ var w=d.getUTCDay();
+      if(w>0&&w<6&&!SA_HOLIDAYS[d.toISOString().slice(0,10)])n++;
+      d.setUTCDate(d.getUTCDate()+1); }
+    return n;
+  }catch(e){ return null; }
+}
+function WORKED(){
+  var a=(ME&&ME.act)||0, cap=DATA_DAYS();
+  return cap==null?a:Math.min(a,cap);
+}
 /* What the projection divides by. A month can never have fewer working days than
    the agent has already worked; if the data says otherwise, believe the agent. */
-function TDAYS(){ return Math.max(DAYS(), (ME&&ME.act)||0); }
+function TDAYS(){ return Math.max(DAYS(), WORKED()); }
+/* "September" — the period's month, for headings that must name their scope. */
+function monthLabel(){
+  try{ return new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',month:'long'}).format(new Date(D.period.from+'T00:00:00Z')); }
+  catch(e){ return 'this month'; }
+}
+/* "3 – 30 September" — the working days still to come: the day after the last day
+   with data, to the end of the period. */
+function remainingLabel(){
+  try{
+    var last=(D.dates&&D.dates.length)?D.dates[D.dates.length-1]:D.period.from;
+    var f=new Date(last+'T00:00:00Z'); f.setUTCDate(f.getUTCDate()+1);
+    var t=new Date(D.period.to+'T00:00:00Z');
+    if(f>t) return '';
+    var mf=new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',month:'long'});
+    var df=new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',day:'numeric'});
+    return df.format(f)+' – '+df.format(t)+' '+mf.format(t);
+  }catch(e){ return ''; }
+}
+/* An AGENT signed in as themselves — not a team leader or campaign manager, and not
+   a drilldown. Decides what the frame shows: agents get no data-assurance chrome. */
+function isAgentUser(){ var acct=TEAM||D||{}; return !TEAM&&acct.role==='agent'; }
 function calcNow(){
   var f=function(id,dflt){ var el=$(id); return el?el.value:dflt; };
   var plan=($('cPlan')&&$('cPlan').value)||ME.plan;   // the figures card's tenure select — sandbox only, never saved
   return commCalc(plan,
-    f('cDays',ME.act), f('tDays',TDAYS()), f('cGwp',ME.gwpEx),
+    f('cDays',WORKED()), f('tDays',TDAYS()), f('cGwp',ME.gwpEx),
     EXTRA, D.comm);
 }
 function show(a){
   ME=a;
-  if(['month','calc','progress','coaching','nik','wimpy'].indexOf(VIEW)<0) VIEW='month';
+  if(['month','calc','progress','coaching','wimpy'].indexOf(VIEW)<0) VIEW='month';
+  if(VIEW==='wimpy'&&!wimpyOpenNow()) VIEW='month';
   var g=greeting();
   var c=calcNowInitial();
   /* On a drilldown the page still belongs to the team leader — greet THEM and
@@ -4662,12 +4752,14 @@ function show(a){
     esc(g)+', '+esc(who),
     (VIEW==='wimpy' ? 'Order lunch — the total works itself out.'
       : VIEW==='coaching' ? (D.__back?'Coaching recorded for '+esc(firstName(a.name))+'.':'Every coaching session recorded for you.')
-      : VIEW==='calc' ? (D.__back?esc(firstName(a.name))+'&rsquo;s commission this month.':'What you are earning, and what would change it.')
+      : VIEW==='calc' ? (D.__back?esc(firstName(a.name))+'&rsquo;s projected commission this month.':'What you can potentially earn, and what can change it.')
       : VIEW==='progress' ? (D.__back?esc(firstName(a.name))+'&rsquo;s figures in full.':'Your last five sessions, what has improved, and what happened after support.')
       : VIEW==='nik' ? 'One fact, one explanation, one next action.'
       : D.__back
         ? 'How '+esc(firstName(a.name))+'&rsquo;s month is going — '+esc(prettyPeriod())+'.'
-        : 'Here is how your month is going so far — '+esc(prettyPeriod())+'.'),
+        /* A PROJECTION, SAID UP FRONT (Nick, 2026-09-03: "at the beginning, this is a
+           projection of how your month is going thus far"). */
+        : 'A projection of how your month is going so far, from your '+esc(prettyPeriod())+' figures. Today’s sales land with tonight’s upload.'),
     (VIEW==='coaching' ? coachPageAgent()
       /* COMMISSION IS ITS OWN TAB. It used to sit collapsed at the bottom of My
          month, which is where Nick found it — that is, did not find it. The money
@@ -4686,8 +4778,11 @@ function show(a){
       /* A DRILL-DOWN SHOWS EVERYTHING THE NAME WAS LISTED FOR. Clicking a name in
          Team Results opened only the month, which is not why it was clicked. */
       : D.__back ? nbaDetail()+agentKpis(a,c)+heroHTML(c)+breakdownHTML(c)+doneHTML()+trackHTML()+standHTML()
-      : agentKpis(a,c)+heroHTML(c)+todayHTML(c)+trackHTML())
-    +'<div class="foot">Numbers updated '+esc(stamp())+'<br>'
+      /* ONE HOME PER FIGURE (Nick, 2026-09-03: "why are we repeating the agent's
+         tracking on each page"). The rand projection lives on Projected Commission
+         and nowhere else; Today keeps tracking-vs-target and a one-line pointer. */
+      : agentKpis(a,c)+todayHTML(c)+trackHTML()+commPointer(c))
+    +'<div class="foot">'+(isAgentUser()?'':'Numbers updated '+esc(stamp())+'<br>')
     +'<button id="notme">'+(D.__back?'Back to my team':'Sign out')+'</button></div>',
     VIEW,
     D.__back?'<button class="btn" id="backTop">← My team</button>':'');
@@ -4730,7 +4825,7 @@ function agentKpis(a,c){
     +'<div style="flex:1;min-width:220px">'
     +'<div class="ac-nm">'+esc(a.name)+' <span class="ac-cd">'+esc(a.code)+'</span></div>'
     +'<div class="ac-meta">'+esc(a.campaign||'')+(a.tenure?' · '+esc(a.tenure):'')
-    +(a.tl?' · Team leader: '+esc(a.tl):'')+' · '+esc(prettyPeriod())+' · '+num(DAYS())+' working days</div></div>'
+    +(a.tl?' · Team leader: '+esc(a.tl):'')+' · '+esc(prettyPeriod())+' · '+num(WORKED(),WORKED()%1?1:0)+' of '+num(DAYS())+' working days worked</div></div>'
     +(a.rankTeam?'<div class="ac-box"><div class="v">#'+num(a.rankTeam)+'</div><div class="k">OF '+num(a.nTeam)+' IN TEAM · BY GWP</div></div>':'')
     +(a.rankCo?'<div class="ac-box"><div class="v">#'+num(a.rankCo)+'</div><div class="k">OF '+num(a.nCo)+' ON FLOOR · BY GWP</div></div>':'')
     +'</div>';
@@ -4758,7 +4853,7 @@ function agentKpis(a,c){
   return head+tiles;
 }
 function calcNowInitial(){
-  return commCalc(ME.plan, ME.act, TDAYS(), ME.gwpEx, EXTRA, D.comm);
+  return commCalc(ME.plan, WORKED(), TDAYS(), ME.gwpEx, EXTRA, D.comm);
 }
 
 /* ---- 1. the hero: what you are on track to earn ---- */
@@ -4821,7 +4916,7 @@ function heroHTML(c){
       +(aDay!=null&&rem>0?' — about <b>'+num(Math.ceil(aDay))+' a day</b> across your '+num(rem)+' remaining day'+(rem===1?'':'s')+'.':'.')
       +'</div>'
       +climbLine(c,sale)
-      +'<div class="tiny">You have written '+R(ME.gwpEx)+' over '+num(ME.act,ME.act%1?1:0)+' day'+(ME.act===1?'':'s')+'. '
+      +'<div class="tiny">You have written '+R(ME.gwpEx)+' over '+num(WORKED(),WORKED()%1?1:0)+' day'+(WORKED()===1?'':'s')+'. '
       +'At today\'s pace the month ends around '+R(c.metrics.premiumProjected)+', which is short of the '
       +R(c.nextMove.gap+ME.gwpEx)+' the first bracket needs — so this is the number to chase, and it moves every time you sell.</div></div>';
   }
@@ -4847,11 +4942,11 @@ function heroHTML(c){
   } else {
     line='Keep going — every sale from here lifts this number.';
   }
-  return '<div class="card hero"><div class="lab">On track to earn this month</div>'
+  return '<div class="card hero"><div class="lab">Projected commission this month</div>'
     +'<div class="amt num">'+R(c.projection)+'</div>'
     +'<div class="note">'+line+'</div>'
-    +'<div class="tiny">Based on the '+R(ME.gwpEx)+' of business you have written over '
-    +num(ME.act,ME.act%1?1:0)+' day'+(ME.act===1?'':'s')+', spread across the '+num(DAYS())+' working days this month. '
+    +'<div class="tiny">A projection: based on the '+R(ME.gwpEx)+' of business you have written over '
+    +num(WORKED(),WORKED()%1?1:0)+' day'+(WORKED()===1?'':'s')+', spread across the '+num(DAYS())+' working days this month. '
     +'It moves every time you sell.</div></div>';
 }
 
@@ -4896,7 +4991,9 @@ function pgCoaching(){
   var CX=(co&&co.cx)||{}, STALE=CX.staleDays||14, WIN=CX.windowDays||30,
       REPEAT=CX.repeatMin||2, PERSIST=CX.persistentMin||5;
   var h='<div class="card"><h2>Your support and coaching</h2>';
-  if(co.stale)h+='<div class="note-done">The Coaching Hub has not answered since '+esc(String(co.staleSince||'').slice(0,10))+' — this list may be behind.</div>';
+  /* "The Coaching Hub has not answered since … — this list may be behind" is gone from
+     the agent's card (Nick, 2026-09-03; data-assurance notices are not for agents).
+     The team leader's Coaching-fails page keeps its own stale note. */
   var daysAgo=mine.last?Math.round((Date.now()-new Date(mine.last+'T00:00:00Z').getTime())/86400000):null;
   h+='<p class="why">'+num(mine.count)+' session'+(mine.count===1?'':'s')+' in the last 90 days'
     +(mine.last?', the last one '+(daysAgo<=0?'today':num(daysAgo)+' day'+(daysAgo===1?'':'s')+' ago'):'')
@@ -4992,7 +5089,7 @@ function pgDrivers(){
 function pgAdviceText(key){
   var th=(D.nba&&D.nba.thresholds)||{};
   var drv=pgDrivers(), by={}; drv.forEach(function(d){by[d.k]=d;});
-  var rem=Math.max(0,DAYS()-(ME.act||0));
+  var rem=Math.max(0,DAYS()-WORKED());
   if(key==='ta'){ var shortS=(ME.target&&ME.sales!=null)?Math.max(0,Math.ceil(ME.target-ME.sales)):null;
     if(shortS===0) return 'You are at your sales target — hold it there to month end.';
     return shortS!=null?('You are '+num(shortS)+' sale'+(shortS===1?'':'s')+' from your target this month'
@@ -5071,13 +5168,6 @@ function cFmtT(p){
   if(p.k==='gwpSale'||p.k==='gwpTotal') return cMoney(p,p.target);
   if(p.k==='talk') return num(p.target)+' min';
   return num(p.target,1)+'%';
-}
-function cLadder(rungs,activeIdx){
-  var tone=['t0','t1','t1','t2'];
-  return '<div class="pg-lad">'+rungs.map(function(r,i){
-    return '<span class="'+(i===activeIdx?'on '+(tone[i]||'t2'):'')+'">'+esc(r.tier)
-      +' · '+(r.off?'−'+num(r.off):'0')+'</span>';
-  }).join('')+'</div>';
 }
 /* The driver labels travel once per digest, not once per agent. An older payload
    still carries them on each part, so read the dictionary first and fall back. */
@@ -5169,28 +5259,12 @@ function pgComposite(){
       +num(p.w)+' points for this row.</p></div>';
   }).join('')+'</div>';
 
-  /* ---- what is coming off, and what is going on ---- */
-  h+='<h3 class="pg-verdict" style="margin-top:18px">What is changing your score</h3>';
-
-  var r=c.r2a||{};
-  var rIdx=['Tier 0','R2A-1','R2A-2','R2A-3'].indexOf(r.tier); if(rIdx<0)rIdx=0;
-  h+='<div class="pg-ded"><span class="pg-l">Critical fails</span>'
-    +'<span class="lad-cell"><div>'+(r.fails?num(r.fails)+' critical fail'+(r.fails===1?'':'s')
-        +(r.rateKnown?' in '+num(r.audited)+' audited call'+(r.audited===1?'':'s')+' — '+num(r.cfr,1)+'%':'')
-      :'No critical fails in the window')+'</div>'
-    +cLadder([{tier:'Tier 0',off:0},{tier:'R2A-1',off:2},{tier:'R2A-2',off:5},{tier:'R2A-3',off:10}],rIdx)
-    +'<div class="tiny2">Clears with two clean audits.</div></span>'
-    +'<span class="off '+(r.penalty?'neg':'zero')+'">'+(r.penalty?'−'+num(r.penalty):'0')+'</span></div>';
-
-  var cx=c.cx||{};
-  var cIdx=['First time','Repeat','Persistent'].indexOf(cx.tier);
-  h+='<div class="pg-ded"><span class="pg-l">The same coaching reason, again</span>'
-    +'<span class="lad-cell"><div>'+(cx.cluster
-        ? esc(pgTheme(cx.cluster))+' has come up '+num(cx.n)+' times in 30 days'
-        : 'No repeat theme in the last 30 days')+'</div>'
-    +cLadder([{tier:'First time',off:0},{tier:'Repeat',off:2},{tier:'Persistent',off:5}],cIdx)
-    +'<div class="tiny2">It comes back on its own once the theme stops coming up for 30 days.</div></span>'
-    +'<span class="off '+(cx.points?'neg':'zero')+'">'+(cx.points?'−'+num(cx.points):'0')+'</span></div>';
+  /* THE "WHAT IS CHANGING YOUR SCORE" PANEL IS GONE (Nick, 2026-09-02: "remove this for
+     all the agents"). It itemised the R2A critical-fail ladder and the repeat-coaching
+     ladder with their point deductions. The DEDUCTIONS THEMSELVES still apply — PULSE
+     publishes r2a/cx/penaltyTotal in the digest and adj = score − penaltyTotal is
+     guard-enforced (verify-composite-score, verify-live-integrity) — only the itemised
+     display is removed. The tally below still reconciles the adjustment honestly. */
 
   /* THE SIGN-IN ROW IS GONE (Nick, 2026-08-31: "remove the five points that the agent
      gets for logging in"). It paid one point per weekday an agent opened this page, up to
@@ -5201,8 +5275,6 @@ function pgComposite(){
   var bits='Composite '+num(c.score,1);
   if(c.penaltyTotal) bits+='  −  '+num(c.penaltyTotal,1)+' adjustment';
   h+='<div class="pg-tally">'+bits+'  =  '+num(c.adj,1)+' out of 100</div>';
-  if(c.penalty&&cx.points) h+='<div class="tiny2" style="text-align:right">Capped at 15 together — '
-    +(c.penaltyTotal>=15?'reached':'not reached')+'.</div>';
 
   h+='<div class="pg-btns"><button class="btn2" onclick="VIEW=\'month\';render()">Open my session brief</button>'
     +(D.__back?''
@@ -5382,8 +5454,9 @@ function pgRun(){
     var wd='SMTWTFS'[new Date(f.d+'T00:00:00Z').getUTCDay()]||'·';
     return '<div class="pg-dotcol"><span class="pg-dl">'+wd+'</span><span class="pg-dot'+(on?' on':'')+'"></span></div>';
   }).join('');
-  return '<div class="card"><h2>Your last five sessions</h2><div class="pg-dots">'+dots+'</div>'
-    +'<p class="why">A filled day is a day you worked. A session is never counted against you for approved leave, system downtime, incorrect data, poor lead quality, or time spent waiting for your team leader.</p></div>';
+  /* the "a filled day is a day you worked / never counted against you for leave,
+     downtime…" paragraph is gone (Nick, 2026-09-03: "remove this") */
+  return '<div class="card"><h2>Your last five sessions</h2><div class="pg-dots">'+dots+'</div></div>';
 }
 /* THE "YOUR RESULTS OVER N SESSIONS" TILE CARD IS GONE (Nick, 2026-08-31: "remove this,
    is not needed for agent view and for team leader view"). Four sparklines — sales, sales
@@ -5475,7 +5548,7 @@ function breakdownHTML(c){
   add('Premium written',R(ME.gwpEx),'This is what commission is worked out on','ok');
   if(ME.aveG!=null) add('Average sale',R(ME.aveG),'What a typical sale of yours is worth','ok');
   if(ME.spd!=null) add('Sales a day',num(ME.spd,2),'On the days you work','ok');
-  add('Days worked',num(ME.act,ME.act%1?1:0),'Of '+num(DAYS())+' working days this month','ok');
+  add('Days worked',num(WORKED(),WORKED()%1?1:0),'Of '+num(DAYS())+' working days in '+monthLabel()+' — days whose files have landed','ok');
 
   if(ME.att!=null) add('Attendance',pct(ME.att,0),
     ME.att>=.95?'Excellent':(ME.att>=.85?'Solid':'Worth lifting'),
@@ -5535,58 +5608,70 @@ function stat(lab,val,sub){
    from figures already on this page (digest month row, day rows, the commission
    model, coaching themes) — today's OWN sales only land with the day's uploads, so
    everything here is forward-looking and can never show a false live zero. */
+/* ONE PRECISE STATEMENT, NOT A MENU (Nick, 2026-09-03: "how will an agent make 59
+   sales over the next 2 days… this entire section looks wrong… what do we mean by
+   pick your rung"). The three rungs divided sales-to-target by remaining days, and
+   with days-worked inflated by the attendance register the remainder collapsed and
+   the arithmetic exploded. Now: the daily target the engine already uses (period
+   target ÷ employed shifts), × the month's working days = the month's target; less
+   sales so far; ÷ working days left, with the dates. Every input is on this page. */
 function todayHTML(c){
   var days=ME.days||[];
-  var rem=Math.max(0,DAYS()-(ME.act||0));
-  var sale=(D.comm&&D.comm.saleValue)||(89/1.15);
-  var h='';
-  var rungs=[];
-  if(rem>0){
-    var needT=(ME.target&&ME.sales!=null)?Math.max(0,ME.target-ME.sales):null;
-    if(needT!=null){
-      if(needT===0) rungs.push({n:'✓',t:'Target banked',s:'Your month target is already in — everything from here is upside.'});
-      else rungs.push({n:num(Math.ceil(needT/rem)),t:'keeps your target',s:num(needT)+' sale'+(needT===1?'':'s')+' still to go across your '+num(rem)+' remaining day'+(rem===1?'':'s')+'.'});
-    }
-    if(ME.act>0&&ME.sales!=null&&ME.sales>0){
-      rungs.push({n:num(Math.ceil(ME.sales/ME.act)),t:'holds your pace',s:'That is your own average'
-        +(ME.pctT!=null?' — it keeps you at '+num(ME.pctT*100)+'% of target':'')
-        +(ME.rankTeam===1?' and #1 in your team.':(ME.rankTeam?' and #'+num(ME.rankTeam)+' in your team.':'.'))});
-    }
-    if(c&&c.nextMove&&c.nextMove.gap>0){
-      var perDay=c.nextMove.gap/rem;
-      rungs.push({n:num(Math.ceil(perDay/sale)),t:'moves you up a bracket',s:R(perDay)+' a day reaches the next bracket — worth '
-        +R(Math.max(0,c.nextMove.extraComm))+' more in your pocket this month.'});
-    } else if(c&&c.nextTarget&&c.nextTarget.kind==='top'){
-      rungs.push({n:'★',t:'top bracket',s:'You are on the top bracket — every sale today protects it.'});
+  var worked=WORKED();
+  var rem=Math.max(0,DAYS()-worked);
+  var perDayTarget=(ME.target&&ME.emp)?ME.target/ME.emp:((ME.target&&DAYS())?ME.target/DAYS():null);
+  var monthTarget=perDayTarget?Math.round(perDayTarget*DAYS()):null;
+  var h='<div class="card"><h2>Your number for today</h2>';
+  if(monthTarget==null){
+    h+='<p class="why">We need a target on file before we can work out your number. Ask your team leader.</p>';
+  } else if(rem<=0){
+    h+='<p class="why">'+esc(monthLabel())+'\'s working days are counted — <b>'+num(ME.sales||0)+' of '+num(monthTarget)+' sales</b>'
+      +(ME.pctT!=null?' ('+num(ME.pctT*100)+'% of target)':'')+'. A fresh number arrives with the new month.</p>';
+  } else {
+    var needT=Math.max(0,monthTarget-(ME.sales||0));
+    if(needT===0){
+      h+='<p class="why"><b>Target reached</b> — '+num(ME.sales||0)+' of '+num(monthTarget)+' sales for '+esc(monthLabel())
+        +', with '+num(rem)+' working day'+(rem===1?'':'s')+' still to go. Every sale from here is upside.</p>';
+    } else {
+      var perDay=Math.ceil(needT/rem);
+      h+='<p class="why">To reach your '+esc(monthLabel())+' target of <b>'+num(monthTarget)+' sales</b> you need about '
+        +'<b>'+num(perDay)+' a day</b> over the <b>'+num(rem)+' working day'+(rem===1?'':'s')+' left</b>'
+        +(remainingLabel()?' ('+esc(remainingLabel())+')':'')+'. '
+        +'You have <b>'+num(ME.sales||0)+'</b> so far'+(worked?' from '+num(worked,worked%1?1:0)+' day'+(worked===1?'':'s')+' worked':'')
+        +' — your daily target is '+num(perDayTarget,1)+'.</p>';
     }
   }
-  if(rungs.length){
-    h+='<div class="card"><h2>Your number for today</h2>'
-      +'<p class="why">Three ways to win the day — pick your rung. Worked out fresh from where your month stands.</p>'
-      +'<div class="td-rungs">'+rungs.map(function(r){
-        return '<div class="td-rung"><div class="td-n num">'+r.n+'</div><div><div class="td-t">'+r.t+'</div><div class="td-s">'+r.s+'</div></div></div>';
-      }).join('')+'</div></div>';
-  } else if(rem<=0&&ME.act>0){
-    h+='<div class="card"><h2>Your number for today</h2>'
-      +'<p class="why">The month\'s working days are banked — '+num(ME.sales||0)+' sales'
-      +(ME.pctT!=null?' at '+num(ME.pctT*100)+'% of target':'')+'. A fresh number arrives with the new month.</p></div>';
-  }
-  /* last session + streak + coaching focus, side by side */
+  h+='</div>';
+
+  /* LAST SESSION AND MOMENTUM READ THE SAME DAY (Nick, 2026-09-03: "last session
+     shows zero, but under momentum last session hit target — doesn't make sense").
+     The last-session card took the newest row whether or not the agent worked it;
+     the streak skipped no-shift days and counted back to the previous real one — so
+     a zero row with no shift (or today's provisional row) contradicted the streak
+     built beside it. Both now read the last WORKED session (a shift and a target),
+     and a newer provisional row is named as still landing, not scored. */
   var cells=[];
-  var ld=days.length?days[days.length-1]:null;
+  var workedRows=days.filter(function(f){ return f.act>0&&f.t>0&&!f.p; });
+  var ld=workedRows.length?workedRows[workedRows.length-1]:null;
+  var newest=days.length?days[days.length-1]:null;
+  var pending=(newest&&ld&&newest.d>ld.d)?newest:(newest&&!ld?newest:null);
   if(ld){
-    var hit=ld.t>0?((ld.s||0)>=ld.t):null;
+    var hit=(ld.s||0)>=ld.t;
     cells.push('<div class="pg-card"><div class="t">Your last session · '+esc(ld.d)+'</div>'
       +num(ld.s||0)+' sale'+(ld.s===1?'':'s')+' · '+R(ld.x||0)+' premium '
-      +(hit==null?'':(hit?'<span class="chip2 beat"><i></i>Target hit</span>':'<span class="chip2 next"><i></i>Short of target</span>'))
-      +(ld.p?'<div class="tiny2">Provisional — the day\'s files are still landing.</div>':'')+'</div>');
+      +(hit?'<span class="chip2 beat"><i></i>Target hit</span>':'<span class="chip2 next"><i></i>Short of target</span>')
+      +(pending?'<div class="tiny2">'+esc(pending.d)+' is still landing — it is counted once its files are in.</div>':'')+'</div>');
     var streak=0;
-    for(var i=days.length-1;i>=0;i--){ var f=days[i]; if(!(f.act>0)||!(f.t>0)) continue; if((f.s||0)>=f.t) streak++; else break; }
-    var best=0,bd=''; days.forEach(function(f){ if((f.s||0)>best){best=f.s;bd=f.d;} });
+    for(var i=workedRows.length-1;i>=0;i--){ var f=workedRows[i]; if((f.s||0)>=f.t) streak++; else break; }
+    var best=0,bd=''; workedRows.forEach(function(f){ if((f.s||0)>best){best=f.s;bd=f.d;} });
     cells.push('<div class="pg-card"><div class="t">'+(streak>=2?'You are on a run':'Momentum')+'</div>'
       +(streak>=2?num(streak)+' sessions in a row on target — one more today keeps it alive.'
-        :(streak===1?'Your last session hit target — make it two in a row today.':'Start a new run today — one on-target session begins it.'))
+        :(streak===1?'Your last session ('+esc(ld.d)+') hit target — make it two in a row today.'
+          :'Your last session ('+esc(ld.d)+') was short of target — one on-target session today starts a new run.'))
       +(best?'<div class="tiny2">Best day this month: '+num(best)+' sales ('+esc(bd)+') — a good day to beat it.</div>':'')+'</div>');
+  } else if(pending){
+    cells.push('<div class="pg-card"><div class="t">Your last session</div>'
+      +esc(pending.d)+' is still landing — it is counted once its files are in.</div>');
   }
   var co=D.coaching,mine=null;
   if(co&&co.agents)for(var j=0;j<co.agents.length;j++)if(co.agents[j].code===ME.code){mine=co.agents[j];break;}
@@ -5598,6 +5683,13 @@ function todayHTML(c){
   }
   if(cells.length) h+='<div class="pg-cards" style="margin-top:0;margin-bottom:16px">'+cells.join('')+'</div>';
   return h;
+}
+/* The money lives on ONE tab. Today points at it instead of repeating the hero. */
+function commPointer(c){
+  if(!ME.plan||!c) return '';
+  return '<div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">'
+    +'<span class="why" style="margin:0">Your projected commission for '+esc(monthLabel())+' — and what would change it — is on the Projected Commission tab.</span>'
+    +'<button class="btn2 primary" onclick="VIEW=\'calc\';render()">Open Projected Commission</button></div>';
 }
 /* ===================== THE HELP CENTER (2026-08-26) =====================
    Agent side: "Ask <TL> to help" opens a modal — pick a topic, WRITE A NOTE
@@ -5969,8 +6061,8 @@ function trackHTML(){
   else if(p>=.75){ v='Nearly there — '+num(Math.max(0,(ME.target||0)-(ME.sales||0)),0)+' more sales gets you to target.'; cls='mid'; }
   else { v='Room to push — '+num(Math.max(0,(ME.target||0)-(ME.sales||0)),0)+' more sales gets you to target.'; cls='go'; }
 
-  return '<div class="card"><h2>How you are tracking</h2>'
-    +'<p class="why">Your target for the days worked so far, and how close you are to it.</p>'
+  return '<div class="card"><h2>How you are tracking — '+esc(monthLabel())+' to date</h2>'
+    +'<p class="why">Your target for the days worked so far ('+esc(prettyPeriod())+'), and how close you are to it. Today’s sales are not in yet.</p>'
     +'<div class="prog"><div class="top"><b>'+num(ME.sales)+' of '+num(ME.target,ME.target%1?1:0)+' sales</b>'
     +'<span>'+(p==null?'':pct(p,0)+' of target')+'</span></div>'
     +'<div class="track"><i style="width:'+bar.toFixed(1)+'%;background:'+(p>=1?'var(--green)':'var(--grad)')+'"></i></div>'
@@ -6082,13 +6174,13 @@ function wireWhatIf(){
 var PLAN_LAB={M1:'M1',M2:'M2',EXP_COURTESY:'Experienced — Courtesy',EXP_CUDDLE:'Experienced — Cuddle',M0:'M0'};
 function comsDaysNow(){
   var w=$('cDays'),t=$('tDays'),g=$('cGwp');
-  return { worked:parseFloat(w?w.value:ME.act)||0,
+  return { worked:parseFloat(w?w.value:WORKED())||0,
            dial:parseFloat(t?t.value:TDAYS())||0,
            gwp:parseFloat(g?g.value:ME.gwpEx)||0 };
 }
 function comsTop(){
   return '<div class="coms-top"><div class="coms-av" style="background:hsl('+hue(ME.code)+',58%,42%)">'+esc(initials(ME.name))+'</div>'
-    +'<div><h1>Commission calculator</h1>'
+    +'<div><h1>Projected Commission Calculator</h1>'
     +'<div class="meta"><span>'+esc(ME.name||'')+'</span>'+(ME.code?'<span>'+esc(ME.code)+'</span>':'')
     +(ME.campaign?'<span>'+esc(ME.campaign)+'</span>':'')
     +'<span>'+esc(prettyPeriod())+' — '+num(TDAYS())+' working days</span></div></div></div>';
@@ -6143,23 +6235,24 @@ function comsHeroInner(c){
     +'<div class="s">'+num(dd.worked)+' of '+num(dd.dial)+' working days complete</div></div>'
     +'</div>';
 }
+/* THE FIGURES ARE READ-ONLY (Nick, 2026-09-03: "why are we giving them options to
+   change figures, when we are stating to them 'your figures for 1–2 September'").
+   The tenure / days / GWP inputs and the reset link are gone; the card states the
+   real inputs the calculator works from. The what-if control below it stays — one
+   more sale a day is the one lever that is genuinely the agent's. */
 function comsFigures(c){
-  var plans=[]; try{ plans=Object.keys((D.comm&&D.comm.brackets)||{}); }catch(e){}
-  if(plans.indexOf('M0')<0) plans=plans.concat('M0');
-  if(ME.plan&&plans.indexOf(ME.plan)<0) plans.unshift(ME.plan);
   var done=c&&!(c.metrics.remainingDays>0);
+  var w=WORKED();
   return '<div class="card figures"><h2>Your figures for '+esc(prettyPeriod())+'</h2>'
-    +(done?'<div class="note-done">Your working days for this month are counted — so there are no remaining days left to add sales to. '
-      +'Change the numbers below to see what a different month would have paid.</div>':'')
-    +'<div class="fields">'
-    +'<div class="field"><label>Tenure</label><select id="cPlan">'
-      +plans.map(function(p){return '<option value="'+esc(p)+'"'+(p===((c&&c.plan)||ME.plan)?' selected':'')+'>'+esc(PLAN_LAB[p]||p)+'</option>';}).join('')+'</select></div>'
-    +'<div class="field"><label>Total working days passed</label><input id="cDays" type="number" inputmode="decimal" min="0" step="0.5" value="'+esc(ME.act)+'"></div>'
-    +'<div class="field"><label>Total working days in the period</label><input id="tDays" type="number" inputmode="numeric" min="1" step="1" value="'+esc(TDAYS())+'"></div>'
-    +'<div class="field"><label>Total GWP excluding VAT</label><input id="cGwp" type="number" inputmode="decimal" min="0" step="1" value="'+esc(Math.round(ME.gwpEx*100)/100)+'"></div>'
+    +'<p class="why">Your real figures from Agent OS — this is what the calculator works from.'
+    +(done?' '+esc(monthLabel())+'\'s working days are counted, so there are no remaining days left to add sales to.':'')+'</p>'
+    +'<div class="coms-rows">'
+    +'<div><span>Plan</span><b>'+esc(PLAN_LAB[ME.plan]||ME.plan||'—')+'</b></div>'
+    +'<div><span>Working days worked (days whose files have landed)</span><b class="num">'+num(w,w%1?1:0)+'</b></div>'
+    +'<div><span>Working days in '+esc(monthLabel())+'</span><b class="num">'+num(TDAYS())+'</b></div>'
+    +'<div><span>Premium written, excluding VAT</span><b class="num">'+R(ME.gwpEx,2)+'</b></div>'
     +'</div>'
     +'<div id="figRows">'+figRowsInner(c)+'</div>'
-    +'<button class="reset" id="reset">Reset to my real figures</button>'
     +'</div>';
 }
 function figRowsInner(c){
@@ -6172,7 +6265,7 @@ function figRowsInner(c){
     +'</div>'
     +'<div class="pace"><i style="width:'+pctFill+'%"></i></div>'
     +'<div class="tiny2">Working day pace — '+num(dd.worked)+' of '+num(dd.dial)+' days complete ('+Math.round(pctFill)+'% of the period). '
-    +'Figures start from your current period in Agent OS and can be changed here without altering anything else — nothing you type is saved.</div>';
+    +'Figures come from your current period in Agent OS.</div>';
 }
 function comsTableCard(c){
   return '<div class="card"><h2>Bracket gap analysis</h2>'

@@ -146,8 +146,8 @@ for (const file of LISTS) {
 
   let wrong = [], missing = [];
   for (const [cb, a] of expect) {
-    /* Campaigns this dashboard does not report on are deliberately kept OFF the roster. */
-    if (!['Cuddle', 'Courtesy', 'Nesting', 'VT'].includes(a.campaign)) continue;
+    /* Since 2026-09-03 EVERY campaign the list names lands on the roster — a new one under
+       its own label (reported under the Courtesy rules until the rule book names it). */
     const l = seen.get(cb);
     if (!l) { missing.push(cb + ' ' + a.name); continue; }
     if (l.campaign !== a.campaign) wrong.push(`${cb} ${a.name}: roster=${l.campaign} list=${a.campaign}`);
@@ -295,7 +295,9 @@ section('a Campaign cell reading exactly "VT"');
   ok('no "campaign this dashboard does not report on" warning is raised',
     !res.toasts.some(t => /does not report on/i.test(t)),
     res.toasts.filter(t => /does not report on/i.test(t)).join(' | '));
-  /* the same guard, still doing its job for a campaign that genuinely is not reported */
+  /* A CAMPAIGN NEW TO THE RULE BOOK (Nick, 2026-09-03: "new campaigns are created"): it is
+     no longer kept off the roster — it lands under its own label, is named in a toast as
+     new, and is reported under the Courtesy rules until the rule book names it. */
   await page.evaluate(() => { window.__toasts = []; });
   await page.evaluate(t => window.__mtd.ingest('odd-list.csv', t, 'roster', 'oddcheck'),
     /* a real row alongside it: a sheet whose ONLY row is off-campaign loads nothing at all
@@ -303,10 +305,18 @@ section('a Campaign cell reading exactly "VT"');
     'Employee Code,Agent Name,Team Leader,Campaign,Tenure,Sales Force,Target,Start Date\n'
     + 'CB904,Admin Person,Fabian Chetty,Back Office,Exp,Admin Person,0,2026-01-05\n'
     + 'CB905,Courtesy Two,Denise Haripersad,Courtesy,Exp,Courtesy Two,5,2026-01-05\n');
-  const odd = await page.evaluate(() => ({ roster: (window.__mtd.state().roster || []).map(a => a.code), toasts: window.__toasts || [] }));
-  ok('a genuinely unreported campaign is STILL kept off the roster and named',
-    !odd.roster.includes('CB904') && odd.toasts.some(t => /does not report on/i.test(t)),
-    JSON.stringify(odd.toasts));
+  const odd = await page.evaluate(() => { const S = window.__mtd.state(); window.__mtd.rebuild();
+    return { roster: (S.roster || []).map(a => ({ code: a.code, campaign: a.campaign })), toasts: window.__toasts || [],
+      camps: (typeof CAMPS !== 'undefined') ? CAMPS.slice() : null, newCamps: (window.__mtd.model() || {}).newCampaigns || [],
+      v23: (window.__mtd.checks() || []).find(c => c.id === 'V23') || null }; });
+  ok('a campaign new to the rule book lands on the roster under its own label',
+    odd.roster.some(a => a.code === 'CB904' && a.campaign === 'Back Office'), JSON.stringify(odd.roster));
+  ok('…and is named as new in a toast, never silently',
+    odd.toasts.some(t => /new to this dashboard/i.test(t) && /Back Office/.test(t)), JSON.stringify(odd.toasts));
+  ok('…CAMPS now reports it alongside the rule book\'s campaigns',
+    Array.isArray(odd.camps) && odd.camps.includes('Back Office') && odd.camps[0] === 'Cuddle', JSON.stringify(odd.camps));
+  ok('…the model names it and V23 flags it as reported under the Courtesy rules',
+    odd.newCamps.includes('Back Office') && odd.v23 && odd.v23.ok === false && /Courtesy rules/.test(odd.v23.msg), JSON.stringify(odd.v23));
 }
 
 ok('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

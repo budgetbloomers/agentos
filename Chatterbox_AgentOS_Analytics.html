@@ -2462,7 +2462,12 @@ function toggleFilters(){const p=$('#filterPanel');p.style.display=p.style.displ
 function drawFilters(){
   const scope=userScopeTeam();
   const rosterVals=f=>Object.values(state.cbInfo||{}).map(i=>i&&i[f]).filter(Boolean);
-  const camps=CAMP_OPTS;
+  /* CAMPAIGNS FOLLOW THE ROSTER (2026-09-03): the three known buckets, plus any campaign
+     the Agent List names that folds to none of them — offered under its own label, the
+     same label campBucket's callers already keep for it. */
+  const knownCamps=new Set(CAMP_OPTS.map(o=>o[0]));
+  const extraCamps=[...new Set(rosterVals('campaign').map(v=>campBucket(v)||String(v).trim()))].filter(c=>c&&!knownCamps.has(c)).sort().map(c=>[c,c]);
+  const camps=CAMP_OPTS.concat(extraCamps);
   let teams=[...new Set([...distinct('QA_EVALUATIONS','team_leader'),...distinct('ATTENDANCE','reports_to'),...rosterVals('tl')])].sort();
   const tenures=[...new Set(rosterVals('tenure'))].sort();
   const agents=distinct('ATTENDANCE','employee_code');
@@ -2881,6 +2886,16 @@ const __zar2fmt=new Intl.NumberFormat('en-ZA',{minimumFractionDigits:2,maximumFr
 function zar2(v){return 'R'+__zar2fmt.format(Number(v||0))}
 function vatPct(){const p=parseFloat((state.rules.vatRate?.vals||[])[0]);return (isNaN(p)?15:p)/100}
 function exVat(v){return v/(1+vatPct())}
+/* THE R99 FLOOR, AT THE CENT THE SOURCE BOOKS IT (scoring audit, 2026-09-03). The Two-Check
+   value line is R99 INCL VAT. A R99 product's charge is booked by Salesforce as R86,08 EX-VAT,
+   which grosses back up to R98,99 — so an agent whose every sale IS the R99 product read
+   "below the R99 line" and fired R4 GWP Value Failure while meeting the rule exactly (30 of
+   59 rated agents on the PULSE side sat at precisely R86,08). The floor is taken to the cent
+   ex-VAT, the way the money it is compared with is stored, then grossed back up through the
+   same vatRate rule. Display strings still quote T('gwpFloor') — the rule is unchanged, only
+   the comparison basis. Mirrors gwpFloorEx in nicks_code/index.html compositeFor. */
+function gwpFloorEx(){return Math.floor(nbaVal('gwpFloor',99)/(1+vatPct())*100)/100}
+function gwpFloorIncl(){return gwpFloorEx()*(1+vatPct())-1e-9}
 function zarStack(v){return fmtVal(v,'zar')+'<div class="exv">'+fmtVal(exVat(v),'zar')+' ex VAT</div>'}
 function zar2Stack(v){return zar2(v)+'<div class="exv">'+zar2(exVat(v))+' ex VAT</div>'}
 function cycleCalc(mode){
@@ -3834,7 +3849,7 @@ function acStats(cb,win,C){
   const closedPerSale=sale.n>0?closedCases/sale.n:null;   // client 2026-07-20 — a RATIO, not a rate: closed cases per sale banked
   const cancPct=sale.n>0?canc/sale.n*100:(canc>0?999:0);
   const sc={};
-  sc['GWP/Sale']=gwpSale==null?null:Math.min(100,gwpSale/T('gwpFloor')*100);
+  sc['GWP/Sale']=gwpSale==null?null:Math.min(100,gwpSale/gwpFloorIncl()*100);
   sc['Target Ach']=ta==null?null:Math.min(100,ta);
   sc['QA']=qaS==null?null:Math.min(100,qaS);
   sc['Conversion']=conv==null?null:Math.min(100,conv/T('convTarget')*100);
@@ -3994,8 +4009,8 @@ function acNBA(st,coach){
     'The same compliance theme has been coached '+worst.scored+' times in the window — '+esc(clusterLabel(worst.key))+'.',
     'Compliance review with QA within 48 hours. The theme is recurring after coaching, so review the calls behind each session, not only the last one, and agree a written commitment.');
   if(tier.tier==='R2A-2')return R('R2A-2',2,'Protect the Revenue','Compliance Risk',tier.cf+' fails · CFR '+fmtVal(tier.cfr,'pct')+' (emerging tier).','P2 structured compliance coaching 5 days — root-cause review, raised audit cadence. Elite blocked.');
-  if(st.gwpSale!=null&&st.gwpSale<T('gwpFloor'))return R('R4',2,'Protect the Revenue','GWP Value Failure','GWP per sale R'+Math.round(st.gwpSale)+' — below the R'+T('gwpFloor')+' line.','Value coaching 48h: policy mix, upsell, GWP mini-target.');
-  if(st.ta!=null&&st.gwpSale!=null&&st.gwpSale>=T('gwpFloor')&&st.ta<T('salesLow'))return R('R4A',2,'Protect the Revenue','Critical Sales-Volume Failure','Value clears R'+T('gwpFloor')+' but volume is '+fmtVal(st.ta,'pct')+' of target.','Start PIP: weekly 1:1, side-by-side call listening, workshops, review activity and pipeline.');
+  if(st.gwpSale!=null&&st.gwpSale<gwpFloorIncl())return R('R4',2,'Protect the Revenue','GWP Value Failure','GWP per sale R'+Math.round(st.gwpSale)+' — below the R'+T('gwpFloor')+' line.','Value coaching 48h: policy mix, upsell, GWP mini-target.');
+  if(st.ta!=null&&st.gwpSale!=null&&st.gwpSale>=gwpFloorIncl()&&st.ta<T('salesLow'))return R('R4A',2,'Protect the Revenue','Critical Sales-Volume Failure','Value clears R'+T('gwpFloor')+' but volume is '+fmtVal(st.ta,'pct')+' of target.','Start PIP: weekly 1:1, side-by-side call listening, workshops, review activity and pipeline.');
   if(st.qaS!=null&&st.qaS<T('qaTarget'))return R('R5',2,'Protect the Revenue','Moderate QA Risk','QA '+fmtVal(st.qaS,'pct')+' — between '+T('qaCritical')+'% and '+T('qaTarget')+'%.','QA refresher within 5 days; audit 5 calls per week; coach every 2 weeks.');
   /* R6 CATCHES MORE THAN ITS BAND. An agent below salesLow normally lands on R4A, but R4A
      requires a GWP-per-sale figure, and an agent who has sold NOTHING has none — so they fall
@@ -4149,7 +4164,7 @@ async function agentOpen(cb){
     +'<div style="font-size:11px;color:var(--muted)">'+bandsOrder.map(b=>esc(b)+' <b>'+(st.bands[b]||0).toLocaleString()+'</b>').join(' · ')+' · Total <b>'+totC.toLocaleString()+'</b> · <b>'+(st.p?Math.round(totC/st.p)+'</b> calls/day':'—</b> calls/day (no present days)')+'</div>'):'<div class="empty">No dialler rows for this agent in the window.</div>';
   const snap=[
    ['Target Achievement',st.ta==null?'—':fmtVal(st.ta,'pct'),'≥100%',st3(st.ta,100,T('salesNear'))],
-   ['GWP / Sale (Value)',st.gwpSale==null?'—':'R'+Math.round(st.gwpSale),'≥R'+T('gwpFloor'),st3(st.gwpSale,T('gwpFloor'),T('gwpFloor')*.9)],
+   ['GWP / Sale (Value)',st.gwpSale==null?'—':'R'+Math.round(st.gwpSale),'≥R'+T('gwpFloor'),st3(st.gwpSale,gwpFloorIncl(),gwpFloorIncl()*.9)],
    ['QA Score',st.qaS==null?'—':fmtVal(st.qaS,'pct'),'≥'+T('qaTarget')+'%',st3(st.qaS,T('qaTarget'),T('qaCritical'))],
    ['Conversion',st.conv==null?'—':fmtVal(st.conv,'pct'),'≥'+T('convTarget')+'%',st3(st.conv,T('convTarget'),T('convTarget')*.8)],
    ['Avg Talk Time',st.talkDay==null?'—':Math.round(st.talkDay)+' min/day','≥'+T('talkTargetMin'),st3(st.talkDay,T('talkTargetMin'),T('talkFloorMin'))],
@@ -4202,7 +4217,7 @@ async function agentOpen(cb){
   })();
 
   const fP=v=>fmtVal(v,'pct'),fR=v=>'R'+Math.round(v),fM=v=>Math.round(v)+'m';
-  const c1=st.gwpSale!=null&&st.gwpSale>=T('gwpFloor'),c2=st.ta!=null&&st.ta>=100;
+  const c1=st.gwpSale!=null&&st.gwpSale>=gwpFloorIncl(),c2=st.ta!=null&&st.ta>=100;
   modal('<div style="display:flex;justify-content:flex-start;margin-bottom:6px"><button class="btn small" onclick="closeModal()" style="display:flex;align-items:center;gap:6px"><span style="font-size:15px">←</span> Back</button></div>'
    +'<div class="ac-head"><div style="flex:1;min-width:220px"><div style="font-size:21px;font-weight:800">'+maskName(st.name)+' <span style="opacity:.75;font-weight:600">'+esc(st.code)+'</span></div>'
    +'<div style="font-size:11.5px;opacity:.8;margin-top:3px">'+esc(st.group)+' · TL: '+maskName(st.tl)+' · Period: '+esc(winFrom(win))+' → '+esc(win.to)+' · '+wd+' working days</div></div>'
@@ -4210,7 +4225,7 @@ async function agentOpen(cb){
    +'<div class="ac-box"><div style="font-size:24px;font-weight:800">#'+rank+'</div><div style="font-size:9.5px;letter-spacing:.6px;opacity:.8">OF '+peers.length+' · '+esc(st.group)+'</div></div></div>'
    +'<div class="ac-tiles">'
    +tile('TARGET ACH.',st.ta==null?'—':fmtVal(st.ta,'pct'),(st.spd==null?(st.p===0&&st.sched===0?'no attendance record in this window':'no present days'):(Math.round(st.spd*10)/10)+' sales/day')+' · target '+(st.target??'—')+'/day',st3(st.ta,100,T('salesNear')))
-   +tile('GWP / SALE',st.gwpSale==null?'—':'R'+Math.round(st.gwpSale),(st.gwpSale==null?'':'R'+Math.round(exVat(st.gwpSale))+' ex VAT · ')+'Value check · ≥R'+T('gwpFloor')+' incl',st3(st.gwpSale,T('gwpFloor'),T('gwpFloor')*.9))
+   +tile('GWP / SALE',st.gwpSale==null?'—':'R'+Math.round(st.gwpSale),(st.gwpSale==null?'':'R'+Math.round(exVat(st.gwpSale))+' ex VAT · ')+'Value check · ≥R'+T('gwpFloor')+' incl',st3(st.gwpSale,gwpFloorIncl(),gwpFloorIncl()*.9))
    +tile('QA SCORE',st.qaS==null?'—':fmtVal(st.qaS,'pct'),'≥'+T('qaTarget')+'% · n='+st.qaN,st3(st.qaS,T('qaTarget'),T('qaCritical')))
    +tile('CONVERSION',st.conv==null?'—':fmtVal(st.conv,'pct'),'sales ÷ total leads · ≥'+T('convTarget')+'%',st3(st.conv,T('convTarget'),T('convTarget')*.8))
    +tile('TALK TIME',st.talkDay==null?'—':Math.round(st.talkDay)+'m','per attended day · ≥'+T('talkTargetMin')+' floor '+T('talkFloorMin'),st3(st.talkDay,T('talkTargetMin'),T('talkFloorMin')))
@@ -5433,7 +5448,7 @@ setTimeout(function(){
       var i=state.cbInfo[st.cb]||{};
       /* THE TWO-CHECK RULE, the same one the drill-down prints: value is GWP per sale
          against the floor, volume is target achievement against the R4A line. */
-      var value=(st.gwpSale!=null)?st.gwpSale>=T('gwpFloor'):null;
+      var value=(st.gwpSale!=null)?st.gwpSale>=gwpFloorIncl():null;
       /* CHECK 2 PASSES AT 100% OF TARGET — Chatterbox_Decision_Rules.xlsx, NBA_THRESHOLDS:
          "target_ach | 100 | % | Check 2 passes at or above this." This used to read
          T('sales_critical_pct'), which the workbook does define (70, the line R4A FIRES at)

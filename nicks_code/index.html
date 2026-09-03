@@ -827,7 +827,20 @@ async function toObjectsAsync(rows){
    otherwise be swallowed by the Courtesy fallback, silently merging a campaign with its
    own targets (M0 → 2/day) into one with different ones. §5 of the spec: the fact table
    must write exactly Courtesy | Cuddle | Nesting. */
-const campOf = c => /nest/i.test(c||'')?'Nesting':(/cuddle/i.test(c||'')?'Cuddle':(/track|vehicle|vision|^vt$/i.test(c||'')?'VT':'Courtesy'));
+/* A CAMPAIGN THE RULE BOOK DOES NOT NAME KEEPS ITS OWN NAME (Nick, 2026-09-03: "when a
+   new agent list is uploaded, new campaigns are created"). campOf used to fold anything
+   unrecognised into Courtesy — a guess wearing a fact's clothes. Now the four known
+   spellings still fold to their canonical token, a BLANK still reads Courtesy (the ingest
+   names those rows in a toast), and any other label is returned as itself, so a new
+   campaign lands on the roster, in the fact table and on the tabs under its own name,
+   measured under the Courtesy rules until the rule book gives it its own (V23). */
+const campOf = c => { const s=String(c||'').trim().replace(/\s+/g,' ');
+  if(!s) return 'Courtesy';
+  if(/nest/i.test(s)) return 'Nesting';
+  if(/cuddle/i.test(s)) return 'Cuddle';
+  if(/track|vehicle|vision|^vt$/i.test(s)) return 'VT';
+  if(/courtesy/i.test(s)) return 'Courtesy';
+  return s; };
 /* THE SAME VOCABULARY THE ROSTER INGEST JUDGES BY (2026-08-28). campOf knew that a Campaign
    cell reading exactly "VT" is Vehicle Tracking; the ingest's off-campaign guard did not — it
    tested track|vehicle|vision and nothing else. So all 46 VT agents were pushed off the sheet
@@ -842,6 +855,18 @@ const KNOWN_CAMP = /cuddle|courtesy|nest|track|vehicle|vision|^vt$/i;
    dashboard actually reports on, and everything (sections, tabs, exports, totals, pivots)
    derives from it. */
 const CAMPS=MTD_RULES.reportedCampaigns.slice();
+/* CAMPS FOLLOWS THE ROSTER (Nick, 2026-09-03). The rule book's reported campaigns come
+   first; any other campaign the current Agent List names (never VT — the tracker is
+   reported elsewhere) is appended so it gets its own section, tab, pivot and export
+   like the rest. Mutated in place so the thirty-odd readers of CAMPS keep working.
+   Called at the top of every buildModel; returns the extras so the model can name them. */
+function refreshCamps(){
+  const base=MTD_RULES.reportedCampaigns.slice();
+  const extra=[...new Set(((typeof S!=='undefined'&&S&&S.roster)||[]).map(a=>a.campaign))]
+    .filter(c=>c&&c!=='VT'&&!base.includes(c)).sort();
+  CAMPS.length=0; CAMPS.push(...base,...extra);
+  return extra;
+}
 const CAMPLAB={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',Nesting:'Nesting',VT:'Matrix Tracker'};
 const normName = s => (s||'').toLowerCase().replace(/-\s*panimax/g,'').replace(/panimax/g,'').replace(/cb[\s-]*\d+/g,'').replace(/[^a-z]/g,'');
 const cbCode = s => { const m=(s||'').match(/CB[\s-]*(\d+)/i); return m?('CB'+parseInt(m[1],10)):null; };
@@ -1079,6 +1104,8 @@ const COMPOSITE_RULES = {
   version:'nba-3.0+coaching-1.0',
   floor:0.5,                                   // rating_floor — attainment below which a driver pays nothing
   windowSessions:5,                            // rating_window_sessions — worked sessions every driver averages over
+  attendanceWindow:'scheduled',                // 2026-09-03: attendance over the last N SCHEDULED shifts, not worked ones (worked = 100% by construction)
+  convMinDataDays:5,                           // 2026-09-03: conversion is shown but not scored until the month has this many working days of data
   drivers:[
     {k:'gwpSale',   label:'Avg GWP per Sale',   w:25, note:'Check 1, scored independently of volume.'},
     {k:'targetAch', label:'Target Achievement', w:20, note:'Check 2, daily sales against the tenure target.'},
@@ -1399,6 +1426,31 @@ function __healthPoll(){
   }catch(e){}
 }
 setInterval(__healthPoll,180000); setTimeout(__healthPoll,20000);
+/* CAMPAIGN TARGET OVERRIDES — same cadence as the health poll. A change Dalwin
+   saves in Agent Analytics reaches every open PULSE session within ~3 minutes:
+   the matrix lands in S.cmTargets, the model rebuilds, and the 90s digest push
+   republishes — which is how the agent, team-leader and campaign-manager views
+   all read the new number without any of them computing it. */
+function __cmTargetsPoll(){
+  try{
+    var t=sessionStorage.getItem('cbx_token'); if(!t) return;
+    if(!window.__vasHydrated||typeof S==='undefined'||!S) return;
+    fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/cm-targets',{headers:{'Authorization':'Bearer '+t,'X-Cbx-Client':'v5'}})
+      .then(function(r){return r.ok?r.json():null})
+      .then(function(x){
+        if(!x||typeof x!=='object') return;
+        var cur=(S.cmTargets&&S.cmTargets.stamp)||'';
+        if((x.stamp||'')===cur) return;
+        S.cmTargets={matrix:x.matrix||{},stamp:x.stamp||''};
+        if(typeof save==='function') save();
+        if(typeof rebuild==='function') rebuild();
+        if(typeof renderAll==='function') renderAll();
+        if(typeof toast==='function'&&cur) toast('Campaign targets changed on the Campaign Manager settings page - every figure just recalculated against the new targets.');
+      }).catch(function(){});
+  }catch(e){}
+}
+setInterval(__cmTargetsPoll,180000); setTimeout(__cmTargetsPoll,25000);
+document.addEventListener('cbx-authed',function(){setTimeout(__cmTargetsPoll,15000)});
 document.addEventListener('cbx-authed',function(){setTimeout(__healthPoll,12000)});
 
 /* SUPABASE IS THE STORE. localStorage is a same-device CACHE and nothing more — it caps at
@@ -2214,7 +2266,7 @@ const INGEST={
        immediately after this returns) does not. Timing-independent, unlike a token that a
        delayed publish could miss. */
     S.rosterFp=null;
-    const out=[]; const offCamp=[]; const noCamp=[];
+    const out=[]; const newCamp=new Set(); const noCamp=[];
     /* WHICH COLUMN NAMES THE CAMPAIGN decides how far this sheet is trusted. The current
        format says 'Campaign'; the legacy tabs say 'Que'. A sheet with neither cannot say who
        is Cuddle and who is Courtesy at all — see the refusal below. */
@@ -2237,12 +2289,13 @@ const INGEST={
          fact's clothes. The agent lands on a floor nobody put them on, and the Courtesy head
          count is wrong with nothing on screen to say why. Named instead. */
       if(!rawCamp) noCamp.push((r['Agent Name']||r['Agent']||code)+' ('+code+')');
-      /* A campaign this dashboard does not report on (Nesting, admin queues) stays OFF the
-         roster — but it is NAMED, never dropped in silence. These are real agents making real
-         sales: their money lands in Unmatched agents with nothing to explain why, and the
-         floor sees the roster short and the totals light with no reason given. */
-      if(rawCamp && !KNOWN_CAMP.test(rawCamp)){
-        offCamp.push((r['Agent Name']||r['Agent']||code)+' ('+rawCamp+')'); continue; }
+      /* A CAMPAIGN NEW TO THIS DASHBOARD (Nick, 2026-09-03: "when a new agent list is
+         uploaded, new campaigns are created"). It used to be kept OFF the roster and named
+         in a warning; now it lands under its own label — its agents are real people making
+         real sales — and is reported under the Courtesy rules (dialler-derived shifts, the
+         Courtesy tenure group, the list's own target cell) until the rule book names it.
+         Never silent: the toast below and V23 on the Data tab both say so. */
+      if(rawCamp && !KNOWN_CAMP.test(rawCamp)) newCamp.add(campOf(rawCamp));
       /* DISPLAY NAME COMES FROM 'Sales Force', NOT 'Agent Name' (spec §3). Only one agent
          differs — CB156 is "Kasavani Snakarparsad" under Agent Name and "Ashnee Kasavani
          Sankarparsad" under Sales Force — but that string is the join key the workbook's
@@ -2271,8 +2324,8 @@ const INGEST={
     }
     if(noCamp.length) toast(noCamp.length+' agent(s) in "'+name+'" have a blank Campaign cell and were filed as Courtesy — '
       +'check them at source: '+noCamp.slice(0,4).join(', ')+(noCamp.length>4?' +'+(noCamp.length-4)+' more':''),11000);
-    if(offCamp.length) toast(offCamp.length+' agent(s) in "'+name+'" are on a campaign this dashboard does not report on, so they are NOT on the roster and their sales will show under Unmatched agents: '
-      +offCamp.slice(0,4).join(', ')+(offCamp.length>4?' +'+(offCamp.length-4)+' more':''),11000);
+    if(newCamp.size) toast(newCamp.size+' campaign'+(newCamp.size===1?'':'s')+' new to this dashboard on "'+name+'": '+[...newCamp].join(', ')
+      +' — its agents are on the roster and reported under the Courtesy rules until the rule book names it (Data tab, V23).',12000);
     // One row per employee code. A sheet that lists someone twice must not put them on the
     // roster twice - that would double them in Team Split and in the head counts.
     { const byCode=new Map(); out.forEach(a=>byCode.set(a.code,a));
@@ -3349,6 +3402,11 @@ function validateMTD(m){
     add('V20','warn',zero===zeroCF, zero?(zeroCF+' of '+zero+' zero scores are Critical Fails'):'no zero scores in the period');
     add('V21','error',pass+coach+cf===ev, 'Pass '+pass+' + Coaching '+coach+' + Critical Fail '+cf+' = '+(pass+coach+cf)+' against '+ev+' evaluations');
     add('V22','warn',!upheld, upheld?upheld+' upheld dispute(s) — the period\'s QA is provisional':'no upheld disputes in the period');
+  /* V23 — a campaign the Agent List names and the rule book does not. Reported under the
+     Courtesy rules (Nick, 2026-09-03) until the rule book gives it its own — said here so
+     nobody mistakes the borrowed rules for a decision about that campaign. */
+  { const nc=m.newCampaigns||[];
+    add('V23','warn',!nc.length, nc.length?'campaign(s) on the Agent List the rule book does not name — reported under the Courtesy rules until it does: '+nc.join(', '):'every reported campaign is named in the rule book'); }
     if(open) out.push({id:'QA',sev:'warn',ok:false,msg:open+' of '+ev+' evaluations are not closed — QA is provisional'}); }
 
   /* Campaigns deliberately left out of this dashboard. Reported every build, with the sales
@@ -3369,6 +3427,7 @@ function validateMTD(m){
 function buildModel(range, periodKey){
   let M_refsAreTotals=false;
   if(!range) return null;
+  const newCampaigns=refreshCamps();    // CAMPS = rule book + whatever else the roster names
   const dates=[...allDataDates()].filter(d=>d>=range.from&&d<=range.to).sort();
   /* DIALLING DAYS ARE THE REGISTER'S DAYS (spec §1), not every date some file happens to
      carry. 01 Aug 2026 is the case that makes the difference: a Saturday with four sales
@@ -3571,7 +3630,8 @@ function buildModel(range, periodKey){
          Cuddle stays on the register — not by preference but by necessity: its talk time
          comes from ViciDial, whose export is aggregated across the whole period and cannot
          be split per day, so "did they talk today" is a question that file cannot answer. */
-      const shiftSrc=MTD_RULES.actualShiftsFrom[camp]||'register';
+      /* a campaign the rule book does not name follows the Courtesy rule (dialler-derived) */
+      const shiftSrc=MTD_RULES.actualShiftsFrom[camp]||MTD_RULES.actualShiftsFrom.Courtesy||'register';
       if(shiftSrc==='dialler'){
         if(w===0.5) act=0.5;                       // HDCA — a half day is a half day
         else if(w===-1) act=0;                     // employment ended
@@ -3602,7 +3662,15 @@ function buildModel(range, periodKey){
          WORKED under, like everything else. */
       const tm=MTD_RULES.salesTargetMatrix;
       const tTen=(oh&&oh.tenure)||a?.tenure||'';
-      const perDay=tm[camp+'|'+tTen]??tm[camp+'|*']??(a?.target||0);
+      /* THE CAMPAIGN MANAGER'S DIAL SITS OVER THE MATRIX (Nick, 2026-09-01: a target
+         Dalwin sets "must change on the dashboard as well because this is the new
+         targets"). S.cmTargets.matrix arrives from the Worker's /api/cm-targets and
+         the chain is shared verbatim with worker/src/campaign.mjs effPerDay():
+         override exact -> override campaign-wide -> rule-book exact -> rule-book
+         campaign-wide -> the Agent List's own cell. Clearing the override restores
+         the rule book exactly; the roster is never rewritten. */
+      const ovm=(S.cmTargets&&S.cmTargets.matrix)||{};
+      const perDay=ovm[camp+'|'+tTen]??ovm[camp+'|*']??tm[camp+'|'+tTen]??tm[camp+'|*']??(a?.target||0);
       const target=trackerIsSource?tr.target:(perDay*emp);
       const gwpT=trackerIsSource?tr.gwpT:(target*S.gwpPerUnit);
       /* canc belongs in this guard (audit round 3, 2026-08-27): under the NET rule a fully
@@ -3944,7 +4012,7 @@ function buildModel(range, periodKey){
   const talkDays=new Set(), workedDays=new Set();
   for(const f of facts){ if(f.talk>0) talkDays.add(f.date); if(f.act>0||f.sales>0) workedDays.add(f.date); }
   const noDialler=[...workedDays].filter(d=>!talkDays.has(d)).sort();
-  return {range,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
+  return {range,newCampaigns,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
     viciSkipped,viciPartial,talkDays,noDialler,attDates,diallingDays,refsAreTotals:M_refsAreTotals,
      /* Agents whose work in THIS period sits under a leader who no longer owns them. Not an
         error — it is the historical rule doing its job — but it is the one thing a reader of
@@ -4297,10 +4365,14 @@ function compositeWindow(code){
 function tenureGroupOf(tenure,campaign){
   const t=String(tenure||'').trim().toLowerCase(), c=String(campaign||'').trim().toLowerCase();
   const norm=t.startsWith('exp')?'experienced':t;
-  return COMPOSITE_RULES.tenureGroups.find(g=>{
+  const find=cc=>COMPOSITE_RULES.tenureGroups.find(g=>{
     const gt=String(g.tenure||'').toLowerCase(), gc=String(g.campaign||'').toLowerCase();
-    return (!gt||gt===norm) && (!gc||gc===c);
+    return (!gt||gt===norm) && (!gc||gc===cc);
   })||null;
+  const g=find(c); if(g) return g;
+  /* A CAMPAIGN THE RULE BOOK DOES NOT NAME is measured under the Courtesy rules (Nick,
+     2026-09-03) — never left with no GWP floor and no conversion target. */
+  return (c&&!/^(courtesy|cuddle|nesting|vt)$/.test(c))?find('courtesy'):null;
 }
 /* The tier is the MORE SEVERE of the count band and the rate band. Where nothing
    has been audited there is no rate band and the count decides alone. */
@@ -4352,8 +4424,28 @@ function compositeFor(code, agent){
   const tenure=(last&&last.tenure)||a.tenure||'';
   const grp=tenureGroupOf(tenure,camp);
   const sum=k=>win.reduce((s,f)=>s+(+f[k]||0),0);
-  const sales=sum('sales'), gwpEx=sum('gwpEx'), tgt=sum('target'),
-        act=sum('act'), emp=sum('emp');
+  const sales=sum('sales'), gwpEx=sum('gwpEx'), tgt=sum('target');
+  /* ATTENDANCE IS MEASURED OVER SCHEDULED SHIFTS, NOT WORKED ONES (audit, 2026-09-03).
+     Every other driver averages the last five WORKED sessions — and attendance over
+     worked sessions is 100% by definition: 59 of 59 rated agents read 100 while one of
+     them had a shift with no activity the day before. The rule's intent ("being here,
+     on time, for the whole session") needs the days the agent was EMPLOYED to be there:
+     the last five rows carrying an employed shift, worked or not. Same window length,
+     different filter — and the only driver that uses it. */
+  const sched=((M.byAgentDay&&M.byAgentDay[code])||[]).filter(f=>f.emp>0&&!f.rangeAgg)
+    .sort((a,b)=>a.date.localeCompare(b.date)).slice(-(+COMPOSITE_RULES.windowSessions||5));
+  const act=sched.reduce((s,f)=>s+(+f.act||0),0), emp=sched.reduce((s,f)=>s+(+f.emp||0),0);
+  /* talk still divides by the WORKED days in the window, as before */
+  const actWorked=sum('act');
+  /* CONVERSION NEEDS A MONTH TO MEAN SOMETHING (audit, 2026-09-03). It is month-to-date
+     sales ÷ the month's open leads, so on day 2 of a month every agent reads near zero
+     (56 of 59 failed it, median 1,8%) and "the most points unclaimed are in Conversion"
+     printed on every card. Until the month carries five working days of data the driver
+     is SHOWN but not scored — the others renormalise, exactly as the rule book already
+     does for a driver nobody has supplied — and the note says why. */
+  const dataDays=(function(){ const last=(M.dates||[]).slice().sort().pop(); if(!last) return 0;
+    let n=0,d=M.range.from; while(d<=last){const w=new Date(d+'T00:00:00Z').getUTCDay(); if(w>0&&w<6&&!SA_HOLIDAYS.has(d))n++; d=addDays(d,1);} return n; })();
+  const CONV_MIN_DAYS=+R.convMinDataDays||5;
   /* MULTI-DAY VICIDIAL TALK LIVES ON A ROW WITH NO SHIFT, so the window would miss it.
      A range export has no per-day detail, so the engine parks its whole total on one
      anchor row with emp/act 0 and zeroes the day rows it covers — deliberately, one
@@ -4374,7 +4466,16 @@ function compositeFor(code, agent){
   /* ONE VAT BASIS PER COMPARISON. min_gwp_per_sale is quoted INCL VAT (R99) while
      every money figure in this engine is EX-VAT, the comms basis. Comparing them
      raw would make the value check ~15% stricter than the rule says. */
-  const gwpFloorEx=((grp&&grp.minGwpSale)||R.gwpFloorDefault||99)/MTD_VAT;
+  /* …AND TO THE CENT THE SOURCE BOOKS (found 2026-09-03, scoring audit against the
+     decision-rules workbook). R99 ÷ 1.15 = 86,0869…, but Salesforce books a R99
+     product's ex-VAT charge as R86,08 — so 30 of 59 agents whose every sale WAS the
+     R99 product read "To go" on Avg GWP per Sale with 25,0 of 25 points beside it,
+     and their Total GWP fell R0,06 short of a target they had met exactly. The floor
+     is therefore taken down to the cent, the way the money it is compared to is
+     stored. Still derived through MTD_VAT (verify-rule-constants) — this is the
+     rounding of the result, not a second VAT rate. */
+  const gwpFloorEx=Math.floor(((grp&&grp.minGwpSale)||R.gwpFloorDefault||99)/MTD_VAT*100)/100;
+  let convShown=null;                      // conversion when the month is too young to score it
   /* QA over the window's own days — evaluations are dated on the call, and an
      agent-day the window does not contain is not part of this rating. */
   const days=new Set(win.map(f=>f.date));
@@ -4412,9 +4513,11 @@ function compositeFor(code, agent){
                  var L=leadsFor(code); if(!L) return null;
                  var pa=(typeof primaryAgg==='function'?primaryAgg(code):null)||{};
                  var ps=+pa.sales||0;
-                 return ps?ps/L*100:0;      /* leads but no sales IS zero, not unmeasured */
+                 var v=ps?ps/L*100:0;      /* leads but no sales IS zero, not unmeasured */
+                 if(dataDays<CONV_MIN_DAYS){ convShown=v; return null; }   /* too early in the month: shown, not scored */
+                 return v;
                })(),
-    talk:      act>0?(talkSec/60)/act:null,
+    talk:      actWorked>0?(talkSec/60)/actWorked:null,
     attendance:emp>0?act/emp*100:null
   };
   const t={
@@ -4425,8 +4528,10 @@ function compositeFor(code, agent){
   /* The measure is real now, so the only thing worth saying beside it is which
      window it covers — because it is the one driver that is not the five-session
      window the rest of the card is built from. */
-  const shownFor={};
-  const shownNote={ conv:'your month to date — sales ÷ your unique leads' };
+  const shownFor={}; if(convShown!=null) shownFor.conv=convShown;
+  const shownNote={ conv:dataDays<CONV_MIN_DAYS
+    ?'your month to date so far (sales ÷ unique leads) — scored from the month\'s '+CONV_MIN_DAYS+'th working day, when it means something'
+    :'your month to date — sales ÷ your unique leads' };
   let raw=0,wsum=0;
   /* NO WORKED SESSION IS NOT A ZERO. An agent published before they have worked a day
      in the period — a new starter, or the first morning of a month — has nothing to
@@ -7770,8 +7875,33 @@ window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
    the commission model, a separate thing with its own review cycle.
    gwp values are ex-VAT month totals; comm is the payout at that bracket. */
 const COMM_RULES={
-  version:'2026-08',
+  version:'2026-09',            // Matrix Vas Comm Model_September26.xlsx — thresholds rebased 20→21 dial days
   saleValue:89/1.15,            // index.tsx:143 — ex-VAT value of one sale
+  brackets:{
+    M1:[{gwp:4063.04,comm:1250},{gwp:4469.35,comm:1833.33},{gwp:4875.65,comm:3000},{gwp:5688.26,comm:4136.36},
+        {gwp:6500.87,comm:5000},{gwp:7313.48,comm:5785.71},{gwp:8126.09,comm:6875},{gwp:9751.30,comm:8087.39}],
+    M2:[{gwp:4875.65,comm:1500},{gwp:5688.26,comm:2333.33},{gwp:6500.87,comm:4000},{gwp:7313.48,comm:5318.18},
+        {gwp:8126.09,comm:6250},{gwp:8938.70,comm:7071.43},{gwp:9751.30,comm:8250},{gwp:11376.52,comm:10293.04}],
+    EXP_COURTESY:[{gwp:6500.87,comm:2000},{gwp:7313.48,comm:3000},{gwp:8126.09,comm:5000},{gwp:8938.70,comm:6500},
+        {gwp:9751.30,comm:7500},{gwp:11376.52,comm:9000},{gwp:13001.74,comm:11000},{gwp:14626.96,comm:14626.96}],
+    EXP_CUDDLE:[{gwp:9751.30,comm:4000},{gwp:11376.52,comm:6000},{gwp:13001.74,comm:7500},{gwp:14626.96,comm:10000},
+        {gwp:16252.17,comm:11500},{gwp:17877.39,comm:14000},{gwp:19502.61,comm:17500},{gwp:21127.83,comm:21127.83},
+        {gwp:22753.04,comm:22753.04},{gwp:24378.26,comm:24378.26}]
+  }
+};
+/* A MONTH KEEPS ITS OWN COMMISSION MODEL (Nick, 2026-09-02: "this comms
+   calculator is for september" — yet the September table had rewritten the
+   AUGUST month view, pricing August's banked premium on brackets that did not
+   exist in August). COMM_RULES above is the CURRENT model and the one the
+   drift test compares to the reference source; this map pins each published
+   month to the model that was in force, so the portal's month filter shows an
+   agent what August actually paid, not what September would have. A month with
+   no entry (or any future month) rides the current model. When a new month's
+   workbook lands: COMM_RULES becomes the new model, and the OLD one is added
+   here under its month. */
+const COMM_RULES_2026_08={
+  version:'2026-08',            // the August model — 20 dial days, EXP_CUDDLE 8 brackets
+  saleValue:89/1.15,
   brackets:{
     M1:[{gwp:3869.57,comm:1250},{gwp:4256.52,comm:1833.33},{gwp:4643.48,comm:3000},{gwp:5417.39,comm:4136.36},
         {gwp:6191.30,comm:5000},{gwp:6965.22,comm:5785.71},{gwp:7739.13,comm:6875},{gwp:9286.96,comm:8087.39}],
@@ -7783,6 +7913,16 @@ const COMM_RULES={
         {gwp:15478.26,comm:11500},{gwp:17026.09,comm:14000},{gwp:18573.91,comm:17500},{gwp:20121.74,comm:20121.74}]
   }
 };
+const COMM_RULES_BY_MONTH={'2026-07':COMM_RULES_2026_08,'2026-08':COMM_RULES_2026_08};
+/* SA PUBLIC HOLIDAYS, observed dates (a Sunday holiday moves to Monday per the
+   Public Holidays Act; Saturday ones stay put and never touch a weekday count).
+   Used by workingDays and daysWithData in the agent digest. EXTEND EACH DECEMBER.
+   Mirrored in agent/index.html (SA_HOLIDAYS) for its fallback — keep them equal. */
+const SA_HOLIDAYS=new Set([
+  '2026-01-01','2026-03-21','2026-04-03','2026-04-06','2026-04-27','2026-05-01',
+  '2026-06-16','2026-08-10','2026-09-24','2026-12-16','2026-12-25','2026-12-26',
+  '2027-01-01','2027-03-22','2027-03-26','2027-03-29','2027-04-27','2027-05-01',
+  '2027-06-16','2027-08-09','2027-09-24','2027-12-16','2027-12-25','2027-12-27']);
 /* campaign+tenure -> commission bracket. The calculator's four bracket keys are
    a one-to-one match with salesTargetMatrix (MTD_RULES:501), which is why this
    map is a lookup and not a heuristic. 'M0' means the M0 calculator (commission
@@ -7983,6 +8123,10 @@ function agentDigestPayload(){
   return {
     v:1,
     updatedAt:new Date().toISOString(),
+    /* which cm:targets set these figures were built WITH — the settings page
+       compares this to the live stamp and says 'refreshing' instead of quietly
+       showing %-to-target computed on the previous targets */
+    cmTargetsStamp:(S.cmTargets&&S.cmTargets.stamp)||'',
     period:{from:M.range.from,to:M.range.to},
     /* TWO DIFFERENT DAY COUNTS, AND CONFUSING THEM BREAKS THE MONEY.
        diallingDays is days we HAVE DATA FOR — days elapsed. workingDays is every
@@ -7991,15 +8135,35 @@ function agentDigestPayload(){
        August had 14 days and ended tomorrow: it projected off 14 instead of 21 and
        told an agent on 23 August she had 1 day left, so "write R252 a day" (3 sales,
        reachable) printed as "write R2,012 a day" (26 sales in one day, absurd). */
+    /* ...AND A PUBLIC HOLIDAY IS NOT A WORKING DAY (Nick, 2026-09-02: "shouldn't
+       it be 21 working days not 22"). Bare weekdays said September 2026 has 22,
+       but the comm model (Matrix Vas Comm Model_September26.xlsx) is built on 21
+       dialling days because Heritage Day (Thu 24 Sep) is a weekday nobody dials.
+       August proved the same rule: 21 weekdays, DD 20 in the model — Women's Day
+       observed Mon 10 Aug. SA_HOLIDAYS below carries the observed dates (a Sunday
+       holiday moves to Monday per the Public Holidays Act; Saturday ones stay and
+       never touch this count). EXTEND IT EACH DECEMBER for the coming year. */
     /* Monday-anchored weeks inside the period, for the portal's Weekly view — the same
        M.weeks the Weekly tab here iterates, boundaries and all. */
     weeks:(M.weeks||[]).map(w=>({num:w.num,from:w.dates[0],to:w.dates[w.dates.length-1]})),
     diallingDays:M.diallingDays||M.dates.length||0,
     workingDays:(function(){let n=0,d=M.range.from;
-      while(d<=M.range.to){const w=new Date(d+'T00:00:00Z').getUTCDay();if(w>0&&w<6)n++;d=addDays(d,1);}
+      while(d<=M.range.to){const w=new Date(d+'T00:00:00Z').getUTCDay();if(w>0&&w<6&&!SA_HOLIDAYS.has(d))n++;d=addDays(d,1);}
       return n||M.diallingDays||M.dates.length||0;})(),
+    /* DAYS WITH DATA (Nick, 2026-09-03: "1st to 2nd is not 3 working days — do not
+       include today, today's stats are not included"). The agent page's "days worked"
+       came from the attendance register, which lands before the day's sales files —
+       so an agent read 3 days worked against 2 days of figures, and every per-day
+       number inherited the error. This is the count of working days from the 1st to
+       the LAST DATE THAT CARRIES FACTS (M.dates — the same list the period label
+       ends on). The page caps days-worked at it: a day counts once its files land. */
+    daysWithData:(function(){const last=(M.dates||[]).filter(x=>x>=M.range.from&&x<=M.range.to).sort().pop();
+      if(!last) return 0; let n=0,d=M.range.from;
+      while(d<=last){const w=new Date(d+'T00:00:00Z').getUTCDay();if(w>0&&w<6&&!SA_HOLIDAYS.has(d))n++;d=addDays(d,1);}
+      return n;})(),
     dates:M.dates,
-    comm:COMM_RULES,
+    /* the model that was in force for THIS period's month — see COMM_RULES_BY_MONTH */
+    comm:COMM_RULES_BY_MONTH[String(M.range.from||'').slice(0,7)]||COMM_RULES,
     /* One copy of the seven driver labels, notes and weights for the whole payload —
        see the note in compositeFor. The panel joins them to each agent's numbers. */
     compositeDrivers:COMPOSITE_RULES.drivers.map(d=>({k:d.k,label:d.label,note:d.note,w:d.w})),
@@ -8043,13 +8207,22 @@ function agentDigestPayload(){
       var body=JSON.stringify(p);
       var cmp=JSON.stringify(p.agents)+p.period.from+p.period.to;   // ignore updatedAt churn
       if(cmp===last) return; last=cmp;
-      fetch(API+'/api/kv?key=agent-digest',{method:'POST',
-        headers:{'Content-Type':'text/plain','Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'},
-        body:body}).catch(function(){});
-      /* THE MONTH'S HISTORY COPY (Nick 2026-08-26): the same payload filed under its own
-         month, so the portal can offer past months. The key freezes by itself when the
-         period rolls over - nothing rewrites July once August is being published. */
+      /* THE LIVE DIGEST IS THE CURRENT MONTH — NOTHING ELSE (Nick, 2026-09-03: "for
+         agents, their past months data keeps on showing"). The guard above only
+         asked for a period starting on the 1st, so a VAS browser reviewing AUGUST
+         republished August as kv:agent-digest every 90 seconds and every agent's
+         Today page rolled back a month while the calendar said 3 September. A past
+         month may refresh ITS OWN history key below; only the month we are in may
+         write the key the portal opens on. SAST month, never the device's. */
       var __dm=(p.period&&p.period.from?String(p.period.from).slice(0,7):'');
+      var __cur=new Date(Date.now()+2*3600000).toISOString().slice(0,7);
+      if(__dm===__cur)
+        fetch(API+'/api/kv?key=agent-digest',{method:'POST',
+          headers:{'Content-Type':'text/plain','Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'},
+          body:body}).catch(function(){});
+      /* THE MONTH'S HISTORY COPY (Nick 2026-08-26): the same payload filed under its own
+         month, so the portal can offer past months. Any month may refresh its own key;
+         only the live key above is fenced to the current month. */
       if(/^\d{4}-\d{2}$/.test(__dm))
         fetch(API+'/api/kv?key=agent-digest-'+__dm,{method:'POST',
           headers:{'Content-Type':'text/plain','Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'},

@@ -220,4 +220,32 @@ fs.mkdirSync(path.join(outDir, 'tracker'), { recursive: true });
 fs.copyFileSync(path.join(root, VT_REL), path.join(outDir, VT_REL));
 console.log('Wrote site/' + VT_REL + ' (embedded page).');
 
+// BUILD CONSISTENCY IS VERIFIED, NOT ASSUMED (2026-09-02). A run that died between
+// writing build.txt and rewriting an app shell left site/agent on the previous build
+// while build.txt moved on — deployed, that made EVERY agent tab, even freshly
+// reloaded, fail the stale check and show the "outdated version" banner forever
+// ("the reload keeps coming"). The failure was invisible because the caller piped
+// the output away and shell-chained to the deploy regardless. So the tool now reads
+// back everything it wrote and refuses to finish unless every shell carries THIS
+// run's build id — a partial site/ exits nonzero and names the file.
+{
+  const shells = ['index.html', 'pulse/index.html', 'tracker/index.html',
+    'agent/index.html', 'agent-preview/index.html'];
+  const bad = [];
+  for (const rel of shells) {
+    const p = path.join(outDir, rel);
+    if (!fs.existsSync(p)) { bad.push(rel + ' (missing)'); continue; }
+    const m = fs.readFileSync(p, 'utf8').match(/CBX_BUILD='([^']+)'/);
+    if (!m || m[1] !== BUILD) bad.push(rel + ' (carries ' + (m ? m[1] : 'no build id') + ', want ' + BUILD + ')');
+  }
+  const bt = fs.readFileSync(path.join(outDir, 'build.txt'), 'utf8').trim();
+  if (bt !== BUILD) bad.push('build.txt (says ' + bt + ', want ' + BUILD + ')');
+  if (bad.length) {
+    console.error('BUILD INCONSISTENT — deploying this site/ would trap every tab in the stale banner:');
+    for (const b of bad) console.error('  ' + b);
+    process.exit(1);
+  }
+  console.log('Build consistency verified: all ' + shells.length + ' shells + build.txt carry ' + BUILD + '.');
+}
+
 console.log('Next: /deploy  (npx wrangler pages deploy site --project-name chatterbox-agentos)');

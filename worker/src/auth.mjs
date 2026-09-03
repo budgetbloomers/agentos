@@ -114,7 +114,12 @@ export async function login(DB, req, body, ctx) {
          and locked them out. One query fetches both events and the tally stops at the last
          login_ok. */
       const since = new Date(Date.now() - LOCK_MIN * 60000).toISOString();
-      const rows = await DB.select(`auth_log?username=eq.${encodeURIComponent(username)}&at=gte.${since}&select=event,at&order=at.desc&limit=60`);
+      /* COUNTED PER ACCOUNT, NOT PER SPELLING (audit, 2026-09-03). The log used to be
+         read back by the username as TYPED, so an account reachable two ways — `dalwin`
+         and its CB `cb145` — carried two independent tallies and alternating them
+         doubled the guesses before the lock. Every failure row above carries the resolved
+         user_id, so that is what is counted. */
+      const rows = await DB.select(`auth_log?user_id=eq.${u.id}&at=gte.${since}&select=event,at&order=at.desc&limit=60`);
       let n = 0;
       for (const r of (rows || [])) {
         if (String(r.event || '') === 'login_ok') break;      // everything older is settled

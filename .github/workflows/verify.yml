@@ -1,0 +1,56 @@
+name: verify
+
+# THE 70 SUITES RUN THEMSELVES (audit, 2026-09-03). Until now every diagnostic ran only
+# when a human remembered; two suites rotted for days unnoticed. This job runs the suites
+# that need no live credentials on every push, and — when the Supabase secrets are set on
+# the repository — the live ones too. A red run here should block a deploy.
+#
+# Secrets (Settings → Secrets → Actions): SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_DB_URL.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Install diagnostics deps (playwright, xlsx, pg)
+        working-directory: nicks_code/diagnostics
+        run: |
+          npm install --no-audit --no-fund
+          npm install --no-save pg@8
+          npx playwright install --with-deps chromium
+
+      - name: Build site/ (consistency check included)
+        run: node tools/prepare-site.js
+
+      - name: Credential-free suites
+        run: |
+          set -e
+          for t in verify-agent-analytics verify-wimpy verify-engine-rules verify-rule-constants \
+                   verify-cm-targets verify-campaign-manager verify-perf-score verify-history \
+                   verify-tbc-backdate verify-variance verify-save-acks verify-login-lockout; do
+            echo "== $t =="; node nicks_code/diagnostics/$t.mjs
+          done
+
+      - name: Live suites (only when secrets are present)
+        if: ${{ secrets.SUPABASE_SECRET_KEY != '' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -e
+          printf 'SUPABASE_URL=%s\nSUPABASE_SECRET_KEY=%s\nSUPABASE_DB_URL=%s\n' "$SUPABASE_URL" "$SUPABASE_SECRET_KEY" "$SUPABASE_DB_URL" > supabase.env
+          for t in verify-composite-score verify-agent-sync verify-campaign-sync verify-all-tabs \
+                   verify-live-integrity verify-agent-list verify-roster-changes verify-nba-publish; do
+            echo "== $t =="; node nicks_code/diagnostics/$t.mjs
+          done

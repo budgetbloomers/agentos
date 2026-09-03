@@ -1,0 +1,55 @@
+name: publish digests
+
+# THE DIGESTS NO LONGER NEED A BROWSER OPEN ON SOMEBODY'S DESK (audit, 2026-09-03).
+# Until now the agent digest republished only while a signed-in VAS tab was open, the Ops
+# NBA digest only when an Ops tab was, the Coaching Hub snapshot and the Supabase lake
+# only when a human ran a tool. This schedule runs the same headless tools from the cloud
+# — nothing local, per the ZERO-LOCAL rule — every fifteen minutes during the South
+# African working day (06:00–18:00 SAST = 04:00–16:00 UTC), plus the coaching snapshot
+# and the lake load once a day.
+#
+# Secrets (Settings → Secrets → Actions): SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_DB_URL.
+# Each tool writes Storage directly and is idempotent; a failed run changes nothing.
+
+on:
+  schedule:
+    - cron: '*/15 4-16 * * 1-5'     # digests, working hours, weekdays (UTC)
+    - cron: '30 3 * * *'            # daily: coaching snapshot + lake load
+  workflow_dispatch:
+
+concurrency: { group: publish-digests, cancel-in-progress: false }
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Credentials
+        run: printf 'SUPABASE_URL=%s\nSUPABASE_SECRET_KEY=%s\nSUPABASE_DB_URL=%s\n' "$SUPABASE_URL" "$SUPABASE_SECRET_KEY" "$SUPABASE_DB_URL" > supabase.env
+      - name: Install deps
+        working-directory: nicks_code/diagnostics
+        run: |
+          npm install --no-audit --no-fund
+          npm install --no-save pg@8
+          npx playwright install --with-deps chromium
+      - name: Build the deployed engines locally (the tools drive site/)
+        run: node tools/prepare-site.js
+
+      - name: Agent digest — live month + history (PULSE engine, headless)
+        run: node tools/digest-republish.mjs --apply --history
+      - name: NBA digest (Ops engine, headless)
+        run: node tools/nba-republish.mjs --apply
+
+      - name: Coaching Hub snapshot (daily run only)
+        if: ${{ github.event.schedule == '30 3 * * *' || github.event_name == 'workflow_dispatch' }}
+        run: node tools/sync-coaching-hub.mjs
+      - name: Supabase lake load (daily run only)
+        if: ${{ github.event.schedule == '30 3 * * *' || github.event_name == 'workflow_dispatch' }}
+        run: node tools/lake-load.mjs

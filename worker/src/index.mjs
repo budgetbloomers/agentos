@@ -11,9 +11,9 @@ import { getCoaching, rollUp, sessionsForAgent, withinWindow } from './coaching.
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, listDigestMonths, overview, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn } from './help.mjs';
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
-import { loadCmContext, eodMarkdown, cmOverviewBody } from './campaign.mjs';
+import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, effPerDay } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
-import { syncAgentLogins, syncTeamLeaders } from './provision.mjs';
+import { syncAgentLogins, syncTeamLeaders, syncCampaigns } from './provision.mjs';
 import { runHealthChecks, dailySnapshots, hygiene, logKvWrite } from './health.mjs';
 import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
 
@@ -302,6 +302,20 @@ export default {
             else console.warn('[cron] agent list NOT synced — ' + g.status + ': '
               + (g.detail || '') + ' ' + JSON.stringify(g.errors || g.reason || ''));
           } catch (e) { console.warn('[cron] agent login sync failed: ' + (e && e.message || e)); }
+
+          /* CAMPAIGNS FOLLOW THE SAME LIST (Nick, 2026-09-03). A campaign named on the
+             list for the first time is CREATED and named here so somebody sets its
+             targets and owner; one no agent carries is deactivated, never deleted. */
+          try {
+            const k = await syncCampaigns(DB, { actor: 'cron' });
+            const n = (x) => (k[x] || []).length;
+            if (k.status === 'SUCCESS' && (n('created') || n('reactivated') || n('deactivated')))
+              console.info('[cron] campaigns synced — +' + n('created') + ' created, ' + n('reactivated') + ' reactivated, -' + n('deactivated') + ' deactivated'
+                + (n('created') ? ' NEW (needs targets + owner): ' + k.created.map((c) => c.label + ' (' + c.agents + ')').join(', ') : '')
+                + (n('deactivated') ? ' quiet: ' + k.deactivated.map((c) => c.label).join(', ') : ''));
+            else if (k.status && k.status !== 'SUCCESS')
+              console.warn('[cron] campaigns NOT synced — ' + k.status + ': ' + (k.detail || ''));
+          } catch (e) { console.warn('[cron] campaign sync failed: ' + (e && e.message || e)); }
 
           /* LEADERS FOLLOW THE SAME LIST. Cheap when nothing has moved: one query over
              the current list and the leader accounts, no writes. */
@@ -703,6 +717,17 @@ export default {
         const ctx = globalThis.__cmCtx || await loadCmContext(DB);
         try {
           let r = { status: 404, body: { error: 'Unknown route.' } };
+          /* THE TARGET SETTINGS — campaign managers for their own campaigns, admin
+             for all. Everyone else is refused before a byte of settings leaves. */
+          if (path === '/api/portal/cm/settings') {
+            if (user.role !== 'campaign_manager' && user.role !== 'admin')
+              return json({ error: 'Target settings are a campaign manager page.' }, 403);
+            const auth2 = { role: user.role, username: user.username };
+            if (req.method === 'GET') r = cmSettingsBody(digest, auth2, ctx);
+            else if (req.method === 'POST') r = await cmSettingsApply(DB, auth2, ctx, await req.json().catch(() => ({})));
+            if (r && r.error && r.status) r = { status: r.status, body: { error: r.error } };
+            return json(r.body, r.status);
+          }
           if (path === '/api/portal/cm/request' && req.method === 'POST') r = await assistCreate(env, DB, user, digest, ctx, await req.json().catch(() => ({})));
           else if (path === '/api/portal/cm/assist' && req.method === 'GET') r = await assistList(env, DB, user, digest, ctx);
           else if (path === '/api/portal/cm/detail' && req.method === 'GET') r = await assistDetail(env, DB, user, digest, ctx, url.searchParams.get('id') || '');
@@ -794,6 +819,10 @@ export default {
         const b = await req.json();
         if (!b.new_password || String(b.new_password).length < 10) return json({ error: 'Password must be at least 10 characters.' }, 400);
         await DB.update(`app_users?id=eq.${user.user_id}`, { password_hash: await hashPassword(String(b.new_password)), must_change_password: false });
+        /* AUDITED (2026-09-03). A password change wrote no log row, so "was it changed or
+           forgotten" could not be answered — exactly the question the Dalwin lockout needed. */
+        ctx.waitUntil(DB.insert('auth_log', [{ user_id: user.user_id, username: user.username, event: 'password_change',
+          ip: req.headers.get('cf-connecting-ip') || '' }]).catch(() => {}));
         return json({ ok: true });
       }
 
@@ -884,6 +913,14 @@ export default {
       // PULSE's live roster in a payload small enough for AgentOS to check on every boot. The
       // fingerprint is order-independent and moves ONLY when a roster field changes — never on
       // the constant vas-state saves — so the client can compare cheaply and skip re-ingesting.
+      /* THE CAMPAIGNS THE LIST CURRENTLY NAMES (migration-019). Read from the table the
+         sync maintains, never from a hardcoded set — any app that needs "which campaigns
+         exist" asks here. */
+      if (path === '/api/campaigns' && req.method === 'GET') {
+        const rows = await DB.select('active_campaigns?select=key,label,agents,first_seen,last_seen').catch(() => null);
+        if (!rows) return json({ error: 'campaigns unavailable' }, 502);
+        return json({ campaigns: rows, n: rows.length });
+      }
       if (path === '/api/roster' && req.method === 'GET') {
         /* THE ROSTER OF RECORD WINS IF THERE IS ONE. Until 2026-08-28 this route derived
            the roster from kv:vas-state, which meant only the VAS app could ever publish
@@ -895,17 +932,40 @@ export default {
            it is a copy of the derivation, not a published list, so serving it would answer
            this route from a snapshot that can no longer move. Falling through re-derives
            and refreshes the seed in one go. */
+        /* THE TARGET SERVED IS THE RULE'S, NOT THE CELL'S (Nick, 2026-09-01: a target
+           Dalwin sets "must change on the dashboard as well"). Every row's Target is
+           resolved through the same chain PULSE's engine uses — cm:targets override,
+           then the salesTargetMatrix, then the list's own cell — so Ops scores against
+           the campaign manager's number the moment it next syncs. The stored list is
+           untouched; this is applied at serve time and clearing the override restores
+           the list's value on the next sync. */
+        const tctx = globalThis.__cmCtx || await loadCmContext(DB).catch(() => null);
+        const applyTargets = (rows) => (rows || []).map((r2) =>
+          ({ ...r2, target: effPerDay(tctx, r2.campaign, r2.tenure, r2.target) }));
+        const tstamp = (tctx && tctx.targets && tctx.targets.stamp) || '';
         const cur = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-current')}&select=value,updated_at`).catch(() => null);
         const rec = cur && cur[0] && cur[0].value;
         if (rec && Array.isArray(rec.roster) && rec.roster.length && rec.source !== 'seed') {
           return json({ fingerprint: rec.fingerprint, n: rec.roster.length, as_of: rec.as_of || '',
             file: rec.file || '', source: rec.source || '', uploaded_by: rec.uploaded_by || '',
             uploaded_at: rec.uploaded_at || '', state_updated_at: (cur[0].updated_at || ''),
-            roster: rec.roster });
+            targets_stamp: tstamp, roster: applyTargets(rec.roster) });
         }
         const payload = await rosterSync(env, DB, { fresh: !!url.searchParams.get('fresh'), who: user && user.username });
         if (payload && payload.error) return json({ error: payload.error }, payload.status || 500);
+        if (payload && Array.isArray(payload.roster)) { payload.roster = applyTargets(payload.roster); payload.targets_stamp = tstamp; }
         return json(payload);
+      }
+
+      /* THE CAMPAIGN TARGET OVERRIDES, for the apps' engines (PULSE overlays them on
+         its salesTargetMatrix at its one target choke point). Override map only —
+         each engine keeps its own rule-book base, so this can never smuggle in a
+         different default. Any signed-in session may read it: targets are printed
+         on every agent's own card, they are not a secret. */
+      if (path === '/api/cm-targets' && req.method === 'GET') {
+        const c2 = globalThis.__cmCtx || await loadCmContext(DB).catch(() => null);
+        const t2 = (c2 && c2.targets) || {};
+        return json({ matrix: t2.matrix || {}, gwpMonth: t2.gwpMonth || {}, stamp: t2.stamp || '' });
       }
 
       /* PUBLISH AN AGENT LIST FROM EITHER APP (Nick, 2026-08-28: "the list changes
@@ -982,8 +1042,15 @@ export default {
         let leaders = null;
         try { leaders = await syncTeamLeaders(DB, { actor: (user && user.username) || 'roster-post' }); }
         catch (e) { leaders = { status: 'FAILED', errors: [String((e && e.message) || e)] }; }
+        /* CAMPAIGNS ON THE SAME UPLOAD (Nick, 2026-09-03). A campaign this list names
+           for the first time is created now and returned in `campaigns.created`, so the
+           uploader is told "new campaign — set its targets and owner" in the same answer. */
+        let campaigns = null;
+        try { campaigns = await syncCampaigns(DB, { actor: (user && user.username) || 'roster-post' }); }
+        catch (e) { campaigns = { status: 'FAILED', errors: [String((e && e.message) || e)] }; }
+        if (campaigns && campaigns.status === 'SUCCESS' && (campaigns.created || []).length) globalThis.__cmCtx = null;  // the CM context must see it now
         return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length,
-          mirrored, replaced: rec.replaced, sync, leaders });
+          mirrored, replaced: rec.replaced, sync, leaders, campaigns });
       }
 
       // ---------- upload relay: one Upload Station feeds BOTH dashboards ----------
@@ -1208,6 +1275,21 @@ export default {
               return json({ error: 'could not decompress the upload: ' + (e && e.message || e) }, 400);
             }
           } else body = new TextDecoder().decode(buf);
+        }
+        /* THE LIVE AGENT DIGEST MUST BE THE CURRENT MONTH (Nick, 2026-09-03). A PULSE tab
+           reviewing a past month republished it as kv:agent-digest, and every agent's
+           Today page read August on 3 September. The publisher now fences itself, but a
+           tab on an older build cannot be fixed from here — so the server refuses the
+           write too: a live-key payload whose period is not the current SAST month is
+           409'd. History keys (agent-digest-YYYY-MM) are untouched; the republish tool
+           writes Storage directly and is unaffected. */
+        if (qk === 'agent-digest') {
+          try {
+            const from = String((JSON.parse(body).period || {}).from || '');
+            const cur = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
+            if (from.slice(0, 7) !== cur)
+              return json({ error: 'stale_month: the live agent digest must be the current month (' + cur + '), got ' + (from || 'no period') + '. Publish it under its own agent-digest-YYYY-MM key instead.' }, 409);
+          } catch (e) { return json({ error: 'agent-digest body is not JSON with a period' }, 400); }
         }
         if (qk === 'vas-state' && body.length < 120000 && !url.searchParams.get('force')) {
           const head = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {

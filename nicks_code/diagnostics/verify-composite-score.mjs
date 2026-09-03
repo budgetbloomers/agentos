@@ -189,7 +189,10 @@ const chain = await page.evaluate(() => {
   const get = () => { const c = window.__mtd.composite(code), M = window.__mtd.model();
     return { camp: M.primaryCamp[code], tl: (M.agents.find(a => a.code === code) || {}).tl,
       group: c.group, conv: c.parts.find(p => p.k === 'conv').target,
-      gwpTotal: Math.round(c.parts.find(p => p.k === 'gwpTotal').target), score: c.score }; };
+      gwpTotal: Math.round(c.parts.find(p => p.k === 'gwpTotal').target), score: c.score,
+      /* the points the two group-dependent drivers actually pay — when both are zero on
+         both sides (attainment under the floor either way) the score legitimately stays put */
+      movable: c.parts.find(p => p.k === 'conv').points + c.parts.find(p => p.k === 'gwpTotal').points }; };
   const before = get();
   /* the roster snapshot ALONE must not move a reported month — history owns it */
   const row = (S.roster || []).find(a => a.code === code);
@@ -218,8 +221,11 @@ else {
   ok('and the composite follows it — tenure group, targets and score',
     chain.after.group !== chain.before.group && chain.after.conv !== chain.before.conv &&
     chain.after.gwpTotal !== chain.before.gwpTotal &&
-    /* both sides pinned to the floor is a legitimate equal score, not a broken chain */
+    /* an equal score is legitimate when the group-dependent drivers pay nothing on either
+       side (under the floor both ways — seen 2026-09-03 on two days of September data),
+       or when both sides sit exactly on the floor; the targets above prove the chain moved */
     (chain.after.score !== chain.before.score ||
+      (chain.before.movable === 0 && chain.after.movable === 0) ||
       (chain.before.score === chain.floor && chain.after.score === chain.floor)),
     JSON.stringify({ before: chain.before, after: chain.after, floor: chain.floor }));
 }
@@ -337,8 +343,11 @@ ok('the unmeasured driver draws no solid bar', view.bars.find(b => b.k === 'conv
 const barBad = view.bars.filter(b => b.solidPct != null && Math.abs(b.solidPct - b.wantPct) > 1.5);
 ok('the solid run of each bar is proportional to its points', barBad.length === 0, JSON.stringify(barBad));
 ok('the floor caption appears once, under the rows', view.hasFloorCaption);
-ok('both adjustment ladders show, including the clear one', view.showsBothLadders);
-ok('each adjustment says how it clears', view.clearsBoth);
+/* 2026-09-02 (Nick): the "What is changing your score" panel — both ladders and their
+   clearing rules — is REMOVED from the agent view. The deductions still apply and the
+   tally still reconciles below; only the itemised display is gone. */
+ok('the adjustment ladders are no longer rendered (removed on Nick’s instruction)', !view.showsBothLadders);
+ok('nor their clearing rules', !view.clearsBoth);
 ok('the word "penalty" never appears — it is an adjustment', !view.saysPenalty);
 ok('the tally line reconciles', /Composite 58[.,]1\s+−\s+2[.,]0 adjustment\s+=\s+56[.,]1 out of 100/
   .test(view.tally.replace(/\s+/g, ' ')), JSON.stringify(view.tally));

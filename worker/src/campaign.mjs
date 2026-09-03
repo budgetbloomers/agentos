@@ -83,14 +83,66 @@ export const CM_ASSIGN_DEFAULTS = {
  * browser tab open (the same reasoning as the kv:agent-teams floor).
  */
 const CACHE_MIN = 5;
+/* ---------------------------------------------------------------------------
+   CAMPAIGN TARGET SETTINGS (Nick, 2026-09-01: Dalwin "must have a setting page
+   to change targets of different campaigns … this is the new targets that was
+   set by him"). One rules row, cm:targets:
+
+     { matrix:   { "Courtesy|Exp": 6, … }        — sales/agent/day overrides
+       gwpMonth: { courtesy: 120000, … }         — campaign GWP target (month)
+       sla:      { courtesy: { qa_target: 85 } } — per-campaign quality dials
+       stamp:    ISO of the last change
+       log:      [{at, by, kind, key, old, new}] — append-only, capped }
+
+   The MATRIX overlays PULSE's salesTargetMatrix. The daily target became a
+   RULE, not a cell, on 2026-08-20; this makes that rule live-editable per
+   campaign. PULSE reads the same override at its one target choke point and
+   republishes the digest, and /api/roster serves overridden per-agent targets
+   to Ops — so agents, team leaders, both dashboards and this view read ONE
+   number. The Agent List's Target column is never rewritten: clearing an
+   override restores it exactly.
+
+   SALES_TARGET_MATRIX_DEFAULTS mirrors specs/mtd_engine_rules.json
+   reference_data.sales_target_matrix (drift-guarded by verify-cm-targets.mjs):
+   the Worker needs the base so a settings screen can say what "inherited"
+   means, and so /api/roster serves rule targets, not stale roster cells. */
+export const SALES_TARGET_MATRIX_DEFAULTS =
+  { 'Cuddle|Exp': 8, 'Courtesy|Exp': 5, 'Courtesy|M2': 4, 'Courtesy|M1': 3, 'Nesting|M0': 2, 'Nesting|*': 2 };
+
+export const CM_TARGET_BOUNDS = {
+  matrix:   { min: 0.5, max: 20 },          // sales per agent per day
+  gwpMonth: { min: 1000, max: 5000000 },    // rand, inclusive of VAT as displayed
+  sla: { qa_target: { min: 50, max: 100 }, talk_target: { min: 30, max: 480 },
+         att_target: { min: 50, max: 100 }, conv_target: { min: 1, max: 100 } },
+};
+
+const emptyTargets = () => ({ matrix: {}, gwpMonth: {}, sla: {}, stamp: '', log: [] });
+
+/* The one precedence everyone must share (PULSE mirrors this chain verbatim):
+   override exact → override campaign-wide → rule-book exact → rule-book
+   campaign-wide → the Agent List's own cell. */
+export function effPerDay(ctx, campaign, tenure, listFallback) {
+  const ov = (ctx && ctx.targets && ctx.targets.matrix) || {};
+  const tm = SALES_TARGET_MATRIX_DEFAULTS;
+  const c = norm(campaign), t = norm(tenure);
+  return ov[c + '|' + t] ?? ov[c + '|*'] ?? tm[c + '|' + t] ?? tm[c + '|*'] ?? (Number(listFallback) || 0);
+}
+export const slaFor = (ctx, key) =>
+  ({ ...((ctx && ctx.sla) || CM_SLA_DEFAULTS), ...((ctx && ctx.targets && ctx.targets.sla && ctx.targets.sla[key]) || {}) });
+
 export async function loadCmContext(DB, { force = false } = {}) {
   const c = globalThis.__cmCtx;
   if (!force && c && Date.now() - c.t < CACHE_MIN * 60000) return c;
 
-  const keys = ['cm:sla', 'cm:blockages', 'cm:assignments'].map(encodeURIComponent).join(',');
-  const [rules, tls] = await Promise.all([
+  const keys = ['cm:sla', 'cm:blockages', 'cm:assignments', 'cm:targets'].map(encodeURIComponent).join(',');
+  const [rules, tls, camps] = await Promise.all([
     DB.select(`rules?key=in.(${keys})&select=key,value`).catch(() => []),
     DB.select('app_users?role=eq.team_leader&active=is.true&select=username,full_name,cb,team').catch(() => []),
+    /* the campaigns the current Agent List names (migration-019) — the one list of
+       "what campaigns exist"; the hardcoded assignment defaults below are only who
+       RUNS them, and a campaign created by the list with no owner yet is exactly
+       what `campaigns` lets the settings screen say out loud */
+    DB.select('active_campaigns?select=key,label,agents,first_seen,last_seen').catch(() => []),
   ]);
   const byKey = {}; for (const r of rules || []) byKey[r.key] = r.value;
 
@@ -99,6 +151,8 @@ export async function loadCmContext(DB, { force = false } = {}) {
     ? byKey['cm:blockages'] : CM_BLOCKAGES_DEFAULTS;
   const assign = byKey['cm:assignments'] && typeof byKey['cm:assignments'] === 'object'
     ? byKey['cm:assignments'] : CM_ASSIGN_DEFAULTS;
+  const targets = byKey['cm:targets'] && typeof byKey['cm:targets'] === 'object'
+    ? { ...emptyTargets(), ...byKey['cm:targets'] } : emptyTargets();
 
   /* team-name → {cb, name}. The team_leader row's `team` column is the exact
      Agent List spelling the digest's `tl` carries (provisioning writes both). */
@@ -108,9 +162,141 @@ export async function loadCmContext(DB, { force = false } = {}) {
     leaders[team] = { cb: norm(t.cb).toUpperCase(), name: t.full_name || t.username, username: t.username };
   }
 
-  const ctx = { t: Date.now(), sla, blockages, assign, leaders };
+  const ctx = { t: Date.now(), sla, blockages, assign, leaders, targets, campaigns: Array.isArray(camps) ? camps : [] };
   globalThis.__cmCtx = ctx;
   return ctx;
+}
+
+/* ---------------------------------------------------------------------------
+   THE SETTINGS SCREEN'S TWO HALVES. GET builds what the page shows — effective
+   value beside inherited value for every dial, so an adjusted target can never
+   masquerade as the rule book's own — and POST applies exactly ONE change,
+   validated, bounded, signed and logged. Both are gated to campaign managers
+   (their assigned campaigns only) and admin (all campaigns).
+   --------------------------------------------------------------------------- */
+/* WHICH CAMPAIGNS A MANAGER RUNS: their assignment, PLUS every active campaign the Agent
+   List has created (migration-019) that nobody is assigned to (Nick, 2026-09-03: a new
+   campaign goes to every campaign manager until narrowed — narrowing is a cm:assignments
+   row edit). VT never carries digest rows, so it never reaches a screen. An account with
+   no assignment row at all is not a campaign manager and gets nothing. */
+export function effectiveCamps(ctx, username) {
+  const assign = (ctx && ctx.assign) || {};
+  const a = assign[String(username || '').toLowerCase()] || null;
+  if (!a) return [];
+  const mine = Array.isArray(a.campaigns) ? a.campaigns.map((c) => campKey(c)).filter(Boolean) : [];
+  const owned = new Set(Object.values(assign).flatMap((x) =>
+    (x && Array.isArray(x.campaigns) ? x.campaigns : []).map((c) => campKey(c))));
+  const unowned = ((ctx && ctx.campaigns) || []).map((c) => campKey(c.key || c.label))
+    .filter((k) => k && k !== 'vt' && !owned.has(k) && !mine.includes(k));
+  return mine.concat(unowned);
+}
+const cmCampsFor = (ctx, user) => {
+  if (user.role === 'admin') return null;                       // null = every campaign
+  return effectiveCamps(ctx, user.username);
+};
+
+export function cmSettingsBody(digest, user, ctx) {
+  const allowed = cmCampsFor(ctx, user);
+  if (allowed && !allowed.length) return { error: 'This account is not assigned to a campaign.', status: 403 };
+  const t = ctx.targets || emptyTargets();
+  /* campaigns come from the matrix keys (the rule book knows the floor), scoped
+     to what this account runs; labels from the digest when it holds the campaign */
+  const camps = {};
+  for (const k of Object.keys(SALES_TARGET_MATRIX_DEFAULTS).concat(Object.keys(t.matrix || {}))) {
+    const camp = k.split('|')[0]; const key = campKey(camp);
+    if (allowed && !allowed.includes(key)) continue;
+    (camps[key] = camps[key] || { key, label: camp, rows: {} }).rows[k] = true;
+  }
+  /* CAMPAIGNS THE LIST CREATED THAT THE RULE BOOK HAS NO ROW FOR (migration-019, Nick
+     2026-09-03: created with NO targets). They appear with one campaign-wide row so a
+     target can be set, and are flagged NEW until something is — the agent page shows
+     "new — targets not set" so nobody mistakes an inherited blank for a decision. */
+  const newKeys = new Set();
+  for (const c of (ctx.campaigns || [])) {
+    const key = campKey(c.key || c.label); if (!key || key === 'vt') continue;
+    if (allowed && !allowed.includes(key)) continue;
+    if (!camps[key]) { camps[key] = { key, label: c.label, rows: {} }; camps[key].rows[c.label + '|*'] = true; newKeys.add(key); }
+  }
+  const digestCamps = new Set(((digest && digest.agents && Object.values(digest.agents)) || [])
+    .map((a) => norm(a.campaign)).filter(Boolean));
+  const out = Object.values(camps).map((c) => {
+    const ov = t.matrix || {};
+    const rows = Object.keys(c.rows).sort().map((k) => ({
+      k, tenure: k.split('|')[1],
+      base: SALES_TARGET_MATRIX_DEFAULTS[k] ?? null,
+      set: ov[k] ?? null,
+      eff: ov[k] ?? ov[c.label + '|*'] ?? SALES_TARGET_MATRIX_DEFAULTS[k] ?? SALES_TARGET_MATRIX_DEFAULTS[c.label + '|*'] ?? null,
+    }));
+    const slaC = slaFor(ctx, c.key), slaSet = (t.sla || {})[c.key] || {};
+    const hasTargets = rows.some((r) => r.set != null) || ((t.gwpMonth || {})[c.key] != null) || Object.keys(slaSet).length > 0;
+    return { key: c.key, label: c.label, inDigest: digestCamps.has(c.label), isNew: newKeys.has(c.key), hasTargets, rows,
+      gwpMonth: { set: (t.gwpMonth || {})[c.key] ?? null },
+      sla: Object.keys(CM_TARGET_BOUNDS.sla).map((k) => ({
+        k, base: (ctx.sla || CM_SLA_DEFAULTS)[k], set: slaSet[k] ?? null, eff: slaC[k] })) };
+  });
+  /* the digest tells us which targets it was built WITH — until PULSE
+     republishes, the numbers on the other tabs run on the previous set */
+  const pending = !!(t.stamp && (digest && digest.cmTargetsStamp) !== t.stamp);
+  return { status: 200, body: { campaigns: out, bounds: CM_TARGET_BOUNDS, stamp: t.stamp || '',
+    pendingDigest: pending, log: (t.log || []).slice(-20).reverse() } };
+}
+
+export async function cmSettingsApply(DB, user, ctx, body) {
+  const allowed = cmCampsFor(ctx, user);
+  if (allowed && !allowed.length) return { status: 403, body: { error: 'This account is not assigned to a campaign.' } };
+  const kind = String(body && body.kind || '');
+  const rawKey = norm(body && body.key);
+  const value = (body && body.value == null) ? null : Number(body.value);
+  if (value != null && (isNaN(value) || !isFinite(value))) return { status: 400, body: { error: 'The value is not a number.' } };
+
+  /* which campaign is being touched, and may this account touch it */
+  let campPart = '';
+  if (kind === 'matrix') campPart = campKey(rawKey.split('|')[0]);
+  else campPart = campKey(rawKey.split(':')[0]);
+  if (!campPart) return { status: 400, body: { error: 'No campaign in the key.' } };
+  if (allowed && !allowed.includes(campPart))
+    return { status: 403, body: { error: 'That campaign is not assigned to this account.' } };
+
+  /* bounds — a fat-fingered value is refused with the range, never stored */
+  const t = { ...emptyTargets(), ...(ctx.targets || {}) };
+  t.matrix = { ...t.matrix }; t.gwpMonth = { ...t.gwpMonth }; t.sla = { ...t.sla };
+  let old = null;
+  if (kind === 'matrix') {
+    if (!/^[A-Za-z ]+\|(\*|[A-Za-z0-9]+)$/.test(rawKey)) return { status: 400, body: { error: 'Bad matrix key.' } };
+    const b = CM_TARGET_BOUNDS.matrix;
+    if (value != null && (value < b.min || value > b.max))
+      return { status: 400, body: { error: `Sales/agent/day must be between ${b.min} and ${b.max}.` } };
+    old = t.matrix[rawKey] ?? null;
+    if (value == null) delete t.matrix[rawKey]; else t.matrix[rawKey] = value;
+  } else if (kind === 'gwpMonth') {
+    const b = CM_TARGET_BOUNDS.gwpMonth;
+    if (value != null && (value < b.min || value > b.max))
+      return { status: 400, body: { error: `GWP/month must be between R${b.min} and R${b.max}.` } };
+    old = t.gwpMonth[campPart] ?? null;
+    if (value == null) delete t.gwpMonth[campPart]; else t.gwpMonth[campPart] = value;
+  } else if (kind === 'sla') {
+    const dial = rawKey.split(':')[1] || '';
+    const b = CM_TARGET_BOUNDS.sla[dial];
+    if (!b) return { status: 400, body: { error: 'Unknown quality dial: ' + dial } };
+    if (value != null && (value < b.min || value > b.max))
+      return { status: 400, body: { error: `${dial} must be between ${b.min} and ${b.max}.` } };
+    const cur = { ...(t.sla[campPart] || {}) };
+    old = cur[dial] ?? null;
+    if (value == null) delete cur[dial]; else cur[dial] = value;
+    if (Object.keys(cur).length) t.sla[campPart] = cur; else delete t.sla[campPart];
+  } else return { status: 400, body: { error: 'Unknown setting kind.' } };
+
+  if (old === value || (old == null && value == null))
+    return { status: 200, body: { unchanged: true, stamp: t.stamp } };
+
+  t.stamp = new Date().toISOString();
+  t.log = [...(t.log || []), { at: t.stamp, by: user.username, kind, key: rawKey, old, new: value }].slice(-200);
+
+  const w = await DB.insert('rules?on_conflict=key',
+    [{ key: 'cm:targets', value: t, updated_by: user.username }], true).catch((e) => ({ error: String(e && e.message || e) }));
+  if (w && w.error) return { status: 502, body: { error: 'The change did not save: ' + w.error } };
+  await loadCmContext(DB, { force: true });
+  return { status: 200, body: { saved: true, kind, key: rawKey, old, new: value, stamp: t.stamp } };
 }
 
 export const blockageOf = (ctx, key) =>
@@ -240,6 +426,10 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
   for (const key of auth.campaigns || []) {
     const rows = (auth.rows || []).filter((a) => campKey(a.campaign) === key);
     const label = rows.length ? norm(rows[0].campaign) : key.charAt(0).toUpperCase() + key.slice(1);
+    /* Per-campaign dials (cm:targets settings) sit over the global cm:sla row —
+       Courtesy and Cuddle can run different QA/talk/attendance/conversion bars. */
+    const slaC = slaFor(ctx, key);
+    const gwpMonthOv = (ctx && ctx.targets && ctx.targets.gwpMonth && ctx.targets.gwpMonth[key]) ?? null;
 
     /* teams: one team leader AND one campaign — the intersection. */
     const byTl = {};
@@ -250,7 +440,7 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
       /* CB first, name only when this leader has no account/CB on record */
       const as = (leader && leader.cb && perTeam[teamKeyCb(leader.cb, label)])
         || teamAs(teamKeyOf(tl, label));
-      const lad = ladder(t, as, sla);
+      const lad = ladder(t, as, slaC);
       return { tl, cb: leader ? leader.cb : '', team: label + ' · ' + (tl.split(/\s+/)[0] || tl),
         agents: t.agents, sales: t.sales, target: Math.round(t.targetMtd), targetMonth: t.target,
         pct: t.pct, gwp: Math.round(t.gwp), aveG: t.aveG, qa: t.qa, canc: t.canc, cancRate: t.cancRate,
@@ -275,23 +465,24 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
     /* The fourteen measures. null = not published yet; never a zero. */
     const kpis = {
       sales: { v: c.sales, target: Math.round(c.targetMtd), month: c.target, pct: c.pct },
-      gwp: { v: Math.round(c.gwp), target: Math.round(c.gwpT), projected: c.projGwp == null ? null : Math.round(c.projGwp) },
-      aveG: { v: c.aveG, ref: Number(sla.gwp_ref) || 99 },
+      gwp: { v: Math.round(c.gwp), target: gwpMonthOv != null ? Math.round(gwpMonthOv) : Math.round(c.gwpT),
+        set: gwpMonthOv != null || undefined, projected: c.projGwp == null ? null : Math.round(c.projGwp) },
+      aveG: { v: c.aveG, ref: Number(slaC.gwp_ref) || 99 },
       /* No pitch count exists anywhere in this suite — answered calls are contacts,
          not pitches — so this stays honestly empty rather than borrowing `ans`. */
       pitches: null,
-      conv: c.conv == null ? null : { v: c.conv, target: (Number(sla.conv_target) || 10) / 100,
+      conv: c.conv == null ? null : { v: c.conv, target: (Number(slaC.conv_target) || 10) / 100,
         leads: c.leads, basis: 'sales \u00f7 unique leads' },
-      talk: { v: c.talkPerDay, targetMin: Number(sla.talk_target) || 210 },
+      talk: { v: c.talkPerDay, targetMin: Number(slaC.talk_target) || 210 },
       attempts: c.attempts == null ? null : { v: c.attempts,
-        low: Number(sla.attempts_low) || 3, high: Number(sla.attempts_high) || 5 },
+        low: Number(slaC.attempts_low) || 3, high: Number(slaC.attempts_high) || 5 },
       contactRate: c.contactRate == null ? null : { v: c.contactRate, contacts: c.ans, dials: c.calls },
       leads: c.leadsKnown ? { v: c.leads, cover: c.leadCover } : null,
-      qa: { v: c.qa, target: (Number(sla.qa_target) || 90) / 100 },
+      qa: { v: c.qa, target: (Number(slaC.qa_target) || 90) / 100 },
       checks: null,
       crit: { fails: c.fails, p1Open: reqs.filter((r) => !r.closed && r.priority === 'P1' && campKey(r.campaign) === key).length },
-      canc: { v: c.canc, rate: c.cancRate, guard: (Number(sla.cancel_watch_pct) || 10) / 100 },
-      att: { v: c.att, target: (Number(sla.att_target) || 95) / 100, productive: c.productive, agents: c.agents },
+      canc: { v: c.canc, rate: c.cancRate, guard: (Number(slaC.cancel_watch_pct) || 10) / 100 },
+      att: { v: c.att, target: (Number(slaC.att_target) || 95) / 100, productive: c.productive, agents: c.agents },
     };
 
     const projection = c.projGwp == null ? null : {

@@ -19,7 +19,7 @@
  */
 
 import { getCoaching, rollUp, sessionsForAgent, withinWindow, CX_RULES } from './coaching.mjs';
-import { campKey, cmOverviewBody } from './campaign.mjs';
+import { campKey, cmOverviewBody, effectiveCamps } from './campaign.mjs';
 
 export const PORTAL_ROLES = new Set(['agent', 'team_leader', 'campaign_manager']);
 
@@ -67,6 +67,8 @@ export const PORTAL_ALLOWED = new Set([
   /* CAMPAIGN ASSISTANCE (assist.mjs) — the team-leader → campaign-manager
      pipeline. request = team leaders only; the register, actions and EOD pack
      are role-gated in the handlers, exactly as the help routes are. */
+  /* CAMPAIGN TARGET SETTINGS — Dalwin's dials (campaign.mjs cmSettingsBody/Apply). */
+  '/api/portal/cm/settings',
   '/api/portal/cm/request',
   '/api/portal/cm/assist',
   '/api/portal/cm/detail',
@@ -216,11 +218,15 @@ export function authorise(user, digest) {
   if (user.role === 'campaign_manager') {
     const ctx = globalThis.__cmCtx;
     if (!ctx) return { error: 'Campaign assignments are not loaded — try again in a moment.', status: 503 };
-    const a = ctx.assign[user.username] || null;
-    const camps = (a && Array.isArray(a.campaigns) ? a.campaigns : []).map((c) => campKey(c));
-    if (!camps.length) return { error: 'This campaign manager account is not assigned to a campaign yet. Ask Nick to update cm:assignments.', status: 403 };
+    /* assignment + every unowned campaign the list created (migration-019) — see
+       effectiveCamps. Only campaigns the digest actually carries make a screen: VT and
+       a campaign with no agents yet fall away here rather than as an empty card. */
+    const camps0 = effectiveCamps(ctx, user.username);
+    if (!camps0.length) return { error: 'This campaign manager account is not assigned to a campaign yet. Ask Nick to update cm:assignments.', status: 403 };
+    const present = new Set(all.map((r) => campKey(r.campaign)));
+    const camps = camps0.filter((k) => present.has(k));
     const rows = all.filter((r) => camps.includes(campKey(r.campaign)));
-    if (!rows.length) return { error: 'No agents are currently on ' + camps.join(', ') + ' in the published digest.', status: 409 };
+    if (!rows.length) return { error: 'No agents are currently on ' + camps0.join(', ') + ' in the published digest.', status: 409 };
     return { scope: 'campaign', cb: normCb(user.cb), team: '', campaigns: camps,
       codes: new Set(rows.map((r) => r.code)), rows, leaders: ctx.leaders || {} };
   }

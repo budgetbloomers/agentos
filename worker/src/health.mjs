@@ -71,6 +71,28 @@ export function evaluateFreshness(t) {
       since: new Date(ops).toISOString(),
     });
   }
+  /* THE AGENT DIGEST MUST BE THIS MONTH AND RECENT (audit, 2026-09-03). On 3 September
+     every agent read August for hours because a VAS browser on a past month republished
+     it; and the digest only moves while a VAS tab is open at all. Both are now visible:
+     the wrong month is critical, a digest older than a day with staff signed in is a
+     warning. `digestMonth` is the payload's own period month, `curMonth` the SAST month. */
+  if (t.digestMonth && t.curMonth && t.digestMonth !== t.curMonth) {
+    alerts.push({
+      id: 'agent-digest-wrong-month', severity: 'critical',
+      message: 'The live agent digest is for ' + t.digestMonth + ' but the month is ' + t.curMonth
+        + ' — every agent, team leader and campaign manager is reading last month. Run tools/digest-republish.mjs --apply.',
+      since: t.digestAt || new Date(now).toISOString(),
+    });
+  }
+  const dg = ms(t.digestAt);
+  if (t.staffLoginRecent && dg && now - dg > 26 * HOUR) {
+    alerts.push({
+      id: 'agent-digest-stale', severity: 'warning',
+      message: 'The agent digest was last published ' + new Date(dg).toISOString().slice(0, 16).replace('T', ' ')
+        + ' — nothing has republished it since (no VAS tab open?). Agents are reading yesterday. Run tools/digest-republish.mjs --apply.',
+      since: new Date(dg).toISOString(),
+    });
+  }
   return alerts;
 }
 
@@ -92,9 +114,20 @@ export async function runHealthChecks(DB) {
     .catch(() => []);
   const staffLoginRecent = (logins || []).some((l) => !/^cb\d{1,5}$/i.test(String(l.username || '').trim()));
 
+  /* the digest's OWN stamps — the rules row's updated_at does not move when the republish
+     tool writes Storage directly, so read the payload (one small object every ten minutes) */
+  let digestMonth = null, digestAt = null;
+  try {
+    const dr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:agent-digest')}&select=value`);
+    const v = dr && dr[0] && dr[0].value;
+    let payload = v ? String(v.data || '') : '';
+    if (!payload && v && v.store) payload = (await DB.storageGet('raw', String(v.store).replace(/^raw\//, ''))) || '';
+    if (payload) { const d = JSON.parse(payload); digestMonth = String((d.period || {}).from || '').slice(0, 7) || null; digestAt = d.updatedAt || null; }
+  } catch (e) { /* unreadable digest: the freshness alert has nothing to say; the portal will say plenty */ }
+  const curMonth = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(),
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);
