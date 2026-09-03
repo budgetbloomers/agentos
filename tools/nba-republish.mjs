@@ -76,6 +76,34 @@ for (const [src, text] of Object.entries(facts)) {
   await page.evaluate(([s, t]) => { state.facts[s] = JSON.parse(t); }, [src, text]);
   console.log('  loaded ' + src);
 }
+/* ---- the roster of record ---- cb-facts-AGENT_LIST is whatever the last signed-in Ops tab
+   saved; the LIST is /api/roster (kv:roster-current), which a headless publish or the VAS
+   station may have moved on since. Adopt it the way Ops's syncRosterFromVAS does — same row
+   mapping, same applyLoad, same fingerprint — so the ladder never lags the list by "until
+   someone opens Ops". Nothing is saved back here; the next real Ops session syncs itself. */
+const rc = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?key=eq.kv:roster-current&select=value`, { headers: H });
+if (rc.ok) {
+  let rv = ((await rc.json())[0] || {}).value; if (typeof rv === 'string') { try { rv = JSON.parse(rv); } catch {} }
+  if (rv && Array.isArray(rv.roster) && rv.roster.length) {
+    const adopted = await page.evaluate((j) => {
+      j.roster = j.roster.filter(a => a && String(a.code || '').trim() && String(a.name || '').trim());
+      if (!j.roster.length) return { refused: 'empty payload' };
+      const cur = (state.batches || []).find(b => b.source_type === 'AGENT_LIST' && b.validation_status !== 'failed');
+      if (cur && cur.file_hash === j.fingerprint) return { same: true, n: Object.keys(state.cbInfo || {}).length };
+      const rows = j.roster.map(a => ({ 'Employee Code': a.code, 'Agent Name': a.name, 'Team Leader': a.tl, 'Campaign': a.campaign,
+        'Tenure': a.tenure, 'Call x': a.callx, 'Sales Force': a.sf, 'Target': a.target, 'Start Date': a.start }));
+      const before = Object.keys(state.cbInfo || {}).length;
+      const res = applyLoad('AGENT_LIST', { name: 'Agent List — published' + (j.as_of ? ' (as of ' + j.as_of + ')' : '') },
+        { data: rows, textHash: j.fingerprint }, 'roster of record, adopted by tools/nba-republish');
+      if (typeof autoMapAgents === 'function') autoMapAgents();
+      return { before, n: res && res.loaded, as_of: j.as_of || null };
+    }, rv);
+    console.log('roster of record: ' + (adopted.same ? 'facts already on this list (' + adopted.n + ' agents)'
+      : adopted.refused ? 'NOT adopted — ' + adopted.refused
+      : 'adopted ' + adopted.n + ' agents (facts had ' + adopted.before + ')' + (adopted.as_of ? ' as of ' + adopted.as_of : '')));
+  }
+}
+
 await page.evaluate(() => { if (typeof _dataVer !== 'undefined') _dataVer++; });
 
 const out = await page.evaluate(() => {

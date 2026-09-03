@@ -317,6 +317,24 @@ section('a Campaign cell reading exactly "VT"');
     Array.isArray(odd.camps) && odd.camps.includes('Back Office') && odd.camps[0] === 'Cuddle', JSON.stringify(odd.camps));
   ok('…the model names it and V23 flags it as reported under the Courtesy rules',
     odd.newCamps.includes('Back Office') && odd.v23 && odd.v23.ok === false && /Courtesy rules/.test(odd.v23.msg), JSON.stringify(odd.v23));
+
+  /* THE VT SHEET'S CAMPAIGN CELLS ARE QUEUES (2026-09-03). The workbook's VT tab labels
+     its rows Scheduling / Matrix Digital / Panimax Referrals / Panimax Predictive; a row on
+     a tab named VT is a VT row, never four new campaigns. Reproduced as a two-sheet text
+     (splitSheets' "### Sheet: Name ###" convention) so the sheet name reaches the ingest. */
+  await page.evaluate(() => { window.__toasts = []; const S = window.__mtd.state(); S.roster = []; S.orgHist = {}; S.files = []; });
+  const two = '### Sheet: VAS ###\nEmployee Code,Agent Name,Team Leader,Campaign,Tenure,Sales Force,Target,Start Date\n'
+    + 'CB906,Vas One,Denise Haripersad,Courtesy,Exp,Vas One,5,2026-01-05\n'
+    + '### Sheet: VT ###\nEmployee Code,Agent Name,Team Leader,Campaign,Tenure,Sales Force,Target,Start Date\n'
+    + 'CB907,Tracker One,Fabian Chetty,Matrix Digital,Exp,Tracker One,0,2026-01-05\n'
+    + 'CB908,Tracker Two,Fabian Chetty,Panimax Predictive,Exp,Tracker Two,0,2026-01-05\n';
+  await page.evaluate(t => window.__mtd.ingest('two-sheet-list.xlsx', t, 'roster', 'vtqueues'), two);
+  const vq = await page.evaluate(() => ({ roster: (window.__mtd.state().roster || []).map(a => ({ code: a.code, campaign: a.campaign })), toasts: window.__toasts || [] }));
+  ok('rows on the VT sheet fold to VT whatever their queue label says',
+    vq.roster.some(a => a.code === 'CB907' && a.campaign === 'VT') && vq.roster.some(a => a.code === 'CB908' && a.campaign === 'VT'), JSON.stringify(vq.roster));
+  ok('…and no "new campaign" is announced for a VT queue',
+    !vq.toasts.some(t => /new to this dashboard/i.test(t) && /Digital|Predictive/.test(t)), JSON.stringify(vq.toasts));
+  ok('…while the VAS row on the other sheet is untouched', vq.roster.some(a => a.code === 'CB906' && a.campaign === 'Courtesy'));
 }
 
 ok('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

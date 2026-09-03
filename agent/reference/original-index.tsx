@@ -78,7 +78,23 @@ const BRACKETS: Record<string, { gwp: number; comm: number }[]> = {
     { gwp: 22753.04, comm: 22753.04 },
     { gwp: 24378.26, comm: 24378.26 },
   ],
+  // "Exp Agents Only - Download / Upsell" (workbook sheet "Exp DownUp"): the Agent List's
+  // "Download & Test" campaign. Average premium R40 (not R89), 21 dial days:
+  // thresholds = SPD × 40 × 21 ÷ 1.15. Added 2026-09-03 when the campaign first landed.
+  EXP_DOWNUP: [
+    { gwp: 4382.61, comm: 1250 },
+    { gwp: 5113.04, comm: 1750 },
+    { gwp: 5843.48, comm: 2500 },
+    { gwp: 6573.91, comm: 3500 },
+    { gwp: 7304.35, comm: 5000 },
+    { gwp: 8765.22, comm: 6250 },
+    { gwp: 10226.09, comm: 7500 },
+    { gwp: 11686.96, comm: 9000 },
+  ],
 };
+// One sale is worth R89 ÷ 1.15 on every plan except Download & Test, whose average premium
+// is R40 — the what-if ("one more sale a day") must add THAT plan's sale value.
+const SALE_VALUES: Record<string, number> = { EXP_DOWNUP: 40 / 1.15 };
 
 
 const TenureType = ["M1", "M2", "EXP_COURTESY", "EXP_CUDDLE"] as const;

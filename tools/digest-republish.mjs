@@ -51,6 +51,36 @@ await page.waitForFunction(() => window.__mtd && window.__mtd.state(), null, { t
 await page.evaluate(x => { const S = window.__mtd.state(); const o = JSON.parse(x);
   for (const k of Object.keys(o)) S[k] = o[k]; window.__mtd.rebuild(); }, blob);
 
+/* ---- the roster of record ---- The blob's roster is whatever the last signed-in PULSE tab
+   saved; the LIST is what /api/roster serves (kv:roster-current), which a headless publish
+   (tools/publish-agent-list.mjs) or the other station may have moved on since. Adopt it the
+   way PULSE's adoptRosterFromRecord does — same row mapping, same INGEST.roster, same
+   fingerprint — so the digest never lags the list by "until someone opens PULSE". Nothing
+   is written back to vas-state here; the next real PULSE session adopts and saves itself. */
+const rc = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?key=eq.kv:roster-current&select=value`, { headers: H });
+if (rc.ok) {
+  let rv = ((await rc.json())[0] || {}).value; if (typeof rv === 'string') { try { rv = JSON.parse(rv); } catch {} }
+  if (rv && Array.isArray(rv.roster) && rv.roster.length) {
+    const adopted = await page.evaluate((j) => {
+      const S = window.__mtd.state();
+      if (!j.fingerprint || j.fingerprint === S.rosterFp) return { same: true, n: (S.roster || []).length };
+      const rows = j.roster.filter(a => a && String(a.code || '').trim() && String(a.name || '').trim())
+        .map(a => ({ 'Employee Code': a.code, 'Agent Name': a.name, 'Sales Force': a.sf || a.name,
+          'Team Leader': a.tl || '', 'Campaign': a.campaign || '', 'Tenure': a.tenure || '',
+          'Call x': a.callx || '', 'Target': a.target, 'Start Date': a.start || '' }));
+      if (!rows.length) return { refused: 'empty payload' };
+      const before = (S.roster || []).length;
+      const res = INGEST.roster(rows, 'Agent List — published' + (j.as_of ? ' as of ' + j.as_of : ''), null);
+      if (!res || !(S.roster || []).length) return { refused: 'ingest refused', before };
+      S.rosterFp = j.fingerprint; window.__mtd.rebuild();
+      return { before, n: S.roster.length, as_of: j.as_of || null };
+    }, rv);
+    console.log('roster of record: ' + (adopted.same ? 'blob already on this list (' + adopted.n + ' agents)'
+      : adopted.refused ? 'NOT adopted — ' + adopted.refused
+      : 'adopted ' + adopted.n + ' agents (blob had ' + adopted.before + ')' + (adopted.as_of ? ' as of ' + adopted.as_of : '')));
+  }
+}
+
 /* --month YYYY-MM builds a PAST month: the engine's own period switch, then the same
    payload function — the portal's month filter reads what this publishes. --history walks
    every month the sales data covers and publishes each, so the filter has a past to offer

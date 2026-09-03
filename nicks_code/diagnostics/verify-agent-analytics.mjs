@@ -94,7 +94,7 @@ function extractBrackets(src) {
   }
   const body = src.slice(open, end + 1);
   const out = {};
-  const planRe = /(M1|M2|EXP_COURTESY|EXP_CUDDLE):\s*\[([\s\S]*?)\]/g;
+  const planRe = /(M1|M2|EXP_COURTESY|EXP_CUDDLE|EXP_DOWNUP):\s*\[([\s\S]*?)\]/g;
   let m;
   while ((m = planRe.exec(body))) {
     out[m[1]] = [...m[2].matchAll(/\{\s*gwp:\s*([\d.]+),\s*comm:\s*([\d.]+)\s*\}/g)]
@@ -107,10 +107,20 @@ const ORIG_SALE_VALUE = (() => {
   const m = TSX.match(/const SALE_VALUE = ([\d.]+) \/ ([\d.]+);/);
   return parseFloat(m[1]) / parseFloat(m[2]);
 })();
+/* Per-plan sale values (2026-09-03): Download & Test sells a R40 product, so its what-if
+   adds 40 ÷ 1.15 a sale. Read out of the original's SALE_VALUES map, never retyped. */
+const ORIG_SALE_VALUES = (() => {
+  const out = {};
+  const blk = TSX.match(/const SALE_VALUES[^=]*=\s*\{([^}]*)\}/);
+  if (blk) for (const m of blk[1].matchAll(/([A-Z0-9_]+):\s*([\d.]+)\s*\/\s*([\d.]+)/g)) out[m[1]] = parseFloat(m[2]) / parseFloat(m[3]);
+  return out;
+})();
+const saleValueFor = (plan) => ORIG_SALE_VALUES[plan] ?? ORIG_SALE_VALUE;
 
-const PLANS = ['M1', 'M2', 'EXP_COURTESY', 'EXP_CUDDLE'];
-/* September 2026: EXP_CUDDLE grew to 10 brackets (SPD 6–15); the rest stay at 8. */
-const PLAN_SIZES = { M1: 8, M2: 8, EXP_COURTESY: 8, EXP_CUDDLE: 10 };
+const PLANS = ['M1', 'M2', 'EXP_COURTESY', 'EXP_CUDDLE', 'EXP_DOWNUP'];
+/* September 2026: EXP_CUDDLE grew to 10 brackets (SPD 6–15); EXP_DOWNUP (Download & Test,
+   R40 product) joined with 8; the rest stay at 8. */
+const PLAN_SIZES = { M1: 8, M2: 8, EXP_COURTESY: 8, EXP_CUDDLE: 10, EXP_DOWNUP: 8 };
 for (const p of PLANS) {
   (ORIG_BRACKETS[p] || []).length === PLAN_SIZES[p]
     ? ok(`${p}: ${PLAN_SIZES[p]} brackets read from the original`)
@@ -145,17 +155,21 @@ else {
   }
   drift.length
     ? bad('COMM_RULES has drifted from the original brackets', drift.join('\n      '))
-    : ok('COMM_RULES brackets match the original exactly (34 values)');
+    : ok('COMM_RULES brackets match the original exactly (42 values)');
   Math.abs(pulseComm.saleValue - ORIG_SALE_VALUE) < 1e-12
     ? ok('COMM_RULES.saleValue matches the original (89 ÷ 1.15)')
     : bad(`COMM_RULES.saleValue ${pulseComm.saleValue} vs original ${ORIG_SALE_VALUE}`);
+  const svDrift = Object.keys({ ...ORIG_SALE_VALUES, ...(pulseComm.saleValues || {}) })
+    .filter((k) => Math.abs((ORIG_SALE_VALUES[k] ?? -1) - ((pulseComm.saleValues || {})[k] ?? -2)) > 1e-12);
+  svDrift.length ? bad('COMM_RULES.saleValues drifted from the original: ' + svDrift.join(', '))
+                 : ok('COMM_RULES.saleValues matches the original (Download & Test = 40 ÷ 1.15)');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    A3 · Reference implementation, transcribed from the lines asserted in A1.
    ══════════════════════════════════════════════════════════════════════════ */
 function refCalc(plan, completedDaysS, totalDaysS, totalGWPS, extraSales) {
-  const SALE_VALUE = ORIG_SALE_VALUE;
+  const SALE_VALUE = saleValueFor(plan);        // the plan's own sale value (index.tsx SALE_VALUES), else 89 ÷ 1.15
   const cDays = parseFloat(completedDaysS), tDays = parseFloat(totalDaysS), gwp = parseFloat(totalGWPS);
   if (isNaN(cDays) || isNaN(tDays) || isNaN(gwp) || cDays <= 0) return null;      // index.tsx:96
   const metrics = { averageGWP: gwp / cDays, premiumProjected: (gwp / cDays) * tDays, remainingDays: tDays - cDays };
@@ -230,7 +244,7 @@ const shipped = (() => {
   // eslint-disable-next-line no-new-func
   return new Function(src + '\nreturn commCalc;')();
 })();
-const SHIPPED_RULES = { saleValue: ORIG_SALE_VALUE, brackets: ORIG_BRACKETS };
+const SHIPPED_RULES = { saleValue: ORIG_SALE_VALUE, saleValues: ORIG_SALE_VALUES, brackets: ORIG_BRACKETS };
 
 const near = (x, y) => {
   if (x == null && y == null) return true;

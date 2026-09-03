@@ -949,13 +949,16 @@ function commCalc(plan,completedDays,totalDays,totalGWP,extraSales,rules){
   /* a digest without the comm block must degrade to the "Not set up yet" hero,
      never throw inside show() and take the whole portal down (audit, 2026-08-27) */
   if(!rules||rules.saleValue==null||(plan!=='M0'&&!rules.brackets)) return null;
+  /* a plan whose average premium is not R89 (Download & Test sells a R40 product) adds ITS
+     sale value in the what-if; every other plan keeps the R89 ÷ 1.15 the original assumes */
+  var saleValue=(rules.saleValues&&rules.saleValues[plan]!=null)?rules.saleValues[plan]:rules.saleValue;
   var cDays=parseFloat(completedDays), tDays=parseFloat(totalDays), gwp=parseFloat(totalGWP);
   if(isNaN(cDays)||isNaN(tDays)||isNaN(gwp)||cDays<=0) return null;      // index.tsx:96
   var metrics={averageGWP:gwp/cDays, premiumProjected:(gwp/cDays)*tDays, remainingDays:tDays-cDays}; // :98-100
 
   // M0 has no brackets at all: commission is 100% of the projected premium (m0.tsx:214-219)
   if(plan==='M0'){
-    var wf0=metrics.premiumProjected+extraSales*rules.saleValue*metrics.remainingDays;
+    var wf0=metrics.premiumProjected+extraSales*saleValue*metrics.remainingDays;
     return {plan:'M0',metrics:metrics,projection:metrics.premiumProjected,brackets:null,
       nextMove:null,table:null,nextTarget:null,
       whatIf:{newPremium:wf0,newComm:wf0,extraVsCurrent:wf0-metrics.premiumProjected}};
@@ -979,7 +982,7 @@ function commCalc(plan,completedDays,totalDays,totalGWP,extraSales,rules){
       extraComm:nb.comm-(projection||0)};                                 // :139
   }
 
-  var extraGWP=extraSales*rules.saleValue*metrics.remainingDays;          // :149
+  var extraGWP=extraSales*saleValue*metrics.remainingDays;                // :149 (per-plan sale value)
   var newProjected=metrics.premiumProjected+extraGWP;                     // :150
   var newComm=commissionFor(brackets,newProjected);                       // :151
   var whatIf={newPremium:newProjected,newComm:newComm,extraVsCurrent:newComm-(projection||0)};
@@ -4901,7 +4904,7 @@ function heroHTML(c){
      PAYOUT they can still reach and exactly what it takes to get there, in
      sales, because sales are the unit an agent controls. The honest projection
      never disappears; it moves to the footnote. */
-  var sale=(D.comm&&D.comm.saleValue)||(89/1.15);
+  var sale=(D.comm&&((D.comm.saleValues&&D.comm.saleValues[ME.plan])||D.comm.saleValue))||(89/1.15);
   var perDaySales=function(rand){ return rand/sale; };
 
   if(ME.plan!=='M0'&&!(c.projection>0)&&c.nextMove){
@@ -6113,7 +6116,7 @@ function whatIfHTML(c){
 }
 function whatIfBody(c){
   if(!c||!c.whatIf) return '';
-  var sale=(D.comm&&D.comm.saleValue)||(89/1.15);
+  var sale=(D.comm&&((D.comm.saleValues&&D.comm.saleValues[ME.plan])||D.comm.saleValue))||(89/1.15);
   var rem=Math.max(0,c.metrics.remainingDays);
   var reached=null;
   if(c.plan!=='M0'&&c.brackets)for(var i=c.brackets.length-1;i>=0;i--){ if(c.whatIf.newPremium>=c.brackets[i].gwp){reached=c.brackets[i];break;} }
@@ -6171,7 +6174,7 @@ function wireWhatIf(){
    PAGE by that instruction — the hero now reads R 0.00 · below the first bracket,
    with the bracket-1 payout named right under it as the number to chase. The Today
    page hero (heroHTML) keeps the first-payout framing. */
-var PLAN_LAB={M1:'M1',M2:'M2',EXP_COURTESY:'Experienced — Courtesy',EXP_CUDDLE:'Experienced — Cuddle',M0:'M0'};
+var PLAN_LAB={M1:'M1',M2:'M2',EXP_COURTESY:'Experienced — Courtesy',EXP_CUDDLE:'Experienced — Cuddle',EXP_DOWNUP:'Experienced — Download & Test',M0:'M0'};
 function comsDaysNow(){
   var w=$('cDays'),t=$('tDays'),g=$('cGwp');
   return { worked:parseFloat(w?w.value:WORKED())||0,
