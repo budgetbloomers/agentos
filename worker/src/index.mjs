@@ -1065,7 +1065,7 @@ export default {
         let mirrored = true;
         try { await rosterSync(env, DB, { fresh: true, who: 'roster-post' }); }
         catch (e) { mirrored = false; }
-        return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length, on_file: out.on_file,
+        return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length, on_file: out.on_file, roster: clean,
           dropped: out.dropped || [], blank_campaign: out.blank_campaign || [], campaigns_on_list: out.campaigns_on_list || [],
           mirrored, replaced: rec.replaced, sync: out.agents, leaders: out.leaders, campaigns: out.campaigns });
       }

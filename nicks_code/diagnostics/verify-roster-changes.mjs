@@ -19,6 +19,7 @@
  */
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { publishAgentListStub } from './stub-publish-agent-list.mjs';   // the DB's publish, in memory (see that file)
 const AGENTOS = 'C:/Users/aarav/OneDrive/Desktop/Chatterbox Agent OS/agentos';
 const worker = (await import(pathToFileURL(path.join(AGENTOS, 'worker', 'src', 'index.mjs')).href)).default;
 
@@ -34,6 +35,8 @@ globalThis.fetch = async (u, o = {}) => {
   if (url.includes('/rest/v1/app_sessions')) return J([{ user_id: 'u1', expires_at: '2099-01-01T00:00:00Z',
     app_users: { username: 'nick', full_name: 'Nick', role: 'admin', apps: null, tabs: null, pii_unmask: true,
       active: true, cb: null, team: null, hub_ids: null, must_change_password: false } }]);
+  if (url.startsWith('http://stub.local/rest/v1/rpc/publish_agent_list'))
+    return J(publishAgentListStub(JSON.parse(o.body || '{}')));
   if (url.startsWith('http://stub.local/rest/v1/rules')) {
     if ((o.method || 'GET') === 'GET') {
       const m = /key=eq\.([^&]+)/.exec(url); const k = m ? decodeURIComponent(m[1]) : '';

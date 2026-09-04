@@ -5,7 +5,8 @@ import fs from 'node:fs'; import path from 'node:path'; import http from 'node:h
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const XLSX = require('xlsx');
-const REPO = path.resolve(process.cwd(), '..', '..');
+import { fileURLToPath } from 'node:url';
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');   // from this file, not the shell's cwd
 const UP = path.join(REPO,'uploads','2026-08-06');
 const SERVE={'/index.html':path.join(REPO,'nicks_code','index.html'),'/xlsx.full.min.js':path.join(REPO,'site','xlsx.full.min.js')};
 const server=http.createServer((q,s)=>{const p=SERVE[q.url.split('?')[0]];

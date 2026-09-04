@@ -64,7 +64,10 @@ const out = await page.evaluate(async () => {
   const byTl = {};
   (S.roster || []).forEach(a => { const t = String(a.tl || '').trim(); if (!t) return;
     (byTl[t] = byTl[t] || { n: 0, camps: new Set() }); byTl[t].n++; byTl[t].camps.add(a.campaign); });
-  const TL = Object.entries(byTl).sort((x, y) => (y[1].camps.size - x[1].camps.size) || (y[1].n - x[1].n))[0][0];
+  /* never a VT-only leader: removing THEM would remove VT agents by right, and the trap below
+     (VT agents named by the file must survive a VAS-format sheet) could not be told apart */
+  const TL = Object.entries(byTl).filter(([, v]) => !(v.camps.size === 1 && v.camps.has('VT')))
+    .sort((x, y) => (y[1].camps.size - x[1].camps.size) || (y[1].n - x[1].n))[0][0];
   const team = (S.roster || []).filter(a => String(a.tl || '').trim() === TL);
   const codes = new Set(team.map(a => a.code));
   const M = window.__mtd.model();
@@ -102,7 +105,8 @@ const out = await page.evaluate(async () => {
 });
 
 console.log('  removing ' + out.TL + ' and all ' + out.teamSize + ' of their agents (' + out.campaigns.join(' + ') + ')\n');
-ok('the leader spans more than one campaign — the shape that hid the bug', out.campaigns.length > 1, out.campaigns.join(','));
+ok('the leader is not a VT leader — the shape that hid the bug (ideally spanning campaigns: ' + out.campaigns.join(' + ') + ')',
+  !out.campaigns.includes('VT') || out.campaigns.length > 1, out.campaigns.join(','));
 ok('every one of their agents leaves the roster', out.after.theirs === 0,
   out.after.theirs + ' still on the roster');
 ok('the roster shrinks by exactly the team size (' + out.before.roster + ' → ' + out.after.roster + ')',

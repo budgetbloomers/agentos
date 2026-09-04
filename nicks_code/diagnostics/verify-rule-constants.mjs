@@ -45,7 +45,7 @@ src.forEach((line, i) => {
   if (/line-height|font-/.test(line)) return;                             // CSS
   if (/^\s*vat\s*:/.test(line)) return;                                   // the rules themselves
   if (/MTD_VAT\s*=/.test(line)) return;                                   // the zero-safe fallback IS the rule reader
-  if (/saleValue\s*:/.test(line)) return;                                 // ported comms constant (index.tsx:143)
+  if (/saleValues?\s*:/.test(line)) return;                               // ported comms constants (index.tsx:143 + SALE_VALUES)
   if (/formulaA\s*:|ROUND\(SUM/.test(line)) return;                       // spec text quoted for display
   if (/<li>|<code>|<p>/.test(line)) return;                               // help copy
   strays.push((i + 1) + ': ' + line.trim().slice(0, 90));

@@ -2438,7 +2438,7 @@ const INGEST={
             /* ADOPT THE RECORD. The server derived the roster from the whole file; what this
                tab classified is a preview. Pull the record now so this screen shows exactly
                what every other app shows. */
-            setTimeout(function(){try{adoptRosterFromRecord()}catch(e){}},800); }
+            if(j.roster&&j.roster.length) setTimeout(function(){try{adoptRosterFromRecord({roster:j.roster,fingerprint:j.fingerprint,as_of:j.as_of,source:'record'})}catch(e){}},800); }
           else if(j&&j.accepted===false&&j.publish) reportListRefused(j);
         }).catch(function(){});
     }catch(e){} },3000);
@@ -7707,13 +7707,16 @@ function reportListRefused(j){
     +' No roster, login or campaign was changed; the previous list is still in force.',20000);
 }
 
-async function adoptRosterFromRecord(){
+async function adoptRosterFromRecord(given){
   if(__rosterAdoptBusy)return; __rosterAdoptBusy=true;
   try{
     if(!window.__vasHydrated)return;                     // never ingest into a half-loaded state
     const tk=sessionStorage.getItem('cbx_token'); if(!tk)return;
     let j;
-    try{
+    /* GIVEN, when the publish reply carried the roster the server derived — adopting THAT
+       can never race a GET that still serves the previous record. Otherwise ask. */
+    if(given&&Array.isArray(given.roster)) j=given;
+    else try{
       const r=await fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/roster',
         {headers:{'Authorization':'Bearer '+tk}});
       if(!r.ok)return; j=await r.json();

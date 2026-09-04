@@ -19,6 +19,7 @@
  */
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { publishAgentListStub } from './stub-publish-agent-list.mjs';   // the DB's publish, in memory (see that file)
 const AGENTOS = 'C:/Users/aarav/OneDrive/Desktop/Chatterbox Agent OS/agentos';
 const mod = await import(pathToFileURL(path.join(AGENTOS, 'worker', 'src', 'index.mjs')).href);
 const worker = mod.default;
@@ -33,6 +34,8 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = async (u, o = {}) => {
   const url = String(u);
   const J = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
+  if (url.startsWith('http://stub.local/rest/v1/rpc/publish_agent_list'))
+    return J(publishAgentListStub(JSON.parse(o.body || '{}')));
   if (url.startsWith('http://stub.local/rest/v1/rules')) {
     if ((o.method || 'GET') === 'GET') {
       const m = /key=eq\.([^&]+)/.exec(url);
