@@ -72,7 +72,7 @@ const ident = await page.evaluate(() => {
     const hist = window.__mtd.orgAt(f.code, f.date);
     const want = (hist && hist.campaign) || roster[f.code];
     /* campOf's vocabulary — an unknown campaign keeps its own label (Download & Test, 2026-09-03); it used to fold to Courtesy here and flagged five correct facts */
-    const norm = c => { const t = String(c || '').trim().replace(/s+/g, ' '); return !t ? 'Courtesy' : /nest/i.test(t) ? 'Nesting' : /cuddle/i.test(t) ? 'Cuddle' : /track|vehicle|vision|^vt$/i.test(t) ? 'VT' : /courtesy/i.test(t) ? 'Courtesy' : t; };
+    const norm = c => { const t = String(c || '').trim().replace(/\s+/g, ' '); return !t ? 'Courtesy' : /nest/i.test(t) ? 'Nesting' : /cuddle/i.test(t) ? 'Cuddle' : /track|vehicle|vision|^vt$/i.test(t) ? 'VT' : /courtesy/i.test(t) ? 'Courtesy' : t; };
     if (norm(want) !== f.campaign && bad.length < 5) bad.push(`${f.code} ${f.date}: fact=${f.campaign} roster=${norm(want)}`);
   }
   return { bad, noRoster, camps, rosterN: S.roster.length, factN: (M.facts || []).length, extra: M.newCampaigns || [] };
