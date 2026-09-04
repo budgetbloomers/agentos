@@ -55,19 +55,29 @@ export function evaluateFreshness(t) {
   /* ABSOLUTE BACKSTOP, gated on people actually being signed in: a store that
      has not moved in 26 hours on a working day. Catches a freeze that starts
      on a day with no uploads at all. */
-  if (t.staffLoginRecent && vas && now - vas > 26 * HOUR) {
+  /* OPENED SINCE ITS LAST SAVE, AND STILL NOT SAVED (2026-09-04). When the Worker stamps
+     app opens (t.opened = {vas, ops} from kv:app-opened), the question is asked per app:
+     was THIS dashboard opened after it last saved, and is that save now over 26 hours
+     old? A dashboard nobody opened is quiet — the old rule fired "AgentOS Analytics has
+     not saved despite staff signing in" over a VAS-only day. Without stamps (older
+     Workers, the unit fixtures) the staff-sign-in rule stands. */
+  const opened = (t.opened && typeof t.opened === 'object') ? t.opened : null;
+  const usedSince = (app, savedAt) => opened ? (ms(opened[app]) > savedAt) : !!t.staffLoginRecent;
+  if (vas && now - vas > 26 * HOUR && usedSince('vas', vas)) {
     alerts.push({
       id: 'vas-state-stale', severity: 'warning',
       message: 'PULSE has not saved its state since ' + new Date(vas).toISOString().slice(0, 16).replace('T', ' ')
-        + ' despite staff signing in since — if anyone uploaded in that time, their work is not stored.',
+        + (opened ? ' although it was opened at ' + String(opened.vas || '').slice(0, 16).replace('T', ' ') : ' despite staff signing in since')
+        + ' — if anyone uploaded in that time, their work is not stored.',
       since: new Date(vas).toISOString(),
     });
   }
-  if (t.staffLoginRecent && ops && now - ops > 26 * HOUR) {
+  if (ops && now - ops > 26 * HOUR && usedSince('ops', ops)) {
     alerts.push({
       id: 'cb-config-stale', severity: 'warning',
       message: 'AgentOS Analytics has not saved its config since ' + new Date(ops).toISOString().slice(0, 16).replace('T', ' ')
-        + ' despite staff signing in since.',
+        + (opened ? ' although it was opened at ' + String(opened.ops || '').slice(0, 16).replace('T', ' ') : ' despite staff signing in since')
+        + '.',
       since: new Date(ops).toISOString(),
     });
   }
@@ -121,8 +131,9 @@ export function evaluateFreshness(t) {
  */
 export async function runHealthChecks(DB) {
   const rows = await DB.select(
-    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config')})&select=key,updated_at`);
-  const at = {}; for (const r of rows || []) at[r.key] = r.updated_at;
+    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened')})&select=key,updated_at,value`);
+  const at = {}; let opened = null;
+  for (const r of rows || []) { at[r.key] = r.updated_at; if (r.key === 'kv:app-opened') opened = (r.value && typeof r.value === 'object') ? r.value : {}; }
 
   /* Staff = a username that is not an agent's CB number. Filtered here rather
      than in PostgREST regex syntax so the query stays simple and indexable. */
@@ -148,7 +159,7 @@ export async function runHealthChecks(DB) {
   catch (e) { integrity = []; }
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);

@@ -83,6 +83,22 @@ head('A · THE SENTINEL, AGAINST FIXTURES');
   ok(/verify-live-save/.test(c.message), 'the critical alert tells the responder what to run next', c.message.slice(0, 120));
   ok(!!c.since, 'and stamps when the condition began');
 }
+{
+  /* 2026-09-04: a VAS-only day is not an Ops failure. With app-open stamps the stale checks
+     ask "opened since its last save?" per app; without stamps the sign-in rule stands. */
+  const base = { manifestAt: '2026-09-04T08:00:00Z', vasAt: '2026-09-04T07:00:00Z', opsAt: '2026-09-02T21:26:00Z',
+    staffLoginRecent: true, now: at('2026-09-04T09:00:00Z') };
+  const legacy = evaluateFreshness(base);
+  ok(legacy.some((x) => x.id === 'cb-config-stale'), 'no stamps: the sign-in rule still names Ops');
+  const quiet = evaluateFreshness({ ...base, opened: { vas: '2026-09-04T08:30:00Z' } });
+  ok(!quiet.some((x) => x.id === 'cb-config-stale'), 'stamps present, Ops never opened since it saved: no Ops alert');
+  ok(!quiet.some((x) => x.id === 'vas-state-stale'), 'PULSE opened and saved this morning: quiet too');
+  const used = evaluateFreshness({ ...base, opened: { vas: '2026-09-04T08:30:00Z', ops: '2026-09-03T09:00:00Z' } });
+  const o = used.find((x) => x.id === 'cb-config-stale');
+  ok(!!o && /opened at 2026-09-03 09:00/.test(o.message), 'Ops opened after its last save and still unsaved 26h on: named, with the open time', o && o.message);
+  const stale = evaluateFreshness({ ...base, vasAt: '2026-09-02T07:00:00Z', opened: { vas: '2026-09-03T08:30:00Z' } });
+  ok(stale.some((x) => x.id === 'vas-state-stale'), 'the same rule catches a PULSE that was opened and did not save');
+}
 
 head('B · THE LIVE VIEW AND THE LIVE KEY');
 {

@@ -231,6 +231,29 @@ async function rosterSync(env, DB, { fresh = false, who = 'roster-sync' } = {}) 
   return payload;
 }
 
+/* WHICH DASHBOARD WAS ACTUALLY OPENED, AND WHEN (2026-09-04). The freshness sentinel used to
+   infer "somebody used Ops" from any staff sign-in, so a VAS-only day raised "AgentOS
+   Analytics has not saved its config despite staff signing in" — a red banner over a
+   dashboard nobody had opened. A boot is unmistakable (PULSE pulls vas-state; Ops asks
+   kv-meta for its cb-facts- stores), so each is stamped here into ONE small row,
+   kv:app-opened {vas, ops}, at most once per ten minutes per app, off the request path.
+   The sentinel then asks the right question: opened since its last save, and still not
+   saved 26 hours on. */
+const OPEN_STAMP_MS = 10 * 60000;
+function stampAppOpen(DB, ctx, app) {
+  const mem = (globalThis.__appOpened = globalThis.__appOpened || {});
+  const now = Date.now();
+  if (mem[app] && now - mem[app] < OPEN_STAMP_MS) return;
+  mem[app] = now;
+  const work = (async () => {
+    const cur = await DB.select(`rules?key=eq.${encodeURIComponent('kv:app-opened')}&select=value`).catch(() => null);
+    const v = Object.assign({}, (cur && cur[0] && cur[0].value) || {});
+    v[app] = new Date(now).toISOString();
+    await DB.insert('rules', [{ key: 'kv:app-opened', value: v, updated_by: 'open-stamp', updated_at: v[app] }], true);
+  })().catch(() => {});
+  if (ctx && ctx.waitUntil) ctx.waitUntil(work);
+}
+
 export default {
   /* THE SAFETY NET (Nick, 2026-08-28: "make this never happen again"). Every ten minutes,
      with nothing open anywhere, the roster is re-synced into Ops' store and the agent->team
@@ -1158,6 +1181,8 @@ export default {
       if (path === '/api/kv-meta' && req.method === 'GET') {
         const prefix = String(url.searchParams.get('prefix') || '').replace(/[^\w:.-]/g, '').slice(0, 40);
         if (!prefix) return json({ error: 'prefix required' }, 400);
+        if (/^cb-/.test(prefix)) stampAppOpen(DB, ctx, 'ops');           // the Ops boot
+        else if (/^vas/.test(prefix)) stampAppOpen(DB, ctx, 'vas');
         const rows = await DB.select(`rules?key=like.${encodeURIComponent('kv:' + prefix + '%')}&select=key,updated_at`);
         const keys = {}; for (const r of rows || []) keys[String(r.key).slice(3)] = r.updated_at || '';
         return json({ keys });
@@ -1215,6 +1240,8 @@ export default {
       }
       if (path === '/api/kv' && req.method === 'GET') {
         const key = url.searchParams.get('key') || '';
+        if (key === 'vas-state' && !url.searchParams.get('meta')) stampAppOpen(DB, ctx, 'vas');   // the PULSE boot
+        else if (key === 'cb-config' && !url.searchParams.get('meta')) stampAppOpen(DB, ctx, 'ops');
         const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:' + key)}&select=value,updated_at`);
         if (!r || !r.length) return json({ found: false }, 404);
         // meta mode: freshness beacon only — lets open tabs poll for other users'
