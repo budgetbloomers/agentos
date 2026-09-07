@@ -48,7 +48,7 @@ sources ──upload──▶ archive (manifest) ──▶ PULSE state ──▶
 These would have named this morning's Ops gap at 13:28 SAST on Sunday, thirty minutes after
 Ashton's upload, instead of it being found by hand on Monday.
 
-## Phase 1 — the scheduler runs (needs Nick: 10 minutes) — code built 7 Sep, waiting on the secrets
+## Phase 1 — the scheduler runs — LIVE since 7 Sep 13:45 SAST (five secrets set on the repository, main fast-forwarded so the schedule is on the default branch; run #1 green except referrals, fixed by passing the HighLevel secrets)
 
 The runner is written: `.github/workflows/publish-digests.yml`. It cannot run without three
 repository secrets. Once they exist, every step below runs on schedule with no browser and no
@@ -131,6 +131,6 @@ And every alert has a driver that re-runs the step on the next schedule without 
 
 ## What Nick decides
 
-1. Add the three secrets (Phase 1) — the single action that makes every scheduled step real.
+1. ~~Add the three secrets (Phase 1)~~ — done 7 Sep; the runner is live.
 2. Confirm the cadence table: which source is due when, and who owns it.
 3. Which connectors to pursue first, and the credentials for them.
