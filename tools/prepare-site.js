@@ -59,8 +59,20 @@ if (!window.storage) {
        cbxSaveWarn above stays for the moment of failure - this is for the
        state of being unsaved, which outlives any toast. */
     var cbxFailed = {}, cbxFailN = 0, cbxRetryT = null;
-    function cbxSaveFail(k, v) {
-      cbxFailed[k] = v; cbxUnsavedBanner();
+    /* TELL THE SERVER WHAT DID NOT ARRIVE (2026-09-07). A refused save leaves no trace in the
+       write log, so the reason lived only in a twelve-second toast. Fire-and-forget, tiny,
+       never awaited; the retry loop does not depend on it. */
+    /* (a plain string replace below, not a regex: this shim is a template string and a regex's
+       backslashes are lost when it is generated) */
+    function cbxSaveReport(k, why, v) {
+      try { var h = authHdr(); if (!h) return;
+        fetch(API.replace('/api/kv', '/api/save-fail'), { method: 'POST', keepalive: true,
+          headers: { 'Authorization': h.Authorization, 'Content-Type': 'application/json', 'X-Cbx-Client': 'v5' },
+          body: JSON.stringify({ app: 'ops', key: k, status: String(why || '?'), build: window.CBX_BUILD || '', bytes: (v || '').length }) }).catch(function () {});
+      } catch (e) {}
+    }
+    function cbxSaveFail(k, v, why) {
+      cbxFailed[k] = v; cbxUnsavedBanner(); cbxSaveReport(k, why, v);
       if (cbxRetryT) return;
       cbxFailN++;
       var d = window.__cbxRetryMs || [30000, 120000, 300000][Math.min(cbxFailN - 1, 2)];   // override = test hook
@@ -133,7 +145,7 @@ if (!window.storage) {
         mem[k] = v;
         try { localStorage.setItem('cbx:' + k, v); } catch (e) { /* quota — cloud still saves below */ }
         var h = authHdr();
-        if (!h) { cbxSaveWarn('Not signed in — this data was NOT saved to the database.'); cbxSaveFail(k, v); return; }
+        if (!h) { cbxSaveWarn('Not signed in — this data was NOT saved to the database.'); cbxSaveFail(k, v, 'no-token'); return; }
         try {
           var hdrs = { 'Authorization': h.Authorization, 'Content-Type': 'text/plain', 'X-Cbx-Client': 'v5' };
           var payload = v;
@@ -148,9 +160,10 @@ if (!window.storage) {
             catch (e) { payload = v; }
           }
           var r = await fetch(API + '?key=' + encodeURIComponent(k), { method: 'POST', headers: hdrs, body: payload });
-          if (!r.ok) { cbxSaveWarn('Cloud save failed (' + r.status + ') — "' + k + '" is NOT in the database yet. Keep this tab open; it is retrying.'); cbxSaveFail(k, v); return; }
+          if (!r.ok) { var why = r.status + ''; try { why += ' ' + (await r.text()).slice(0, 160); } catch (e2) {}
+            cbxSaveWarn('Cloud save failed (' + r.status + ') — "' + k + '" is NOT in the database yet. Keep this tab open; it is retrying.'); cbxSaveFail(k, v, why); return; }
           cbxSaveOkFor(k);
-        } catch (e) { cbxSaveWarn('Cloud save failed (network) — "' + k + '" is NOT in the database yet. Keep this tab open; it is retrying.'); cbxSaveFail(k, v); }
+        } catch (e) { cbxSaveWarn('Cloud save failed (network) — "' + k + '" is NOT in the database yet. Keep this tab open; it is retrying.'); cbxSaveFail(k, v, 'network ' + String(e && e.message || e).slice(0, 120)); }
       },
       async delete(k) {
         // real delete: drop the local copy AND remove it from the database (Storage

@@ -110,6 +110,22 @@ export function evaluateFreshness(t) {
      accounts, campaigns or the record disagree; a warning when a leader has no login (a
      human has to supply the CB number). `since` is fixed so a persisting condition is
      written once, not every tick. */
+  /* SAVES THE CLIENTS REPORTED AS FAILED (2026-09-07). Three or more in an hour is a
+     dashboard that cannot store what it holds — critical, and the alert names the keys
+     and statuses so the reason is readable without asking anyone what the toast said. */
+  const sf = Array.isArray(t.saveFailures) ? t.saveFailures : [];
+  if (sf.length >= 3) {
+    const by = {};
+    for (const r of sf) { const k = (r.app || '?') + ' ' + (r.key || '?') + ' → ' + String(r.status || '?').slice(0, 60); by[k] = (by[k] || 0) + 1; }
+    const oldest = sf.map((r) => Date.parse(r.at) || now).reduce((a, b) => Math.min(a, b), now);
+    alerts.push({
+      id: 'saves-failing', severity: 'critical',
+      message: sf.length + ' cloud saves failed in the last hour, reported by the dashboards themselves: '
+        + Object.entries(by).map(([k, n]) => k + (n > 1 ? ' ×' + n : '')).join('; ')
+        + '. The data is queued in those tabs and retrying; see the save_failures table for the full reasons.',
+      since: new Date(oldest).toISOString(),
+    });
+  }
   const integ = Array.isArray(t.integrity) ? t.integrity.filter((r) => r && r.failures > 0) : [];
   if (integ.length) {
     alerts.push({
@@ -157,9 +173,13 @@ export async function runHealthChecks(DB) {
   let integrity = [];
   try { integrity = (await DB.select('agent_list_integrity?failures=gt.0&select=check_name,severity,failures,detail')) || []; }
   catch (e) { integrity = []; }
+  /* what the dashboards could NOT save in the last hour, by their own report */
+  let saveFailures = [];
+  try { saveFailures = (await DB.select('save_failures?at=gte.' + new Date(Date.now() - HOUR).toISOString() + '&select=at,username,app,key,status&order=at.desc&limit=100')) || []; }
+  catch (e) { saveFailures = []; }
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);

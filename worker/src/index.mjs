@@ -1238,6 +1238,20 @@ export default {
         }
         return json({ from, to, tz: 'Africa/Johannesburg', weekdaysOnly: true, days, provisioned });
       }
+      /* A REFUSED SAVE REPORTS ITSELF (2026-09-07). Nick's Ops tab said "2 items NOT saved"
+         all morning and the server had no trace: a refused or failed request is not a write,
+         so kv_write_log — the record of what ARRIVED — could not see it, and the toast with
+         the status code lived twelve seconds. Both dashboards now post the key, the status
+         and the build here from their failure branch; the health cron alerts on a cluster. */
+      if (path === '/api/save-fail' && req.method === 'POST') {
+        let b = null; try { b = await req.json(); } catch { return json({ error: 'json body required' }, 400); }
+        const row = { username: (user && user.username) || '', app: String(b.app || '').slice(0, 8), key: String(b.key || '').slice(0, 80),
+          status: String(b.status || '').slice(0, 300), detail: String(b.detail || '').slice(0, 300), build: String(b.build || '').slice(0, 16),
+          ua: String(req.headers.get('user-agent') || '').slice(0, 200) };
+        console.warn('[save-fail] ' + row.username + ' ' + row.app + ' ' + row.key + ' → ' + row.status);
+        try { await DB.insert('save_failures', [row]); } catch (e) { /* the report must never fail the client's retry loop */ }
+        return json({ ok: true });
+      }
       if (path === '/api/kv' && req.method === 'GET') {
         const key = url.searchParams.get('key') || '';
         if (key === 'vas-state' && !url.searchParams.get('meta')) stampAppOpen(DB, ctx, 'vas');   // the PULSE boot

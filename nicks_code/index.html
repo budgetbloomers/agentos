@@ -1331,8 +1331,18 @@ function __saveAck(){
   if(S._rev===window.__vasPushRev) window.__vasDirtySince=null;
   __unsavedBanner();
 }
-function __saveFail(msg){
+/* TELL THE SERVER WHAT DID NOT ARRIVE (2026-09-07): a refused save is not a write, so the
+   write log cannot see it and the toast lives twelve seconds. Fire-and-forget. */
+function __saveFailReport(why){
+  try{ var t=sessionStorage.getItem('cbx_token'); if(!t) return;
+    fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/save-fail',{method:'POST',keepalive:true,
+      headers:{'Authorization':'Bearer '+t,'Content-Type':'application/json','X-Cbx-Client':'v5'},
+      body:JSON.stringify({app:'vas',key:'vas-state',status:String(why||'?'),build:window.CBX_BUILD||'',bytes:0})}).catch(function(){});
+  }catch(e){}
+}
+function __saveFail(msg,why){
   if(typeof toast==='function') toast(msg,12000);
+  if(why!=null) __saveFailReport(why);
   /* retry with backoff — a failed save must never wait for the user's next edit */
   window.__saveFailN=(window.__saveFailN||0)+1;
   var d=window.__saveRetryMs||[30000,120000,300000][Math.min(window.__saveFailN-1,2)];   // override = test hook
@@ -1394,8 +1404,10 @@ var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_tok
    }
    return fetch(url,{method:'POST',headers:hdr,body:b,keepalive:keep});
  })().then(function(r){if(r&&r.ok){__saveAck();return}
-     __saveFail('⚠ Cloud save failed ('+(r?r.status:'?')+') — your upload is NOT in the database yet. Keep this tab open; it is retrying.');})
-   .catch(function(){__saveFail('⚠ Cloud save failed (network) — your upload is NOT in the database yet. Keep this tab open; it is retrying.')})}
+     var why=(r?r.status:'?')+'';
+     var say=function(){__saveFail('⚠ Cloud save failed ('+(r?r.status:'?')+') — your upload is NOT in the database yet. Keep this tab open; it is retrying.',why)};
+     if(r&&r.text) r.text().then(function(t){why+=' '+String(t||'').slice(0,160)}).catch(function(){}).then(say); else say();})
+   .catch(function(e){__saveFail('⚠ Cloud save failed (network) — your upload is NOT in the database yet. Keep this tab open; it is retrying.','network '+String(e&&e.message||e).slice(0,120))})}
  catch(e){ /* A THROW HERE USED TO VANISH. The outer try wraps the stringify, the gzip and
      the fetch; swallowing it silently is the same failure mode as the 13-Aug Cuddle upload —
      the app looks fine and the data is gone. Say it, and keep retrying. */

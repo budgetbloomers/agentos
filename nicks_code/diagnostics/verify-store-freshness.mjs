@@ -99,6 +99,23 @@ head('A · THE SENTINEL, AGAINST FIXTURES');
   const stale = evaluateFreshness({ ...base, vasAt: '2026-09-02T07:00:00Z', opened: { vas: '2026-09-03T08:30:00Z' } });
   ok(stale.some((x) => x.id === 'vas-state-stale'), 'the same rule catches a PULSE that was opened and did not save');
 }
+{
+  /* 2026-09-07: saves the dashboards themselves reported as failed */
+  const base = { manifestAt: '2026-09-07T08:00:00Z', vasAt: '2026-09-07T07:00:00Z', opsAt: '2026-09-07T07:00:00Z',
+    staffLoginRecent: true, now: at('2026-09-07T09:00:00Z'), opened: {} };
+  const two = evaluateFreshness({ ...base, saveFailures: [
+    { at: '2026-09-07T08:20:00Z', app: 'ops', key: 'cb-audit', status: '409 wipe_blocked' },
+    { at: '2026-09-07T08:25:00Z', app: 'ops', key: 'cb-audit', status: '409 wipe_blocked' }] });
+  ok(!two.some((x) => x.id === 'saves-failing'), 'two reports in an hour: not yet an alert (a retry may land)');
+  const three = evaluateFreshness({ ...base, saveFailures: [
+    { at: '2026-09-07T08:20:00Z', app: 'ops', key: 'cb-audit', status: '409 wipe_blocked' },
+    { at: '2026-09-07T08:25:00Z', app: 'ops', key: 'cb-audit', status: '409 wipe_blocked' },
+    { at: '2026-09-07T08:30:00Z', app: 'ops', key: 'cb-facts-AGENT_LIST', status: '426 outdated' }] });
+  const a = three.find((x) => x.id === 'saves-failing');
+  ok(!!a && a.severity === 'critical', 'three in an hour is critical');
+  ok(!!a && /cb-audit → 409 wipe_blocked ×2/.test(a.message) && /cb-facts-AGENT_LIST → 426/.test(a.message), 'the alert names each key, status and count', a && a.message);
+  ok(!!a && a.since === '2026-09-07T08:20:00.000Z', 'since = the oldest report');
+}
 
 head('B · THE LIVE VIEW AND THE LIVE KEY');
 {
