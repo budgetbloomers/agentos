@@ -112,6 +112,15 @@ try {
     const none = await render(tab, 'Nobody Real', '');
     ok(tab + ': a leader with no rows names the filter that emptied the page', none.empty || none.rows === 0, JSON.stringify(none));
   }
+  {
+    /* the Dashboard — the first page anyone sees — must follow the header filters too */
+    const all = await render('dashboard', '', ''), one = await render('dashboard', 'Leader Alpha', ''), cud = await render('dashboard', '', 'Cuddle');
+    const txt = async () => page.evaluate(() => document.getElementById('view').innerText.replace(/s+/g, ' '));
+    await render('dashboard', '', ''); const tAll = await txt(); await render('dashboard', 'Leader Alpha', ''); const tOne = await txt(); await render('dashboard', '', 'Cuddle'); const tCud = await txt();
+    ok('dashboard: Team = Leader Alpha changes the figures', tOne !== tAll && one.note, JSON.stringify(one));
+    ok('dashboard: Campaign = Cuddle changes the figures', tCud !== tAll && cud.note, JSON.stringify(cud));
+    ok('dashboard: no filter shows the floor', !all.note);
+  }
   ok('no page errors', errs.length === 0, errs.join(' | '));
 } finally {
   await b.close(); server.close();

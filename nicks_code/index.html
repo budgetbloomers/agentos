@@ -4073,6 +4073,9 @@ function buildModel(range, periodKey){
   const noDialler=[...workedDays].filter(d=>!talkDays.has(d)).sort();
   return {range,newCampaigns,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
     viciSkipped,viciPartial,talkDays,noDialler,attDates,diallingDays,refsAreTotals:M_refsAreTotals,
+    /* the same aggregator the grand total used, for a page that must total a FILTERED set of
+       facts (the Dashboard under the header Team/Campaign filters, 2026-09-07) */
+    aggFacts:(rows)=>agg(rows,null),
      /* Agents whose work in THIS period sits under a leader who no longer owns them. Not an
         error — it is the historical rule doing its job — but it is the one thing a reader of
         an old month needs told, because the org chart on screen elsewhere disagrees. */
@@ -5405,8 +5408,20 @@ PAGES.manual=()=>`<div class="card vasguide" style="max-width:900px" id="manualC
 </div>`;
 PAGES.dashboard=()=>{
   if(!M||!M.dates.length) return emptyState();
-  const g=M.grand;
-  const gp=(MP&&MP.dates.length)?MP.grand:null;
+  /* THE HEADER FILTERS APPLY HERE (Nick, 2026-09-07: "the filters is not working … pick things
+     like this"). The Dashboard read the floor-wide grand total whatever the header said, so
+     choosing a team leader or a campaign changed nothing on the first page anyone sees. Under
+     a filter every figure, sparkline, the QA average and the top-agents list are re-totalled
+     over the filtered facts with the model's own aggregator; the previous period follows. */
+  const filterOn=!!(S.ui.team||S.ui.camp);
+  const FF=filterOn?gFilter:null;
+  const g=filterOn?M.aggFacts(M.facts.filter(gFilter)):M.grand;
+  const gp=(MP&&MP.dates.length)?(filterOn&&MP.aggFacts?MP.aggFacts((MP.facts||[]).filter(gFilter)):MP.grand):null;
+  const qaOf=(model,agents)=>{ const xs=agents.map(a=>((model.mtdCC[model.primaryCamp[a.code]]||{})[a.code])).filter(x=>x&&x.qa&&x.qa.avg!=null);
+    return xs.length?{avg:xs.reduce((n,x)=>n+x.qa.avg,0)/xs.length,n:xs.reduce((n,x)=>n+(x.qa.n||1),0)}:{avg:null,n:0}; };
+  const qaF=filterOn?qaOf(M,filteredAgents()):{avg:M.qaAvg,n:M.qaN};
+  const qaAvg=qaF.avg, qaN=qaF.n;
+  const filterNote=filterOn?`<span class="note" style="margin-left:10px">filtered by ${[S.ui.camp?'campaign <b>'+esc(CAMPLAB[S.ui.camp]||S.ui.camp)+'</b>':'',S.ui.team?'team leader <b>'+esc(S.ui.team)+'</b>':''].filter(Boolean).join(' and ')} — <a href="#" onclick="__clearFilters();return false">clear</a></span>`:'';
   const days=M.dates.length, pdays=(MP&&MP.dates.length)?MP.dates.length:0;
   const rate=(v,dd)=>dd?v/dd:null;
   const vsLab='vs last period';
@@ -5422,35 +5437,35 @@ PAGES.dashboard=()=>{
   const row1=[
     {lab:'Total GWP',val:fmtR(g.gwp),icon:I.money,color:'var(--accent)',
      cmp:gp?deltaChip(rate(g.gwp,days),rate(gp.gwp,pdays)):'',sub:`${fmtPct(g.pctG)} of target`,
-     s:seriesBy(f=>f.gwp),tip:'Gross written premium from activated sales — '+fmtPct(g.pctG)+' of the '+fmtR(g.gwpT)+' target.'},
+     s:seriesBy(f=>f.gwp,FF),tip:'Gross written premium from activated sales — '+fmtPct(g.pctG)+' of the '+fmtR(g.gwpT)+' target.'},
     {lab:'Policies Sold',val:fmtNum(g.sales),icon:I.tag,color:'var(--cuddle)',
      cmp:gp?deltaChip(rate(g.sales,days),rate(gp.sales,pdays)):'',sub:`${fmtPct(g.pctT)} of target`,
-     s:seriesBy(f=>f.sales),tip:'Unique activated opportunities — '+fmtPct(g.pctT)+' of the '+fmtNum(g.target)+' target.'},
+     s:seriesBy(f=>f.sales,FF),tip:'Unique activated opportunities — '+fmtPct(g.pctT)+' of the '+fmtNum(g.target)+' target.'},
     {lab:'Ave GWP / Sale',val:fmtR(g.aveG,2),icon:I.target,color:'var(--violet)',
-     cmp:gp?deltaChip(g.aveG,gp.aveG):'',s:ratioSeries(f=>MTD_RULES.gwpDisplayBasis==='ex'?(f.gwpEx||0):f.gwp,f=>f.sales),tip:'GWP achieved ÷ sales achieved (ex-VAT — the agent comms basis).'},
+     cmp:gp?deltaChip(g.aveG,gp.aveG):'',s:ratioSeries(f=>MTD_RULES.gwpDisplayBasis==='ex'?(f.gwpEx||0):f.gwp,f=>f.sales,FF),tip:'GWP achieved ÷ sales achieved (ex-VAT — the agent comms basis).'},
     {lab:'SPD',val:fmtNum(g.spd,2),icon:I.up,color:'var(--courtesy)',
      cmp:gp?deltaChip(g.spd,gp.spd):'',sub:'',
-     s:ratioSeries(f=>f.sales,f=>f.act),tip:'Sales per actual shift — the core productivity measure.'},
-    {lab:'Avg QA Score',val:M.qaAvg!=null?fmtPct(M.qaAvg,1):'–',icon:I.shield,color:'var(--good)',
-     cmp:(MP&&MP.dates.length&&MP.qaAvg!=null&&M.qaAvg!=null)?deltaChip(M.qaAvg,MP.qaAvg):'',sub:(MP&&MP.dates.length&&MP.qaAvg!=null)?'':M.qaN+' evaluations',
-     s:qaSeries(null),tip:'Average CallBi score for calls dated in the period ('+M.qaN+' evaluations).'},
+     s:ratioSeries(f=>f.sales,f=>f.act,FF),tip:'Sales per actual shift — the core productivity measure.'},
+    {lab:'Avg QA Score',val:qaAvg!=null?fmtPct(qaAvg,1):'–',icon:I.shield,color:'var(--good)',
+     cmp:(!filterOn&&MP&&MP.dates.length&&MP.qaAvg!=null&&qaAvg!=null)?deltaChip(qaAvg,MP.qaAvg):'',sub:(!filterOn&&MP&&MP.dates.length&&MP.qaAvg!=null)?'':qaN+' evaluations',
+     s:qaSeries(null),tip:'Average CallBi score for calls dated in the period ('+qaN+' evaluations).'},
   ];
   const row2=[
     {lab:'Total Calls',val:fmtNum(g.calls),icon:I.phone,color:'var(--cuddle)',
      cmp:gp?deltaChip(rate(g.calls,days),rate(gp.calls,pdays)):'',sub:'',
-     s:seriesBy(f=>f.calls),tip:'Dialer records for the period.'},
+     s:seriesBy(f=>f.calls,FF),tip:'Dialer records for the period.'},
     {lab:'Answered Calls',val:fmtNum(g.ans),icon:I.check,color:'var(--good)',
      cmp:gp?deltaChip(rate(g.ans,days),rate(gp.ans,pdays)):'',sub:'',
-     s:seriesBy(f=>f.ans),tip:'Calls that bridged (ANSWERED).'},
+     s:seriesBy(f=>f.ans,FF),tip:'Calls that bridged (ANSWERED).'},
     {lab:'Avg Handle Time',val:g.aht?fmtDur(g.aht):'–',icon:I.clock,color:'var(--rose)',
      cmp:(gp&&gp.aht&&g.aht)?deltaChip(g.aht,gp.aht,{invert:true}):'',sub:(gp&&gp.aht)?'':'talk per answered call',
-     s:ratioSeries(f=>f.talk,f=>f.ans),tip:'Talk time ÷ answered calls. Lower is faster.'},
+     s:ratioSeries(f=>f.talk,f=>f.ans,FF),tip:'Talk time ÷ answered calls. Lower is faster.'},
     {lab:'Attendance %',val:fmtPct(g.att,1),icon:I.users,color:'var(--amber)',
      cmp:gp?deltaChip(g.att,gp.att):'',sub:'',
-     s:ratioSeries(f=>f.act,f=>f.emp),tip:fmtNum(g.act)+' of '+fmtNum(g.emp)+' employed shifts worked.'},
+     s:ratioSeries(f=>f.act,f=>f.emp,FF),tip:fmtNum(g.act)+' of '+fmtNum(g.emp)+' employed shifts worked.'},
     {lab:'Answer Rate',val:fmtPct(g.ansPct,1),icon:I.target,color:'var(--violet)',
      cmp:gp?deltaChip(g.ansPct,gp.ansPct):'',sub:'',
-     s:ratioSeries(f=>f.ans,f=>f.calls),tip:'Answered calls as a share of all dials.'},
+     s:ratioSeries(f=>f.ans,f=>f.calls,FF),tip:'Answered calls as a share of all dials.'},
   ];
 
   // performance radar (company profile this period)
@@ -5462,11 +5477,11 @@ PAGES.dashboard=()=>{
     {key:'ans',label:'Answered',fmt:v=>v!=null?fmtPct(v):'–'},
   ];
   const radar=radarChart(axes,[{name:'This period',color:'var(--accent)',
-    norm:{pctT:Math.min(1,g.pctT||0),qa:M.qaAvg||0,att:g.att||0,optPct:Math.min(1,(g.optPct||0)/0.6),pctG:Math.min(1,g.pctG||0),ans:g.ansPct||0},
-    raw:{pctT:g.pctT,qa:M.qaAvg,att:g.att,optPct:g.optPct,pctG:g.pctG,ans:g.ansPct}}],268);
+    norm:{pctT:Math.min(1,g.pctT||0),qa:qaAvg||0,att:g.att||0,optPct:Math.min(1,(g.optPct||0)/0.6),pctG:Math.min(1,g.pctG||0),ans:g.ansPct||0},
+    raw:{pctT:g.pctT,qa:qaAvg,att:g.att,optPct:g.optPct,pctG:g.pctG,ans:g.ansPct}}],268);
 
   // top performing agents with deltas
-  const ranked=M.agents.filter(a=>!vtHidden(a.code)).map(a=>({a,g:primaryAgg(a.code)})).filter(x=>x.g&&(x.g.sales>0||x.g.emp>0))
+  const ranked=(filterOn?filteredAgents():M.agents).filter(a=>!vtHidden(a.code)).map(a=>({a,g:primaryAgg(a.code)})).filter(x=>x.g&&(x.g.sales>0||x.g.emp>0))
     .sort((x,y)=>(y.g.gwp||0)-(x.g.gwp||0));
   const prevOf=code=>{
     if(MP&&MP.dates.length){ const p=(MP.mtdCC.Cuddle||{})[code]||(MP.mtdCC.Courtesy||{})[code];
@@ -5487,7 +5502,7 @@ PAGES.dashboard=()=>{
   const qa=qaSeries(null);
 
   return `
-  <div class="page-head"><h2>Dashboard</h2><div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialing day${M.diallingDays===1?'':'s'}</div></div>
+  <div class="page-head"><h2>Dashboard</h2>${filterNote}<div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialing day${M.diallingDays===1?'':'s'}</div></div>
   <div class="kpirow">${row1.map(k=>kpiCard(k)).join('')}</div>
   <div class="midgrid">
     <div class="card"><div class="cardhead"><div><h3>Revenue trend</h3><div class="sub">daily GWP performance</div></div></div>
