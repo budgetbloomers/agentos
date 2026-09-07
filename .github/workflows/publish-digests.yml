@@ -7,7 +7,8 @@ name: publish digests
 # the Worker's sentinel raises runner-never-ran / runner-silent / verification-failed from it.
 #
 # Secrets (Settings → Secrets → Actions): SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_DB_URL.
-# Nothing here runs until they exist.
+# Plus HL_API_KEY / HL_LOCATION_ID for the referrals pull. All five were set on 2026-09-07; the first
+# run (#1) republished the digests, relayed the archive into Ops, refreshed coaching and loaded the lake.
 
 on:
   schedule:
@@ -25,6 +26,8 @@ env:
   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
   SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
   SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+  HL_API_KEY: ${{ secrets.HL_API_KEY }}            # HighLevel referrals (tools/fetch-referrals.mjs reads env)
+  HL_LOCATION_ID: ${{ secrets.HL_LOCATION_ID }}
 
 jobs:
   publish:
