@@ -48,7 +48,7 @@ sources ──upload──▶ archive (manifest) ──▶ PULSE state ──▶
 These would have named this morning's Ops gap at 13:28 SAST on Sunday, thirty minutes after
 Ashton's upload, instead of it being found by hand on Monday.
 
-## Phase 1 — the scheduler runs (needs Nick: 10 minutes)
+## Phase 1 — the scheduler runs (needs Nick: 10 minutes) — code built 7 Sep, waiting on the secrets
 
 The runner is written: `.github/workflows/publish-digests.yml`. It cannot run without three
 repository secrets. Once they exist, every step below runs on schedule with no browser and no
@@ -75,7 +75,7 @@ Two additions to the workflow in this phase:
 | `jobs-status` write | Every step writes `kv:jobs-status {step, ranAt, ok, note}` when it finishes |
 | `runnerSilent` sentinel | If no step has written for 45 min during working hours → `runner-silent` (critical): the scheduler itself has stopped |
 
-## Phase 2 — freshness contracts per source (2–3 days)
+## Phase 2 — freshness contracts per source — built 7 Sep (source_cadence, data_reach, dataReach/expectedReach in the digest, source-stale, PULSE trust chips, "Figures to …" in Agent Analytics; the Ops DATA TRUST bar still counts files)
 
 Today the DATA TRUST bar counts files. It should measure **reach**: how far each source's data
 actually goes, against when it is due.
@@ -105,7 +105,7 @@ nothing downstream changes.
 Until a connector exists, the `source-stale` alert (Phase 2) names the missing upload and its
 owner by 13:30, which turns "we found out on Monday" into "Ashton's phone buzzed at 13:30".
 
-## Phase 4 — prove it every night
+## Phase 4 — prove it every night — built 7 Sep (nightly verify job, Scheduled-jobs card in Settings, weekly reach report; the report is stored, not yet posted anywhere)
 
 | Function | What it does |
 |---|---|
@@ -119,7 +119,7 @@ An alert is raised in both apps, within one cron tick, whenever any of these is 
 
 | Condition | Alert |
 |---|---|
-| A source's reach is past its due time plus grace | `source-stale` |
+| A source's reach is past its due day (Sat only for sales/calls) | `source-stale` |
 | Uploads moved and Ops has not ingested them within 30 min | `ops-behind-uploads` |
 | PULSE saved and the digest did not follow within 30 min | `digest-behind-store` |
 | The live digest is not the current month | `agent-digest-wrong-month` |
