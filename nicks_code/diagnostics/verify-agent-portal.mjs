@@ -169,9 +169,10 @@ ok('E6 an agent with no data still gets their identity', ghost.scope === 'agent'
 section('F · the Worker lockdown is an allow-list');
 const idx = fs.readFileSync(path.join(ROOT, 'worker', 'src', 'index.mjs'), 'utf8');
 ok('F1 the lockdown sits immediately after the session check',
-  /if \(!user\) return json\(\{ error: 'Sign in required\.' \}, 401\);[\s\S]{0,2000}?if \(PORTAL_ROLES\.has\(user\.role\) && !PORTAL_ALLOWED\.has\(path\)\)/.test(idx));
+  /if \(!user\) return json\(\{ error: 'Sign in required\.' \}, 401\);[\s\S]{0,2000}?if \((?:PORTAL_ROLES\.has\(user\.role\)|portalOnly\(user\)) && !PORTAL_ALLOWED\.has\(path\)\)/.test(idx));
 /* campaign_manager joined 2026-08-30 — the third view. It is INSIDE the
-   lockdown on purpose: a CM reaches only PORTAL_ALLOWED, never /api/kv. */
+   lockdown by role; since 2026-09-07 the lock follows the GRANT (portalOnly): a CM with no
+   management app reaches only PORTAL_ALLOWED, one granted ops/vas is a manager too. */
 ok('F2 portal roles are agent + team_leader + campaign_manager',
   PORTAL_ROLES.has('agent') && PORTAL_ROLES.has('team_leader') && PORTAL_ROLES.has('campaign_manager') && PORTAL_ROLES.size === 3);
 for (const shut of ['/api/kv', '/api/bi', '/api/eod', '/api/ask', '/api/agent-link', '/api/campaign-stats', '/api/referrals', '/api/coaching', '/api/coaching/summary', '/api/bi/raw', '/api/agent-digest'])
