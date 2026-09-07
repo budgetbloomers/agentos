@@ -1115,7 +1115,7 @@ const COMPOSITE_RULES = {
   floor:0.5,                                   // rating_floor — attainment below which a driver pays nothing
   windowSessions:5,                            // rating_window_sessions — worked sessions every driver averages over
   attendanceWindow:'scheduled',                // 2026-09-03: attendance over the last N SCHEDULED shifts, not worked ones (worked = 100% by construction)
-  convMinDataDays:5,                           // 2026-09-03: conversion is shown but not scored until the month has this many working days of data
+  convMinDataDays:1,                           // 2026-09-07 (Nick: "their conversion must show"): scored from the first data day; was 5 (3 Sep) to spare the early-month ramp — the note on the card still says the figure grows through the month
   drivers:[
     {k:'gwpSale',   label:'Avg GWP per Sale',   w:25, note:'Check 1, scored independently of volume.'},
     {k:'targetAch', label:'Target Achievement', w:20, note:'Check 2, daily sales against the tenure target.'},

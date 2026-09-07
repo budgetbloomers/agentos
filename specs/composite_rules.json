@@ -12,10 +12,10 @@
   "floor": 0.5,
   "windowSessions": 5,
   "attendanceWindow": "scheduled",
-  "convMinDataDays": 5,
+  "convMinDataDays": 1,
   "_scoringNotes": {
     "attendanceWindow": "2026-09-03 audit: attendance is averaged over the last windowSessions SCHEDULED shifts (rows with an employed shift, worked or not). Over WORKED sessions it was 100% for every agent by construction — a driver that could not fail.",
-    "convMinDataDays": "2026-09-03 audit: conversion (MTD sales ÷ the month's open leads) is SHOWN but not scored until the month carries this many working days of data; on day 2 of a month 56 of 59 agents failed it by construction. The other drivers renormalise, as for any unmeasured driver."
+    "convMinDataDays": "2026-09-07 (Nick: their conversion must show — scored from the first data day). Was 5 from the 3 Sep audit, because conversion (MTD sales ÷ the month's open leads) ramps through the month and day-2 figures failed 56/59 agents; the card's note still says so. Previously: SHOWN but not scored until the month carried this many working days of data; on day 2 of a month 56 of 59 agents failed it by construction. The other drivers renormalise, as for any unmeasured driver."
   },
   "drivers": [
     {

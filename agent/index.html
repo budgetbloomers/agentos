@@ -5056,7 +5056,11 @@ function pgCoaching(){
    value check ~15% stricter than the rule: an agent at R95 ex (≈R109 incl — a real pass,
    and a pass on the TL's Team Results, which reads the engine's own twoCheck) read
    "fail" here. The floor converts to ex-VAT in exactly one place. */
-function gwpFloorEx(){ var th=(D&&D.nba&&D.nba.thresholds)||{}; return (th.gwpFloor!=null?th.gwpFloor:99)/1.15; }
+/* THE CENT THE SOURCE BOOKS (audit, 2026-09-03; seen again 2026-09-07 on Jolene's card). R99 incl is
+   R86,0869… ex VAT; Salesforce books the case at R86,08. Dividing here gave 86,09 while the rating
+   row — fed by the engine's floor — read 86,08, so an agent EXACTLY at the floor showed "At target"
+   above and "R 0,01 to go — VALUE ISSUE" below. Floor to the cent, as the engine does. */
+function gwpFloorEx(){ var th=(D&&D.nba&&D.nba.thresholds)||{}; return Math.floor((th.gwpFloor!=null?th.gwpFloor:99)/1.15*100)/100; }
 function pgDrivers(){
   /* THE DRIVERS ARE THE RATING'S OWN PARTS WHEREVER THERE IS A RATING.
      Performance_Tab_View.json binds this section to c.parts, and for good reason: a second
