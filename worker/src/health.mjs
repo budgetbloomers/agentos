@@ -126,6 +126,34 @@ export function evaluateFreshness(t) {
       since: new Date(oldest).toISOString(),
     });
   }
+  /* OPS MUST FOLLOW THE UPLOADS (never-stale plan, Phase 0, 2026-09-07). Ops ingests only
+     when a tab is open and its relay's saves land; on 4–7 Sep nobody's did, and the Ops
+     dashboard sat five days behind the archive with nothing on screen to say so. The
+     manifest is the record of what was uploaded; the newest Ops fact store is the record of
+     what Ops took. Thirty minutes apart, with uploads newer, is the gap — named in hours. */
+  const opsFacts = ms(t.opsFactsAt);                       // unreadable = no opinion, never a false alarm
+  if (opsFacts && manifest && manifest - opsFacts > 30 * 60000) {
+    alerts.push({
+      id: 'ops-behind-uploads', severity: 'critical',
+      message: 'AgentOS Analytics has not ingested the latest uploads: files were archived at '
+        + new Date(manifest).toISOString().slice(0, 16).replace('T', ' ') + ' but its newest fact store is from '
+        + (opsFacts ? new Date(opsFacts).toISOString().slice(0, 16).replace('T', ' ') : 'never')
+        + ' (' + Math.round((manifest - opsFacts) / HOUR) + 'h behind). Open Ops and leave the tab for three minutes, or run tools/ops-relay.mjs.',
+      since: new Date(manifest).toISOString(),
+    });
+  }
+  /* THE DIGEST MUST FOLLOW THE STATE (same plan). PULSE saved — an upload landed or a rule
+     changed — but the live agent digest did not republish within the half hour, so every
+     agent, team leader and campaign manager is reading the state before the save. */
+  const digestAt = ms(t.digestAt);
+  if (vas && digestAt && vas - digestAt > 30 * 60000) {
+    alerts.push({
+      id: 'digest-behind-store', severity: 'warning',
+      message: 'VAS Analytics saved at ' + new Date(vas).toISOString().slice(0, 16).replace('T', ' ') + ' but the live agent digest was last published '
+        + new Date(digestAt).toISOString().slice(0, 16).replace('T', ' ') + ' — agents are reading the state before that save. Run tools/digest-republish.mjs --apply.',
+      since: new Date(vas).toISOString(),
+    });
+  }
   const integ = Array.isArray(t.integrity) ? t.integrity.filter((r) => r && r.failures > 0) : [];
   if (integ.length) {
     alerts.push({
@@ -169,6 +197,11 @@ export async function runHealthChecks(DB) {
     if (payload) { const d = JSON.parse(payload); digestMonth = String((d.period || {}).from || '').slice(0, 7) || null; digestAt = d.updatedAt || null; }
   } catch (e) { /* unreadable digest: the freshness alert has nothing to say; the portal will say plenty */ }
   const curMonth = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
+  /* the newest Ops fact store — what Ops has actually taken from the archive */
+  let opsFactsAt = null;
+  try { const fr = await DB.select('rules?key=like.' + encodeURIComponent('kv:cb-facts-%') + '&select=key,updated_at&order=updated_at.desc&limit=20');
+    for (const r of fr || []) { if (/SES_/.test(r.key)) continue; opsFactsAt = r.updated_at; break; } }
+  catch (e) { opsFactsAt = null; }
   /* the database's own view of list ↔ logins ↔ campaigns; unreadable = no opinion, never a false alarm */
   let integrity = [];
   try { integrity = (await DB.select('agent_list_integrity?failures=gt.0&select=check_name,severity,failures,detail')) || []; }
@@ -179,7 +212,7 @@ export async function runHealthChecks(DB) {
   catch (e) { saveFailures = []; }
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);

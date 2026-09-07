@@ -9,6 +9,8 @@ name: publish digests
 # and the lake load once a day.
 #
 # Secrets (Settings → Secrets → Actions): SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_DB_URL.
+# Since 2026-09-07 the Ops relay runs here too (tools/ops-relay.mjs): the Ops dashboard's own
+# ingest, driven headlessly, so its fact stores follow the archive without a tab being open.
 # Each tool writes Storage directly and is idempotent; a failed run changes nothing.
 
 on:
@@ -44,6 +46,8 @@ jobs:
 
       - name: Agent digest — live month + history (PULSE engine, headless)
         run: node tools/digest-republish.mjs --apply --history
+      - name: Ops relay — the Ops page ingests every unseen archived file (never-stale plan, Phase 0)
+        run: node tools/ops-relay.mjs --wait 300
       - name: NBA digest (Ops engine, headless)
         run: node tools/nba-republish.mjs --apply
 

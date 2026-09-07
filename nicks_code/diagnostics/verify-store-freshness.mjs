@@ -117,6 +117,20 @@ head('A · THE SENTINEL, AGAINST FIXTURES');
   ok(!!a && a.since === '2026-09-07T08:20:00.000Z', 'since = the oldest report');
 }
 
+{
+  /* never-stale plan, Phase 0 (2026-09-07): Ops must follow the uploads, the digest must follow the state */
+  const base = { manifestAt: '2026-09-06T10:59:00Z', vasAt: '2026-09-06T10:59:30Z', opsAt: '2026-09-06T11:00:00Z',
+    staffLoginRecent: true, now: at('2026-09-07T08:00:00Z'), opened: {}, digestMonth: '2026-09', curMonth: '2026-09', digestAt: '2026-09-06T11:00:00Z' };
+  const behind = evaluateFreshness({ ...base, opsFactsAt: '2026-09-02T21:26:00Z' });
+  const o = behind.find((x) => x.id === 'ops-behind-uploads');
+  ok(!!o && o.severity === 'critical' && /86h behind/.test(o.message), 'Ops fact stores 3.5 days older than the archive: critical, hours named', o && o.message);
+  ok(!evaluateFreshness({ ...base, opsFactsAt: '2026-09-06T11:05:00Z' }).some((x) => x.id === 'ops-behind-uploads'), 'Ops that followed within the half hour: quiet');
+  ok(!evaluateFreshness({ ...base, opsFactsAt: null }).some((x) => x.id === 'ops-behind-uploads'), 'no Ops reading at all is no opinion, never an alarm');
+  const lag = evaluateFreshness({ ...base, opsFactsAt: '2026-09-06T11:05:00Z', vasAt: '2026-09-07T06:56:00Z', digestAt: '2026-09-06T11:00:00Z' });
+  ok(lag.some((x) => x.id === 'digest-behind-store'), 'PULSE saved 20h after the last digest publish: the digest is behind');
+  ok(!evaluateFreshness({ ...base, opsFactsAt: '2026-09-06T11:05:00Z', vasAt: '2026-09-07T06:56:00Z', digestAt: '2026-09-07T07:10:00Z' }).some((x) => x.id === 'digest-behind-store'), 'digest republished after the save: quiet');
+}
+
 head('B · THE LIVE VIEW AND THE LIVE KEY');
 {
   const env = {};
