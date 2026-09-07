@@ -203,5 +203,31 @@
     }
   ],
   "_driver_notes": "note = the workbook DRIVERS tab plain_english column, which is what an agent is shown. appNote = the app internal shorthand, kept beside it rather than overwriting the workbook prose.",
-  "_removed_signIn": "THE SIGN-IN BONUS WAS REMOVED 2026-08-31 (Nick: \"remove the five points that the agent gets for logging in\"). It ran from 2026-08-28: one point per weekday an agent opened Agent Analytics, capped at 5, added AFTER the deductions and never weighted as an eighth driver. The adjusted score is now the composite less its deductions and nothing else. Nothing in the workbook ever carried it, so there is nothing to re-issue; this line is the record that it existed and why it went."
+  "_removed_signIn": "THE SIGN-IN BONUS WAS REMOVED 2026-08-31 (Nick: \"remove the five points that the agent gets for logging in\"). It ran from 2026-08-28: one point per weekday an agent opened Agent Analytics, capped at 5, added AFTER the deductions and never weighted as an eighth driver. The adjusted score is now the composite less its deductions and nothing else. Nothing in the workbook ever carried it, so there is nothing to re-issue; this line is the record that it existed and why it went.",
+  "_changes": [
+    {
+      "date": "2026-09-03",
+      "by": "Nick / audit",
+      "key": "attendanceWindow",
+      "from": "worked",
+      "to": "scheduled",
+      "why": "attendance over worked sessions was 100% by definition"
+    },
+    {
+      "date": "2026-09-03",
+      "by": "Nick / audit",
+      "key": "convMinDataDays",
+      "from": 0,
+      "to": 5,
+      "why": "day-2 conversion failed 56/59 agents; shown, not scored until the 5th data day"
+    },
+    {
+      "date": "2026-09-07",
+      "by": "Nick",
+      "key": "convMinDataDays",
+      "from": 5,
+      "to": 1,
+      "why": "\"their conversion must show\" — scored from the first data day"
+    }
+  ]
 }

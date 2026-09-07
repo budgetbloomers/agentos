@@ -5060,7 +5060,8 @@ function pgCoaching(){
    R86,0869… ex VAT; Salesforce books the case at R86,08. Dividing here gave 86,09 while the rating
    row — fed by the engine's floor — read 86,08, so an agent EXACTLY at the floor showed "At target"
    above and "R 0,01 to go — VALUE ISSUE" below. Floor to the cent, as the engine does. */
-function gwpFloorEx(){ var th=(D&&D.nba&&D.nba.thresholds)||{}; return Math.floor((th.gwpFloor!=null?th.gwpFloor:99)/1.15*100)/100; }
+function gwpFloorEx(){ var th=(D&&D.nba&&D.nba.thresholds)||{}; if(th.gwpFloorEx!=null) return th.gwpFloorEx;   // published by the Worker (rules.mjs), floored to the cent
+  var C=ME&&ME.checks; return (C&&C.value&&C.value.floorEx!=null)?C.value.floorEx:null; }   // no division on this page — one number, one verdict
 function pgDrivers(){
   /* THE DRIVERS ARE THE RATING'S OWN PARTS WHEREVER THERE IS A RATING.
      Performance_Tab_View.json binds this section to c.parts, and for good reason: a second
@@ -5141,22 +5142,13 @@ function pgAdviceText(key){
 /* SHOW THE FIGURE EVEN WHEN THE ENGINE WILL NOT SCORE IT (Nick, 2026-08-28: "I want to
    show the conversion of the agent but it does not have to be measured").
 
-   PULSE publishes `shown` on the part, but a digest already sitting in the store does
-   not carry it, and waiting for the next push means the agent sees a dash today for no
-   reason — the page is holding the day rows the figure comes from. So it is computed
-   here when it has not travelled, over the SAME window the rating uses, never the whole
-   month, or the number would not belong beside the rest of the row. */
-function cShown(p){
-  if(p.shown!=null) return p.shown;
-  /* CONVERSION IS SALES DIVIDED BY UNIQUE LEADS, AND NOTHING ELSE MAY WEAR THE NAME
-     (audit, 2026-08-31). This used to fall back to sales divided by dialler calls — about a
-     fifth of the real figure — and print it in the Conversion row as "shown, not scored".
-     That is the exact substitution the engine refuses to make: compositeFor() publishes
-     conv as null rather than sending sales-per-call under conversion's label. An agent
-     whose lead book is not loaded is unmeasured, and the row now says so. */
-  if(p.k==='conv'&&ME.leads&&ME.sales!=null) return Math.round((ME.sales/ME.leads)*1000)/10;
-  return null;
-}
+   THE FIGURE IS THE ENGINE'S OR IT IS NOT SHOWN (one number, one verdict, 2026-09-07). This
+   used to compute sales ÷ leads here when `shown` had not travelled — a bridge for digests
+   published before 28 August. The bridge outlived its digests: on 7 September three agents
+   read "Conversion 1,1% of — shown, not scored" from a whole-month quotient the page made
+   up while the engine had published null, which is exactly the re-derivation the plan
+   forbids. Every digest now carries `shown`; a part without it reads "not measured". */
+function cShown(p){ return p.shown!=null?p.shown:null; }
 /* Money that is compared against a small target carries its cents; a period total does
    not need them. gwpSale is R86-ish against an R86,09 floor — round it and the reader
    cannot see which side of the line they are on. */
@@ -5423,24 +5415,13 @@ function pgNBA(){
     +' Your team leader works through this with you — it is a plan, not a mark.</div></div>';
 }
 function pgChecks(){
-  /* VAS figures, rule-book lines: value = this month's GWP per sale against the R99
-     floor; volume = this month's percent-to-target against the ladder's 70% line
-     (the R4A volume trigger — a constant of the rule book, not of this page). */
-  var th=(D.nba&&D.nba.thresholds)||{};
-  /* THE TWO CHECKS DO NOT DEPEND ON THE OPS DIGEST ARRIVING (audit, 2026-08-31). This
-     returned nothing whenever th.gwpFloor was absent, so the whole card vanished — with no
-     line saying why — any time the management app had not published. Both lines are rule
-     book constants the page already carries its own defaults for (gwpFloorEx falls back to
-     R99, the volume line to 100), and now that the ladder no longer renders here this was
-     the last thing tying an agent's own page to the other engine. The agent's figures are
-     the only inputs that can genuinely be missing. */
-  if(ME.aveG==null||ME.pctT==null) return '';
-  /* CHECK 2 PASSES AT THE PUBLISHED LINE — Chatterbox_Decision_Rules.xlsx, NBA_THRESHOLDS:
-     "target_ach | 100 | % | Check 2 passes at or above this". This page used 70, which is
-     where R4A FIRES, so an agent at 80% of target read "pass" here while their team leader's
-     screen read the same person as short. One line, published once, read by both. */
-  var volLine=th.targetAch||100;
-  var value=ME.aveG>=gwpFloorEx(), volume=(ME.pctT*100)>=volLine;   // ex-VAT vs ex-VAT — see gwpFloorEx()
+  /* THE VERDICTS ARRIVE DECIDED (one number, one verdict — 2026-09-07). The Worker's rules.mjs
+     compares this month's GWP per sale with the R99 floor at the cent Salesforce books, and the
+     percent-to-target with the ladder's published line, and sends {value:{pass}, volume:{pass}}
+     with the exact figures it compared. This page paints them. It used to derive the floor
+     itself (99 ÷ 1.15 = 86,0869) and disagreed with the rating row above by a cent. */
+  var C=ME&&ME.checks; if(!C||!C.value||C.value.aveG==null||!C.volume||C.volume.pct==null) return '';
+  var value=C.value.pass===true, volume=C.volume.pass===true;
   var status=value&&volume?'Healthy':(value?'Volume Issue':(volume?'Value Issue':'Both Issues'));
   var map={'Both Issues':['bad','Value and volume both need work — your team leader has this on the plan above.'],
     'Volume Issue':['warn','Good value, but not enough sales. Coach on activity, pipeline and closing.'],
@@ -5449,8 +5430,8 @@ function pgChecks(){
   var sm=map[status];
   return '<div class="card"><h2>The two checks on every sale</h2>'
     +'<div class="pg-status '+sm[0]+'"><b>'+esc(status.toUpperCase())+'</b>'+esc(sm[1])+'</div>'
-    +'<p class="why"><b>Check 1 · value:</b> '+R(ME.aveG,2)+' a sale against '+R(gwpFloorEx(),2)+' ex VAT ('+R(th.gwpFloor!=null?th.gwpFloor:99)+' incl) — '+(value?'pass':'to go')+'</p>'
-    +'<p class="why"><b>Check 2 · volume:</b> '+num(ME.pctT*100,1)+'% of your sales target against '+num(volLine)+'% — '+(volume?'pass':'to go')+'</p>'
+    +'<p class="why"><b>Check 1 · value:</b> '+R(C.value.aveG,2)+' a sale against '+R(C.value.floorEx,2)+' ex VAT ('+R(C.value.floorIncl)+' incl) — '+(value?'pass':'to go')+'</p>'
+    +'<p class="why"><b>Check 2 · volume:</b> '+num(C.volume.pct,1)+'% of your sales target against '+num(C.volume.line)+'% — '+(volume?'pass':'to go')+'</p>'
     /* THE TWO PERCENTAGES ON THIS PAGE COVER DIFFERENT WINDOWS, AND BOTH ARE TRUE. The
        rating above is the last five worked sessions; these checks are the whole month. Said
        out loud they are two facts; left unlabelled they read as the page contradicting

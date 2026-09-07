@@ -22,7 +22,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
-const AGENTOS = 'C:/Users/aarav/OneDrive/Desktop/Chatterbox Agent OS/agentos';
+import { fileURLToPath } from 'node:url';
+const AGENTOS = process.env.AGENTOS || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');   // repo-relative so the nightly cloud run can find it
 const { chromium } = await import(pathToFileURL(path.join(AGENTOS, 'nicks_code', 'diagnostics', 'node_modules', 'playwright', 'index.mjs')).href);
 const HTML = path.join(AGENTOS, ...(process.env.PULSE_HTML || 'nicks_code/index.html').split('/'));
 let pass = 0, fail = 0;
@@ -51,6 +52,23 @@ src.forEach((line, i) => {
   strays.push((i + 1) + ': ' + line.trim().slice(0, 90));
 });
 ok('no calculation carries its own VAT literal', strays.length === 0, strays.join('  |  '));
+
+/* ONE NUMBER, ONE VERDICT (2026-09-07). The agent page and the Worker portal PAINT verdicts the
+   engine decided; neither may divide by VAT or carry the R99 floor as a literal again. The
+   commission calculator's ported constants (saleValue, 89/1.15, SALE_VALUES) are the one
+   allowed exception — they are equivalence-tested against the original source. */
+for (const rel of ['agent/index.html', 'worker/src/portal.mjs']) {
+  const lines = fs.readFileSync(path.join(AGENTOS, ...rel.split('/')), 'utf8').split(/\r?\n/);
+  let inBlock = false; const bad = [];
+  lines.forEach((line, i) => {
+    const o = line.lastIndexOf('/*'), c = line.lastIndexOf('*/');
+    const opened = inBlock; if (!inBlock && o > -1 && c < o) inBlock = true; else if (inBlock && c > -1) inBlock = false;
+    if (opened || inBlock || /^\s*\/\//.test(line)) return;
+    if (/\/\s*1\.15|\*\s*1\.15/.test(line) && !/saleValue|SALE_VALUES|89\s*\/\s*1\.15/.test(line)) bad.push(rel + ':' + (i + 1) + ' ' + line.trim().slice(0, 80));
+    if (/gwpFloor\s*:\s*99\b|:\s*99\)|\?\s*99\b/.test(line)) bad.push(rel + ':' + (i + 1) + ' ' + line.trim().slice(0, 80));
+  });
+  ok(rel + ' carries no VAT division and no R99 fallback of its own', bad.length === 0, bad.join('  |  '));
+}
 
 /* Serve the real sidecar scripts. Answering every request with the HTML makes the browser
    parse a page as JavaScript and report a phantom syntax error, which the page-error check

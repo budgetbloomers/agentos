@@ -1793,5 +1793,23 @@
   "Cuddle",
   "Courtesy",
   "Nesting"
+ ],
+ "_changes": [
+  {
+   "date": "2026-09-01",
+   "by": "Nick",
+   "key": "sources.call_x_call.retired",
+   "from": null,
+   "to": "2026-09-01",
+   "why": "whole floor on ViciDial"
+  },
+  {
+   "date": "2026-09-07",
+   "by": "Nick",
+   "key": "reference_data.saturday_shifts",
+   "from": null,
+   "to": "data_only_from 2026-09-01",
+   "why": "\"add the data but do not add to the numerator for Saturday\" — Saturday keeps its sales, is not a shift or a dialling day"
+  }
  ]
 }

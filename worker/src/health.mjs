@@ -28,13 +28,8 @@ const HOUR = 3600000;
 
 /* THE DAY EACH SOURCE SHOULD REACH RIGHT NOW (never-stale plan, Phase 2). The daily drop lands
    by 13:00 SAST carrying yesterday; there is no Sunday data. Mirrors expectedReach() in PULSE. */
-export function expectedReachFor(nowMs, saturday = true) {
-  const sast = new Date(nowMs + 2 * HOUR);
-  const d = new Date(Date.UTC(sast.getUTCFullYear(), sast.getUTCMonth(), sast.getUTCDate()));
-  d.setUTCDate(d.getUTCDate() - (sast.getUTCHours() >= 13 ? 1 : 2));
-  while (d.getUTCDay() === 0 || (!saturday && d.getUTCDay() === 6)) d.setUTCDate(d.getUTCDate() - 1);   // no Sunday data; Saturday only for sources that dial
-  return d.toISOString().slice(0, 10);
-}
+import { expectedReachFor } from './rules.mjs';
+export { expectedReachFor };                              // lives in rules.mjs since 2026-09-07 (one source); re-exported for the suites
 const SATURDAY_SOURCES = new Set(['sales', 'calls']);
 const SAST_WORKING = (nowMs) => { const s = new Date(nowMs + 2 * HOUR); const h = s.getUTCHours(), w = s.getUTCDay(); return w >= 1 && w <= 5 && h >= 6 && h < 20; };
 const REACH_LABEL = { sales: 'Sales (BI Active cases)', calls: 'Calls (ViciDial)', attendance: 'Attendance register', qa: 'QA evaluations' };

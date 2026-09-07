@@ -24,20 +24,20 @@ nightly for every agent.
 3. **A rule change is a dated event, not an edit.** Every change carries who, when and why, and the apps show it.
 4. **Prove every card, every night.** A suite renders every agent's card from the live digest and asserts it agrees with itself and with the engine.
 
-## Phase 0 — build now (1 day)
+## Phase 0 — BUILT 7 Sep (Worker version ab6ee327, site build mtr92q4s)
 
 | Function | Where | What it does |
 |---|---|---|
-| Verdicts in the digest | `agentDigestPayload` (PULSE) | Each agent row gains `checks: { value: {aveG, floorEx, pass}, volume: {pct, line, pass} }`; composite parts already carry `onTarget`, `measured`, `shown`, `shownNote`. The page reads `pass` and stops computing `aveG >= floor` |
-| `gwpFloorEx` removed from clients | `agent/index.html`, Ops | The ex-VAT floor is published once (`thresholds.gwpFloorEx`, floored to the cent) and read everywhere; the two client copies are deleted |
-| `verify-agent-card.mjs` | diagnostics | Renders EVERY agent in the live digest headlessly and asserts: the score on screen equals the digest score; every rating-row verdict equals its part's `onTarget`; the two-checks verdicts equal `checks.*.pass`; a figure shown in two places carries the same value and target in both; Conversion shows a value whenever `leads > 0`; sessions rows equal `days`. Added to the nightly verify job |
-| No client arithmetic | `verify-rule-constants.mjs` | Fails on any `/1.15`, `*1.15` or `99` literal in `agent/index.html` and `worker/src/portal.mjs` outside a rules block — the rule PULSE already lives under |
+| Verdicts in the payload — built in the Worker, not the digest publisher: `checksFor()` in `worker/src/rules.mjs`, attached by `portal.mjs` to `me` (agent scope) and `me` (agent-detail) | Each agent row gains `checks: { value: {aveG, floorEx, pass}, volume: {pct, line, pass} }`; composite parts already carry `onTarget`, `measured`, `shown`, `shownNote`. The page reads `pass` and stops computing `aveG >= floor` |
+| `gwpFloorEx` removed from clients | `agent/index.html` | The ex-VAT floor is published once (`thresholds.gwpFloorEx`, floored to the cent) and read from the payload; the agent page no longer divides. Ops keeps its copy because Ops is an ENGINE (it scores its own composite), not a page painting someone else's verdict — its copy is drift-checked, not deleted |
+| `verify-agent-card.mjs` — 1 014 checks green on 7 Sep over all 84 rated agents on the deployed page | diagnostics | Renders EVERY agent in the live digest headlessly and asserts: the score on screen equals the digest score; every rating-row verdict equals its part's `onTarget`; the two-checks verdicts equal `checks.*.pass`; a figure shown in two places carries the same value and target in both; Conversion shows a value whenever `leads > 0`; sessions rows equal `days`. Added to the nightly verify job |
+| No client arithmetic — live | `verify-rule-constants.mjs` | Fails on any `/1.15`, `*1.15` or `99` literal in `agent/index.html` and `worker/src/portal.mjs` outside a rules block — the rule PULSE already lives under |
 
-## Phase 1 — one source for every constant (2 days)
+## Phase 1 — BUILT 7 Sep (generic drift over every scalar key of composite_rules.json; rules.mjs holds VAT, the floor, checksFor and expectedReachFor; _changes[] in both spec files, refused when empty)
 
 | Function | Where | What it does |
 |---|---|---|
-| Generic drift check | `verify-engine-rules.mjs`, `verify-composite-score.mjs` | Iterate every key of `specs/mtd_engine_rules.json` and `specs/composite_rules.json` against the inline mirrors instead of a hand-kept list — a key present in one copy and not the other fails |
+| Generic drift check — composite done; the engine spec is nested so its suite still walks named sections | `verify-composite-score.mjs` | Iterate every key of `specs/mtd_engine_rules.json` and `specs/composite_rules.json` against the inline mirrors instead of a hand-kept list — a key present in one copy and not the other fails |
 | `rules.mjs` shared module | `worker/src/rules.mjs` | `expectedReachFor`, `gwpFloorEx`, `saturdayDataOnly`, `workingDays` live once for the Worker and the tools; PULSE's inlined copies are drift-checked against it by text |
 | Rule-book `_changes[]` | both spec files | Every change appends `{date, by, key, from, to, why}`; the drift check refuses a value change without an entry |
 
@@ -69,3 +69,7 @@ nightly for every agent.
 
 1. Whether the "Is this right?" button belongs on the agent card (it invites reports; it also invites noise).
 2. Whether the "Rules changed" strip shows to agents, or only to team leaders and managers.
+
+## One thing the suite deliberately does NOT assert
+
+The rating row (last five worked sessions) and the two checks (the whole month) are two windows, both true — the card says so in words. The first draft of `verify-agent-card` compared them and failed 2 of 3 agents; the comparison was wrong, not the card. A future suite must never "fix" that by making the two windows agree.

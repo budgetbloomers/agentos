@@ -121,7 +121,7 @@ jobs:
         id: nightly
         run: |
           set +e; fails=""
-          for s in verify-all-tabs verify-controls verify-store-freshness verify-publish-agent-list; do
+          for s in verify-all-tabs verify-controls verify-store-freshness verify-publish-agent-list verify-agent-card verify-rule-constants verify-composite-score; do
             node nicks_code/diagnostics/$s.mjs > /tmp/$s.log 2>&1 || fails="$fails $s($(grep -oE '[0-9]+ failed' /tmp/$s.log | head -1))"
           done
           node nicks_code/diagnostics/verify-live-save.mjs --live > /tmp/live.log 2>&1 || fails="$fails verify-live-save"

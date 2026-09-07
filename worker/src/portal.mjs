@@ -20,6 +20,7 @@
 
 import { getCoaching, rollUp, sessionsForAgent, withinWindow, CX_RULES } from './coaching.mjs';
 import { campKey, cmOverviewBody, effectiveCamps } from './campaign.mjs';
+import { withFloorEx, checksFor } from './rules.mjs';   // one number, one verdict (2026-09-07): the floor and the two checks are decided once
 
 export const PORTAL_ROLES = new Set(['agent', 'team_leader', 'campaign_manager']);
 
@@ -414,9 +415,12 @@ export async function overview(env, DB, user, digest, months, extra) {
       if (nd && Array.isArray(nd.agents)) {
         const hit = nd.agents.find((x) => normCb(x.cb) === auth.cb) || null;
         if (hit) nba = { updatedAt: nd.updatedAt, period: nd.period, workDays: nd.workDays,
-          thresholds: nd.thresholds, agents: [hit] };
+          thresholds: withFloorEx(nd.thresholds), agents: [hit] };
       }
     } catch { nba = null; }
+    /* THE TWO CHECKS, DECIDED HERE (one number, one verdict — 2026-09-07). The page used to
+       compare aveG against a floor it derived itself and disagreed with the rating row. */
+    if (me) me.checks = checksFor(me, nba && nba.thresholds);
     return {
       status: 200,
       body: {
@@ -460,7 +464,7 @@ export async function overview(env, DB, user, digest, months, extra) {
     if (nd && Array.isArray(nd.agents)) {
       const mine = nd.agents.filter((a) => auth.codes.has(normCb(a.cb)));
       nba = { updatedAt: nd.updatedAt, period: nd.period, workDays: nd.workDays,
-        thresholds: nd.thresholds, agents: mine, missing: auth.codes.size - mine.length };
+        thresholds: withFloorEx(nd.thresholds), agents: mine, missing: auth.codes.size - mine.length };
     }
   } catch (e) { nba = { error: String(e.message || e).slice(0, 200) }; }
   return {
@@ -513,11 +517,12 @@ export async function agentDetail(env, DB, user, digest, wantCb) {
       if (nd && Array.isArray(nd.agents)) {
         const hit = nd.agents.find((x) => normCb(x.cb) === cb) || null;
         if (hit) nba = { updatedAt: nd.updatedAt, period: nd.period, workDays: nd.workDays,
-          thresholds: nd.thresholds, agent: hit };
+          thresholds: withFloorEx(nd.thresholds), agent: hit };
       }
     } catch { nba = null; }
   }
 
+  if (row) row.checks = checksFor(row, nba && nba.thresholds);   // decided once, painted by the page
   return {
     status: 200,
     body: { ...envelope(digest), role: user.role, scope: 'agent-detail', me: row,

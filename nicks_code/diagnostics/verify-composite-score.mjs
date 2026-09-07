@@ -23,7 +23,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
-const AGENTOS = 'C:/Users/aarav/OneDrive/Desktop/Chatterbox Agent OS/agentos';
+import { fileURLToPath } from 'node:url';
+const AGENTOS = process.env.AGENTOS || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');   // repo-relative so the nightly cloud run can find it
 const { chromium } = await import(pathToFileURL(path.join(AGENTOS, 'nicks_code', 'diagnostics', 'node_modules', 'playwright', 'index.mjs')).href);
 const HTML = path.join(AGENTOS, ...(process.env.PULSE_HTML || 'nicks_code/index.html').split('/'));
 let pass = 0, fail = 0;
@@ -72,6 +73,15 @@ if (live.floor !== spec.floor) drift.push('floor');
 if (live.windowSessions !== spec.windowSessions) drift.push('windowSessions');
 if (live.combinedCap !== spec.combinedCap) drift.push('combinedCap');
 if (live.r2aCap !== spec.r2aCap) drift.push('r2aCap');
+/* GENERIC (one number, one verdict — 2026-09-07): every scalar key in the spec must equal the live
+   copy, so a constant can no longer be added to one side only. Keys starting with _ are notes. */
+for (const k of Object.keys(spec)) {
+  if (k.startsWith('_') || typeof spec[k] === 'object') continue;
+  if (live[k] !== spec[k]) drift.push(k + ' ' + JSON.stringify(live[k]) + ' vs ' + JSON.stringify(spec[k]));
+}
+ok('every rule-book value has a dated change entry (_changes[] exists and is well formed)',
+  Array.isArray(spec._changes) && spec._changes.length > 0 && spec._changes.every(c => /^\d{4}-\d{2}-\d{2}$/.test(c.date) && c.key && c.why),
+  JSON.stringify(spec._changes || null).slice(0, 120));
 spec.drivers.forEach(d => { const l = (live.drivers || []).find(x => x.k === d.k);
   if (!l) drift.push('driver ' + d.k + ' missing'); else if (l.w !== d.w) drift.push(d.k + ' weight ' + l.w + ' vs ' + d.w); });
 for (const k of Object.keys(spec.targets)) if (live.targets[k] !== spec.targets[k]) drift.push('target ' + k);
