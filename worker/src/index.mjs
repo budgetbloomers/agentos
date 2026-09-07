@@ -254,6 +254,22 @@ function stampAppOpen(DB, ctx, app) {
   if (ctx && ctx.waitUntil) ctx.waitUntil(work);
 }
 
+/* WHO IS LOCKED TO THE PORTAL (2026-09-07). The lockdown used to key on the role name alone,
+   so a campaign manager — a PORTAL role, because the Campaign Manager view lives in Agent
+   Analytics — was refused /api/kv, /api/roster and every other management route even when
+   Nick had granted them Ops and VAS Analytics: Dalwin signed in and PULSE sat on "Loading
+   your data from Supabase…" forever (the 403s never reach the screen). The lock now follows
+   the GRANT: a portal role with no management app is locked exactly as before (every agent,
+   every team leader), while one that has been given 'ops', 'vas' or 'tracker' is a manager
+   who also has a portal view. Deny-by-default is unchanged — the allow-list still decides
+   which routes a locked user may call. */
+const MANAGEMENT_APPS = new Set(['ops', 'vas', 'tracker']);
+function portalOnly(user) {
+  if (!user || !PORTAL_ROLES.has(user.role)) return false;
+  const apps = Array.isArray(user.apps) ? user.apps : [];
+  return !apps.some((a) => MANAGEMENT_APPS.has(String(a)));
+}
+
 export default {
   /* THE SAFETY NET (Nick, 2026-08-28: "make this never happen again"). Every ten minutes,
      with nothing open anywhere, the roster is re-synced into Ops' store and the agent->team
@@ -487,7 +503,7 @@ export default {
            colleague's name, premium and commission. Caught by the live section of
            verify-agent-portal.mjs, which is exactly why that section exists.
            Any future route placed above the gate needs this same line. */
-        if (PORTAL_ROLES.has(user.role)) return json({ error: 'Not permitted.' }, 403);
+        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
 
         // Edge-cached: hundreds of agents share one 5-minute copy, so Supabase sees
         // ~1 read per 5 minutes however many people open the link at once.
@@ -522,7 +538,7 @@ export default {
          to this Worker next month is closed to agents until somebody opens it
          on purpose — the opposite polarity (a deny-list) fails open, silently,
          exactly once, and that once is a POPIA incident. */
-      if (PORTAL_ROLES.has(user.role) && !PORTAL_ALLOWED.has(path))
+      if (portalOnly(user) && !PORTAL_ALLOWED.has(path))
         return json({ error: 'Not permitted.' }, 403);
 
       /* The campaign-manager context (assignments, SLA rules, blockage table,

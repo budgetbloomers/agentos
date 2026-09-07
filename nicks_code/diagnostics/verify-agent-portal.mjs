@@ -196,7 +196,7 @@ ok('F5 every route the Worker serves a portal role is one it declares',
   /* The two that return real data up there must refuse portal roles by hand. */
   const dBody = idx.slice(idx.indexOf("path === '/api/agent-digest'"), gateAt);
   ok('F7 /api/agent-digest refuses portal roles itself',
-    /PORTAL_ROLES\.has\(user\.role\)\) return json\(\{ error: 'Not permitted\.' \}, 403\)/.test(dBody));
+    /(?:PORTAL_ROLES\.has\(user\.role\)|portalOnly\(user\))\) return json\(\{ error: 'Not permitted\.' \}, 403\)/.test(dBody));   // portalOnly(): the lock follows the GRANT since 2026-09-07
 }
 ok('F6 the retired share key no longer authorises the digest',
   !/agent_link_key[\s\S]{0,400}?allowed = diff === 0/.test(idx));
