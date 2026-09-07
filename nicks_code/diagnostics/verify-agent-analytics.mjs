@@ -432,7 +432,8 @@ const CODE = PAGE
   const digest = WORKER.indexOf("path === '/api/agent-digest'");
   const sess = WORKER.indexOf('const user = await session(DB, req)');
   const deny = WORKER.indexOf("if (!user) return json({ error: 'Sign in required.' }, 401)");
-  const lock = WORKER.indexOf('if (PORTAL_ROLES.has(user.role) && !PORTAL_ALLOWED.has(path))');
+  const lock = Math.max(WORKER.indexOf('if (PORTAL_ROLES.has(user.role) && !PORTAL_ALLOWED.has(path))'),
+    WORKER.indexOf('if (portalOnly(user) && !PORTAL_ALLOWED.has(path))'));   // portalOnly(): the lock follows the GRANT since 2026-09-07
   const linkRt = WORKER.indexOf("path === '/api/agent-link'");
 
   /* THE ORDER IS THE SECURITY. Session check first, role lockdown immediately

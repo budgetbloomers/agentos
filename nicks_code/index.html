@@ -3476,6 +3476,26 @@ function saturdayDataOnly(d){
   const from=MTD_RULES.saturdayShiftsFrom; if(!from||d<from) return false;
   return new Date(d+'T00:00:00Z').getUTCDay()===6;
 }
+/* HOW FAR THE DATA REACHES (never-stale plan, Phase 2, 2026-09-07). The trust bar used to count
+   files by upload age; what a manager needs is the last DAY each source covers, against the day
+   it should cover. expectedReach(): the daily drop lands by 13:00 SAST with yesterday's data,
+   and there is no Sunday data — so before 13:00 the expectation is the day before yesterday,
+   after it yesterday, Sundays skipped. Both travel in the agent digest (dataReach,
+   expectedReach) so the Worker's sentinel and Agent Analytics read the same answer. */
+function dataReach(){
+  const mx=o=>{const ks=Object.keys(o||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).sort();return ks.length?ks[ks.length-1]:null};
+  return {sales:mx(S.sales),calls:mx(S.calls),attendance:mx(S.att),qa:mx(S.evals),
+    roster:{n:(S.roster||[]).length,fp:S.rosterFp||null}};
+}
+function expectedReach(nowMs,saturday){
+  if(saturday===undefined) saturday=true;
+  const sast=new Date((nowMs||Date.now())+2*3600000);
+  const d=new Date(Date.UTC(sast.getUTCFullYear(),sast.getUTCMonth(),sast.getUTCDate()));
+  d.setUTCDate(d.getUTCDate()-(sast.getUTCHours()>=13?1:2));
+  while(d.getUTCDay()===0||(!saturday&&d.getUTCDay()===6)) d.setUTCDate(d.getUTCDate()-1);   // no Sunday data; Saturday only for sources that dial (sales, calls)
+  return d.toISOString().slice(0,10);
+}
+const REACH_SATURDAY={sales:true,calls:true,attendance:false,qa:false};
 function buildModel(range, periodKey){
   let M_refsAreTotals=false;
   if(!range) return null;
@@ -6750,6 +6770,28 @@ PAGES.hubs=()=>`
   <p class="note" style="margin-top:14px">The KPI and Coaching hubs keep their own sign-in and their own data.
   <b>Agent Analytics</b> is this suite's agent- and team-leader-facing app: its numbers come live from VAS Analytics, and each person signs in with their own CB number — hand out the link with <b>Copy link</b>.</p>`;
 
+/* The Scheduled-jobs card fills in after render: one small read of kv:jobs-status (written by
+   tools/job-status.mjs from the GitHub runner). Never reported = the runner has never run, and
+   the card says exactly what unblocks it. */
+PAGES._wire_settings=function(){
+  var el=document.getElementById('jobsCard'); if(!el) return;
+  var tk=sessionStorage.getItem('cbx_token'); if(!tk) return;
+  fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=jobs-status',{headers:{'Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'}})
+    .then(function(r){return r.ok?r.text():null}).then(function(t){
+      var box=el.querySelector('.note'); if(!box) return;
+      var j=null; try{ j=t?JSON.parse(t):null; }catch(e){}
+      if(!j||!j.steps||!Object.keys(j.steps).length){
+        box.innerHTML='The scheduled runner has <b>never reported</b>. It runs every fifteen minutes once the three Supabase secrets are added to the GitHub repository (specs/never-stale-data-plan.md, Phase 1). Until then digests, the Ops relay, the lake and coaching refresh only when someone opens a tab or runs a tool.';
+        return;
+      }
+      var rows=Object.entries(j.steps).sort(function(a,b){return String(b[1].ranAt).localeCompare(String(a[1].ranAt))}).map(function(kv){
+        var st=kv[1]; var when=st.ranAt?new Date(st.ranAt).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg',hour12:false}):'—';
+        var age=st.ranAt?Math.round((Date.now()-Date.parse(st.ranAt))/60000):null;
+        return '<tr><td>'+esc(kv[0])+'</td><td>'+esc(when)+(age!=null?' <span style="color:var(--muted)">('+(age<60?age+' min':Math.round(age/60)+' h')+' ago)</span>':'')+'</td><td>'+(st.ok?'<span class="pill pgood">ok</span>':'<span class="pill pcrit">FAILED</span>')+'</td><td>'+esc(st.note||'')+'</td></tr>';
+      }).join('');
+      box.innerHTML='<div class="tablewrap"><table class="tbl"><thead><tr><th>Step</th><th>Last run (SAST)</th><th>Result</th><th>Note</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    }).catch(function(){});
+};
 PAGES.settings=()=>{
   const statuses={}; for(const d in S.att) for(const c in S.att[d]){ const s=S.att[d][c]; statuses[s]=(statuses[s]||0)+1; }
   return `<div class="page-head"><h2>Settings</h2></div>
@@ -6788,6 +6830,7 @@ PAGES.settings=()=>{
       <td class="l">${a.start||''}</td></tr>`).join('')}
     </tbody></table></div></div>
   ${orgHistCard()}
+  <div class="card mt" id="jobsCard"><div class="cardhead"><div><h3>Scheduled jobs</h3><div class="sub">The runner that republishes the digests, relays uploads into Ops, loads the lake and refreshes coaching — what ran, when, and whether it worked</div></div></div><div class="note">Loading…</div></div>
   <div class="card mt"><div class="cardhead"><div><h3>Danger zone</h3></div></div>
     <div class="formrow" style="border:none">
       <button class="btn danger" onclick="if(confirm('Remove all uploaded data (keeps agent list and settings)?')){window.__cbxIntentionalClear=Date.now();DATA_STORES.forEach(k=>S[k]={});S.files=[];S.opencases=null;S.opencasesLM=null;S.closedcases=null;S.refs=null;save();rebuild();renderAll();}">Clear uploaded data</button>
@@ -8254,6 +8297,8 @@ function agentDigestPayload(){
   return {
     v:1,
     updatedAt:new Date().toISOString(),
+    dataReach:dataReach(),                 // last day each source covers (never-stale plan)
+    expectedReach:expectedReach(),         // the day it should cover right now
     /* which cm:targets set these figures were built WITH — the settings page
        compares this to the live stamp and says 'refreshing' instead of quietly
        showing %-to-target computed on the previous targets */
@@ -8431,7 +8476,7 @@ var SRC=[
      daily file, so a "none" chip here read as a problem when nothing was wrong. The Upload
      Station slot and the MTD Referrals column are untouched. */
   ["board","Manual Stats",function(t){return t.indexOf("board")===0}]
-];var open=false;function daysSince(at){if(!at)return null;var d=new Date(at.replace(" ","T"));if(isNaN(d))return null;return Math.floor((Date.now()-d.getTime())/864e5)}function fresh(days){if(days==null)return["n","var(--muted)"];if(days<=7)return["g","var(--good)"];if(days<=14)return["a","var(--warn)"];return["r","var(--crit)"]}function build(){var host=document.getElementById("vasTrust");var view=document.getElementById("view");if(!view)return;if(!host){host=document.createElement("div");host.id="vasTrust";view.parentNode.insertBefore(host,view)}var S=(window.__mtd&&window.__mtd.state)?window.__mtd.state():null;var files=(S&&S.files)||[];var latest={};files.forEach(function(f){var t=String(f.type||"");SRC.forEach(function(s){if(s[2](t)){var d=daysSince(f.at);if(latest[s[0]]==null||(d!=null&&d<latest[s[0]]))latest[s[0]]=d}})});var worst="g";SRC.forEach(function(s){var st=fresh(latest[s[0]])[0];if(st==="r"||st==="n"){if(worst!=="r")worst=(st==="r"?"r":"a")}else if(st==="a"&&worst==="g")worst="a"});var have=SRC.filter(function(s){return latest[s[0]]!=null}).length;var wc=worst==="g"?"var(--good)":worst==="a"?"var(--warn)":"var(--crit)";var wl=worst==="g"?"All sources fresh":worst==="a"?"Sources need attention":"Stale or missing sources";function chip(color,label){return "<span style='display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:var(--glass3);color:"+color+"'><span style='width:7px;height:7px;border-radius:50%;background:"+color+"'></span>"+label+"</span>"}var chips=open?SRC.map(function(s){var d=latest[s[0]];var fr=fresh(d);var lbl=s[1]+" · "+(d==null?"none":d===0?"today":d+"d");return chip(fr[1],lbl)}).join(""):"";var html="<div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--card-bg);border:1px solid var(--stroke);border-radius:16px;padding:10px 14px;margin:0 0 16px'>"+"<span style='font-size:11px;font-weight:800;letter-spacing:.8px;color:var(--muted)'>DATA TRUST</span>"+"<span onclick='window.__vasTrustToggle()' style='cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:var(--glass3);color:"+wc+"'><span style='width:7px;height:7px;border-radius:50%;background:"+wc+"'></span>"+wl+" · "+have+"/"+SRC.length+" sources "+(open?"▾":"▸")+"</span>"+chips+"<button onclick='go(&quot;data&quot;)' style='margin-left:auto;border:1px solid var(--stroke2);background:var(--glass2);color:var(--ink2);border-radius:9px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer'>Manage uploads →</button>"+"</div>";if(html!==window.__vtLast){window.__vtLast=html;host.innerHTML=html}}window.__vasTrustToggle=function(){open=!open;build()};var t=setInterval(build,10000);setTimeout(build,300);})();</script>
+];var open=false;function daysSince(at){if(!at)return null;var d=new Date(at.replace(" ","T"));if(isNaN(d))return null;return Math.floor((Date.now()-d.getTime())/864e5)}function fresh(days){if(days==null)return["n","var(--muted)"];if(days<=7)return["g","var(--good)"];if(days<=14)return["a","var(--warn)"];return["r","var(--crit)"]}function build(){var host=document.getElementById("vasTrust");var view=document.getElementById("view");if(!view)return;if(!host){host=document.createElement("div");host.id="vasTrust";view.parentNode.insertBefore(host,view)}var S=(window.__mtd&&window.__mtd.state)?window.__mtd.state():null;var files=(S&&S.files)||[];var latest={};files.forEach(function(f){var t=String(f.type||"");SRC.forEach(function(s){if(s[2](t)){var d=daysSince(f.at);if(latest[s[0]]==null||(d!=null&&d<latest[s[0]]))latest[s[0]]=d}})});var worst="g";SRC.forEach(function(s){var st=fresh(latest[s[0]])[0];if(st==="r"||st==="n"){if(worst!=="r")worst=(st==="r"?"r":"a")}else if(st==="a"&&worst==="g")worst="a"});var rw=(function(){try{var R=dataReach(),w="g";["sales","calls","attendance","qa"].forEach(function(k){var r=R[k];if(!r)return;var late=Math.round((Date.parse(expectedReach(null,REACH_SATURDAY[k]))-Date.parse(r))/864e5);if(late>=2)w="r";else if(late===1&&w==="g")w="a"});return w}catch(e){return "g"}})();if(rw==="r")worst="r";else if(rw==="a"&&worst==="g")worst="a";var have=SRC.filter(function(s){return latest[s[0]]!=null}).length;var wc=worst==="g"?"var(--good)":worst==="a"?"var(--warn)":"var(--crit)";var wl=worst==="g"?"All sources fresh":worst==="a"?"Sources need attention":"Stale or missing sources";function chip(color,label){return "<span style='display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:var(--glass3);color:"+color+"'><span style='width:7px;height:7px;border-radius:50%;background:"+color+"'></span>"+label+"</span>"}function reachChips(){try{var R=dataReach();return [["sales","Sales"],["calls","Calls"],["attendance","Attendance"],["qa","QA"]].map(function(p){var r=R[p[0]];var late=r?Math.round((Date.parse(expectedReach(null,REACH_SATURDAY[p[0]]))-Date.parse(r))/864e5):null;var col=r==null?"var(--muted)":late<=0?"var(--good)":late===1?"var(--warn)":"var(--crit)";return chip(col,p[1]+" to "+(r?r.slice(8)+"/"+r.slice(5,7):"—")+(late>0?" · "+late+"d late":""))}).join("")}catch(e){return ""}}var chips=(open?SRC.map(function(s){var d=latest[s[0]];var fr=fresh(d);var lbl=s[1]+" · "+(d==null?"none":d===0?"today":d+"d");return chip(fr[1],lbl)}).join(""):"")+reachChips();var html="<div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--card-bg);border:1px solid var(--stroke);border-radius:16px;padding:10px 14px;margin:0 0 16px'>"+"<span style='font-size:11px;font-weight:800;letter-spacing:.8px;color:var(--muted)'>DATA TRUST</span>"+"<span onclick='window.__vasTrustToggle()' style='cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:var(--glass3);color:"+wc+"'><span style='width:7px;height:7px;border-radius:50%;background:"+wc+"'></span>"+wl+" · "+have+"/"+SRC.length+" sources "+(open?"▾":"▸")+"</span>"+chips+"<button onclick='go(&quot;data&quot;)' style='margin-left:auto;border:1px solid var(--stroke2);background:var(--glass2);color:var(--ink2);border-radius:9px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer'>Manage uploads →</button>"+"</div>";if(html!==window.__vtLast){window.__vtLast=html;host.innerHTML=html}}window.__vasTrustToggle=function(){open=!open;build()};var t=setInterval(build,10000);setTimeout(build,300);})();</script>
 
 <script>(function(){/* Referrals auto-sync — pull the referral book from HighLevel through the
    API Worker (the HL key is a Worker secret; the browser never sees it) and feed it into

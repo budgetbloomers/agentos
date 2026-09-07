@@ -25,6 +25,19 @@
  */
 
 const HOUR = 3600000;
+
+/* THE DAY EACH SOURCE SHOULD REACH RIGHT NOW (never-stale plan, Phase 2). The daily drop lands
+   by 13:00 SAST carrying yesterday; there is no Sunday data. Mirrors expectedReach() in PULSE. */
+export function expectedReachFor(nowMs, saturday = true) {
+  const sast = new Date(nowMs + 2 * HOUR);
+  const d = new Date(Date.UTC(sast.getUTCFullYear(), sast.getUTCMonth(), sast.getUTCDate()));
+  d.setUTCDate(d.getUTCDate() - (sast.getUTCHours() >= 13 ? 1 : 2));
+  while (d.getUTCDay() === 0 || (!saturday && d.getUTCDay() === 6)) d.setUTCDate(d.getUTCDate() - 1);   // no Sunday data; Saturday only for sources that dial
+  return d.toISOString().slice(0, 10);
+}
+const SATURDAY_SOURCES = new Set(['sales', 'calls']);
+const SAST_WORKING = (nowMs) => { const s = new Date(nowMs + 2 * HOUR); const h = s.getUTCHours(), w = s.getUTCDay(); return w >= 1 && w <= 5 && h >= 6 && h < 20; };
+const REACH_LABEL = { sales: 'Sales (BI Active cases)', calls: 'Calls (ViciDial)', attendance: 'Attendance register', qa: 'QA evaluations' };
 export const ALERTS_KEY = 'kv:health-alerts';
 
 /**
@@ -154,6 +167,50 @@ export function evaluateFreshness(t) {
       since: new Date(vas).toISOString(),
     });
   }
+  /* THE SCHEDULED RUNNER (never-stale plan, Phase 1). Every step it runs writes kv:jobs-status.
+     Never written = it has never run — say what unblocks it. Silent for 45 min in working hours
+     = the scheduler itself has stopped. A verify step that failed in the last day = the nightly
+     proof is red. `jobs` undefined = unreadable = no opinion; null = the row does not exist. */
+  if (t.jobs === null) {
+    alerts.push({ id: 'runner-never-ran', severity: 'warning',
+      message: 'The scheduled runner has never reported. Digests, the Ops relay, the lake and coaching refresh only while somebody has a tab open or runs a tool. Add the three Supabase secrets on GitHub (specs/never-stale-data-plan.md, Phase 1) and it takes over.',
+      since: 'plan' });
+  } else if (t.jobs && t.jobs.steps) {
+    const steps = Object.entries(t.jobs.steps);
+    const newest = steps.map(([, v]) => ms(v.ranAt)).reduce((a, b) => Math.max(a, b), 0);
+    if (newest && SAST_WORKING(now) && now - newest > 45 * 60000) {
+      alerts.push({ id: 'runner-silent', severity: 'critical',
+        message: 'The scheduled runner has not reported since ' + new Date(newest).toISOString().slice(0, 16).replace('T', ' ') + ' — nothing is republishing or relaying. Check the publish-digests workflow on GitHub.',
+        since: new Date(newest).toISOString() });
+    }
+    const red = steps.filter(([k, v]) => /^verify/.test(k) && v.ok === false && now - ms(v.ranAt) < 24 * HOUR);
+    if (red.length) {
+      alerts.push({ id: 'verification-failed', severity: 'critical',
+        message: 'The nightly verification is red: ' + red.map(([k, v]) => k + (v.note ? ' (' + String(v.note).slice(0, 80) + ')' : '')).join('; ') + '. A figure on screen may be wrong — read the run log before trusting today.',
+        since: new Date(Math.min(...red.map(([, v]) => ms(v.ranAt)))).toISOString() });
+    }
+  }
+  /* SOURCES MUST REACH THE DAY THEY ARE DUE (never-stale plan, Phase 2). The digest carries the
+     last day each source covers; the cadence table names who owns each drop. A source a day
+     short at 15:00 is a missed upload with a name on it, not a mystery on Monday. */
+  if (t.reach && typeof t.reach === 'object') {
+    const cad = Object.fromEntries((Array.isArray(t.cadence) ? t.cadence : []).map((c) => [c.source, c]));
+    const expFor = (k) => expectedReachFor(now, cad[k] && cad[k].saturday != null ? !!cad[k].saturday : SATURDAY_SOURCES.has(k));
+    const late = [];
+    for (const k of ['sales', 'calls', 'attendance', 'qa']) {
+      const r = t.reach[k]; if (!r) continue;
+      const exp = expFor(k);
+      const days = Math.round((Date.parse(exp) - Date.parse(r)) / 86400000);
+      if (days >= 1) late.push({ k, r, exp, days, owner: (cad[k] && cad[k].owner) || '' });
+    }
+    if (late.length) {
+      alerts.push({ id: 'source-stale', severity: late.some((x) => x.days >= 2) ? 'critical' : 'warning',
+        message: 'Data is behind where it should be: '
+          + late.map((x) => (REACH_LABEL[x.k] || x.k) + ' reaches ' + x.r + ', expected ' + x.exp + ' (' + x.days + 'd short' + (x.owner ? ', owner ' + x.owner : '') + ')').join('; ')
+          + '. Upload the missing day in either Upload Station.',
+        since: late.map((x) => x.exp).sort()[0] });
+    }
+  }
   const integ = Array.isArray(t.integrity) ? t.integrity.filter((r) => r && r.failures > 0) : [];
   if (integ.length) {
     alerts.push({
@@ -188,15 +245,23 @@ export async function runHealthChecks(DB) {
 
   /* the digest's OWN stamps — the rules row's updated_at does not move when the republish
      tool writes Storage directly, so read the payload (one small object every ten minutes) */
-  let digestMonth = null, digestAt = null;
+  let digestMonth = null, digestAt = null, reach = null, expectedReach = null;
   try {
     const dr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:agent-digest')}&select=value`);
     const v = dr && dr[0] && dr[0].value;
     let payload = v ? String(v.data || '') : '';
     if (!payload && v && v.store) payload = (await DB.storageGet('raw', String(v.store).replace(/^raw\//, ''))) || '';
-    if (payload) { const d = JSON.parse(payload); digestMonth = String((d.period || {}).from || '').slice(0, 7) || null; digestAt = d.updatedAt || null; }
+    if (payload) { const d = JSON.parse(payload); digestMonth = String((d.period || {}).from || '').slice(0, 7) || null; digestAt = d.updatedAt || null; reach = d.dataReach || null; expectedReach = d.expectedReach || null; }
   } catch (e) { /* unreadable digest: the freshness alert has nothing to say; the portal will say plenty */ }
   const curMonth = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
+  /* the scheduled runner's own report (tools/job-status.mjs); null = row absent, undefined = unreadable */
+  let jobs;
+  try { const jr = await DB.select('rules?key=eq.' + encodeURIComponent('kv:jobs-status') + '&select=value');
+    if (!jr || !jr.length) jobs = null; else { const v = jr[0].value || {}; jobs = v.steps ? v : (v.data ? JSON.parse(v.data) : null); } }
+  catch (e) { jobs = undefined; }
+  /* who owns each source's daily drop */
+  let cadence = [];
+  try { cadence = (await DB.select('source_cadence?select=source,owner,label,grace_hours,saturday')) || []; } catch (e) { cadence = []; }
   /* the newest Ops fact store — what Ops has actually taken from the archive */
   let opsFactsAt = null;
   try { const fr = await DB.select('rules?key=like.' + encodeURIComponent('kv:cb-facts-%') + '&select=key,updated_at&order=updated_at.desc&limit=20');
@@ -212,7 +277,7 @@ export async function runHealthChecks(DB) {
   catch (e) { saveFailures = []; }
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);

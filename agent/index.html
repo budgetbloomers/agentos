@@ -4733,6 +4733,11 @@ function remainingLabel(){
 /* An AGENT signed in as themselves — not a team leader or campaign manager, and not
    a drilldown. Decides what the frame shows: agents get no data-assurance chrome. */
 function isAgentUser(){ var acct=TEAM||D||{}; return !TEAM&&acct.role==='agent'; }
+/* "Figures to Friday 5 September" — how far the data behind this page reaches (never-stale
+   plan, Phase 2). From the digest's own dataReach stamp, else its last data day. Shown to
+   everyone, agents included: it says WHAT the numbers cover, never when they were pushed. */
+function reachLabel(){ try{ var r=(D&&D.dataReach&&D.dataReach.sales)||(D&&D.dates&&D.dates[D.dates.length-1]); if(!r) return '';
+  return new Date(r+'T00:00:00Z').toLocaleDateString('en-ZA',{weekday:'long',day:'numeric',month:'long',timeZone:'UTC'}); }catch(e){ return ''; } }
 function calcNow(){
   var f=function(id,dflt){ var el=$(id); return el?el.value:dflt; };
   var plan=($('cPlan')&&$('cPlan').value)||ME.plan;   // the figures card's tenure select — sandbox only, never saved
@@ -4785,7 +4790,7 @@ function show(a){
          tracking on each page"). The rand projection lives on Projected Commission
          and nowhere else; Today keeps tracking-vs-target and a one-line pointer. */
       : agentKpis(a,c)+todayHTML(c)+trackHTML()+commPointer(c))
-    +'<div class="foot">'+(isAgentUser()?'':'Numbers updated '+esc(stamp())+'<br>')
+    +'<div class="foot">'+(reachLabel()?'Figures to '+esc(reachLabel())+'<br>':'')+(isAgentUser()?'':'Numbers updated '+esc(stamp())+'<br>')
     +'<button id="notme">'+(D.__back?'Back to my team':'Sign out')+'</button></div>',
     VIEW,
     D.__back?'<button class="btn" id="backTop">← My team</button>':'');

@@ -1,34 +1,36 @@
 name: publish digests
 
-# THE DIGESTS NO LONGER NEED A BROWSER OPEN ON SOMEBODY'S DESK (audit, 2026-09-03).
-# Until now the agent digest republished only while a signed-in VAS tab was open, the Ops
-# NBA digest only when an Ops tab was, the Coaching Hub snapshot and the Supabase lake
-# only when a human ran a tool. This schedule runs the same headless tools from the cloud
-# — nothing local, per the ZERO-LOCAL rule — every fifteen minutes during the South
-# African working day (06:00–18:00 SAST = 04:00–16:00 UTC), plus the coaching snapshot
-# and the lake load once a day.
+# THE DIGESTS NO LONGER NEED A BROWSER OPEN ON SOMEBODY'S DESK (audit, 2026-09-03), and since
+# the never-stale plan (2026-09-07) neither does anything else in the pipeline. Every step
+# below is the same headless tool a person would run, on a schedule, from the cloud — nothing
+# local, per the ZERO-LOCAL rule. Every step reports to kv:jobs-status (tools/job-status.mjs);
+# the Worker's sentinel raises runner-never-ran / runner-silent / verification-failed from it.
 #
 # Secrets (Settings → Secrets → Actions): SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_DB_URL.
-# Since 2026-09-07 the Ops relay runs here too (tools/ops-relay.mjs): the Ops dashboard's own
-# ingest, driven headlessly, so its fact stores follow the archive without a tab being open.
-# Each tool writes Storage directly and is idempotent; a failed run changes nothing.
+# Nothing here runs until they exist.
 
 on:
   schedule:
-    - cron: '*/15 4-16 * * 1-5'     # digests, working hours, weekdays (UTC)
-    - cron: '30 3 * * *'            # daily: coaching snapshot + lake load
+    - cron: '*/15 4-18 * * 1-6'     # digests + Ops relay, 06:00–20:00 SAST, Mon–Sat
+    - cron: '0 */2 * * *'           # coaching snapshot, every two hours
+    - cron: '30 19 * * *'           # daily: lake load (21:30 SAST)
+    - cron: '30 4 * * *'            # daily: referrals (06:30 SAST)
+    - cron: '0 20 * * 1-5'          # nightly verification (22:00 SAST)
+    - cron: '0 5 * * 1'             # Monday 07:00 SAST: weekly reach report
   workflow_dispatch:
 
 concurrency: { group: publish-digests, cancel-in-progress: false }
 
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+  SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+
 jobs:
   publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '*/15') || github.event.schedule == '0 */2 * * *' || github.event.schedule == '30 19 * * *' || github.event.schedule == '30 4 * * *' || github.event.schedule == '0 5 * * 1' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,16 +46,83 @@ jobs:
       - name: Build the deployed engines locally (the tools drive site/)
         run: node tools/prepare-site.js
 
+      # ---- every 15 minutes: the digests and the Ops relay ----
       - name: Agent digest — live month + history (PULSE engine, headless)
+        id: digest
+        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '*/15') }}
         run: node tools/digest-republish.mjs --apply --history
-      - name: Ops relay — the Ops page ingests every unseen archived file (never-stale plan, Phase 0)
+      - if: ${{ always() && steps.digest.conclusion != 'skipped' }}
+        run: node tools/job-status.mjs agent-digest ${{ steps.digest.outcome }}
+      - name: Ops relay — the Ops page ingests every unseen archived file
+        id: relay
+        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '*/15') }}
         run: node tools/ops-relay.mjs --wait 300
+      - if: ${{ always() && steps.relay.conclusion != 'skipped' }}
+        run: node tools/job-status.mjs ops-relay ${{ steps.relay.outcome }}
       - name: NBA digest (Ops engine, headless)
+        id: nba
+        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '*/15') }}
         run: node tools/nba-republish.mjs --apply
+      - if: ${{ always() && steps.nba.conclusion != 'skipped' }}
+        run: node tools/job-status.mjs nba-digest ${{ steps.nba.outcome }}
 
-      - name: Coaching Hub snapshot (daily run only)
-        if: ${{ github.event.schedule == '30 3 * * *' || github.event_name == 'workflow_dispatch' }}
+      # ---- every two hours ----
+      - name: Coaching Hub snapshot
+        id: coaching
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '0 */2 * * *' }}
         run: node tools/sync-coaching-hub.mjs
-      - name: Supabase lake load (daily run only)
-        if: ${{ github.event.schedule == '30 3 * * *' || github.event_name == 'workflow_dispatch' }}
+      - if: ${{ always() && steps.coaching.conclusion != 'skipped' }}
+        run: node tools/job-status.mjs coaching-snapshot ${{ steps.coaching.outcome }}
+
+      # ---- daily ----
+      - name: Supabase lake load
+        id: lake
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '30 19 * * *' }}
         run: node tools/lake-load.mjs
+      - if: ${{ always() && steps.lake.conclusion != 'skipped' }}
+        run: node tools/job-status.mjs lake-load ${{ steps.lake.outcome }}
+      - name: HighLevel referrals
+        id: referrals
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '30 4 * * *' }}
+        run: node tools/fetch-referrals.mjs
+        continue-on-error: true
+      - if: ${{ always() && steps.referrals.conclusion != 'skipped' }}
+        run: node tools/job-status.mjs referrals ${{ steps.referrals.outcome }}
+
+      # ---- weekly ----
+      - name: Weekly reach report
+        id: reach
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '0 5 * * 1' }}
+        run: node tools/reach-report.mjs --write
+      - if: ${{ always() && steps.reach.conclusion != 'skipped' }}
+        run: node tools/job-status.mjs reach-report ${{ steps.reach.outcome }}
+
+  verify:
+    if: ${{ github.event.schedule == '0 20 * * 1-5' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Credentials
+        run: printf 'SUPABASE_URL=%s\nSUPABASE_SECRET_KEY=%s\nSUPABASE_DB_URL=%s\n' "$SUPABASE_URL" "$SUPABASE_SECRET_KEY" "$SUPABASE_DB_URL" > supabase.env
+      - name: Install deps
+        working-directory: nicks_code/diagnostics
+        run: |
+          npm install --no-audit --no-fund
+          npm install --no-save pg@8
+          npx playwright install --with-deps chromium
+      - run: node tools/prepare-site.js
+      - name: Nightly proof — every tab, every control, a real save
+        id: nightly
+        run: |
+          set +e; fails=""
+          for s in verify-all-tabs verify-controls verify-store-freshness verify-publish-agent-list; do
+            node nicks_code/diagnostics/$s.mjs > /tmp/$s.log 2>&1 || fails="$fails $s($(grep -oE '[0-9]+ failed' /tmp/$s.log | head -1))"
+          done
+          node nicks_code/diagnostics/verify-live-save.mjs --live > /tmp/live.log 2>&1 || fails="$fails verify-live-save"
+          echo "fails=$fails" >> "$GITHUB_OUTPUT"
+          [ -z "$fails" ]
+      - if: ${{ always() }}
+        run: node tools/job-status.mjs verify-nightly ${{ steps.nightly.outcome }} "${{ steps.nightly.outputs.fails }}"

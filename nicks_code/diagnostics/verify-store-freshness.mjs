@@ -18,7 +18,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
-const { evaluateFreshness } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'health.mjs')).href);
+const { evaluateFreshness, expectedReachFor } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'health.mjs')).href);
 
 let pass = 0, fail = 0;
 const ok = (c, n, extra) => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.log('  FAIL ' + n + (extra !== undefined ? ' — ' + extra : '')); } };
@@ -129,6 +129,36 @@ head('A · THE SENTINEL, AGAINST FIXTURES');
   const lag = evaluateFreshness({ ...base, opsFactsAt: '2026-09-06T11:05:00Z', vasAt: '2026-09-07T06:56:00Z', digestAt: '2026-09-06T11:00:00Z' });
   ok(lag.some((x) => x.id === 'digest-behind-store'), 'PULSE saved 20h after the last digest publish: the digest is behind');
   ok(!evaluateFreshness({ ...base, opsFactsAt: '2026-09-06T11:05:00Z', vasAt: '2026-09-07T06:56:00Z', digestAt: '2026-09-07T07:10:00Z' }).some((x) => x.id === 'digest-behind-store'), 'digest republished after the save: quiet');
+}
+
+{
+  /* never-stale plan, Phases 1 & 2 (2026-09-07): the runner and the sources */
+  const base = { manifestAt: '2026-09-07T08:00:00Z', vasAt: '2026-09-07T08:05:00Z', opsAt: '2026-09-07T08:06:00Z', opsFactsAt: '2026-09-07T08:06:00Z',
+    staffLoginRecent: true, opened: {}, digestMonth: '2026-09', curMonth: '2026-09', digestAt: '2026-09-07T08:10:00Z', now: at('2026-09-07T09:00:00Z') };
+  ok(evaluateFreshness({ ...base, jobs: null }).some((x) => x.id === 'runner-never-ran'), 'no jobs-status row: the runner has never run (warning)');
+  ok(!evaluateFreshness({ ...base, jobs: undefined }).some((x) => /runner/.test(x.id)), 'unreadable jobs-status: no opinion');
+  const fresh = { steps: { 'agent-digest': { ranAt: '2026-09-07T08:50:00Z', ok: true } } };
+  ok(!evaluateFreshness({ ...base, jobs: fresh }).some((x) => /runner/.test(x.id)), 'a step 10 min ago: quiet');
+  const stale = { steps: { 'agent-digest': { ranAt: '2026-09-07T07:00:00Z', ok: true } } };
+  ok(evaluateFreshness({ ...base, jobs: stale }).some((x) => x.id === 'runner-silent'), 'no step for 2 h at 11:00 SAST on a Monday: runner-silent');
+  ok(!evaluateFreshness({ ...base, jobs: stale, now: at('2026-09-06T09:00:00Z') }).some((x) => x.id === 'runner-silent'), 'the same silence on a Sunday: quiet');
+  const red = { steps: { 'verify-nightly': { ranAt: '2026-09-06T20:10:00Z', ok: false, note: 'verify-all-tabs 49/50' } } };
+  ok(evaluateFreshness({ ...base, jobs: red }).some((x) => x.id === 'verification-failed' && /49\/50/.test(x.message)), 'a red nightly verify is named');
+  /* sources: Monday 11:00 SAST → expected through Saturday 5 Sep */
+  ok(expectedReachFor(at('2026-09-07T09:00:00Z')) === '2026-09-05', 'Monday before 13:00 expects Saturday (no Sunday data)');
+  ok(expectedReachFor(at('2026-09-07T12:00:00Z')) === '2026-09-05', 'Monday after 13:00 still expects Saturday');
+  ok(expectedReachFor(at('2026-09-08T12:00:00Z')) === '2026-09-07', 'Tuesday after 13:00 expects Monday');
+  ok(expectedReachFor(at('2026-09-08T08:00:00Z')) === '2026-09-05', 'Tuesday before 13:00 expects Saturday');
+  const good = evaluateFreshness({ ...base, jobs: fresh, reach: { sales: '2026-09-05', calls: '2026-09-05', attendance: '2026-09-05', qa: '2026-09-05' } });
+  ok(!good.some((x) => x.id === 'source-stale'), 'every source through Saturday on Monday morning: quiet');
+  ok(!evaluateFreshness({ ...base, jobs: fresh, reach: { sales: '2026-09-05', calls: '2026-09-05', attendance: '2026-09-04', qa: '2026-09-04' } }).some((x) => x.id === 'source-stale'),
+    'attendance and QA through Friday on a Monday: on time (no Saturday rows for those sources)');
+  ok(expectedReachFor(at('2026-09-07T09:00:00Z'), false) === '2026-09-04', 'a Mon–Fri source is expected through Friday on a Monday');
+  const short = evaluateFreshness({ ...base, jobs: fresh, reach: { sales: '2026-09-04', calls: '2026-09-05', attendance: '2026-09-04', qa: '2026-09-02' },
+    cadence: [{ source: 'qa', owner: 'Ashton', saturday: false }, { source: 'sales', owner: 'Ashton', saturday: true }] });
+  const ss = short.find((x) => x.id === 'source-stale');
+  ok(!!ss && ss.severity === 'critical' && /Sales \(BI Active cases\) reaches 2026-09-04, expected 2026-09-05 \(1d short, owner Ashton\)/.test(ss.message) && /QA evaluations reaches 2026-09-02, expected 2026-09-04 \(2d short, owner Ashton\)/.test(ss.message),
+    'sales a day short and QA two: critical, each named with its expected day and owner', ss && ss.message);
 }
 
 head('B · THE LIVE VIEW AND THE LIVE KEY');
