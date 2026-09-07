@@ -43,6 +43,8 @@ const inlined = (() => {
 ok('schema version matches', inlined.version === SPEC.$schema_version, `${inlined.version} vs ${SPEC.$schema_version}`);
 ok('GWP rate per sale matches', inlined.gwpPerSale === SPEC.reference_data.gwp_rate_per_sale.value);
 ok('VAT multiplier matches', inlined.vat === SPEC.reference_data.vat_multiplier.value);
+ok('Saturday shift rule matches (data only, from)', inlined.saturdayShiftsFrom === (SPEC.reference_data.saturday_shifts || {}).data_only_from,
+  inlined.saturdayShiftsFrom + ' vs ' + JSON.stringify((SPEC.reference_data.saturday_shifts || {}).data_only_from));
 {
   const w = SPEC.reference_data.attendance_shift_weights;
   const drift = Object.keys(inlined.attWeights).filter(k => w[k] !== inlined.attWeights[k]);

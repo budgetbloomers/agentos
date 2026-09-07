@@ -554,6 +554,16 @@ const MTD_RULES = {
      register because the ViciDial export is period-aggregated and has no per-day split. */
   actualShiftsFrom: { Courtesy:'dialler', Nesting:'dialler', Cuddle:'register', VT:'register' },
 
+  /* SATURDAY IS DATA, NOT A SHIFT (Nick, 2026-09-07: "for the month to date add the data but
+     do not add to the numerator for Saturday only"). A Saturday's sales, GWP, talk, referrals
+     and cancellations count in every total; the day itself is never an Employed or Actual
+     Shift and never a dialling day — so it moves neither Attendance (Actual ÷ Employed), nor
+     SPD (Sales ÷ Actual Shifts), nor the targets that multiply out of employed days. It
+     simply adds what was sold. Effective-dated so August, verified row-for-row against the
+     workbook, stays exactly as it was: Saturdays on/after this date follow the rule.
+     Mirror of specs/mtd_engine_rules.json reference_data.saturday_shifts. */
+  saturdayShiftsFrom: '2026-09-01',
+
   /* CallX retired — the whole floor dials on ViciDial from this date (Nick, 2026-09-01).
      The calls() intake refuses rows on/after it and points at the ViciDial slot; earlier
      days still load as history corrections. The dialler-derived shift rule is untouched —
@@ -3460,6 +3470,12 @@ function validateMTD(m){
   }
   return out;
 }
+/* Saturday in the calendar sense (dates are YYYY-MM-DD, weekday-safe in UTC). Governed by
+   MTD_RULES.saturdayShiftsFrom: before that date a Saturday is an ordinary day. */
+function saturdayDataOnly(d){
+  const from=MTD_RULES.saturdayShiftsFrom; if(!from||d<from) return false;
+  return new Date(d+'T00:00:00Z').getUTCDay()===6;
+}
 function buildModel(range, periodKey){
   let M_refsAreTotals=false;
   if(!range) return null;
@@ -3472,7 +3488,7 @@ function buildModel(range, periodKey){
      SPD (Sales / Employed HC / Dialing Days) by three instead of two and understates every
      team by a third. Falls back to the data dates when no register is loaded, so the figure
      degrades to "what we know" rather than to zero. */
-  const attDates=Object.keys(S.att).filter(d=>d>=range.from&&d<=range.to&&Object.keys(S.att[d]||{}).length).sort();
+  const attDates=Object.keys(S.att).filter(d=>d>=range.from&&d<=range.to&&Object.keys(S.att[d]||{}).length&&!saturdayDataOnly(d)).sort();
   /* A dialling day needs BOTH a register and something to report on it. The register runs
      ahead of the other exports — on the August drop it reaches the 6th while the dialler and
      BI stop at the 5th — and those trailing register-only days carry no fact rows at all, so
@@ -3481,7 +3497,8 @@ function buildModel(range, periodKey){
      is the honest answer; the fallbacks keep the figure meaningful when a source is missing
      entirely rather than collapsing it to zero. */
   const factDates=new Set(dates);
-  const diallingDays=attDates.filter(d=>factDates.has(d)).length||attDates.length||dates.length;
+  /* …and a Saturday under the rule is not a dialling day whichever fallback answers */
+  const diallingDays=attDates.filter(d=>factDates.has(d)).length||attDates.length||dates.filter(d=>!saturdayDataOnly(d)).length;
 
   // termination map: first date an agent is marked Terminated/Resigned
   const term={};
@@ -3687,6 +3704,12 @@ function buildModel(range, periodKey){
       if(trackerIsSource){ emp=tr.emp; act=tr.act; }
       if(!emp&&(active)) emp=1;                    // has activity → must be employed
       if(act>0&&!emp) emp=1;
+      /* SATURDAY IS DATA, NOT A SHIFT (rule saturdayShiftsFrom, Nick 2026-09-07): whatever the
+         register or the dialler say, the day carries its sales, GWP, talk, referrals and
+         cancellations into the totals and contributes 0 to Employed and Actual Shifts — so
+         the target (perDay × emp) does not grow by it either. The row survives the guard
+         below on its data. */
+      if(saturdayDataOnly(d)){ emp=0; act=0; }
       /* THE DAILY TARGET IS A RULE, NOT A CELL (Nick, 2026-08-20: 'the nesting target is
          2 SPD'). It used to come straight from the roster's Target column, which let a
          stale per-agent value override the campaign's rule — four agents who moved into
@@ -5833,6 +5856,9 @@ function groupByTL(rows){
 function campSection(camp,week,opts){
   opts=opts||{}; if(camp==='VT') opts={...opts,vt:true,canc:false};
   let rows=agentRows(camp,week); if(!rows.length) return '';
+  /* the header's Team filter applies here too (2026-09-07) — the page used to offer only its
+     own campaign chips and ignore the global Team, so choosing a leader changed nothing */
+  if(opts.team){ rows=rows.filter(r=>r.tl===opts.team); if(!rows.length) return ''; }
   if(camp==='Courtesy') rows=groupByTL(rows);
   const tot=Object.assign(totalRow(rows.filter(r=>!r._sub),'Grand Total'),{_tot:1});
   return tableHTML(aggCols(opts),[...rows,tot],r=>r._tot?'total':(r._sub?'subtotal':''));
@@ -5841,9 +5867,14 @@ function campSection(camp,week,opts){
 PAGES.mtd=()=>{
   if(!M||!M.dates.length) return emptyState();
   const grainWarn=staleGrainBanner();
-  const sub=[...CAMPS,'Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle';
+  /* THE HEADER FILTERS APPLY HERE (Nick, 2026-09-07: "the filters is not working on the month
+     to date"). Campaign: the global filter picks the chip, so the chips read as the filter
+     does. Team: the section and the team-leader columns narrow to that leader. */
+  const camp0=S.ui.camp&&CAMPS.includes(S.ui.camp)?S.ui.camp:null;
+  const sub=camp0||([...CAMPS,'Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle');
+  const team=S.ui.team||null;
   const tlBlock=camp=>{
-    const keys=Object.keys(M.tlAgg).filter(k=>k.startsWith(camp+'|'));
+    const keys=Object.keys(M.tlAgg).filter(k=>k.startsWith(camp+'|')&&(!team||k.split('|')[1]===team));
     if(!keys.length) return '';
     const metricRows=[
       ['Dialing Days',()=>M.diallingDays],['Employed HC',o=>fmtNum(o.hc)],['Total Employed Shifts',o=>fmtNum(o.emp)],
@@ -5863,24 +5894,30 @@ PAGES.mtd=()=>{
   ${listAppliedBanner()}${grainWarn}${diallerWarning()}${coverageNote()}<div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialling day${M.diallingDays===1?'':'s'}${S.ui.asAt?' · <b>as at '+esc(S.ui.asAt)+'</b>':''} · sorted by SPD</div>
     <div class="spacer"></div><button class="btn small" onclick="exportTracker()">${I.download}<span>Generate MTD tracker</span></button><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
   <div class="chiprow" style="margin-bottom:14px">
-    ${[...CAMPS.map(c=>[c,CAMPLAB[c]||c]),['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}" onclick="S.ui.mtdSub='${t}';saveUI();renderPage()">${esc(l)}</button>`).join('')}</div>
-  ${sub==='Team Leaders'?tlBlock('Courtesy')+tlBlock('Cuddle')+tlBlock('VT')
-    :`<div class="card">${campSection(sub,null,{canc:true,noOpt:true})||'<div class="empty">No '+(CAMPLAB[sub]||sub)+' data in this period — upload the call records covering it</div>'}
+    ${[...CAMPS.map(c=>[c,CAMPLAB[c]||c]),['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}${camp0&&t!==camp0?' off':''}" ${camp0&&t!==camp0?'disabled title="the header Campaign filter is set to '+esc(CAMPLAB[camp0]||camp0)+'"':''} onclick="S.ui.mtdSub='${t}';saveUI();renderPage()">${esc(l)}</button>`).join('')}
+    ${(camp0||team)?`<span class="note" style="margin-left:10px">filtered by ${[camp0?'campaign <b>'+esc(CAMPLAB[camp0]||camp0)+'</b>':'',team?'team leader <b>'+esc(team)+'</b>':''].filter(Boolean).join(' and ')} — <a href="#" onclick="__clearFilters();return false">clear</a></span>`:''}</div>
+  ${sub==='Team Leaders'?(tlBlock('Courtesy')+tlBlock('Cuddle')+tlBlock('VT')||filterEmptyNote((M.facts||[]).length))
+    :`<div class="card">${campSection(sub,null,{canc:true,noOpt:true,team})||(team?filterEmptyNote((M.facts||[]).length):'<div class="empty">No '+(CAMPLAB[sub]||sub)+' data in this period — upload the call records covering it</div>')}
       <p class="note" style="margin:10px 0 0">Cancellations and referrals come from the Adjustments page. QA is the average CallBi score for calls dated in the period.</p></div>`}`;
 };
 
 PAGES.weekly=()=>{
   if(!M||!M.weeks.length) return emptyState();
-  const camp=CAMPS.includes(S.ui.wtdCamp)?S.ui.wtdCamp:'Cuddle';
+  /* THE HEADER FILTERS APPLY HERE TOO (Nick, 2026-09-07: "it must be fixed for weekly and daily").
+     Campaign picks the chip; Team narrows every week's table to that leader. */
+  const camp0=S.ui.camp&&CAMPS.includes(S.ui.camp)?S.ui.camp:null;
+  const camp=camp0||(CAMPS.includes(S.ui.wtdCamp)?S.ui.wtdCamp:'Cuddle');
+  const team=S.ui.team||null;
   return `
   ${diallerWarning()}<div class="page-head"><h2>Weekly reports</h2><div class="sub">weeks run Monday–Sunday inside the period</div></div>
   <div class="chiprow" style="margin-bottom:14px">
-    ${CAMPS.map(c=>`<button class="chip ${camp===c?'on':''}" onclick="S.ui.wtdCamp='${c}';saveUI();renderPage()">${esc(CAMPLAB[c]||c)}</button>`).join('')}</div>
+    ${CAMPS.map(c=>`<button class="chip ${camp===c?'on':''}${camp0&&c!==camp0?' off':''}" ${camp0&&c!==camp0?'disabled title="the header Campaign filter is set to '+esc(CAMPLAB[camp0]||camp0)+'"':''} onclick="S.ui.wtdCamp='${c}';saveUI();renderPage()">${esc(CAMPLAB[c]||c)}</button>`).join('')}
+    ${(camp0||team)?`<span class="note" style="margin-left:10px">filtered by ${[camp0?'campaign <b>'+esc(CAMPLAB[camp0]||camp0)+'</b>':'',team?'team leader <b>'+esc(team)+'</b>':''].filter(Boolean).join(' and ')} — <a href="#" onclick="__clearFilters();return false">clear</a></span>`:''}</div>
   ${[...M.weeks].reverse().map(w=>{
-    const sec=campSection(camp,w.num);
+    const sec=campSection(camp,w.num,{team});
     return sec?`<div class="card mt" style="margin-top:12px"><div class="cardhead"><div><h3>${CAMPLAB[camp]||camp} — Week ${w.num}</h3>
       <div class="sub">${w.dates[0]} → ${w.dates[w.dates.length-1]}</div></div></div>${sec}</div>`:'';
-  }).join('')||'<div class="card"><div class="empty">No weekly data</div></div>'}`;
+  }).join('')||(team?filterEmptyNote((M.facts||[]).length):'<div class="card"><div class="empty">No weekly data</div></div>')}`;
 };
 
 /* HOW MANY DAILY ROWS TO PAINT (perf, 2026-08-28). Rendering all 800 put ~17,800 nodes in

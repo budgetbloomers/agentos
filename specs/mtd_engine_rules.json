@@ -352,6 +352,12 @@
   }
  },
  "reference_data": {
+  "saturday_shifts": {
+   "data_only_from": "2026-09-01",
+   "rule": "A Saturday on/after this date carries its sales, GWP, talk time, referrals and cancellations into every total but is never an Employed Shift, an Actual Shift or a dialling day. Attendance (Actual/Employed), SPD (Sales/Actual Shifts) and the targets derived from employed days are therefore unmoved by Saturday work; only what was sold is added.",
+   "source": "Nick, 2026-09-07: 'for the month to date add the data but do not add to the numerator for saturday only' — numerator of Attendance and denominator of SPD are both Actual Shifts.",
+   "note": "Effective-dated so the August reference period, verified row-for-row, is untouched. Mirror: MTD_RULES.saturdayShiftsFrom."
+  },
   "sales_target_matrix": {
    "_source": "agent_roster 'Target' column, keyed Campaign|Tenure. Read at runtime - values below are the observed state.",
    "Cuddle|Exp": 8,
