@@ -148,6 +148,16 @@ a{color:var(--blue)}
 
 /* ============ CARD ============ */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:14px}
+/* Links tab (2026-09-08) */
+.links{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin-top:12px}
+.lk{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);color:inherit;text-decoration:none;transition:transform .12s,box-shadow .12s}
+a.lk:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+.lk-off{opacity:.62}
+.lk-shot{aspect-ratio:16/10;background:linear-gradient(135deg,#E8EEF8,#F6F8FC);overflow:hidden;border-bottom:1px solid var(--line)}
+.lk-shot img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
+.lk-ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;color:#7A8797;letter-spacing:.02em}
+.lk-body{display:flex;flex-direction:column;gap:2px;padding:10px 12px 12px}
+.lk-body b{font-size:14px}.lk-body small{font-size:12px;color:var(--muted)}.lk-url{font-size:11px;color:#6E7F99;margin-top:4px;word-break:break-all}
 .card h3{font-size:14.5px;font-weight:800;margin-bottom:4px;display:flex;align-items:center;gap:8px}
 .card .cnt{font-size:11px;font-weight:800;color:var(--muted);background:#EEF2F8;border-radius:999px;padding:2px 9px}
 .why{font-size:12.5px;color:var(--muted);line-height:1.55;margin-bottom:8px}
@@ -3108,7 +3118,7 @@ function sigPad(box,path,set){
    leader four. The sidebar carries who is signed in and how fresh the numbers
    are — the Data Trust habit from the management apps, shrunk to one line. */
 
-var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:'🧮',team:'👥',agent:'👤',results:'📊',kpi:'📋',prog:'📈',nik:'✦',forms:'🗂️',wimpy:'🍔',set:'⚙️'};
+var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:'🧮',team:'👥',agent:'👤',results:'📊',kpi:'📋',prog:'📈',nik:'✦',forms:'🗂️',wimpy:'🍔',set:'⚙️',links:'🔗'};
 
 /* The nav must match the SECTIONS actually on screen, which is decided by the
    view being rendered — not by the account. A team leader drilling into one of
@@ -3147,8 +3157,10 @@ function navFor(active){
      NIKOLA IS OFF THE AGENT NAV (Nick, 2026-09-03: "Nikola to be hidden"); team
      leaders and campaign managers keep theirs. The tab reads "Projected Commission"
      (same instruction) because that is what the page is — a projection. */
+  /* LINKS (Nick, 2026-09-08): the three systems an agent signs in to every day, with a screenshot
+     each — on the AGENT nav only ("this is for agent analytics only for the agent view"). */
   return [['month','Today',ICON.month],['calc','Projected Commission',ICON.calc],
-          ['progress','My Progress',ICON.prog]]
+          ['progress','My Progress',ICON.prog],['links','Links',ICON.links]]
     .concat(wimpyOpenNow()?[['wimpy','Wimpy Order',ICON.wimpy]]:[]);
 }
 
@@ -3256,7 +3268,7 @@ function render(){
     if(TL_VIEWS.indexOf(VIEW)<0) VIEW='team';
     return teamView();
   }
-  if(['month','calc','progress','coaching','wimpy'].indexOf(VIEW)<0) VIEW='month';
+  if(['month','calc','progress','coaching','wimpy','links'].indexOf(VIEW)<0) VIEW='month';
   if(VIEW==='wimpy'&&!wimpyOpenNow()) VIEW='month';
   if(D.notReported) return notReported();
   if(D.me) return show(D.me);
@@ -4769,7 +4781,7 @@ function calcNow(){
 }
 function show(a){
   ME=a;
-  if(['month','calc','progress','coaching','wimpy'].indexOf(VIEW)<0) VIEW='month';
+  if(['month','calc','progress','coaching','wimpy','links'].indexOf(VIEW)<0) VIEW='month';
   if(VIEW==='wimpy'&&!wimpyOpenNow()) VIEW='month';
   var g=greeting();
   var c=calcNowInitial();
@@ -4783,6 +4795,7 @@ function show(a){
     (VIEW==='wimpy' ? 'Order lunch — the total works itself out.'
       : VIEW==='coaching' ? (D.__back?'Coaching recorded for '+esc(firstName(a.name))+'.':'Every coaching session recorded for you.')
       : VIEW==='calc' ? (D.__back?esc(firstName(a.name))+'&rsquo;s projected commission this month.':'What you can potentially earn, and what can change it.')
+      : VIEW==='links' ? 'The systems you use every day — each opens in a new tab.'
       : VIEW==='progress' ? (D.__back?esc(firstName(a.name))+'&rsquo;s figures in full.':'Your last five sessions, what has improved, and what happened after support.')
       : VIEW==='nik' ? 'One fact, one explanation, one next action.'
       : D.__back
@@ -4790,7 +4803,8 @@ function show(a){
         /* A PROJECTION, SAID UP FRONT (Nick, 2026-09-03: "at the beginning, this is a
            projection of how your month is going thus far"). */
         : 'A projection of how your month is going so far, from your '+esc(prettyPeriod())+' figures. Today’s sales land with tonight’s upload.'),
-    (VIEW==='coaching' ? coachPageAgent()
+    (VIEW==='links' ? linksPage()
+      : VIEW==='coaching' ? coachPageAgent()
       /* COMMISSION IS ITS OWN TAB. It used to sit collapsed at the bottom of My
          month, which is where Nick found it — that is, did not find it. The money
          story reads on its own: what you are on track to earn, what one more sale
@@ -5541,6 +5555,25 @@ function wireMyHelp(){
       });
     };
   });
+}
+/* THE LINKS TAB. Cards come from the Worker (kv:agent-links, tools/agent-links.mjs): title, the
+   page's own title line, the address, and a screenshot taken the day the address was set. A card
+   with no address yet is shown greyed with "address to be added" so the tab is honest about what
+   is live. The screenshot is a data URI the Worker served — never a URL typed on this page. */
+function linksPage(){
+  var L=(D&&D.links)||[];
+  if(!L.length) return '<div class="card"><h2>Links</h2><p class="why">No links have been published yet.</p></div>';
+  return '<div class="card"><h2>Links</h2><p class="why">The systems you use every day. Tap a card to open it in a new tab.</p>'
+    +'<div class="links">'+L.map(function(l){
+      var url=String(l.url||''), live=/^https?:\/\//.test(url);
+      var shot=(typeof l.shot==='string'&&l.shot.indexOf('data:image/')===0)?l.shot:'';
+      var open=live?'<a class="lk" href="'+esc(url)+'" target="_blank" rel="noopener noreferrer">':'<div class="lk lk-off" title="The address for this link has not been added yet">';
+      return open
+        +'<div class="lk-shot">'+(shot?'<img src="'+shot+'" alt="">':'<div class="lk-ph"><span>'+esc(l.title||'')+'</span></div>')+'</div>'
+        +'<div class="lk-body"><b>'+esc(l.title||'')+'</b><small>'+esc(l.sub||'')+'</small>'
+        +'<span class="lk-url">'+(live?esc(url.replace(/^https?:\/\//,'').replace(/\/$/,'')):'address to be added')+'</span></div>'
+        +(live?'</a>':'</div>');
+    }).join('')+'</div></div>';
 }
 function progressPage(c){
   var out=pgHead()+pgRating()+pgMyHelp()+pgNBA()+pgChecks()+pgRun()+pgSessions()+pgCoaching();

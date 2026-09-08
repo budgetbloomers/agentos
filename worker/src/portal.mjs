@@ -402,6 +402,11 @@ export async function overview(env, DB, user, digest, months, extra) {
 
   if (auth.scope === 'agent') {
     const me = auth.rows[0] || null;
+    /* THE LINKS TAB (Nick, 2026-09-08: "add a tab that says links … a screenshot of each one" —
+       agent view only). kv:agent-links is written by tools/agent-links.mjs; each item carries its
+       address and a JPEG data-URI screenshot. Agents only — the team and campaign bodies do not carry it. */
+    let links = [];
+    try { const lr = await DB.select('rules?key=eq.' + encodeURIComponent('kv:agent-links') + '&select=value'); links = (lr && lr[0] && lr[0].value && lr[0].value.items) || []; } catch (e) { links = []; }
     const coaching = await coachingFor(env, DB, me ? [me] : [{ code: auth.cb, name: base.name }], { withSessions: true });
     /* THE AGENT'S OWN LADDER ROW (Nick, 2026-08-26: the My Progress redesign shows an
        agent their rating, next best action and the two checks — the same things a team
@@ -432,6 +437,7 @@ export async function overview(env, DB, user, digest, months, extra) {
         team: auth.team,
         coaching,
         nba,
+        links,
       },
     };
   }

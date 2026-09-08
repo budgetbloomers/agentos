@@ -1091,6 +1091,13 @@ head('Change my password (Nick, 2026-09-08)');
 /body\.current_password\s*=\s*cur/.test(PAGE) ? ok('a voluntary change sends the current password for the Worker to verify') : bad('the voluntary change does not send the current password');
 /if\(U\.must_change_password\) return changePassword\(\);/.test(PAGE) ? ok('the forced first-sign-in change still runs without asking for the current password') : bad('forced change path altered');
 
+head('Links tab (Nick, 2026-09-08) — agent view only');
+/\['links','Links',ICON\.links\]/.test(PAGE) ? ok('the agent nav carries a Links tab') : bad('no Links tab on the agent nav');
+!/TL_VIEWS=\[[^\]]*'links'/.test(PAGE) && !/CM_VIEWS=\[[^\]]*'links'/.test(PAGE) ? ok('team leaders and campaign managers do NOT get the tab (agent view only)') : bad('Links leaked onto a management nav');
+/function linksPage\(\)/.test(PAGE) && /VIEW==='links' \? linksPage\(\)/.test(PAGE) ? ok('the view renders linksPage()') : bad('links view not wired');
+/indexOf\('data:image\/'\)===0/.test(PAGE) ? ok('only a data-URI screenshot the Worker served is ever painted') : bad('screenshot source not guarded');
+/rel="noopener noreferrer"/.test(PAGE) && /lk-off/.test(PAGE) ? ok('live links open in a new tab; a link without an address is shown greyed, never invented') : bad('link cards missing the safe-open or the greyed state');
+
 head(fails ? `\x1b[31m${fails} of ${checks} checks FAILED — do not deploy\x1b[0m`
            : `\x1b[32mAll ${checks} checks passed\x1b[0m`);
 process.exit(fails ? 1 : 0);
