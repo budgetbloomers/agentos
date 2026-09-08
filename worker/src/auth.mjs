@@ -4,6 +4,11 @@
  * auth_log (migration 003). Passwords never touch disk or logs in plaintext.
  */
 const ITER = 100000; // Cloudflare Workers caps PBKDF2 at 100k iterations
+/* THE START PASSWORD (Nick, 2026-09-08: "agentos123 must be removed"). Every provisioned account
+   is born on it with password_is_default = true (migration-025), which forces a change at first
+   sign-in; nobody may choose it as a new password; tools/audit-default-passwords.mjs finds every
+   account still on it. One definition — provision.mjs imports it from here. */
+export const START_PASSWORD = 'agentos123';
 const SESSION_HOURS = 12;
 const MAX_FAILS = 5;
 const LOCK_MIN = 15;
@@ -196,6 +201,7 @@ export async function changePassword(DB, user, body, req, ctx) {
   const b = body || {};
   const next = String(b.new_password || '');
   if (next.length < 10) return { status: 400, body: { error: 'Password must be at least 10 characters.' } };
+  if (next === START_PASSWORD) return { status: 400, body: { error: 'That is the start password everyone was given. Choose one only you know.' } };
   const rows = await DB.select(`app_users?id=eq.${user.user_id}&select=password_hash,must_change_password`);
   const row = rows && rows[0];
   if (!row) return { status: 404, body: { error: 'Account not found.' } };
@@ -205,10 +211,10 @@ export async function changePassword(DB, user, body, req, ctx) {
   /* a current password that IS given is verified even on a forced change — a screen that asks for it never lets a wrong one through */
   if (cur && !(await verifyPassword(cur, row.password_hash))) return { status: 403, body: { error: 'Your current password is not right.' } };
   if (await verifyPassword(next, row.password_hash)) return { status: 400, body: { error: 'Choose a password you are not already using.' } };
-  await DB.update(`app_users?id=eq.${user.user_id}`, { password_hash: await hashPassword(next), must_change_password: false });
-  if (user.token_hash) await DB.del(`app_sessions?user_id=eq.${user.user_id}&token_hash=neq.${user.token_hash}`).catch(() => {});
-  const log = DB.insert('auth_log', [{ user_id: user.user_id, username: user.username, event: 'password_change',
-    ip: (req && req.headers && req.headers.get('cf-connecting-ip')) || '' }]).catch(() => {});
-  if (ctx && ctx.waitUntil) ctx.waitUntil(log); else await log;
-  return { status: 200, body: { ok: true, signed_out_elsewhere: true } };
+  /* ONE TRANSACTION IN THE DATABASE (migration-025 set_password): the hash, password_is_default
+     → false, must_change_password → false, lockout reset, every OTHER session dropped, auth_log
+     row. The Worker's job is the PBKDF2 work Postgres cannot do; the state change is the table's. */
+  const out = await DB.rpc('set_password', { p_user_id: user.user_id, p_new_hash: await hashPassword(next),
+    p_keep_token: user.token_hash || null, p_ip: (req && req.headers && req.headers.get('cf-connecting-ip')) || '' });
+  return { status: 200, body: { ok: true, signed_out_elsewhere: true, sessions_dropped: out && out.sessions_dropped } };
 }

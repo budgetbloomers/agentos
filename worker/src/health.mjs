@@ -217,6 +217,15 @@ export function evaluateFreshness(t) {
       since: 'list',
     });
   }
+  /* MANAGEMENT ACCOUNTS ON THE START PASSWORD (Nick, 2026-09-08). Agents are forced to change at
+     their next sign-in and need no alert; a team leader, campaign manager, exec or admin still on
+     agentos123 is a door left open and is named here until they sign in and change it. */
+  if (Array.isArray(t.defaultPw) && t.defaultPw.length) {
+    const names = t.defaultPw.map((u) => u.username + ' (' + u.role.replace('_', ' ') + ')');
+    alerts.push({ id: 'default-passwords', severity: 'warning',
+      message: names.length + ' management account' + (names.length === 1 ? ' is' : 's are') + ' still on the start password: ' + names.slice(0, 8).join(', ') + (names.length > 8 ? ' …' : '') + '. Each is forced to choose their own at their next sign-in.',
+      since: 'audit' });
+  }
   return alerts;
 }
 
@@ -258,6 +267,9 @@ export async function runHealthChecks(DB) {
   /* who owns each source's daily drop */
   let cadence = [];
   try { cadence = (await DB.select('source_cadence?select=source,owner,label,grace_hours,saturday')) || []; } catch (e) { cadence = []; }
+  /* management accounts still on the start password (migration-025 view) */
+  let defaultPw = [];
+  try { defaultPw = (await DB.select('accounts_on_default_password?active=is.true&role=neq.agent&select=username,role')) || []; } catch (e) { defaultPw = []; }
   /* the Worker's last ask for the GitHub tick (runner.mjs) — so the alert says what was already done */
   let kick = null;
   try { const kr = await DB.select('rules?key=eq.' + encodeURIComponent('kv:runner-kick') + '&select=value'); kick = kr && kr[0] && kr[0].value ? JSON.parse(kr[0].value.data || 'null') : null; } catch (e) { kick = null; }
@@ -276,7 +288,7 @@ export async function runHealthChecks(DB) {
   catch (e) { saveFailures = []; }
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, defaultPw,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);

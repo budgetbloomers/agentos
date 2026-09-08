@@ -69,10 +69,17 @@ ok('a single typo after the lockout expires does not re-lock', !USER.locked_unti
     async update(q, patch) { Object.assign(ACC, patch); },
     async del(q) { deletes.push(q); const m = /token_hash=neq\.(\w+)/.exec(q); for (let i = sessions.length - 1; i >= 0; i--) if (sessions[i].user_id === 'u2' && sessions[i].token_hash !== (m && m[1])) sessions.splice(i, 1); },
     async insert(t, rows) { if (t === 'auth_log') logs.push(...rows); },
+    /* set_password (migration-025) — the mock does what the SQL does: hash + flags, other sessions dropped, auth_log row */
+    async rpc(fn, a) { if (fn !== 'set_password') throw new Error('unexpected rpc ' + fn);
+      Object.assign(ACC, { password_hash: a.p_new_hash, password_is_default: false, must_change_password: false });
+      let d = 0; for (let i = sessions.length - 1; i >= 0; i--) if (sessions[i].user_id === a.p_user_id && sessions[i].token_hash !== a.p_keep_token) { sessions.splice(i, 1); d++; }
+      logs.push({ user_id: a.p_user_id, username: ACC.username, event: 'password_change', ip: a.p_ip }); return { ok: true, sessions_dropped: d }; },
   };
   const me = { user_id: 'u2', username: 'cb17', token_hash: 'mine' };
   const r1 = await auth.changePassword(DB2, me, { new_password: 'short' }, req, ctx);
   ok('a short password is refused', r1.status === 400, String(r1.status));
+  const r0 = await auth.changePassword(DB2, me, { current_password: 'agentos123', new_password: 'agentos123' }, req, ctx);
+  ok('the start password itself is refused as a new password', r0.status === 400 && /start password/.test(r0.body.error), r0.status + ' ' + r0.body.error);
   const r2 = await auth.changePassword(DB2, me, { new_password: 'a-good-long-one' }, req, ctx);
   ok('a voluntary change without the current password is refused', r2.status === 400 && /current/.test(r2.body.error), r2.status + ' ' + r2.body.error);
   const r3 = await auth.changePassword(DB2, me, { current_password: 'not-it', new_password: 'a-good-long-one' }, req, ctx);

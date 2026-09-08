@@ -62,9 +62,7 @@
  * removed agent stays NAMED in history without staying ACTIVE.
  */
 
-import { hashPassword } from './auth.mjs';
-
-const START_PASSWORD = 'agentos123';
+import { hashPassword, START_PASSWORD } from './auth.mjs';   // one definition of the start password (2026-09-08)
 const MIN_ROSTER = 25;             // the floor has run 120-130 for months
 const MAX_DELETE_SHARE = 0.25;     // more than a quarter leaving in one list is a broken list
 const FP_KEY = 'kv:agent-logins-fp';

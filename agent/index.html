@@ -3339,6 +3339,7 @@ function changePassword(voluntary){
     if(a.length<10) return bad('At least 10 characters.');
     if(a!==b) return bad('Those two do not match.');
     if(voluntary&&a===cur) return bad('Choose a password you are not already using.');
+    if(a==='agentos123') return bad('That is the start password everyone was given. Choose one only you know.');   // the Worker refuses it too
     $('pgo').disabled=true;
     var body={new_password:a}; if(voluntary) body.current_password=cur;
     api('/api/password',body).then(function(r){
