@@ -25,6 +25,8 @@
  */
 
 const HOUR = 3600000;
+/* EVERY TIME A PERSON READS IN AN ALERT IS SOUTH AFRICAN TIME (Nick, 2026-09-08: "it needs to be CAT south african time"). SAST is UTC+2 with no daylight saving; the `since` fields stay ISO — they are for the machine. */
+const sast = (ms) => new Date(+ms + 2 * HOUR).toISOString().slice(0, 16).replace('T', ' ') + ' SAST';
 
 /* THE DAY EACH SOURCE SHOULD REACH RIGHT NOW (never-stale plan, Phase 2). The daily drop lands
    by 13:00 SAST carrying yesterday; there is no Sunday data. Mirrors expectedReach() in PULSE. */
@@ -54,7 +56,7 @@ export function evaluateFreshness(t) {
     alerts.push({
       id: 'uploads-not-persisting', severity: 'critical',
       message: 'Uploads are being archived but NEITHER dashboard has saved its state since '
-        + new Date(Math.max(vas, ops)).toISOString().slice(0, 16).replace('T', ' ')
+        + sast(Math.max(vas, ops))
         + ' — saves may be silently failing for everyone. Check the browser console on an open tab, and run verify-live-save.mjs --live.',
       since: new Date(manifest).toISOString(),
     });
@@ -74,7 +76,7 @@ export function evaluateFreshness(t) {
   if (vas && now - vas > 26 * HOUR && usedSince('vas', vas)) {
     alerts.push({
       id: 'vas-state-stale', severity: 'warning',
-      message: 'PULSE has not saved its state since ' + new Date(vas).toISOString().slice(0, 16).replace('T', ' ')
+      message: 'PULSE has not saved its state since ' + sast(vas)
         + (opened ? ' although it was opened at ' + String(opened.vas || '').slice(0, 16).replace('T', ' ') : ' despite staff signing in since')
         + ' — if anyone uploaded in that time, their work is not stored.',
       since: new Date(vas).toISOString(),
@@ -83,7 +85,7 @@ export function evaluateFreshness(t) {
   if (ops && now - ops > 26 * HOUR && usedSince('ops', ops)) {
     alerts.push({
       id: 'cb-config-stale', severity: 'warning',
-      message: 'AgentOS Analytics has not saved its config since ' + new Date(ops).toISOString().slice(0, 16).replace('T', ' ')
+      message: 'AgentOS Analytics has not saved its config since ' + sast(ops)
         + (opened ? ' although it was opened at ' + String(opened.ops || '').slice(0, 16).replace('T', ' ') : ' despite staff signing in since')
         + '.',
       since: new Date(ops).toISOString(),
@@ -106,7 +108,7 @@ export function evaluateFreshness(t) {
   if (t.staffLoginRecent && dg && now - dg > 26 * HOUR) {
     alerts.push({
       id: 'agent-digest-stale', severity: 'warning',
-      message: 'The agent digest was last published ' + new Date(dg).toISOString().slice(0, 16).replace('T', ' ')
+      message: 'The agent digest was last published ' + sast(dg)
         + ' — nothing has republished it since (no VAS tab open?). Agents are reading yesterday. Run tools/digest-republish.mjs --apply.',
       since: new Date(dg).toISOString(),
     });
@@ -144,8 +146,8 @@ export function evaluateFreshness(t) {
     alerts.push({
       id: 'ops-behind-uploads', severity: 'critical',
       message: 'AgentOS Analytics has not ingested the latest uploads: files were archived at '
-        + new Date(manifest).toISOString().slice(0, 16).replace('T', ' ') + ' but its newest fact store is from '
-        + (opsFacts ? new Date(opsFacts).toISOString().slice(0, 16).replace('T', ' ') : 'never')
+        + sast(manifest) + ' but its newest fact store is from '
+        + (opsFacts ? sast(opsFacts) : 'never')
         + ' (' + Math.round((manifest - opsFacts) / HOUR) + 'h behind). Open Ops and leave the tab for three minutes, or run tools/ops-relay.mjs.',
       since: new Date(manifest).toISOString(),
     });
@@ -157,8 +159,8 @@ export function evaluateFreshness(t) {
   if (vas && digestAt && vas - digestAt > 30 * 60000) {
     alerts.push({
       id: 'digest-behind-store', severity: 'warning',
-      message: 'VAS Analytics saved at ' + new Date(vas).toISOString().slice(0, 16).replace('T', ' ') + ' but the live agent digest was last published '
-        + new Date(digestAt).toISOString().slice(0, 16).replace('T', ' ') + ' — agents are reading the state before that save. Run tools/digest-republish.mjs --apply.',
+      message: 'VAS Analytics saved at ' + sast(vas) + ' but the live agent digest was last published '
+        + sast(digestAt) + ' — agents are reading the state before that save. Run tools/digest-republish.mjs --apply.',
       since: new Date(vas).toISOString(),
     });
   }
@@ -175,8 +177,8 @@ export function evaluateFreshness(t) {
     const newest = steps.map(([, v]) => ms(v.ranAt)).reduce((a, b) => Math.max(a, b), 0);
     if (newest && SAST_WORKING(now) && now - newest > 45 * 60000) {
       alerts.push({ id: 'runner-silent', severity: 'critical',
-        message: 'The scheduled runner has not reported since ' + new Date(newest).toISOString().slice(0, 16).replace('T', ' ') + ' — nothing is republishing or relaying.'
-          + (t.kick && t.kick.at ? ' The Worker asked GitHub to run it at ' + String(t.kick.at).slice(11, 16) + ' UTC (HTTP ' + t.kick.http + ')' + (t.kick.http === 204 ? '; if this stays red the run itself is failing — read its log.' : ' — the ask was refused; check GH_DISPATCH_TOKEN.') : ' GitHub drops scheduled runs under load; the Worker re-asks for the tick by itself once the GH_DISPATCH_TOKEN secret is set on the Worker (cd worker && npx wrangler secret put GH_DISPATCH_TOKEN).'),
+        message: 'The scheduled runner has not reported since ' + sast(newest) + ' — nothing is republishing or relaying.'
+          + (t.kick && t.kick.at ? ' The Worker asked GitHub to run it at ' + sast(Date.parse(t.kick.at)).slice(11) + ' (HTTP ' + t.kick.http + ')' + (t.kick.http === 204 ? '; if this stays red the run itself is failing — read its log.' : ' — the ask was refused; check GH_DISPATCH_TOKEN.') : ' GitHub drops scheduled runs under load; the Worker re-asks for the tick by itself once the GH_DISPATCH_TOKEN secret is set on the Worker (cd worker && npx wrangler secret put GH_DISPATCH_TOKEN).'),
         since: new Date(newest).toISOString() });
     }
     const red = steps.filter(([k, v]) => /^verify/.test(k) && v.ok === false && now - ms(v.ranAt) < 24 * HOUR);
