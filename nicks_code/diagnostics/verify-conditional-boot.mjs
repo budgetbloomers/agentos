@@ -7,7 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
-const AGENTOS = 'C:/Users/aarav/OneDrive/Desktop/Chatterbox Agent OS/agentos';
+const AGENTOS = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const { chromium } = await import(pathToFileURL(path.join(AGENTOS, 'nicks_code', 'diagnostics', 'node_modules', 'playwright', 'index.mjs')).href);
 
 let kvGets = [];            // every /api/kv?key= data GET the app makes

@@ -10,7 +10,7 @@ const XLSX = require('xlsx');
 // Serve over HTTP — Pulse loads /xlsx.full.min.js from the site root (present in
 // production; unreachable at file://), so a tiny local server mirrors the real layout.
 import http from 'node:http';
-const REPO = String.raw`c:\Users\aarav\OneDrive\Desktop\Chatterbox Agent OS\agentos`;
+const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const SERVE = {
   '/': path.join(REPO, 'nicks_code', 'index.html'),
   '/index.html': path.join(REPO, 'nicks_code', 'index.html'),

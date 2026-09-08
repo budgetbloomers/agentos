@@ -4,7 +4,7 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
 
-const REPO = String.raw`c:\Users\aarav\OneDrive\Desktop\Chatterbox Agent OS\agentos`;
+const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const UP = path.join(REPO, 'uploads', '2026-08-13');
 const j = (...p) => path.join(...p);
 const FILES = ['Matrix - Agent List.xlsx', 'attendance_2026-08-06_to_2026-08-13.csv', 'evaluations-full-export-2026-08-13.csv', 'SF Open Cases 5 - 13.xls', 'Inactive.xlsx'].map(f => j(UP, f));

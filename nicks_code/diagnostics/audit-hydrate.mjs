@@ -3,7 +3,7 @@
 // any store added since must be re-seeded by normalizeState().
 import { chromium } from 'playwright';
 import fs from 'node:fs'; import path from 'node:path'; import http from 'node:http';
-const REPO = String.raw`c:\Users\aarav\OneDrive\Desktop\Chatterbox Agent OS\agentos`;
+const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const UP = path.join(REPO,'uploads','2026-08-06');
 const SERVE={'/index.html':path.join(REPO,'nicks_code','index.html'),'/xlsx.full.min.js':path.join(REPO,'site','xlsx.full.min.js')};
 const server=http.createServer((q,s)=>{const p=SERVE[q.url.split('?')[0]];

@@ -11,7 +11,7 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
 
-const ROOT = 'c:/Users/aarav/OneDrive/Desktop/Chatterbox Agent OS/agentos/site';
+const ROOT = process.env.AGENTOS || decodeURIComponent(new URL('../../site', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const APPS = [
   ['Ops', ROOT + '/index.html'],
   ['VAS (PULSE)', ROOT + '/pulse/index.html'],

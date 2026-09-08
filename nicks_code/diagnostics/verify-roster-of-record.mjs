@@ -20,7 +20,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { publishAgentListStub } from './stub-publish-agent-list.mjs';   // the DB's publish, in memory (see that file)
-const AGENTOS = 'C:/Users/aarav/OneDrive/Desktop/Chatterbox Agent OS/agentos';
+const AGENTOS = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const mod = await import(pathToFileURL(path.join(AGENTOS, 'worker', 'src', 'index.mjs')).href);
 const worker = mod.default;
 

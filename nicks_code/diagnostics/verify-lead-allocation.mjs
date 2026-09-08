@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 
-const REPO = String.raw`c:\Users\aarav\OneDrive\Desktop\Chatterbox Agent OS\agentos`;
+const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const OPS = path.join(REPO, 'Chatterbox_AgentOS_Analytics.html');
 const src = fs.readFileSync(OPS, 'utf8');
 let pass = 0, fail = 0; const failures = [];

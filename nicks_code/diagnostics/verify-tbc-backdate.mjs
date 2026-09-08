@@ -25,7 +25,7 @@ import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 
 const require_ = createRequire(import.meta.url);
-const REPO = String.raw`c:\Users\aarav\OneDrive\Desktop\Chatterbox Agent OS\agentos`;
+const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const HTML = path.join(REPO, ...(process.env.PULSE_HTML || 'nicks_code/index.html').split('/'));
 const XLSX = require_(path.join(REPO, 'site', 'xlsx.full.min.js'));
 

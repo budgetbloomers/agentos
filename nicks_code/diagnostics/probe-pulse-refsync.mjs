@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 
-const REPO = String.raw`c:\Users\aarav\OneDrive\Desktop\Chatterbox Agent OS\agentos`;
+const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const j = (...p) => path.join(...p);
 const SERVE = { '/': j(REPO, 'nicks_code', 'index.html'), '/index.html': j(REPO, 'nicks_code', 'index.html'), '/xlsx.full.min.js': j(REPO, 'site', 'xlsx.full.min.js') };
 const server = http.createServer((req, res) => { const p = SERVE[req.url.split('?')[0]]; if (!p || !fs.existsSync(p)) { res.writeHead(404); res.end('nf'); return; } res.writeHead(200, { 'Content-Type': p.endsWith('.js') ? 'text/javascript' : 'text/html' }); fs.createReadStream(p).pipe(res); });

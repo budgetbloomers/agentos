@@ -438,7 +438,10 @@ ok('conversion is shown even though it is not scored', labels.convShown, labels.
    the page now refuses it too: the lead count travels on every digest row, so the figure
    is either computed from leads or the row says it is not measured. */
 const convLocal = await p2.evaluate(() => {
-  const parts = [{ k: 'conv', w: 10, value: null, target: 8, measured: false, att: null, points: 0, available: 0, onTarget: false },
+  /* ONE NUMBER, ONE VERDICT (2026-09-07): the figure travels as the engine's `shown`; the page no
+     longer divides sales by leads itself (that fallback printed 1,1% for three agents the engine
+     had published as not measured). 12 sales ÷ 150 leads = 8,0 %, published here by the fixture. */
+  const parts = [{ k: 'conv', w: 10, value: null, shown: 8, target: 8, measured: false, att: null, points: 0, available: 0, onTarget: false },
     { k: 'qa', w: 20, value: 77.4, target: 90, measured: true, att: 86, points: 14.4, available: 5.6, onTarget: false }];
   const base = { code: 'CB287', name: 'B', tl: 'D', sales: 12, leads: 150,
     days: [{ d: '2026-08-21', s: 1, c: 40 }, { d: '2026-08-27', s: 2, c: 45 },
@@ -454,18 +457,24 @@ const convLocal = await p2.evaluate(() => {
     return [...el.querySelectorAll('.pg-row')].map(r => r.textContent.replace(/\s+/g, ' '))
       .find(r => /Conversion/.test(r)) || ''; };
   const withLeads = rowFor(JSON.parse(JSON.stringify(base)));
-  const noLeads = rowFor(Object.assign(JSON.parse(JSON.stringify(base)), { leads: null }));
+  const withoutLeads = Object.assign(JSON.parse(JSON.stringify(base)), { leads: null }); withoutLeads.composite.parts[0].shown = null;   // no leads ⇒ the engine publishes no conversion
+  const noLeads = rowFor(withoutLeads);
+  const unpublished = JSON.parse(JSON.stringify(base)); unpublished.composite.parts[0].shown = null;   // leads present, engine silent
+  const noShown = rowFor(unpublished);
   return { withLeads, noLeads,
     onLeads: /8[.,]0%/.test(withLeads),
     notPerCall: !/3[.,]2%/.test(withLeads) && !/12[.,]4%/.test(withLeads),
     notScored: /shown, not scored/.test(withLeads),
     /* the row still prints its TARGET ("of 8,0%"); what must be absent is a VALUE — the
        dash is the whole point, so anchor on the label and the chip. */
-    blankWithoutLeads: /Conversion—/.test(noLeads) && /not measured/.test(noLeads) };
+    blankWithoutLeads: /Conversion—/.test(noLeads) && /not measured/.test(noLeads),
+    noDerivation: /Conversion—/.test(noShown) && /not measured/.test(noShown) && !/8[.,]0% of/.test(noShown) };
 });
-ok('conversion is shown from the lead count the digest carries', convLocal.onLeads, convLocal.withLeads);
+ok('conversion is shown from the figure the engine published (shown)', convLocal.onLeads, convLocal.withLeads);
 ok('and never from dialler calls', convLocal.notPerCall, convLocal.withLeads);
 ok('it still says it is not scored', convLocal.notScored, convLocal.withLeads);
+ok('with leads but no published figure the page prints a dash — it never derives conversion itself',
+  convLocal.noDerivation, convLocal.noShown);
 ok('with no lead count it reads not measured, not a call-based stand-in',
   convLocal.blankWithoutLeads, convLocal.noLeads);
 ok('and it is labelled as shown rather than scored', labels.convNotScored);

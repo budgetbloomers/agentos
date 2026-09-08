@@ -2,7 +2,7 @@
 // cache, real Supabase blob to hydrate. Must render the dashboard KPIs regardless.
 import { chromium } from 'playwright';
 import fs from 'node:fs'; import path from 'node:path';
-const REPO = String.raw`c:\Users\aarav\OneDrive\Desktop\Chatterbox Agent OS\agentos`;
+const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const URL = process.argv[2] || 'https://chatterbox-agentos.pages.dev/pulse/';
 const blob = fs.readFileSync(path.join(REPO, 'backups', 'live-now.json'), 'utf8');
 const torn = JSON.parse(blob); torn.sales = {}; torn.calls = {}; torn._rev = JSON.parse(blob)._rev + 999999;
