@@ -89,6 +89,8 @@ sentinel raised `runner-silent` within the hour — the alert worked — but the
 | Suite logs kept | workflow verify job | The nightly note carries the first FAIL lines; every suite log uploads as the `suite-logs` artifact for 14 days. The first red note read "verify-all-tabs()" and nothing else |
 | Repo-relative suites | 61 diagnostics | Every suite derived the repo from this laptop's absolute path and crashed in the cloud; `verify.yml` itself had been invalid since 3 Sep (secrets in a step-level `if`) — 30 red push runs nobody read |
 
+| `upload_manifest_add` + `reconcileManifest` | migration-024, `worker/src/manifest.mjs`, cron | The archive manifest is appended in one statement under the row lock (five files in five seconds had lost the ViciDial report's entry on 8 Sep — Ops never saw Monday's calls); every tick lists `raw/uploads/` and re-adds any blob the manifest does not know |
+
 **Needs one secret:** `GH_DISPATCH_TOKEN` on the Worker (a GitHub token with Actions: write on the
 repo) — `cd worker && npx wrangler secret put GH_DISPATCH_TOKEN`. Until it is set the kick is
 skipped and the runner-silent alert still says what is wrong.
