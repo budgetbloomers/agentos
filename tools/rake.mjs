@@ -60,7 +60,8 @@ async function uploadFile(bucket, p, localPath, contentType) {
 const db = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false }, statement_timeout: 0 });
 await db.connect();
 const sql = async (s, a) => (await db.query(s, a)).rows;
-const setFile = (id, patch) => { const keys = Object.keys(patch); return sql(`update upload_files set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')} where id = $1`, [id, ...keys.map((k) => patch[k])]); };
+/* --dry never writes the record: a rehearsal must leave a loaded file loaded */
+const setFile = (id, patch) => { if (DRY) return Promise.resolve(); const keys = Object.keys(patch); return sql(`update upload_files set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')} where id = $1`, [id, ...keys.map((k) => patch[k])]); };
 
 async function processFile(f, msg) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rake-')); const raw = path.join(tmp, 'raw.bin'); const canon = path.join(tmp, 'canon.csv'); const parquet = path.join(tmp, 'file.parquet');

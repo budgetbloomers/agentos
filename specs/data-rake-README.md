@@ -65,6 +65,9 @@ diagnostics `node_modules` (pg, @duckdb/node-api, csv-parse, pg-copy-streams are
 - **Excel serial dates, comma decimals, `.0` account suffixes** are parsed in SQL (`rake_date`,
   `rake_num`, `rake_idish`) and never raise; an unparseable key row is a reject, listed in
   `rake_rejects_<source>` and written to `failed/`.
+- **Same bytes load once.** A re-upload of a file already loaded fails immediately with `duplicate of <id>` and
+  never retries; a failed attempt may share its hash with the retry that succeeds (migration-031). `--dry`
+  writes nothing to the record.
 - **Snapshot date** for open cases comes from `ddmmyy` in the file name, else the received day.
 - **Duplicate headers**: the first occurrence wins, as in the browser.
 - **The lake is fuller than the browser path by design**: full open-case snapshots, zero-length calls and
@@ -72,7 +75,7 @@ diagnostics `node_modules` (pg, @duckdb/node-api, csv-parse, pg-copy-streams are
 
 ## Verification
 
-`node nicks_code/diagnostics/verify-rake.mjs` — 32 checks. The library half drives `rake-lib.mjs` on
+`node nicks_code/diagnostics/verify-rake.mjs` — 33 checks. The library half drives `rake-lib.mjs` on
 fixtures in a temp folder; the database half stages fixture rows (cases 9000xx, CB900077), calls every
 merge and reads the lake back inside one transaction that always rolls back. Runs nightly
 (publish-digests) and on every verify run (verify.yml).

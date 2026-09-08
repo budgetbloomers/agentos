@@ -110,6 +110,12 @@ try {
   const m5 = await one(`select * from rake_merge_vici('verify-rake', 0, 10)`);
   const v1 = await q(`select agent_login, employee_code, call_day::text, length_in_sec from vici_calls where batch_id = 'verify-rake' order by agent_login`);
   ok('Vici merge: CB login becomes employee_code, a system login does not; SAST day derived; dateless row rejected', +m5.merged === 2 && +m5.rejected === 1 && v1.length === 2 && v1[0].employee_code === 'CB900077' && v1[1].employee_code === null && v1[0].call_day === '2026-09-04' && v1[0].length_in_sec === 23, JSON.stringify(v1));
+  /* migration-031: same bytes load once, but a failed attempt may share its hash with the retry that succeeds */
+  await c.query(`insert into upload_files (file_name, sha256, storage_path, status, uploaded_by) values ('fx-a', 'deadbeef-verify-rake', 'test/a', 'failed', 'verify-rake'), ('fx-b', 'deadbeef-verify-rake', 'test/b', 'loaded', 'verify-rake')`);
+  await c.query('savepoint twin');
+  const twin = await c.query(`insert into upload_files (file_name, sha256, storage_path, status, uploaded_by) values ('fx-c', 'deadbeef-verify-rake', 'test/c', 'loaded', 'verify-rake')`).then(() => 'accepted', (e) => e.code);
+  await c.query('rollback to savepoint twin');
+  ok('upload_files: a failed attempt may repeat a loaded hash, a second LOADED copy is refused (23505)', twin === '23505', String(twin));
   const h = await one(`select rake_health() h`);
   ok('rake_health() has the shape the Worker reads', ['received_stuck', 'in_flight', 'failed_24h', 'failed_names', 'queue_depth', 'dlq_depth', 'last_run'].every((key) => key in h.h), JSON.stringify(h.h).slice(0, 160));
 } catch (e) { ok('database half ran without an exception', false, e.message); }
