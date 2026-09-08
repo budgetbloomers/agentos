@@ -6657,6 +6657,7 @@ PAGES.data=()=>{
   return `${listAppliedBanner()}${staleGrainBanner()}<div class="page-head"><h2>Upload station</h2>
     <div class="sub">one slot per file — drop the file on its slot or click Choose file. Renamed files are fine: the type is confirmed from the file's own columns, and anything dropped on the wrong slot gets filed correctly with a heads-up.</div></div>
   <div class="slots">${slotCards}</div>
+  ${largeFileCard()}
   <div class="card"><div class="cardhead"><div><h3>Uploaded files</h3></div></div>${reg}
     <p class="note" style="margin:10px 0 0">Files are recognised by their <b>content</b> — re-uploading a file that's already loaded (even renamed) is skipped automatically, so you can safely upload your whole export folder every day and only new files are added. Daily sources (sales, calls, attendance, QA) <b>append</b> — each file adds to the history as the month builds up; re-uploading the same day/month refreshes it. The <b>Agent List replaces the roster</b> — upload a fresh one as often as agents join, leave or move. Everything saves to the cloud database, and <b>removing a file here removes it from the database too</b>.</p></div>
   ${cov}${ruleChecksCard()}${unHtml}`;
@@ -6684,7 +6685,50 @@ function ruleChecksCard(){
     <p class="note" style="margin:10px 0 0">${passed.length} of ${VCHK.filter(v=>v.sev!=='info').length} checks pass.
     V18 (pivot cache range) and V19 (cached formula values) apply to the exported workbook, not to a live dashboard — <b>Export report</b> asserts those when it writes the file.</p></div>`;
 }
+/* THE LARGE-FILE DROP (Data Rake, Phase 1 — Nick, 2026-09-08: the Salesforce and Power BI case exports
+   reach 500 MB). This browser cannot parse a file that size and the Worker cannot carry it, so the
+   card sends the BYTES straight to Storage on a signed URL the Worker minted for exactly one object,
+   then tells the Worker it is done. The runner in the cloud validates, converts and loads it into the
+   lake within fifteen minutes; this card lists every large file with its status and reason. Nothing on
+   this page reads a large file — the slots above stay the path for the daily drop. */
+function largeFileCard(){
+  return `<div class="card mt" id="largeCard"><div class="cardhead"><div><h3>Large files</h3>
+      <div class="sub">For exports too big for a slot (Salesforce open or closed cases, Power BI, a ViciDial history — anything over 30 MB). The file goes straight to storage and the cloud runner loads it into the data lake; the slots above stay the daily path.</div></div>
+      <div><button class="btn" id="largePick">Choose a large file</button><input type="file" id="largeInput" style="display:none"></div></div>
+    <div id="largeProg" class="note" style="display:none;margin:8px 0 0"></div>
+    <div id="largeList" class="note" style="margin:10px 0 0">Loading recent large uploads…</div></div>`;
+}
+async function largeUpload(file){
+  const prog=$('#largeProg'), say=(m)=>{ prog.style.display='block'; prog.textContent=m; };
+  const tk=sessionStorage.getItem('cbx_token'); const base='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
+  const hdr={'Authorization':'Bearer '+tk,'Content-Type':'application/json','X-Cbx-Client':'v5'};
+  say('Preparing '+file.name+' ('+(file.size/1048576).toFixed(1)+' MB)…');
+  const st=await fetch(base+'/api/upload/large/start',{method:'POST',headers:hdr,body:JSON.stringify({name:file.name,size:file.size})}).then(r=>r.json()).catch(()=>({error:'Cannot reach the server.'}));
+  if(!st||!st.upload_url) return say('Could not start: '+(st&&st.error||'unknown error'));
+  const status=await new Promise((res)=>{ const x=new XMLHttpRequest(); x.open('PUT',st.upload_url,true);
+    x.setRequestHeader('x-upsert','true');
+    x.upload.onprogress=(e)=>{ if(e.lengthComputable) say('Uploading '+file.name+' — '+Math.round(e.loaded/e.total*100)+'% of '+(e.total/1048576).toFixed(1)+' MB'); };
+    x.onload=()=>res(x.status); x.onerror=()=>res(0); x.send(file); });
+  if(status<200||status>=300) return say('Upload failed (HTTP '+status+'). Check the connection and try again — nothing was recorded.');
+  say('Uploaded. Handing over to the runner…');
+  const done=await fetch(base+'/api/upload/large/complete',{method:'POST',headers:hdr,body:JSON.stringify({id:st.id,size:file.size})}).then(r=>r.json()).catch(()=>({error:'Cannot reach the server.'}));
+  say(done&&done.ok?done.message:('Could not hand over: '+(done&&done.error||'unknown error')));
+  largeStatus();
+}
+async function largeStatus(){
+  const el=$('#largeList'); if(!el) return;
+  const tk=sessionStorage.getItem('cbx_token'); const base='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
+  const r=await fetch(base+'/api/upload/large/status',{headers:{'Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'}}).then(r=>r.ok?r.json():null).catch(()=>null);
+  if(!r) return el.textContent='Large-upload status is unavailable right now.';
+  const fmtB=(b)=>b==null?'':(b/1048576).toFixed(1)+' MB'; const when=(t)=>t?new Date(t).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg',hour12:false}).slice(0,17):'';
+  const badge=(s)=>({received:'pwarn',validated:'pwarn',transforming:'pwarn',loading:'pwarn',loaded:'pok',failed:'pbad'}[s]||'pmuted');
+  el.innerHTML=r.files.length?`<div class="tablewrap" style="max-height:260px"><table class="data"><thead><tr><th class="l">File</th><th class="l">Source</th><th>Status</th><th>Size</th><th>Rows</th><th class="l">Received</th><th class="l">Note</th></tr></thead><tbody>`
+    +r.files.map(f=>`<tr><td class="l">${esc(f.file_name)}</td><td class="l">${esc(f.source||'—')}</td><td><span class="pill ${badge(f.status)}">${esc(f.status)}</span></td><td>${fmtB(f.bytes)}</td><td>${f.status==='loaded'?fmtNum(f.rows_loaded)+(f.rows_rejected?' <small>('+fmtNum(f.rows_rejected)+' rejected)</small>':''):(f.rows_in!=null?fmtNum(f.rows_in):'')}</td><td class="l">${when(f.received_at)}</td><td class="l">${esc(f.error||'')}</td></tr>`).join('')
+    +'</tbody></table></div>':'No large files yet.';
+}
 PAGES['_wire_data']=()=>{
+  const lp=$('#largePick'), li=$('#largeInput');
+  if(lp&&li){ lp.onclick=()=>li.click(); li.onchange=()=>{ if(li.files&&li.files[0]) largeUpload(li.files[0]); li.value=''; }; largeStatus(); }
   document.querySelectorAll('.slot[data-slot]').forEach(el=>{
     const t=el.dataset.slot;
     const pick=()=>{ window.__slotExpected=t; $('#fileInput').click(); };

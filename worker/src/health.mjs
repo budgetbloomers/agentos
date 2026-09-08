@@ -219,6 +219,17 @@ export function evaluateFreshness(t) {
       since: 'list',
     });
   }
+  /* THE RAKE (Data Rake, Phase 1). A large file received but not picked up within an hour, a file that
+     failed three times, or a message in the dead-letter queue is an alert — the station said
+     "received", so somebody is waiting for those rows. */
+  if (t.rake) {
+    const k = t.rake; const bits = [];
+    if (k.received_stuck > 0) bits.push(k.received_stuck + ' file' + (k.received_stuck === 1 ? '' : 's') + ' received over an hour ago and not picked up');
+    if (k.failed_24h > 0) bits.push(k.failed_24h + ' failed in the last day (' + (k.failed_names || []).slice(0, 3).join(', ') + ')');
+    if (k.dlq_depth > 0) bits.push(k.dlq_depth + ' in the dead-letter queue');
+    if (bits.length) alerts.push({ id: 'rake-stuck', severity: k.received_stuck > 0 || k.dlq_depth > 0 ? 'critical' : 'warning',
+      message: 'Large-file uploads need attention: ' + bits.join('; ') + '. Upload Station → Large files shows each one with its reason.', since: 'rake' });
+  }
   /* No alert about the start password: keeping it is allowed (Nick, 2026-09-08 — "only if they want
      to"). accounts_on_default_password remains the audit view for whoever asks. */
   return alerts;
@@ -262,6 +273,9 @@ export async function runHealthChecks(DB) {
   /* who owns each source's daily drop */
   let cadence = [];
   try { cadence = (await DB.select('source_cadence?select=source,owner,label,grace_hours,saturday')) || []; } catch (e) { cadence = []; }
+  /* the rake's own health (migration-028): stuck, failed, dead-lettered */
+  let rake = null;
+  try { rake = await DB.rpc('rake_health', {}); } catch (e) { rake = null; }
   /* the Worker's last ask for the GitHub tick (runner.mjs) — so the alert says what was already done */
   let kick = null;
   try { const kr = await DB.select('rules?key=eq.' + encodeURIComponent('kv:runner-kick') + '&select=value'); kick = kr && kr[0] && kr[0].value ? JSON.parse(kr[0].value.data || 'null') : null; } catch (e) { kick = null; }
@@ -280,7 +294,7 @@ export async function runHealthChecks(DB) {
   catch (e) { saveFailures = []; }
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);

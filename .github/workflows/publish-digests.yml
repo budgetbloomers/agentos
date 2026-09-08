@@ -60,6 +60,15 @@ jobs:
       - name: Build the deployed engines locally (the tools drive site/)
         run: node tools/prepare-site.js
 
+      # ---- every 15 minutes: the Data Rake drains the large-file queue (before the digests, so a
+      #      file that just landed is in the lake when they republish) ----
+      - name: Data Rake — large files → lake
+        id: rake
+        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '7,22') }}
+        run: node tools/rake.mjs
+      - if: ${{ always() && steps.rake.conclusion != 'skipped' }}
+        run: node tools/job-status.mjs rake ${{ steps.rake.outcome }}
+
       # ---- every 15 minutes: the digests and the Ops relay ----
       - name: Agent digest — live month + history (PULSE engine, headless)
         id: digest

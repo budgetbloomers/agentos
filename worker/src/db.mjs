@@ -18,8 +18,8 @@ export function db(env) {
   };
   return {
     select: (path) => q('GET', path),
-    insert: (table, rows, upsert = false) =>
-      q('POST', table, rows, upsert
+    insert: (table, rows, upsert = false, returning = false) =>
+      q('POST', table, rows, returning ? { Prefer: 'return=representation' } : upsert
         ? { Prefer: 'resolution=merge-duplicates,return=minimal' }
         : { Prefer: 'return=minimal' }),
     update: (path, patch) => q('PATCH', path, patch, { Prefer: 'return=minimal' }),

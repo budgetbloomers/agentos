@@ -1119,6 +1119,51 @@ export default {
         if (added === 'dupe') return json({ ok: true, dupe: true });
         return json({ ok: true, archived: store });
       }
+      /* THE LARGE-FILE PATH (Data Rake, Phase 1 — Nick, 2026-09-08). A 500 MB export cannot pass
+         through this Worker (100 MB body cap) or through a browser's parser at all. So the station
+         asks for a SIGNED UPLOAD URL scoped to one object path, PUTs the bytes straight to Storage,
+         and tells us when it is done; we record the file and put one message on the ingest queue.
+         The runner (tools/rake.mjs) does everything after that. The service key never leaves here:
+         the signed URL is the only thing the browser holds, it names one path, and it expires. */
+      if (path === '/api/upload/large/start' && req.method === 'POST') {
+        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        const b = await req.json().catch(() => ({}));
+        const name = String(b.name || '').replace(/[^\w .()\-\[\]]/g, '_').slice(0, 120);
+        const size = Number(b.size || 0);
+        if (!name) return json({ error: 'name required' }, 400);
+        if (!(size > 0) || size > 5 * 1024 * 1024 * 1024) return json({ error: 'size must be between 1 byte and 5 GB' }, 400);
+        const d = new Date(); const day = d.toISOString().slice(0, 10).split('-');
+        const rows = await DB.insert('upload_files', [{ file_name: name, bytes: size, storage_bucket: 'raw-uploads', storage_path: 'pending', uploaded_by: user.username }], false, true).catch(() => null);
+        const id = rows && rows[0] && rows[0].id; if (!id) return json({ error: 'could not record the file' }, 500);
+        const objectPath = `${day[0]}/${day[1]}/${day[2]}/${id}-${name}`;
+        await DB.update(`upload_files?id=eq.${id}`, { storage_path: objectPath });
+        const sign = await fetch(`${env.SUPABASE_URL}/storage/v1/object/upload/sign/raw-uploads/${objectPath.split('/').map(encodeURIComponent).join('/')}`, {
+          method: 'POST', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json' }, body: '{}' });
+        if (!sign.ok) return json({ error: 'could not sign an upload: ' + sign.status + ' ' + (await sign.text()).slice(0, 120) }, 502);
+        const sj = await sign.json();
+        return json({ id, upload_url: `${env.SUPABASE_URL}/storage/v1${sj.url}`, token: sj.token, path: objectPath, expires_in: 7200 });
+      }
+      if (path === '/api/upload/large/complete' && req.method === 'POST') {
+        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        const b = await req.json().catch(() => ({}));
+        const id = String(b.id || ''); if (!/^[0-9a-f-]{36}$/.test(id)) return json({ error: 'id required' }, 400);
+        const rows = await DB.select(`upload_files?id=eq.${id}&select=id,storage_path,status,uploaded_by`);
+        const f = rows && rows[0]; if (!f) return json({ error: 'unknown upload' }, 404);
+        if (f.uploaded_by !== user.username && user.role !== 'admin') return json({ error: 'Not your upload.' }, 403);
+        /* the object must exist before it is queued — a cancelled PUT leaves a row that says so */
+        const info = await fetch(`${env.SUPABASE_URL}/storage/v1/object/info/raw-uploads/${f.storage_path.split('/').map(encodeURIComponent).join('/')}`, { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY } });
+        if (!info.ok) { await DB.update(`upload_files?id=eq.${id}`, { status: 'failed', error: 'upload never completed (object not found in storage)' }); return json({ error: 'The file did not finish uploading. Try again.' }, 409); }
+        const meta = await info.json().catch(() => ({}));
+        await DB.update(`upload_files?id=eq.${id}`, { bytes: Number(meta.size || (meta.metadata && meta.metadata.size) || b.size || 0) || null, status: 'received' });
+        const msg = await DB.rpc('rake_enqueue', { p_file_id: id }).catch((e) => ({ error: String(e && e.message || e) }));
+        return json({ ok: true, id, queued: msg && !msg.error, message: 'Received. The runner picks it up within fifteen minutes; progress shows below and in Settings → Scheduled jobs.' });
+      }
+      if (path === '/api/upload/large/status' && req.method === 'GET') {
+        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        const rows = await DB.select(`upload_files?select=id,file_name,source,status,bytes,rows_in,rows_loaded,rows_rejected,error,received_at,loaded_at,uploaded_by&order=received_at.desc&limit=25`).catch(() => []);
+        const health = await DB.rpc('rake_health', {}).catch(() => null);
+        return json({ files: rows || [], health });
+      }
       if (path === '/api/upload-manifest' && req.method === 'GET') {
         const mr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:upload-manifest')}&select=value,updated_at`);
         return json({ files: (mr && mr[0] && mr[0].value && mr[0].value.files) || [], updated_at: (mr && mr[0] && mr[0].updated_at) || '' });

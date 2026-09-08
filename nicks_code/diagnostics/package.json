@@ -2,9 +2,13 @@
   "name": "vas-diagnostics",
   "private": true,
   "type": "module",
-  "description": "Headless verification suites for the VAS dashboard. Run with: npm i && npx playwright install chromium && node audit-dupes.mjs",
+  "description": "Headless verification suites for the VAS dashboard. Run with: npm i && npx playwright install chromium && node audit-dupes.mjs The rake (tools/rake.mjs) also imports pg, @duckdb/node-api, csv-parse and pg-copy-streams from here.",
   "devDependencies": {
     "playwright": "^1.49.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "pg": "^8.13.0",
+    "@duckdb/node-api": "1.5.5-r.4",
+    "csv-parse": "^7.0.0",
+    "pg-copy-streams": "^7.0.0"
   }
 }
