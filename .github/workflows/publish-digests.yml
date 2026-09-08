@@ -17,12 +17,12 @@ name: publish digests
 
 on:
   schedule:
-    - cron: '*/15 4-18 * * 1-6'     # digests + Ops relay, 06:00–20:00 SAST, Mon–Sat
-    - cron: '0 */2 * * *'           # coaching snapshot, every two hours
-    - cron: '30 19 * * *'           # daily: lake load (21:30 SAST)
-    - cron: '30 4 * * *'            # daily: referrals (06:30 SAST)
-    - cron: '0 20 * * 1-5'          # nightly verification (22:00 SAST)
-    - cron: '0 5 * * 1'             # Monday 07:00 SAST: weekly reach report
+    - cron: '7,22,37,52 4-18 * * 1-6'   # digests + Ops relay, 06:00–20:00 SAST, Mon–Sat — off the quarter-hours GitHub drops
+    - cron: '13 */2 * * *'          # coaching snapshot, every two hours
+    - cron: '41 19 * * *'           # daily: lake load (21:41 SAST)
+    - cron: '41 4 * * *'            # daily: referrals (06:41 SAST)
+    - cron: '9 20 * * 1-5'          # nightly verification (22:09 SAST)
+    - cron: '9 5 * * 1'             # Monday 07:09 SAST: weekly reach report
   workflow_dispatch:
     inputs:
       steps:
@@ -42,7 +42,7 @@ env:
 
 jobs:
   publish:
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps != 'verify') || startsWith(github.event.schedule, '*/15') || github.event.schedule == '0 */2 * * *' || github.event.schedule == '30 19 * * *' || github.event.schedule == '30 4 * * *' || github.event.schedule == '0 5 * * 1' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps != 'verify') || startsWith(github.event.schedule, '7,22') || github.event.schedule == '13 */2 * * *' || github.event.schedule == '41 19 * * *' || github.event.schedule == '41 4 * * *' || github.event.schedule == '9 5 * * 1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -63,19 +63,19 @@ jobs:
       # ---- every 15 minutes: the digests and the Ops relay ----
       - name: Agent digest — live month + history (PULSE engine, headless)
         id: digest
-        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '*/15') }}
+        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '7,22') }}
         run: node tools/digest-republish.mjs --apply --history
       - if: ${{ always() && steps.digest.conclusion != 'skipped' }}
         run: node tools/job-status.mjs agent-digest ${{ steps.digest.outcome }}
       - name: Ops relay — the Ops page ingests every unseen archived file
         id: relay
-        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '*/15') }}
+        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '7,22') }}
         run: node tools/ops-relay.mjs --wait 300
       - if: ${{ always() && steps.relay.conclusion != 'skipped' }}
         run: node tools/job-status.mjs ops-relay ${{ steps.relay.outcome }}
       - name: NBA digest (Ops engine, headless)
         id: nba
-        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '*/15') }}
+        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '7,22') }}
         run: node tools/nba-republish.mjs --apply
       - if: ${{ always() && steps.nba.conclusion != 'skipped' }}
         run: node tools/job-status.mjs nba-digest ${{ steps.nba.outcome }}
@@ -83,7 +83,7 @@ jobs:
       # ---- every two hours ----
       - name: Coaching Hub snapshot
         id: coaching
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '0 */2 * * *' }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '13 */2 * * *' }}
         run: node tools/sync-coaching-hub.mjs
       - if: ${{ always() && steps.coaching.conclusion != 'skipped' }}
         run: node tools/job-status.mjs coaching-snapshot ${{ steps.coaching.outcome }}
@@ -91,13 +91,13 @@ jobs:
       # ---- daily ----
       - name: Supabase lake load
         id: lake
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '30 19 * * *' }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '41 19 * * *' }}
         run: node tools/lake-load.mjs
       - if: ${{ always() && steps.lake.conclusion != 'skipped' }}
         run: node tools/job-status.mjs lake-load ${{ steps.lake.outcome }}
       - name: HighLevel referrals
         id: referrals
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '30 4 * * *' }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '41 4 * * *' }}
         run: node tools/fetch-referrals.mjs
         continue-on-error: true
       - if: ${{ always() && steps.referrals.conclusion != 'skipped' }}
@@ -106,13 +106,13 @@ jobs:
       # ---- weekly ----
       - name: Weekly reach report
         id: reach
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '0 5 * * 1' }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '9 5 * * 1' }}
         run: node tools/reach-report.mjs --write
       - if: ${{ always() && steps.reach.conclusion != 'skipped' }}
         run: node tools/job-status.mjs reach-report ${{ steps.reach.outcome }}
 
   verify:
-    if: ${{ github.event.schedule == '0 20 * * 1-5' || (github.event_name == 'workflow_dispatch' && inputs.steps == 'verify') }}
+    if: ${{ github.event.schedule == '9 20 * * 1-5' || (github.event_name == 'workflow_dispatch' && inputs.steps == 'verify') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
