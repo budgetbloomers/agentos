@@ -6,11 +6,11 @@
  *
  * NOTHING IS COMMITTED: one transaction, BEGIN … ROLLBACK, on fixture accounts CB9000xx that
  * can never collide with a real agent. Proves, against the REAL functions and triggers:
- *   · an account born on the start password must change it (insert trigger);
+ *   · an account born on the start password is recorded as such and NOT forced to change (026);
  *   · a hash written by any path flips the row to a personal password (update trigger);
  *   · set_password(): flags, lockout reset, every OTHER session dropped, own kept, auth_log row,
  *     refuses a hash outside the Worker's scheme and an inactive account;
- *   · reset_password_to_default(): back on the default, forced change, ALL sessions dropped;
+ *   · reset_password_to_default(): back on the default, nothing forced, ALL sessions dropped;
  *   · accounts_on_default_password lists exactly the rows on the default.
  */
 import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -31,7 +31,7 @@ try {
                         values ('cb900011', 'Fixture One', 'agent', 'CB900011', array['agent']::text[], '{}'::jsonb, true, $1, false)
                         returning id, password_is_default, must_change_password, password_changed_at`, [DEFAULT]);
   ok(u.password_is_default === true, 'a new account is on the default (column default)');
-  ok(u.must_change_password === true, 'and MUST change it — even though the insert said false', String(u.must_change_password));
+  ok(u.must_change_password === false, 'and is NOT made to change it (migration-026: keeping the start password is allowed)', String(u.must_change_password));
   ok(!!u.password_changed_at, 'password_changed_at is stamped at birth');
   ok((await q(`select 1 from accounts_on_default_password where username = 'cb900011'`)).length === 1, 'the view lists it');
 
@@ -63,8 +63,8 @@ try {
   await c.query(`insert into app_sessions (token_hash, user_id, expires_at) values ('again', $1, now() + interval '1 hour')`, [u.id]);
   const s2 = (await one(`select reset_password_to_default($1, $2, 'nick') as out`, [u.id, DEFAULT])).out;
   r = await one(`select password_hash, password_is_default, must_change_password, failed_attempts from app_users where id = $1`, [u.id]);
-  ok(s2.ok === true && s2.must_change_password === true, 'returns ok with the forced flag', JSON.stringify(s2));
-  ok(r.password_hash === DEFAULT && r.password_is_default === true && r.must_change_password === true, 'back on the default and forced to change', JSON.stringify(r));
+  ok(s2.ok === true && s2.must_change_password === false, 'returns ok and forces nothing', JSON.stringify(s2));
+  ok(r.password_hash === DEFAULT && r.password_is_default === true && r.must_change_password === false, 'back on the default, recorded as such, not forced', JSON.stringify(r));
   ok((await q(`select 1 from app_sessions where user_id = $1`, [u.id])).length === 0, 'EVERY session is dropped on a reset');
   ok((await q(`select 1 from auth_log where user_id = $1 and event = 'password_reset' and ip = 'by nick'`, [u.id])).length === 1, 'auth_log carries password_reset by the actor');
   ok((await q(`select 1 from accounts_on_default_password where username = 'cb900011'`)).length === 1, 'the view lists it again');

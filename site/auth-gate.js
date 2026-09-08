@@ -177,6 +177,7 @@
     applyPerms();
     addSignout();
     addThemeButton();
+    addPasswordButton();
   }
   function allowedTabs() {
     var u = window.CBX_USER || {}; var t = (u.tabs || {})[APP] || [];
@@ -234,6 +235,52 @@
     var low = document.getElementById('signOutBtn') || document.getElementById('cbxOut');
     b.setAttribute('style', 'position:fixed;left:' + (low ? '54px' : '14px') + ';bottom:14px;z-index:2147483000;width:34px;height:34px;border-radius:50%;border:1px solid var(--line,#E3E9F3);background:var(--card,#FFFFFF);color:var(--body,#3B4A63);cursor:pointer;font-size:15px;line-height:1');
     b.onclick = themePanel;
+    document.body.appendChild(b);
+  }
+
+  /* CHANGE MY PASSWORD — OPTIONAL, EVERY APP (Nick, 2026-09-08: "if they want to change it they
+     can, now this for everything … only if they want to"). The start password stays valid for as
+     long as the person keeps it; this key sits beside sign-out and appearance and opens a small
+     panel: current, new, confirm. The Worker verifies the current password and signs the account
+     out everywhere else. Nothing here is ever shown unasked. */
+  function passwordPanel() {
+    if (document.getElementById('cbxPw')) return;
+    var wrap = document.createElement('div'); wrap.id = 'cbxPw';
+    wrap.setAttribute('style', 'position:fixed;inset:0;z-index:2147483600;background:rgba(15,30,54,.28);display:flex;align-items:center;justify-content:center');
+    var inp = 'width:100%;box-sizing:border-box;background:#F7FAFE;border:1px solid #E3E9F3;color:#0F1E36;border-radius:10px;padding:11px 12px;font-size:13px;margin-bottom:10px;outline:none';
+    wrap.innerHTML = '<div style="width:340px;max-width:92vw;background:#FFFFFF;border:1px solid #E3E9F3;border-radius:16px;padding:22px 22px 18px;box-shadow:0 10px 30px rgba(15,30,54,.18)">'
+      + '<div style="font-size:15px;font-weight:800;color:#0F1E36;margin-bottom:4px">Change your password</div>'
+      + '<div style="font-size:12px;color:#71809B;margin-bottom:14px">Signed in as <b style="color:#0F1E36">' + esc(window.CBX_USER && window.CBX_USER.username || '') + '</b>. New password: at least 10 characters.</div>'
+      + '<div id="cbxPwErr" style="display:none;background:rgba(251,113,133,.14);border:1px solid rgba(251,113,133,.3);color:#C42D2D;font-size:12px;padding:8px 11px;border-radius:9px;margin-bottom:10px"></div>'
+      + '<input id="cbxPw0" type="password" placeholder="Current password" autocomplete="current-password" style="' + inp + '">'
+      + '<input id="cbxPw1" type="password" placeholder="New password" autocomplete="new-password" style="' + inp + '">'
+      + '<input id="cbxPw2" type="password" placeholder="Confirm new password" autocomplete="new-password" style="' + inp + '">'
+      + '<button id="cbxPwGo" style="width:100%;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;background:linear-gradient(135deg,#2563EB,#38BDF8);color:#fff;cursor:pointer">Save new password</button>'
+      + '<button id="cbxPwX" style="width:100%;border:1px solid #E3E9F3;background:#fff;border-radius:10px;padding:9px;font-size:12.5px;color:#3B4A63;margin-top:8px;cursor:pointer">Cancel</button></div>';
+    document.body.appendChild(wrap);
+    var err = document.getElementById('cbxPwErr'); var bad = function (m) { err.style.display = 'block'; err.textContent = m; };
+    document.getElementById('cbxPwX').onclick = function () { wrap.remove(); };
+    document.getElementById('cbxPwGo').onclick = function () {
+      var cur = document.getElementById('cbxPw0').value, a = document.getElementById('cbxPw1').value, b = document.getElementById('cbxPw2').value;
+      if (!cur) return bad('Enter your current password.');
+      if (a.length < 10) return bad('At least 10 characters.');
+      if (a !== b) return bad('Those two do not match.');
+      if (a === cur) return bad('Choose a password you are not already using.');
+      var btn = document.getElementById('cbxPwGo'); btn.disabled = true; btn.textContent = 'Saving…';
+      api('/api/password', { current_password: cur, new_password: a }).then(function (r) {
+        if (r.ok) { wrap.innerHTML = '<div style="background:#FFFFFF;border:1px solid #E3E9F3;border-radius:16px;padding:22px 24px;box-shadow:0 10px 30px rgba(15,30,54,.18);font-size:13px;color:#0F1E36;max-width:92vw"><b>Password changed.</b><div style="color:#71809B;margin-top:4px">Any other device you were signed in on has been signed out.</div></div>'; setTimeout(function () { wrap.remove(); }, 2200); }
+        else { btn.disabled = false; btn.textContent = 'Save new password'; bad(r.error || 'Could not save that password.'); }
+      });
+    };
+    setTimeout(function () { try { document.getElementById('cbxPw0').focus(); } catch (e) {} }, 60);
+  }
+  function addPasswordButton() {
+    if (document.getElementById('cbxPwBtn')) return;
+    var b = document.createElement('button');
+    b.id = 'cbxPwBtn'; b.title = 'Change my password'; b.textContent = '🔑';
+    var low = document.getElementById('signOutBtn') || document.getElementById('cbxOut');
+    b.setAttribute('style', 'position:fixed;left:' + (low ? '94px' : '54px') + ';bottom:14px;z-index:2147483000;width:34px;height:34px;border-radius:50%;border:1px solid var(--line,#E3E9F3);background:var(--card,#FFFFFF);color:var(--body,#3B4A63);cursor:pointer;font-size:14px');
+    b.onclick = passwordPanel;
     document.body.appendChild(b);
   }
 
