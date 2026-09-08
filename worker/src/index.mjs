@@ -5,7 +5,7 @@
  * IRON RULE: the LLM explains numbers, it never computes them.
  */
 import { db } from './db.mjs';
-import { login, logout, session, hashPassword } from './auth.mjs';
+import { login, logout, session, hashPassword, changePassword } from './auth.mjs';
 import { retrieveKB } from './kb.mjs';
 import { getCoaching, rollUp, sessionsForAgent, withinWindow } from './coaching.mjs';
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, listDigestMonths, overview, agentDetail, normCb } from './portal.mjs';
@@ -863,14 +863,9 @@ export default {
       }
 
       if (path === '/api/password' && req.method === 'POST') {
-        const b = await req.json();
-        if (!b.new_password || String(b.new_password).length < 10) return json({ error: 'Password must be at least 10 characters.' }, 400);
-        await DB.update(`app_users?id=eq.${user.user_id}`, { password_hash: await hashPassword(String(b.new_password)), must_change_password: false });
-        /* AUDITED (2026-09-03). A password change wrote no log row, so "was it changed or
-           forgotten" could not be answered — exactly the question the Dalwin lockout needed. */
-        ctx.waitUntil(DB.insert('auth_log', [{ user_id: user.user_id, username: user.username, event: 'password_change',
-          ip: req.headers.get('cf-connecting-ip') || '' }]).catch(() => {}));
-        return json({ ok: true });
+        /* the rule lives in auth.mjs (changePassword) so verify-login-lockout can drive it against a mocked DB */
+        const out = await changePassword(DB, user, await req.json().catch(() => ({})), req, ctx);
+        return json(out.body, out.status);
       }
 
       /* The shareable link, for staff to copy out of Agent Analytics. Below the session

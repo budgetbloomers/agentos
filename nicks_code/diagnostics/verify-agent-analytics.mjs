@@ -1084,6 +1084,13 @@ try {
     : ok('the calculator is fed the month’s working days');
 }
 
+head('Change my password (Nick, 2026-09-08)');
+/* CHANGE MY PASSWORD (Nick, 2026-09-08): in the user card for every role, current password required, forced mode unchanged */
+/id="pwBtn"/.test(PAGE) ? ok('the user card carries a Change-password button (every role sees the same card)') : bad('no Change-password button in the user card');
+/pwBtn'\)[^\n]*changePassword\(true\)/.test(PAGE) ? ok('the button opens the voluntary change screen') : bad('the Change-password button is not wired');
+/body\.current_password\s*=\s*cur/.test(PAGE) ? ok('a voluntary change sends the current password for the Worker to verify') : bad('the voluntary change does not send the current password');
+/if\(U\.must_change_password\) return changePassword\(\);/.test(PAGE) ? ok('the forced first-sign-in change still runs without asking for the current password') : bad('forced change path altered');
+
 head(fails ? `\x1b[31m${fails} of ${checks} checks FAILED — do not deploy\x1b[0m`
            : `\x1b[32mAll ${checks} checks passed\x1b[0m`);
 process.exit(fails ? 1 : 0);

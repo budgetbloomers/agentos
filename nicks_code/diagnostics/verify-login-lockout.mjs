@@ -58,5 +58,40 @@ const afterWait = await auth.login(DB, req, { username: 'cb93', password: 'wrong
 ok('a single typo after the lockout expires does not re-lock', !USER.locked_until,
   'locked_until=' + USER.locked_until + ' status=' + afterWait.status);
 
+/* --- CHANGE MY OWN PASSWORD (Nick, 2026-09-08) — the rule in auth.changePassword --- */
+{
+  const real = await auth.hashPassword('agentos123');
+  const ACC = { id: 'u2', username: 'cb17', password_hash: real, must_change_password: false };
+  const sessions = [{ user_id: 'u2', token_hash: 'mine' }, { user_id: 'u2', token_hash: 'phone' }, { user_id: 'u9', token_hash: 'other' }];
+  const deletes = []; const logs = [];
+  const DB2 = {
+    async select(q) { return q.startsWith('app_users?') ? [{ password_hash: ACC.password_hash, must_change_password: ACC.must_change_password }] : []; },
+    async update(q, patch) { Object.assign(ACC, patch); },
+    async del(q) { deletes.push(q); const m = /token_hash=neq\.(\w+)/.exec(q); for (let i = sessions.length - 1; i >= 0; i--) if (sessions[i].user_id === 'u2' && sessions[i].token_hash !== (m && m[1])) sessions.splice(i, 1); },
+    async insert(t, rows) { if (t === 'auth_log') logs.push(...rows); },
+  };
+  const me = { user_id: 'u2', username: 'cb17', token_hash: 'mine' };
+  const r1 = await auth.changePassword(DB2, me, { new_password: 'short' }, req, ctx);
+  ok('a short password is refused', r1.status === 400, String(r1.status));
+  const r2 = await auth.changePassword(DB2, me, { new_password: 'a-good-long-one' }, req, ctx);
+  ok('a voluntary change without the current password is refused', r2.status === 400 && /current/.test(r2.body.error), r2.status + ' ' + r2.body.error);
+  const r3 = await auth.changePassword(DB2, me, { current_password: 'not-it', new_password: 'a-good-long-one' }, req, ctx);
+  ok('a wrong current password is refused', r3.status === 403, String(r3.status));
+  ok('nothing was written on the refusals', ACC.password_hash === real && logs.length === 0 && sessions.length === 3);
+  const r4 = await auth.changePassword(DB2, me, { current_password: 'agentos123', new_password: 'agentos123' }, req, ctx);
+  ok('re-using the current password is refused', r4.status === 400, String(r4.status));
+  const r5 = await auth.changePassword(DB2, me, { current_password: 'agentos123', new_password: 'a-good-long-one' }, req, ctx);
+  ok('the right current password changes it', r5.status === 200 && r5.body.ok, String(r5.status));
+  ok('the stored hash verifies the NEW password and not the old', await auth.verifyPassword('a-good-long-one', ACC.password_hash) && !(await auth.verifyPassword('agentos123', ACC.password_hash)));
+  ok('every OTHER session of the account is signed out, mine and other people\'s survive', sessions.length === 2 && sessions.some(x => x.token_hash === 'mine') && sessions.some(x => x.token_hash === 'other'), JSON.stringify(sessions));
+  ok('auth_log records password_change', logs.length === 1 && logs[0].event === 'password_change' && logs[0].username === 'cb17');
+  ACC.must_change_password = true;
+  const r6 = await auth.changePassword(DB2, me, { new_password: 'first-sign-in-pick' }, req, ctx);
+  ok('a FORCED first-sign-in change needs no current password', r6.status === 200 && ACC.must_change_password === false, String(r6.status));
+  ACC.must_change_password = true;
+  const r7 = await auth.changePassword(DB2, me, { current_password: 'wrong-one', new_password: 'another-long-pick' }, req, ctx);
+  ok('but a WRONG current password given on a forced change is still refused', r7.status === 403 && ACC.must_change_password === true, String(r7.status));
+}
+
 console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====');
 process.exit(fail ? 1 : 0);

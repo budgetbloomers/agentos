@@ -179,3 +179,36 @@ export async function logout(DB, user) {
   await log(DB, user?.user_id, user?.username, 'logout', '');
 }
 
+
+/**
+ * CHANGE YOUR OWN PASSWORD (Nick, 2026-09-08: "the option to change their password, for the
+ * campaign manager, for the team leader and for the agent"). Rules, in order:
+ *   · at least 10 characters (the same floor the login screen states);
+ *   · unless the account is on a FORCED first-sign-in change, the CURRENT password must be
+ *     given and must verify — a colleague at an unlocked desk cannot lock someone out of
+ *     their own account;
+ *   · the new password may not equal the current one;
+ *   · on success every OTHER session of that account is signed out (a stolen token dies
+ *     with the old password) and auth_log records password_change.
+ * Pure of transport: the route hands in the parsed body and gets back {status, body}.
+ */
+export async function changePassword(DB, user, body, req, ctx) {
+  const b = body || {};
+  const next = String(b.new_password || '');
+  if (next.length < 10) return { status: 400, body: { error: 'Password must be at least 10 characters.' } };
+  const rows = await DB.select(`app_users?id=eq.${user.user_id}&select=password_hash,must_change_password`);
+  const row = rows && rows[0];
+  if (!row) return { status: 404, body: { error: 'Account not found.' } };
+  const forced = !!row.must_change_password;
+  const cur = String(b.current_password || '');
+  if (!forced && !cur) return { status: 400, body: { error: 'Enter your current password.' } };
+  /* a current password that IS given is verified even on a forced change — a screen that asks for it never lets a wrong one through */
+  if (cur && !(await verifyPassword(cur, row.password_hash))) return { status: 403, body: { error: 'Your current password is not right.' } };
+  if (await verifyPassword(next, row.password_hash)) return { status: 400, body: { error: 'Choose a password you are not already using.' } };
+  await DB.update(`app_users?id=eq.${user.user_id}`, { password_hash: await hashPassword(next), must_change_password: false });
+  if (user.token_hash) await DB.del(`app_sessions?user_id=eq.${user.user_id}&token_hash=neq.${user.token_hash}`).catch(() => {});
+  const log = DB.insert('auth_log', [{ user_id: user.user_id, username: user.username, event: 'password_change',
+    ip: (req && req.headers && req.headers.get('cf-connecting-ip')) || '' }]).catch(() => {});
+  if (ctx && ctx.waitUntil) ctx.waitUntil(log); else await log;
+  return { status: 200, body: { ok: true, signed_out_elsewhere: true } };
+}

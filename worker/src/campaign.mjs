@@ -67,6 +67,7 @@ export const CM_BLOCKAGES_DEFAULTS = [
 export const CM_ASSIGN_DEFAULTS = {
   dalwin: { name: 'Dalwin Callaghan', campaigns: ['courtesy', 'cuddle', 'nesting'] },
   ryan:   { name: 'Ryan G',           campaigns: ['courtesy', 'cuddle', 'nesting'] },
+  preshen: { name: 'Preshen Naidoo',  campaigns: ['courtesy', 'cuddle', 'nesting'] },   // Nick, 2026-09-07: same access as Dalwin; found unassigned 2026-09-08 ("not assigned to a campaign yet")
 };
 
 /**

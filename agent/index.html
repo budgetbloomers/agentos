@@ -117,6 +117,7 @@ a{color:var(--blue)}
 .user-av{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;color:#fff;flex:none}
 .user-nm{font-weight:700;color:#E7EEFA;font-size:12.5px;line-height:1.2}
 .user-rl{font-size:10.5px;color:#9FB0CC}
+.secondary{width:100%;border:1px solid var(--line);background:transparent;color:var(--body);border-radius:10px;padding:10px;font-weight:700;font-size:13px;cursor:pointer}
 .signout{margin-left:auto;border:1px solid rgba(148,182,255,.22);background:rgba(148,182,255,.08);color:#C6D3E8;border-radius:8px;padding:6px 9px;font-size:11px;font-weight:700;white-space:nowrap}
 .main{flex:1;padding:20px 26px 34px;min-width:0;max-width:100%;overflow-x:hidden}
 .topbar{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:16px}
@@ -893,6 +894,7 @@ var LOGO="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAY8AAACrCAYAAACe0BBzAABa
    U  — the signed-in account
    TEAM — a team leader's own page, kept so a drilldown can come back to it */
 var D=null, ME=null, EXTRA=1, U=null, TEAM=null, VIEW='month';
+var PW_OPEN=false;   // the change-password screen is up: background re-renders (help polls, assist refreshes) must not wipe the form
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -1071,6 +1073,7 @@ function api(path, body){
   },function(){ return {ok:false,status:0,json:{error:'We could not reach the server. Check your connection and try again.'}}; });
 }
 function signOut(){
+  PW_OPEN=false;
   api('/api/logout',{}).then(function(){},function(){});
   try{ sessionStorage.removeItem(TKEY); }catch(e){}
   U=null; D=null; ME=null; TEAM=null;
@@ -3191,7 +3194,8 @@ function sidebarHTML(active){
     +freshHTML()
     +'<div class="user-card"><div class="user-av" style="background:hsl('+hue(nm)+',58%,52%)">'+esc(initials(nm))+'</div>'
     +'<div><div class="user-nm">'+esc(nm)+'</div><div class="user-rl">'+esc(role)+'</div></div>'
-    +'<button class="signout" id="signOutBtn">⏻</button></div>'
+    +'<button class="signout" id="pwBtn" title="Change my password" aria-label="Change my password">🔑</button>'
+    +'<button class="signout" id="signOutBtn" title="Sign out" aria-label="Sign out">⏻</button></div>'
     +'</aside>';
 }
 
@@ -3210,6 +3214,7 @@ function shell(title,sub,body,active,right){
 
 function wireShell(){
   var b=$('signOutBtn'); if(b) b.onclick=signOut;
+  var pb=$('pwBtn'); if(pb) pb.onclick=function(){ changePassword(true); };   // every role: agent, team leader, campaign manager, admin
   var m=$('menuBtn'), s=$('side'), sc=$('scrim');
   var close=function(){ if(s)s.classList.remove('open'); if(sc)sc.classList.remove('on'); };
   if(m) m.onclick=function(){ if(s)s.classList.toggle('open'); if(sc)sc.classList.toggle('on'); };
@@ -3237,6 +3242,7 @@ function wireShell(){
    already in memory — switching sections never re-asks the Worker. */
 function render(){
   if(!D) return;
+  if(PW_OPEN) return;   // the person is mid-way through changing their password — leave the form alone
   /* The campaign manager is the third branch, decided by what is LOADED —
      the same rule as isTeam below. */
   if(D.scope==='campaign'&&!D.me){
@@ -3309,21 +3315,34 @@ function loginScreen(msg){
 /* Only reached when an account is issued with --force-change. The rule (10
    characters) is the Worker's, restated here so the failure is instant rather
    than a round trip. */
-function changePassword(){
-  preShell('<div class="greet">Choose your own password</div>'
+function changePassword(voluntary){
+  /* CHANGE MY PASSWORD (Nick, 2026-09-08: "the option to change their password, for the campaign
+     manager, for the team leader and for the agent"). Two ways in: the forced first-sign-in
+     change (must_change_password, no current password asked — they typed it a second ago) and
+     the key button in the user card, open to every role. The voluntary form asks for the
+     current password and the Worker verifies it; a colleague at an unlocked desk cannot lock
+     someone out of their own account. Saving signs out every OTHER session of the account. */
+  var back=VIEW; PW_OPEN=!!voluntary;
+  preShell('<div class="greet">'+(voluntary?'Change your password':'Choose your own password')+'</div>'
     +'<div class="greet-sub">You are signed in as <b>'+esc(U.full_name||U.username)+'</b>. Pick a password only you know.</div>'
     +'<div class="card"><div class="err" id="perr" style="display:none"></div>'
+    +(voluntary?'<label for="p0">Current password</label><input id="p0" type="password" autocomplete="current-password" placeholder="The one you signed in with">':'')
     +'<label for="p1">New password</label><input id="p1" type="password" autocomplete="new-password" placeholder="At least 10 characters">'
     +'<label for="p2">Confirm it</label><input id="p2" type="password" autocomplete="new-password" placeholder="Type it again">'
-    +'<button class="primary" id="pgo">Save and continue</button></div>');
+    +'<button class="primary" id="pgo">'+(voluntary?'Save new password':'Save and continue')+'</button>'
+    +(voluntary?'<button class="secondary" id="pcancel" style="margin-top:8px">Cancel</button>':'')+'</div>');
+  if(voluntary){ $('pcancel').onclick=function(){ PW_OPEN=false; VIEW=back; render(); }; }
   $('pgo').onclick=function(){
-    var a=$('p1').value, b=$('p2').value, e=$('perr');
+    var a=$('p1').value, b=$('p2').value, e=$('perr'), cur=voluntary?$('p0').value:'';
     var bad=function(m){ e.textContent=m; e.style.display='block'; };
+    if(voluntary&&!cur) return bad('Enter your current password.');
     if(a.length<10) return bad('At least 10 characters.');
     if(a!==b) return bad('Those two do not match.');
+    if(voluntary&&a===cur) return bad('Choose a password you are not already using.');
     $('pgo').disabled=true;
-    api('/api/password',{new_password:a}).then(function(r){
-      if(r.ok){ U.must_change_password=false; loadPortal(); }
+    var body={new_password:a}; if(voluntary) body.current_password=cur;
+    api('/api/password',body).then(function(r){
+      if(r.ok){ U.must_change_password=false; if(voluntary){ PW_OPEN=false; VIEW=back; render(); toast('Password changed. Any other device you were signed in on has been signed out.',6000); } else loadPortal(); }
       else { $('pgo').disabled=false; bad(r.json.error||'Could not save that password.'); }
     });
   };
@@ -3332,8 +3351,10 @@ function changePassword(){
 function fatal(title,body,retry){
   preShell('<div class="greet">'+esc(title)+'</div>'
     +'<div class="card"><p style="margin:0;font-size:13.5px;line-height:1.6;color:var(--body)">'+esc(body)+'</p></div>'
-    +'<div class="foot"><button id="out">'+(retry?'Try again':'Sign out')+'</button></div>');
+    +'<div class="foot"><button id="out">'+(retry?'Try again':'Sign out')+'</button>'
+    +(U&&!retry?' <button id="pwFatal" title="Change my password">Change password</button>':'')+'</div>');
   $('out').onclick=retry?function(){ loadPortal(); }:signOut;
+  var pf=$('pwFatal'); if(pf) pf.onclick=function(){ changePassword(true); };   // a blocked account can still manage its own password
 }
 
 /* ===================== loading what you are allowed to see ===================== */
