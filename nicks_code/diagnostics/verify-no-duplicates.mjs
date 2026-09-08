@@ -1,124 +1,88 @@
-/* ONE ROW, ONE FACT — the live stores must hold no duplicate keys, and every key must
- * actually key its data.
+#!/usr/bin/env node
+/**
+ * verify-no-duplicates.mjs — nothing is counted twice, in any store, today.
  *
- * Born 2026-08-31, from a store that held the same closed-cases export seven times: 141 535
- * rows carrying 35 463 cases. Ingest now supersedes by key, but nothing watched, and this is
- * the kind of thing that returns quietly the first time a source is added.
+ *   node nicks_code/diagnostics/verify-no-duplicates.mjs
  *
- * THREE CHECKS, AND THE SECOND ONE IS THE ONE THAT EARNS ITS KEEP:
+ * Every upload path already refuses duplicates in its own way (specs/duplicates-policy.md): PULSE by
+ * file hash and per-key supersede, Ops by file hash → update-in-place and record-key supersede, the
+ * Rake by sha256 and keyed merges, the lake by primary keys. This suite is the PROOF, over the LIVE
+ * data, that those rules held — a nightly answer to "if I upload files, are there duplicates?".
  *
- *   1. No key repeats in any store.
- *
- *   2. Every key MATCHES ITS DATA. A key naming a field the rows do not carry silently keys
- *      nothing at all and protects nothing: AGENT_LIST was keyed (_d, cb_norm) while every
- *      roster row carries _d as null, and SES_DIAL_* was keyed as ViciDial while it actually
- *      holds CallX-shaped rows. Both reported a tidy "0 duplicates" while checking nothing.
- *      A store where nearly every row is unkeyable fails here.
- *
- *   3. The spec's recorded row counts are in the right order of magnitude. specs/source_keys
- *      .json carries what each store measured when its key was written; an order-of-magnitude
- *      departure means the store has been rewritten by something nobody described.
- *
- * Run: node verify-no-duplicates.mjs            (add --json for machine output)
+ *   A · THE LAKE (Postgres, read-only): natural-key twins in every partitioned table, one agent twice
+ *       on one list, the same bytes loaded twice (batches, upload_files), two active logins on one CB.
+ *       Closed cases on two closure days are REPORTED (a re-closed case is real) and fail only past 1%.
+ *   B · PULSE (kv:vas-state): the same file hash registered twice; then the deployed build is driven
+ *       headlessly over the blob and V01 is applied to the model — one row per agent per day
+ *       (rangeAgg rows exempt, as in the app).
+ *   C · OPS (kv:cb-audit): the legacy in-browser registry, reported only — Ops rows live in the lake.
+ *   The database removes twins itself (dedupe_lake, migration-032); A also proves it ran.
+ * Nothing here writes anywhere.
  */
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(HERE, '..', '..');
-const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8')
-  .split(/\r?\n/).filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]));
+import fs from 'node:fs'; import path from 'node:path'; import http from 'node:http';
+import { fileURLToPath } from 'node:url'; import { createRequire } from 'node:module';
+const HERE = path.dirname(fileURLToPath(import.meta.url)); const ROOT = process.env.AGENTOS || path.resolve(HERE, '..', '..');
+const req = createRequire(path.join(HERE, 'node_modules', 'x.js')); const pg = req('pg'); const { chromium } = req('playwright');
+const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8').split(/\r?\n/).filter((l) => l.includes('=') && !l.startsWith('#')).map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim().replace(/^"|"$/g, '')]));
 const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
-const SPEC = JSON.parse(fs.readFileSync(path.join(ROOT, 'specs', 'source_keys.json'), 'utf8'));
-const JSON_OUT = process.argv.includes('--json');
+let pass = 0, fail = 0; const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n + (d ? '  (' + d + ')' : '')); } else { fail++; console.log('  FAIL ' + n + (d ? ' — ' + d : '')); } };
+const kv = async (k) => { const r = await fetch(env.SUPABASE_URL + '/storage/v1/object/raw/kv/' + k, { headers: H, signal: AbortSignal.timeout(90000) }); return r.ok ? r.text() : null; };
 
-let pass = 0, fail = 0; const failures = [];
-const ok = (n, c, d = '') => {
-  if (c) { pass++; if (!JSON_OUT) console.log('  ok   ' + n); }
-  else { fail++; failures.push(n + (d ? ' — ' + d : '')); if (!JSON_OUT) console.log('  FAIL ' + n + ' — ' + d); }
-};
-
-const specFor = (src) => SPEC.sources[src] || SPEC.sources[(SPEC.session_sources || {})[src]] || null;
-const keyOf = (row, fields) => {
-  const parts = [];
-  for (const f of fields) { const v = row[f]; if (v == null || v === '') return null; parts.push(String(v)); }
-  return parts.join('');
-};
-
-const list = await (await fetch(`${env.SUPABASE_URL}/storage/v1/object/list/raw`, {
-  method: 'POST', headers: { ...H, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ prefix: 'kv/', limit: 200 }) })).json();
-const sources = list.filter((o) => /^cb-facts-/.test(o.name)).map((o) => o.name.replace(/^cb-facts-/, '')).sort();
-
-const report = [];
-for (const src of sources) {
-  const spec = specFor(src);
-  if (!spec) { ok(src + ' has an identity rule in specs/source_keys.json', false, 'no entry — a source nothing can dedupe'); continue; }
-
-  const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/cb-facts-${src}`, { headers: H });
-  if (!r.ok) { ok(src + ' store is readable', false, 'HTTP ' + r.status); continue; }
-  let rows; try { rows = JSON.parse(await r.text()); } catch { ok(src + ' store parses', false, 'not JSON'); continue; }
-  if (!Array.isArray(rows)) { ok(src + ' store is an array', false, typeof rows); continue; }
-
-  const seen = new Map(); let unkeyable = 0, dupRows = 0;
-  for (const row of rows) {
-    const k = keyOf(row, spec.key);
-    if (k == null) { unkeyable++; continue; }
-    const n = (seen.get(k) || 0) + 1; seen.set(k, n);
-    if (n > 1) dupRows++;
-  }
-  const keyed = rows.length - unkeyable;
-  report.push({ src, rows: rows.length, distinct: seen.size, dupRows, unkeyable });
-
-  ok(src + ' holds no duplicate keys (' + rows.length + ' rows)', dupRows === 0,
-    dupRows + ' duplicate row(s) on (' + spec.key.join(', ') + ')');
-
-  /* the check that catches a key naming fields the rows do not have */
-  ok(src + ' key matches its data', rows.length === 0 || keyed / rows.length >= 0.5,
-    unkeyable + ' of ' + rows.length + ' rows cannot be keyed by (' + spec.key.join(', ') + ') — the key names fields these rows do not carry');
-
-  /* A SESSION SLOT IS ALLOWED TO BE EMPTY. SES_* holds an intraday snapshot that the next
-     upload overwrites and a cleanup may clear (2026-08-31: four of them held July data and
-     were emptied). Empty is a state, not evidence of a rewrite, so the order-of-magnitude
-     check applies to the daily stores only — the duplicate and key checks above still run
-     on every source, including these. */
-  const isSession = !!(SPEC.session_sources || {})[src];
-  const claimed = (spec.measured && spec.measured.rows) || null;
-  if (claimed && !isSession) ok(src + ' row count is the order the spec recorded', rows.length >= claimed / 10 && rows.length <= claimed * 10,
-    rows.length + ' now vs ' + claimed + ' when the key was written');
-}
-
-/* ---- AND THE LAKE, where the constraints actually live -----------------------------
-   The blobs are what the apps read; the tables are what Postgres enforces. A blob can be
-   clean while the table it feeds is not (or the reverse, if something wrote past the
-   station), so both are checked here rather than in two places that can disagree.
-   lake_duplicates (migration-017) states rows against distinct keys per source — the whole
-   contract in one query. */
+console.log('\nA · THE LAKE');
+const c = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false }, statement_timeout: 110000 }); await c.connect();
+const n = async (s) => +(await c.query(s)).rows[0].n;
 try {
-  const r = await fetch(env.SUPABASE_URL + '/rest/v1/lake_duplicates?select=*&order=source',
-    { headers: { ...H, Accept: 'application/json' } });
-  if (!r.ok) ok('the lake audit view is readable', false, 'HTTP ' + r.status);
-  else {
-    const lake = await r.json();
-    ok('the lake reports every source', Array.isArray(lake) && lake.length >= 8, JSON.stringify(lake).slice(0, 120));
-    for (const t of (lake || [])) {
-      const rows = Number(t.rows), keys = Number(t.distinct_keys);
-      ok('lake: ' + t.source + ' is one row per key (' + rows + ')', rows === keys,
-        (rows - keys) + ' more row(s) than keys — something wrote past the constraint');
-    }
-    const empty = (lake || []).filter((t) => Number(t.rows) === 0).map((t) => t.source);
-    ok('every lake table has been loaded at least once', empty.length === 0,
-      'never written: ' + empty.join(', ') + ' — a table nothing writes cannot enforce anything');
-  }
-} catch (e) { ok('the lake audit view is reachable', false, String(e.message).slice(0, 120)); }
+  ok('sf_closed_cases: one row per case per closure day', (await n(`select count(*) n from (select case_number, closed_at from sf_closed_cases group by 1,2 having count(*) > 1) x`)) === 0);
+  const twoDays = await n(`select count(*) n from (select case_number from sf_closed_cases group by 1 having count(distinct closed_at) > 1) x`);
+  const cases = await n(`select count(distinct case_number) n from sf_closed_cases`);
+  ok('sf_closed_cases: cases closed on two days stay under 1% (a re-closed case is real; a flood is a keying bug)', twoDays <= Math.max(1, cases * 0.01), twoDays + ' of ' + cases);
+  ok('sf_open_cases: one row per case per snapshot', (await n(`select count(*) n from (select snapshot_date, case_number from sf_open_cases group by 1,2 having count(*) > 1) x`)) === 0);
+  ok('bi_active_cases: no natural-key twins (case, account, contract, charge code, amount, date)', (await n(`select count(*) n from (select case_number, account_no, coalesce(contract_number,''), coalesce(charge_code,''), charge_amount, contract_create_date from bi_active_cases group by 1,2,3,4,5,6 having count(*) > 1) x`)) === 0);
+  ok('vici_calls: one row per call (date, login, lead, status)', (await n(`select count(*) n from (select call_date, agent_login, lead_id, status from vici_calls group by 1,2,3,4 having count(*) > 1) x`)) === 0);
+  ok('agent_list: an agent appears once per dated list', (await n(`select count(*) n from (select as_of, norm_cb(employee_code) from agent_list group by 1,2 having count(*) > 1) x`)) === 0);
+  ok('batches: the same bytes are never loaded twice', (await n(`select count(*) n from (select file_hash from batches where status = 'loaded' and file_hash is not null group by 1 having count(*) > 1) x`)) === 0);
+  ok('upload_files: the same bytes are never loaded twice by the Rake', (await n(`select count(*) n from (select sha256 from upload_files where status = 'loaded' group by 1 having count(*) > 1) x`)) === 0);
+  ok('app_users: one active login per CB number', (await n(`select count(*) n from (select norm_cb(cb) from app_users where active and cb is not null group by 1 having count(*) > 1) x`)) === 0);
+  const last = (await c.query(`select ran_at, applied, removed from dedupe_log where applied order by ran_at desc limit 1`)).rows[0];
+  ok('dedupe_lake() has run and applied within the last 26 hours (rake + nightly pg_cron)', !!last && Date.now() - new Date(last.ran_at).getTime() < 26 * 3600e3, last ? 'last ' + last.ran_at.toISOString() + ', removed ' + last.removed : 'never ran');
+  ok('app_users: one active login per username', (await n(`select count(*) n from (select lower(username) from app_users where active group by 1 having count(*) > 1) x`)) === 0);
+} catch (e) { ok('lake queries ran', false, e.message); } finally { await c.end(); }
 
-if (JSON_OUT) console.log(JSON.stringify({ pass, fail, failures, report }, null, 2));
+console.log('\nB · PULSE');
+const blob = await kv('vas-state');
+if (!blob) console.log('  (skipping — cannot read kv:vas-state)');
 else {
-  console.log('\n' + report.map((r) => '  ' + r.src.padEnd(22) + String(r.rows).padStart(7) + ' rows, '
-    + String(r.distinct).padStart(7) + ' distinct'
-    + (r.unkeyable ? ', ' + r.unkeyable + ' unkeyable' : '')).join('\n'));
-  console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====');
-  if (fail) console.log(failures.map((f) => '  · ' + f).join('\n'));
+  const S = JSON.parse(blob); const files = Array.isArray(S.files) ? S.files : [];
+  const byHash = new Map(); for (const f of files) if (f.hash) byHash.set(f.hash, (byHash.get(f.hash) || 0) + 1);
+  const twice = [...byHash.entries()].filter(([, k]) => k > 1);
+  ok('file registry: no file hash registered twice (' + files.length + ' files)', twice.length === 0, twice.map(([h]) => h.slice(0, 10)).join(','));
+  const HTML = path.join(ROOT, 'site', 'pulse', 'index.html');
+  const SERVE = { '/': HTML, '/index.html': HTML, '/xlsx.full.min.js': path.join(ROOT, 'site', 'xlsx.full.min.js') };
+  const server = http.createServer((q, s) => { const p = SERVE[q.url.split('?')[0]]; if (!p || !fs.existsSync(p)) { s.writeHead(404); s.end('nf'); return; } s.writeHead(200, { 'Content-Type': p.endsWith('.js') ? 'text/javascript' : 'text/html' }); fs.createReadStream(p).pipe(s); });
+  await new Promise((r) => server.listen(8179, '127.0.0.1', r));
+  const browser = await chromium.launch({ args: ['--js-flags=--max-old-space-size=8192'] });
+  try {
+    const page = await browser.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message.slice(0, 120)));
+    await page.goto('http://127.0.0.1:8179/', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__mtd && window.__mtd.state(), null, { timeout: 30000 });
+    const r = await page.evaluate((b) => { const S = window.__mtd.state(); const blob = JSON.parse(b); for (const k of Object.keys(blob)) S[k] = blob[k]; window.__mtd.rebuild();
+      const F = window.__mtd.model().facts || []; const seen = new Set(), dup = []; for (const f of F) { if (f.rangeAgg) continue; const k = f.date + '|' + f.code; if (seen.has(k)) dup.push(k); seen.add(k); }
+      return { rows: F.length, dup: dup.slice(0, 5), ndup: dup.length }; }, blob);
+    ok('V01 on the live model: one row per agent per day (' + r.rows + ' rows)', r.ndup === 0, r.ndup + ' duplicate(s) e.g. ' + r.dup.join(', '));
+    ok('the build rendered the live state without a page error', errs.length === 0, errs.join(' ; '));
+  } catch (e) { ok('headless PULSE ran', false, e.message.slice(0, 200)); } finally { await browser.close(); server.close(); }
 }
+
+console.log('\nC · OPS');
+const audit = await kv('cb-audit');
+if (!audit) console.log('  (skipping — cannot read kv:cb-audit)');
+else {
+  const B = (JSON.parse(audit).batches || []).filter((b) => b.file_hash && b.validation_status !== 'failed');
+  const key = new Map(); for (const b of B) { const k = b.source_type + '|' + b.file_hash; key.set(k, (key.get(k) || 0) + 1); }
+  const twice = [...key.entries()].filter(([, k]) => k > 1);
+  /* the cb-audit blob is Ops' legacy in-browser registry (July 2026 ghosts predate the Worker path); the rows themselves live in the lake, checked in A — so this is a report, not a verdict */
+  console.log('  info ' + twice.length + ' legacy registry twin(s) in kv:cb-audit (' + B.length + ' batches)' + (twice.length ? ': ' + twice.map(([k]) => k.split('|')[0]).join(',') : ''));
+}
+
+console.log('\n==== ' + pass + ' passed, ' + fail + ' failed  (read-only — nothing was written) ====');
 process.exit(fail ? 1 : 0);

@@ -166,6 +166,7 @@ try {
     else if (r.final) { failed++; notes.push(f.file_name + ': ' + r.error.slice(0, 120)); if (msg) await sql(`select pgmq.delete('ingest', $1::bigint)`, [msg.msg_id]); }
   }
   if (loaded && !DRY) { log('refreshing agent_day…'); await db.query('refresh materialized view concurrently agent_day'); }
+  if (loaded && !DRY) { const dd = (await db.query(`select dedupe_lake(true, 'rake') r`)).rows[0].r; log('dedupe_lake: ' + dd.removed_total + ' duplicate row(s) removed'); }   // migration-032: the database removes twins, every run logged
   await sql(`update pipeline_runs set finished_at = now(), ok = $2, files_seen = $3, files_loaded = $4, files_failed = $5, rows_loaded = $6, seconds = extract(epoch from now() - started_at), note = $7 where run_id = $1`,
     [run, failed === 0, seen, loaded, failed, rows, notes.join(' | ').slice(0, 900) || null]);
   log(`done: ${loaded} loaded, ${failed} failed, ${rows} rows`);

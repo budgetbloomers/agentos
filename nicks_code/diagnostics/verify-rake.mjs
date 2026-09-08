@@ -123,6 +123,20 @@ try {
   const twin = await c.query(`insert into upload_files (file_name, sha256, storage_path, status, uploaded_by) values ('fx-c', 'deadbeef-verify-rake', 'test/c', 'loaded', 'verify-rake')`).then(() => 'accepted', (e) => e.code);
   await c.query('rollback to savepoint twin');
   ok('upload_files: a failed attempt may repeat a loaded hash, a second LOADED copy is refused (23505)', twin === '23505', String(twin));
+  /* migration-032: dedupe_lake() removes semantic twins and keeps real re-closures */
+  await c.query(`insert into sf_closed_cases (case_number, closed_at, closed_ts, closed_day, disposition, batch_id) values
+    ('900091', '2026-09-02 00:00+00', '2026-09-03 11:00+00', '2026-09-03', 'Sale', 'verify-rake'),
+    ('900091', '2026-09-03 00:00+00', '2026-09-03 11:00+00', '2026-09-03', 'Sale', 'verify-rake-2'),
+    ('900092', '2026-09-01 00:00+00', '2026-09-01 09:00+00', '2026-09-01', 'No Answer', 'verify-rake'),
+    ('900092', '2026-09-05 00:00+00', '2026-09-05 09:00+00', '2026-09-05', 'No Answer', 'verify-rake')`);
+  await c.query(`insert into agent_list (as_of, employee_code, agent_name, batch_id) values ((select max(as_of) from agent_list), 'CB-900077', 'Fixture Owner', 'verify-rake')`);
+  const dry = (await one(`select dedupe_lake(false, 'verify-rake dry') r`)).r;
+  ok('dedupe_lake(dry): finds the keyed twin and the spelt-twice CB, touches nothing', dry.sf_closed_cases.found === 1 && dry.agent_list.found === 1 && dry.removed_total === 0 && +(await one(`select count(*) n from sf_closed_cases where case_number = '900091'`)).n === 2, JSON.stringify({ c: dry.sf_closed_cases, l: dry.agent_list }));
+  const live = (await one(`select dedupe_lake(true, 'verify-rake') r`)).r;
+  const left = await q(`select case_number, closed_at, batch_id from sf_closed_cases where case_number in ('900091','900092') order by 1, 2`);
+  ok('dedupe_lake(apply): the twin goes (latest load kept), the re-closed case keeps both days', live.removed_total === 2 && left.length === 3 && left[0].batch_id === 'verify-rake-2' && left.filter((x) => x.case_number === '900092').length === 2, JSON.stringify(left));
+  ok('dedupe_lake: the canonical CB row survives, the spelt variant goes', +(await one(`select count(*) n from agent_list where as_of = (select max(as_of) from agent_list) and norm_cb(employee_code) = 'CB900077'`)).n === 1 && +(await one(`select count(*) n from agent_list where employee_code = 'CB-900077'`)).n === 0);
+  ok('dedupe_lake: both runs are logged', +(await one(`select count(*) n from dedupe_log where actor like 'verify-rake%'`)).n === 2);
   const h = await one(`select rake_health() h`);
   ok('rake_health() has the shape the Worker reads', ['received_stuck', 'in_flight', 'failed_24h', 'failed_names', 'queue_depth', 'dlq_depth', 'last_run'].every((key) => key in h.h), JSON.stringify(h.h).slice(0, 160));
 } catch (e) { ok('database half ran without an exception', false, e.message); }
