@@ -51,7 +51,12 @@ const LISTS = [
   path.join(REPO, 'uploads', '2026-08-06', 'Matrix - Agent List.xlsx'),
   path.join(REPO, 'uploads', '2026-08-13', 'Matrix - Agent List.xlsx'),
 ].filter(f => fs.existsSync(f));
-if (LISTS.length < 2) { console.error('Need at least two real Agent Lists under uploads/ — found ' + LISTS.length); process.exit(2); }
+if (LISTS.length < 2) {
+  /* The cloud runner has no uploads/ (gitignored PII) — that is a SKIP, not a red run (2026-09-08). A
+     laptop with uploads/ present but the lists missing is still a failure. */
+  if (!fs.existsSync(path.join(REPO, 'uploads'))) { console.log('SKIP: this suite needs the real Agent List workbooks under uploads/, which only exist on a machine that receives the daily drop.'); process.exit(0); }
+  console.error('Need at least two real Agent Lists under uploads/ — found ' + LISTS.length); process.exit(2);
+}
 
 /* ---------- what each workbook SAYS, read independently of the app ---------- */
 const campOf = (c) => /nest/i.test(c || '') ? 'Nesting'
