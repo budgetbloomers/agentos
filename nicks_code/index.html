@@ -564,6 +564,12 @@ const MTD_RULES = {
      Mirror of specs/mtd_engine_rules.json reference_data.saturday_shifts. */
   saturdayShiftsFrom: '2026-09-01',
 
+  /* AVERAGE TALK TIME IS MINUTES PER EMPLOYED SHIFT (Nick, 2026-09-08: "total talk time divided
+     by shifts, and must be in minutes"). The denominator was already employed shifts (spec §6.4);
+     the unit was h:mm:ss. One value, read by fmtTalk() for every average-talk figure on screen
+     and in the tracker export. Mirror of specs/mtd_engine_rules.json reference_data.talk_time_average. */
+  aveTalkUnit: 'minutes',
+
   /* CallX retired — the whole floor dials on ViciDial from this date (Nick, 2026-09-01).
      The calls() intake refuses rows on/after it and points at the ViciDial slot; earlier
      days still load as history corrections. The dialler-derived shift rule is untouched —
@@ -899,6 +905,8 @@ const fmtPct = (x,d=0) => (x==null||!isFinite(x))?'–':(x*100).toFixed(d)+'%';
 const __nfCache = {};
 const __nf = d => __nfCache[d] || (__nfCache[d] = new Intl.NumberFormat('en-ZA',{minimumFractionDigits:d,maximumFractionDigits:d}));
 const fmtNum = (x,d=0) => (x==null||!isFinite(x))?'–':__nf(d).format(Number(x));
+/* average talk per shift — minutes to one decimal (MTD_RULES.aveTalkUnit); h:mm:ss only if the rule book ever says so */
+const fmtTalk = s => MTD_RULES.aveTalkUnit==='minutes' ? fmtNum((s||0)/60,1) : fmtDur(s);
 const dkey = d => d instanceof Date ? d.toISOString().slice(0,10) : String(d).slice(0,10);
 function parseDateLoose(s){
   if(!s) return null;
@@ -3428,7 +3436,7 @@ function validateMTD(m){
        day's first upload over a file that is merely not in yet. */
     add('V18','warn', !dark.length&&!thin.length,
       dark.length
-        ? dark.map(([c,t])=>`${c}: not one of its ${t.codes.size} agents has a dialler record — Ave Talk Time reads 0:00:00 for the whole tab. The dialler export does not cover this campaign.`).join(' ')
+        ? dark.map(([c,t])=>`${c}: not one of its ${t.codes.size} agents has a dialler record — Ave Talk reads 0,0 min for the whole tab. The dialler export does not cover this campaign.`).join(' ')
         : (thin.length
             ? thin.map(([c,t])=>`${c}: only ${t.dial.size} of ${t.codes.size} agents have a dialler record`).join('; ')
             : 'every reported campaign has dialler coverage')); }
@@ -5727,7 +5735,7 @@ function aggCols(opts={}){
     {h:'Answered',f:r=>fmtNum(r.ans)},
     {h:'Answer %',f:r=>fmtPct(r.calls?r.ans/r.calls:null)},
     {h:'AHT',f:r=>r.aht?fmtDur(r.aht):'–'},
-    {h:'Ave Talk',f:r=>r.aveTalk!=null?fmtDur(r.aveTalk):'–'},
+    {h:'Ave Talk (min)',f:r=>r.aveTalk!=null?fmtTalk(r.aveTalk):'–'},
     {h:'QA',f:r=>r.qa?fmtPct(r.qa.avg,1):'–',csv:r=>r.qa?(r.qa.avg*100).toFixed(1)+'%':''}
   ];
   const c=[
@@ -5744,7 +5752,7 @@ function aggCols(opts={}){
   ];
   if(opts.canc) c.push({h:'Cancellations',f:r=>fmtNum(r.canc)},{h:'% of Cancellations',f:r=>fmtPct(r.cancPct,1)});
   c.push(
-    {h:'Ave Talk Time',f:r=>r.aveTalk!=null?fmtDur(r.aveTalk):'-'},
+    {h:'Ave Talk Time (min)',f:r=>r.aveTalk!=null?fmtTalk(r.aveTalk):'-'},
     {h:'GWP Target',f:r=>fmtNum(r.gwpT)},
     {h:'GWP Achieved',f:r=>fmtNum(r.gwp)},
     {h:'% To GWP Target',f:r=>pctPill(r.pctG),csv:r=>r.pctG==null?'':(r.pctG*100).toFixed(1)+'%'},
@@ -5758,8 +5766,8 @@ function aggCols(opts={}){
        shifts (utilisation — an unworked shift drags it down); this divides by ACTUAL shifts
        (intensity on the days they were there). Read together, a big gap between the two is an
        attendance problem, and a low figure in BOTH is a performance one. */
-    {h:'Talk / Day Worked',f:r=>r.talkPerWorked!=null?fmtDur(r.talkPerWorked):'–',
-      csv:r=>r.talkPerWorked!=null?fmtDur(r.talkPerWorked):''}
+    {h:'Talk / Day Worked (min)',f:r=>r.talkPerWorked!=null?fmtTalk(r.talkPerWorked):'–',
+      csv:r=>r.talkPerWorked!=null?fmtTalk(r.talkPerWorked):''}
   );
   /* Opt-ins are OFF the MTD view (Nick, 2026-08-15) — pass noOpt from the MTD call sites.
      Weekly/daily keep them: the dialler opt-in dispositions are a daily coaching signal. */
@@ -5917,7 +5925,7 @@ PAGES.mtd=()=>{
       ['Sales Target',o=>fmtNum(o.target)],['Sales Achieved',o=>'<b>'+fmtNum(o.sales)+'</b>'],['% To Sales Target',o=>pctPill(o.pctT)],
       ['SPD',o=>fmtNum(o.spd,2)],['Cancellations',o=>fmtNum(o.canc)],['% Canc to Sales',o=>fmtPct(o.cancPct,1)],
       ['GWP Target',o=>fmtNum(o.gwpT)],['GWP Achieved',o=>fmtNum(o.gwp)],['% To GWP Target',o=>pctPill(o.pctG)],
-      ['Ave GWP',o=>fmtNum(o.aveG,1)],['Ave Talk Time',o=>o.aveTalk!=null?fmtDur(o.aveTalk):'–'],
+      ['Ave GWP',o=>fmtNum(o.aveG,1)],['Ave Talk Time (min)',o=>o.aveTalk!=null?fmtTalk(o.aveTalk):'–'],
       ['Referrals',o=>fmtNum(o.ref)],['Referrals %',o=>fmtPct(o.refPct,1)],
       ['Agents on Target',o=>fmtNum(o.onT)],['% Agents on Target',o=>fmtPct(o.hc?o.onT/o.hc:null)]];
     const cols=[{h:'Metric',l:1,f:r=>r[0]},
@@ -5981,7 +5989,7 @@ PAGES.daily=()=>{
     /* At day grain this is the day's talk over that day's actual shift: unchanged on a full
        shift, doubled on a half day, and flagged where an agent talked but was credited no
        shift at all — the anomaly a daily view exists to surface. */
-    {h:'Talk / Worked',f:r=>r.act?fmtDur(r.talk/r.act):(r.talk?'<span class="pill pwarn" title="talk recorded but no shift credited">no shift</span>':'–'),
+    {h:'Talk / Worked (min)',f:r=>r.act?fmtTalk(r.talk/r.act):(r.talk?'<span class="pill pwarn" title="talk recorded but no shift credited">no shift</span>':'–'),
       csv:r=>r.act?fmtDur(r.talk/r.act):''},
     {h:'Calls',f:r=>r.calls||''},
     {h:'GWP',f:r=>fmtNum(MTD_RULES.gwpDisplayBasis==='ex'?(r.gwpEx||0):r.gwp)},{h:'Ave GWP',f:r=>r.sales?fmtNum((MTD_RULES.gwpDisplayBasis==='ex'?(r.gwpEx||0):r.gwp)/r.sales,1):'–'},
@@ -7306,7 +7314,7 @@ function downloadText(filename, text){
    sheets beside it (head count x planned dialing days, rather than the shifts actually
    worked), so the two never reconciled. Here it is computed from the SAME actuals as every
    other sheet - one basis for the whole workbook. */
-const XF={pct:'0.0%',dur:'[h]:mm:ss',money:'#,##0',num:'0.00'};
+const XF={pct:'0.0%',dur:'[h]:mm:ss',money:'#,##0',num:'0.00',min:'0.0'};
 function xlSheet(aoa,fmt){
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   if(fmt) for(const key in fmt){
@@ -7319,6 +7327,7 @@ function xlSheet(aoa,fmt){
   return ws;
 }
 const dur=s=>(s||0)/86400;                       // seconds -> Excel time fraction
+const mins=s=>Math.round((s||0)/60*10)/10;        // seconds -> minutes, one decimal (average talk per shift, Nick 2026-09-08)
 const pctOf=(n,d)=>d?n/d:0;
 const ddmm=d=>{const p=String(d).split('-');return p.length===3?`${p[2]}.${p[1]}.${p[0]}`:String(d)};
 
@@ -7335,7 +7344,7 @@ function trackerAgentCols(mtd){
      workbook whose TL sheet carries a comment explaining why employed is the denominator.
      A null stays null: the screen shows '–' where the dialler never covered the agent, and
      the export must not invent 0:00:00. */
-  c.push(['Ave Talk Time',r=>r.aveTalk==null?'':dur(r.aveTalk)],
+  c.push(['Ave Talk Time (min)',r=>r.aveTalk==null?'':mins(r.aveTalk)],
     ['GWP Target ',r=>r.gwpT],['GWP Achieved ',r=>r.gwp],['% To GWP Target',r=>pctOf(r.gwp,r.gwpT)],
     ['Ave GWP ',r=>r.sales?r.gwp/r.sales:0],['Referrals ',r=>r.ref||0],
     ['% Of Referrals To Sales Achieved ',r=>pctOf(r.ref||0,r.sales)],
@@ -7350,7 +7359,7 @@ function trackerAgentSheet(title,rows,mtd){
     aoa.push(cols.map(c=>c[1](t))); }
   const fmt={}; cols.forEach((c,i)=>{
     if(/Att %|% of Sales|% To GWP|% of Cancellations|% Of Referrals|^QA$/.test(c[0].trim()))fmt[i]=XF.pct;
-    if(/Ave Talk Time/.test(c[0]))fmt[i]=XF.dur;
+    if(/Ave Talk Time/.test(c[0]))fmt[i]=XF.min;
     if(/GWP/.test(c[0])&&!/%/.test(c[0]))fmt[i]=XF.money;
     if(/SPD/.test(c[0]))fmt[i]=XF.num;
   });
@@ -7369,8 +7378,8 @@ const TL_METRICS=[
      an AVERAGE over the daily fact rows, and every fact row carries exactly 1 employed shift,
      so employed is the denominator. Talk / Day Worked keeps the actual-shift view beside it. */
   ['Ave GWP',o=>o.sales?o.gwp/o.sales:0],
-  ['Ave Talk Time',o=>dur(o.emp?o.talk/o.emp:0)],
-  ['Talk / Day Worked',o=>dur(o.act?o.talk/o.act:0)],
+  ['Ave Talk Time (min)',o=>mins(o.emp?o.talk/o.emp:0)],
+  ['Talk / Day Worked (min)',o=>mins(o.act?o.talk/o.act:0)],
   ['Referrals',o=>o.ref||0],['Referrals %',o=>pctOf(o.ref||0,o.sales)],
   ['Number Of Agents on Target',o=>o.onT??''],['% Of Agents on Target',o=>pctOf(o.onT||0,o.hc||0)],
   ['QA %',o=>o.qa&&o.qa.n?o.qa.avg:'']];
@@ -7389,14 +7398,16 @@ function exportTracker(){
      side blocks it carries (cancellations by agent, and QA by agent). */
   const piv=[['Week',M.weeks.length?'Week '+M.weeks[M.weeks.length-1].num:''],['Campaign',camps.join(' + ')],[],
     ['Team Leader','Tenure','Agent','Sum of Employed Shifts','Sum of Actual Shifts','Sum of Sales Target',
-     'Sum of Sales Achieved','Average of Talk Time','Sum of GWP Target','Sum of GWP Achieved','Sum of Referrals',
+     'Sum of Sales Achieved','Average of Talk Time (min)','Sum of GWP Target','Sum of GWP Achieved','Sum of Referrals',
      '','','Row Labels','Count of Contract Deactivate Date','','Agent','Comment','Issued Date','','','Row Labels','Average of Score %']];
   const allRows=camps.flatMap(c=>agentRows(c,null));
   allRows.sort((a,b)=>String(a.agent).localeCompare(String(b.agent)));
   allRows.forEach(r=>piv.push([r.tl,r.tenure,r.agent,r.emp,r.act,r.target,r.sales,
-    dur(r.act?r.talk/r.act:0),r.gwpT,r.gwp,r.ref||0,'','',r.agent,r.canc||0,'','','','','',
+    /* employed shifts, not actual (2026-09-08): the MTD sheets and the screen already divided by
+       employed (spec §6.4) while this pivot divided by actual — one figure, two answers */
+    mins(r.emp?r.talk/r.emp:0),r.gwpT,r.gwp,r.ref||0,'','',r.agent,r.canc||0,'','','','','',
     r.agent,(r.qa&&r.qa.n)?r.qa.avg:'']));
-  XLSX.utils.book_append_sheet(wb,xlSheet(piv,{7:XF.dur,8:XF.money,9:XF.money,21:XF.pct}),'Pivot Table');
+  XLSX.utils.book_append_sheet(wb,xlSheet(piv,{7:XF.min,8:XF.money,9:XF.money,21:XF.pct}),'Pivot Table');
 
   /* ---- the daily sheet, one row per agent per dialing day (the workbook's month tab).
      Range-aggregate dialler rows are excluded here by design: a multi-day ViciDial export
@@ -7452,7 +7463,7 @@ function exportTracker(){
     const lab=String(row[0]||'');
     let z=null;
     if(/^%|%$|% Of|% To|% of/.test(lab)) z=XF.pct;
-    else if(/Ave Talk Time/.test(lab)) z=XF.dur;
+    else if(/Ave Talk Time|Talk \/ Day Worked/.test(lab)) z=XF.min;
     else if(/GWP Target|GWP Achieved|Ave GWP/.test(lab)) z=XF.money;
     else if(/SPD/.test(lab)) z=XF.num;
     if(!z) return;

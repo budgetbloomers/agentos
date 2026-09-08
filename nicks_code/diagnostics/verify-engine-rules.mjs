@@ -45,6 +45,14 @@ ok('GWP rate per sale matches', inlined.gwpPerSale === SPEC.reference_data.gwp_r
 ok('VAT multiplier matches', inlined.vat === SPEC.reference_data.vat_multiplier.value);
 ok('Saturday shift rule matches (data only, from)', inlined.saturdayShiftsFrom === (SPEC.reference_data.saturday_shifts || {}).data_only_from,
   inlined.saturdayShiftsFrom + ' vs ' + JSON.stringify((SPEC.reference_data.saturday_shifts || {}).data_only_from));
+/* AVERAGE TALK IS MINUTES PER EMPLOYED SHIFT (Nick, 2026-09-08). The unit is a rule-book value with an inline
+   mirror, and the display layer must read it: no average-talk column may format with fmtDur any more. */
+const tta = SPEC.reference_data.talk_time_average || {};
+ok('average talk unit matches the rule book', inlined.aveTalkUnit === tta.unit, inlined.aveTalkUnit + ' vs ' + tta.unit);
+ok('the rule book divides average talk by employed shifts', tta.denominator === 'employed_shifts', String(tta.denominator));
+{ const src = html;
+  ok('no average-talk column still prints h:mm:ss', !/fmtDur(r.aveTalk)|fmtDur(o.aveTalk)|fmtDur(r.talkPerWorked)/.test(src));
+  ok('Month to date shows Ave Talk in minutes', src.includes("h:'Ave Talk (min)'")); }
 {
   const w = SPEC.reference_data.attendance_shift_weights;
   const drift = Object.keys(inlined.attWeights).filter(k => w[k] !== inlined.attWeights[k]);

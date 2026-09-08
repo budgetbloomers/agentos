@@ -403,6 +403,13 @@
     ],
     "broken_mapping_fixed": "Lindokuhle Phakathi (CB263) showed reference talk = 0 on both days because the reference VLOOKUP used the roster's wrong dialler label 'Nomonde Ntoza CB-263'. He dialled 646 calls. The corrected mapping fixes both rows."
    }
+  },
+  "talk_time_average": {
+   "denominator": "employed_shifts",
+   "unit": "minutes",
+   "rule": "Average talk time is TOTAL talk seconds divided by EMPLOYED shifts (spec 6.4 — every daily fact row is one employed shift, so the workbook's \"Average of Talk Time\" over rows is the same figure), shown in MINUTES to one decimal. The same unit applies to Talk / Day Worked (the actual-shift companion figure) and to the tracker export, whose pivot column used to divide by actual shifts while the MTD sheets divided by employed.",
+   "source": "Nick, 2026-09-08: \"for the talk time it must be total talk time divided by shifts, and must be in minutes\"",
+   "note": "Mirror: MTD_RULES.aveTalkUnit. AHT (seconds per answered call) and per-day Talk totals stay h:mm:ss — they are not averages per shift."
   }
  },
  "august_fact_table": {
@@ -1810,6 +1817,14 @@
    "from": null,
    "to": "data_only_from 2026-09-01",
    "why": "\"add the data but do not add to the numerator for Saturday\" — Saturday keeps its sales, is not a shift or a dialling day"
+  },
+  {
+   "date": "2026-09-08",
+   "by": "Nick",
+   "key": "reference_data.talk_time_average",
+   "from": "h:mm:ss over employed shifts",
+   "to": "minutes (1 dp) over employed shifts; pivot export aligned from actual to employed",
+   "why": "\"total talk time divided by shifts, and must be in minutes\""
   }
  ]
 }
