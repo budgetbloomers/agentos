@@ -49,6 +49,7 @@ function findRoster() {
   const explicit = flag('roster', null);
   if (explicit) return explicit;
   const updir = path.join(HERE, '..', 'uploads');
+  if (!fs.existsSync(updir)) return null;   // the cloud runner has no uploads/ — the roster then comes from the record below
   let best = null, bestM = 0;
   const walk = d => { for (const n of fs.readdirSync(d)) { const p = path.join(d, n);
     const st = fs.statSync(p);
@@ -72,7 +73,24 @@ if (rosterPath) {
     }
   }
   console.log(`roster: ${Object.keys(cbName).length} agents from ${path.basename(path.dirname(rosterPath))}/${path.basename(rosterPath)}`);
-} else console.log('WARNING: no Matrix - Agent List.xlsx found under uploads/ — all agents will report UNMATCHED');
+} else {
+  /* THE FILE IS THE RECORD (CLAUDE.md rule 13): with no local list, read the roster the Worker
+     serves — kv:roster-current — through the Supabase env the scheduled runner already carries.
+     Before this the cloud step crashed on scandir(uploads/) every morning (found 2026-09-08). */
+  const SB_URL = process.env.SUPABASE_URL, SB_KEY = process.env.SUPABASE_SECRET_KEY;
+  if (SB_URL && SB_KEY) {
+    try {
+      const rc = await fetch(SB_URL + '/rest/v1/rules?key=eq.kv:roster-current&select=value', { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } });
+      let rv = rc.ok ? ((await rc.json())[0] || {}).value : null; if (typeof rv === 'string') { try { rv = JSON.parse(rv); } catch {} }
+      for (const a of (rv && rv.roster) || []) {
+        const code = String(a.code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, ''); const nm = String(a.name || '').trim();
+        if (!code || !nm) continue;
+        nameToCB[normName(nm)] = code; cbName[code] = nm; if (a.sf) nameToCB[normName(a.sf)] = code;
+      }
+      console.log('roster: ' + Object.keys(cbName).length + ' agents from kv:roster-current (the record)');
+    } catch (e) { console.log('WARNING: roster record unreadable (' + (e && e.message) + ') — all agents will report UNMATCHED'); }
+  } else console.log('WARNING: no Matrix - Agent List.xlsx found under uploads/ and no Supabase env — all agents will report UNMATCHED');
+}
 
 /* ---- custom-field map ---- */
 const cf = await get(`/locations/${LOC}/customFields`);
@@ -169,7 +187,7 @@ for (const c of contacts) {
 
 const list = [...perAgent.values()].sort((a, b) => b.refs - a.refs);
 const matched = list.filter(e => e.cb), unmatched = list.filter(e => !e.cb);
-const outDir = path.join(HERE, '..', 'uploads');
+const outDir = path.join(HERE, '..', 'uploads'); fs.mkdirSync(outDir, { recursive: true });
 const day = new Date().toISOString().slice(0, 10);
 const perAgentCsv = [['cb', 'agent_name', 'agent_name_raw', 'referrer_contacts', 'referrals', 'status'].join(',')]
   .concat(list.map(e => [e.cb || '', e.cb ? cbName[e.cb] : '', e.raw, e.contacts, e.refs, e.cb ? 'MATCHED' : 'NOT IN AGENT LIST'].map(esc).join(',')));

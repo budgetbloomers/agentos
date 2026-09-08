@@ -17,6 +17,10 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -41,12 +45,11 @@ jobs:
             echo "== $t =="; node nicks_code/diagnostics/$t.mjs
           done
 
+      # A step-level if may not read the secrets context — this workflow was INVALID and every one of
+      # its 30 push runs since 3 Sep failed at startup with zero jobs (found 2026-09-08). The secret is
+      # lifted into a job-level env below and the step tests that instead.
       - name: Live suites (only when secrets are present)
-        if: ${{ secrets.SUPABASE_SECRET_KEY != '' }}
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        if: ${{ env.SUPABASE_SECRET_KEY != '' }}
         run: |
           set -e
           printf 'SUPABASE_URL=%s\nSUPABASE_SECRET_KEY=%s\nSUPABASE_DB_URL=%s\n' "$SUPABASE_URL" "$SUPABASE_SECRET_KEY" "$SUPABASE_DB_URL" > supabase.env
