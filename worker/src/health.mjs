@@ -303,8 +303,9 @@ export async function runHealthChecks(DB) {
      is only refreshed when something changes, so the row's updated_at going stale
      for days while alerts sit empty is itself the sign to look at the cron. */
   const neverWritten = !(prev && prev.length);
-  const changed = neverWritten || JSON.stringify(alerts.map((a) => a.id + a.since))
-    !== JSON.stringify(prevAlerts.map((a) => a.id + a.since));
+  /* the MESSAGE counts too (2026-09-08): a wording change — UTC → SAST — must reach the banner without waiting for an alert to come or go */
+  const changed = neverWritten || JSON.stringify(alerts.map((a) => a.id + a.since + a.message))
+    !== JSON.stringify(prevAlerts.map((a) => a.id + a.since + a.message));
   if (changed) {
     await DB.insert('rules', [{ key: ALERTS_KEY,
       value: { data: JSON.stringify({ alerts, checked_at: new Date().toISOString() }) },
