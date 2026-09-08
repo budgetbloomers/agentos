@@ -75,6 +75,24 @@ Two additions to the workflow in this phase:
 | `jobs-status` write | Every step writes `kv:jobs-status {step, ranAt, ok, note}` when it finishes |
 | `runnerSilent` sentinel | If no step has written for 45 min during working hours → `runner-silent` (critical): the scheduler itself has stopped |
 
+### Phase 1b — the scheduler that cannot be dropped (8 Sep)
+
+Monday 8 September, 05:30 SAST: GitHub fired no scheduled run of ANY cadence between 03:13 and
+09:25 UTC. Actions was "operational", the workflow enabled, nothing queued. GitHub documents this:
+schedules "can be delayed during periods of high load … some queued jobs may be dropped". The
+sentinel raised `runner-silent` within the hour — the alert worked — but the plan promised a driver.
+
+| Function | Where | What it does |
+|---|---|---|
+| `kickRunner` | `worker/src/runner.mjs`, Worker cron (10 min) | Inside the tick window (Mon–Sat 06:00–20:00 SAST), when no tick step has reported for 20 min, no kick was sent in the last 20 min and GitHub has nothing queued or running, POST a `workflow_dispatch` with `steps=tick`; records `kv:runner-kick`. GitHub's cron stays first; the Worker is the scheduler that cannot be dropped |
+| `steps` dispatch input | workflow | `tick` (digests + Ops relay), `all` (every step, the hand-run default), `verify` (the nightly proof on demand) |
+| Suite logs kept | workflow verify job | The nightly note carries the first FAIL lines; every suite log uploads as the `suite-logs` artifact for 14 days. The first red note read "verify-all-tabs()" and nothing else |
+| Repo-relative suites | 61 diagnostics | Every suite derived the repo from this laptop's absolute path and crashed in the cloud; `verify.yml` itself had been invalid since 3 Sep (secrets in a step-level `if`) — 30 red push runs nobody read |
+
+**Needs one secret:** `GH_DISPATCH_TOKEN` on the Worker (a GitHub token with Actions: write on the
+repo) — `cd worker && npx wrangler secret put GH_DISPATCH_TOKEN`. Until it is set the kick is
+skipped and the runner-silent alert still says what is wrong.
+
 ## Phase 2 — freshness contracts per source — built 7 Sep (source_cadence, data_reach, dataReach/expectedReach in the digest, source-stale, PULSE trust chips, "Figures to …" in Agent Analytics; the Ops DATA TRUST bar still counts files)
 
 Today the DATA TRUST bar counts files. It should measure **reach**: how far each source's data
