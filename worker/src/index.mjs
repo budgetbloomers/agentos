@@ -15,6 +15,7 @@ import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsA
 import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
 import { syncAgentLogins, syncTeamLeaders, syncCampaigns, publishAgentList } from './provision.mjs';
 import { runHealthChecks, dailySnapshots, hygiene, logKvWrite } from './health.mjs';
+import { kickRunner } from './runner.mjs';
 import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
 
 // Hermes 2 Pro was deprecated 2026-05-30. Default: Llama 4 Scout (131k context —
@@ -387,6 +388,9 @@ export default {
            · hygiene: orphaned zz-* probe keys and write-log rows past 90 days. */
       try { await runHealthChecks(DB); }
       catch (e) { console.warn('[cron] health checks failed: ' + (e && e.message || e)); }
+      /* THE DRIVER BEHIND runner-silent (2026-09-08): when GitHub drops the 15-minute cron, ask for it. */
+      try { await kickRunner(env, DB); }
+      catch (e) { console.warn('[cron] runner kick failed: ' + (e && e.message || e)); }
       try {
         const snaps = await dailySnapshots(env, DB);
         if (snaps.length) console.info('[cron] state snapshots: ' + snaps.join('; '));

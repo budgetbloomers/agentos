@@ -175,7 +175,8 @@ export function evaluateFreshness(t) {
     const newest = steps.map(([, v]) => ms(v.ranAt)).reduce((a, b) => Math.max(a, b), 0);
     if (newest && SAST_WORKING(now) && now - newest > 45 * 60000) {
       alerts.push({ id: 'runner-silent', severity: 'critical',
-        message: 'The scheduled runner has not reported since ' + new Date(newest).toISOString().slice(0, 16).replace('T', ' ') + ' — nothing is republishing or relaying. Check the publish-digests workflow on GitHub.',
+        message: 'The scheduled runner has not reported since ' + new Date(newest).toISOString().slice(0, 16).replace('T', ' ') + ' — nothing is republishing or relaying.'
+          + (t.kick && t.kick.at ? ' The Worker asked GitHub to run it at ' + String(t.kick.at).slice(11, 16) + ' UTC (HTTP ' + t.kick.http + ')' + (t.kick.http === 204 ? '; if this stays red the run itself is failing — read its log.' : ' — the ask was refused; check GH_DISPATCH_TOKEN.') : ' Check the publish-digests workflow on GitHub.'),
         since: new Date(newest).toISOString() });
     }
     const red = steps.filter(([k, v]) => /^verify/.test(k) && v.ok === false && now - ms(v.ranAt) < 24 * HOUR);
@@ -257,6 +258,9 @@ export async function runHealthChecks(DB) {
   /* who owns each source's daily drop */
   let cadence = [];
   try { cadence = (await DB.select('source_cadence?select=source,owner,label,grace_hours,saturday')) || []; } catch (e) { cadence = []; }
+  /* the Worker's last ask for the GitHub tick (runner.mjs) — so the alert says what was already done */
+  let kick = null;
+  try { const kr = await DB.select('rules?key=eq.' + encodeURIComponent('kv:runner-kick') + '&select=value'); kick = kr && kr[0] && kr[0].value ? JSON.parse(kr[0].value.data || 'null') : null; } catch (e) { kick = null; }
   /* the newest Ops fact store — what Ops has actually taken from the archive */
   let opsFactsAt = null;
   try { const fr = await DB.select('rules?key=like.' + encodeURIComponent('kv:cb-facts-%') + '&select=key,updated_at&order=updated_at.desc&limit=20');
@@ -272,7 +276,7 @@ export async function runHealthChecks(DB) {
   catch (e) { saveFailures = []; }
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);

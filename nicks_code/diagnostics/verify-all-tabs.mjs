@@ -21,7 +21,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 
-const REPO = String.raw`c:\Users\aarav\OneDrive\Desktop\Chatterbox Agent OS\agentos`;
+import { fileURLToPath } from 'node:url';
+const REPO = process.env.AGENTOS || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');   // repo-relative: the nightly cloud run crashed on the laptop path (2026-09-07)
 const HTML = path.join(REPO, ...(process.env.PULSE_HTML || 'site/pulse/index.html').split('/'));
 let pass = 0, fail = 0; const failures = [];
 const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; failures.push(n + (d ? ' — ' + d : '')); console.log('  FAIL ' + n + ' — ' + d); } };

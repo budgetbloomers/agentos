@@ -6,6 +6,11 @@ name: publish digests
 # local, per the ZERO-LOCAL rule. Every step reports to kv:jobs-status (tools/job-status.mjs);
 # the Worker's sentinel raises runner-never-ran / runner-silent / verification-failed from it.
 #
+# GITHUB DROPS CRON SLOTS (2026-09-08: no run of any schedule for six hours on a Monday morning,
+# Actions "operational"). The Worker's own cron now asks for the 15-minute tick when it is overdue
+# (worker/src/runner.mjs → workflow_dispatch with steps=tick); GitHub's schedule stays as the first
+# scheduler and the Worker is the one that cannot be dropped.
+#
 # Secrets (Settings → Secrets → Actions): SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_DB_URL.
 # Plus HL_API_KEY / HL_LOCATION_ID for the referrals pull. All five were set on 2026-09-07; the first
 # run (#1) republished the digests, relayed the archive into Ops, refreshed coaching and loaded the lake.
@@ -19,6 +24,12 @@ on:
     - cron: '0 20 * * 1-5'          # nightly verification (22:00 SAST)
     - cron: '0 5 * * 1'             # Monday 07:00 SAST: weekly reach report
   workflow_dispatch:
+    inputs:
+      steps:
+        description: "tick = the 15-minute digests + Ops relay only (what the Worker asks for when GitHub drops the cron); all = every step; verify = the nightly proof"
+        type: choice
+        default: all
+        options: [all, tick, verify]
 
 concurrency: { group: publish-digests, cancel-in-progress: false }
 
@@ -31,7 +42,7 @@ env:
 
 jobs:
   publish:
-    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '*/15') || github.event.schedule == '0 */2 * * *' || github.event.schedule == '30 19 * * *' || github.event.schedule == '30 4 * * *' || github.event.schedule == '0 5 * * 1' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps != 'verify') || startsWith(github.event.schedule, '*/15') || github.event.schedule == '0 */2 * * *' || github.event.schedule == '30 19 * * *' || github.event.schedule == '30 4 * * *' || github.event.schedule == '0 5 * * 1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -72,7 +83,7 @@ jobs:
       # ---- every two hours ----
       - name: Coaching Hub snapshot
         id: coaching
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '0 */2 * * *' }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '0 */2 * * *' }}
         run: node tools/sync-coaching-hub.mjs
       - if: ${{ always() && steps.coaching.conclusion != 'skipped' }}
         run: node tools/job-status.mjs coaching-snapshot ${{ steps.coaching.outcome }}
@@ -80,13 +91,13 @@ jobs:
       # ---- daily ----
       - name: Supabase lake load
         id: lake
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '30 19 * * *' }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '30 19 * * *' }}
         run: node tools/lake-load.mjs
       - if: ${{ always() && steps.lake.conclusion != 'skipped' }}
         run: node tools/job-status.mjs lake-load ${{ steps.lake.outcome }}
       - name: HighLevel referrals
         id: referrals
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '30 4 * * *' }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '30 4 * * *' }}
         run: node tools/fetch-referrals.mjs
         continue-on-error: true
       - if: ${{ always() && steps.referrals.conclusion != 'skipped' }}
@@ -95,13 +106,13 @@ jobs:
       # ---- weekly ----
       - name: Weekly reach report
         id: reach
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '0 5 * * 1' }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.steps == 'all') || github.event.schedule == '0 5 * * 1' }}
         run: node tools/reach-report.mjs --write
       - if: ${{ always() && steps.reach.conclusion != 'skipped' }}
         run: node tools/job-status.mjs reach-report ${{ steps.reach.outcome }}
 
   verify:
-    if: ${{ github.event.schedule == '0 20 * * 1-5' }}
+    if: ${{ github.event.schedule == '0 20 * * 1-5' || (github.event_name == 'workflow_dispatch' && inputs.steps == 'verify') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -122,10 +133,14 @@ jobs:
         run: |
           set +e; fails=""
           for s in verify-all-tabs verify-controls verify-store-freshness verify-publish-agent-list verify-agent-card verify-rule-constants verify-composite-score; do
-            node nicks_code/diagnostics/$s.mjs > /tmp/$s.log 2>&1 || fails="$fails $s($(grep -oE '[0-9]+ failed' /tmp/$s.log | head -1))"
+            node nicks_code/diagnostics/$s.mjs > /tmp/$s.log 2>&1 || fails="$fails $s($(grep -oE '[0-9]+ failed' /tmp/$s.log | head -1 || true): $(grep -E 'FAIL|Error' /tmp/$s.log | head -2 | cut -c1-120 | tr '\n' ';'))"
           done
           node nicks_code/diagnostics/verify-live-save.mjs --live > /tmp/live.log 2>&1 || fails="$fails verify-live-save"
+          mkdir -p suite-logs && cp /tmp/*.log suite-logs/ || true
           echo "fails=$fails" >> "$GITHUB_OUTPUT"
           [ -z "$fails" ]
+      - if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with: { name: suite-logs, path: suite-logs, retention-days: 14 }
       - if: ${{ always() }}
         run: node tools/job-status.mjs verify-nightly ${{ steps.nightly.outcome }} "${{ steps.nightly.outputs.fails }}"
