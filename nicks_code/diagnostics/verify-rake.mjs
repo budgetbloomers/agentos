@@ -56,6 +56,13 @@ ok('CSV quoting escapes commas, quotes and newlines', lib.csvQuote('a,b') === '"
   const n = await w.end(); const out = fs.readFileSync(path.join(tmp, 'canon.csv'), 'utf8').split('\n');
   ok('delimited reader + writer: two rows, _seq first, absent columns blank', n === 2 && out[0].startsWith('_seq,call_date,agent_login') && out[1].startsWith('1,2026-09-04 06:48:08,CB188,223363,A') && out[2].includes(',cb 7,'), out.slice(0, 3).join(' | ')); }
 
+console.log(String.fromCharCode(10) + 'C · STORAGE');
+/* the project upload limit caps every bucket; while it sits at the 50 MB default the Rake cannot receive the files it exists for */
+{ const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
+  const b = await fetch(env.SUPABASE_URL + '/storage/v1/bucket/raw-uploads', { headers: H }).then((r) => r.json()).catch(() => null);
+  const lim = b && b.file_size_limit; const GB = 1024 ** 3;
+  ok('raw-uploads bucket accepts at least 1 GB per file (raise Storage → Settings → Upload file size limit, then set the bucket limit)', lim >= GB, 'bucket limit is ' + (lim == null ? 'unset — project default 50 MB applies' : (lim / 1048576).toFixed(0) + ' MB')); }
+
 console.log('\nB · THE DATABASE (one transaction, rolled back)');
 const c = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false }, statement_timeout: 120000 }); await c.connect();
 const q = async (s, a) => (await c.query(s, a)).rows; const one = async (s, a) => (await q(s, a))[0];

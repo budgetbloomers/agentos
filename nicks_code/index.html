@@ -6712,6 +6712,7 @@ async function largeUpload(file){
     x.setRequestHeader('x-upsert','true');
     x.upload.onprogress=(e)=>{ if(e.lengthComputable) say('Uploading '+file.name+' — '+Math.round(e.loaded/e.total*100)+'% of '+(e.total/1048576).toFixed(1)+' MB'); };
     x.onload=()=>res(x.status); x.onerror=()=>res(0); x.send(file); });
+  if(status===413) return say('Storage refused the file: it is over the project upload limit (Supabase → Storage → Settings → Upload file size limit). Nothing was recorded.');
   if(status<200||status>=300) return say('Upload failed (HTTP '+status+'). Check the connection and try again — nothing was recorded.');
   say('Uploaded. Handing over to the runner…');
   const done=await fetch(base+'/api/upload/large/complete',{method:'POST',headers:hdr,body:JSON.stringify({id:st.id,size:file.size})}).then(r=>r.json()).catch(()=>({error:'Cannot reach the server.'}));

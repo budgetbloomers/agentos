@@ -12,6 +12,15 @@ path for files of any size: the browser streams the file straight to Supabase St
 it and queues it, and the GitHub runner turns it into a Parquet copy plus rows in partitioned Postgres
 tables. The browser never parses a large file and the Worker never touches its bytes.
 
+## Setup that only the project owner can do (once)
+
+**Raise the project upload limit.** Supabase → Storage → Settings → *Upload file size limit*. The default is
+50 MB and every bucket shows "Unset (50 MB)" because a bucket limit can never exceed the project's. Set it to
+5 GB (a single PUT tops out at 5 GB; anything larger would need resumable uploads, which nothing here sends).
+Then tell me and I set `raw-uploads` to an explicit 5 GB so the setting is visible and the nightly check
+(`verify-rake` section C) stops failing. Until this is done the Large files card refuses anything over 50 MB
+with a message naming this setting, and nothing is recorded.
+
 ## How to use it (Nick / Ashton)
 
 1. PULSE → Upload Station → **Large files** card → choose the file (or drop it).
@@ -75,7 +84,7 @@ diagnostics `node_modules` (pg, @duckdb/node-api, csv-parse, pg-copy-streams are
 
 ## Verification
 
-`node nicks_code/diagnostics/verify-rake.mjs` — 33 checks. The library half drives `rake-lib.mjs` on
+`node nicks_code/diagnostics/verify-rake.mjs` — 34 checks. The library half drives `rake-lib.mjs` on
 fixtures in a temp folder; the database half stages fixture rows (cases 9000xx, CB900077), calls every
 merge and reads the lake back inside one transaction that always rolls back. Runs nightly
 (publish-digests) and on every verify run (verify.yml).
