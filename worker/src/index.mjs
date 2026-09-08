@@ -16,6 +16,7 @@ import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
 import { syncAgentLogins, syncTeamLeaders, syncCampaigns, publishAgentList } from './provision.mjs';
 import { runHealthChecks, dailySnapshots, hygiene, logKvWrite } from './health.mjs';
 import { kickRunner } from './runner.mjs';
+import { manifestAdd, reconcileManifest } from './manifest.mjs';
 import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
 
 // Hermes 2 Pro was deprecated 2026-05-30. Default: Llama 4 Scout (131k context —
@@ -397,6 +398,9 @@ export default {
       } catch (e) { console.warn('[cron] snapshots failed: ' + (e && e.message || e)); }
       try { await hygiene(env, DB); }
       catch (e) { console.warn('[cron] hygiene failed: ' + (e && e.message || e)); }
+      /* a blob in raw/uploads/ the manifest does not know is re-added (2026-09-08: the lost ViciDial report) */
+      try { const m = await reconcileManifest(env, DB); if (m.repaired.length) console.info('[cron] manifest repaired: ' + m.repaired.join('; ')); }
+      catch (e) { console.warn('[cron] manifest reconcile failed: ' + (e && e.message || e)); }
     })());
   },
   async fetch(req, env, ctx) {
@@ -1105,23 +1109,19 @@ export default {
         const buf = await req.arrayBuffer();
         if (!buf.byteLength) return json({ error: 'empty body' }, 400);
         if (buf.byteLength > 30 * 1048576) return json({ error: 'file exceeds the 30 MB relay cap — upload it in the other dashboard by hand' }, 413);
-        // KNOWN LIMIT: this read-modify-write can lose an entry if two people archive in
-        // the same second (last writer wins). Self-healing, not silent: re-uploading the
-        // file in PULSE re-archives it — the dup-skip path checks this manifest and
-        // re-POSTs anything missing. Blobs in raw/uploads/ outlive the 300-entry cap.
-        const mr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:upload-manifest')}&select=value`);
-        const files = (mr && mr[0] && mr[0].value && mr[0].value.files) || [];
-        if (files.some(f => f.h === hash)) return json({ ok: true, dupe: true });   // same bytes already archived
+        /* THE MANIFEST IS APPENDED ATOMICALLY (2026-09-08, migration-024). The old read-modify-write
+           here lost the ViciDial call report when five files landed in the same five seconds, and
+           its own comment had called that a "KNOWN LIMIT" since August. upload_manifest_add() runs
+           as one statement under the row lock; the cron's reconcileManifest() re-adds any blob the
+           manifest is ever found not to know. The stations read the manifest before posting, so a
+           re-upload of archived bytes never sends its body; a race that slips past that check
+           is answered with 'dupe' here. */
         const store = 'raw/uploads/' + hash.slice(0, 16) + '-' + name;
         const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, {
-          method: 'POST', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/octet-stream', 'x-upsert': 'true' }, body: buf });
+          method: 'POST', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/octet-stream', 'x-upsert': 'true' }, body: buf })
         if (!put.ok) return json({ error: 'archive write failed: ' + put.status }, 500);
-        files.unshift({ n: name, h: hash, s: buf.byteLength, at: new Date().toISOString() });
-        /* 1000, not 300 (review, 2026-08-26): a file evicted from the manifest is
-           unreachable by the relay even though its blob survives — an app that fell
-           behind by >cap files developed a silent, permanent relay gap. */
-        await DB.insert('rules', [{ key: 'kv:upload-manifest', value: { files: files.slice(0, 1000) },
-          updated_by: user.username, updated_at: new Date().toISOString() }], true);
+        const added = await manifestAdd(DB, { name, hash, size: buf.byteLength, actor: user.username });
+        if (added === 'dupe') return json({ ok: true, dupe: true });
         return json({ ok: true, archived: store });
       }
       if (path === '/api/upload-manifest' && req.method === 'GET') {
