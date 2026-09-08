@@ -40,12 +40,16 @@ if (si >= 0) {
   const b = await chromium.launch();
   try {
     const page = await b.newPage({ viewport: { width: 960, height: 600 } });
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 }).catch(() => {});
-    await page.waitForTimeout(1500);
-    const title = await page.title().catch(() => '');
-    const jpg = await page.screenshot({ type: 'jpeg', quality: 60 });
-    it.url = url; it.shot = 'data:image/jpeg;base64,' + jpg.toString('base64'); it.capturedAt = new Date().toISOString(); if (title && !it.sub) it.sub = title;
-    console.log('captured ' + key + ' — page title "' + title + '", ' + Math.round(jpg.length / 1024) + ' KB');
+    /* a page this machine cannot reach (the dialler lives on the office LAN) keeps its placeholder — never a blank screenshot */
+    const reached = await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 }).then((r) => !!r && r.status() < 500).catch(() => false);
+    it.url = url;
+    if (reached) {
+      await page.waitForTimeout(1500);
+      const title = await page.title().catch(() => '');
+      const jpg = await page.screenshot({ type: 'jpeg', quality: 60 });
+      it.shot = 'data:image/jpeg;base64,' + jpg.toString('base64'); it.capturedAt = new Date().toISOString(); if (title && !it.sub) it.sub = title;
+      console.log('captured ' + key + ' — page title "' + title + '", ' + Math.round(jpg.length / 1024) + ' KB');
+    } else console.log('address saved for ' + key + ' — the page could not be reached from this machine, so the card keeps its placeholder (run --set again from the office network for a screenshot)');
   } finally { await b.close(); }
   await write(items); console.log('saved');
 }
