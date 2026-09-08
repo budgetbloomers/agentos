@@ -34,32 +34,13 @@ const req = createRequire(path.join(NM, 'x.js'));
 const pg = req('pg'); const { parse: csvParse } = req('csv-parse'); const { from: copyFrom } = req('pg-copy-streams');
 const XLSX = createRequire(import.meta.url)(path.join(ROOT, 'site', 'xlsx.full.min.js'));
 const { DuckDBInstance } = await import(pathToFileURL(path.join(NM, '@duckdb', 'node-api', 'lib', 'index.js')).href);
+const { SOURCES, detect, snapshotFrom, pickIndexes, sniff, canonWriter, csvQuote, readDelimited, readHtmlTable, readXlsx } = await import(pathToFileURL(path.join(ROOT, 'tools', 'rake-lib.mjs')).href);
 
 const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8').split(/\r?\n/).filter((l) => l.includes('=') && !l.startsWith('#')).map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim().replace(/^"|"$/g, '')]));
 const SB = env.SUPABASE_URL; const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
 const args = process.argv.slice(2); const flag = (n) => { const i = args.indexOf('--' + n); return i >= 0 ? args[i + 1] : null; }; const DRY = args.includes('--dry');
 const SLICE = 50000; const MAX_ATTEMPTS = 3; const QUEUE_VT = 900;
 const log = (m) => console.log(new Date().toISOString().slice(11, 19) + ' ' + m);
-
-/* ---- the source contracts (the Ops app's SOURCES headers; first occurrence of a repeated header wins) ---- */
-const SOURCES = {
-  SF_OPEN_CASES:   { stage: 'rake_stage_sf_open', merge: 'rake_merge_sf_open', rejects: 'rake_rejects_sf_open', required: ['Case Number', 'Date/Time Opened', 'Case Owner'], absent: ['Date/Time Closed'],
-    cols: { case_id: 'Case ID', case_number: 'Case Number', subject: 'Subject', opened_at: 'Date/Time Opened', age_hours: 'Age (Hours)', account_name: 'Account Name', account_number: 'Account Number', case_owner: 'Case Owner', status: 'Status', record_type: 'Case Record Type' }, extra: ['snapshot_date'] },
-  SF_CLOSED_CASES: { stage: 'rake_stage_sf_closed', merge: 'rake_merge_sf_closed', rejects: 'rake_rejects_sf_closed', required: ['Case Number', 'Date/Time Closed'],
-    cols: { case_id: 'Case ID', case_number: 'Case Number', subject: 'Subject', opened_at: 'Date/Time Opened', closed_at: 'Date/Time Closed', disposition: 'Disposition', age_hours: 'Age (Hours)', account_name: 'Account Name', account_number: 'Account Number', case_owner: 'Case Owner', status: 'Status', record_type: 'Case Record Type' } },
-  BI_ACTIVE_CASES: { stage: 'rake_stage_bi', merge: 'rake_merge_bi', rejects: 'rake_rejects_bi', required: ['Account Number', 'Owner', 'Charge Amount', 'Contract Create Date'],
-    cols: { account_no: 'Account Number', contract_status: 'Contract Status', account_name: 'Account Name', contract_number: 'Contract Number', owner: 'Owner', contract_create_date: 'Contract Create Date', charge_amount: 'Charge Amount', charge_code: 'Charge Code', product_bundle: 'Product Bundle', merged_bundle: 'Merged Product Bundle', consultant: 'Consultant', sales_vertical: 'Sales Vertical', case_number: 'Case Number' } },
-  VICI_CALL_REPORT: { stage: 'rake_stage_vici', merge: 'rake_merge_vici', rejects: 'rake_rejects_vici', required: ['call_date', 'user', 'length_in_sec'],
-    cols: { call_date: 'call_date', agent_login: 'user', lead_id: 'lead_id', status: 'status', full_name: 'full_name', user_group: 'user_group', campaign_id: 'campaign_id', length_in_sec: 'length_in_sec', status_name: 'status_name' } },
-};
-const norm = (h) => String(h || '').replace(/\s+/g, ' ').trim().toLowerCase();
-function detect(headers) {
-  const set = new Set(headers.map(norm));
-  for (const [src, c] of Object.entries(SOURCES)) if (c.required.every((h) => set.has(norm(h))) && !(c.absent || []).some((h) => set.has(norm(h)))) return src;
-  return null;
-}
-/* the date a Salesforce export was pulled: ddmmyy in the file name ("sf closed 070926.xls"), else the day it was received */
-const snapshotFrom = (name, receivedAt) => { const m = /(\d{2})(\d{2})(\d{2})(?!\d)/.exec(name); if (m && +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31) return `20${m[3]}-${m[2]}-${m[1]}`; return new Date(receivedAt).toISOString().slice(0, 10); };
 
 /* ---- storage ---- */
 const objUrl = (bucket, p) => `${SB}/storage/v1/object/${bucket}/${p.split('/').map(encodeURIComponent).join('/')}`;
@@ -73,62 +54,6 @@ async function downloadHashing(bucket, p, dest) {
 async function uploadFile(bucket, p, localPath, contentType) {
   const r = await fetch(objUrl(bucket, p), { method: 'POST', headers: { ...H, 'Content-Type': contentType, 'x-upsert': 'true' }, body: fs.readFileSync(localPath) });
   if (!r.ok) throw new Error('storage POST ' + r.status + ' ' + (await r.text()).slice(0, 120));
-}
-
-/* ---- canonical CSV writer (RFC 4180, text values, _seq first) ---- */
-const q = (v) => { const s = v == null ? '' : String(v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-function canonWriter(dest, lakeCols) {
-  const out = fs.createWriteStream(dest); let seq = 0; let pending = Promise.resolve();
-  out.write(['_seq', ...lakeCols].join(',') + '\n');
-  return {
-    row(values) { seq++; const line = q(seq) + ',' + values.map(q).join(',') + '\n'; if (!out.write(line)) pending = new Promise((res) => out.once('drain', res)); return pending; },
-    async end() { await pending; await new Promise((res, rej) => out.end((e) => (e ? rej(e) : res()))); return seq; },
-  };
-}
-const pickIndexes = (headers, contract) => { const hn = headers.map(norm); const idx = {}; for (const [col, h] of Object.entries(contract.cols)) idx[col] = hn.indexOf(norm(h)); return idx; };
-
-/* the file's first bytes decide the reader */
-function sniff(buf) {
-  const head = buf.slice(0, 4096).toString('latin1');
-  if (buf[0] === 0x50 && buf[1] === 0x4b) return 'xlsx';
-  if (/^\s*(<\?xml|<!doctype|<html|<head|<table)/i.test(head)) return 'html';
-  const first = head.split(/\r?\n/)[0]; return (first.split('\t').length > first.split(',').length) ? 'tsv' : 'csv';
-}
-const htmlCharset = (buf) => (/charset=([\w-]+)/i.exec(buf.slice(0, 4096).toString('latin1')) || [])[1] || 'utf-8';
-const decodeEntities = (s) => s.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n));
-
-/* ---- readers → canonical CSV ---- */
-async function readDelimited(localPath, delim, onHeader, onRow) {
-  let headers = null;
-  const parser = csvParse({ delimiter: delim, bom: true, relax_column_count: true, relax_quotes: true, skip_empty_lines: true, trim: false });
-  const sink = new Transform({ objectMode: true, async transform(rec, enc, cb) { try { if (!headers) { headers = rec; const ok = await onHeader(headers); if (!ok) return cb(new Error('unrecognised header')); } else await onRow(rec); cb(); } catch (e) { cb(e); } } });
-  await pipeline(fs.createReadStream(localPath), parser, sink);
-  return headers;
-}
-async function readHtmlTable(localPath, onHeader, onRow) {
-  /* a streaming <tr> parser: keep the tail of the previous chunk, emit each complete row */
-  const fd = fs.openSync(localPath, 'r'); const buf0 = Buffer.alloc(4096); fs.readSync(fd, buf0, 0, 4096, 0); fs.closeSync(fd);
-  const cs = htmlCharset(buf0).toLowerCase();
-  const decoder = new TextDecoder(cs === 'iso-8859-1' || cs === 'latin1' ? 'latin1' : 'utf-8');
-  let carry = ''; let headers = null;
-  const cell = /<t([dh])[^>]*>([\s\S]*?)<\/t\1>/gi; const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  const sink = new Transform({ async transform(chunk, enc, cb) {
-    try {
-      carry += decoder.decode(chunk, { stream: true }); let m; let last = 0; rowRe.lastIndex = 0;
-      while ((m = rowRe.exec(carry))) { last = rowRe.lastIndex; const cells = []; let c; cell.lastIndex = 0; while ((c = cell.exec(m[1]))) cells.push(decodeEntities(c[2].replace(/<[^>]+>/g, '')).trim());
-        if (!headers) { headers = cells; const ok = await onHeader(headers); if (!ok) return cb(new Error('unrecognised header')); } else await onRow(cells); }
-      carry = carry.slice(last); if (carry.length > 4 * 1024 * 1024) carry = carry.slice(-1024 * 1024);   // never let a row-less tail grow without bound
-      cb();
-    } catch (e) { cb(e); } } });
-  await pipeline(fs.createReadStream(localPath), sink);
-  return headers;
-}
-async function readXlsx(localPath, onHeader, onRow) {
-  const wb = XLSX.read(fs.readFileSync(localPath), { type: 'buffer', dense: true, cellDates: false });
-  const ws = wb.Sheets[wb.SheetNames[0]]; const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
-  const headers = (rows[0] || []).map((h) => String(h)); const ok = await onHeader(headers); if (!ok) throw new Error('unrecognised header');
-  for (let i = 1; i < rows.length; i++) if (rows[i].some((v) => v !== '' && v != null)) await onRow(rows[i].map((v) => (v == null ? '' : String(v))));
-  return headers;
 }
 
 /* ---- database ---- */
@@ -154,7 +79,7 @@ async function processFile(f, msg) {
     const snapshot = snapshotFrom(f.file_name, f.received_at);
     const onRow = (rec) => { const vals = Object.keys(contract.cols).map((c) => (idx[c] >= 0 ? rec[idx[c]] : '')); for (const e of contract.extra || []) vals.push(e === 'snapshot_date' ? snapshot : ''); return writer.row(vals); };
     stage = 'transform';
-    if (kind === 'xlsx') await readXlsx(raw, onHeader, onRow); else if (kind === 'html') await readHtmlTable(raw, onHeader, onRow); else await readDelimited(raw, kind === 'tsv' ? '\t' : ',', onHeader, onRow);
+    if (kind === 'xlsx') await readXlsx(XLSX, raw, onHeader, onRow); else if (kind === 'html') await readHtmlTable(raw, onHeader, onRow); else await readDelimited(csvParse, raw, kind === 'tsv' ? '\t' : ',', onHeader, onRow);
     if (!src) throw Object.assign(new Error('unrecognised header — not one of ' + Object.keys(SOURCES).join(', ')), { final: true });
     const rowsIn = await writer.end();
     await setFile(f.id, { status: 'transforming', rows_in: rowsIn });
@@ -192,7 +117,7 @@ async function processFile(f, msg) {
     }
     if (rejected > 0) {
       const rej = path.join(tmp, 'rejects.csv'); const rows = await sql(`select * from ${contract.rejects} order by _seq`);
-      fs.writeFileSync(rej, [Object.keys(rows[0]).join(','), ...rows.map((r) => Object.values(r).map(q).join(','))].join('\n'));
+      fs.writeFileSync(rej, [Object.keys(rows[0]).join(','), ...rows.map((r) => Object.values(r).map(csvQuote).join(','))].join('\n'));
       const rejPath = `${src}/${ym[0]}/${ym[1]}/${f.id}/rejects.csv`; await uploadFile('failed', rejPath, rej, 'text/csv');
       log(`  ${rejected} row(s) rejected → failed/${rejPath}`);
     }

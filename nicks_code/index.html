@@ -6691,15 +6691,18 @@ function ruleChecksCard(){
    then tells the Worker it is done. The runner in the cloud validates, converts and loads it into the
    lake within fifteen minutes; this card lists every large file with its status and reason. Nothing on
    this page reads a large file — the slots above stay the path for the daily drop. */
+/* the progress line lives in a variable, not only in the DOM: this page re-renders whenever data
+   refreshes, and a rebuilt card must still show where the upload is */
+let LARGE_MSG='';
 function largeFileCard(){
   return `<div class="card mt" id="largeCard"><div class="cardhead"><div><h3>Large files</h3>
       <div class="sub">For exports too big for a slot (Salesforce open or closed cases, Power BI, a ViciDial history — anything over 30 MB). The file goes straight to storage and the cloud runner loads it into the data lake; the slots above stay the daily path.</div></div>
       <div><button class="btn" id="largePick">Choose a large file</button><input type="file" id="largeInput" style="display:none"></div></div>
-    <div id="largeProg" class="note" style="display:none;margin:8px 0 0"></div>
+    <div id="largeProg" class="note" style="display:${LARGE_MSG?'block':'none'};margin:8px 0 0">${esc(LARGE_MSG)}</div>
     <div id="largeList" class="note" style="margin:10px 0 0">Loading recent large uploads…</div></div>`;
 }
 async function largeUpload(file){
-  const prog=$('#largeProg'), say=(m)=>{ prog.style.display='block'; prog.textContent=m; };
+  const say=(m)=>{ LARGE_MSG=m; const p=$('#largeProg'); if(p){ p.style.display='block'; p.textContent=m; } };
   const tk=sessionStorage.getItem('cbx_token'); const base='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
   const hdr={'Authorization':'Bearer '+tk,'Content-Type':'application/json','X-Cbx-Client':'v5'};
   say('Preparing '+file.name+' ('+(file.size/1048576).toFixed(1)+' MB)…');

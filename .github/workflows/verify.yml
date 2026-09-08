@@ -54,6 +54,6 @@ jobs:
           set -e
           printf 'SUPABASE_URL=%s\nSUPABASE_SECRET_KEY=%s\nSUPABASE_DB_URL=%s\n' "$SUPABASE_URL" "$SUPABASE_SECRET_KEY" "$SUPABASE_DB_URL" > supabase.env
           for t in verify-composite-score verify-agent-sync verify-campaign-sync verify-all-tabs \
-                   verify-live-integrity verify-agent-list verify-roster-changes verify-nba-publish verify-password-lifecycle; do
+                   verify-live-integrity verify-agent-list verify-roster-changes verify-nba-publish verify-password-lifecycle verify-rake; do
             echo "== $t =="; node nicks_code/diagnostics/$t.mjs
           done
