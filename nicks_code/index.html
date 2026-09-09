@@ -7969,9 +7969,20 @@ setInterval(syncUploadsFromStation,600000);
 setInterval(adoptRosterFromRecord,600000);
 setTimeout(adoptRosterFromRecord,24000);                    // shortly after sign-in + hydrate
 setTimeout(syncUploadsFromStation,20000);                   // first pass shortly after sign-in + hydrate
+/* A FILE TOO BIG TO READ HERE IS NOT AN INVALID FILE (Nick, 2026-09-09). The station reads every
+   drop into browser memory to check it before saving; a 340 MB open-cases export died in that read
+   and came back as unreadable, which sent the day looking for a bad file that was never bad. The
+   large-file path exists for exactly this, so the drop zone now ROUTES rather than refuses: over
+   LARGE_MIN the file goes straight to storage and the runner loads it. One drop zone, no choosing.
+   Threshold is the archive relay cap: under it the in-page parse is proven, over it it is not. */
+const LARGE_MIN=30*1048576;
 async function handleFiles(list, expected){
   let ok=0, skipped=0;
   for(const f of Array.from(list)){
+    if(f.size>LARGE_MIN){
+      toast(f.name+' is '+Math.round(f.size/1048576)+' MB — too big to read in the page, so it is going straight to storage for the runner. Watch it on the Large files card.',9000);
+      try{ await largeUpload(f); }catch(e){ toast('Could not hand '+f.name+' to the runner — '+((e&&e.message)||e)); }
+      continue; }
     let buf=null;
     try{ buf=await f.arrayBuffer(); }catch(e){ toast('Could not read '+f.name+' — '+(e.message||e)); continue; }
     const hash=await hashBuf(buf);

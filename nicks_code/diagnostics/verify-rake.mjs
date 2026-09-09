@@ -60,8 +60,8 @@ console.log(String.fromCharCode(10) + 'C · STORAGE');
 /* the project upload limit caps every bucket; while it sits at the 50 MB default the Rake cannot receive the files it exists for */
 { const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
   const b = await fetch(env.SUPABASE_URL + '/storage/v1/bucket/raw-uploads', { headers: H }).then((r) => r.json()).catch(() => null);
-  const lim = b && b.file_size_limit; const GB = 1024 ** 3;
-  ok('raw-uploads bucket accepts at least 1 GB per file (raise Storage → Settings → Upload file size limit, then set the bucket limit)', lim >= GB, 'bucket limit is ' + (lim == null ? 'unset — project default 50 MB applies' : (lim / 1048576).toFixed(0) + ' MB')); }
+  const lim = b && b.file_size_limit; const MIN = 400 * 1048576;   // the project ceiling is 500 MB (raised by Nick 2026-09-09); the bucket must not sit under the biggest real export
+  ok('raw-uploads bucket accepts at least 400 MB per file (project ceiling is 500 MB)', lim >= MIN, 'bucket limit is ' + (lim == null ? 'unset — project default 50 MB applies' : (lim / 1048576).toFixed(0) + ' MB')); }
 
 console.log('\nB · THE DATABASE (one transaction, rolled back)');
 const c = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false }, statement_timeout: 120000 }); await c.connect();
