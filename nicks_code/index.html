@@ -512,7 +512,7 @@ h1,.page-title{letter-spacing:-.5px}
 <div class="scrim" id="scrim"></div>
 <div class="drawer" id="drawer" role="dialog" aria-label="Agent profile"></div>
 <div class="toast" id="toast"></div>
-<input type="file" id="fileInput" multiple accept=".csv,.txt,.xls,.xlsx" style="display:none">
+<input type="file" id="fileInput" multiple accept=".csv,.tsv,.txt,.xls,.xlsx,.xlsm" style="display:none">
 
 <script>
 'use strict';
@@ -6697,7 +6697,7 @@ let LARGE_MSG='';
 function largeFileCard(){
   return `<div class="card mt" id="largeCard"><div class="cardhead"><div><h3>Large files</h3>
       <div class="sub">For exports too big for a slot (Salesforce open or closed cases, Power BI, a ViciDial history — anything over 30 MB). The file goes straight to storage and the cloud runner loads it into the data lake; the slots above stay the daily path.</div></div>
-      <div><button class="btn" id="largePick">Choose a large file</button><input type="file" id="largeInput" style="display:none"></div></div>
+      <div><button class="btn" id="largePick">Choose a large file</button><input type="file" id="largeInput" accept=".csv,.tsv,.txt,.xls,.xlsx,.xlsm" style="display:none"></div></div>
     <div id="largeProg" class="note" style="display:${LARGE_MSG?'block':'none'};margin:8px 0 0">${esc(LARGE_MSG)}</div>
     <div id="largeList" class="note" style="margin:10px 0 0">Loading recent large uploads…</div></div>`;
 }
