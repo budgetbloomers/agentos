@@ -262,6 +262,11 @@
   table.data th.l,table.data td.l{text-align:left}
   table.data th .dir{color:var(--accent);margin-left:3px}
   table.data td{padding:7px 10px;border-bottom:1px solid var(--grid-line);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  /* table.data is nowrap by design — every other table on the site is numeric and must not wrap.
+     The Large files table is the exception: two of its columns are free text (a file name and the
+     runner's reason, which can carry a full uuid), and nowrap pushed the last column outside the
+     card. Only those two cells wrap, and only inside #largeList. */
+  #largeList table.data td.tx{white-space:normal;overflow-wrap:anywhere;max-width:340px}
   table.data tbody tr{transition:background .12s}
   table.data tbody tr:hover{background:var(--glass2)}
   table.data tr.rowlink{cursor:pointer}
@@ -6692,14 +6697,18 @@ function ruleChecksCard(){
    lake within fifteen minutes; this card lists every large file with its status and reason. Nothing on
    this page reads a large file — the slots above stay the path for the daily drop. */
 /* the progress line lives in a variable, not only in the DOM: this page re-renders whenever data
-   refreshes, and a rebuilt card must still show where the upload is */
+   refreshes, and a rebuilt card must still show where the upload is.
+   #largeProg is one line of prose and keeps .note (max-width 76ch is what makes prose readable);
+   #largeList must NOT, because it holds a seven-column table — capped at 76ch it rendered as a
+   ~610px scrolling box inside a full-width card, with the Size column clipped (Nick, 2026-09-09).
+   Placeholder text inside it carries .note on its own div instead. */
 let LARGE_MSG='';
 function largeFileCard(){
   return `<div class="card mt" id="largeCard"><div class="cardhead"><div><h3>Large files</h3>
       <div class="sub">For exports too big for a slot (Salesforce open or closed cases, Power BI, a ViciDial history — anything over 30 MB). The file goes straight to storage and the cloud runner loads it into the data lake; the slots above stay the daily path.</div></div>
       <div><button class="btn" id="largePick">Choose a large file</button><input type="file" id="largeInput" accept=".csv,.tsv,.txt,.xls,.xlsx,.xlsm" style="display:none"></div></div>
     <div id="largeProg" class="note" style="display:${LARGE_MSG?'block':'none'};margin:8px 0 0">${esc(LARGE_MSG)}</div>
-    <div id="largeList" class="note" style="margin:10px 0 0">Loading recent large uploads…</div></div>`;
+    <div id="largeList" style="margin:10px 0 0"><div class="note">Loading recent large uploads…</div></div></div>`;
 }
 async function largeUpload(file){
   const say=(m)=>{ LARGE_MSG=m; const p=$('#largeProg'); if(p){ p.style.display='block'; p.textContent=m; } };
@@ -6723,12 +6732,12 @@ async function largeStatus(){
   const el=$('#largeList'); if(!el) return;
   const tk=sessionStorage.getItem('cbx_token'); const base='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
   const r=await fetch(base+'/api/upload/large/status',{headers:{'Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'}}).then(r=>r.ok?r.json():null).catch(()=>null);
-  if(!r) return el.textContent='Large-upload status is unavailable right now.';
+  if(!r) return el.innerHTML='<div class="note">Large-upload status is unavailable right now.</div>';
   const fmtB=(b)=>b==null?'':(b/1048576).toFixed(1)+' MB'; const when=(t)=>t?new Date(t).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg',hour12:false}).slice(0,17):'';
   const badge=(s)=>({received:'pwarn',validated:'pwarn',transforming:'pwarn',loading:'pwarn',loaded:'pok',failed:'pbad'}[s]||'pmuted');
   el.innerHTML=r.files.length?`<div class="tablewrap" style="max-height:260px"><table class="data"><thead><tr><th class="l">File</th><th class="l">Source</th><th>Status</th><th>Size</th><th>Rows</th><th class="l">Received</th><th class="l">Note</th></tr></thead><tbody>`
-    +r.files.map(f=>`<tr><td class="l">${esc(f.file_name)}</td><td class="l">${esc(f.source||'—')}</td><td><span class="pill ${badge(f.status)}">${esc(f.status)}</span></td><td>${fmtB(f.bytes)}</td><td>${f.status==='loaded'?fmtNum(f.rows_loaded)+(f.rows_rejected?' <small>('+fmtNum(f.rows_rejected)+' rejected)</small>':''):(f.rows_in!=null?fmtNum(f.rows_in):'')}</td><td class="l">${when(f.received_at)}</td><td class="l">${esc(f.error||'')}</td></tr>`).join('')
-    +'</tbody></table></div>':'No large files yet.';
+    +r.files.map(f=>`<tr><td class="l tx">${esc(f.file_name)}</td><td class="l">${esc(f.source||'—')}</td><td><span class="pill ${badge(f.status)}">${esc(f.status)}</span></td><td>${fmtB(f.bytes)}</td><td>${f.status==='loaded'?fmtNum(f.rows_loaded)+(f.rows_rejected?' <small>('+fmtNum(f.rows_rejected)+' rejected)</small>':''):(f.rows_in!=null?fmtNum(f.rows_in):'')}</td><td class="l">${when(f.received_at)}</td><td class="l tx">${esc(f.error||'')}</td></tr>`).join('')
+    +'</tbody></table></div>':'<div class="note">No large files yet.</div>';
 }
 PAGES['_wire_data']=()=>{
   const lp=$('#largePick'), li=$('#largeInput');
