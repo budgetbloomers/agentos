@@ -638,7 +638,7 @@ const CODE = PAGE
      column, and a button in the drawer all open it; the panel READS parts/points/adj, never recomputes. */
   (function(){
     const jr = PAGE.slice(PAGE.indexOf('function journeyHTML('), PAGE.indexOf('function openScoreJourney('));
-    (PAGE.match(/data-journey=/g) || []).length >= 3
+    (/journeyBtn\(a\.code/.test(PAGE.slice(PAGE.indexOf('function drawerHTML('))) && /class="jlink" data-journey=/.test(PAGE.slice(PAGE.indexOf('function mtdRows('))) && /journeyBtn\(ME\.code/.test(PAGE))
       ? ok('the Score Journey opens from the rating card, the Month to date Score column and the drawer')
       : bad('a Score Journey button is missing');
     /journeyBtn\(ME\.code/.test(PAGE.slice(PAGE.indexOf('function pgComposite('), PAGE.indexOf('function pgRating(')))
