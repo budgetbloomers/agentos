@@ -76,6 +76,15 @@
   },
   "tenureGroups": [
     {
+      "key": "m0",
+      "label": "M0",
+      "tenure": "M0",
+      "campaign": "",
+      "dailySales": 3,
+      "minGwpSale": 99,
+      "convTarget": 3
+    },
+    {
       "key": "m1",
       "label": "M1",
       "tenure": "M1",
@@ -228,6 +237,14 @@
       "from": 5,
       "to": 1,
       "why": "\"their conversion must show\" — scored from the first data day"
+    },
+    {
+      "date": "2026-09-10",
+      "by": "Nick / nightly verification",
+      "key": "tenureGroups",
+      "from": "no M0 group",
+      "to": "M0 measured under the M1 targets (3 sales/day, R99 floor, 3% conversion)",
+      "why": "the 8 Sep Agent List carries M0 (first month) on Courtesy for the first time — CB330/CB332/CB334 were rated with no group, so no GWP floor and no conversion target; verify-composite-recompute failed nightly. M0 is the spec vocabulary (mtd_engine_rules Tenure allowed_values). Targets mirror M1 pending a matrix row from Nick."
     }
   ]
 }
