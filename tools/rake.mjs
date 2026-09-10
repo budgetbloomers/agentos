@@ -156,6 +156,19 @@ try {
      where f.status = 'received' and f.received_at < now() - interval '5 minutes'
        and not exists (select 1 from pgmq.q_ingest q where q.message ->> 'file_id' = f.id::text)`);
   for (const o of orphaned) { await sql(`select pgmq.send('ingest', $1::jsonb)`, [JSON.stringify({ file_id: o.id })]); log('re-queued orphaned upload ' + o.file_name + ' (' + String(o.id).slice(0, 8) + ')'); }
+  /* DEAD LETTERS WHOSE OUTCOME IS ALREADY ON THE FILE ARE NOISE (2026-09-10): the queue kept a letter
+     for a refused duplicate and one for an upload that never completed in storage although the same file
+     loaded thirty seconds later — and rake_health counted both as needing a person, every ten minutes.
+     A letter is dropped once its file is loaded or recorded as a duplicate; a non-duplicate failure whose
+     name and byte count loaded under a later upload is re-recorded as the duplicate it was. */
+  for (const m of await sql(`select msg_id, message from pgmq.q_ingest_dlq`)) {
+    const fid = m.message && m.message.file_id; const f = fid ? (await sql(`select id, file_name, bytes, status, error from upload_files where id = $1`, [fid]))[0] : null;
+    if (f && f.status === 'failed' && !/duplicate of /.test(f.error || '')) {
+      const later = (await sql(`select id from upload_files where file_name = $1 and bytes = $2 and status = 'loaded' and id <> $3 limit 1`, [f.file_name, f.bytes, f.id]))[0];
+      if (later) { await setFile(f.id, { error: ('duplicate of ' + later.id + ' (the same file loaded under a later upload; this one never completed — ' + (f.error || '') + ')').slice(0, 900) }); f.error = 'duplicate of ' + later.id; }
+    }
+    if (!f || f.status === 'loaded' || (f.status === 'failed' && /duplicate of /.test(f.error || ''))) { await sql(`select pgmq.delete('ingest_dlq', $1::bigint)`, [m.msg_id]); log('dropped dead letter ' + m.msg_id + (f ? ' (' + f.file_name + ': ' + f.status + ')' : ' (no such file)')); }
+  }
   const only = flag('file');
   const work = [];
   if (only) { const f = (await sql(`select * from upload_files where id = $1`, [only]))[0]; if (!f) throw new Error('no upload_files row ' + only); work.push({ f, msg: null }); }
