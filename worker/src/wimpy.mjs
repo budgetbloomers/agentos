@@ -34,9 +34,17 @@
  *
  * WHAT WAS REMOVED, DELIBERATELY (brief §7): wings (two bastings and two
  * dipping sauces existed for one category), mince (one product's ingredient),
- * gherkins (ditto). Add-ons survive only where they are a core ingredient the
- * kitchen already holds — and stay at 0.00/configurable because the FIRST
- * brief's rule still stands: an unverified price is never invented.
+ * gherkins (ditto). THE ADD-ON DOOR IS GONE TOO (Nick, 2026-09-10: "no option
+ * to add-ons and edit the items"): an item is an id and a quantity, nothing
+ * else travels, and a request still carrying an add-on or a customisation is
+ * refused in words rather than stripped.
+ *
+ * ITS OWN APP SINCE 2026-09-10 (specs/wimpy-vas-apps-plan.md): the page is
+ * /wimpy/, signed in with a CB number and no password (a session SCOPED to
+ * these routes — see auth.mjs signinByCb); the order form asks for the CB
+ * number, name and surname, which travel to the kitchen beside the account's
+ * own name; orders are taken 08:00–17:00 SAST, Monday to Friday; everyone
+ * orders, management included.
  */
 
 const WEBHOOK = 'https://n8n-production-591cc.up.railway.app/webhook/wimpy';
@@ -63,19 +71,10 @@ export const ING = {
 };
 export const OVERHEAD_PER_MEAL = 1.20;   // butter, oil, gas, wrap — the spec's stated assumption
 
-/* Add-ons: only core ingredients the kitchen already holds — no new stock line
-   can enter through the add-on door. 0.00 + configurable until a price is set. */
-const ADD_ONS = {
-  extra_cheese:  { id: 'extra_cheese',  name: 'Extra Cheese',         price: 0, configurablePrice: true },
-  extra_bacon:   { id: 'extra_bacon',   name: 'Extra Bacon',          price: 0, configurablePrice: true },
-  extra_egg:     { id: 'extra_egg',     name: 'Extra Fried Egg',      price: 0, configurablePrice: true },
-  extra_patty:   { id: 'extra_patty',   name: 'Extra Beef Patty',     price: 0, configurablePrice: true },
-  extra_relish:  { id: 'extra_relish',  name: 'Extra Wimpy Relish',   price: 0, configurablePrice: true },
-  extra_onions:  { id: 'extra_onions',  name: 'Extra Grilled Onions', price: 0, configurablePrice: true },
-  extra_chips:   { id: 'extra_chips',   name: 'Extra Chips',          price: 0, configurablePrice: true },
-};
+/* There is no add-on table any more (Nick, 2026-09-10). The kitchen still holds
+   the thirteen ingredients; nothing can be added to an item through this file. */
 
-const inc = (name, removable = true) => ({ name, removable });
+const inc = (name) => ({ name });
 
 /* ------------------------------------------------------------------ the nine
    ing[]: ingredient id → units used, the machine-readable half of the spec's
@@ -104,70 +103,61 @@ const ITEMS = [
     basePrice: 45.90, wasPrice: 57.90, prep: 'LOW',
     description: 'A fried egg, two rashers of bacon and grilled tomato on toast. The weekday starter.',
     ing: { eggs: 1, bacon: 2, tomato: 1, bread: 2 },
-    includedIngredients: [inc('Fried egg'), inc('Bacon'), inc('Grilled tomato'), inc('Toast', false)],
-    addOns: ['extra_egg', 'extra_bacon', 'extra_chips'] },
+    includedIngredients: [inc('Fried egg'), inc('Bacon'), inc('Grilled tomato'), inc('Toast')] },
 
   { id: 'double_up_breakfast', name: 'Double Up Breakfast', category: 'breakfast',
     basePrice: 65.90, wasPrice: 82.90, prep: 'MEDIUM',
     description: 'Two eggs, two rashers of bacon, a grilled banger and tomato on toast. Made fresh.',
     ing: { eggs: 2, bacon: 2, banger: 1, tomato: 1, bread: 2 },
-    includedIngredients: [inc('2 fried eggs'), inc('Bacon'), inc('Banger'), inc('Grilled tomato'), inc('Toast', false)],
-    addOns: ['extra_egg', 'extra_bacon', 'extra_chips'] },
+    includedIngredients: [inc('2 fried eggs'), inc('Bacon'), inc('Banger'), inc('Grilled tomato'), inc('Toast')] },
 
   { id: 'farmhouse_breakfast', name: 'Farmhouse Breakfast', category: 'breakfast',
     basePrice: 77.90, wasPrice: 97.90, prep: 'MEDIUM',
     description: 'Two eggs, bacon, two bangers, grilled tomato and onion, with chips and toast. The full plate.',
     ing: { eggs: 2, bacon: 2, banger: 2, chips: 1, tomato: 1, onion: 1, bread: 2 },
     includedIngredients: [inc('2 fried eggs'), inc('Bacon'), inc('2 bangers'), inc('Chips'),
-      inc('Grilled tomato'), inc('Grilled onion'), inc('Toast', false)],
-    addOns: ['extra_egg', 'extra_bacon', 'extra_chips'] },
+      inc('Grilled tomato'), inc('Grilled onion'), inc('Toast')] },
 
   // ---- BURGERS — 3 ----
   { id: 'cheese_burger', name: 'Cheese Burger', category: 'burgers',
     basePrice: 54.90, wasPrice: 68.90, prep: 'LOW',
     description: 'Flame-grilled beef patty with cheese, lettuce, tomato, onion and Wimpy Relish, with chips.',
     ing: { patty: 1, cheese: 1, lettuce: 1, tomato: 1, onion: 1, relish: 1, bun: 1, chips: 1 },
-    includedIngredients: [inc('Beef patty', false), inc('Cheese'), inc('Lettuce'), inc('Tomato'),
-      inc('Onion'), inc('Wimpy Relish'), inc('Chips')],
-    addOns: ['extra_cheese', 'extra_patty', 'extra_relish', 'extra_onions', 'extra_chips'] },
+    includedIngredients: [inc('Beef patty'), inc('Cheese'), inc('Lettuce'), inc('Tomato'),
+      inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },
 
   { id: 'bacon_cheese_burger', name: 'Bacon & Cheese Burger', category: 'burgers',
     basePrice: 82.90, wasPrice: 103.90, prep: 'MEDIUM',
     description: 'Beef patty, crispy bacon and cheese with the full salad and Wimpy Relish, with chips.',
     ing: { patty: 1, bacon: 2, cheese: 1, lettuce: 1, tomato: 1, onion: 1, relish: 1, bun: 1, chips: 1 },
-    includedIngredients: [inc('Beef patty', false), inc('Bacon'), inc('Cheese'), inc('Lettuce'),
-      inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')],
-    addOns: ['extra_cheese', 'extra_bacon', 'extra_patty', 'extra_relish', 'extra_onions', 'extra_chips'] },
+    includedIngredients: [inc('Beef patty'), inc('Bacon'), inc('Cheese'), inc('Lettuce'),
+      inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },
 
   { id: 'big_cheese_burger', name: 'Big Cheese Burger', category: 'burgers',
     basePrice: 95.90, wasPrice: 119.90, prep: 'MEDIUM',
     description: 'Two patties, double cheese, the full salad and Wimpy Relish, with chips. A weekday favourite.',
     ing: { patty: 2, cheese: 2, lettuce: 1, tomato: 1, onion: 1, relish: 1, bun: 1, chips: 1 },
-    includedIngredients: [inc('2 beef patties', false), inc('Double cheese'), inc('Lettuce'),
-      inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')],
-    addOns: ['extra_cheese', 'extra_bacon', 'extra_patty', 'extra_relish', 'extra_onions', 'extra_chips'] },
+    includedIngredients: [inc('2 beef patties'), inc('Double cheese'), inc('Lettuce'),
+      inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },
 
   // ---- TOASTEDS — 3 ----
   { id: 'toasted_cheese_tomato', name: 'Cheese & Tomato Toasted', category: 'toasteds',
     basePrice: 49.90, wasPrice: 75.90, /* SUPPLIED */ prep: 'LOW',
     description: 'Melted cheese and tomato on toasted bread, with chips.',
     ing: { cheese: 1, tomato: 1, bread: 2, chips: 1 },
-    includedIngredients: [inc('Cheese'), inc('Tomato'), inc('Toasted bread', false), inc('Chips')],
-    addOns: ['extra_cheese', 'extra_chips'] },
+    includedIngredients: [inc('Cheese'), inc('Tomato'), inc('Toasted bread'), inc('Chips')] },
 
   { id: 'toasted_chicken_mayo', name: 'Chicken Mayo Toasted', category: 'toasteds',
     basePrice: 53.90, wasPrice: 80.90, /* SUPPLIED */ prep: 'LOW',
     description: 'Creamy chicken mayo on toasted bread, with chips.',
     ing: { chicken_mayo: 1, bread: 2, chips: 1 },
-    includedIngredients: [inc('Chicken mayo'), inc('Toasted bread', false), inc('Chips')],
-    addOns: ['extra_cheese', 'extra_chips'] },
+    includedIngredients: [inc('Chicken mayo'), inc('Toasted bread'), inc('Chips')] },
 
   { id: 'toasted_bacon_egg', name: 'Bacon & Egg Toasted', category: 'toasteds',
     basePrice: 55.90, wasPrice: 84.90, /* SUPPLIED */ prep: 'LOW',
     description: 'Bacon and fried egg on toasted bread, with chips.',
     ing: { bacon: 2, eggs: 1, bread: 2, chips: 1 },
-    includedIngredients: [inc('Bacon'), inc('Fried egg'), inc('Toasted bread', false), inc('Chips')],
-    addOns: ['extra_cheese', 'extra_bacon', 'extra_egg', 'extra_chips'] },
+    includedIngredients: [inc('Bacon'), inc('Fried egg'), inc('Toasted bread'), inc('Chips')] },
 ];
 
 /* ------------------------------------------------------------ the Big Ones
@@ -179,40 +169,35 @@ const BIG_ONES = {
     description: 'Three eggs, three rashers of bacon, two bangers, grilled tomato and onion, chips and toast. Monday, done properly.',
     ing: { eggs: 3, bacon: 3, banger: 2, chips: 1, tomato: 1, onion: 1, bread: 2 },
     includedIngredients: [inc('3 fried eggs'), inc('Bacon'), inc('2 bangers'), inc('Chips'),
-      inc('Grilled tomato'), inc('Grilled onion'), inc('Toast', false)],
-    addOns: ['extra_egg', 'extra_bacon', 'extra_chips'] },
+      inc('Grilled tomato'), inc('Grilled onion'), inc('Toast')] },
 
   2: { id: 'dagwood', name: 'Dagwood', day: 2,
     basePrice: 97.90, wasPrice: 149.90, /* SUPPLIED */ prep: 'HIGH', category: 'bigone',
     description: 'The triple-decker: beef patty, fried egg, bacon and cheese stacked on three slices of toast with the full salad and Wimpy Relish, with chips.',
     ing: { patty: 1, eggs: 1, bacon: 2, cheese: 1, lettuce: 1, tomato: 1, onion: 1, relish: 1, bread: 3, chips: 1 },
     includedIngredients: [inc('Beef patty'), inc('Fried egg'), inc('Bacon'), inc('Cheese'),
-      inc('Lettuce'), inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Toast', false), inc('Chips')],
-    addOns: ['extra_cheese', 'extra_bacon', 'extra_egg', 'extra_patty', 'extra_relish', 'extra_chips'] },
+      inc('Lettuce'), inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Toast'), inc('Chips')] },
 
   3: { id: 'big_bacon_cheese', name: 'Big Bacon & Cheese', day: 3,
     basePrice: 103.90, wasPrice: 129.90, prep: 'MEDIUM',  category: 'bigone',
     description: 'Two patties, three rashers of bacon and double cheese with the full salad and Wimpy Relish, with chips.',
     ing: { patty: 2, bacon: 3, cheese: 2, lettuce: 1, tomato: 1, onion: 1, relish: 1, bun: 1, chips: 1 },
-    includedIngredients: [inc('2 beef patties', false), inc('Bacon'), inc('Double cheese'),
-      inc('Lettuce'), inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')],
-    addOns: ['extra_cheese', 'extra_bacon', 'extra_patty', 'extra_relish', 'extra_chips'] },
+    includedIngredients: [inc('2 beef patties'), inc('Bacon'), inc('Double cheese'),
+      inc('Lettuce'), inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },
 
   4: { id: 'big_champion', name: 'Big Champion', day: 4,
     basePrice: 115.90, wasPrice: 144.90, prep: 'MEDIUM', category: 'bigone',
     description: 'Two patties, a fried egg and double cheese with the full salad and Wimpy Relish, with chips. Thursday’s heavyweight.',
     ing: { patty: 2, eggs: 1, cheese: 2, lettuce: 1, tomato: 1, onion: 1, relish: 1, bun: 1, chips: 1 },
-    includedIngredients: [inc('2 beef patties', false), inc('Fried egg'), inc('Double cheese'),
-      inc('Lettuce'), inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')],
-    addOns: ['extra_cheese', 'extra_bacon', 'extra_egg', 'extra_patty', 'extra_relish', 'extra_chips'] },
+    includedIngredients: [inc('2 beef patties'), inc('Fried egg'), inc('Double cheese'),
+      inc('Lettuce'), inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },
 
   5: { id: 'fully_loaded_dagwood', name: 'Fully Loaded Dagwood', day: 5,
     basePrice: 127.90, wasPrice: 159.90, prep: 'HIGH', category: 'bigone',
     description: 'The Friday stack: two patties, fried egg, bacon, double cheese AND chicken mayo across three slices of toast, full salad, Wimpy Relish, chips.',
     ing: { patty: 2, eggs: 1, bacon: 2, cheese: 2, chicken_mayo: 1, lettuce: 1, tomato: 1, onion: 1, relish: 1, bread: 3, chips: 1 },
     includedIngredients: [inc('2 beef patties'), inc('Fried egg'), inc('Bacon'), inc('Double cheese'),
-      inc('Chicken mayo'), inc('Lettuce'), inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Toast', false), inc('Chips')],
-    addOns: ['extra_cheese', 'extra_bacon', 'extra_egg', 'extra_patty', 'extra_relish', 'extra_chips'] },
+      inc('Chicken mayo'), inc('Lettuce'), inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Toast'), inc('Chips')] },
 };
 
 const CATEGORIES = [
@@ -235,23 +220,21 @@ export function todaysBigOne(now = Date.now()) {
   return BIG_ONES[d] || null;
 }
 
-/* THE ORDERING WINDOW (Nick, 2026-09-02: the tab "must only show for 8am to
-   9am, from monday to friday, south african time"). The page hides the tab,
-   but a page's clock is nobody's authority — THIS is the lock: the menu says
-   whether the window is open and submit refuses outside it, so a tab left
-   open past nine cannot buy lunch at ten. SAST is UTC+2, no daylight saving. */
+/* THE ORDERING WINDOW — 08:00 to 17:00 SAST, Monday to Friday (Nick, 2026-09-10:
+   "the time is 8am to 5pm"; it was the 08:00 hour alone from 2026-09-02). The
+   page shows the hours when closed, but a page's clock is nobody's authority —
+   THIS is the lock: the menu says whether the window is open and submit
+   refuses outside it. SAST is UTC+2, no daylight saving. */
+export const WINDOW = { fromHour: 8, toHour: 17, hours: '08:00–17:00', days: 'Monday to Friday' };
 export function wimpyWindowOpen(now = Date.now()) {
   const d = new Date(now + 2 * 3600000);
-  const dow = d.getUTCDay();
-  return dow >= 1 && dow <= 5 && d.getUTCHours() === 8;
+  const dow = d.getUTCDay(), h = d.getUTCHours();
+  return dow >= 1 && dow <= 5 && h >= WINDOW.fromHour && h < WINDOW.toHour;
 }
 
-/* ORDERS ARE AS-IS (Nick, 2026-09-02: "remove the part to customize and
-   condements, it must be as is") — the menu advertises no add-ons any more, so
-   the page has nothing to build a customisation sheet from. The items' own
-   addOns/ADD_ONS definitions stay above as the record of what the kitchen can
-   hold, but none of it travels. */
-const withAddOns = (i) => ({ ...i, available: i.basePrice != null, addOns: [] });
+/* ORDERS ARE AS-IS (Nick, 2026-09-02 and again 2026-09-10) — an item is served
+   exactly as the kitchen makes it. `available` is the only flag the page reads. */
+const served = (i) => ({ ...i, available: i.basePrice != null });
 
 /**
  * The menu the page renders. Prices travel from here and nowhere else.
@@ -268,10 +251,10 @@ export function wimpyMenu(now = Date.now()) {
     dayName: DAY_NAMES[d],
     /* the window travels with the menu so a page that fetched it can say when
        ordering opens rather than guessing from its own clock */
-    window: { open: wimpyWindowOpen(now), hours: '08:00–09:00', days: 'Monday to Friday' },
+    window: { open: wimpyWindowOpen(now), hours: WINDOW.hours, days: WINDOW.days },
     categories: CATEGORIES,
-    items: [...ITEMS, ...(hero ? [BIG_ONES[d]] : [])].map(withAddOns),
-    bigOne: hero ? { ...withAddOns(hero), dayName: DAY_NAMES[d] } : null,
+    items: [...ITEMS, ...(hero ? [BIG_ONES[d]] : [])].map(served),
+    bigOne: hero ? { ...served(hero), dayName: DAY_NAMES[d] } : null,
     weekend: hero ? null : {
       message: 'The Big One is a weekday feature — back Monday.',
       next: { name: BIG_ONES[1].name, basePrice: BIG_ONES[1].basePrice, dayName: 'Monday' },
@@ -292,6 +275,8 @@ export function wimpyMenu(now = Date.now()) {
 
 /* Money in cents, so a total is never the sum of a hundred floating-point
    sixteenths. Everything is added as an integer and divided once at the end. */
+/* Quantity is the ONE thing a person may change about an item (Nick, 2026-09-10). */
+const MAX_QTY = 10;
 const cents = (r) => Math.round(Number(r) * 100);
 const rands = (c) => Math.round(c) / 100;
 export const zar = (r) => 'R' + Number(r).toFixed(2);
@@ -337,16 +322,18 @@ export function priceOrder(body, now = Date.now()) {
       return;
     }
     const qty = Math.floor(Number(row.quantity));
-    if (!Number.isFinite(qty) || qty < 1 || qty > 20) { errors.push(def.name + ': quantity must be between 1 and 20.'); return; }
+    if (!Number.isFinite(qty) || qty < 1 || qty > MAX_QTY) { errors.push(def.name + ': quantity must be between 1 and ' + MAX_QTY + '.'); return; }
 
-    /* EVERY ITEM COMES AS IT IS (Nick, 2026-09-02). A request still carrying a
-       customisation is an old cached tab — and silently stripping it would hand
-       the kitchen a different order than the agent believes they placed (their
-       "no onions" would arrive WITH onions), so it is refused in words instead. */
+    /* EVERY ITEM COMES AS IT IS (Nick, 2026-09-02; add-ons too, 2026-09-10). A
+       request still carrying a customisation or an add-on is an old cached tab —
+       and silently stripping it would hand the kitchen a different order than the
+       person believes they placed (their "no onions" would arrive WITH onions),
+       so it is refused in words instead. */
     if ((Array.isArray(row.removed) && row.removed.length)
       || (Array.isArray(row.added) && row.added.length)
-      || (row.choices && Object.keys(row.choices).length)) {
-      errors.push(def.name + ' comes as it is — customisations are no longer taken. Remove the item and add it back.');
+      || (row.choices && Object.keys(row.choices).length)
+      || (row.customisations && ((row.customisations.removed || []).length || (row.customisations.added || []).length))) {
+      errors.push(def.name + ' comes as it is — add-ons and customisations are not taken. Remove the item and add it back.');
       return;
     }
 
@@ -356,7 +343,6 @@ export function priceOrder(body, now = Date.now()) {
     items.push({
       id: def.id, item: def.name, category: def.category, quantity: qty,
       base_price: rands(cents(def.basePrice)),
-      customisations: { removed: [], added: [] },
       unit_total: rands(unit),
       item_total: rands(line),
     });
@@ -366,23 +352,46 @@ export function priceOrder(body, now = Date.now()) {
 }
 
 /** The human-readable order n8n forwards downstream. */
-export function formatOrder({ agentName, cb, items, total, notes }) {
-  const L = ['WIMPY ORDER', '', 'Agent: ' + agentName, 'CB Number: ' + cb, ''];
+export function formatOrder({ agentName, cb, listName, items, total, notes }) {
+  const L = ['WIMPY ORDER', '', 'Name: ' + agentName, 'CB Number: ' + cb];
+  if (listName && listName !== agentName) L.push('On the Agent List as: ' + listName);
+  L.push('');
   for (const it of items) {
     L.push('---', '');
     L.push(it.quantity + ' × ' + it.item.toUpperCase()
       + (it.category === 'bigone' ? ' (TODAY’S BIG ONE)' : '') + ' — ' + zar(it.item_total));
-    const c = it.customisations || {};
-    if (c.removed && c.removed.length) { L.push('', 'Removed:'); c.removed.forEach((r) => L.push('  • ' + r)); }
-    if (c.added && c.added.length) {
-      L.push('', 'Added:');
-      c.added.forEach((a) => L.push('  • ' + a.name + (a.price ? ' (' + zar(a.price) + ')' : '')));
-    }
     L.push('');
   }
   L.push('---', '', 'TOTAL: ' + zar(total));
   if (notes) L.push('', 'Additional Notes:', notes);
   return L.join('\n');
+}
+
+/* WHO IS ORDERING — typed on the form, checked against the session (Nick,
+   2026-09-10: "when they order they need to put their cb number, name,
+   surname"). The CB typed must be the signed-in person's own: an agent's CB, or
+   a manager's username (they have no CB). Names are letters, spaces, hyphens
+   and apostrophes, 2–40 characters — enough for every name on the list and
+   nothing that could carry an instruction to the kitchen. */
+const NAME_RE = /^[\p{L}][\p{L}\s'’\-.]{0,39}$/u;
+export function whoIsOrdering(user, who) {
+  const w = who && typeof who === 'object' ? who : {};
+  const typedCb = String(w.cb || '').trim();
+  const first = String(w.first_name || '').trim().replace(/\s+/g, ' ');
+  const last = String(w.surname || '').trim().replace(/\s+/g, ' ');
+  const own = String(user.cb || '').trim();
+  const norm = (v) => /^\s*(cb)?[\s-]*0*\d+\s*$/i.test(v) ? 'CB' + String(parseInt(String(v).replace(/[^0-9]/g, ''), 10)) : String(v).trim().toLowerCase();
+  if (!typedCb) return { error: 'Type your CB number.' };
+  if (!first || !NAME_RE.test(first) || first.length < 2) return { error: 'Type your name (letters only, 2 to 40 characters).' };
+  if (!last || !NAME_RE.test(last) || last.length < 2) return { error: 'Type your surname (letters only, 2 to 40 characters).' };
+  if (own) {
+    if (norm(typedCb) !== norm(own)) return { error: 'That CB number is not the one you signed in with (' + own.toUpperCase() + '). An order can only be placed in your own name — sign in as that person to order for them.' };
+    return { cb: own.toUpperCase(), first, last };
+  }
+  /* management: no CB on the account, the username is the handle */
+  if (norm(typedCb) !== String(user.username || '').trim().toLowerCase())
+    return { error: 'You have no CB number on your account — type your username (' + user.username + ') in the CB number box.' };
+  return { cb: String(user.username).toLowerCase(), first, last };
 }
 
 /* South African local time. SAST is UTC+2 all year — no daylight saving. */
@@ -392,21 +401,25 @@ function sastNow() {
 }
 
 /**
- * POST /api/portal/wimpy/order — validate, re-price, send.
+ * POST /api/wimpy/order — validate, re-price, send.
  *
- * The identity is the SESSION's, never the request's: an order cannot be placed
- * in somebody else's name because there is no field in which to say a name.
+ * The identity is checked against the SESSION: the form's CB number must be the
+ * signed-in person's own, so an order cannot be placed in somebody else's name.
+ * The typed name and surname travel as typed, and the account's own name (the
+ * Agent List's) travels beside them as list_name, so the kitchen sheet can
+ * reconcile a nickname without anyone's word being silently corrected.
  */
 export async function submitWimpyOrder(env, user, body, now = Date.now()) {
-  /* THE WINDOW IS ENFORCED HERE, not only hidden on the page — a tab left open
-     since 08:55 does not get to order at half past ten. */
+  /* THE WINDOW IS ENFORCED HERE, not only shown on the page — a tab left open
+     since 16:55 does not get to order at half past five. */
   if (!wimpyWindowOpen(now)) return { status: 403, body: {
-    error: 'Wimpy orders are taken between 08:00 and 09:00, Monday to Friday (SA time). The window is closed now — the tab will be back tomorrow morning.' } };
+    error: 'Wimpy orders are taken between 08:00 and 17:00, Monday to Friday (SA time). Ordering is closed now — the menu is back next working day.' } };
 
-  const agentName = String(user.full_name || user.username || '').trim();
-  const cb = String(user.cb || '').trim().toUpperCase();
-  if (!agentName) return { status: 403, body: { error: 'This account has no name on it, so an order cannot be placed. Ask Nick to check your profile.' } };
-  if (!cb) return { status: 403, body: { error: 'This account has no CB number, so an order cannot be placed. Ask your team leader.' } };
+  const who = whoIsOrdering(user, body && body.who);
+  if (who.error) return { status: 400, body: { error: who.error } };
+  const agentName = who.first + ' ' + who.last;
+  const cb = who.cb;
+  const listName = String(user.full_name || '').trim();
 
   const priced = priceOrder(body, now);
   if (!priced.ok) return { status: 400, body: { error: priced.errors[0], errors: priced.errors } };
@@ -424,9 +437,12 @@ export async function submitWimpyOrder(env, user, body, now = Date.now()) {
   const payload = {
     cb_number: cb,
     agent_name: agentName,
+    first_name: who.first,
+    surname: who.last,
+    list_name: listName,
     timestamp: sastNow(),
     total_price: priced.total,
-    order_formatted: formatOrder({ agentName, cb, items: priced.items, total: priced.total, notes }),
+    order_formatted: formatOrder({ agentName, cb, listName, items: priced.items, total: priced.total, notes }),
     order: { items: priced.items, additional_notes: notes },
   };
   if (mismatch) payload.price_mismatch = mismatch;

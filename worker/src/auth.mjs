@@ -173,10 +173,70 @@ export async function session(DB, req) {
      undefined and a simple RELOAD walked straight past the overlay — leaving the account on
      its temporary password for good. That matters most for exactly the accounts being handed
      out with a shared starter password. */
-  const rows = await DB.select(`app_sessions?token_hash=eq.${th}&select=expires_at,user_id,app_users(username,full_name,role,apps,tabs,pii_unmask,active,cb,team,hub_ids,must_change_password,theme)`);
+  /* scope (migration-037): 'full' for every password login; 'wimpy' for the CB-only Wimpy
+     sign-in, which index.mjs refuses everywhere outside /api/wimpy/*. It travels on the
+     user object so the check is one line at the gate, never a second lookup. */
+  const rows = await DB.select(`app_sessions?token_hash=eq.${th}&select=expires_at,user_id,scope,app_users(username,full_name,role,apps,tabs,pii_unmask,active,cb,team,hub_ids,must_change_password,theme)`);
   const s = rows && rows[0];
   if (!s || new Date(s.expires_at) < new Date() || !s.app_users?.active) return null;
-  return { ...s.app_users, user_id: s.user_id, token_hash: th };
+  return { ...s.app_users, user_id: s.user_id, token_hash: th, scope: s.scope || 'full' };
+}
+
+/**
+ * THE WIMPY SIGN-IN — a CB number and no password (Nick, 2026-09-10: "sign in only with cb
+ * number no password"). What makes that acceptable is that the session it mints is SCOPED:
+ * app_sessions.scope = 'wimpy', and the Worker refuses it on every route but the Wimpy ones,
+ * so knowing a colleague's CB buys lunch in their name (which Nick accepts — the typed name and
+ * surname land on the kitchen sheet beside the account's own) and opens nothing else.
+ *
+ *   · the field accepts a CB number in any spelling ("CB-93", "cb 93", "093") → looked up on the
+ *     cb column; or a management username (no CB on those accounts) → looked up on username;
+ *   · the account must be active and hold the Wimpy app (which the Agent List sync grants at
+ *     birth and removes with the account when a person leaves);
+ *   · rate-limited: ten failures per typed value or per IP in ten minutes → 429, counted from
+ *     auth_log the same append-only way login() counts password failures;
+ *   · the answer for an unknown, inactive or un-granted account is ONE generic 404, so the
+ *     field cannot be used to discover which CB numbers exist.
+ * Pure of transport: {ok, status, error} or {ok, token, user}.
+ */
+const WIMPY_SIGNIN_MAX = 10, WIMPY_SIGNIN_MIN = 10, WIMPY_SESSION_HOURS = 12;
+export async function signinByCb(DB, req, body, ctx) {
+  const defer = (p) => { try { ctx && ctx.waitUntil(p); } catch { /* no ctx */ } return p; };
+  const ip = req.headers.get('cf-connecting-ip') || '';
+  const raw = String((body && (body.cb ?? body.username)) || '').trim();
+  let key = raw.toLowerCase();
+  const isCb = /^\s*(cb)?[\s-]*0*\d+\s*$/i.test(raw);
+  if (isCb) key = 'cb' + String(parseInt(raw.replace(/[^0-9]/g, ''), 10));
+  const generic = { ok: false, status: 404, error: 'No active account for that CB number. Check the number, or ask your team leader — accounts follow the Agent List.' };
+  if (!key || key.length > 40) return { ok: false, status: 400, error: 'Type your CB number.' };
+
+  /* the rate limit, before any lookup */
+  try {
+    const since = new Date(Date.now() - WIMPY_SIGNIN_MIN * 60000).toISOString();
+    const byKey = await DB.select(`auth_log?username=eq.${encodeURIComponent('wimpy:' + key)}&event=eq.wimpy_signin_fail&at=gte.${since}&select=at&limit=${WIMPY_SIGNIN_MAX + 1}`);
+    const byIp = ip ? await DB.select(`auth_log?ip=eq.${encodeURIComponent(ip)}&event=eq.wimpy_signin_fail&at=gte.${since}&select=at&limit=${WIMPY_SIGNIN_MAX + 1}`) : [];
+    if ((byKey || []).length >= WIMPY_SIGNIN_MAX || (byIp || []).length >= WIMPY_SIGNIN_MAX)
+      return { ok: false, status: 429, error: 'Too many tries. Wait ten minutes and try again.' };
+  } catch { /* the log unreadable — carry on; the lookup below still decides */ }
+
+  let rows = null;
+  if (isCb) rows = await DB.select(`app_users?cb=ilike.${encodeURIComponent(key)}&active=is.true&limit=1`);
+  if (!rows || !rows.length) rows = await DB.select(`app_users?username=eq.${encodeURIComponent(key)}&active=is.true&limit=1`);
+  const u = rows && rows[0];
+  const granted = u && Array.isArray(u.apps) && u.apps.includes('wimpy');
+  if (!u || !u.active || !granted) {
+    /* awaited, not deferred: the count above must see this failure next time */
+    await DB.insert('auth_log', [{ user_id: u ? u.id : null, username: 'wimpy:' + key, event: 'wimpy_signin_fail', ip }]).catch(() => {});
+    return generic;
+  }
+  const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
+  await DB.insert('app_sessions', [{
+    token_hash: await sha256hex(token), user_id: u.id, scope: 'wimpy',
+    expires_at: new Date(Date.now() + WIMPY_SESSION_HOURS * 3600000).toISOString(),
+    ip, user_agent: (req.headers.get('user-agent') || '').slice(0, 200),
+  }]);
+  defer(log(DB, u.id, u.username, 'wimpy_signin_ok', ip));
+  return { ok: true, token, user: { username: u.username, full_name: u.full_name || '', role: u.role, cb: u.cb || '', scope: 'wimpy' } };
 }
 
 export async function logout(DB, user) {

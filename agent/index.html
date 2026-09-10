@@ -776,107 +776,6 @@ textarea.cc{font-weight:500;line-height:1.5;resize:vertical}
 .cm-filter .f span{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
 .cm-filter select{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12.5px;background:#fff;color:var(--ink)}
 
-/* ============ WIMPY ORDER ============
-   The agent's own lunch order. Same tokens, same card, same buttons as every
-   other screen — an agent should not feel they have left the app. The only new
-   shapes are the two the job needs: a menu grid that stays scannable next to a
-   cart, and a cart that is a column on a desk and a sheet on a phone. */
-.wp-wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
-@media(max-width:1000px){.wp-wrap{grid-template-columns:minmax(0,1fr)}}
-.wp-who{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:11px 15px;margin-bottom:14px;box-shadow:var(--shadow)}
-.wp-who .k{font-size:10.5px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;color:var(--muted)}
-.wp-who .v{font-size:13.5px;font-weight:800;color:var(--ink);margin-left:7px}
-.wp-title{margin:2px 0 10px}
-.wp-title h2{font-size:19px;font-weight:900;letter-spacing:.2px;color:var(--ink);text-transform:uppercase}
-.wp-title .sub{display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:2px}
-.wp-hero{background:linear-gradient(135deg,#7f1d1d,#b91c1c);border-radius:var(--radius);padding:18px 20px;color:#fff;box-shadow:var(--shadow);margin-bottom:10px}
-.wp-hero.off{background:var(--card);color:var(--body);border:1px dashed var(--line);box-shadow:none}
-.wp-hero-day{font-size:11px;font-weight:900;letter-spacing:1.4px;opacity:.85}
-.wp-hero-name{font-size:24px;font-weight:900;letter-spacing:.2px;margin:4px 0 4px}
-.wp-hero-desc{font-size:12.5px;line-height:1.45;opacity:.92;max-width:60ch}
-.wp-hero-row{display:flex;align-items:center;gap:14px;margin-top:12px}
-.wp-hero-price{font-size:22px;font-weight:900}
-.wp-hero .btn.primary{background:#fff;color:#7f1d1d;border-color:#fff}
-.wp-week{display:flex;gap:6px;overflow-x:auto;margin-bottom:14px;padding-bottom:2px}
-.wp-day{flex:1;min-width:96px;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:7px 9px;display:flex;flex-direction:column;gap:1px}
-.wp-day.today{border-color:#b91c1c;box-shadow:0 0 0 1px #b91c1c inset}
-.wp-day .d{font-size:10px;font-weight:900;letter-spacing:1px;color:var(--muted);text-transform:uppercase}
-.wp-day.today .d{color:#b91c1c}
-.wp-day .n{font-size:11.5px;font-weight:800;color:var(--ink);line-height:1.2}
-.wp-day .p{font-size:11px;font-weight:700;color:var(--muted)}
-.wp-cat .ct{opacity:.55;font-weight:800}
-.was{color:var(--muted);font-weight:600;font-size:.82em;margin-left:6px;opacity:.85}
-.save{display:inline-block;font-style:normal;font-size:10px;font-weight:900;letter-spacing:.5px;text-transform:uppercase;color:#15803d;background:rgba(21,128,61,.1);border-radius:99px;padding:2px 8px;margin-left:7px;vertical-align:1px}
-.wp-hero .was{color:#fff;opacity:.7}
-.wp-hero .save{color:#7f1d1d;background:#fff}
-.wp-day{cursor:pointer;text-align:left}
-.wp-day:focus-visible{outline:2px solid #b91c1c;outline-offset:2px}
-.wp-day.open{background:rgba(185,28,28,.06)}
-.wp-day .p s{color:var(--muted);font-weight:600;margin-left:4px}
-.wp-peek{background:var(--card);border:1px solid #b91c1c;border-radius:12px;padding:13px 16px;margin:0 0 14px;box-shadow:var(--shadow)}
-.wp-peek .d{font-size:10px;font-weight:900;letter-spacing:1.2px;color:#b91c1c}
-.wp-peek .n{font-size:17px;font-weight:900;color:var(--ink);margin:2px 0}
-.wp-peek .desc{font-size:12.5px;color:var(--muted);line-height:1.45;max-width:62ch}
-.wp-peek .row{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-top:9px}
-.wp-peek .row .p{font-size:16px;font-weight:900;color:var(--ink)}
-.wp-peek .when{font-size:11.5px;font-weight:700;color:var(--muted)}
-.wp-cats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
-.wp-cat{border:1px solid var(--line);background:#fff;color:var(--body);border-radius:20px;padding:8px 16px;font-size:12.5px;font-weight:700}
-.wp-cat.on{background:var(--blue);border-color:var(--blue);color:#fff}
-.wp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(238px,1fr));gap:12px}
-.wp-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 15px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:7px}
-.wp-card h4{font-size:14px;font-weight:800;color:var(--ink);line-height:1.25}
-.wp-card .d{font-size:12px;color:var(--muted);line-height:1.5;flex:1}
-.wp-card .p{font-size:19px;font-weight:800;letter-spacing:-.4px;color:var(--ink)}
-.wp-card .p.na{font-size:12.5px;font-weight:700;color:var(--amber)}
-.wp-card button{width:100%}
-/* the cart — a column beside the menu, a sheet under it on a phone */
-.wp-cart{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:15px 16px;position:sticky;top:14px}
-.wp-cart h3{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin-bottom:10px}
-.wp-line{border-top:1px solid var(--line);padding:11px 0}
-.wp-line:first-of-type{border-top:none}
-.wp-line .t{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
-.wp-line .n{font-size:13px;font-weight:800;color:var(--ink)}
-.wp-line .m{font-size:13px;font-weight:800;color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums}
-.wp-line ul{list-style:none;margin:5px 0 0;padding:0}
-.wp-line li{font-size:11.5px;color:var(--muted);line-height:1.5}
-.wp-line li.rm::before{content:"− ";color:var(--red);font-weight:800}
-.wp-line li.ad::before{content:"+ ";color:var(--green);font-weight:800}
-.wp-line li.ch::before{content:"• ";color:var(--blue);font-weight:800}
-.wp-qty{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap}
-.wp-qty button{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:800;line-height:1;padding:0}
-.wp-qty .q{min-width:22px;text-align:center;font-weight:800;font-size:13px;font-variant-numeric:tabular-nums}
-/* Edit is pushed right; Remove sits beside it. Both used to be shoved past the
-   cart's edge by a margin-left:auto on each, which clipped "Remove" clean off. */
-.wp-qty .lnk{font-size:11.5px;padding:4px 6px}
-.wp-qty .lnk:first-of-type{margin-left:auto}
-.wp-tot{display:flex;justify-content:space-between;align-items:baseline;border-top:2px solid var(--ink);margin-top:10px;padding-top:10px}
-.wp-tot .l{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--muted)}
-.wp-tot .v{font-size:23px;font-weight:900;letter-spacing:-.6px;color:var(--ink);font-variant-numeric:tabular-nums}
-.wp-empty{font-size:12.5px;color:var(--muted);line-height:1.6;padding:6px 0 2px}
-@media(max-width:1000px){
-  .wp-cart{position:fixed;left:0;right:0;bottom:0;top:auto;border-radius:16px 16px 0 0;z-index:60;max-height:72vh;overflow-y:auto;box-shadow:0 -8px 30px rgba(15,30,54,.22)}
-  .wp-cart.shut{transform:translateY(calc(100% - 62px))}
-  .wp-pull{display:flex;width:100%;align-items:center;gap:10px;border:none;background:none;padding:0 0 10px;font-weight:800;color:var(--ink)}
-  .wp-pad{height:78px}
-}
-@media(min-width:1001px){.wp-pull{display:none}.wp-pad{display:none}}
-/* the customisation sheet reuses .cmov/.cmpanel, but slides from the right on a
-   desk and up from the bottom on a phone, which is where a thumb is */
-.wp-opts{display:flex;flex-direction:column;gap:2px}
-.wp-opt{display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;font-size:13px;color:var(--ink);background:#fff;text-align:left;width:100%}
-.wp-opt.on{border-color:var(--blue);background:var(--blue-soft)}
-.wp-opt .bx{width:17px;height:17px;border-radius:5px;border:1.5px solid var(--line-2,#C7D2E4);flex:none;display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff}
-.wp-opt.on .bx{background:var(--blue);border-color:var(--blue)}
-.wp-opt.rd .bx{border-radius:50%}
-.wp-opt .gone{text-decoration:line-through;color:var(--muted)}
-.wp-opt .pr{margin-left:auto;font-size:11.5px;font-weight:800;color:var(--muted);white-space:nowrap}
-.wp-bar{position:sticky;bottom:0;background:var(--card);border-top:1px solid var(--line);margin:16px -22px -20px;padding:13px 22px;display:flex;align-items:center;gap:12px}
-.wp-bar .v{font-size:19px;font-weight:900;color:var(--ink);font-variant-numeric:tabular-nums;margin-left:auto}
-.wp-err{background:var(--red-soft);border:1px solid #F1C6C6;color:var(--red);font-size:12.5px;font-weight:600;border-radius:9px;padding:9px 12px;margin-bottom:10px;line-height:1.5}
-.wp-ok{text-align:center;padding:26px 10px}
-.wp-ok .big{font-size:44px;line-height:1}
-.wp-ok h3{font-size:18px;font-weight:800;margin:12px 0 4px;color:var(--ink)}
 
 </style>
 </head>
@@ -3118,7 +3017,7 @@ function sigPad(box,path,set){
    leader four. The sidebar carries who is signed in and how fresh the numbers
    are — the Data Trust habit from the management apps, shrunk to one line. */
 
-var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:'🧮',team:'👥',agent:'👤',results:'📊',kpi:'📋',prog:'📈',nik:'✦',forms:'🗂️',wimpy:'🍔',set:'⚙️',links:'🔗'};
+var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:'🧮',team:'👥',agent:'👤',results:'📊',kpi:'📋',prog:'📈',nik:'✦',forms:'🗂️',set:'⚙️',links:'🔗'};
 
 /* The nav must match the SECTIONS actually on screen, which is decided by the
    view being rendered — not by the account. A team leader drilling into one of
@@ -3153,7 +3052,7 @@ function navFor(active){
   /* 'My coaching' is OFF the agent nav (Nick, 2026-08-26). The view itself still
      exists — the "Ask … to help" button on My Progress deep-links to it, and the
      coaching themes still show on My Progress and Today — there is simply no tab. */
-  /* Wimpy only during its window (08:00–09:00 SAST weekdays) — see wimpyOpenNow.
+  /* Wimpy ordering left this app on 2026-09-10 — it is its own app (/wimpy/), linked from the VAS Apps page.
      NIKOLA IS OFF THE AGENT NAV (Nick, 2026-09-03: "Nikola to be hidden"); team
      leaders and campaign managers keep theirs. The tab reads "Projected Commission"
      (same instruction) because that is what the page is — a projection. */
@@ -3161,7 +3060,7 @@ function navFor(active){
      each — on the AGENT nav only ("this is for agent analytics only for the agent view"). */
   return [['month','Today',ICON.month],['calc','Projected Commission',ICON.calc],
           ['progress','My Progress',ICON.prog],['links','Links',ICON.links]]
-    .concat(wimpyOpenNow()?[['wimpy','Wimpy Order',ICON.wimpy]]:[]);
+;
 }
 
 /* Freshness, stated plainly. A number on stale data is a confident wrong
@@ -3268,8 +3167,7 @@ function render(){
     if(TL_VIEWS.indexOf(VIEW)<0) VIEW='team';
     return teamView();
   }
-  if(['month','calc','progress','coaching','wimpy','links'].indexOf(VIEW)<0) VIEW='month';
-  if(VIEW==='wimpy'&&!wimpyOpenNow()) VIEW='month';
+  if(['month','calc','progress','coaching','links'].indexOf(VIEW)<0) VIEW='month';
   if(D.notReported) return notReported();
   if(D.me) return show(D.me);
 }
@@ -3415,290 +3313,6 @@ function notReported(){
 }
 
 
-
-/* ===================== WIMPY ORDER =====================
-   The agent's own lunch order, inside their own page. It reuses the sign-in they
-   already have, the shell every other tab wears, and the same api() helper — so
-   there is no second app, no second login, and no second idea of who they are.
-
-   WHERE THE NUMBERS COME FROM. The menu and every price are served by the Worker
-   (worker/src/wimpy.mjs) and rendered here; not one price is written in this
-   file, so a price change is one edit in one place. The total this page shows is
-   for the agent to read: the Worker re-prices the whole order on submit from its
-   own copy, and the figure that reaches the kitchen is the one IT worked out.
-
-   WHY THE ORDER IS POSTED TO OUR OWN WORKER. The CSP lets this page reach itself
-   and the Worker, nothing else — a fetch straight to the n8n webhook would be
-   blocked by the browser. Proxying is also how the Coaching Hub and the Help
-   Center already work, and it keeps the webhook URL off 130 phones. */
-
-var WMENU=null, WDAY=null, WCART=[], WCAT='breakfast', WNOTE='', WEDIT=null, WSTATE='order', WERR='', WBUSY=false, WDONE=null, WOPEN=false;
-
-/* THE TAB KEEPS OFFICE HOURS (Nick, 2026-09-02): visible 08:00–09:00 SAST,
-   Monday to Friday, hidden the rest of the day. SAST is UTC+2 with no daylight
-   saving, so the arithmetic holds on any phone set to network time. The page
-   only HIDES the tab — the Worker refuses an out-of-window order regardless,
-   so a stale tab cannot buy lunch at ten. */
-function wimpyOpenNow(){
-  var d=new Date(Date.now()+2*3600000);
-  var dow=d.getUTCDay();
-  return dow>=1&&dow<=5&&d.getUTCHours()===8;
-}
-/* The tab has to APPEAR at 08:00 and VANISH at 09:00 without anyone touching
-   the page — a phone left on the Today tab all morning must still grow the
-   tab when the window opens. Checked twice a minute; re-renders only on the
-   flip, so the poll costs nothing the rest of the day. */
-var WWIN_LAST=wimpyOpenNow();
-setInterval(function(){
-  var o=wimpyOpenNow();
-  if(o!==WWIN_LAST){
-    WWIN_LAST=o;
-    if(!o&&VIEW==='wimpy') VIEW='month';
-    try{ render(); }catch(e){}
-  }
-},30000);
-
-function wZar(v){ return 'R'+Number(v||0).toFixed(2); }
-/* Money in cents until the last moment: adding a hundred floats is how a total
-   ends in .0000000004. The Worker does the same, so the two agree exactly. */
-function wCents(v){ return Math.round(Number(v||0)*100); }
-/* A price with the REAL price it is cut from, and the saving (Nick, 31 Aug:
-   "add the 20% off but make it the real price"). wasPrice is decided by the
-   Worker — a supplied Wimpy list price where Nick gave one, otherwise the
-   brief's own "~20% off" rule run backwards — and this only renders it. The
-   badge shows each item's ACTUAL saving, so a deeper cut reads as the deeper
-   cut it is rather than being flattened to a uniform claim. */
-function wPriceInner(base, was){
-  if(!(was>base)) return wZar(base);
-  return wZar(base)+' <s class="was">'+wZar(was)+'</s>'
-    +'<em class="save">save '+Math.round((1-base/was)*100)+'%</em>';
-}
-function wItemDef(id){ return ((WMENU&&WMENU.items)||[]).filter(function(i){return i.id===id;})[0]||null; }
-function wLineCents(l){
-  var d=wItemDef(l.id); if(!d||d.basePrice==null) return 0;
-  var c=wCents(d.basePrice);
-  (l.added||[]).forEach(function(a){ c+=wCents(a.price); });
-  return c*(l.quantity||1);
-}
-function wTotalCents(){ return WCART.reduce(function(n,l){ return n+wLineCents(l); },0); }
-
-function wLoadMenu(){
-  api('/api/portal/wimpy/menu').then(function(r){
-    WMENU = r.ok ? r.json : {error:(r.json&&r.json.error)||'The menu could not be loaded.'};
-    if(VIEW==='wimpy') render();
-  });
-}
-
-/* ---------- the page ---------- */
-function wimpyPage(){
-  if(!WMENU) { wLoadMenu(); return '<div class="card"><p class="why">Loading the menu…</p></div>'; }
-  if(WMENU.error) return '<div class="card"><p class="why">'+esc(WMENU.error)+'</p></div>';
-  if(WSTATE==='done') return wDonePage();
-  if(WSTATE==='confirm') return wConfirmPage();
-
-  var who='<div class="wp-who">'
-    +'<div><span class="k">Agent</span><span class="v">'+esc(D.name||'')+'</span></div>'
-    +'<div><span class="k">CB Number</span><span class="v">'+esc(D.cb||'')+'</span></div></div>';
-
-  /* THE 3-3-3-1 HEADER (the weekday brief, 2026-08-31). The Big One is the
-     hero of the day and gets the strongest emphasis on the page; the week strip
-     underneath is the reason to come back tomorrow. Weekend: the nine core
-     choices stand and the hero slot trails Monday's feature instead. All of it
-     renders from the menu payload - the day, the item and the price are decided
-     by the Worker, never by this page's clock. */
-  var hero='';
-  if(WMENU.bigOne){
-    var bo=WMENU.bigOne;
-    hero='<div class="wp-hero"><div class="wp-hero-day">'+esc((bo.dayName||'').toUpperCase())+' · TODAY’S BIG ONE</div>'
-      +'<div class="wp-hero-name">'+esc(bo.name)+'</div>'
-      +'<div class="wp-hero-desc">'+esc(bo.description||'')+'</div>'
-      +'<div class="wp-hero-row"><span class="wp-hero-price">'+wPriceInner(bo.basePrice,bo.wasPrice)+'</span>'
-      +'<button class="btn primary" data-wadd="'+esc(bo.id)+'">Add to order</button></div></div>';
-  }else if(WMENU.weekend){
-    hero='<div class="wp-hero off"><div class="wp-hero-day">TODAY’S BIG ONE</div>'
-      +'<div class="wp-hero-name">Back Monday</div>'
-      +'<div class="wp-hero-desc">'+esc(WMENU.weekend.message||'')+' Monday’s feature: '
-      +esc(WMENU.weekend.next.name)+' — '+wZar(WMENU.weekend.next.basePrice)+'.</div></div>';
-  }
-  /* THE WEEK, READABLE (Nick: "just to see what was available"). Tapping a day
-     opens its Big One to READ — what is in it, its price, the real price it is
-     cut from — and says plainly which day it can be had. Deliberately no add
-     button on an off day: the Worker refuses an off-day Big One by name, and a
-     button that always errors is worse than no button at all. */
-  var week='';
-  if(WMENU.week&&WMENU.week.length){
-    week='<div class="wp-week">'+WMENU.week.map(function(w){
-      return '<div class="wp-day'+(w.today?' today':'')+(WDAY===w.day?' open':'')
-        +'" data-wday="'+w.day+'" role="button" tabindex="0"'
-        +' aria-label="'+esc(w.dayName+': '+w.name+', '+wZar(w.basePrice))+'">'
-        +'<span class="d">'+esc(w.dayName.slice(0,3))+'</span>'
-        +'<span class="n">'+esc(w.name)+'</span>'
-        +'<span class="p">'+wZar(w.basePrice)
-        +(w.wasPrice>w.basePrice?' <s>'+wZar(w.wasPrice)+'</s>':'')+'</span></div>';
-    }).join('')+'</div>';
-    var wv=WMENU.week.filter(function(w){return w.day===WDAY;})[0];
-    if(wv&&!wv.today){
-      week+='<div class="wp-peek"><div class="d">'+esc(wv.dayName.toUpperCase())+'’S BIG ONE</div>'
-        +'<div class="n">'+esc(wv.name)+'</div>'
-        +'<div class="desc">'+esc(wv.description||'')+'</div>'
-        +'<div class="row"><span class="p">'+wPriceInner(wv.basePrice,wv.wasPrice)+'</span>'
-        +'<span class="when">Available '+esc(wv.dayName)
-        +(WMENU.bigOne?' — today’s is the '+esc(WMENU.bigOne.name)+'.':' — the Big One returns Monday.')
-        +'</span></div></div>';
-    }
-  }
-  var header='<div class="wp-title"><h2>'+esc(WMENU.title||'Weekday Value Menu')+'</h2>'
-    +'<span class="sub">3 breakfasts · 3 burgers · 3 toasteds · today’s Big One — made fresh</span></div>';
-
-  var cats='<div class="wp-cats">'+(WMENU.categories||[]).map(function(c){
-    return '<button class="wp-cat'+(c.id===WCAT?' on':'')+'" data-wcat="'+esc(c.id)+'">'+esc(c.label)+' <span class="ct">3</span></button>';
-  }).join('')+'</div>';
-
-  var grid='<div class="wp-grid">'+(WMENU.items||[]).filter(function(i){return i.category===WCAT;}).map(function(i){
-    /* An item with no price is shown and NOT orderable — the brief is explicit
-       that an unverified price must not be invented, and hiding the item would
-       be its own kind of lie. */
-    var priced=i.basePrice!=null;
-    return '<div class="wp-card"><h4>'+esc(i.name)+'</h4>'
-      +'<div class="d">'+esc(i.description||'')+'</div>'
-      +(priced?'<div class="p">'+wPriceInner(i.basePrice,i.wasPrice)+'</div>'
-              :'<div class="p na">Price not set yet</div>')
-      +(priced?'<button class="btn primary" data-wadd="'+esc(i.id)+'">Add to order</button>'
-              :'<button class="btn" disabled title="This item has no price configured">Unavailable</button>')
-      +'</div>';
-  }).join('')+'</div>';
-
-  return who+header+hero+week+'<div class="wp-wrap"><div>'+cats+grid+'<div class="wp-pad"></div></div>'+wCartHTML()+'</div>';
-}
-
-function wCartHTML(){
-  var lines=WCART.map(function(l,ix){
-    var d=wItemDef(l.id); if(!d) return '';
-    /* no chips under the line any more — every item is as the kitchen makes it */
-    return '<div class="wp-line"><div class="t"><span class="n">'+l.quantity+' × '+esc(d.name)+'</span>'
-      +'<span class="m">'+wZar(wLineCents(l)/100)+'</span></div>'
-      +'<div class="wp-qty"><button data-wdec="'+ix+'" aria-label="One fewer">−</button>'
-      +'<span class="q">'+l.quantity+'</span>'
-      +'<button data-winc="'+ix+'" aria-label="One more">+</button>'
-      +'<button class="lnk" data-wdel="'+ix+'">Remove</button></div></div>';
-  }).join('');
-
-  var n=WCART.reduce(function(a,l){return a+l.quantity;},0);
-  return '<div class="wp-cart'+(WOPEN?'':' shut')+'" id="wpCart">'
-    +'<button class="wp-pull" id="wpPull">🛒 Current order · '+n+' item'+(n===1?'':'s')
-    +'<span style="margin-left:auto">'+wZar(wTotalCents()/100)+'</span></button>'
-    +'<h3>Current order</h3>'
-    +(WCART.length?lines:'<div class="wp-empty">Nothing added yet. Pick something from the menu and it will appear here with its total.</div>')
-    +(WCART.length?'<div class="wp-tot"><span class="l">Total</span><span class="v">'+wZar(wTotalCents()/100)+'</span></div>'
-      /* the free-text notes box is gone (audit, 2026-09-03): "no onions please" in a
-         notes field is a customisation by another name, and orders are as-is */
-      +'<button class="btn primary" id="wpReview" style="width:100%;margin-top:10px">Submit Wimpy Order</button>':'')
-    +'</div>';
-}
-
-/* ---------- adding an item ----------
-   THE CUSTOMISATION SHEET IS GONE (Nick, 2026-09-02: "remove the part to
-   customize and condements, it must be as is"). One tap adds one of the item
-   exactly as the kitchen makes it; the cart's +/− handles quantity. The Worker
-   refuses any order that still carries a customisation, so an old cached tab
-   cannot sneak one through either. */
-function wAdd(id){
-  var d=wItemDef(id); if(!d||d.basePrice==null) return;
-  var line=null; WCART.forEach(function(l){ if(l.id===id) line=l; });
-  if(line) line.quantity=Math.min(20,line.quantity+1);
-  else WCART.push({ id:id, quantity:1 });
-  WOPEN=true; render();
-}
-
-/* ---------- confirm ---------- */
-function wConfirmPage(){
-  return '<div class="card" style="max-width:640px">'
-    +'<h3>Confirm order</h3>'
-    +(WERR?'<div class="wp-err">'+esc(WERR)+'</div>':'')
-    +'<p class="why">Agent <b>'+esc(D.name||'')+'</b> · CB Number <b>'+esc(D.cb||'')+'</b></p>'
-    +WCART.map(function(l){
-      var d=wItemDef(l.id); if(!d) return '';
-      return '<div class="wp-line"><div class="t"><span class="n">'+l.quantity+' × '+esc(d.name)+'</span>'
-        +'<span class="m">'+wZar(wLineCents(l)/100)+'</span></div></div>';
-    }).join('')
-    +'<div class="wp-tot"><span class="l">Total</span><span class="v">'+wZar(wTotalCents()/100)+'</span></div>'
-    +'<div class="cm-actions" style="margin-top:16px">'
-    +'<button class="btn" id="wpBack"'+(WBUSY?' disabled':'')+'>Back &amp; edit</button>'
-    +'<button class="btn primary" id="wpSend"'+(WBUSY?' disabled':'')+'>'+(WBUSY?'Submitting order…':'Confirm &amp; submit')+'</button>'
-    +'</div></div>';
-}
-
-function wDonePage(){
-  return '<div class="card wp-ok" style="max-width:520px">'
-    +'<div class="big">✅</div><h3>Order submitted</h3>'
-    +'<p class="why">Your Wimpy order has been sent through.</p>'
-    +'<div class="wp-tot" style="justify-content:center;gap:14px;border:none"><span class="l">Order total</span><span class="v">'+wZar((WDONE&&WDONE.total)||0)+'</span></div>'
-    +'<button class="btn primary" id="wpNew" style="margin-top:16px">Create new order</button></div>';
-}
-
-/* ---------- validation, mirrored from the Worker so a mistake is caught here
-     first and explained in the same words ---------- */
-function wValidate(){
-  if(!String(D.name||'').trim()) return 'Your account has no name on it, so an order cannot be placed.';
-  if(!String(D.cb||'').trim()) return 'Your account has no CB number, so an order cannot be placed.';
-  if(!WCART.length) return 'Add at least one item before submitting.';
-  for(var i=0;i<WCART.length;i++){
-    var l=WCART[i], d=wItemDef(l.id);
-    if(!d) return 'One of the items is no longer on the menu — remove it and add it again.';
-    if(d.basePrice==null) return d.name+' has no price set yet, so it cannot be ordered.';
-    if(!(l.quantity>=1)) return d.name+': choose how many.';
-    var miss=(d.choices||[]).filter(function(ch){ return ch.required && !(l.choices||{})[ch.id]; });
-    if(miss.length) return d.name+': choose a '+miss.map(function(m){return m.label.toLowerCase();}).join(' and a ')+'.';
-  }
-  if(!(wTotalCents()>0)) return 'The order total is not valid.';
-  return '';
-}
-
-function wSubmit(){
-  if(WBUSY) return;                       // the click is already in flight
-  var bad=wValidate(); if(bad){ WERR=bad; return render(); }
-  WBUSY=true; WERR=''; render();          // the button disables on the same tick
-  api('/api/portal/wimpy/order',{
-    total_price: wTotalCents()/100,
-    order:{
-      items: WCART.map(function(l){ return { id:l.id, quantity:l.quantity }; }),
-      additional_notes: ''
-    }
-  }).then(function(r){
-    WBUSY=false;
-    if(r.ok&&r.json&&r.json.ok){
-      /* cleared ONLY now — the order survives every failure path above */
-      WDONE={total:r.json.total_price}; WCART=[]; WNOTE=''; WSTATE='done'; WERR='';
-    } else {
-      WERR=(r.json&&r.json.error)||'Unable to submit the order. Please try again.';
-    }
-    render();
-  });
-}
-
-function wireWimpy(){
-  document.querySelectorAll('[data-wday]').forEach(function(b){
-    var go=function(){ var d=+b.getAttribute('data-wday'); WDAY=(WDAY===d?null:d); render(); };
-    b.onclick=go;
-    b.onkeydown=function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } };
-  });
-  document.querySelectorAll('[data-wcat]').forEach(function(b){ b.onclick=function(){ WCAT=b.getAttribute('data-wcat'); render(); }; });
-  document.querySelectorAll('[data-wadd]').forEach(function(b){ b.onclick=function(){ wAdd(b.getAttribute('data-wadd')); }; });
-  document.querySelectorAll('[data-winc]').forEach(function(b){ b.onclick=function(){ var i=+b.getAttribute('data-winc'); WCART[i].quantity=Math.min(20,WCART[i].quantity+1); render(); }; });
-  document.querySelectorAll('[data-wdec]').forEach(function(b){ b.onclick=function(){ var i=+b.getAttribute('data-wdec');
-    if(WCART[i].quantity>1) WCART[i].quantity--; else WCART.splice(i,1); render(); }; });
-  document.querySelectorAll('[data-wdel]').forEach(function(b){ b.onclick=function(){ WCART.splice(+b.getAttribute('data-wdel'),1); render(); }; });
-  var note=$('wpNote'); if(note) note.onchange=function(){ WNOTE=note.value; };
-  var pull=$('wpPull'); if(pull) pull.onclick=function(){ WOPEN=!WOPEN; render(); };
-  var rev=$('wpReview'); if(rev) rev.onclick=function(){
-    var n=$('wpNote'); if(n) WNOTE=n.value;
-    var bad=wValidate(); if(bad){ WERR=bad; return render(); }
-    WERR=''; WSTATE='confirm'; render();
-  };
-  var back=$('wpBack'); if(back) back.onclick=function(){ WSTATE='order'; WERR=''; render(); };
-  var send=$('wpSend'); if(send) send.onclick=wSubmit;
-  var nw=$('wpNew'); if(nw) nw.onclick=function(){ WSTATE='order'; WDONE=null; WERR=''; WOPEN=false; render(); };
-}
 
 /* ===================== THE CAMPAIGN MANAGER VIEW =====================
    The third view: agent → team leader → CAMPAIGN MANAGER. Everything here
@@ -4781,8 +4395,7 @@ function calcNow(){
 }
 function show(a){
   ME=a;
-  if(['month','calc','progress','coaching','wimpy','links'].indexOf(VIEW)<0) VIEW='month';
-  if(VIEW==='wimpy'&&!wimpyOpenNow()) VIEW='month';
+  if(['month','calc','progress','coaching','links'].indexOf(VIEW)<0) VIEW='month';
   var g=greeting();
   var c=calcNowInitial();
   /* On a drilldown the page still belongs to the team leader — greet THEM and
@@ -4792,8 +4405,7 @@ function show(a){
 
   shell(
     esc(g)+', '+esc(who),
-    (VIEW==='wimpy' ? 'Order lunch — the total works itself out.'
-      : VIEW==='coaching' ? (D.__back?'Coaching recorded for '+esc(firstName(a.name))+'.':'Every coaching session recorded for you.')
+    (VIEW==='coaching' ? (D.__back?'Coaching recorded for '+esc(firstName(a.name))+'.':'Every coaching session recorded for you.')
       : VIEW==='calc' ? (D.__back?esc(firstName(a.name))+'&rsquo;s projected commission this month.':'What you can potentially earn, and what can change it.')
       : VIEW==='links' ? 'The systems you use every day — each opens in a new tab.'
       : VIEW==='progress' ? (D.__back?esc(firstName(a.name))+'&rsquo;s figures in full.':'Your last five sessions, what has improved, and what happened after support.')
@@ -4817,7 +4429,6 @@ function show(a){
          where you stand. The hero shows on Today and Commission deliberately:
          "what am I earning" is the reason an agent opens either. */
       : VIEW==='progress' ? progressPage(c)
-      : VIEW==='wimpy' ? wimpyPage()
       : VIEW==='nik' ? nikolaPage(a,c)
       /* A DRILL-DOWN SHOWS EVERYTHING THE NAME WAS LISTED FOR. Clicking a name in
          Team Results opened only the month, which is not why it was clicked. */
@@ -4836,7 +4447,6 @@ function show(a){
   if($('backTop')) $('backTop').onclick=back;
   if(VIEW==="calc"){ wireWhatIf(); wireTool(); }
   if(VIEW==="nik") wireNikola();
-  if(VIEW==="wimpy") wireWimpy();
   if(VIEW==="progress"&&!D.__back){
     if(!MYHELP) myHelpLoad();
     else { wireMyHelp(); if(Date.now()-MYHELP_AT>45000) myHelpLoad(); }

@@ -6815,6 +6815,12 @@ window.setAdj=(code,k,v)=>{
    adds auth may refuse to run framed at all. rel=noopener is not decoration — without it the
    opened page can reach back through window.opener and drive the tab it came from. */
 const HUBS=[
+  /* WIMPY ORDER (2026-09-10) — the suite's lunch app, moved out of Agent Analytics into its
+     own page. Sign-in is the CB number alone (managers: their username) and the session it
+     mints reaches nothing but the menu and the order; everyone orders, management included.
+     The card carries no screenshot on purpose: the menu changes daily. */
+  {name:'Wimpy Order',url:'https://chatterbox-agentos.pages.dev/wimpy/',copy:true,shot:'',
+   desc:'Order the Weekday Value Menu — 3 breakfasts, 3 burgers, 3 toasteds and today’s Big One, served as it comes. Sign in with your CB number (managers: your username), type your CB number, name and surname on the order, and it goes straight to the kitchen. Orders 08:00–17:00, Monday to Friday.'},
   /* THE SUITE'S OWN agent-facing app — removed from the app switcher 2026-08-27 (Nick:
      "agent analytics is an app, where I can give the link to the agents and tls").
      This card is the one place the link lives now. Unlike the Vercel hubs its data

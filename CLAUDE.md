@@ -10,6 +10,7 @@ Agentic OS for The Chatterbox call centre (Durban, ZA). Three parts: a single-fi
 | `site/` | Cloudflare Pages deploy root. `site/index.html` is GENERATED from the file above by `node tools/prepare-site.js` — never edit `site/index.html` directly. |
 | `nba-analyst/` | Skill: NBA Scoring Framework v3.0. Rationale + output templates only — every number lives in the dashboard Dictionary (single source; prose copies were deduplicated away 2026-07). |
 | `chatterbox-kb/` | Skill: RAG knowledge base. `data/modules/01..10_*.yaml` = TCB-KB-V3 corpus (read-only). `context/kb-state.md` = mutable overlay. |
+| `wimpy/` | **Wimpy Order** — the lunch app (2026-09-10), built to `/wimpy/` by prepare-site. Its own sign-in: a CB number, no password (managers: their username), minting a session SCOPED to `/api/wimpy/*` (`app_sessions.scope`, migration-037) so a passwordless sign-in buys lunch and reaches nothing else. Menu and every price live in `worker/src/wimpy.mjs` alone; an item is an id and a quantity (no add-ons, no customising); the order form asks CB number, name and surname and the Worker refuses a CB that is not the signed-in person’s. Orders 08:00–17:00 SAST Mon–Fri. Linked from the VAS Apps page. Guard: `diagnostics/verify-wimpy.mjs`. |
 | `AGENTIC-OS-PLAN.md` | Architecture plan v0.2 — ZERO-LOCAL: everything cloud (Workers AI Hermes, D1/R2/KV, Cron Triggers, Access). Nothing runs on the user's PC. |
 | `uploads/` | Drop zone for raw exports when scoring outside the dashboard (CSV/XLS). |
 | `reports/` | Output of /weekly-report runs. |

@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Wimpy Order — Chatterbox</title>
+<meta name="theme-color" content="#d0021b">
+<!--
+  WIMPY ORDER — the Chatterbox lunch app (2026-09-10; specs/wimpy-vas-apps-plan.md).
+
+  Its own app, its own sign-in: a CB number and nothing else (Nick: "sign in only with cb
+  number no password"). The Worker mints a session SCOPED to /api/wimpy/*, stored here under
+  cbx_wimpy_token — never cbx_token, so a shared browser can never mistake a lunch session for a
+  management one. auth-gate.js is deliberately NOT injected: this page's gate is below, and the
+  Worker's scope check is the lock.
+
+  RULES THIS PAGE KEEPS (the same ones the Agent Analytics tab kept before it moved here):
+    · not one price lives in this file — the menu, the window, today's Big One and every price
+      come from the Worker's payload (verify-wimpy fails if a price appears here);
+    · the total shown is display only; the Worker re-prices every order;
+    · an item is added as it comes — quantity is the ONE thing a person may change (Nick,
+      2026-09-10: "they can have quantity just cant customize");
+    · the order form asks for the CB number, name and surname, pre-filled from the account and
+      typed by the person; the Worker refuses a CB that is not the signed-in person's own;
+    · orders are taken 08:00–17:00 SAST Mon–Fri; outside the window the menu reads, nothing adds,
+      and the Worker refuses regardless of what this page's clock says.
+
+  THEME: Wimpy red and white with the yellow accent. The colour values below are placeholders
+  in the Wimpy family, marked so — swap them for the brand sheet's values in this one block when
+  Nick sends it; nothing else in the file names a colour.
+-->
+<style>
+:root{
+  /* --- brand tokens: PLACEHOLDERS in the Wimpy family until the brand sheet arrives --- */
+  --w-red:#d0021b; --w-red-dark:#a30015; --w-yellow:#ffc72c; --w-cream:#fff7e8;
+  --w-ink:#231f20; --w-body:#3b3536; --w-muted:#7a6f70; --w-line:#f0dcc0; --w-card:#ffffff;
+  --w-ok:#1c7c3e; --w-bad:#b3001b;
+  --radius:16px; --shadow:0 6px 18px rgba(35,31,32,.08);
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--w-cream);color:var(--w-body);
+  font-family:"Nunito","Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;font-size:15px;line-height:1.4;-webkit-text-size-adjust:100%}
+button{font:inherit;cursor:pointer}
+input{font:inherit}
+a{color:var(--w-red)}
+
+/* ---- masthead ---- */
+.mast{background:var(--w-red);color:#fff;padding:14px 18px;display:flex;align-items:center;gap:12px;box-shadow:0 2px 0 var(--w-yellow)}
+.mast .logo{width:44px;height:44px;border-radius:12px;background:#fff;display:grid;place-items:center;font-size:24px;flex:none}
+.mast .brand{font-weight:900;font-size:19px;letter-spacing:.3px;line-height:1.1}
+.mast .brand small{display:block;font-weight:700;font-size:11.5px;opacity:.9;letter-spacing:.6px;text-transform:uppercase}
+.mast .who{margin-left:auto;text-align:right;font-size:12px;line-height:1.25}
+.mast .who b{display:block;font-size:13px}
+.mast .who button{background:transparent;border:1px solid rgba(255,255,255,.6);color:#fff;border-radius:999px;padding:4px 10px;font-size:11.5px;font-weight:800;margin-top:4px}
+
+/* ---- sign-in ---- */
+.login{min-height:100vh;display:grid;place-items:center;padding:24px 16px}
+.box{width:100%;max-width:420px;background:var(--w-card);border-radius:22px;box-shadow:var(--shadow);overflow:hidden}
+.box .top{background:var(--w-red);color:#fff;padding:26px 22px 20px;text-align:center}
+.box .top .logo{width:66px;height:66px;border-radius:18px;background:#fff;display:grid;place-items:center;font-size:36px;margin:0 auto 10px}
+.box .top h1{margin:0;font-size:24px;font-weight:900;letter-spacing:.2px}
+.box .top p{margin:6px 0 0;font-size:13px;opacity:.92;font-weight:700}
+.box form{padding:20px 22px 24px}
+.lab{display:block;font-size:11.5px;font-weight:900;letter-spacing:.7px;text-transform:uppercase;color:var(--w-muted);margin:0 0 6px}
+.inp{width:100%;border:2px solid var(--w-line);border-radius:12px;padding:12px 14px;font-size:17px;font-weight:800;color:var(--w-ink);background:#fff;outline:none}
+.inp:focus{border-color:var(--w-red)}
+.inp.err{border-color:var(--w-bad)}
+.hint{font-size:12px;color:var(--w-muted);margin:6px 0 0}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:2px solid var(--w-line);background:#fff;color:var(--w-ink);border-radius:12px;padding:11px 16px;font-weight:900;font-size:15px}
+.btn.primary{background:var(--w-red);border-color:var(--w-red);color:#fff}
+.btn.primary:disabled{opacity:.55;cursor:default}
+.btn.wide{width:100%}
+.msg{border-radius:12px;padding:10px 12px;font-size:13.5px;font-weight:700;margin:0 0 12px}
+.msg.bad{background:#fdecee;color:var(--w-bad);border:1px solid #f7c6cc}
+.msg.info{background:#fff3cf;color:#6b4d00;border:1px solid #f4dd8a}
+
+/* ---- page ---- */
+.wrap{max-width:1080px;margin:0 auto;padding:14px 14px 120px}
+.window{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--w-line);border-radius:12px;padding:9px 12px;margin:0 0 12px;font-size:13px;font-weight:700}
+.window .dot{width:10px;height:10px;border-radius:50%;background:var(--w-ok);flex:none}
+.window.shut .dot{background:var(--w-muted)}
+.window.shut{color:var(--w-muted)}
+.wp-title{margin:4px 0 10px}
+.wp-title h2{margin:0;font-size:20px;font-weight:900;letter-spacing:.2px;color:var(--w-ink);text-transform:uppercase}
+.wp-title .sub{display:block;font-size:12.5px;color:var(--w-muted);font-weight:700;margin-top:2px}
+.wp-hero{background:linear-gradient(135deg,var(--w-red-dark),var(--w-red));border-radius:var(--radius);padding:18px 20px;color:#fff;box-shadow:var(--shadow);margin-bottom:10px;position:relative;overflow:hidden}
+.wp-hero:after{content:"";position:absolute;right:-30px;top:-30px;width:140px;height:140px;border-radius:50%;background:var(--w-yellow);opacity:.18}
+.wp-hero.off{background:#fff;color:var(--w-body);border:1px dashed var(--w-line);box-shadow:none}
+.wp-hero.off:after{display:none}
+.wp-hero-day{font-size:11px;font-weight:900;letter-spacing:1.4px;opacity:.9}
+.wp-hero-name{font-size:26px;font-weight:900;letter-spacing:.2px;margin:4px 0 4px}
+.wp-hero-desc{font-size:13px;line-height:1.45;opacity:.94;max-width:60ch}
+.wp-hero-row{display:flex;align-items:center;gap:14px;margin-top:12px;flex-wrap:wrap}
+.wp-hero-price{font-size:22px;font-weight:900}
+.wp-hero .btn.primary{background:var(--w-yellow);color:var(--w-ink);border-color:var(--w-yellow)}
+.wp-week{display:flex;gap:6px;overflow-x:auto;margin-bottom:12px;padding-bottom:2px;-webkit-overflow-scrolling:touch}
+.wp-day{flex:1;min-width:104px;background:#fff;border:1px solid var(--w-line);border-radius:10px;padding:8px 9px;display:flex;flex-direction:column;gap:1px;text-align:left}
+.wp-day.today{border-color:var(--w-red);box-shadow:0 0 0 1px var(--w-red) inset}
+.wp-day.open{background:var(--w-cream)}
+.wp-day .d{font-size:10px;font-weight:900;letter-spacing:1px;color:var(--w-muted);text-transform:uppercase}
+.wp-day.today .d{color:var(--w-red)}
+.wp-day .n{font-size:12.5px;font-weight:800;color:var(--w-ink);line-height:1.2}
+.wp-day .p{font-size:11.5px;font-weight:700;color:var(--w-body)}
+.wp-day .p s{color:var(--w-muted);font-weight:600;margin-left:3px}
+.wp-peek{background:#fff;border:1px solid var(--w-line);border-left:5px solid var(--w-yellow);border-radius:10px;padding:12px 14px;margin:-6px 0 12px}
+.wp-peek .d{font-size:10.5px;font-weight:900;letter-spacing:1.2px;color:var(--w-muted)}
+.wp-peek .n{font-size:17px;font-weight:900;color:var(--w-ink);margin:2px 0}
+.wp-peek .desc{font-size:13px;color:var(--w-body)}
+.wp-peek .row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+.wp-peek .when{font-size:12px;font-weight:700;color:var(--w-muted)}
+.wp-cats{display:flex;gap:8px;margin:0 0 10px;overflow-x:auto}
+.wp-cat{border:2px solid var(--w-line);background:#fff;border-radius:999px;padding:7px 14px;font-weight:900;font-size:13.5px;color:var(--w-body);white-space:nowrap}
+.wp-cat.on{border-color:var(--w-red);background:var(--w-red);color:#fff}
+.wp-cat .ct{opacity:.7;font-weight:800;margin-left:2px}
+.wp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.wp-card{background:#fff;border:1px solid var(--w-line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow)}
+.wp-card h4{margin:0;font-size:16px;font-weight:900;color:var(--w-ink)}
+.wp-card .d{font-size:12.5px;color:var(--w-body);flex:1}
+.wp-card .p{font-size:17px;font-weight:900;color:var(--w-ink)}
+.wp-card .p.na{font-size:12.5px;color:var(--w-muted);font-weight:700}
+.was{color:var(--w-muted);font-weight:600;font-size:.8em;margin-left:5px}
+.save{display:inline-block;background:var(--w-yellow);color:var(--w-ink);font-size:10.5px;font-weight:900;border-radius:999px;padding:2px 7px;margin-left:6px;font-style:normal;vertical-align:middle}
+.wp-wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+@media(max-width:900px){.wp-wrap{grid-template-columns:minmax(0,1fr)}}
+
+/* ---- cart ---- */
+.wp-cart{background:#fff;border:1px solid var(--w-line);border-radius:14px;padding:14px;box-shadow:var(--shadow);position:sticky;top:12px}
+.wp-cart h3{margin:0 0 8px;font-size:15px;font-weight:900;color:var(--w-ink);text-transform:uppercase;letter-spacing:.5px}
+.wp-line{padding:8px 0;border-bottom:1px solid var(--w-line)}
+.wp-line .t{display:flex;justify-content:space-between;gap:10px;font-weight:800;color:var(--w-ink)}
+.wp-qty{display:flex;align-items:center;gap:8px;margin-top:6px}
+.wp-qty button{width:32px;height:32px;border-radius:9px;border:2px solid var(--w-line);background:#fff;font-weight:900;font-size:17px;color:var(--w-ink)}
+.wp-qty .q{min-width:22px;text-align:center;font-weight:900}
+.wp-qty .lnk{width:auto;height:auto;border:none;background:none;color:var(--w-red);font-size:12.5px;font-weight:800;margin-left:auto;padding:0}
+.wp-empty{font-size:13px;color:var(--w-muted);padding:6px 0 10px}
+.wp-tot{display:flex;justify-content:space-between;align-items:center;padding:10px 0 2px;font-weight:900;color:var(--w-ink)}
+.wp-tot .v{font-size:19px}
+.wp-pull{display:none}
+@media(max-width:900px){
+  .wp-cart{position:fixed;left:0;right:0;bottom:0;top:auto;border-radius:18px 18px 0 0;max-height:78vh;overflow:auto;z-index:20;box-shadow:0 -8px 24px rgba(35,31,32,.18)}
+  .wp-cart.shut>*:not(.wp-pull){display:none}
+  .wp-pull{display:flex;width:100%;align-items:center;gap:8px;border:none;background:var(--w-red);color:#fff;border-radius:999px;padding:11px 16px;font-weight:900;font-size:14px;margin-bottom:8px}
+}
+
+/* ---- form / confirm / done ---- */
+.card{background:#fff;border:1px solid var(--w-line);border-radius:16px;padding:18px;box-shadow:var(--shadow)}
+.card h3{margin:0 0 6px;font-size:18px;font-weight:900;color:var(--w-ink)}
+.why{font-size:13px;color:var(--w-muted);margin:0 0 12px}
+.frow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:560px){.frow{grid-template-columns:1fr}}
+.f{margin:0 0 12px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.wp-ok{text-align:center}
+.wp-ok .big{font-size:48px;line-height:1}
+.slip{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;background:var(--w-cream);border:1px dashed var(--w-line);border-radius:10px;padding:10px 12px;text-align:left;margin:12px 0 0}
+.foot{margin-top:18px;font-size:11.5px;color:var(--w-muted);text-align:center}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+'use strict';
+var API='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
+var TKEY='cbx_wimpy_token';                     // never cbx_token — a lunch session is not a management one
+var U=null;                                     // {username, full_name, cb, role, scope}
+var WMENU=null, WCART=[], WCAT='breakfast', WDAY=null, WOPEN=false, WSTATE='order', WERR='', WBUSY=false, WDONE=null;
+var WHO={cb:'',first:'',last:'',notes:''};      // the order form, typed by the person
+var MAX_QTY=10;                                 // quantity is the one thing a person may change
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function api(path, body){
+  var o={method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-Cbx-Client':'v5'}};
+  var t=null; try{ t=sessionStorage.getItem(TKEY); }catch(e){}
+  if(t) o.headers.Authorization='Bearer '+t;
+  if(body) o.body=JSON.stringify(body);
+  return fetch(API+path,o).then(function(r){
+    return r.json().then(function(j){ return {ok:r.ok,status:r.status,json:j}; },
+                         function(){ return {ok:false,status:r.status,json:{}}; });
+  },function(){ return {ok:false,status:0,json:{error:'We could not reach the server. Check your connection and try again.'}}; });
+}
+
+/* ---------- money: display only, the Worker re-prices ---------- */
+function wZar(v){ return 'R'+Number(v||0).toFixed(2); }
+function wCents(v){ return Math.round(Number(v||0)*100); }
+function wPriceInner(base, was){
+  if(!(was>base)) return wZar(base);
+  return wZar(base)+' <s class="was">'+wZar(was)+'</s>'+'<em class="save">save '+Math.round((1-base/was)*100)+'%</em>';
+}
+function wItemDef(id){ return ((WMENU&&WMENU.items)||[]).filter(function(i){return i.id===id;})[0]||null; }
+function wLineCents(l){ var d=wItemDef(l.id); if(!d||d.basePrice==null) return 0; return wCents(d.basePrice)*(l.quantity||1); }
+function wTotalCents(){ return WCART.reduce(function(n,l){ return n+wLineCents(l); },0); }
+
+/* ---------- the window: the Worker decides; the page only reads its clock to re-ask on the flip ---------- */
+function wimpyOpenNow(){ return !!(WMENU&&WMENU.window&&WMENU.window.open); }
+var WWIN_LAST=null;
+setInterval(function(){
+  var d=new Date(Date.now()+2*3600000), open=d.getUTCDay()>=1&&d.getUTCDay()<=5&&d.getUTCHours()>=8&&d.getUTCHours()<17;
+  if(WWIN_LAST!==null&&open!==WWIN_LAST&&U) wLoadMenu();
+  WWIN_LAST=open;
+},30000);
+
+/* ---------- sign-in: a CB number, nothing else ---------- */
+function loginScreen(msg, bad){
+  $('root').innerHTML='<div class="login"><div class="box">'
+    +'<div class="top"><div class="logo">🍔</div><h1>Wimpy Order</h1><p>Chatterbox × Wimpy · Weekday Value Menu</p></div>'
+    +'<form id="lf" autocomplete="off">'
+    +(msg?'<div class="msg '+(bad?'bad':'info')+'">'+esc(msg)+'</div>':'')
+    +'<label class="lab" for="cb">CB number</label>'
+    +'<input class="inp" id="cb" name="cb" inputmode="text" autocapitalize="characters" placeholder="e.g. CB123" autofocus>'
+    +'<p class="hint">Managers: type your username here.</p>'
+    +'<button class="btn primary wide" id="go" type="submit" style="margin-top:14px">Let’s eat</button>'
+    +'<p class="foot">Orders 08:00–17:00, Monday to Friday. Your CB number is your sign-in — no password.</p>'
+    +'</form></div></div>';
+  $('lf').onsubmit=function(e){
+    e.preventDefault();
+    var v=String($('cb').value||'').trim(); if(!v){ $('cb').classList.add('err'); return; }
+    $('go').disabled=true; $('go').textContent='Signing in…';
+    api('/api/wimpy/signin',{cb:v}).then(function(r){
+      if(r.ok&&r.json&&r.json.token){
+        try{ sessionStorage.setItem(TKEY,r.json.token); }catch(e){}
+        U=r.json.user; boot();
+      } else loginScreen((r.json&&r.json.error)||'Could not sign in.', true);
+    });
+  };
+}
+function signOut(){
+  api('/api/logout',{}).then(function(){},function(){});
+  try{ sessionStorage.removeItem(TKEY); }catch(e){}
+  U=null; WMENU=null; WCART=[]; WSTATE='order'; WERR='';
+  loginScreen('Signed out. See you tomorrow.');
+}
+
+/* ---------- boot ---------- */
+function boot(){
+  var t=null; try{ t=sessionStorage.getItem(TKEY); }catch(e){}
+  if(!t){ loginScreen(); return; }
+  api('/api/me').then(function(r){
+    if(!r.ok||!r.json||!r.json.user){ try{ sessionStorage.removeItem(TKEY); }catch(e){} loginScreen(r.status===426?'This page is an outdated copy — press Ctrl+Shift+R.':''); return; }
+    U=r.json.user;
+    WHO.cb=String(U.cb||U.username||'').toUpperCase();
+    var parts=String(U.full_name||'').trim().split(/\s+/);
+    WHO.first=WHO.first||parts[0]||''; WHO.last=WHO.last||parts.slice(1).join(' ')||'';
+    wLoadMenu(); render();
+  });
+}
+function wLoadMenu(){
+  api('/api/wimpy/menu').then(function(r){
+    if(r.status===401||r.status===403){ signOut(); return; }
+    WMENU = r.ok ? r.json : {error:(r.json&&r.json.error)||'The menu could not be loaded.'};
+    render();
+  });
+}
+
+/* ---------- render ---------- */
+function shell(inner){
+  var name=(U&&(U.full_name||U.username))||'';
+  $('root').innerHTML='<div class="mast"><div class="logo">🍔</div><div class="brand">Wimpy Order<small>Chatterbox · Weekday Value Menu</small></div>'
+    +'<div class="who"><b>'+esc(name)+'</b>'+esc(String((U&&U.cb)||(U&&U.username)||'').toUpperCase())+'<br><button type="button" id="out">Sign out</button></div></div>'
+    +'<div class="wrap">'+inner+'</div>';
+  var o=$('out'); if(o) o.onclick=signOut;
+}
+function render(){
+  if(!U){ loginScreen(); return; }
+  if(!WMENU){ shell('<div class="card"><p class="why">Loading the menu…</p></div>'); return; }
+  if(WMENU.error){ shell('<div class="card"><p class="why">'+esc(WMENU.error)+'</p><button type="button" class="btn" id="retry">Try again</button></div>'); var rt=$('retry'); if(rt) rt.onclick=wLoadMenu; return; }
+  if(WSTATE==='done'){ shell(wDonePage()); wire(); return; }
+  if(WSTATE==='form'){ shell(wFormPage()); wire(); return; }
+  if(WSTATE==='confirm'){ shell(wConfirmPage()); wire(); return; }
+  shell(wMenuPage()); wire();
+}
+
+function wWindowBar(){
+  var w=WMENU.window||{};
+  if(w.open) return '<div class="window"><span class="dot"></span>Ordering is open · '+esc(w.hours||'')+', '+esc(w.days||'')+'</div>';
+  return '<div class="window shut"><span class="dot"></span>Ordering is closed right now — orders are taken '+esc(w.hours||'')+', '+esc(w.days||'')+'. You can read the menu.</div>';
+}
+
+function wMenuPage(){
+  var open=wimpyOpenNow();
+  var hero='';
+  if(WMENU.bigOne){
+    var bo=WMENU.bigOne;
+    hero='<div class="wp-hero"><div class="wp-hero-day">'+esc((bo.dayName||'').toUpperCase())+' · TODAY’S BIG ONE</div>'
+      +'<div class="wp-hero-name">'+esc(bo.name)+'</div>'
+      +'<div class="wp-hero-desc">'+esc(bo.description||'')+'</div>'
+      +'<div class="wp-hero-row"><span class="wp-hero-price">'+wPriceInner(bo.basePrice,bo.wasPrice)+'</span>'
+      +(open?'<button type="button" class="btn primary" data-wadd="'+esc(bo.id)+'">Add to order</button>':'')+'</div></div>';
+  }else if(WMENU.weekend){
+    hero='<div class="wp-hero off"><div class="wp-hero-day">TODAY’S BIG ONE</div><div class="wp-hero-name">Back Monday</div>'
+      +'<div class="wp-hero-desc">'+esc(WMENU.weekend.message||'')+' Monday’s feature: '+esc(WMENU.weekend.next.name)+' — '+wZar(WMENU.weekend.next.basePrice)+'.</div></div>';
+  }
+  var week='';
+  if(WMENU.week&&WMENU.week.length){
+    week='<div class="wp-week">'+WMENU.week.map(function(w){
+      return '<button type="button" class="wp-day'+(w.today?' today':'')+(WDAY===w.day?' open':'')+'" data-wday="'+w.day+'" role="button"'
+        +' aria-label="'+esc(w.dayName+': '+w.name+', '+wZar(w.basePrice))+'">'
+        +'<span class="d">'+esc(w.dayName.slice(0,3))+'</span><span class="n">'+esc(w.name)+'</span>'
+        +'<span class="p">'+wZar(w.basePrice)+(w.wasPrice>w.basePrice?' <s>'+wZar(w.wasPrice)+'</s>':'')+'</span></button>';
+    }).join('')+'</div>';
+    var wv=WMENU.week.filter(function(w){return w.day===WDAY;})[0];
+    if(wv&&!wv.today){
+      week+='<div class="wp-peek"><div class="d">'+esc(wv.dayName.toUpperCase())+'’S BIG ONE</div><div class="n">'+esc(wv.name)+'</div>'
+        +'<div class="desc">'+esc(wv.description||'')+'</div>'
+        +'<div class="row"><span class="p">'+wPriceInner(wv.basePrice,wv.wasPrice)+'</span>'
+        +'<span class="when">Available '+esc(wv.dayName)+(WMENU.bigOne?' — today’s is the '+esc(WMENU.bigOne.name)+'.':' — the Big One returns Monday.')+'</span></div></div>';
+    }
+  }
+  var header='<div class="wp-title"><h2>'+esc(WMENU.title||'Weekday Value Menu')+'</h2>'
+    +'<span class="sub">3 breakfasts · 3 burgers · 3 toasteds · today’s Big One — made fresh, served as it comes</span></div>';
+  var cats='<div class="wp-cats">'+(WMENU.categories||[]).map(function(c){
+    return '<button type="button" class="wp-cat'+(c.id===WCAT?' on':'')+'" data-wcat="'+esc(c.id)+'">'+esc(c.label)+' <span class="ct">3</span></button>';
+  }).join('')+'</div>';
+  var grid='<div class="wp-grid">'+(WMENU.items||[]).filter(function(i){return i.category===WCAT;}).map(function(i){
+    var priced=i.basePrice!=null;
+    return '<div class="wp-card"><h4>'+esc(i.name)+'</h4><div class="d">'+esc(i.description||'')+'</div>'
+      +(priced?'<div class="p">'+wPriceInner(i.basePrice,i.wasPrice)+'</div>':'<div class="p na">Price not set yet</div>')
+      +(priced&&open?'<button type="button" class="btn primary" data-wadd="'+esc(i.id)+'">Add to order</button>'
+        :priced?'<button type="button" class="btn" disabled>Ordering closed</button>'
+        :'<button type="button" class="btn" disabled title="This item has no price configured">Unavailable</button>')
+      +'</div>';
+  }).join('')+'</div>';
+  return wWindowBar()+header+hero+week+'<div class="wp-wrap"><div>'+cats+grid+'</div>'+(open?wCartHTML():'')+'</div>';
+}
+
+function wCartHTML(){
+  var lines=WCART.map(function(l,ix){
+    var d=wItemDef(l.id); if(!d) return '';
+    return '<div class="wp-line"><div class="t"><span class="n">'+l.quantity+' × '+esc(d.name)+'</span><span class="m">'+wZar(wLineCents(l)/100)+'</span></div>'
+      +'<div class="wp-qty"><button type="button" data-wdec="'+ix+'" aria-label="One fewer">−</button><span class="q">'+l.quantity+'</span>'
+      +'<button type="button" data-winc="'+ix+'" aria-label="One more"'+(l.quantity>=MAX_QTY?' disabled':'')+'>+</button>'
+      +'<button type="button" class="lnk" data-wdel="'+ix+'">Remove</button></div></div>';
+  }).join('');
+  var n=WCART.reduce(function(a,l){return a+l.quantity;},0);
+  return '<div class="wp-cart'+(WOPEN?'':' shut')+'" id="wpCart">'
+    +'<button type="button" class="wp-pull" id="wpPull">🛒 Your order · '+n+' item'+(n===1?'':'s')+'<span style="margin-left:auto">'+wZar(wTotalCents()/100)+'</span></button>'
+    +'<h3>Your order</h3>'
+    +(WCART.length?lines:'<div class="wp-empty">Nothing added yet. Pick something from the menu — it is served as it comes; you can change how many.</div>')
+    +(WCART.length?'<div class="wp-tot"><span class="l">Total</span><span class="v">'+wZar(wTotalCents()/100)+'</span></div>'
+      +'<button type="button" class="btn primary wide" id="wpReview" style="margin-top:10px">Next: your details</button>':'')
+    +'</div>';
+}
+
+function wAdd(id){
+  var d=wItemDef(id); if(!d||d.basePrice==null||!wimpyOpenNow()) return;
+  var line=null; WCART.forEach(function(l){ if(l.id===id) line=l; });
+  if(line) line.quantity=Math.min(MAX_QTY,line.quantity+1); else WCART.push({id:id,quantity:1});
+  WOPEN=true; render();
+}
+
+/* ---------- the order form: CB number, name, surname (Nick, 2026-09-10) ---------- */
+function wFormPage(){
+  return '<div class="card" style="max-width:640px">'
+    +'<h3>Who is this order for?</h3>'
+    +'<p class="why">Type your CB number, name and surname. The CB number must be the one you signed in with — an order can only be placed in your own name.</p>'
+    +(WERR?'<div class="msg bad">'+esc(WERR)+'</div>':'')
+    +'<form id="of" autocomplete="off">'
+    +'<div class="f"><label class="lab" for="fcb">CB number</label><input class="inp" id="fcb" value="'+esc(WHO.cb)+'" autocapitalize="characters"></div>'
+    +'<div class="frow"><div class="f"><label class="lab" for="ffn">Name</label><input class="inp" id="ffn" value="'+esc(WHO.first)+'" autocapitalize="words"></div>'
+    +'<div class="f"><label class="lab" for="fln">Surname</label><input class="inp" id="fln" value="'+esc(WHO.last)+'" autocapitalize="words"></div></div>'
+    +'<div class="f"><label class="lab" for="fnt">Notes for the kitchen (optional)</label><input class="inp" id="fnt" value="'+esc(WHO.notes)+'" placeholder="e.g. collect at reception" maxlength="200"></div>'
+    +'<div class="actions"><button type="button" class="btn" id="wpBack">Back to menu</button><button class="btn primary" type="submit">Review order</button></div>'
+    +'</form></div>';
+}
+
+function wValidate(){
+  if(!WCART.length) return 'Add at least one item before submitting.';
+  if(!String(WHO.cb||'').trim()) return 'Type your CB number.';
+  if(!String(WHO.first||'').trim()) return 'Type your name.';
+  if(!String(WHO.last||'').trim()) return 'Type your surname.';
+  for(var i=0;i<WCART.length;i++){
+    var l=WCART[i], d=wItemDef(l.id);
+    if(!d) return 'One of the items is no longer on the menu — remove it and add it again.';
+    if(d.basePrice==null) return d.name+' has no price set yet, so it cannot be ordered.';
+    if(!(l.quantity>=1&&l.quantity<=MAX_QTY)) return d.name+': choose between 1 and '+MAX_QTY+'.';
+  }
+  if(!(wTotalCents()>0)) return 'The order total is not valid.';
+  return '';
+}
+
+function wConfirmPage(){
+  return '<div class="card" style="max-width:640px"><h3>Confirm your order</h3>'
+    +(WERR?'<div class="msg bad">'+esc(WERR)+'</div>':'')
+    +'<p class="why"><b>'+esc(WHO.first+' '+WHO.last)+'</b> · CB number <b>'+esc(WHO.cb)+'</b>'+(WHO.notes?' · “'+esc(WHO.notes)+'”':'')+'</p>'
+    +WCART.map(function(l){ var d=wItemDef(l.id); if(!d) return '';
+      return '<div class="wp-line"><div class="t"><span class="n">'+l.quantity+' × '+esc(d.name)+'</span><span class="m">'+wZar(wLineCents(l)/100)+'</span></div></div>'; }).join('')
+    +'<div class="wp-tot"><span class="l">Total</span><span class="v">'+wZar(wTotalCents()/100)+'</span></div>'
+    +'<div class="actions"><button type="button" class="btn" id="wpEdit"'+(WBUSY?' disabled':'')+'>Back &amp; edit</button>'
+    +'<button type="button" class="btn primary" id="wpSend"'+(WBUSY?' disabled':'')+'>'+(WBUSY?'Sending…':'Confirm &amp; send to Wimpy')+'</button></div></div>';
+}
+
+function wDonePage(){
+  return '<div class="card wp-ok" style="max-width:560px;margin:0 auto"><div class="big">✅</div><h3>Order sent</h3>'
+    +'<p class="why">Your Wimpy order has gone through to the kitchen.</p>'
+    +'<div class="wp-tot" style="justify-content:center;gap:14px"><span class="l">Order total</span><span class="v">'+wZar((WDONE&&WDONE.total)||0)+'</span></div>'
+    +(WDONE&&WDONE.slip?'<div class="slip">'+esc(WDONE.slip)+'</div>':'')
+    +'<div class="actions" style="justify-content:center"><button type="button" class="btn primary" id="wpNew">Order again</button></div></div>';
+}
+
+function wSubmit(){
+  if(WBUSY) return;
+  var bad=wValidate(); if(bad){ WERR=bad; WSTATE='form'; return render(); }
+  WBUSY=true; WERR=''; render();
+  api('/api/wimpy/order',{
+    who:{cb:WHO.cb, first_name:WHO.first, surname:WHO.last},
+    total_price: wTotalCents()/100,
+    order:{ items: WCART.map(function(l){ return {id:l.id, quantity:l.quantity}; }), additional_notes: WHO.notes||'' }
+  }).then(function(r){
+    WBUSY=false;
+    if(r.ok&&r.json&&r.json.ok){
+      WDONE={total:r.json.total_price, slip:r.json.order_formatted||''}; WCART=[]; WHO.notes=''; WSTATE='done'; WERR='';
+    } else if(r.status===401){ signOut(); return; }
+    else { WERR=(r.json&&r.json.error)||'Unable to send the order. Please try again.'; if(r.status===400&&/CB number|name|surname/i.test(WERR)) WSTATE='form'; }
+    render();
+  });
+}
+
+function wire(){
+  document.querySelectorAll('[data-wday]').forEach(function(b){ b.onclick=function(){ var d=+b.getAttribute('data-wday'); WDAY=(WDAY===d?null:d); render(); }; });
+  document.querySelectorAll('[data-wcat]').forEach(function(b){ b.onclick=function(){ WCAT=b.getAttribute('data-wcat'); render(); }; });
+  document.querySelectorAll('[data-wadd]').forEach(function(b){ b.onclick=function(){ wAdd(b.getAttribute('data-wadd')); }; });
+  document.querySelectorAll('[data-winc]').forEach(function(b){ b.onclick=function(){ var i=+b.getAttribute('data-winc'); WCART[i].quantity=Math.min(MAX_QTY,WCART[i].quantity+1); render(); }; });
+  document.querySelectorAll('[data-wdec]').forEach(function(b){ b.onclick=function(){ var i=+b.getAttribute('data-wdec'); if(WCART[i].quantity>1) WCART[i].quantity--; else WCART.splice(i,1); render(); }; });
+  document.querySelectorAll('[data-wdel]').forEach(function(b){ b.onclick=function(){ WCART.splice(+b.getAttribute('data-wdel'),1); render(); }; });
+  var pull=$('wpPull'); if(pull) pull.onclick=function(){ WOPEN=!WOPEN; render(); };
+  var rev=$('wpReview'); if(rev) rev.onclick=function(){ WERR=''; WSTATE='form'; render(); };
+  var back=$('wpBack'); if(back) back.onclick=function(){ WSTATE='order'; WERR=''; render(); };
+  var of=$('of'); if(of) of.onsubmit=function(e){ e.preventDefault();
+    WHO.cb=String($('fcb').value||'').trim().toUpperCase(); WHO.first=String($('ffn').value||'').trim(); WHO.last=String($('fln').value||'').trim(); WHO.notes=String($('fnt').value||'').trim();
+    var bad=wValidate(); if(bad){ WERR=bad; return render(); }
+    WERR=''; WSTATE='confirm'; render(); };
+  var ed=$('wpEdit'); if(ed) ed.onclick=function(){ WSTATE='form'; WERR=''; render(); };
+  var send=$('wpSend'); if(send) send.onclick=wSubmit;
+  var nw=$('wpNew'); if(nw) nw.onclick=function(){ WSTATE='order'; WDONE=null; WERR=''; WOPEN=false; render(); };
+}
+
+boot();
+</script>
+</body>
+</html>

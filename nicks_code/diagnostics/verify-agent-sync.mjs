@@ -103,7 +103,10 @@ try {
     ok(u && u.role === 'agent' && u.active, 'created as an active agent');
     ok(u && /^pbkdf2h\$100000\$/.test(u.password_hash), 'the password is stored hashed, never in clear');
     ok(u && u.must_change_password === false, 'they can sign in with the handout password as asked');
-    ok(u && u.apps.join() === 'agent' && JSON.stringify(u.tabs) === '{}', 'granted NO management app — the portal only');
+    /* apps: the portal and — since migration-037 — the Wimpy app, which every account is born with
+       (the trigger app_users_grant_wimpy). Never a management app. */
+    ok(u && u.apps.includes('agent') && u.apps.includes('wimpy') && !u.apps.some((a) => ['ops', 'vas', 'tracker'].includes(a))
+      && JSON.stringify(u.tabs) === '{}', 'granted the portal and the Wimpy app, NO management app', u && u.apps.join());
     ok(u && u.team === 'Test Leader One', 'the team leader relationship is set from the list', u && u.team);
     const v = await one(`select * from active_agents where cb = $1`, [CB(31)]);
     ok(v && v.has_account, 'they appear in active_agents WITH an account — the Agent View exists');

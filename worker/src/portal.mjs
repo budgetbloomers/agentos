@@ -35,6 +35,11 @@ export const PORTAL_ALLOWED = new Set([
   '/api/me',
   '/api/logout',
   '/api/password',
+  /* The Wimpy app (2026-09-10). Its own sign-in mints a wimpy-scoped session that index.mjs
+     confines to these two; a FULL agent session (Agent Analytics) may reach them as well. They
+     answer for the caller alone: the menu, and the caller's own order. */
+  '/api/wimpy/menu',
+  '/api/wimpy/order',
   '/api/portal/me',
   '/api/portal/overview',
   '/api/portal/agent',

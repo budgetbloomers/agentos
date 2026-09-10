@@ -5,7 +5,7 @@
  * IRON RULE: the LLM explains numbers, it never computes them.
  */
 import { db } from './db.mjs';
-import { login, logout, session, hashPassword, changePassword } from './auth.mjs';
+import { login, logout, session, hashPassword, changePassword, signinByCb } from './auth.mjs';
 import { retrieveKB } from './kb.mjs';
 import { getCoaching, rollUp, sessionsForAgent, withinWindow } from './coaching.mjs';
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, listDigestMonths, overview, agentDetail, normCb } from './portal.mjs';
@@ -445,6 +445,13 @@ export default {
         // token also in body: cross-origin pages use Bearer (cookie is same-origin only)
         return json({ user: r.user, token: r.token });
       }
+      /* THE WIMPY SIGN-IN (2026-09-10): a CB number, no password, a session scoped to
+         /api/wimpy/* — auth.mjs signinByCb has the rules and the rate limit. */
+      if (path === '/api/wimpy/signin' && req.method === 'POST') {
+        const r = await signinByCb(DB, req, await req.json().catch(() => ({})), ctx);
+        if (!r.ok) return json({ error: r.error }, r.status);
+        return json({ user: r.user, token: r.token });
+      }
 
       // Referrals-pipe health: NO auth and NO data — booleans and counts only, so the
       // route/secrets/HighLevel legs can each be verified when the column reads 0.
@@ -533,6 +540,15 @@ export default {
 
       // Everything below requires a session.
       if (!user) return json({ error: 'Sign in required.' }, 401);
+
+      /* ---------- WIMPY SESSION SCOPE (2026-09-10) ----------
+         A session minted by the CB-only sign-in (scope 'wimpy') buys lunch and reaches
+         NOTHING else — not /api/kv, not the portal, not the roster — whatever the role
+         on the account. Above the role lockdown so it applies to every role alike;
+         /api/me and /api/logout sit above the gate and still answer, which is what the
+         Wimpy page needs to show a name and to sign out. */
+      if (user.scope === 'wimpy' && !path.startsWith('/api/wimpy/'))
+        return json({ error: 'This sign-in is for Wimpy orders only.' }, 403);
 
       /* ---------- AGENT ANALYTICS ROLE LOCKDOWN ----------
          THIS MUST STAY THE FIRST THING AFTER THE SESSION CHECK. Before agents
@@ -747,15 +763,20 @@ export default {
         return json(r.body, r.status);
       }
 
-      /* ---------- WIMPY ORDERING — the agent's own lunch order ----------
+      /* ---------- WIMPY ORDERING — its own app since 2026-09-10 ----------
          The menu is served from the Worker so a price lives in exactly one file,
          and the order is POSTed from here because the page's CSP allows it to
-         reach this Worker and nothing else. */
-      if (path === '/api/portal/wimpy/menu' && req.method === 'GET') return json(wimpyMenu());
-      if (path === '/api/portal/wimpy/order' && req.method === 'POST') {
+         reach this Worker and nothing else. Reachable by a wimpy-scoped session
+         (the app's own sign-in), by a full agent session (on PORTAL_ALLOWED) and
+         by any management session. The old /api/portal/wimpy/* paths answer 410
+         for one release so a cached Agent Analytics tab fails in words. */
+      if (path === '/api/wimpy/menu' && req.method === 'GET') return json(wimpyMenu());
+      if (path === '/api/wimpy/order' && req.method === 'POST') {
         const r = await submitWimpyOrder(env, user, await req.json().catch(() => ({})));
         return json(r.body, r.status);
       }
+      if (path.startsWith('/api/portal/wimpy/'))
+        return json({ error: 'Wimpy ordering has moved to its own app — open Wimpy Order from the VAS Analytics Apps page and sign in with your CB number.' }, 410);
 
       /* ---------- CAMPAIGN ASSISTANCE — team leader → campaign manager ---------- */
       if (path.startsWith('/api/portal/cm/')) {

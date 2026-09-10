@@ -392,12 +392,9 @@ const CODE = PAGE
     /* Campaign target settings (Nick, 2026-09-01) — Dalwin's dials. GET is the
        page, POST is one validated change; both live in the Worker's cm block and
        are refused for every role but campaign_manager and admin. */
-    '/api/portal/cm/settings',
-    /* Wimpy ordering (2026-08-30). The menu is served BY the Worker so a price
-       lives in one file, and the order is POSTed through it because the CSP lets
-       this page reach the Worker and nothing else — a direct call to the n8n
-       webhook would be blocked. Agent name and CB come from the session. */
-    '/api/portal/wimpy/menu', '/api/portal/wimpy/order']);
+    '/api/portal/cm/settings']);
+  /* Wimpy ordering left this page on 2026-09-10 for its own app (/wimpy/); the
+     old portal routes answer 410 and must not be referenced here any more. */
   const extra = eps.filter((e) => !allowed.has(e));
   extra.length
     ? bad('agent/index.html calls an endpoint it should not', extra.join(', '))

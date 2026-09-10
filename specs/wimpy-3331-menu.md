@@ -1,5 +1,13 @@
 # Wimpy Weekday Value Menu — the 3–3–3–1 Operating Model
 
+> **Changed 2026-09-10 (Nick).** Ordering left Agent Analytics for its OWN app at `/wimpy/`, signed in
+> with a CB number and no password (managers: their username); the session it mints reaches the Wimpy
+> routes and nothing else. The order form asks for CB number, name and surname, which travel to the
+> kitchen beside the Agent List’s own name. The add-on door is DELETED — a line is an id and a
+> quantity (1–10); anything else is refused, never stripped. Orders 08:00–17:00 SAST, Monday to
+> Friday (was the 08:00 hour alone). Everyone orders, management included. Plan:
+> `specs/wimpy-vas-apps-plan.md`; guard: `diagnostics/verify-wimpy.mjs` (159 checks).
+
 **Status: LIVE in the Agent Analytics Wimpy tab, 31 Aug 2026.**
 The operational source is `worker/src/wimpy.mjs` — the menu, the prices, the
 ingredient matrix and the day rotation all live there and nowhere else; the
