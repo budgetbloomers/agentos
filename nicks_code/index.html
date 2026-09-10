@@ -1897,7 +1897,7 @@ async function ingestText(name, text, expected, hash){
     if(!ingested.some(r=>want.some(w=>r.type.startsWith(w))))
       toast('Heads up: "'+name+'" is actually '+ingested.map(r=>r.type).join(', ')+' — filed there instead');
   }
-  save(); return true;
+  __curFileHash=null; save(); return true;
 }
 
 /* THE SOURCE REGISTRY - one place that knows what a data store is.
@@ -3226,6 +3226,11 @@ function monthlyHistory(){
    statuses actually resolved, since "?" for every row is the same binary-garbage tell. */
 function pruneDeadFiles(){
   const before=(S.files||[]).length;
+  /* A ROSTER ADOPTED FROM THE PUBLISHED RECORD HAS NO FILE BYTES. One that carries a hash carries
+     somebody else's bytes — the stale __curFileHash of the previous upload (BI Inactive's, on
+     2026-09-10), which registered one hash twice and failed verify-no-duplicates. Stripped here so
+     state saved before the fix heals on the next rebuild. */
+  (S.files||[]).forEach(f=>{ if(f&&f.hash&&/^Agent List — published/.test(String(f.name||''))) delete f.hash; });
   S.files=(S.files||[]).filter(f=>{
     // Entries carrying a content hash were ingested AFTER the xlsx fix by a reader that
     // verified them — they are never phantoms, and a 0-date calls entry can be legitimate
@@ -7910,6 +7915,7 @@ async function adoptRosterFromRecord(given){
         'Call x':a.callx||'','Target':a.target,'Start Date':a.start||''}));
     if(!rows.length)return;                                           // never wipe on a bad payload
     const before=(S.roster||[]).length;
+    __curFileHash=null;                                   // the record has no file bytes: regFile must not stamp the LAST upload's hash on it (it did — BI Inactive's, 2026-09-10)
     const res=INGEST.roster(rows,'Agent List — published '+(j.as_of?'as of '+j.as_of:'by '+(j.source||'the other station')),null);
     if(!res||!(S.roster||[]).length) return;                          // refused, or it emptied the roster
     S.rosterFp=j.fingerprint;                                         // set BEFORE the ingest's delayed publish fires

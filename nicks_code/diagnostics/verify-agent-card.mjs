@@ -55,7 +55,8 @@ try {
       const rows = [...root.querySelectorAll('.pg-row')].map((r) => r.innerText.replace(/\s+/g, ' ').trim());
       const whys = [...root.querySelectorAll('.why')].map((r) => r.innerText.replace(/\s+/g, ' ').trim());
       const sessCard = [...root.querySelectorAll('h2')].find((h) => /Sales by session/.test(h.textContent)); const sessRows = sessCard ? sessCard.closest('.card').querySelectorAll('tbody tr').length : -1;
-      return { score, rows, whys, sessRows, hasScore: !!root.querySelector('.pg-score') };
+      const pageDays = (window.ME && Array.isArray(window.ME.days)) ? window.ME.days.length : null;   // the payload THIS page rendered
+      return { score, rows, whys, sessRows, pageDays, hasScore: !!root.querySelector('.pg-score') };
     }, a.code);
     const c = me.composite;
     ok(a.code + ': the card renders a score', view.hasScore, view.score);
@@ -74,7 +75,11 @@ try {
       ok(a.code + ': check 2 verdict = Worker', /— pass$/.test(c2) === (chk.volume.pass === true), c2.slice(0, 100));
       /* NOT compared: the rating row is the last five worked sessions, the checks are the whole month — two windows, both true; the page labels them. */
     }
-    ok(a.code + ': one sessions row per day row', view.sessRows === (me.days || []).length, view.sessRows + ' vs ' + (me.days || []).length);
+    /* Against the payload the PAGE received, not this script's own fetch: the Worker caches the digest
+       60 s per isolate, so a tick that lands between the two fetches gave 7 vs 8 across 45 agents
+       (2026-09-10, a daytime run) — two true digests, one comparison. */
+    const dayRows = view.pageDays != null ? view.pageDays : (me.days || []).length;
+    ok(a.code + ': one sessions row per day row', view.sessRows === dayRows, view.sessRows + ' vs ' + dayRows);
   }
   ok('no page errors across ' + rated.length + ' cards', errs.length === 0, [...new Set(errs)].slice(0, 3).join(' | '));
 } finally { await b.close(); await fetch(REST + 'app_sessions?token_hash=eq.' + th, { method: 'DELETE', headers: H }); }
