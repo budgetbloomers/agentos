@@ -128,10 +128,18 @@ async function processFile(f, msg) {
     log(`  loaded ${merged} rows into ${contract.stage.replace('rake_stage_', '')} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
     return { ok: true, rows: merged };
   } catch (e) {
+    /* AN UPLOAD WITH NO OBJECT IN STORAGE WAS ABANDONED, NOT FAILED (2026-09-10): /start records the row,
+       the browser PUT never finishes (tab closed, connection dropped), /complete never comes — and the
+       row sat at 'received' being retried against a 400 for ever, counted as stuck every ten minutes.
+       An hour after receipt with nothing in storage it is recorded as abandoned: final, on the file,
+       never a dead letter, never a failure a person must act on (rake_health leaves it out). */
+    if (stage === 'validate' && /storage GET (400|404)/.test(e.message || '') && Date.parse(f.received_at) < Date.now() - 3600000) {
+      e = Object.assign(new Error('abandoned: the browser upload never completed — no object in storage (' + e.message + ')'), { final: true, abandoned: true });
+    }
     const finalFail = e.final || f.attempts + 1 >= MAX_ATTEMPTS;
     log(`  FAILED at ${stage}: ${e.message}${finalFail ? ' — giving up' : ' — will retry'}`);
     await setFile(f.id, { error: (stage + ': ' + e.message).slice(0, 900), status: finalFail ? 'failed' : 'received', loaded_at: finalFail ? new Date().toISOString() : null }).catch(() => {});
-    const isDupe = /^duplicate of /.test(e.message || '');   // recorded on the file; a dead letter for it only raised the banner (2026-09-10)
+    const isDupe = /^duplicate of /.test(e.message || '') || !!e.abandoned;   // recorded on the file; a dead letter for it only raised the banner (2026-09-10)
     if (finalFail && msg && !isDupe) await sql(`select pgmq.send('ingest_dlq', $1::jsonb)`, [JSON.stringify({ file_id: f.id, error: e.message.slice(0, 300), at: new Date().toISOString() })]).catch(() => {});
     return { ok: false, final: finalFail, error: e.message };
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
