@@ -859,6 +859,7 @@ textarea.cc{font-weight:500;line-height:1.5;resize:vertical}
 .jarr{color:#60A5FA;font-size:22px;font-weight:900}
 .jbtn{border-color:#BFD3FF;color:var(--blue)}
 .jlink{border:none;background:none;color:var(--blue);font-weight:800;cursor:pointer;font-size:12px;padding:0 4px}
+.jrow{text-align:right;padding:2px 6px 0}
 @media(max-width:860px){.jgrid{grid-template-columns:1fr}.jtitle{font-size:30px}.jquote,.jsmall{display:none}}
 </style>
 </head>
@@ -1593,6 +1594,8 @@ function nbaNorm(a){
 }
 function nbaAgents(){ var n=D.nba; var rows=(n&&!n.error&&n.agents)?n.agents:[];
   return rows.map(nbaNorm); }
+/* the score a team leader reads beside a ladder row: the VAS composite when published, else the ladder's own */
+function teamScoreOf(a){ var v=journeyFor(a.cb); return (v&&v.composite&&v.composite.rated!==false&&v.composite.adj!=null)?v.composite.adj:a.composite.adj; }
 function nbaBy(cb){ var a=nbaAgents(); for(var i=0;i<a.length;i++) if(a[i].cb===cb) return a[i]; return null; }
 function nbaMissingCard(){
   var n=D.nba;
@@ -1684,8 +1687,14 @@ function pageMyTeam(){
       +'<span class="pill '+L.p+'">'+esc(a.nba.code)+' · '+esc(a.nba.label)+'</span>'
       +'<span class="lead-r">'+esc(L.n)+'</span></div>'
       +'<div class="lead-b"><b>Impact:</b> '+esc(a.nba.reason||'—')+'</div>'
-      +'<div class="lead-b"><b>Agent rating:</b> '+num(a.composite.adj)+' out of 100'
-      +(a.driver?' — most points available in '+esc(a.driver.label):'')+'</div>'
+      /* ONE SCORE, ONE NAME (2026-09-11): the rating printed here is the VAS composite the rating
+         card, Month to date and the Score Journey all show — the ladder's own Ops composite was
+         reading 71 beside a breakdown that adds to 56,7. The NBA rule, its reason and its action
+         stay the ladder's. Falls back to the ladder's figure only when VAS has not rated the agent. */
+      +'<div class="lead-b"><b>Agent rating:</b> '+num(teamScoreOf(a))+' out of 100'
+      +(a.driver?' — most points available in '+esc(a.driver.label):'')
+      /* the Score Journey for this agent (Nick, 2026-09-11: "add the button for the score to my team") */
+      +(journeyFor(a.cb)?' <button class="jlink" data-journey="'+esc(a.cb)+'">★ How the score is made up</button>':'')+'</div>'
       +'<div class="lead-b"><b>Do this:</b> '+esc(a.nba.action||'—')+'</div>'
       +'<div class="lead-b"><b>By:</b> '+esc(byDeadline(a.nba.hrs))+'</div>'
       +'<button class="btn primary" data-cb="'+esc(a.cb)+'">Open '+esc(firstName(a.name))+'</button>'
@@ -1700,9 +1709,10 @@ function pageMyTeam(){
     var l=lvlOf(a.nba.lvl);
     return '<div class="needwrap"><button class="needrow" data-expand="'+esc(a.cb)+'">'
       +'<span class="nm">'+esc(a.name)+'</span>'
-      +'<span class="score" style="border-color:'+l.c+';color:'+l.c+'">'+num(a.composite.adj)+'</span>'
+      +'<span class="score" style="border-color:'+l.c+';color:'+l.c+'">'+num(teamScoreOf(a))+'</span>'
       +'<span class="rsn">'+esc(a.nba.code)+' · '+esc(a.nba.label)+'</span>'
       +'<span class="rgt">'+esc(l.n)+'</span></button>'
+      +(journeyFor(a.cb)?'<div class="jrow"><button class="jlink" data-journey="'+esc(a.cb)+'">★ How the score is made up</button></div>':'')
       +actPills(a)+'</div>';
   }).join('');
 
