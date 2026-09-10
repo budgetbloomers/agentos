@@ -1,10 +1,17 @@
-# Wimpy ordering moves to VAS Analytics → Apps — implementation plan
+# Wimpy ordering becomes its own app — implementation plan (v2)
 
-**Asked (Nick, 2026-09-10):** "remove the wimpy tab from the agent view and put it directly into apps in
-the vas analytics, and there must be no option to add-ons and edit the items, and if one person orders
-send the data to the webhook, create a full implementation plan."
+**Asked (Nick, 2026-09-10, two messages):**
+1. "remove the wimpy tab from the agent view and put it directly into apps in the vas analytics, and there
+   must be no option to add-ons and edit the items, and if one person orders send the data to the webhook,
+   create a full implementation plan."
+2. "to login to the app the users needs to put their cb number and when they order they need to put their
+   cb number, name, surname, also add to the plan when the agent list is uploaded it must update the logins
+   for this app, create this to my wimpy themed as well."
 
 Status: PLAN — nothing below is built. Every step names the file it touches and the guard that proves it.
+v1 (same day, earlier) put the ordering inline on the VAS Apps page; message 2 makes it a **standalone,
+Wimpy-themed app with its own CB-number sign-in**, reached from the VAS Apps page. v1's decisions are
+replaced where they conflict.
 
 ---
 
@@ -12,81 +19,74 @@ Status: PLAN — nothing below is built. Every step names the file it touches an
 
 | Piece | Where | Behaviour |
 |---|---|---|
-| Menu, prices, Big One rotation, window, pricing, webhook POST | `worker/src/wimpy.mjs` (458 lines) | The only place a price lives. `wimpyMenu(now)`, `priceOrder(body, now)`, `submitWimpyOrder(env, user, body)`. Orders are already **as-is**: any `customisations` on a line is refused, never stripped. Add-ons still exist as a *door* — `ADDONS` at 0.00 "until a price is set", drawn from the 13 core lines. |
-| Routes | `worker/src/index.mjs` ~754 | `GET /api/portal/wimpy/menu`, `POST /api/portal/wimpy/order`. Sit after the session gate; reachable by any signed-in session (agent, team leader, management). |
-| Page | `agent/index.html` ~3155–3720 | Tab "Wimpy Order" on the agent nav, shown only 08:00–09:00 SAST Mon–Fri (`wimpyOpenNow`, 30 s flip poll). `wimpyPage`, `wCartHTML`, `wAdd`, `wConfirmPage`, `wDonePage`, `wValidate`, `wSubmit`, `wireWimpy`, 87 `.wp-*` CSS rules, `ICON.wimpy`. |
-| Identity on an order | `submitWimpyOrder` | `agent_name` = `user.full_name`, `cb_number` = `user.cb` — **both mandatory** (403 without). |
-| Webhook | `WIMPY_WEBHOOK_URL` secret, else the n8n URL in the module | One POST per order, 15 s timeout, failure keeps the cart and offers Retry. Live-tested 2 Sep. |
-| Guard | `nicks_code/diagnostics/verify-wimpy.mjs` (131 checks) | Module half (menu shape, rotation, overlap invariant, pricing, refusals) + page half that serves **agent/index.html** on :8298 and drives the tab. Section L fails if the operating-model tab returns. |
-| VAS Apps page | `nicks_code/index.html` `PAGES.hubs` (~6830), nav id `hubs` under "Apps" | A grid of cards (`HUBS[]`): KPI Hub, Coaching Hub, Agent Analytics link — each opens an external URL. No in-page app lives there yet. |
+| Menu, prices, Big One rotation, window, pricing, webhook POST | `worker/src/wimpy.mjs` (458 lines) | The only place a price lives. `wimpyMenu(now)`, `priceOrder(body, now)`, `submitWimpyOrder(env, user, body)`. Orders are already **as-is**: any `customisations` on a line is refused, never stripped. Add-ons still exist as a *door* — `ADDONS` at 0.00 "until a price is set". |
+| Routes | `worker/src/index.mjs` ~754 | `GET /api/portal/wimpy/menu`, `POST /api/portal/wimpy/order`, after the session gate; on the agent allow-list (`PORTAL_ALLOWED`, `worker/src/portal.mjs`). |
+| Page | `agent/index.html` ~3155–3720 | Tab "Wimpy Order" on the agent nav, shown 08:00–09:00 SAST Mon–Fri only (`wimpyOpenNow`, 30 s flip poll). ~15 `w*` functions, 87 `.wp-*` CSS rules, `ICON.wimpy`. |
+| Identity on an order | `submitWimpyOrder` | `agent_name` = `user.full_name`, `cb_number` = `user.cb`, both taken from the session, both mandatory. Nothing is typed. |
+| Webhook | `WIMPY_WEBHOOK_URL` secret, else the n8n URL in the module | One POST per order, 15 s timeout; failure keeps the cart and offers Retry. Live-tested 2 Sep. |
+| Guard | `nicks_code/diagnostics/verify-wimpy.mjs` (131 checks) | Module half + a page half that serves `agent/index.html` on :8298. Section L fails if the operating-model tab returns. |
+| Per-app shells | `tools/prepare-site.js` line 217 | Builds `site/pulse`, `site/tracker`, `site/agent`, `site/agent-preview` from source dirs; injects `auth-gate.js` + the stale-guard; checks all shells carry one build id. |
+| Sign-in | `site/auth-gate.js` (all apps), `worker/src/auth.mjs` | Username + password (PBKDF2, sessions, lockout). An agent's username IS their CB number, password `agentos123` by default, `apps:['agent']`. `auth-gate` refuses an app not in `u.apps`. |
+| Accounts follow the list | `supabase/migration-014` `sync_agent_list()`, `migration-018` `sync_team_leaders()`, `migration-020` `publish_agent_list()` | Every Agent List publish + the ten-minute cron reconcile logins in ONE transaction: on the list ⇒ an active account; off it ⇒ no account. New agents get `apps:['agent']`. |
+| VAS Apps page | `nicks_code/index.html` `PAGES.hubs` (~6830), nav id `hubs` | Cards in `HUBS[]` — KPI Hub, Coaching Hub, Agent Analytics — each "Open" + "Copy link". |
 
-**Who can reach VAS Analytics today** (`app_users`, active):
-
-| Role | Accounts | Apps | Has CB |
-|---|---|---|---|
-| agent | 126 | agent only | yes |
-| team_leader | 9 | agent only | yes |
-| campaign_manager | 3 | ops, vas (+tracker) | 2 of 3 |
-| exec | 8 | ops, vas, tracker | no |
-| viewer | 10 | vas (+ops, tracker) | no |
-| admin | 2 | ops, vas (+tracker) | no |
-| qa | 1 | ops | no |
-
-So: **after the move, no agent or team leader can order** (they cannot open VAS), and **most of the people who can open VAS have no CB number**, which today's `submitWimpyOrder` refuses. Both are decided in §2.
+**Who has what today** (`app_users`, active): 126 agents and 9 team leaders hold `agent` only and all carry a CB; 24 management/viewer/exec/admin accounts hold `ops`/`vas`/`tracker` and 22 of them have **no CB**.
 
 ---
 
-## 2 · Decisions this plan takes (say if any is wrong)
+## 2 · The shape (decisions — say if any is wrong)
 
-1. **Who orders.** Whoever is signed in to VAS Analytics — management, campaign managers, execs, viewers. Agents lose the tab, as asked. If agents must still order lunch, that is a different door (say so and §7 has the shape).
-2. **Identity on the order.** `agent_name` ← `full_name`, falling back to `username`. `cb_number` ← `cb` when the account has one, else the `username` (so the kitchen sheet always has a stable handle). The field names stay exactly as they are so the n8n workflow needs no change. A missing *name* still refuses (a nameless order cannot be plated).
-3. **No add-ons, no editing.** The add-on door is **deleted** from the module (no `ADDONS`, no `added[]` on a line, no `customisations` object at all). The page has no "customise" affordance of any kind. `priceOrder` refuses a request that carries `customisations` or `added` — it does today for customisations; add-ons join that rule. **Quantity +/− stays** (three of the same burger is not an edit of the item); flag if you want one-of-each only.
-4. **One order → one webhook POST**, exactly as today; nothing is batched, nothing is queued. The Worker does the POST (browser CSP cannot reach n8n). Payload shape unchanged.
-5. **Office hours stay** (08:00–09:00 SAST, Mon–Fri) unless you say otherwise. In VAS the card is *always visible* on the Apps page but says "orders open at 08:00" outside the window; the Worker still refuses out of window.
-6. **Menu and prices stay where they are** (`worker/src/wimpy.mjs`) — verify-wimpy's "no price in the page" rule is extended to `nicks_code/index.html`.
-7. **Where in VAS.** The Apps page (`hubs`) gets the ordering card **inline** — a card at the top of the grid that expands into the menu + cart (no new nav entry, no new tab id, so no permission grants are needed: everyone who can see Apps can order). If you would rather a dedicated "Wimpy" nav item, §7 lists the extra steps (page id + `tools/audit-permissions.mjs` + grants).
+1. **A fourth app: `/wimpy/`** — source `wimpy/index.html`, built by `prepare-site` like `/agent/`, its own shell, its own theme, `auth-gate` app id `wimpy`. Listed on the VAS Apps page as a card (Open + Copy link), exactly like Agent Analytics. The agent view loses its Wimpy tab.
+2. **Sign-in = CB number.** The username field on the Wimpy sign-in reads "CB number"; it is the same account the agent already has (username = CB, password `agentos123` until changed), so one credential works in Agent Analytics and Wimpy. **Recommended: CB number + password.** Alternative if you want CB-only: a one-field sign-in that mints a session for that CB with no password — cheaper to type, but anyone who knows a CB can order lunch in that person's name; the typed name/surname (§2.3) does not stop that. Pick before Phase 1.
+3. **The order form asks for CB number, name, surname** — three required fields, pre-filled from the account, editable. Rules: the CB typed **must be the signed-in CB** (an order for somebody else is refused with "sign in as that person"); name and surname are free text (2–40 letters each, no digits) and travel as typed; the Agent List's name for that CB travels beside them (`list_name`) so the kitchen sheet can reconcile a nickname. Nothing on the form edits an item.
+4. **No add-ons, no editing.** The add-on door is deleted from the module (no `ADDONS`, no `added[]`, no `customisations`). `priceOrder` refuses a line carrying any of them, as it refuses customisations today. Quantity +/− stays (three of one burger is not an edit) — say if you want one-of-each.
+5. **One order → one webhook POST**, unchanged mechanics (Worker does the POST; 15 s timeout; failure keeps the cart). Payload adds `first_name`, `surname`, `list_name`; `agent_name` stays as "Name Surname" as typed, `cb_number` as typed (= session CB). Existing n8n workflow keeps working; the new columns are there when the sheet wants them.
+6. **Logins follow the Agent List — including this app.** `sync_agent_list()` grants every agent `apps:['agent','wimpy']` (migration); `sync_team_leaders()` the same for leaders; a one-off backfill adds `wimpy` to every active agent/leader account; leavers already lose their account whole. Management keep their own usernames and get `wimpy` added too, so the Apps card works for them.
+7. **Office hours stay** (08:00–09:00 SAST, Mon–Fri) unless you say otherwise. The app is always reachable; outside the window it shows the hours and today's Big One to read; the Worker still refuses out of window.
+8. **Menu and prices stay in `worker/src/wimpy.mjs`.** The "no price in a page" rule extends to `wimpy/index.html`.
+9. **Wimpy theme.** Red-and-white with the yellow accent, rounded friendly type, the Wimpy wordmark on the sign-in card and header. Colour values come from the brand assets you supply (logo file / brand sheet) — the plan carries **placeholder tokens** (`--wimpy-red`, `--wimpy-yellow`, `--wimpy-cream`, `--wimpy-ink`) and never publishes a guessed hex as official. Light theme only (no dark palette, like Agent Analytics). The masthead reads "Chatterbox × Wimpy — Weekday Value Menu".
 
 ---
 
 ## 3 · Phases
 
-### Phase 0 — Freeze the contract (½ day)
-- `specs/wimpy-3331-menu.md`: add a dated `_changes` note — "add-ons removed 2026-09-xx; ordering moved to VAS Apps". The 3–3–3–1 menu, rotation and overlap invariant are untouched.
-- Write the new checks FIRST in `verify-wimpy.mjs` (RED): (a) module exports no `ADDONS`, menu payload carries no `addOns`; (b) `priceOrder` refuses a line with `added[]`; (c) `submitWimpyOrder` accepts a management session `{full_name, username, cb:null}`; (d) page half drives `site/pulse/index.html` not `agent/index.html`; (e) `agent/index.html` contains no `wimpy` token; (f) none of the 14 prices appears in `nicks_code/index.html`.
+### Phase 0 — Contract and RED tests (½ day)
+- `specs/wimpy-3331-menu.md`: dated `_changes` note (add-ons removed; ordering moved to its own app; form fields).
+- New checks in `verify-wimpy.mjs`, written first: (a) module has no `ADDONS`, menu carries no `addOns`; (b) `priceOrder` refuses `added[]`; (c) `submitWimpyOrder` refuses a typed CB ≠ session CB, refuses a missing/invalid name or surname, accepts the three fields and sends `first_name`/`surname`/`list_name`; (d) page half serves `wimpy/index.html`; (e) `agent/index.html` has no `wimpy` token; (f) no price in `wimpy/index.html`; (g) sign-in card labels the field "CB number".
+- `verify-agent-sync.mjs` (80 checks, rolled back): new checks — a new list row gets `apps` containing `wimpy`; a leaver's account is gone; a leader gets `wimpy`.
 
-### Phase 1 — Worker (½ day) — `worker/src/wimpy.mjs`, `worker/src/index.mjs`
-1. Delete `ADDONS` and every reference (`wimpyMenu` payload, `priceOrder` add-on pricing, `formatOrder` "+ …" lines). Lines become `{id, quantity}` only.
-2. `priceOrder`: refuse any line carrying `added`, `removed` or `customisations` with the existing wording ("comes as it is"). Keep the Big One day-lock and the window.
-3. `submitWimpyOrder`: identity per §2.2. Keep 403 on a nameless account. Keep the window check first.
-4. Routes: move the two routes out of the agent-portal block into the management block and rename to `/api/wimpy/menu` and `/api/wimpy/order`; keep the old `/api/portal/wimpy/*` paths answering **410 Gone** with a message for one release, so a cached agent page fails loudly rather than silently.
-5. `portalOnly(user)` → 403 on the new routes (agents cannot order through the API after the tab is gone).
-6. Deploy Worker; `verify-wimpy` module half GREEN.
+### Phase 1 — Database: logins follow the list into this app (½ day)
+- `supabase/migration-037-wimpy-app-grant.sql`: `sync_agent_list()` and `sync_team_leaders()` create with `apps:['agent','wimpy']`; on every sync, add `wimpy` to any active agent/leader account missing it (idempotent); one-off backfill in the same migration for existing accounts and for management (`ops`/`vas` holders). `agent_list_integrity` gains a row: every active agent holds `wimpy`. Guarded by the Phase 0 checks; applied with `tools/apply-migration.mjs`; `tools/audit-permissions.mjs` learns the app id.
 
-### Phase 2 — PULSE page (1 day) — `nicks_code/index.html`
-1. Port the page functions from `agent/index.html` (`wimpyPage`→`wimpyCard`, `wCartHTML`, `wAdd`, `wConfirmPage`, `wDonePage`, `wValidate`, `wSubmit`, `wireWimpy`, `wZar`, `wCents`, `wPriceInner`, `wItemDef`, `wLineCents`, `wTotalCents`, `wLoadMenu`, `wimpyOpenNow` + the 30 s flip poll) into a `/* ===== WIMPY ORDERING ===== */` block. Drop everything add-on related (`l.added`, the customise sheet remnants).
-2. Move the 87 `.wp-*` rules into PULSE's stylesheet unchanged (they are namespaced; PULSE wears the Agent Analytics light skin, so colours port as-is; dark glass survives behind `data-theme='dark'`).
-3. `PAGES.hubs`: render `wimpyCard()` as the first card. States: **closed** (window shut: hours + weekday text, no menu fetched), **loading**, **menu** (items with was-price + saving badge, cart with quantity +/−, total), **confirm** (read-back, Send / Back), **done** (order_formatted echo, "Order another"). No customise, no add-on, no free-text per line; `additional_notes` (≤1000 chars) stays as today — say if it must go.
-4. Fetch through the existing PULSE Worker helper (`sessionStorage.cbx_token`, `X-Cbx-Client: v5`), never the agent token.
-5. `PAGES._wire_hubs`: wire buttons after render (PULSE's `_wire_*` convention). Cart state lives in a page-local variable, never in the shared `S.ui` blob.
-6. `tools/prepare-site.js` → `site/pulse/index.html`; `verify-wimpy` page half GREEN against the build copy.
+### Phase 2 — Worker (½ day) — `worker/src/wimpy.mjs`, `worker/src/index.mjs`, `worker/src/portal.mjs`
+1. Delete `ADDONS` and every reference; lines are `{id, quantity}`.
+2. `priceOrder`: refuse `added`/`removed`/`customisations` (existing wording). Keep the Big One day-lock and the window.
+3. `submitWimpyOrder(env, user, body)`: read `body.who = {cb, first_name, surname}`; `normCb(who.cb) === normCb(user.cb)` or 403; validate names; `list_name` from `active_agents` for that CB (empty for management); build the payload per §2.5.
+4. Routes → `/api/wimpy/menu`, `/api/wimpy/order`; add both to `PORTAL_ALLOWED` (agents reach them) — they are the only non-portal routes an agent session may call, and they return nothing about anyone else. Old `/api/portal/wimpy/*` → 410 with a message for one release.
+5. `/api/me` already returns `cb`, `full_name` — the form pre-fills from it. Deploy; module half GREEN.
 
-### Phase 3 — Agent view removal (½ day) — `agent/index.html`
-1. Remove the nav concat (`wimpyOpenNow()?[['wimpy',…]]:[]`), the two `VIEW==='wimpy'` guards, the header copy line, the `wimpyPage()` branch, `wireWimpy()` call, all `w*` functions, the flip poll, `ICON.wimpy`, the 87 `.wp-*` rules.
-2. `verify-wimpy` check (e) GREEN; `verify-agent-analytics.mjs` and `verify-agent-card.mjs` still GREEN (nav length changes — check their nav assertions).
+### Phase 3 — The app (1½ days) — `wimpy/index.html`, `tools/prepare-site.js`, `site/_headers`
+1. New single-file app: sign-in card (auth-gate, app id `wimpy`, field label "CB number"), header with wordmark, window state, menu (14 items, was-price + saving badge, week strip readable not orderable), cart with quantity +/−, **order form (CB number, name, surname — pre-filled, required)**, confirm, done. Port the `w*` functions from `agent/index.html`; drop add-on remnants.
+2. Theme per §2.9 as CSS tokens at the top of the file; PII masking not needed (the page shows only the signed-in person).
+3. `prepare-site`: add `['wimpy', 'wimpy', 'Wimpy Order']` to the shell list; shell count 5 → 6 in the consistency check; CSP unchanged (the page talks only to the Worker).
+4. Phone-first layout (agents order from phones); 30 s window flip poll kept.
 
-### Phase 4 — Guards, docs, permissions (½ day)
-- `verify-wimpy.mjs`: page half now serves `nicks_code/index.html` (env `PULSE_HTML` for the build copy) on :8298, mints a **management** session, opens Apps, orders one item at a stubbed webhook (`WIMPY_WEBHOOK_URL` → local http server in the test) and asserts the payload: `cb_number`, `agent_name`, `timestamp`, `total_price`, `order.items[]` with no `customisations`, one POST per order. Keep the ingredient-overlap and rotation checks. Section L (no operating model) stays.
-- `verify-controls.mjs` / `verify-all-tabs.mjs`: add the Apps card to the every-control sweep (open, add, +, −, remove, back, send-disabled-outside-window).
-- No permission grants needed (§2.7). If a nav item is chosen instead: add the page id to `PAGES.vas` in `tools/audit-permissions.mjs`, run it, and grant the tab to every explicit-tabs user.
-- `CLAUDE.md`: one sentence under the Agent Analytics / Wimpy note; `specs/wimpy-3331-menu.md` `_changes`.
-- Memory: update `wimpy-ordering.md` (tab location, no add-on door, identity rule).
+### Phase 4 — VAS Apps card + agent-view removal (½ day)
+- `nicks_code/index.html` `HUBS[]`: add `{name:'Wimpy Order', url:<pages>/wimpy/, desc:'Order the Weekday Value Menu — sign in with your CB number. Orders 08:00–09:00, Mon–Fri.', copy:true}` with a screenshot like the others. No new nav id ⇒ no tab grants.
+- `agent/index.html`: remove the tab, guards, functions, poll, icon, 87 CSS rules. `verify-agent-analytics.mjs` / `verify-agent-card.mjs` nav assertions updated.
 
-### Phase 5 — Deploy and prove (½ day)
-1. `npx wrangler deploy` (worker) → `node tools/prepare-site.js` → `npx wrangler pages deploy site --project-name chatterbox-agentos --branch main`.
+### Phase 5 — Guards and docs (½ day)
+- `verify-wimpy.mjs` page half: serves `wimpy/index.html` (env `WIMPY_HTML` for the build copy), mints an AGENT session, signs in, orders one item at a stubbed webhook (`WIMPY_WEBHOOK_URL` → local server) and asserts one POST with `cb_number`, `first_name`, `surname`, `agent_name`, `list_name`, `total_price`, `order.items[]`, no `customisations`; a typed CB of another agent is refused on the page and by the Worker; nothing in the page says customise/add-on/extra.
+- `verify-all-tabs` / `verify-controls`: the Apps card is in the sweep (Open + Copy link).
+- `verify-cors-headers`: the new page sends no header the Worker preflight does not name.
+- `CLAUDE.md` (app table + one sentence under 13), `specs/wimpy-3331-menu.md`, memory `wimpy-ordering.md`.
+
+### Phase 6 — Deploy and prove (½ day)
+1. Apply migration-037 → `npx wrangler deploy` (worker) → `node tools/prepare-site.js` → `npx wrangler pages deploy site --project-name chatterbox-agentos --branch main`.
 2. Post-deploy smoke (mandatory): `verify-cors-headers --live`, `verify-live-save --live`.
-3. Real order in the window with a marked-TEST note from a management account; confirm the n8n run (`Workflow was started`) and the sheet row carries the username-as-CB when the account has no CB.
-4. Out-of-window check: card says closed, `POST /api/wimpy/order` → 403.
-5. Agent view: sign in as an agent between 08:00 and 09:00 — no Wimpy tab; `GET /api/portal/wimpy/menu` → 410.
+3. Real order inside the window from an agent account with a marked-TEST note → n8n answers `Workflow was started`; the sheet row shows the typed name/surname beside `list_name`.
+4. Agent List publish (or the cron) → a fresh agent account holds `wimpy`; `agent_list_integrity` clean; `tools/audit-permissions.mjs` clean.
+5. Agent view: no Wimpy tab; `GET /api/portal/wimpy/menu` → 410. Out of window: the app says closed; `POST /api/wimpy/order` → 403.
 
 ---
 
@@ -94,46 +94,51 @@ So: **after the move, no agent or team leader can order** (they cannot open VAS)
 
 | File | Change |
 |---|---|
-| `worker/src/wimpy.mjs` | remove `ADDONS` + add-on pricing/formatting; refuse `added`/`customisations`; identity fallback (name → username, cb → username); nothing else |
-| `worker/src/index.mjs` | routes `/api/wimpy/menu`, `/api/wimpy/order` in the management block with `portalOnly` → 403; old `/api/portal/wimpy/*` → 410 for one release |
-| `nicks_code/index.html` | Wimpy block (functions + CSS), `wimpyCard()` first on `PAGES.hubs`, `_wire_hubs`, flip poll |
+| `supabase/migration-037-wimpy-app-grant.sql` | NEW — `wimpy` in the default and reconciled `apps` for agents and leaders; backfill; integrity row |
+| `worker/src/wimpy.mjs` | remove `ADDONS`; refuse `added`/`customisations`; `who{cb,first_name,surname}` validation; `list_name`; payload fields |
+| `worker/src/index.mjs`, `worker/src/portal.mjs` | routes `/api/wimpy/*` on the agent allow-list; old paths 410 |
+| `wimpy/index.html` | NEW — the app (sign-in, menu, cart, order form, theme) |
+| `tools/prepare-site.js` | sixth shell `wimpy/` |
+| `nicks_code/index.html` | `HUBS[]` card "Wimpy Order" |
 | `agent/index.html` | delete the tab, functions, CSS, icon, guards |
-| `nicks_code/diagnostics/verify-wimpy.mjs` | page half → PULSE; new checks (a)–(f); stubbed-webhook payload assertion |
-| `nicks_code/diagnostics/verify-controls.mjs`, `verify-all-tabs.mjs` | Apps card in the sweep |
-| `nicks_code/diagnostics/verify-agent-analytics.mjs`, `verify-agent-card.mjs` | nav assertions without Wimpy |
-| `specs/wimpy-3331-menu.md`, `CLAUDE.md`, memory | dated notes |
+| `tools/audit-permissions.mjs` | knows app id `wimpy` |
+| `nicks_code/diagnostics/verify-wimpy.mjs`, `verify-agent-sync.mjs`, `verify-agent-analytics.mjs`, `verify-agent-card.mjs`, `verify-all-tabs.mjs`, `verify-controls.mjs` | per Phases 0 and 5 |
+| `CLAUDE.md`, `specs/wimpy-3331-menu.md`, memory | dated notes |
 
-No database change. No new secret (`WIMPY_WEBHOOK_URL` already exists as an optional override).
+No new secret (`WIMPY_WEBHOOK_URL` already exists as an optional override). Brand assets (logo, colours) needed from Nick before Phase 3's theme is final; the layout does not wait for them.
 
 ---
 
 ## 5 · Test plan (what GREEN means)
 
-- Module: 14 prices unchanged; `wimpyMenu()` has no `addOns`; `priceOrder({items:[{id, quantity:2}]})` prices; `priceOrder` with `added:[…]` → refused with the as-is wording; wrong-day Big One → refused by name; window closed → 403 before pricing.
-- Identity: `{full_name:'X', cb:'CB1'}` → `cb_number:'CB1'`; `{full_name:'X', username:'dalwin', cb:null}` → `cb_number:'dalwin'`; `{username:'x'}` with no name → 403.
-- Page (PULSE, headless): Apps shows the card; outside the window it shows hours and fetches nothing; inside, add → cart → confirm → send hits the stub exactly once with the shape in §2.4; a 502 from the stub keeps the cart and shows Retry; no element in the card carries "customise", "add-on", "extra".
-- Agent page: no `wimpy` token; nav has four tabs for an agent.
-- Prices: none of the 14 appear in either page.
-- Existing: `verify-wimpy` sections on rotation, overlap and section L all still pass.
+- Module: 14 prices unchanged; no `addOns`; `priceOrder({items:[{id, quantity:2}]})` prices; `added:[…]` → refused; wrong-day Big One → refused by name; window closed → 403 before pricing.
+- Identity: session `{cb:'CB101', full_name:'Ann Smith'}` + typed `{cb:'CB101', first_name:'Ann', surname:'Smith'}` → payload `cb_number:'CB101', first_name:'Ann', surname:'Smith', agent_name:'Ann Smith', list_name:'Ann Smith'`; typed `cb:'CB102'` → 403; surname blank → 400; digits in a name → 400.
+- Accounts: a list with a new CB → account with `apps ⊇ ['agent','wimpy']`; a CB removed → account gone; a leader in `team_leader_cbs` → `wimpy` granted; re-running the sync changes nothing (idempotent).
+- App (headless): sign-in field labelled "CB number"; wrong password refused; outside the window the menu is read-only and no order button exists; inside, add → cart → form → confirm → send hits the stub once with the §2.5 shape; a 502 keeps the cart and shows Retry; no customise/add-on/extra control exists; the page contains none of the 14 prices.
+- Agent page: no `wimpy` token; four tabs for an agent.
+- VAS: the Apps card opens the app URL and copies it.
+- Existing: rotation, overlap invariant and section L still pass.
 
 ---
 
 ## 6 · Risks and what limits them
 
-- **People with no CB.** Handled by the username fallback; the kitchen sheet column reads a username for execs/viewers/admins. If the sheet must be CB-only, those roles cannot order — decide before Phase 1.
-- **Cached agent pages** after Phase 3: a phone with the old tab open gets 410 with a message, never a silent failure.
-- **Two price lists drifting**: unchanged discipline — the client total is display-only and `price_mismatch` travels with the order.
-- **The window in a management app**: a card that is visible all day but only orders for an hour must say so on its face (the "closed" state), or it reads as broken.
-- **verify-all-tabs / verify-controls** drive every VAS page nightly; a card with a live cart must not leave the shared `S.ui` blob dirty (page-local cart state only).
+- **CB-only sign-in (if chosen)** lets anyone order in a colleague's name. The typed CB must still equal the signed-in CB, so the exposure is "knows a CB", not "types a CB". Password sign-in closes it; hence the recommendation.
+- **Two names for one person** (typed vs list): both travel; the sheet decides. Nothing is silently corrected.
+- **Cached agent pages** after Phase 4 get 410 with a message, never a silent failure.
+- **Route exposure for agents**: only the two Wimpy routes join the allow-list; they answer for the caller alone. `verify-agent-sync` and the role-lockdown checks stay the proof that an agent session reaches nothing else.
+- **Brand colours**: placeholders until the assets arrive; the theme is a token block, so swapping values touches one place.
+- **A sixth shell**: `prepare-site`'s consistency check counts shells — update the count or the build refuses.
 
 ---
 
 ## 7 · Open questions for Nick (answers change the work)
 
-1. Should agents and team leaders still be able to order at all? (Today they are the only ones with the tab; after this, nobody in the agent app can.) If yes: the cheapest door is keeping the *route* open for portal sessions and a one-button "Order lunch" link on the agent's Links tab that opens the VAS card in a read-only shell — about a day more.
+1. Sign-in: **CB number + password** (recommended, one credential across the suite) or **CB number only**?
 2. Quantity +/−: keep, or one of each?
-3. Keep the 08:00–09:00 window, or open it wider now that management orders?
-4. Keep `additional_notes` (free text on the order), or drop it as "editing"?
-5. Inline card on Apps (no grants needed) or a dedicated "Wimpy" nav item (grants needed for every explicit-tabs user)?
+3. Keep the 08:00–09:00 window?
+4. Keep the free-text `additional_notes` on the order?
+5. Brand assets: send the Wimpy logo (SVG or PNG) and the colour sheet if you have one; otherwise I match the logo's own colours and mark them "sampled from the logo".
+6. Should management be able to order too (they get the `wimpy` grant either way), or is the Apps card only the doorway for agents?
 
-**Effort:** ~3½ days including the guard rewrite and the live proof. Order of work: Phase 0 → 1 → 2 → 3 → 4 → 5; Phases 2 and 3 can run in parallel once Phase 1's routes are live.
+**Effort:** ~4½ days including the migration, the new app, the guard rewrite and the live proof. Order: Phase 0 → 1 → 2 → 3 → 4 → 5 → 6; Phases 3 and 4 can run in parallel once Phase 2's routes are live.
