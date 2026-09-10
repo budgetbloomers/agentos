@@ -193,7 +193,7 @@ try {
     seen++; await setFile(f.id, { run_id: run }); log(`${f.file_name} (${String(f.id).slice(0, 8)}) attempt ${f.attempts + 1}`);
     const r = await processFile(f, msg);
     if (r.ok) { loaded++; rows += r.rows; if (msg) await sql(`select pgmq.delete('ingest', $1::bigint)`, [msg.msg_id]); }
-    else if (r.final && /^duplicate of /.test(r.error || '')) { dupes++; notes.push(f.file_name + ': ' + r.error.slice(0, 120)); if (msg) await sql(`select pgmq.delete('ingest', $1::bigint)`, [msg.msg_id]); }   // refused, recorded on the file — but not a failed RUN (2026-09-10: it silenced the digests)
+    else if (r.final && /^(duplicate of |abandoned: )/.test(r.error || '')) { dupes++; notes.push(f.file_name + ': ' + r.error.slice(0, 120)); if (msg) await sql(`select pgmq.delete('ingest', $1::bigint)`, [msg.msg_id]); }   // refused, recorded on the file — but not a failed RUN (2026-09-10: it silenced the digests)
     else if (r.final) { failed++; notes.push(f.file_name + ': ' + r.error.slice(0, 120)); if (msg) await sql(`select pgmq.delete('ingest', $1::bigint)`, [msg.msg_id]); }
   }
   if (loaded && !DRY) { log('refreshing agent_day…'); await db.query('refresh materialized view concurrently agent_day'); }
@@ -203,7 +203,7 @@ try {
   if (loaded && !DRY) { const lb = (await db.query(`select lm_open_book_refresh() r`)).rows[0].r; log(`lead book: ${lb.unchanged ? 'unchanged' : 'rebuilt'} — snapshot ${lb.snapshot_date || 'none'}, ${lb.agent_rows ?? 0} agent-held case(s)${lb.file ? ' from ' + lb.file : ''}`); }
   await sql(`update pipeline_runs set finished_at = now(), ok = $2, files_seen = $3, files_loaded = $4, files_failed = $5, rows_loaded = $6, seconds = extract(epoch from now() - started_at), note = $7 where run_id = $1`,
     [run, failed === 0, seen, loaded, failed, rows, notes.join(' | ').slice(0, 900) || null]);
-  log(`done: ${loaded} loaded, ${failed} failed, ${dupes} duplicate(s) refused, ${rows} rows`);
+  log(`done: ${loaded} loaded, ${failed} failed, ${dupes} duplicate/abandoned refused, ${rows} rows`);
   process.exitCode = failed ? 1 : 0;
 } catch (e) {
   await sql(`update pipeline_runs set finished_at = now(), ok = false, note = $2 where run_id = $1`, [run, ('run: ' + e.message).slice(0, 900)]).catch(() => {});
