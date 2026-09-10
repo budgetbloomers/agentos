@@ -859,7 +859,9 @@ textarea.cc{font-weight:500;line-height:1.5;resize:vertical}
 .jarr{color:#60A5FA;font-size:22px;font-weight:900}
 .jbtn{border-color:#BFD3FF;color:var(--blue)}
 .jlink{border:none;background:none;color:var(--blue);font-weight:800;cursor:pointer;font-size:12px;padding:0 4px}
-.jrow{text-align:right;padding:2px 6px 0}
+.jpick{position:absolute;top:14px;right:58px;z-index:3;display:flex;align-items:center;gap:8px;color:#fff;font-size:12px;font-weight:700}
+.jpick select{border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.14);color:#fff;border-radius:8px;padding:6px 10px;font-weight:700;max-width:260px}
+.jpick select option{color:var(--ink)}
 @media(max-width:860px){.jgrid{grid-template-columns:1fr}.jtitle{font-size:30px}.jquote,.jsmall{display:none}}
 </style>
 </head>
@@ -1692,9 +1694,7 @@ function pageMyTeam(){
          reading 71 beside a breakdown that adds to 56,7. The NBA rule, its reason and its action
          stay the ladder's. Falls back to the ladder's figure only when VAS has not rated the agent. */
       +'<div class="lead-b"><b>Agent rating:</b> '+num(teamScoreOf(a))+' out of 100'
-      +(a.driver?' — most points available in '+esc(a.driver.label):'')
-      /* the Score Journey for this agent (Nick, 2026-09-11: "add the button for the score to my team") */
-      +(journeyFor(a.cb)?' <button class="jlink" data-journey="'+esc(a.cb)+'">★ How the score is made up</button>':'')+'</div>'
+      +(a.driver?' — most points available in '+esc(a.driver.label):'')+'</div>'
       +'<div class="lead-b"><b>Do this:</b> '+esc(a.nba.action||'—')+'</div>'
       +'<div class="lead-b"><b>By:</b> '+esc(byDeadline(a.nba.hrs))+'</div>'
       +'<button class="btn primary" data-cb="'+esc(a.cb)+'">Open '+esc(firstName(a.name))+'</button>'
@@ -1712,7 +1712,6 @@ function pageMyTeam(){
       +'<span class="score" style="border-color:'+l.c+';color:'+l.c+'">'+num(teamScoreOf(a))+'</span>'
       +'<span class="rsn">'+esc(a.nba.code)+' · '+esc(a.nba.label)+'</span>'
       +'<span class="rgt">'+esc(l.n)+'</span></button>'
-      +(journeyFor(a.cb)?'<div class="jrow"><button class="jlink" data-journey="'+esc(a.cb)+'">★ How the score is made up</button></div>':'')
       +actPills(a)+'</div>';
   }).join('');
 
@@ -1729,7 +1728,10 @@ function pageMyTeam(){
     +num((D.coaching&&D.coaching.totals&&D.coaching.totals.sessions)||0)+'</b><span class="qsub">last 90 days</span></div>';
 
   return head+cards
-    +'<div class="sec-lab">Who needs help</div>'+hero+rows
+    /* ONE Score Journey button for the whole page (Nick, 2026-09-11: "it must just be one button") —
+       the agent is picked inside the panel; it opens on the person at the top of the ladder. */
+    +'<div class="sec-lab" style="display:flex;align-items:center;gap:12px"><span style="flex:1">Who needs help</span>'
+    +(journeyFor(top.cb)?journeyBtn(top.cb,'How the score is made up'):'')+'</div>'+hero+rows
     +'<div class="sec-lab">Queue</div><div class="card qcard">'+q+'</div>';
 }
 
@@ -5281,9 +5283,17 @@ function openScoreJourney(code){
   var el=$('cbxJourney');
   if(!el){ el=document.createElement('div'); el.id='cbxJourney'; el.className='jmodal'; document.body.appendChild(el);
     el.onclick=function(e){ if(e.target===el) closeScoreJourney(); }; }
-  el.innerHTML='<div class="jpanel"><button class="jx" id="jClose" aria-label="Close">✕</button>'+journeyHTML(a,self)+'</div>';
+  /* A TEAM LEADER PICKS THE AGENT INSIDE THE PANEL — one button on the page, every agent reachable.
+     Only the scoped rows the Worker sent (D.agents) are offered; an agent viewing themselves gets no picker. */
+  var pick='';
+  if(!self&&D&&D.agents&&D.agents.length>1){
+    var opts=D.agents.filter(function(r){return r.covered&&r.composite&&r.composite.rated!==false;}).slice().sort(function(x,y){return String(x.name).localeCompare(String(y.name));});
+    if(opts.length>1) pick='<div class="jpick"><label>Agent</label><select id="jPick">'+opts.map(function(r){return '<option value="'+esc(r.code)+'"'+(r.code===a.code?' selected':'')+'>'+esc(r.name)+' · '+esc(r.code)+'</option>';}).join('')+'</select></div>';
+  }
+  el.innerHTML='<div class="jpanel"><button class="jx" id="jClose" aria-label="Close">✕</button>'+pick+journeyHTML(a,self)+'</div>';
   el.classList.add('open'); document.body.classList.add('dk-locked');
   $('jClose').onclick=closeScoreJourney;
+  var sel=$('jPick'); if(sel) sel.onchange=function(){ openScoreJourney(sel.value); };
   document.addEventListener('keydown',jEsc);
 }
 function jEsc(e){ if(e.key==='Escape') closeScoreJourney(); }
