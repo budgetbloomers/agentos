@@ -631,6 +631,29 @@ const CODE = PAGE
   /a\.wk\|\|\[\]/.test(PAGE.slice(PAGE.indexOf('function pageWeeklyTeam(')))
     ? ok('Weekly reads the engine\'s own per-week rows (a.wk), so it carries every VAS Weekly column')
     : bad('Weekly still re-derives its columns from day rows');
+
+  /* ---- 2026-09-11 (Nick): the Score Journey — "a button ... must show the breakdown of the agent score" ----
+     The poster, drawn live per agent from the published composite. A button on the rating card
+     (agent view and the team leader's drill-down), a ★ in the team leader's Month to date Score
+     column, and a button in the drawer all open it; the panel READS parts/points/adj, never recomputes. */
+  (function(){
+    const jr = PAGE.slice(PAGE.indexOf('function journeyHTML('), PAGE.indexOf('function openScoreJourney('));
+    (PAGE.match(/data-journey=/g) || []).length >= 3
+      ? ok('the Score Journey opens from the rating card, the Month to date Score column and the drawer')
+      : bad('a Score Journey button is missing');
+    /journeyBtn\(ME\.code/.test(PAGE.slice(PAGE.indexOf('function pgComposite('), PAGE.indexOf('function pgRating(')))
+      ? ok('the rating card carries the button (agent view + team leader drill-down)')
+      : bad('the rating card has no Score Journey button');
+    /num\(c\.adj,1\)/.test(jr) && /p\.points/.test(jr) && /p\.available/.test(jr) && !/\/\s*\(1\s*-\s*F\)|\* *def\.w/.test(jr)
+      ? ok('the panel prints the published points and adj — it never rescored a driver')
+      : bad('the Score Journey computes points of its own');
+    /Nothing is taken away/.test(jr) && /COLLECT POINTS FROM 7 IMPORTANT THINGS/.test(jr) && /PASS THE HALFWAY LINE/.test(jr)
+      ? ok('the four poster steps are on the panel')
+      : bad('a poster step is missing from the Score Journey');
+    ['gwpSale', 'targetAch', 'qa', 'gwpTotal', 'conv', 'talk', 'attendance'].every((k) => new RegExp(k + ':\\s*\\{t:').test(PAGE))
+      ? ok('all seven drivers have a plain-English card')
+      : bad('a driver has no card on the Score Journey');
+  })();
 }
 
 /* THE NBA LAYER HAS NO SOURCE (Nick, 2026-08-25: "leave ops analytics, vas

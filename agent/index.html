@@ -777,6 +777,89 @@ textarea.cc{font-weight:500;line-height:1.5;resize:vertical}
 .cm-filter select{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12.5px;background:#fff;color:var(--ink)}
 
 
+
+/* ============ THE SCORE JOURNEY (2026-09-11) — the poster, drawn live per agent ============ */
+.jmodal{position:fixed;inset:0;background:rgba(10,23,48,.6);z-index:2147483005;display:none;overflow:auto;padding:24px 12px}
+.jmodal.open{display:block}
+.jpanel{position:relative;max-width:1180px;margin:0 auto;background:#F2F5FA;border-radius:18px;box-shadow:0 30px 80px rgba(10,23,48,.45);overflow:hidden}
+.jx{position:absolute;top:12px;right:12px;z-index:3;width:34px;height:34px;border-radius:50%;border:none;background:rgba(255,255,255,.18);color:#fff;font-size:15px;font-weight:800;cursor:pointer}
+.jx:hover{background:rgba(255,255,255,.32)}
+.jwrap{font-family:inherit;color:var(--ink)}
+.jhead{background:linear-gradient(100deg,#0A1730 0%,#0E2244 55%,#1D4ED8 100%);color:#fff;padding:26px 30px;display:flex;justify-content:space-between;align-items:center;gap:20px}
+.jkick{font-size:12px;letter-spacing:3px;font-weight:800;opacity:.85}
+.jtitle{font-size:44px;font-weight:900;line-height:1;letter-spacing:-1px;margin:4px 0}
+.jtitle span{color:#60A5FA}
+.jsub{font-size:11px;letter-spacing:4px;font-weight:700;opacity:.85}
+.jquote{font-family:"Segoe Script","Brush Script MT",cursive;font-size:18px;line-height:1.25;text-align:right;opacity:.95}
+.jquote span{color:#7DD3FC}
+.jhi{display:flex;align-items:center;gap:16px;margin:16px 20px 0;background:#fff;border-radius:14px;padding:14px 18px;border:1px solid var(--line)}
+.jtrophy{font-size:34px;background:var(--blue);border-radius:12px;width:58px;height:58px;display:flex;align-items:center;justify-content:center;flex:none}
+.jhi b{font-size:22px;display:block}
+.jhi b span{color:var(--blue)}
+.jhi>div{flex:1;font-size:14px;color:var(--body)}
+.jsmall{font-family:"Segoe Script","Brush Script MT",cursive;font-size:17px;line-height:1.2;color:var(--ink);text-align:right;flex:none}
+.jsmall span{font-weight:700;font-size:20px}
+.jsec{display:flex;align-items:center;gap:12px;margin:22px 20px 10px;flex-wrap:wrap}
+.jsec h3{margin:0;font-size:18px;font-weight:900;letter-spacing:.3px;flex:1}
+.jsec small{font-size:10px;letter-spacing:2.5px;font-weight:800;color:var(--muted)}
+.jn{width:34px;height:34px;border-radius:50%;background:var(--blue);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;flex:none}
+.jcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:0 20px}
+.jcard{background:#fff;border:1px solid var(--line);border-bottom:4px solid;border-radius:12px;padding:12px;min-height:150px}
+.jtop{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
+.jic{width:40px;height:40px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:19px;color:#fff;flex:none}
+.jpts{color:#fff;font-size:11px;font-weight:800;border-radius:12px;padding:3px 9px;white-space:nowrap}
+.jcard b{display:block;font-size:13px;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px}
+.jcard p{margin:0;font-size:12.5px;color:var(--body)}
+.jnm{display:inline-block;margin-top:6px;font-size:10.5px;color:var(--muted);font-weight:700}
+.jgrid{display:grid;grid-template-columns:1fr 1.1fr 1fr;gap:12px;margin:14px 20px 0}
+.jbox{background:#fff;border:1px solid var(--line);border-radius:14px;padding:6px 16px 16px}
+.jbox .jsec{margin:12px 0 6px}
+.jbox>p{margin:0 0 10px;font-size:13.5px;color:var(--body)}
+.jbox.dark{background:#0A1730;color:#fff;border-color:#0A1730}
+.jbox.dark .jsec h3{color:#fff}
+.jbox.dark>p{color:#C9D6EC}
+.jline{position:relative;height:74px;font-size:12px;font-weight:700;color:var(--blue)}
+.jline .l{position:absolute;left:0}.jline .r{position:absolute;right:0}
+.jline .t{top:0}.jline .l.t{color:var(--body)}
+.jline .b,.jline .m{top:48px;color:var(--ink)}
+.jline .m{position:absolute;transform:translateX(-50%)}
+.jtrack{position:absolute;top:26px;left:0;right:0;height:8px;border-radius:4px;background:linear-gradient(90deg,#93C5FD,#2563EB)}
+.jtrack i{position:absolute;top:50%;transform:translate(-50%,-50%);border-radius:50%}
+.jtrack .a{left:0;width:16px;height:16px;background:#F87171}
+.jtrack .k{width:22px;height:22px;background:var(--blue);border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.25)}
+.jtrack .c{left:100%;width:16px;height:16px;background:#14B8A6}
+.jex{display:flex;gap:12px;align-items:flex-start;background:#EAF1FF;border-radius:10px;padding:12px;margin-top:6px}
+.jstar{font-size:22px;line-height:1}
+.jexh{font-size:10.5px;letter-spacing:2px;font-weight:800;color:var(--ink)}
+.jex b{display:block;font-size:15px;margin:3px 0}
+.jexs{font-size:12.5px;color:var(--body)}
+.jstars{display:flex;justify-content:space-around;gap:6px;margin:6px 0 10px;flex-wrap:wrap}
+.jst{text-align:center}
+.jst span{font-size:30px;line-height:1;display:block}
+.jst b{font-size:14px}
+.jeq{text-align:center;font-size:14px;color:#C9D6EC;letter-spacing:.5px}
+.jsum{text-align:center;font-size:26px;margin:6px 0 12px}
+.jsum b{font-size:40px;font-weight:900}
+.jgoal{display:flex;align-items:center;gap:10px;background:rgba(37,99,235,.25);border:1px solid rgba(96,165,250,.5);border-radius:30px;padding:8px 14px}
+.jgoal span{font-size:20px}
+.jgoal>div{flex:1}
+.jgoal b{font-size:13px;letter-spacing:1px}
+.jgoal small{color:#C9D6EC;font-size:11px;margin-left:6px}
+.jgoal i{display:block;height:6px;border-radius:3px;background:rgba(255,255,255,.18);margin-top:5px;overflow:hidden}
+.jgoal u{display:block;height:100%;background:linear-gradient(90deg,#60A5FA,#38BDF8);text-decoration:none}
+.jnext{display:flex;align-items:center;gap:12px;border-radius:12px;padding:12px;margin-top:10px}
+.jnext>div{flex:1;font-size:12.5px;color:var(--body)}
+.jnext b{display:block;font-size:12.5px;letter-spacing:1px}
+.jstrip{background:linear-gradient(90deg,#0A1730,#0E2244);color:#fff;margin-top:18px;padding:16px 24px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.jyj{font-family:"Segoe Script","Brush Script MT",cursive;font-size:15px;line-height:1.1;margin-right:8px;color:#7DD3FC}
+.jstep{display:flex;align-items:center;gap:9px}
+.jstep .jic{background:var(--blue);width:36px;height:36px;font-size:15px}
+.jstep b{display:block;font-size:11px;letter-spacing:1.5px}
+.jstep small{display:block;font-size:11px;color:#C9D6EC}
+.jarr{color:#60A5FA;font-size:22px;font-weight:900}
+.jbtn{border-color:#BFD3FF;color:var(--blue)}
+.jlink{border:none;background:none;color:var(--blue);font-weight:800;cursor:pointer;font-size:12px;padding:0 4px}
+@media(max-width:860px){.jgrid{grid-template-columns:1fr}.jtitle{font-size:30px}.jquote,.jsmall{display:none}}
 </style>
 </head>
 <body>
@@ -1068,8 +1151,9 @@ function mtdRows(forAgent){
        row must show the same number — it used to render the four-driver score beside
        it, so the same agent read two different figures called "Score" on one screen. */
     ['Score',                function(o){
-      if(o.composite&&o.composite.rated!==false&&o.composite.adj!=null) return '<b>'+Math.round(o.composite.adj)+'</b>';
-      return o.score==null?'–':'<b>'+Math.round(o.score*100)+'</b>';}],
+      var j=(o.code&&o.composite&&o.composite.rated!==false)?' <button class="jlink" data-journey="'+esc(o.code)+'" title="How this score is made up">★</button>':'';
+      if(o.composite&&o.composite.rated!==false&&o.composite.adj!=null) return '<b>'+Math.round(o.composite.adj)+'</b>'+j;
+      return o.score==null?'–':'<b>'+Math.round(o.score*100)+'</b>'+j;}],
   ];
   return forAgent ? rows.filter(function(r){return r[0].indexOf('Canc')<0;}) : rows;
 }
@@ -2025,7 +2109,7 @@ function drawerHTML(P){
     +'<div><div class="dk-trend '+trend[0]+'">'+trend[1]+'</div>'
     +'<div class="dk-meta">'+esc(a.code)+' · <b>'+esc(a.campaign||'')+'</b>'+(a.tenure?' · '+esc(a.tenure):'')
     +(a.tl?' · worked this period under <b>'+esc(a.tl)+'</b>':'')+'</div>'
-    + badges +'</div></div>'
+    + badges +(a.composite&&a.composite.rated!==false?'<div style="margin-top:10px">'+journeyBtn(a.code,'How the score works')+'</div>':'')+'</div></div>'
     + tiles + rank + nba + cSec
     +'</div>';
 }
@@ -2060,6 +2144,7 @@ function openDrawer(cb){
       $('dkClose').onclick=closeDrawer; return;
     }
     var P=r.json, a=P.me||{}, n=(P.nba&&P.nba.agent)||null;
+    DRAWER_ME=P.me||null;   // the Score Journey button in the drawer reads this
     var risk=n?(n.nba.lvl===1?['High risk','r']:(n.nba.lvl===2?['Watch','a']:['On track','g'])):null;
     d.innerHTML='<div class="dk-head">'
       +'<button class="dk-back" id="dkClose2">← Back</button>'
@@ -5063,12 +5148,146 @@ function pgComposite(){
   if(c.penaltyTotal) bits+='  −  '+num(c.penaltyTotal,1)+' adjustment';
   h+='<div class="pg-tally">'+bits+'  =  '+num(c.adj,1)+' out of 100</div>';
 
-  h+='<div class="pg-btns"><button class="btn2" onclick="VIEW=\'month\';render()">Open my session brief</button>'
+  h+='<div class="pg-btns">'+journeyBtn(ME.code,'How the score works')+'<button class="btn2" onclick="VIEW=\'month\';render()">Open my session brief</button>'
     +(D.__back?''
       :'<button class="btn2 primary" onclick="openHelp()">Ask '+esc(firstName(ME.tl||'')||'your team leader')
         +(wk?' to help with '+esc(wk.label.toLowerCase()):' for help')+'</button>')+'</div>';
   return h+'</div>';
 }
+/* ===================== THE SCORE JOURNEY =====================
+   (Nick, 2026-09-11: "for team leader view and agent view I need you to add a button and
+   when they click it must show the breakdown of the agent score".) The Chatterbox Score
+   Journey poster — four steps and the journey strip — drawn LIVE for one agent from the
+   same published composite the rating card reads: the seven drivers and their weights,
+   the halfway line worked through with the agent's own figure, every star's points added
+   to the score, and the two drivers with the most points still to claim. Nothing here is
+   worked out twice: parts, points, adj, band and next band all come off ME.composite (or
+   the team leader's row / drawer payload), and the sum printed in step 3 IS c.adj.
+   Opened from the rating card (agent view and the team leader's drill-down), the Score
+   column of the team leader's Month to date, and the drawer. */
+var JOURNEY_DRV={
+  gwpSale:   {t:'Premium per sale', d:'Value of each sale.',            ic:'🛒', c:'#2563EB'},
+  targetAch: {t:'Sales target',     d:'How much of your goal.',         ic:'🎯', c:'#0D9488'},
+  qa:        {t:'QA score',         d:'Follow script and rules.',       ic:'✅', c:'#7C3AED'},
+  gwpTotal:  {t:'Total premium',    d:'Value of all your sales.',       ic:'👑', c:'#F59E0B'},
+  conv:      {t:'Sales from leads', d:'Leads that become sales.',       ic:'👥', c:'#EC4899'},
+  talk:      {t:'Talk time',        d:'Time talking to customers.',     ic:'💬', c:'#06B6D4'},
+  attendance:{t:'Attendance',       d:'Come to work as planned.',       ic:'📅', c:'#6366F1'}
+};
+var DRAWER_ME=null;   // the agent the team leader's drawer is showing, for its own Journey button
+function journeyFor(code){
+  if(ME&&ME.code===code&&ME.composite) return ME;
+  if(DRAWER_ME&&DRAWER_ME.code===code&&DRAWER_ME.composite) return DRAWER_ME;
+  var list=(D&&D.agents)||[];
+  for(var i=0;i<list.length;i++) if(list[i].code===code&&list[i].composite) return list[i];
+  return null;
+}
+function journeyBtn(code,label){
+  return '<button class="btn2 jbtn" data-journey="'+esc(code)+'">★ '+esc(label||'How the score works')+'</button>';
+}
+function journeyHTML(a,self){
+  var c=a.composite, jd=JOURNEY_DRV, first=firstName(a.name);
+  var floor=c.floor||50;
+  var parts=c.parts||[];
+  var byK={}; parts.forEach(function(p){ byK[p.k]=p; });
+  var order=['gwpSale','targetAch','qa','gwpTotal','conv','talk','attendance'];
+  var ordered=order.map(function(k){return byK[k];}).filter(Boolean)
+    .concat(parts.filter(function(p){return order.indexOf(p.k)<0;}));
+  var dv=function(k){ return jd[k]||{t:C_LABELS[k]||k,d:'',ic:'★',c:'#2563EB'}; };
+  var you=self?'you':first;
+
+  /* 1 · the seven cards */
+  var cards=ordered.map(function(p){ var d=dv(p.k);
+    return '<div class="jcard" style="border-bottom-color:'+d.c+'">'
+      +'<div class="jtop"><span class="jic" style="background:'+d.c+'">'+d.ic+'</span>'
+      +'<span class="jpts" style="background:'+d.c+'">'+num(p.w)+' pts</span></div>'
+      +'<b>'+esc(d.t)+'</b><p>'+esc(d.d)+'</p>'
+      +(p.measured?'':'<span class="jnm">not measured this period</span>')+'</div>'; }).join('');
+
+  /* 2 · the halfway line, worked through with this agent's own figure: QA if it is scored
+        (the poster's example), else the measured driver earning the most of its points */
+  var ex=(byK.qa&&byK.qa.measured)?byK.qa:null;
+  if(!ex){ var m=parts.filter(function(p){return p.measured;}).slice().sort(function(x,y){return (y.points/y.w)-(x.points/x.w);}); ex=m[0]||null; }
+  var exHTML='';
+  if(ex){ var d2=dv(ex.k), att=Math.max(0,Math.min(100,ex.att));
+    exHTML='<div class="jex"><span class="jstar" style="color:'+d2.c+'">★</span><div>'
+      +'<div class="jexh">'+esc((self?'Your':first+'’s')+' '+d2.t)+' example</div>'
+      +'<b>'+cFmt(ex)+' out of '+cFmtT(ex)+' = '+num(att,0)+'% of target</b>'
+      +'<div class="jexs">'+(att>=100?'At target, so '+you+' earn'+(self?'':'s')+' the full '+num(ex.w)+' points.'
+        :att<=floor?'Below the halfway line, so no points yet — every step past '+num(floor)+'% starts paying.'
+        :'So '+you+' earn'+(self?'':'s')+' '+num(ex.points,0)+' out of '+num(ex.w)+' points.')+'</div></div></div>'; }
+
+  /* 3 · every star, added up — the sum IS the published adj, nothing is taken away */
+  var stars=ordered.map(function(p){ var d=dv(p.k);
+    return '<div class="jst"><span style="color:'+d.c+'">★</span><b>'+(p.measured?num(p.points,1):'–')+'</b></div>'; }).join('');
+  var eq=ordered.filter(function(p){return p.measured;}).map(function(p){return num(p.points,1);}).join(' + ');
+  var goal=c.nextBand?{label:c.nextBand.label,min:Math.round(c.adj+c.nextBand.pointsAway)}:null;
+  var goalHTML=goal
+    ? '<div class="jgoal"><span>🎯</span><div><b>NEXT GOAL: '+num(goal.min)+'</b> <small>'+esc(goal.label)+' · '+num(c.nextBand.pointsAway,1)+' points away</small>'
+      +'<i><u style="width:'+Math.max(2,Math.min(100,c.adj/goal.min*100))+'%"></u></i></div></div>'
+    : '<div class="jgoal"><span>🏆</span><div><b>TOP BAND: '+esc(c.band||'')+'</b> <small>keep every star shining</small></div></div>';
+
+  /* 4 · where the points are hiding — the two measured drivers with the most left to claim */
+  var hide=parts.filter(function(p){return p.measured&&p.available>0;}).slice()
+    .sort(function(x,y){return y.available-x.available;}).slice(0,2);
+  var nextHTML=hide.length?hide.map(function(p){ var d=dv(p.k), att=Math.max(0,Math.min(100,p.att));
+      return '<div class="jnext" style="background:'+d.c+'14"><span class="jic" style="background:'+d.c+'">'+d.ic+'</span>'
+        +'<div><b style="color:'+d.c+'">'+esc(d.t).toUpperCase()+'</b><div>'
+        +(att<=floor?'Get it over halfway':num(p.available,1)+' points still to claim — ask your team leader')+'</div></div>'
+        +'<span class="jpts" style="background:'+d.c+'">'+num(p.available,1)+' pts</span></div>'; }).join('')
+    :'<p class="why">Every measured driver is at target — nothing is hiding.</p>';
+
+  return '<div class="jwrap">'
+    +'<div class="jhead"><div><div class="jkick">THE CHATTERBOX</div><div class="jtitle">SCORE <span>JOURNEY</span></div>'
+    +'<div class="jsub">EVERY POINT MOVES YOU FORWARD.</div></div>'
+    +'<div class="jquote">Same team.<br>Same goals.<br><span>Bigger dreams.</span></div></div>'
+    +'<div class="jhi"><span class="jtrophy">🏆</span><div><b>'+(self?'Hi! I am <span>'+esc(first)+'.</span>':'This is <span>'+esc(a.name)+'</span> ('+esc(a.code)+').')+'</b>'
+    +'<div>Every day '+(self?'I':first)+' collect'+(self?'':'s')+' points by doing 7 important things well.'
+    +(self?' Your score works the same way!':' The score is read from the last '+num(c.window)+' worked sessions.')+'</div></div>'
+    +'<div class="jsmall">Small actions.<br><span>Big results.</span></div></div>'
+    +'<div class="jsec"><span class="jn">1</span><h3>COLLECT POINTS FROM 7 IMPORTANT THINGS</h3><small>TOGETHER THEY CAN GIVE YOU 100 POINTS.</small></div>'
+    +'<div class="jcards">'+cards+'</div>'
+    +'<div class="jgrid">'
+    +'<div class="jbox"><div class="jsec"><span class="jn">2</span><h3>PASS THE HALFWAY LINE</h3></div>'
+      +'<p>Each thing has its own target.</p>'
+      +'<div class="jline"><span class="l t">0 points</span><span class="r t">points grow</span>'
+      +'<div class="jtrack"><i class="a"></i><i class="k" style="left:'+floor+'%"></i><i class="c"></i></div>'
+      +'<span class="l b">0%</span><span class="m" style="left:'+floor+'%">'+num(floor)+'%</span><span class="r b">100%</span></div>'
+      +exHTML+'</div>'
+    +'<div class="jbox dark"><div class="jsec"><span class="jn">3</span><h3>ADD ALL THE POINTS</h3></div>'
+      +'<p>Nothing is taken away.</p><div class="jstars">'+stars+'</div>'
+      +'<div class="jeq">'+esc(eq)+'</div><div class="jsum">= <b>'+num(c.adj,1)+'</b> / 100</div>'+goalHTML+'</div>'
+    +'<div class="jbox"><div class="jsec"><span class="jn">4</span><h3>WHAT’S NEXT?</h3></div>'
+      +'<p>The score shows where points are hiding.</p>'+nextHTML+'</div>'
+    +'</div>'
+    +'<div class="jstrip"><span class="jyj">YOUR<br>JOURNEY:</span>'
+    +[['▶','START','Build good habits'],['🎯','BUILD','Hit your targets'],['50%','PASS 50%','Reach the halfway line'],['★','SCORE','Add your points'],['🏆','LEVEL UP','Hit your next goal']]
+      .map(function(s,i){return (i?'<span class="jarr">›</span>':'')+'<div class="jstep"><span class="jic">'+s[0]+'</span><div><b>'+s[1]+'</b><small>'+s[2]+'</small></div></div>';}).join('')
+    +'</div></div>';
+}
+function openScoreJourney(code){
+  var a=journeyFor(code); if(!a) return;
+  var self=!!(U&&U.role==='agent')&&!(D&&D.__back);
+  var el=$('cbxJourney');
+  if(!el){ el=document.createElement('div'); el.id='cbxJourney'; el.className='jmodal'; document.body.appendChild(el);
+    el.onclick=function(e){ if(e.target===el) closeScoreJourney(); }; }
+  el.innerHTML='<div class="jpanel"><button class="jx" id="jClose" aria-label="Close">✕</button>'+journeyHTML(a,self)+'</div>';
+  el.classList.add('open'); document.body.classList.add('dk-locked');
+  $('jClose').onclick=closeScoreJourney;
+  document.addEventListener('keydown',jEsc);
+}
+function jEsc(e){ if(e.key==='Escape') closeScoreJourney(); }
+function closeScoreJourney(){
+  var el=$('cbxJourney'); if(el) el.classList.remove('open');
+  if(!$('cbxDrawer')||!$('cbxDrawer').classList.contains('open')) document.body.classList.remove('dk-locked');
+  document.removeEventListener('keydown',jEsc);
+}
+/* one handler for every Journey button on the page — rating card, drawer, team leader tables */
+if(document.addEventListener) document.addEventListener('click',function(e){   // guarded: the structural suite loads this page into a stub document
+  var b=e.target&&e.target.closest?e.target.closest('[data-journey]'):null;
+  if(!b) return; e.preventDefault(); e.stopPropagation(); openScoreJourney(b.getAttribute('data-journey'));
+});
+
 function pgRating(){
   /* IGNORE scoreParts WHENEVER A COMPOSITE IS PUBLISHED, even if the digest still carries
      both. A payload written before 2026-08-28 pairs the composite as `score` with the
