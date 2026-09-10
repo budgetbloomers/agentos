@@ -6127,7 +6127,9 @@ function leadBook(all){
   const slot=all?__leadsCacheAll:__leadsCache;
   if(M&&slot&&slot.m===M&&slot.k===key) return slot;
   const A=leadRoster(all);
-  let unOpen=0,unClosed=0;
+  /* Queue-held cases (the unallocated pool) are kept back by the lake and only counted; they are
+     open cases whose owner matches nobody on the Agent List, so they start the tally. */
+  let unOpen=(oc&&+oc.queues)||0,unClosed=0;
   for(const r of (oc?oc.rows:[])){
     const cb=resolveKey(r.owner);if(!cb||!A[cb]){if(!cb)unOpen++;continue}
     const a=A[cb];const k=String(r.k||'').trim();
@@ -6618,7 +6620,7 @@ PAGES.data=()=>{
        page and its own Open Cases slot were removed 2026-08-27 (Nick), so only the Lead
        Management pulls remain. Open Cases is a SNAPSHOT (replaced whole on each upload,
        because a point-in-time position cannot be merged); Closed Cases accumulates. */
-    {t:'opencasesLM',icon:I.db,color:'var(--accent)',name:'Lead Management — Open Cases',desc:'The open half of the <b>Lead Management</b> funnel — the Salesforce <b>Open Cases</b> export named for Lead Management. A <b>snapshot</b>, so each upload replaces the whole book rather than merging; one row per Case Number, owners matched through the Agent List on the CB number. Open attempts, the attempt-stage pivot and the unique-lead conversion denominator all come from here; closures come from the slot below.',stat:statFor(['open cases (lead mgmt)'])},
+    {t:'opencasesLM',icon:I.db,color:'var(--accent)',name:'Lead Management — Open Cases',desc:'The open half of the <b>Lead Management</b> funnel — the Salesforce <b>Open Cases</b> export named for Lead Management. A <b>snapshot</b>, so each upload replaces the whole book rather than merging; one row per Case Number, owners matched through the Agent List on the CB number. Open attempts, the attempt-stage pivot and the unique-lead conversion denominator all come from here; closures come from the slot below. <b>Over 30 MB</b> (the export has been ~94 MB since 8 Sep) the drop goes to the <b>Large files</b> card instead and this book follows the newest data-lake snapshot by itself — within ten minutes of the runner loading it, or on the next open of this app.',stat:statFor(['open cases (lead mgmt)'])},
     {t:'closedcases',icon:I.db,color:'var(--good)',name:'Lead Management — Closed Cases',desc:'Feeds <b>Lead Management</b>, together with the Open Cases book above (open attempts come from there, closures from here — one snapshot, two views, which is what keeps Total Allocated equal to Total Open). Salesforce <b>Closed Cases</b> export: total closed, no-feedback, wasted leads and conversion. Keyed on Case Number and dated on Date/Time Closed, so pulls <b>accumulate</b> instead of replacing. Note: a Salesforce .xls that is a frameset shell carries no rows and is refused rather than counted as zero.',stat:statFor(['closed cases'])},
     {t:'referrals',icon:I.grid,color:'var(--violet)',name:'Referrals (HighLevel)',desc:'Referrals pull themselves from HighLevel through the API Worker — automatically on sign-in, or <button class="btn small" onclick="event.stopPropagation();window.__hlSyncVAS&&__hlSyncVAS()" style="vertical-align:1px">⟳ Sync now</button> — and a CSV drop still works. Agents are matched THROUGH THE AGENT LIST (employee code, then the roster name index); unmatched names are counted and reported, never invented. Counts are referral blocks per contact (one referrer can carry up to five), so totals can exceed rows. While loaded, keyed referral adjustments are ignored — one source, never both.',
       /* The stat reads S.refs, the store itself — not the file registry. The API sync's
@@ -7967,17 +7969,65 @@ async function syncUploadsFromStation(){
     if(dirty)save();
   }catch(e){}finally{__stationSyncBusy=false}
 }
+/* THE LEAD BOOK FOLLOWS THE LAKE (2026-09-10). The Salesforce Open Cases export outgrew the
+   page on 8 Sep — 94 MB / ~487,000 rows — so the drop zone routes it to storage and the runner
+   loads it into sf_open_cases; the book this app reads, S.opencasesLM, stayed on the last file
+   small enough to parse here (6 Sep) and the Lead Management tab said nothing. Every client now
+   polls the Worker for the lake's cached book (migration-035; rebuilt by the Rake after each
+   load) and ADOPTS it when it is newer than the book on screen, the way the roster adopts the
+   published record. Agent-owned rows only travel — the ~400,000 queue rows are the unallocated
+   pool and match nobody on the Agent List; their count rides along so the page can still say
+   so. Owners arrive as the Salesforce string and resolve through the Agent List here, exactly
+   as the file did. A hand-dropped small file still loads in-page and wins while it is the newer. */
+var __leadBookBusy=false;
+async function syncLeadBookFromLake(){
+  if(__leadBookBusy)return; __leadBookBusy=true;
+  try{
+    if(!window.__vasHydrated)return;                        // never adopt into a half-loaded state
+    const tk=sessionStorage.getItem('cbx_token'); if(!tk)return;
+    const base='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev', H={'Authorization':'Bearer '+tk};
+    let meta; try{ const r=await fetch(base+'/api/lead-book?meta=1',{headers:H}); if(!r.ok)return; meta=await r.json(); }catch(e){return}
+    if(!meta||meta.empty||!meta.loaded_at||!(+meta.agent_rows>0))return;
+    const cur=S.opencasesLM, lakeMs=Date.parse(meta.loaded_at);
+    if(!isFinite(lakeMs))return;
+    if(cur&&cur.lakeAt===meta.loaded_at)return;              // already on this load
+    /* A file dropped here AFTER the lake's load is the newer book: keep it. The ingest stamps
+       'at' with the local wall clock (YYYY-MM-DD HH:mm); it is read back as local time. */
+    if(cur&&!cur.lakeAt&&cur.at){ const hm=Date.parse(String(cur.at).replace(' ','T')); if(isFinite(hm)&&hm>lakeMs)return; }
+    let book; try{ const r=await fetch(base+'/api/lead-book',{headers:H}); if(!r.ok)return; book=await r.json(); }catch(e){return}
+    if(!book||!Array.isArray(book.rows)||!book.rows.length)return;   // never wipe on a bad payload
+    const rows=[], seen=new Set(); const now=Date.now();
+    for(const r of book.rows){
+      const k=String((r&&r.k)||'').trim(); if(!k||seen.has(k))continue;   // one row per Case Number
+      seen.add(k);
+      const ms=r.d?Date.parse(r.d):NaN; const opened=isFinite(ms)?new Date(ms).toISOString().slice(0,10):'';
+      let ah=isFinite(ms)?Math.max(0,(now-ms)/36e5):null; if(ah!=null&&!(ah<=LEAD_AGE_MAX_H))ah=null;   // implausible -> unknown, as the file path does
+      rows.push({k,owner:String(r.o||'').trim(),status:String(r.s||'').trim(),opened,age:ah==null?null:Math.round(ah*10)/10});
+    }
+    if(!rows.length)return;
+    const name=String(book.file||('Salesforce open cases '+(book.snapshot_date||''))).trim();
+    const d=new Date(lakeMs), p2=n=>String(n).padStart(2,'0');
+    const at=d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes());
+    S.opencasesLM={rows,f:name,at,total:rows.length,lake:true,lakeAt:meta.loaded_at,snapshot:book.snapshot_date||'',queues:+book.queue_rows||0};
+    __curFileHash=null;                                     // a lake adoption has no file bytes to fingerprint
+    regFile(name,'open cases (lead mgmt)',[],+book.total||rows.length,{cases:rows.length,queues:+book.queue_rows||0,lake:true,snapshot:book.snapshot_date||''});
+    try{ save(); rebuild(); if(S.ui.tab==='leads'||S.ui.tab==='data') renderPage(); }catch(e){}
+    toast('Lead Management open cases updated from the data lake — "'+name+'": '+fmtNum(rows.length)+' agent-held cases (snapshot '+(book.snapshot_date||'?')+').',9000);
+  }catch(e){}finally{__leadBookBusy=false}
+}
 /* …and on focus, like the Ops side (audit round 5, 2026-08-28). Without this a file uploaded
    in Ops took up to ten minutes to appear here, and if sign-in plus hydrate ran past the
    20-second first pass it took ten minutes GUARANTEED. Throttled to one pull a minute. */
 (function(){ var last=0; var go=function(){ var n=Date.now(); if(n-last<60000) return; last=n;
-    syncUploadsFromStation(); adoptRosterFromRecord(); };
+    syncUploadsFromStation(); adoptRosterFromRecord(); syncLeadBookFromLake(); };
   window.addEventListener('focus',go);
   document.addEventListener('visibilitychange',function(){ if(document.visibilityState==='visible') go(); }); })();
 setInterval(syncUploadsFromStation,600000);
 setInterval(adoptRosterFromRecord,600000);
+setInterval(syncLeadBookFromLake,600000);
 setTimeout(adoptRosterFromRecord,24000);                    // shortly after sign-in + hydrate
 setTimeout(syncUploadsFromStation,20000);                   // first pass shortly after sign-in + hydrate
+setTimeout(syncLeadBookFromLake,26000);                    // after the roster, so owners resolve against the current list
 /* A FILE TOO BIG TO READ HERE IS NOT AN INVALID FILE (Nick, 2026-09-09). The station reads every
    drop into browser memory to check it before saving; a 340 MB open-cases export died in that read
    and came back as unreadable, which sent the day looking for a bad file that was never bad. The
@@ -8072,6 +8122,7 @@ rebuild(); renderAll();
 
 /* test hook (kept API-compatible) */
 window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
+  syncLeadBook:syncLeadBookFromLake,        // the lake adoption, for the harness
   setPeriod:(m,mode)=>{ S.ui.month=m; S.ui.preset=(mode==='cycle')?'cycle':'month'; if(mode)S.ui.mode=mode; saveUI(); rebuild(); renderAll(); },
   setRange:(from,to)=>{ S.ui.preset='custom'; S.ui.from=from; S.ui.to=to; saveUI(); rebuild(); renderAll(); },
   setPreset:p=>{ S.ui.preset=p; saveUI(); rebuild(); renderAll(); },

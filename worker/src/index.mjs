@@ -1164,6 +1164,21 @@ export default {
         const health = await DB.rpc('rake_health', {}).catch(() => null);
         return json({ files: rows || [], health });
       }
+      /* ---------- THE LEAD MANAGEMENT BOOK, FROM THE LAKE (2026-09-10; migration-035) ----------
+         The Salesforce Open Cases export is ~94 MB / 487,000 rows since 8 Sep, so it takes the
+         large-file path and never reaches the in-page parser that used to fill PULSE's
+         S.opencasesLM — the Lead Management tab sat on the 6 Sep pull while the lake moved every
+         morning. tools/rake.mjs rebuilds lm_open_book_cache after each load; this serves it.
+         ?meta=1 is the cheap freshness poll (no rows); the full call is ~8 MB of agent-owned
+         rows {k,o,s,d} which the page resolves through its own Agent List, as it did the file.
+         Management only: the book is every agent's case list. */
+      if (path === '/api/lead-book' && req.method === 'GET') {
+        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        const fn = url.searchParams.get('meta') ? 'lm_open_book_meta' : 'lm_open_book';
+        const out = await DB.rpc(fn, {}).catch((e) => ({ error: String((e && e.message) || e).slice(0, 200) }));
+        if (!out || out.error) return json({ error: (out && out.error) || 'lead book unavailable' }, 502);
+        return json(out, 200, { 'Cache-Control': 'no-store' });
+      }
       if (path === '/api/upload-manifest' && req.method === 'GET') {
         const mr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:upload-manifest')}&select=value,updated_at`);
         return json({ files: (mr && mr[0] && mr[0].value && mr[0].value.files) || [], updated_at: (mr && mr[0] && mr[0].updated_at) || '' });

@@ -66,6 +66,10 @@ jobs:
         id: rake
         if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '7,22') }}
         run: node tools/rake.mjs
+        # A FAILED FILE MUST NOT SILENCE THE DIGESTS (2026-09-10): a re-upload refused as a duplicate
+        # failed this step and every step after it was SKIPPED — no digest, no Ops relay, for the
+        # whole gap. The outcome still reaches job-status; the tick carries on.
+        continue-on-error: true
       - if: ${{ always() && steps.rake.conclusion != 'skipped' }}
         run: node tools/job-status.mjs rake ${{ steps.rake.outcome }}
 
@@ -141,7 +145,7 @@ jobs:
         id: nightly
         run: |
           set +e; fails=""
-          for s in verify-all-tabs verify-controls verify-store-freshness verify-publish-agent-list verify-agent-card verify-rule-constants verify-composite-score verify-password-lifecycle verify-composite-recompute verify-rake verify-no-duplicates verify-upload-formats; do
+          for s in verify-all-tabs verify-controls verify-store-freshness verify-publish-agent-list verify-agent-card verify-rule-constants verify-composite-score verify-password-lifecycle verify-composite-recompute verify-rake verify-no-duplicates verify-upload-formats verify-lead-book; do
             node nicks_code/diagnostics/$s.mjs > /tmp/$s.log 2>&1 || fails="$fails $s($(grep -oE '[0-9]+ failed' /tmp/$s.log | head -1 || true): $(grep -E 'FAIL|Error' /tmp/$s.log | head -2 | cut -c1-120 | tr '\n' ';'))"
           done
           node nicks_code/diagnostics/verify-live-save.mjs --live > /tmp/live.log 2>&1 || fails="$fails verify-live-save"

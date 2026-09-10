@@ -94,6 +94,26 @@ merge and reads the lake back inside one transaction that always rolls back. Run
 Live figures from the first end-to-end runs (8 Sep): SF closed 7,002 merged in place; SF open 78,273 rows
 in 35 s; Vici 25,649; BI 10,225 + 1 reject; browser upload of a 1,315-row export end to end.
 
+## The Lead Management book (2026-09-10, migration-035)
+
+The first consumer of the lake. The Open Cases export outgrew the browser on 8 Sep (94 MB CSV / 342 MB
+frameset .xls, ~487,000 rows), so it takes the large-file path — and PULSE's Lead Management tab, which only
+ever read the in-page book, sat on the 6 Sep pull. Now:
+
+- `tools/rake.mjs` calls `lm_open_book_refresh()` after every run that loaded a file: it rebuilds the one-row
+  `lm_open_book_cache` from the newest `sf_open_cases` snapshot (agent-owned rows as `{k,o,s,d}`, queue rows
+  counted only, the batch's file named) and is a no-op when nothing moved. ~25 s; never on the request path.
+- The Worker serves it at `GET /api/lead-book` (`?meta=1` = freshness only; management sessions only).
+- PULSE's `syncLeadBookFromLake()` polls meta on boot, focus and every ten minutes and adopts the book when it
+  is newer than `S.opencasesLM` — the registry gets an `open cases (lead mgmt)` entry named for the upload, the
+  Lead Management tab re-renders, and the digest publisher reads the same blob. A file dropped in the page after
+  the lake's load is kept.
+- `diagnostics/verify-lead-book.mjs` (25 checks) proves both halves; it runs in verify.yml and nightly.
+
+Known: `employee_code` is NULL on every lake row because `rake_owner_cb` matches nothing — the page resolves
+owners itself through the Agent List, so the book is unaffected, but `agent_day` and any per-CB lake query are.
+The "Courtesy call- Panimax" pseudo-queue (~15,000 rows) classifies as an agent and resolves to nobody.
+
 ## Not built yet (Phase 2)
 
 Retention policy on `raw-uploads`; `wrappers` S3 foreign tables over the Parquet copies for ad-hoc SQL;
