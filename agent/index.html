@@ -859,9 +859,6 @@ textarea.cc{font-weight:500;line-height:1.5;resize:vertical}
 .jarr{color:#60A5FA;font-size:22px;font-weight:900}
 .jbtn{border-color:#BFD3FF;color:var(--blue)}
 .jlink{border:none;background:none;color:var(--blue);font-weight:800;cursor:pointer;font-size:12px;padding:0 4px}
-.jpick{position:absolute;top:14px;right:58px;z-index:3;display:flex;align-items:center;gap:8px;color:#fff;font-size:12px;font-weight:700}
-.jpick select{border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.14);color:#fff;border-radius:8px;padding:6px 10px;font-weight:700;max-width:260px}
-.jpick select option{color:var(--ink)}
 @media(max-width:860px){.jgrid{grid-template-columns:1fr}.jtitle{font-size:30px}.jquote,.jsmall{display:none}}
 </style>
 </head>
@@ -1154,7 +1151,7 @@ function mtdRows(forAgent){
        row must show the same number — it used to render the four-driver score beside
        it, so the same agent read two different figures called "Score" on one screen. */
     ['Score',                function(o){
-      var j=(o.code&&o.composite&&o.composite.rated!==false)?' <button class="jlink" data-journey="'+esc(o.code)+'" title="How this score is made up">★</button>':'';
+      var j='';   // the Score Journey is a static explainer now — one button per page, not one per row
       if(o.composite&&o.composite.rated!==false&&o.composite.adj!=null) return '<b>'+Math.round(o.composite.adj)+'</b>'+j;
       return o.score==null?'–':'<b>'+Math.round(o.score*100)+'</b>'+j;}],
   ];
@@ -1731,7 +1728,7 @@ function pageMyTeam(){
     /* ONE Score Journey button for the whole page (Nick, 2026-09-11: "it must just be one button") —
        the agent is picked inside the panel; it opens on the person at the top of the ladder. */
     +'<div class="sec-lab" style="display:flex;align-items:center;gap:12px"><span style="flex:1">Who needs help</span>'
-    +(journeyFor(top.cb)?journeyBtn(top.cb,'How the score is made up'):'')+'</div>'+hero+rows
+    +journeyBtn(null,'How the score is made up')+'</div>'+hero+rows
     +'<div class="sec-lab">Queue</div><div class="card qcard">'+q+'</div>';
 }
 
@@ -2121,7 +2118,7 @@ function drawerHTML(P){
     +'<div><div class="dk-trend '+trend[0]+'">'+trend[1]+'</div>'
     +'<div class="dk-meta">'+esc(a.code)+' · <b>'+esc(a.campaign||'')+'</b>'+(a.tenure?' · '+esc(a.tenure):'')
     +(a.tl?' · worked this period under <b>'+esc(a.tl)+'</b>':'')+'</div>'
-    + badges +(a.composite&&a.composite.rated!==false?'<div style="margin-top:10px">'+journeyBtn(a.code,'How the score works')+'</div>':'')+'</div></div>'
+    + badges +'<div style="margin-top:10px">'+journeyBtn(null,'How the score works')+'</div></div></div>'
     + tiles + rank + nba + cSec
     +'</div>';
 }
@@ -5195,67 +5192,35 @@ function journeyFor(code){
   return null;
 }
 function journeyBtn(code,label){
-  return '<button class="btn2 jbtn" data-journey="'+esc(code)+'">★ '+esc(label||'How the score works')+'</button>';
+  return '<button class="btn2 jbtn" data-journey="1">★ '+esc(label||'How the score works')+'</button>';
 }
-function journeyHTML(a,self){
-  var c=a.composite, jd=JOURNEY_DRV, first=firstName(a.name);
-  var floor=c.floor||50;
-  var parts=c.parts||[];
-  var byK={}; parts.forEach(function(p){ byK[p.k]=p; });
-  var order=['gwpSale','targetAch','qa','gwpTotal','conv','talk','attendance'];
-  var ordered=order.map(function(k){return byK[k];}).filter(Boolean)
-    .concat(parts.filter(function(p){return order.indexOf(p.k)<0;}));
-  var dv=function(k){ return jd[k]||{t:C_LABELS[k]||k,d:'',ic:'★',c:'#2563EB'}; };
-  var you=self?'you':first;
-
-  /* 1 · the seven cards */
-  var cards=ordered.map(function(p){ var d=dv(p.k);
+/* STATIC, BY INSTRUCTION (Nick, 2026-09-11: "remove agent, its static just showing the team
+   leaders and agents how to calculate the agent score"). This is the poster, word for word:
+   Ayanda's worked example, her seven stars adding to 50,8, her next goal of 60 and the two
+   places her points are hiding. Nobody's real figures appear here — the rating card, Month to
+   date and the drawer carry those. The seven weights are read from the rule book's driver list
+   (D.compositeDrivers) so the cards can never disagree with what the engine actually pays. */
+var JOURNEY_EX={
+  gwpSale:12.4, targetAch:12, qa:17, gwpTotal:0, conv:1.5, talk:2.9, attendance:5
+};
+function journeyHTML(){
+  var jd=JOURNEY_DRV, order=['gwpSale','targetAch','qa','gwpTotal','conv','talk','attendance'];
+  var w={gwpSale:25,targetAch:20,qa:20,gwpTotal:15,conv:10,talk:5,attendance:5};
+  ((D&&D.compositeDrivers)||[]).forEach(function(d){ if(d&&d.k&&d.w!=null) w[d.k]=d.w; });
+  var cards=order.map(function(k){ var d=jd[k];
     return '<div class="jcard" style="border-bottom-color:'+d.c+'">'
       +'<div class="jtop"><span class="jic" style="background:'+d.c+'">'+d.ic+'</span>'
-      +'<span class="jpts" style="background:'+d.c+'">'+num(p.w)+' pts</span></div>'
-      +'<b>'+esc(d.t)+'</b><p>'+esc(d.d)+'</p>'
-      +(p.measured?'':'<span class="jnm">not measured this period</span>')+'</div>'; }).join('');
-
-  /* 2 · the halfway line, worked through with this agent's own figure: QA if it is scored
-        (the poster's example), else the measured driver earning the most of its points */
-  var ex=(byK.qa&&byK.qa.measured)?byK.qa:null;
-  if(!ex){ var m=parts.filter(function(p){return p.measured;}).slice().sort(function(x,y){return (y.points/y.w)-(x.points/x.w);}); ex=m[0]||null; }
-  var exHTML='';
-  if(ex){ var d2=dv(ex.k), att=Math.max(0,Math.min(100,ex.att));
-    exHTML='<div class="jex"><span class="jstar" style="color:'+d2.c+'">★</span><div>'
-      +'<div class="jexh">'+esc((self?'Your':first+'’s')+' '+d2.t)+' example</div>'
-      +'<b>'+cFmt(ex)+' out of '+cFmtT(ex)+' = '+num(att,0)+'% of target</b>'
-      +'<div class="jexs">'+(att>=100?'At target, so '+you+' earn'+(self?'':'s')+' the full '+num(ex.w)+' points.'
-        :att<=floor?'Below the halfway line, so no points yet — every step past '+num(floor)+'% starts paying.'
-        :'So '+you+' earn'+(self?'':'s')+' '+num(ex.points,0)+' out of '+num(ex.w)+' points.')+'</div></div></div>'; }
-
-  /* 3 · every star, added up — the sum IS the published adj, nothing is taken away */
-  var stars=ordered.map(function(p){ var d=dv(p.k);
-    return '<div class="jst"><span style="color:'+d.c+'">★</span><b>'+(p.measured?num(p.points,1):'–')+'</b></div>'; }).join('');
-  var eq=ordered.filter(function(p){return p.measured;}).map(function(p){return num(p.points,1);}).join(' + ');
-  var goal=c.nextBand?{label:c.nextBand.label,min:Math.round(c.adj+c.nextBand.pointsAway)}:null;
-  var goalHTML=goal
-    ? '<div class="jgoal"><span>🎯</span><div><b>NEXT GOAL: '+num(goal.min)+'</b> <small>'+esc(goal.label)+' · '+num(c.nextBand.pointsAway,1)+' points away</small>'
-      +'<i><u style="width:'+Math.max(2,Math.min(100,c.adj/goal.min*100))+'%"></u></i></div></div>'
-    : '<div class="jgoal"><span>🏆</span><div><b>TOP BAND: '+esc(c.band||'')+'</b> <small>keep every star shining</small></div></div>';
-
-  /* 4 · where the points are hiding — the two measured drivers with the most left to claim */
-  var hide=parts.filter(function(p){return p.measured&&p.available>0;}).slice()
-    .sort(function(x,y){return y.available-x.available;}).slice(0,2);
-  var nextHTML=hide.length?hide.map(function(p){ var d=dv(p.k), att=Math.max(0,Math.min(100,p.att));
-      return '<div class="jnext" style="background:'+d.c+'14"><span class="jic" style="background:'+d.c+'">'+d.ic+'</span>'
-        +'<div><b style="color:'+d.c+'">'+esc(d.t).toUpperCase()+'</b><div>'
-        +(att<=floor?'Get it over halfway':num(p.available,1)+' points still to claim — ask your team leader')+'</div></div>'
-        +'<span class="jpts" style="background:'+d.c+'">'+num(p.available,1)+' pts</span></div>'; }).join('')
-    :'<p class="why">Every measured driver is at target — nothing is hiding.</p>';
-
+      +'<span class="jpts" style="background:'+d.c+'">'+num(w[k])+' pts</span></div>'
+      +'<b>'+esc(d.t)+'</b><p>'+esc(d.d)+'</p></div>'; }).join('');
+  var stars=order.map(function(k){ return '<div class="jst"><span style="color:'+jd[k].c+'">★</span><b>'+num(JOURNEY_EX[k],1)+'</b></div>'; }).join('');
+  var eq=order.map(function(k){return num(JOURNEY_EX[k],1);}).join(' + ');
+  var total=order.reduce(function(n,k){return n+JOURNEY_EX[k];},0);
   return '<div class="jwrap">'
     +'<div class="jhead"><div><div class="jkick">THE CHATTERBOX</div><div class="jtitle">SCORE <span>JOURNEY</span></div>'
     +'<div class="jsub">EVERY POINT MOVES YOU FORWARD.</div></div>'
     +'<div class="jquote">Same team.<br>Same goals.<br><span>Bigger dreams.</span></div></div>'
-    +'<div class="jhi"><span class="jtrophy">🏆</span><div><b>'+(self?'Hi! I am <span>'+esc(first)+'.</span>':'This is <span>'+esc(a.name)+'</span> ('+esc(a.code)+').')+'</b>'
-    +'<div>Every day '+(self?'I':first)+' collect'+(self?'':'s')+' points by doing 7 important things well.'
-    +(self?' Your score works the same way!':' The score is read from the last '+num(c.window)+' worked sessions.')+'</div></div>'
+    +'<div class="jhi"><span class="jtrophy">🏆</span><div><b>Hi! I am <span>Ayanda.</span></b>'
+    +'<div>Every day I collect points by doing 7 important things well. Your score works the same way!</div></div>'
     +'<div class="jsmall">Small actions.<br><span>Big results.</span></div></div>'
     +'<div class="jsec"><span class="jn">1</span><h3>COLLECT POINTS FROM 7 IMPORTANT THINGS</h3><small>TOGETHER THEY CAN GIVE YOU 100 POINTS.</small></div>'
     +'<div class="jcards">'+cards+'</div>'
@@ -5263,37 +5228,35 @@ function journeyHTML(a,self){
     +'<div class="jbox"><div class="jsec"><span class="jn">2</span><h3>PASS THE HALFWAY LINE</h3></div>'
       +'<p>Each thing has its own target.</p>'
       +'<div class="jline"><span class="l t">0 points</span><span class="r t">points grow</span>'
-      +'<div class="jtrack"><i class="a"></i><i class="k" style="left:'+floor+'%"></i><i class="c"></i></div>'
-      +'<span class="l b">0%</span><span class="m" style="left:'+floor+'%">'+num(floor)+'%</span><span class="r b">100%</span></div>'
-      +exHTML+'</div>'
+      +'<div class="jtrack"><i class="a"></i><i class="k" style="left:50%"></i><i class="c"></i></div>'
+      +'<span class="l b">0%</span><span class="m" style="left:50%">50%</span><span class="r b">100%</span></div>'
+      +'<div class="jex"><span class="jstar" style="color:'+jd.qa.c+'">★</span><div>'
+      +'<div class="jexh">AYANDA’S QA EXAMPLE</div><b>83,4 out of 90 = 93% of target</b>'
+      +'<div class="jexs">So she earns 17 out of 20 points.</div></div></div></div>'
     +'<div class="jbox dark"><div class="jsec"><span class="jn">3</span><h3>ADD ALL THE POINTS</h3></div>'
       +'<p>Nothing is taken away.</p><div class="jstars">'+stars+'</div>'
-      +'<div class="jeq">'+esc(eq)+'</div><div class="jsum">= <b>'+num(c.adj,1)+'</b> / 100</div>'+goalHTML+'</div>'
+      +'<div class="jeq">'+esc(eq)+'</div><div class="jsum">= <b>'+num(total,1)+'</b> / 100</div>'
+      +'<div class="jgoal"><span>🎯</span><div><b>NEXT GOAL: 60</b><i><u style="width:'+Math.round(total/60*100)+'%"></u></i></div></div></div>'
     +'<div class="jbox"><div class="jsec"><span class="jn">4</span><h3>WHAT’S NEXT?</h3></div>'
-      +'<p>The score shows where points are hiding.</p>'+nextHTML+'</div>'
+      +'<p>The score shows where points are hiding.</p>'
+      +'<div class="jnext" style="background:'+jd.gwpTotal.c+'14"><span class="jic" style="background:'+jd.gwpTotal.c+'">'+jd.gwpTotal.ic+'</span>'
+      +'<div><b style="color:'+jd.gwpTotal.c+'">TOTAL PREMIUM</b><div>Get it over halfway</div></div><span class="jpts" style="background:'+jd.gwpTotal.c+'">'+num(w.gwpTotal)+' pts</span></div>'
+      +'<div class="jnext" style="background:'+jd.conv.c+'14"><span class="jic" style="background:'+jd.conv.c+'">'+jd.conv.ic+'</span>'
+      +'<div><b style="color:'+jd.conv.c+'">SALES FROM LEADS</b><div>Ask your team leader</div></div><span class="jpts" style="background:'+jd.conv.c+'">'+num(w.conv)+' pts</span></div>'
+      +'</div>'
     +'</div>'
     +'<div class="jstrip"><span class="jyj">YOUR<br>JOURNEY:</span>'
     +[['▶','START','Build good habits'],['🎯','BUILD','Hit your targets'],['50%','PASS 50%','Reach the halfway line'],['★','SCORE','Add your points'],['🏆','LEVEL UP','Hit your next goal']]
       .map(function(s,i){return (i?'<span class="jarr">›</span>':'')+'<div class="jstep"><span class="jic">'+s[0]+'</span><div><b>'+s[1]+'</b><small>'+s[2]+'</small></div></div>';}).join('')
     +'</div></div>';
 }
-function openScoreJourney(code){
-  var a=journeyFor(code); if(!a) return;
-  var self=!!(U&&U.role==='agent')&&!(D&&D.__back);
+function openScoreJourney(){
   var el=$('cbxJourney');
   if(!el){ el=document.createElement('div'); el.id='cbxJourney'; el.className='jmodal'; document.body.appendChild(el);
     el.onclick=function(e){ if(e.target===el) closeScoreJourney(); }; }
-  /* A TEAM LEADER PICKS THE AGENT INSIDE THE PANEL — one button on the page, every agent reachable.
-     Only the scoped rows the Worker sent (D.agents) are offered; an agent viewing themselves gets no picker. */
-  var pick='';
-  if(!self&&D&&D.agents&&D.agents.length>1){
-    var opts=D.agents.filter(function(r){return r.covered&&r.composite&&r.composite.rated!==false;}).slice().sort(function(x,y){return String(x.name).localeCompare(String(y.name));});
-    if(opts.length>1) pick='<div class="jpick"><label>Agent</label><select id="jPick">'+opts.map(function(r){return '<option value="'+esc(r.code)+'"'+(r.code===a.code?' selected':'')+'>'+esc(r.name)+' · '+esc(r.code)+'</option>';}).join('')+'</select></div>';
-  }
-  el.innerHTML='<div class="jpanel"><button class="jx" id="jClose" aria-label="Close">✕</button>'+pick+journeyHTML(a,self)+'</div>';
+  el.innerHTML='<div class="jpanel"><button class="jx" id="jClose" aria-label="Close">✕</button>'+journeyHTML()+'</div>';
   el.classList.add('open'); document.body.classList.add('dk-locked');
   $('jClose').onclick=closeScoreJourney;
-  var sel=$('jPick'); if(sel) sel.onchange=function(){ openScoreJourney(sel.value); };
   document.addEventListener('keydown',jEsc);
 }
 function jEsc(e){ if(e.key==='Escape') closeScoreJourney(); }
@@ -5305,7 +5268,7 @@ function closeScoreJourney(){
 /* one handler for every Journey button on the page — rating card, drawer, team leader tables */
 if(document.addEventListener) document.addEventListener('click',function(e){   // guarded: the structural suite loads this page into a stub document
   var b=e.target&&e.target.closest?e.target.closest('[data-journey]'):null;
-  if(!b) return; e.preventDefault(); e.stopPropagation(); openScoreJourney(b.getAttribute('data-journey'));
+  if(!b) return; e.preventDefault(); e.stopPropagation(); openScoreJourney();
 });
 
 function pgRating(){
