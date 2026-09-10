@@ -263,6 +263,9 @@ const envelope = (digest) => ({
   workingDays: digest.workingDays,
   dates: digest.dates,
   weeks: digest.weeks || [],   // Monday-anchored weeks, for the portal's Weekly view
+  /* how PULSE prints talk averages (MTD_RULES.aveTalkUnit) — the mirrored tables print them
+     the same way, so "152,0" on one screen is never "2h 32m" on the other (2026-09-10) */
+  talkUnit: digest.talkUnit || 'minutes',
   comm: digest.comm,
   /* THE COMPOSITE'S DRIVER LABELS. They travel once per digest rather than once per
      agent, so they live out here — and this envelope hand-picks its fields, so leaving
@@ -391,6 +394,26 @@ function teamTotals(rows) {
   };
 }
 
+/**
+ * The MTD "Team Leaders" block for a team scope (Nick, 2026-09-10) — this leader's own
+ * column(s) and the total of each campaign they sit in, exactly as PULSE published them
+ * (digest.tlAgg / digest.campAgg). Sliced by the SAME team string authorise() scoped the
+ * rows on, so a leader gets their own column and never a colleague's; the campaign total is
+ * an aggregate with nobody named in it, the same footing as the anonymous peer groups an
+ * agent already receives. A staff scope ('all') gets every column. Null when the digest
+ * predates the block, and the page says so instead of drawing an empty table.
+ */
+function teamSummary(digest, auth) {
+  if (!Array.isArray(digest.tlAgg) || !digest.campAgg) return null;
+  const team = String(auth.team || '').trim();
+  const teams = auth.staff ? digest.tlAgg.slice()
+    : digest.tlAgg.filter((t) => String(t.tl || '').trim() === team);
+  const camps = [...new Set(teams.map((t) => t.camp))];
+  const campaigns = {};
+  for (const c of camps) if (digest.campAgg[c]) campaigns[c] = digest.campAgg[c];
+  return { onTarget: digest.onTarget == null ? 1 : digest.onTarget, talkUnit: digest.talkUnit || 'minutes', teams, campaigns };
+}
+
 /** Daily team sales — element-wise sum of the per-agent sparklines already published. */
 function teamSpark(rows, dates) {
   const out = new Array((dates || []).length).fill(0);
@@ -487,6 +510,7 @@ export async function overview(env, DB, user, digest, months, extra) {
       team: auth.team || (auth.staff ? 'All teams' : ''),
       totals: teamTotals(rows),
       spark: teamSpark(rows, digest.dates),
+      summary: teamSummary(digest, auth),   // the MTD "Team Leaders" block, this team's column + campaign total
       nba,
       /* The team list. Each row is the same agent-safe shape the agent sees of
          themselves — a team leader is entitled to their own team's figures. */

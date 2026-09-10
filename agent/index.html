@@ -1014,42 +1014,56 @@ function preShell(inner){
    cancelled" on their own motivational page is exactly what this app was built
    not to do. A team leader is accountable for the number and it is on the
    management MTD table, so it travels, and it stops here. */
+/* TALK AVERAGES PRINT THE WAY MANAGEMENT'S TABLE PRINTS THEM (Nick, 2026-09-10: the two
+   reports "did not match" — the same 9,120 seconds read "152,0" on the management dashboard and
+   "2h 32m" here). D.talkUnit is PULSE's own MTD_RULES.aveTalkUnit, so the unit follows the
+   rule book rather than a taste of this page's. */
+function talkHdr(label){ return (!D||D.talkUnit!=='minutes')?label:label+' (min)'; }
+function fmtTalkAve(sec){
+  if(sec==null||isNaN(sec)) return '–';
+  if(!D||D.talkUnit==='minutes') return num(sec/60,1);
+  return durShort(sec);
+}
+/* The two averages are READ from the digest when it carries them (the engine's null rule:
+   no dialler file covers the agent → unknown, a dash — never "0m"). The division survives
+   only as the fallback for a digest published before they travelled. */
+function aveTalkOf(o){ return o.aveTalk!==undefined?o.aveTalk:(o.talk==null?null:(o.emp?o.talk/o.emp:null)); }
+function talkPerWorkedOf(o){ return o.talkPerWorked!==undefined?o.talkPerWorked:(o.talk==null?null:(o.act?o.talk/o.act:null)); }
 function mtdRows(forAgent){
-  var d1=function(v){return v==null?'–':num(v,1);};
   var d0=function(v){return v==null?'–':num(v,0);};
+  var shifts=function(v){return v==null?'–':num(v,v%1?1:0);};   // "7", "6,5" — as the VAS table prints shifts
+  var p0=function(v){return v==null?'–':pct(v,0);};
   var p1=function(v){return v==null?'–':pct(v,1);};
-  var dur=function(sec){
-    if(sec==null) return '–';
-    var m=Math.round(sec/60), h=Math.floor(m/60);
-    return h?(h+'h '+String(m%60).padStart(2,'0')+'m'):(m+'m');
-  };
-  /* THE VAS TABLE, ROW FOR ROW (Nick 2026-08-26): same metrics, same labels, same order,
-     same formulas as the management dashboard's own Month to Date columns - transposed, but never a
-     different number. Two formulas worth naming because they LOOK interchangeable and are
-     not, and this table used to use the wrong one: Ave Talk Time divides by EMPLOYED shifts
-     (utilisation - an unworked shift drags it down); Talk / Day Worked divides by ACTUAL
-     shifts (intensity on the days they were there). VAS shows both, so this does too.
-     Score is the VAS leaderboard's own 0-100 (perfScore), published in the digest - shown,
-     never recomputed here. */
+  /* THE VAS TABLE, COLUMN FOR COLUMN (Nick 2026-08-26, re-checked 2026-09-10 against a
+     cell-by-cell render of both apps): same metrics, same labels, same order, same formulas
+     AND same formatting as the management dashboard's Month to Date — Tenure first (it was
+     the one column missing), attendance to the whole percent, talk in the rule book's unit,
+     Ave GWP to one decimal. Two formulas worth naming because they LOOK interchangeable and
+     are not: Ave Talk Time divides by EMPLOYED shifts (utilisation — an unworked shift drags
+     it down); Talk / Day Worked divides by ACTUAL shifts (intensity on the days they were
+     there). VAS shows both, so this does too. Score is the VAS leaderboard's own 0-100,
+     published in the digest — shown, never recomputed here; it is the one column the
+     management table does not carry. */
   var rows=[
-    ['Employed Shifts',      function(o){return d1(o.emp);}],
-    ['Actual Shifts',        function(o){return d1(o.act);}],
-    ['Att %',                function(o){return p1(o.att);}],
+    ['Tenure',               function(o){return o.tenure?esc(o.tenure):'';}],
+    ['Employed Shifts',      function(o){return shifts(o.emp);}],
+    ['Actual Shifts',        function(o){return shifts(o.act);}],
+    ['Att %',                function(o){return p0(o.att);}],
     ['Sales Target',         function(o){return d0(o.target);}],
     ['Sales Achieved',       function(o){return '<b>'+d0(o.sales)+'</b>';}],
     ['% of Sales Target',    function(o){return o.pctT==null?'–':pctPill(o.pctT);}],
     ['SPD',                  function(o){return o.spd==null?'–':num(o.spd,2);}],
     ['Cancellations',        function(o){return d0(o.canc);}],
     ['% of Cancellations',   function(o){return (o.canc==null||!o.sales)?'–':pct(o.canc/o.sales,1);}],
-    ['Ave Talk Time',        function(o){return dur(o.talk==null?null:(o.emp?o.talk/o.emp:null));}],
+    [talkHdr('Ave Talk Time'), function(o){return fmtTalkAve(aveTalkOf(o));}],
     ['GWP Target',           function(o){return o.gwpT==null?'–':R(o.gwpT);}],
     ['GWP Achieved',         function(o){return '<b>'+R(o.gwpEx)+'</b>';}],
     ['% To GWP Target',      function(o){return (o.gwpT==null||!o.gwpT||o.gwpEx==null)?'–':pctPill(o.gwpEx/o.gwpT);}],
-    ['Ave GWP',              function(o){return o.aveG==null?'–':R(o.aveG);}],
+    ['Ave GWP',              function(o){return o.aveG==null?'–':R(o.aveG,1);}],
     ['Referrals',            function(o){return d0(o.ref);}],
     ['% Of Referrals To Sales Achieved', function(o){return (o.ref==null||!o.sales)?'–':pct(o.ref/o.sales,1);}],
-    ['Call Quality (QA)',    function(o){return p1(o.qa);}],
-    ['Talk / Day Worked',    function(o){return dur(o.talk==null?null:(o.act?o.talk/o.act:null));}],
+    ['QA',                   function(o){return p1(o.qa);}],
+    [talkHdr('Talk / Day Worked'), function(o){return fmtTalkAve(talkPerWorkedOf(o));}],
     /* ONE SCORE, ONE NAME. The rating card shows the seven-driver composite, so this
        row must show the same number — it used to render the four-driver score beside
        it, so the same agent read two different figures called "Score" on one screen. */
@@ -1070,19 +1084,27 @@ function pctPill(v){
    team's own rate. */
 function teamAgg(rows){
   var cov=rows.filter(function(a){return a.covered;});
-  var sum=function(f){ var any=false,t=0;
-    cov.forEach(function(r){ if(r[f]!=null){any=true;t+=Number(r[f])||0;} });
+  var sum=function(f,rand){ var any=false,t=0;
+    cov.forEach(function(r){ if(r[f]!=null){any=true;t+=rand?Math.round(Number(r[f])||0):(Number(r[f])||0);} });
     return any?t:null; };
   var emp=sum('emp'), act=sum('act'), sales=sum('sales'), target=sum('target');
-  var gwpEx=sum('gwpEx'), gwpT=sum('gwpT'), canc=sum('canc'), talk=sum('talk');
+  /* GWP TOTALS ADD THE RAND EACH ROW PRINTS, as the management table's Grand Total does
+     (PULSE totalRow sums r.gwp, the per-agent figure already rounded to the rand). Summing
+     cents and rounding once read R 56 691 under a column of rows that add to R 56 690 — one
+     rand, but a visible one on the two reports Nick put side by side (2026-09-10). */
+  var gwpEx=sum('gwpEx',true), gwpT=sum('gwpT',true), canc=sum('canc'), talk=sum('talk');
   var qav=cov.filter(function(r){return r.qa!=null;});
   return {
-    covered:true, emp:emp, act:act, sales:sales, target:target, gwpEx:gwpEx, gwpT:gwpT,
+    covered:true, tenure:'', emp:emp, act:act, sales:sales, target:target, gwpEx:gwpEx, gwpT:gwpT,
     canc:canc, talk:talk, ref:sum('ref'),
     att:(emp?act/emp:null),
     pctT:(target?sales/target:null),
     spd:(act?sales/act:null),
     aveG:(sales?gwpEx/sales:null),
+    /* both talk figures from the summed seconds over the summed shifts, never a mean of the
+       rows — the same rule PULSE's totalRow applies to every ratio on its Grand Total */
+    aveTalk:(emp&&talk!=null?talk/emp:null),
+    talkPerWorked:(act&&talk!=null?talk/act:null),
     qa:(qav.length?qav.reduce(function(n,r){return n+r.qa;},0)/qav.length:null),
     /* Score is per person by definition; the team column carries the plain mean of the
        members who have one, the same way QA does - a rate re-derived from sums would be a
@@ -1096,19 +1118,88 @@ function teamAgg(rows){
   };
 }
 
+/* ===================== REPORTS =====================
+   ONE TAB, THREE SUB-TABS (Nick, 2026-09-10: "there must be a tab called reports and its
+   sub tabs must be month to date, daily, weekly"). The three views keep their own ids —
+   deep links, the render switch and the suites all name them — and only the NAV changed:
+   the sidebar carries one "Reports" entry, and the page opens with this row of sub-tabs.
+   LAST_REPORT remembers which sub-tab was open, so leaving for Coaching Hub and coming back
+   lands on the same report. */
+var REPORT_TABS=[['mtd_team','Month to date'],['daily_team','Daily'],['weekly_team','Weekly']];
+var LAST_REPORT='mtd_team';
+function isReport(v){ return REPORT_TABS.some(function(t){return t[0]===v;}); }
+function reportsTabs(active){
+  LAST_REPORT=active;
+  return '<div class="seg" id="reportTabs" role="tablist">'
+    +REPORT_TABS.map(function(t){
+      return '<button class="pill'+(t[0]===active?' on':'')+'" role="tab" aria-selected="'+(t[0]===active)+'" data-report="'+t[0]+'">'+esc(t[1])+'</button>';
+    }).join('')+'</div>';
+}
+
 function pageMTD(){
   var mine=(D.agents||[]).filter(function(a){return a.covered;});
-  if(!mine.length) return '<div class="card"><h3>Month to date</h3>'
+  if(!mine.length) return reportsTabs('mtd_team')+'<div class="card"><h3>Month to date</h3>'
     +'<p class="why">Nobody on your team has figures published for this month yet.</p></div>';
   var total=teamAgg(mine);
-  return '<div class="card">'
+  return reportsTabs('mtd_team')+'<div class="card">'
     +'<h3>Month to date <span class="cnt">'+esc(prettyPeriod())+'</span></h3>'
     +'<p class="why">The same table management reads — one row per agent, your team\'s totals on the last row. Nothing here is worked out twice; these are the published figures.</p>'
     +vasAgentsTable(mine,total,mtdRows())
     +'<p class="why" style="margin-top:12px">Dialling days this month: <b>'+num(D.diallingDays)+'</b> '
     +'· working days: <b>'+num(D.workingDays)+'</b>. A dash means that figure has not been supplied for '
     +'this month — it is not a zero.</p>'
-    +'</div>';
+    +'</div>'
+    +tlSummaryCard();
+}
+
+/* THE "TEAM LEADERS" BLOCK of management's Month to Date (Nick, 2026-09-10: this was the
+   part of that page the team leader's own view never carried — Dialing Days, Employed HC,
+   Agents on Target and the campaign total beside the leader's column). Every figure is the
+   engine's (digest.tlAgg / campAgg, sliced to this team by the Worker); Agents on Target in
+   particular cannot be re-derived here because the threshold is a VAS setting, so it
+   travels with the block. The campaign total is an aggregate with nobody named in it. A
+   digest published before the block existed gets one sentence, never an empty table. */
+function tlSummaryCard(){
+  var s=D.summary;
+  if(!s) return '<div class="card"><h3>Team leader summary</h3><p class="why">The team-leader summary '
+    +'(Employed HC, Agents on Target, the campaign total) is not in the published figures yet — it appears '
+    +'within a couple of minutes of a signed-in management dashboard session being open. Nothing is missing from the data itself.</p></div>';
+  if(!s.teams||!s.teams.length) return '';
+  var dd=D.diallingDays;
+  var rows=[
+    ['Dialing Days',          function(){return num(dd);}],
+    ['Employed HC',           function(o){return num(o.hc);}],
+    ['Total Employed Shifts', function(o){return num(o.emp,o.emp%1?1:0);}],
+    ['Total Actual Shifts',   function(o){return num(o.act,o.act%1?1:0);}],
+    ['% Of Attendance',       function(o){return o.att==null?'–':pct(o.att,1);}],
+    ['Sales Target',          function(o){return num(o.target);}],
+    ['Sales Achieved',        function(o){return '<b>'+num(o.sales)+'</b>';}],
+    ['% To Sales Target',     function(o){return o.pctT==null?'–':pctPill(o.pctT);}],
+    ['SPD',                   function(o){return o.spd==null?'–':num(o.spd,2);}],
+    ['Cancellations',         function(o){return num(o.canc);}],
+    ['% Canc to Sales',       function(o){return o.cancPct==null?'–':pct(o.cancPct,1);}],
+    ['GWP Target',            function(o){return o.gwpT==null?'–':R(o.gwpT);}],
+    ['GWP Achieved',          function(o){return o.gwp==null?'–':'<b>'+R(o.gwp)+'</b>';}],
+    ['% To GWP Target',       function(o){return o.pctG==null?'–':pctPill(o.pctG);}],
+    ['Ave GWP',               function(o){return o.aveG==null?'–':R(o.aveG,1);}],
+    [talkHdr('Ave Talk Time'), function(o){return fmtTalkAve(o.aveTalk);}],
+    ['Referrals',             function(o){return num(o.ref);}],
+    ['Referrals %',           function(o){return o.refPct==null?'–':pct(o.refPct,1);}],
+    ['Agents on Target',      function(o){return num(o.onT);}],
+    ['% Agents on Target',    function(o){return o.hc?pct(o.onT/o.hc,0):'–';}],
+  ];
+  var lab={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',Nesting:'Nesting',VT:'Matrix Tracker'};
+  return s.teams.map(function(t){
+    var c=s.campaigns&&s.campaigns[t.camp];
+    return '<div class="card"><h3>'+esc(lab[t.camp]||t.camp)+' — team leader summary</h3>'
+      +'<p class="why">The "Team Leaders" block of management\'s Month to Date: your team beside the campaign total. '
+      +'An agent is on target at or above '+esc(pct(s.onTarget,0))+' of their sales target.</p>'
+      +'<div class="scroller"><table class="tbl vastbl"><thead><tr><th class="l stick">Metric</th>'
+      +'<th>'+esc(t.tl)+'</th><th>Campaign total</th></tr></thead><tbody>'
+      +rows.map(function(r){ return '<tr><td class="l stick">'+esc(r[0])+'</td><td class="num">'+r[1](t)+'</td>'
+        +'<td class="num">'+(c?'<b>'+r[1](c)+'</b>':'–')+'</td></tr>'; }).join('')
+      +'</tbody></table></div></div>';
+  }).join('');
 }
 
 /* THE MANAGEMENT ORIENTATION (Nick 2026-08-26: "formatted well"): agents as ROWS and
@@ -1177,12 +1268,34 @@ function weeklyRows(){
 }
 function pageWeeklyTeam(){
   var mine=(D.agents||[]).filter(function(a){return a.covered;});
-  if(!mine.length) return '<div class="card"><h3>Weekly</h3><p class="why">Nobody on your team has figures published for this month yet.</p></div>';
-  if(!daysPublished()) return staleDaysCard('Weekly');
+  if(!mine.length) return reportsTabs('weekly_team')+'<div class="card"><h3>Weekly</h3><p class="why">Nobody on your team has figures published for this month yet.</p></div>';
   var weeks=(D.weeks||[]).slice().reverse();
-  if(!weeks.length) return staleDaysCard('Weekly');
-  var cols=weeklyRows();
-  return weeks.map(function(w){
+  /* THE VAS WEEKLY TABLE, COLUMN FOR COLUMN (Nick, 2026-09-10). Each agent's week arrives as
+     PULSE's own wtdCC aggregate (a.wk), so the columns are the management Weekly's — the
+     month table without its cancellation pair and without Score, exactly as PULSE's Weekly
+     calls aggCols. A digest published before the weekly rows travelled falls back to the
+     eight columns the day rows can support, below. */
+  var hasWk=mine.some(function(a){return Array.isArray(a.wk)&&a.wk.length;});
+  if(hasWk&&weeks.length){
+    var cols=mtdRows().filter(function(r){return r[0].indexOf('Canc')<0&&r[0]!=='Score';});
+    var out=weeks.map(function(w){
+      var per=mine.map(function(a){
+        var wk=null; (a.wk||[]).forEach(function(x){ if(x.n===w.num) wk=x; });
+        if(!wk) return null;
+        var o={}; for(var k in wk) o[k]=wk[k];
+        o.name=a.name; o.code=a.code; o.tenure=a.tenure; o.covered=true; return o;
+      }).filter(Boolean);
+      if(!per.length) return '';
+      return '<div class="card" style="margin-bottom:14px">'
+        +'<h3>Week '+esc(String(w.num))+' <span class="cnt">'+esc(w.from)+' → '+esc(w.to)+'</span></h3>'
+        +vasAgentsTable(per,teamAgg(per),cols)+'</div>';
+    }).join('');
+    return reportsTabs('weekly_team')+(out||'<div class="card"><h3>Weekly</h3><p class="why">No week in this month carries figures yet.</p></div>');
+  }
+  if(!daysPublished()) return reportsTabs('weekly_team')+staleDaysCard('Weekly');
+  if(!weeks.length) return reportsTabs('weekly_team')+staleDaysCard('Weekly');
+  var cols0=weeklyRows();
+  return reportsTabs('weekly_team')+(weeks.map(function(w){
     var per=mine.map(function(a){var o=sumDays(a,w.from,w.to);
         return {name:a.name,code:a.code,o:o,spd:(o.act?o.s/o.act:0)};})
       .filter(function(x){return x.o.any;});
@@ -1195,52 +1308,64 @@ function pageWeeklyTeam(){
       +'<h3>Week '+esc(String(w.num))+' <span class="cnt">'+esc(w.from)+' → '+esc(w.to)+'</span></h3>'
       +'<div class="scroller"><table class="tbl vastbl"><thead><tr>'
       +'<th class="l stick">Agent</th>'
-      +cols.map(function(c){return '<th>'+esc(c[0])+'</th>';}).join('')
+      +cols0.map(function(c){return '<th>'+esc(c[0])+'</th>';}).join('')
       +'</tr></thead><tbody>'
       +byS.map(function(x){
         return '<tr><td class="l stick"><b>'+esc(x.name)+'</b><div class="sub2">'+esc(x.code)+'</div></td>'
-          +cols.map(function(c){return '<td class="num">'+c[1](x.o)+'</td>';}).join('')+'</tr>';
+          +cols0.map(function(c){return '<td class="num">'+c[1](x.o)+'</td>';}).join('')+'</tr>';
       }).join('')
       +'<tr class="grand"><td class="l stick"><b>Grand Total</b></td>'
-      +cols.map(function(c){return '<td class="num">'+c[1](tot)+'</td>';}).join('')
+      +cols0.map(function(c){return '<td class="num">'+c[1](tot)+'</td>';}).join('')
       +'</tr></tbody></table></div></div>';
-  }).join('')||staleDaysCard('Weekly');
+  }).join('')||staleDaysCard('Weekly'));
 }
+/* The Daily sub-tab's day filter — '' is every day, else one YYYY-MM-DD. Session-only,
+   like the management Daily's own day picker. */
+var DAY_FILTER='';
 function pageDailyTeam(){
   var mine=(D.agents||[]).filter(function(a){return a.covered;});
-  if(!mine.length) return '<div class="card"><h3>Daily</h3><p class="why">Nobody on your team has figures published for this month yet.</p></div>';
-  if(!daysPublished()) return staleDaysCard('Daily');
+  if(!mine.length) return reportsTabs('daily_team')+'<div class="card"><h3>Daily</h3><p class="why">Nobody on your team has figures published for this month yet.</p></div>';
+  if(!daysPublished()) return reportsTabs('daily_team')+staleDaysCard('Daily');
   /* ONE FLAT TABLE, newest day first — the management dashboard's Daily detail, scoped
      to this team. A day the dialler never covered shows a dash (unknown), never a zero,
      and talk with no shift credited keeps its flag: that anomaly is the whole reason a
      daily view exists. */
-  var rows=[];
-  mine.forEach(function(a){ (a.days||[]).forEach(function(f){ rows.push({a:a,f:f}); }); });
-  if(!rows.length) return staleDaysCard('Daily');
+  var all=[]; var daySet={};
+  mine.forEach(function(a){ (a.days||[]).forEach(function(f){ all.push({a:a,f:f}); daySet[f.d]=1; }); });
+  if(!all.length) return reportsTabs('daily_team')+staleDaysCard('Daily');
+  var days=Object.keys(daySet).sort().reverse();
+  if(DAY_FILTER&&!daySet[DAY_FILTER]) DAY_FILTER='';     // a day that is no longer in the month is not a filter
+  var rows=DAY_FILTER?all.filter(function(r){return r.f.d===DAY_FILTER;}):all;
   rows.sort(function(x,y){ return x.f.d<y.f.d?1:(x.f.d>y.f.d?-1:(y.f.s-x.f.s)); });
-  return '<div class="card">'
+  /* the day picker — the management Daily has one, and a team leader looking for yesterday
+     should not scroll past a fortnight to find it */
+  var picker='<select id="dayFilter" class="kc" style="max-width:220px"><option value="">All days</option>'
+    +days.map(function(d){return '<option value="'+esc(d)+'"'+(d===DAY_FILTER?' selected':'')+'>'+esc(d)+'</option>';}).join('')+'</select>';
+  var dash='–';
+  return reportsTabs('daily_team')+'<div class="card">'
     +'<h3>Daily detail <span class="cnt">'+num(rows.length)+' agent-days · '+esc(prettyPeriod())+'</span></h3>'
+    +'<div style="margin-top:8px">'+picker+'</div>'
     +'<div class="scroller"><table class="tbl vastbl"><thead><tr>'
     +'<th class="l stick">Date</th><th>W</th><th class="l">Agent</th><th>Emp</th><th>Act</th>'
-    +'<th>Target</th><th>Sales</th><th>% Target</th><th>Talk</th><th>Talk / Worked</th>'
+    +'<th>Target</th><th>Sales</th><th>% Target</th><th>Talk</th><th>'+esc(talkHdr('Talk / Worked'))+'</th>'
     +'<th>Calls</th><th>GWP</th><th>Ave GWP</th><th>Referrals</th>'
     +'</tr></thead><tbody>'
     +rows.map(function(r,i){var f=r.f;
       var first=(i===0||rows[i-1].f.d!==f.d);
-      var tw=f.act?durShort(f.tk/f.act):(f.tk?'<span class="pill r" title="talk recorded but no shift credited">no shift</span>':'–');
+      var tw=f.act?fmtTalkAve(f.tk/f.act):(f.tk?'<span class="pill r" title="talk recorded but no shift credited">no shift</span>':dash);
       return '<tr'+(first?' class="dayfirst"':'')+'><td class="l stick">'+(first?'<b>'+esc(f.d)+'</b>':'')+'</td>'
         +'<td class="num">'+(first?'W'+esc(String(f.w)):'')+'</td>'
         +'<td class="l"><b>'+esc(firstName(r.a.name))+'</b> <span class="sub2" style="display:inline">'+esc(r.a.code)+'</span></td>'
         +'<td class="num">'+num(f.emp,f.emp%1?1:0)+'</td><td class="num">'+num(f.act,f.act%1?1:0)+'</td>'
         +'<td class="num">'+num(f.t)+'</td>'
         +'<td class="num"><b>'+num(f.s)+'</b>'+(f.p?' <span class="pill a" title="from call dispositions — provisional until the money file lands">±</span>':'')+'</td>'
-        +'<td class="num">'+(f.t?pctPill(f.s/f.t):'–')+'</td>'
-        +'<td class="num">'+((f.tk>0||f.dc)?durShort(f.tk):'<span title="no dialler file covers this agent on this day">'+'–'+'</span>')+'</td>'
+        +'<td class="num">'+(f.t?pctPill(f.s/f.t):dash)+'</td>'
+        +'<td class="num">'+((f.tk>0||f.dc)?durShort(f.tk):'<span title="no dialler file covers this agent on this day">'+dash+'</span>')+'</td>'
         +'<td class="num">'+tw+'</td>'
-        +'<td class="num">'+(f.c?num(f.c):'–')+'</td>'
+        +'<td class="num">'+(f.c?num(f.c):dash)+'</td>'
         +'<td class="num">'+R(f.x)+'</td>'
-        +'<td class="num">'+(f.s?R(f.x/f.s):'–')+'</td>'
-        +'<td class="num">'+(f.r?num(f.r):'–')+'</td></tr>';
+        +'<td class="num">'+(f.s?R(f.x/f.s,1):dash)+'</td>'
+        +'<td class="num">'+(f.r?num(f.r):dash)+'</td></tr>';
     }).join('')
     +'</tbody></table></div></div>';
 }
@@ -3032,7 +3157,9 @@ var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:
    HR Operations · Team Results · Nikola. HR Operations is left out on Nick's
    instruction and there is no data behind it here. Month to date stays because he
    asked for it separately, and My coaching because it is real and already working. */
-var TL_VIEWS=['team','help','kpihub','coach_team','forms','results','mtd_team','weekly_team','daily_team','nik_team'];
+/* 'reports' is the NAV id; it resolves to whichever of the three report views was open
+   last (REPORT_TABS / LAST_REPORT above) — the view ids themselves are unchanged. */
+var TL_VIEWS=['team','help','kpihub','coach_team','forms','results','reports','mtd_team','weekly_team','daily_team','nik_team'];
 /* The third view. Campaign · Team Leaders · Assistance · Nikola — the spec's
    four pages, nothing else. */
 var CM_VIEWS=['cm','cm_teams','cm_assist','cm_nik','cm_set'];
@@ -3047,8 +3174,10 @@ function navFor(active){
             ['kpihub','KPI Hub',ICON.kpi],
             ['coach_team','Coaching Hub',ICON.coaching],
             ['results','Team Results',ICON.results],
-            ['mtd_team','Month to date',ICON.mtd],['weekly_team','Weekly',ICON.week],
-            ['daily_team','Daily',ICON.day],['nik_team','Nikola',ICON.nik]];
+            /* ONE REPORTS TAB (Nick, 2026-09-10): Month to date · Daily · Weekly are its
+               sub-tabs, on the page, not three sidebar entries. */
+            ['reports','Reports',ICON.mtd],
+            ['nik_team','Nikola',ICON.nik]];
   /* 'My coaching' is OFF the agent nav (Nick, 2026-08-26). The view itself still
      exists — the "Ask … to help" button on My Progress deep-links to it, and the
      coaching themes still show on My Progress and Today — there is simply no tab. */
@@ -4026,6 +4155,7 @@ function teamView(){
      tab then pointed at a page that was not rendered. Each view owns its own
      state so it is correct whoever calls it. */
   if(TL_VIEWS.indexOf(VIEW)<0) VIEW='team';
+  if(VIEW==='reports') VIEW=LAST_REPORT;   // the Reports nav entry opens the sub-tab that was open last
   var t=D.totals||{};
   /* NOT named pct — the global pct() formatter is used inside cell() below, and a
      local of that name shadows it for the whole closure ("pct is not a function",
@@ -4143,7 +4273,7 @@ function teamView(){
          table lives on Team Results, which is where the management view keeps it. */
       : pageMyTeam()+tlAssistHTML()+daily)
     +'<div class="foot">Numbers updated '+esc(stamp())+'<br><button id="out">Sign out</button></div>',
-    VIEW==='team'?'team':VIEW);
+    VIEW==='team'?'team':(isReport(VIEW)?'reports':VIEW));
 
   if(VIEW==='nik_team') wireNikola();
   /* The hubs are fetched the first time their tab is opened, not on sign-in —
@@ -4161,6 +4291,11 @@ function teamView(){
   if(VIEW==='help'){ if(!HELPD) helpLoad(); else { wireHelp(); if(Date.now()-HELPD_AT>45000) helpLoad(); } }
   if(VIEW==='team'){ if(!ACTS&&nbaAgents().length) actsLoad(); else wireActs(); }
   if(VIEW==='team'){ if(!TLA) tlaLoad(); else wireTlAssist(); }
+  /* Reports sub-tabs and the Daily day picker (2026-09-10) */
+  Array.prototype.forEach.call(document.querySelectorAll('[data-report]'),function(b){
+    b.onclick=function(){ VIEW=b.getAttribute('data-report'); render(); };
+  });
+  var df=$('dayFilter'); if(df) df.onchange=function(){ DAY_FILTER=df.value; render(); };
   Array.prototype.forEach.call(document.querySelectorAll('[data-expand]'),function(b){
     b.onclick=function(e){ e.stopPropagation();
       var cb=b.getAttribute('data-expand'); EXPANDED[cb]=!EXPANDED[cb]; render(); };

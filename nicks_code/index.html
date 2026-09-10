@@ -8346,6 +8346,25 @@ function agentDigestPayload(){
          zero would read as 'no cancellations' when it means 'we were not told'. */
       canc:g.canc==null?null:r2(g.canc), gwpT:g.gwpT==null?null:r2(g.gwpT),
       talk:g.talk==null?null:Math.round(g.talk),
+      /* THE TWO TALK AVERAGES, DECIDED HERE (Nick, 2026-09-10: "the month to date report on
+         vas analytics does not match the report on the team leader view"). Agent Analytics
+         divided talk by shifts itself, so an agent the dialler never covered read "0m" on the
+         team leader's table where this app prints a dash — the same null rule agg() applies
+         (o.aveTalk is null until the dialler has seen the agent). Seconds to the hundredth — rounded
+         to whole seconds, 12536.9 became 12537 and printed 209,0 minutes against VAS's 208,9;
+         null = unknown. */
+      aveTalk:r2(g.aveTalk),
+      talkPerWorked:r2(g.talkPerWorked),
+      /* THE WEEKLY ROWS, as this app's own Weekly tab computes them — the same wtdCC aggregate
+         per week, same clamped QA window — so the team leader's Weekly carries every column
+         management's does (target, attendance, GWP target, QA) instead of the eight it could
+         re-derive from day rows. Ex-VAT GWP like the month row; null QA = no evaluation. */
+      wk:(M.weeks||[]).map(w=>{ const wg=((M.wtdCC[w.num]||{})[camp]||{})[a.code]; if(!wg) return null;
+        return {n:w.num,emp:r2(wg.emp)||0,act:r2(wg.act)||0,target:r2(wg.target)||0,sales:wg.sales||0,
+          gwpEx:r2(wg.gwpEx)||0,gwpT:wg.gwpT==null?null:r2(wg.gwpT),talk:Math.round(wg.talk||0),
+          aveTalk:r2(wg.aveTalk),talkPerWorked:r2(wg.talkPerWorked),
+          ref:wg.ref||0,calls:wg.calls||0,qa:(wg.qa&&wg.qa.avg!=null)?r4(wg.qa.avg):null,
+          att:r4(wg.att),pctT:r4(wg.pctT),spd:r4(wg.spd),aveG:r2(wg.aveG)}; }).filter(Boolean),
       /* Dialler + leads. `leads` is the unique-lead denominator; null means the case
          books are not loaded, which is not the same as an agent with no leads. */
       calls:(callsBy[a.code]||{}).calls||0, ans:(callsBy[a.code]||{}).ans||0,
@@ -8489,9 +8508,28 @@ function agentDigestPayload(){
        see the note in compositeFor. The panel joins them to each agent's numbers. */
     compositeDrivers:COMPOSITE_RULES.drivers.map(d=>({k:d.k,label:d.label,note:d.note,w:d.w})),
     groups:groups,
+    /* THE TEAM-LEADER SUMMARY (Nick, 2026-09-10). This app's Month to Date has a "Team
+       Leaders" block — Dialing Days, Employed HC, Agents on Target and the campaign total
+       beside each leader — that the team leader's own view never carried. Published as the
+       engine computed it (M.tlAgg / M.campAgg, on-target at S.settings.onTarget) so Agent
+       Analytics paints the same block; the Worker slices it to the signed-in leader's team.
+       Aggregates only: no agent is named in it. */
+    onTarget:S.settings.onTarget,
+    talkUnit:MTD_RULES.aveTalkUnit,     // how this app prints talk averages — the mirror must print them the same way
+    tlAgg:Object.keys(M.tlAgg||{}).map(k=>{ const i=k.indexOf('|'); return {camp:k.slice(0,i),tl:k.slice(i+1),...tlSummary(M.tlAgg[k])}; }),
+    campAgg:Object.fromEntries(Object.keys(M.campAgg||{}).map(c=>[c,tlSummary(M.campAgg[c])])),
     agents:rows,
     notCovered:notCovered
   };
+}
+/* One team-leader / campaign column of the MTD "Team Leaders" block, rounded on the way out
+   like the agent rows (money to the rand as the block prints it, rates to four places). */
+function tlSummary(o){
+  const r2=v=>v==null?null:Math.round(v*100)/100, r4=v=>v==null?null:Math.round(v*10000)/10000;
+  return {hc:o.hc||0, emp:r2(o.emp)||0, act:r2(o.act)||0, att:r4(o.att), target:r2(o.target)||0, sales:o.sales||0,
+    pctT:r4(o.pctT), spd:r4(o.spd), canc:o.canc||0, cancPct:r4(o.cancPct), gwpT:o.gwpT==null?null:Math.round(o.gwpT),
+    gwp:o.gwp==null?null:Math.round(o.gwp), pctG:r4(o.pctG), aveG:r2(o.aveG),
+    aveTalk:r2(o.aveTalk), ref:o.ref||0, refPct:r4(o.refPct), onT:o.onT||0};
 }
 
 /* Publish on the same cadence and with the same guards as the AI digest

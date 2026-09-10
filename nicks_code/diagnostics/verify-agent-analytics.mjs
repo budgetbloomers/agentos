@@ -529,12 +529,25 @@ const CODE = PAGE
   /\['Score',/.test(mtd)
     ? ok('the Month to Date table carries the Score row (the published 0-100, never recomputed)')
     : bad('the Score row is missing from Month to Date');
-  /o\.emp\?o\.talk\/o\.emp/.test(mtd)
+  /* 2026-09-10: the figure itself now travels in the digest (engine-decided); the division
+     survives only as the fallback for an older digest and must keep the employed basis. */
+  /o\.emp\?o\.talk\/o\.emp/.test(PAGE.slice(PAGE.indexOf('function aveTalkOf('), PAGE.indexOf('function mtdRows(')))
     ? ok('Ave Talk Time divides by EMPLOYED shifts, as the management dashboard does')
     : bad('Ave Talk Time is not on the employed-shift basis');
-  /'weekly_team','Weekly'/.test(navBlk) && /'daily_team','Daily'/.test(navBlk)
-    ? ok('a team leader has Weekly and Daily tabs')
-    : bad('the team leader Weekly/Daily tabs are missing');
+  /* ---- 2026-09-10 (Nick): ONE Reports tab, three sub-tabs ----
+     "there must be a tab called reports and its sub tabs must be month to date, daily,
+     weekly". The sidebar carries a single Reports entry; the three views keep their ids and
+     are chosen on the page (REPORT_TABS), in that order. */
+  const tabsBlk = PAGE.slice(PAGE.indexOf('var REPORT_TABS='), PAGE.indexOf('function pageMTD('));
+  /'reports','Reports'/.test(navBlk)
+    ? ok('a team leader has a Reports tab')
+    : bad('the team leader Reports tab is missing');
+  /\['mtd_team','Month to date'\],\['daily_team','Daily'\],\['weekly_team','Weekly'\]/.test(tabsBlk)
+    ? ok('its sub-tabs are Month to date · Daily · Weekly, in that order')
+    : bad('the Reports sub-tabs are not Month to date / Daily / Weekly');
+  (!/'weekly_team','Weekly'/.test(navBlk) && !/'daily_team','Daily'/.test(navBlk) && !/'mtd_team','Month to date'/.test(navBlk))
+    ? ok('Month to date, Weekly and Daily are no longer separate sidebar entries')
+    : bad('a report view is still its own sidebar entry');
   (!/'weekly_team'/.test(agentNav) && !/'daily_team'/.test(agentNav))
     ? ok('an agent has neither — they are team leader pages')
     : bad('an agent can reach the team Weekly/Daily pages');
@@ -587,9 +600,37 @@ const CODE = PAGE
         : bad(fn + ' reaches past the scoped list');
     }
   })();
-  /'mtd_team','Month to date'/.test(navBlk)
-    ? ok('a team leader still has Month to date')
-    : bad('the team leader lost their Month to date tab');
+  /* ---- 2026-09-10 (Nick): the team leader's table matches VAS Analytics' cell for cell ----
+     A side-by-side render of both apps over the same digest found the same numbers printed
+     differently: Tenure was missing, talk read "2h 32m" against VAS's "152,0" minutes, the
+     Grand Total added cents where VAS adds the rand each row prints, and the whole "Team
+     Leaders" block (Employed HC, Agents on Target, campaign total) was absent. Every value is
+     READ from the digest: PULSE publishes it, the Worker slices it, the page paints it. */
+  const PORTAL = rd('worker', 'src', 'portal.mjs');
+  /\['Tenure',/.test(mtd)
+    ? ok('the Month to Date table carries the Tenure column VAS shows')
+    : bad('Tenure is missing from Month to Date');
+  /function aveTalkOf\(o\)\{ return o\.aveTalk!==undefined\?o\.aveTalk/.test(PAGE)
+    ? ok('Ave Talk Time is read from the digest (the engine\'s null rule) — the division is only the old-digest fallback')
+    : bad('Ave Talk Time is still divided on the page');
+  /D\.talkUnit/.test(PAGE) && /talkHdr\('Ave Talk Time'\)/.test(mtd)
+    ? ok('talk averages print in the rule book\'s unit (digest.talkUnit), as VAS prints them')
+    : bad('talk averages ignore the rule book unit');
+  /sum\('gwpEx',true\)/.test(PAGE.slice(PAGE.indexOf('function teamAgg(')))
+    ? ok('the Grand Total adds the rand each row prints, as VAS totalRow does')
+    : bad('the Grand Total sums cents — off by a rand from the VAS table');
+  /function tlSummaryCard\(\)/.test(PAGE) && /Agents on Target/.test(PAGE) && /D\.summary/.test(PAGE)
+    ? ok('the VAS "Team Leaders" block (Employed HC, Agents on Target, campaign total) is on the page, read from the digest')
+    : bad('the team leader summary block is missing');
+  /summary: teamSummary\(digest, auth\)/.test(PORTAL) && /digest\.tlAgg\.filter\(\(t\) => String\(t\.tl \|\| ''\)\.trim\(\) === team\)/.test(PORTAL)
+    ? ok('the Worker slices the summary block to the authorised team')
+    : bad('the Worker does not scope the summary block');
+  /tlAgg:Object\.keys\(M\.tlAgg/.test(PULSE) && /wk:\(M\.weeks\|\|\[\]\)\.map/.test(PULSE) && /aveTalk:r2\(g\.aveTalk\),/.test(PULSE)
+    ? ok('PULSE publishes the summary block, the weekly rows and the two talk averages')
+    : bad('the digest does not carry the new figures');
+  /a\.wk\|\|\[\]/.test(PAGE.slice(PAGE.indexOf('function pageWeeklyTeam(')))
+    ? ok('Weekly reads the engine\'s own per-week rows (a.wk), so it carries every VAS Weekly column')
+    : bad('Weekly still re-derives its columns from day rows');
 }
 
 /* THE NBA LAYER HAS NO SOURCE (Nick, 2026-08-25: "leave ops analytics, vas
