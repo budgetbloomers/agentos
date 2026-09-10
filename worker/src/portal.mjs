@@ -80,12 +80,9 @@ export const PORTAL_ALLOWED = new Set([
   '/api/portal/cm/detail',
   '/api/portal/cm/act',
   '/api/portal/cm/eod',
-  /* WIMPY ORDERING (wimpy.mjs). The agent's own lunch order — menu out, order in.
-     Proxied for the same reason the hubs are: the CSP lets the browser reach this
-     Worker and nothing else, and the agent's name and CB come from the SESSION so
-     an order cannot be placed in somebody else's name. */
-  '/api/portal/wimpy/menu',
-  '/api/portal/wimpy/order',
+  /* Wimpy ordering moved to /api/wimpy/* (listed above) when it became its own app on
+     2026-09-10; the old /api/portal/wimpy/* paths answer 410 in index.mjs and are no longer
+     declared here — verify-agent-portal F5 fails on a declared route the Worker does not serve. */
 ]);
 
 export const normCb = (v) => {

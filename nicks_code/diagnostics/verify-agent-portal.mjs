@@ -191,7 +191,10 @@ ok('F5 every route the Worker serves a portal role is one it declares',
 {
   const gateAt = idx.indexOf("if (!user) return json({ error: 'Sign in required.' }, 401)");
   const above = [...idx.slice(0, gateAt).matchAll(/path === '(\/api\/[a-z/-]+)'/g)].map(m => m[1]);
-  const known = ['/api/login', '/api/referrals/health', '/api/me', '/api/logout', '/api/agent-digest'];
+  /* /api/wimpy/signin reviewed 2026-09-11: the Wimpy app's CB-only sign-in (auth.mjs signinByCb —
+     rate-limited, mints a session SCOPED to /api/wimpy/*). It has to sit above the gate because
+     it IS a sign-in; a wimpy-scoped session reaches nothing else (F-checks below the gate). */
+  const known = ['/api/login', '/api/referrals/health', '/api/me', '/api/logout', '/api/agent-digest', '/api/wimpy/signin'];
   const surprise = [...new Set(above)].filter(p => !known.includes(p));
   ok('F6 no unreviewed route sits above the session gate', surprise.length === 0, surprise.join(','));
   /* The two that return real data up there must refuse portal roles by hand. */
