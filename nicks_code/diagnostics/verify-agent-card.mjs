@@ -78,8 +78,10 @@ try {
     /* Against the payload the PAGE received, not this script's own fetch: the Worker caches the digest
        60 s per isolate, so a tick that lands between the two fetches gave 7 vs 8 across 45 agents
        (2026-09-10, a daytime run) — two true digests, one comparison. */
-    const dayRows = view.pageDays != null ? view.pageDays : (me.days || []).length;
-    ok(a.code + ': one sessions row per day row', view.sessRows === dayRows, view.sessRows + ' vs ' + dayRows);
+    /* pgSessions() shows the LAST SEVEN sessions by design (slice(-7)); the month passed seven day rows on
+       2026-09-10 and this read 7 vs 8 for every agent. One row per day row, up to seven. */
+    const dayRows = Math.min(7, view.pageDays != null ? view.pageDays : (me.days || []).length);
+    ok(a.code + ': one sessions row per day row (up to the seven the table shows)', view.sessRows === dayRows, view.sessRows + ' vs ' + dayRows);
   }
   ok('no page errors across ' + rated.length + ' cards', errs.length === 0, [...new Set(errs)].slice(0, 3).join(' | '));
 } finally { await b.close(); await fetch(REST + 'app_sessions?token_hash=eq.' + th, { method: 'DELETE', headers: H }); }
