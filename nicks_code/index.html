@@ -1173,10 +1173,15 @@ const COMPOSITE_RULES = {
   /* THE TIER IS THE MORE SEVERE of the count band and the rate band. With nothing
      audited there is no rate band and the count decides alone — which is the common
      case here, because QA does not evaluate every agent every week. */
+  /* NBA PRIORITY RULES DO NOT TOUCH THE SCORE (Nick, 2026-09-11: "nba priority rules must not
+     affect the agent scores"). The R2A tier is NBA priority rule 2A; it still CLASSIFIES — the
+     tier, the rule name and elite eligibility travel to every card for coaching — but every
+     penalty is 0, so adj always equals the composite. specs/composite_rules.json _changes
+     carries the entry; verify-composite-score fails if the two copies drift. */
   r2aTiers:[
-    {tier:'R2A-3',  rule:'Critical Compliance Fail', level:1, failsMin:4, failsMax:null, cfrMin:30, cfrMax:null, penalty:10, elite:'Blocked'},
-    {tier:'R2A-2',  rule:'Compliance Risk',          level:2, failsMin:2, failsMax:3,    cfrMin:10, cfrMax:30,   penalty:5,  elite:'Blocked'},
-    {tier:'R2A-1',  rule:'Compliance Note',          level:3, failsMin:1, failsMax:1,    cfrMin:0,  cfrMax:10,   penalty:2,  elite:'Retained'},
+    {tier:'R2A-3',  rule:'Critical Compliance Fail', level:1, failsMin:4, failsMax:null, cfrMin:30, cfrMax:null, penalty:0, elite:'Blocked'},
+    {tier:'R2A-2',  rule:'Compliance Risk',          level:2, failsMin:2, failsMax:3,    cfrMin:10, cfrMax:30,   penalty:0,  elite:'Blocked'},
+    {tier:'R2A-1',  rule:'Compliance Note',          level:3, failsMin:1, failsMax:1,    cfrMin:0,  cfrMax:10,   penalty:0,  elite:'Retained'},
     {tier:'Tier 0', rule:'Clean',                    level:0, failsMin:0, failsMax:0,    cfrMin:0,  cfrMax:0,    penalty:0,  elite:'Eligible'}
   ],
   r2aCap:10,
@@ -5425,15 +5430,15 @@ PAGES.manual=()=>`<div class="card vasguide" style="max-width:900px" id="manualC
 </ul>
 
 <h3>Graduated Critical-Fail (R2A)</h3>
-<p>Critical Fail Rate (CFR) = critical fails ÷ audited calls. The tier is the <b>higher</b> of the count band and the rate band, and the penalty is <b>capped at −10</b>:</p>
+<p>Critical Fail Rate (CFR) = critical fails ÷ audited calls. The tier is the <b>higher</b> of the count band and the rate band. <b>Since 11 September 2026 the tier deducts nothing from the score</b> (Nick: NBA priority rules must not affect the agent scores) — it is reported on every card for coaching, and it still decides Elite eligibility:</p>
 <table class="tbl"><thead><tr><th>Tier</th><th>Trigger</th><th>Composite</th><th>Elite</th></tr></thead><tbody>
-<tr><td>R2A-3</td><td>≥4 fails OR CFR ≥30%</td><td>−10</td><td>Blocked</td></tr>
-<tr><td>R2A-2</td><td>2–3 fails OR CFR 10–&lt;30%</td><td>−5</td><td>Blocked</td></tr>
-<tr><td>R2A-1</td><td>exactly 1 fail AND CFR &lt;10%</td><td>−2</td><td>Retained (a note, never a primary NBA)</td></tr>
+<tr><td>R2A-3</td><td>≥4 fails OR CFR ≥30%</td><td>0 (reported, not deducted)</td><td>Blocked</td></tr>
+<tr><td>R2A-2</td><td>2–3 fails OR CFR 10–&lt;30%</td><td>0 (reported, not deducted)</td><td>Blocked</td></tr>
+<tr><td>R2A-1</td><td>exactly 1 fail AND CFR &lt;10%</td><td>0 (reported, not deducted)</td><td>Retained (a note, never a primary NBA)</td></tr>
 </tbody></table>
 
 <h3>The Composite Score (/100)</h3>
-<p>Seven weighted metrics sum to 100, then the capped critical-fail penalty is applied and reported as <b>'Adj'</b>: Avg GWP/Sale <b>25</b>, Target Achievement <b>20</b>, QA <b>20</b>, Total GWP percentile <b>15</b>, Conversion <b>10</b>, Talk Time <b>5</b>, Attendance <b>5</b>. Cancellations and attempts-per-lead are diagnostics — they are never scored.</p>
+<p>Seven weighted metrics sum to 100 and that is the score — <b>'Adj'</b> equals the composite since 11 September 2026, because no NBA priority rule deducts from it any more: Avg GWP/Sale <b>25</b>, Target Achievement <b>20</b>, QA <b>20</b>, Total GWP percentile <b>15</b>, Conversion <b>10</b>, Talk Time <b>5</b>, Attendance <b>5</b>. Cancellations and attempts-per-lead are diagnostics — they are never scored.</p>
 
 <h2>3 · How to use the software</h2>
 <ol>
@@ -5929,6 +5934,10 @@ PAGES.mtd=()=>{
   const camp0=S.ui.camp&&CAMPS.includes(S.ui.camp)?S.ui.camp:null;
   const sub=camp0||([...CAMPS,'Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle');
   const team=S.ui.team||null;
+  /* ONE BLOCK PER REPORTED CAMPAIGN (Nick, 2026-09-11: "the month to date for the team leader
+     columns are missing"). This used to render Courtesy, Cuddle and VT by name, so the Nesting
+     leaders (Ntokozo, Renolin) and Download & Test (Denise) never had a column — and VT never
+     has one because tlAgg is built over CAMPS, which excludes it by design. */
   const tlBlock=camp=>{
     const keys=Object.keys(M.tlAgg).filter(k=>k.startsWith(camp+'|')&&(!team||k.split('|')[1]===team));
     if(!keys.length) return '';
@@ -5952,7 +5961,7 @@ PAGES.mtd=()=>{
   <div class="chiprow" style="margin-bottom:14px">
     ${[...CAMPS.map(c=>[c,CAMPLAB[c]||c]),['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}${camp0&&t!==camp0?' off':''}" ${camp0&&t!==camp0?'disabled title="the header Campaign filter is set to '+esc(CAMPLAB[camp0]||camp0)+'"':''} onclick="S.ui.mtdSub='${t}';saveUI();renderPage()">${esc(l)}</button>`).join('')}
     ${(camp0||team)?`<span class="note" style="margin-left:10px">filtered by ${[camp0?'campaign <b>'+esc(CAMPLAB[camp0]||camp0)+'</b>':'',team?'team leader <b>'+esc(team)+'</b>':''].filter(Boolean).join(' and ')} — <a href="#" onclick="__clearFilters();return false">clear</a></span>`:''}</div>
-  ${sub==='Team Leaders'?(tlBlock('Courtesy')+tlBlock('Cuddle')+tlBlock('VT')||filterEmptyNote((M.facts||[]).length))
+  ${sub==='Team Leaders'?(CAMPS.map(tlBlock).join('')||filterEmptyNote((M.facts||[]).length))
     :`<div class="card">${campSection(sub,null,{canc:true,noOpt:true,team})||(team?filterEmptyNote((M.facts||[]).length):'<div class="empty">No '+(CAMPLAB[sub]||sub)+' data in this period — upload the call records covering it</div>')}
       <p class="note" style="margin:10px 0 0">Cancellations and referrals come from the Adjustments page. QA is the average CallBi score for calls dated in the period.</p></div>`}`;
 };

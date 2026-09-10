@@ -1704,11 +1704,13 @@ function pageTeamResults(){
         +'<td class="num"><span class="pill '+p+'">'+esc(st.toUpperCase())+'</span></td></tr>';
     }).join('')+'</tbody></table></div></div>';
 
-  /* WHAT CAME OFF THE SCORE. The penalty is a TIER value, capped — never
-     accumulated per fail. */
-  var adj='<div class="card"><h3>Adjustments to the composite</h3>'
-    +'<p class="why">Two things come off the score and nothing else: critical fails, and a theme being coached repeatedly. '
-    +'Each is capped, and the two together are capped again.</p>'
+  /* THE COMPLIANCE TIER, REPORTED — NOT DEDUCTED (Nick, 2026-09-11: "nba priority rules must not
+     affect the agent scores"). The R2A tier still classifies and still decides Elite; the
+     "Off the score" column now reads 0 for everyone, and is kept so a digest published under the
+     old rule cannot hide a deduction it still carries. */
+  var adj='<div class="card"><h3>Compliance tier</h3>'
+    +'<p class="why">Critical fails set a tier for coaching and decide Elite eligibility. Nothing comes off the score for them — '
+    +'NBA priority rules do not move the composite.</p>'
     +'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Agent</th>'
     +'<th>Fails</th><th>Tier</th><th>Off the score</th><th>Elite</th></tr></thead><tbody>'
     +list.map(function(a){

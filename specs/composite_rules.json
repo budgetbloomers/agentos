@@ -140,7 +140,7 @@
       "failsMax": null,
       "cfrMin": 30,
       "cfrMax": null,
-      "penalty": 10,
+      "penalty": 0,
       "elite": "Blocked"
     },
     {
@@ -151,7 +151,7 @@
       "failsMax": 3,
       "cfrMin": 10,
       "cfrMax": 30,
-      "penalty": 5,
+      "penalty": 0,
       "elite": "Blocked"
     },
     {
@@ -162,7 +162,7 @@
       "failsMax": 1,
       "cfrMin": 0,
       "cfrMax": 10,
-      "penalty": 2,
+      "penalty": 0,
       "elite": "Retained"
     },
     {
@@ -245,6 +245,14 @@
       "from": "no M0 group",
       "to": "M0 measured under the M1 targets (3 sales/day, R99 floor, 3% conversion)",
       "why": "the 8 Sep Agent List carries M0 (first month) on Courtesy for the first time — CB330/CB332/CB334 were rated with no group, so no GWP floor and no conversion target; verify-composite-recompute failed nightly. M0 is the spec vocabulary (mtd_engine_rules Tenure allowed_values). Targets mirror M1 pending a matrix row from Nick."
+    },
+    {
+      "date": "2026-09-11",
+      "by": "Nick",
+      "key": "r2aTiers[].penalty",
+      "from": "R2A-3:10, R2A-2:5, R2A-1:2, Tier 0:0",
+      "to": "0 for every tier",
+      "why": "\"nba priority rules must not affect the agent scores\" — the R2A critical-fail tier (NBA priority rule 2A) still classifies (tier, elite eligibility travel for coaching) but deducts nothing; adj equals the composite. 31 of 83 rated agents were carrying 2–10 points off on 10 Sep."
     }
   ]
 }

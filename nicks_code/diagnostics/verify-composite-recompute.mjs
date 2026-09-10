@@ -28,7 +28,12 @@ let pass = 0, fail = 0; const failures = [];
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; failures.push(n + (d ? ' — ' + d : '')); } };
 const near = (a, b, tol = 0.051) => a != null && b != null && Math.abs(a - b) <= tol;
 
-let buf = Buffer.from(await (await fetch(env.SUPABASE_URL + '/storage/v1/object/raw/kv/agent-digest', { headers: H })).arrayBuffer()); if (buf[0] === 0x1f && buf[1] === 0x8b) buf = zlib.gunzipSync(buf);
+/* Optional: a digest FILE instead of the live one (`node verify-composite-recompute.mjs path.json`) —
+   to prove a rule-book change against a digest built from the new build BEFORE it is published,
+   when the live digest still carries the old rule (2026-09-11: the R2A penalties going to 0). */
+let buf = process.argv[2] ? fs.readFileSync(process.argv[2])
+  : Buffer.from(await (await fetch(env.SUPABASE_URL + '/storage/v1/object/raw/kv/agent-digest', { headers: H })).arrayBuffer());
+if (buf[0] === 0x1f && buf[1] === 0x8b) buf = zlib.gunzipSync(buf);
 const D = JSON.parse(buf.toString());
 const rated = D.agents.filter((a) => a.composite && a.composite.rated);
 console.log('digest ' + D.updatedAt + ' · ' + D.agents.length + ' agents, ' + rated.length + ' rated · rule book v' + R.version + ' · window ' + R.windowSessions + ' · floor ' + R.floor);

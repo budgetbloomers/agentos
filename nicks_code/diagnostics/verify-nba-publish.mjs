@@ -110,7 +110,8 @@ ok('working days are plausible for one period (' + p.workDays + ')', p.workDays 
 ok('QA reads this period for a clean agent', a.stats.qa == null || (a.stats.qa >= 80 && a.stats.qa <= 100),
   String(a.stats.qa));
 const crit = p.agents.find(x => x.cb === 'CB902');
-ok('a critical fail is carried and tiered', crit && crit.r2a && crit.r2a.fails >= 1 && crit.r2a.penalty > 0,
+/* 2026-09-11 (Nick): the tier still classifies, but deducts nothing — penalty is 0 by rule. */
+ok('a critical fail is carried and tiered (and deducts nothing)', crit && crit.r2a && crit.r2a.fails >= 1 && crit.r2a.tier && crit.r2a.tier !== 'Tier 0' && crit.r2a.penalty === 0,
   JSON.stringify(crit && crit.r2a));
 ok('the "all data" sentinel never reaches the published window',
   p.period.from >= '2000-01-01', p.period.from + ' (raw window was ' + out.rawWin.from + ')');
