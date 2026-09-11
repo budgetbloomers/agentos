@@ -300,6 +300,13 @@ details.tool summary .chev{margin-left:auto;color:var(--muted);font-size:11px}
 .seg{display:inline-flex;background:#F1F5FB;border:1px solid var(--line);border-radius:11px;padding:3px;margin-bottom:14px;flex-wrap:wrap}
 .seg .pill{border:none;background:transparent;border-radius:8px;padding:8px 14px;color:var(--body)}
 .seg .pill.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(15,30,54,.12)}
+/* the Reports toolbar: sub-tabs left, published-stamp + Refresh + Export right (2026-09-11) */
+.rep-bar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px 14px;margin-bottom:14px}
+.rep-bar .seg{margin-bottom:0}
+.rep-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rep-stamp{font-size:11.5px;font-weight:700;color:var(--muted);white-space:nowrap}
+.rep-tools .btn2{padding:7px 12px;cursor:pointer}
+.rep-tools .btn2[disabled]{opacity:.6;cursor:default}
 .chip2{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;border-radius:14px;padding:4px 10px;white-space:nowrap}
 .chip2 i{width:6px;height:6px;border-radius:50%;display:inline-block}
 .chip2.togo{background:var(--blue-soft);color:var(--blue)}.chip2.togo i{background:var(--blue)}
@@ -865,6 +872,10 @@ textarea.cc{font-weight:500;line-height:1.5;resize:vertical}
 <body>
 <div id="root"><div class="msg"><div class="spin"></div><div class="d">Loading your numbers…</div></div></div>
 
+<!-- SheetJS for the Reports export (2026-09-11) — the same self-hosted copy the VAS export uses,
+     served at the site root beside /pulse/ and /agent/. Deferred: nothing touches XLSX until
+     somebody clicks Export, long after the page has drawn. -->
+<script src="/xlsx.full.min.js" defer></script>
 <script>
 "use strict";
 /* ===================== plumbing ===================== */
@@ -1214,21 +1225,42 @@ var LAST_REPORT='mtd_team';
 function isReport(v){ return REPORT_TABS.some(function(t){return t[0]===v;}); }
 function reportsTabs(active){
   LAST_REPORT=active;
-  return '<div class="seg" id="reportTabs" role="tablist">'
+  /* THE TOOLBAR (Nick, 2026-09-11: the three reports "must be exportable" and must not be
+     static). Left, the sub-tabs. Right: when management last published these figures, a
+     Refresh that asks the Worker for the latest copy now, and two exports — this report, or
+     all three in one workbook. The page also re-asks on its own (LIVE, below loadPortal). */
+  return '<div class="rep-bar"><div class="seg" id="reportTabs" role="tablist">'
     +REPORT_TABS.map(function(t){
       return '<button class="pill'+(t[0]===active?' on':'')+'" role="tab" aria-selected="'+(t[0]===active)+'" data-report="'+t[0]+'">'+esc(t[1])+'</button>';
-    }).join('')+'</div>';
+    }).join('')+'</div>'
+    +'<div class="rep-tools">'
+    +'<span class="rep-stamp" title="When the management dashboard last published these figures">Published '+esc(stamp())+'</span>'
+    +'<button class="btn2" id="repRefresh" title="Ask for the latest published figures now">&#8635; Refresh</button>'
+    +'<button class="btn2" data-export="'+active+'" title="Download this report as an Excel workbook">&#8595; Export</button>'
+    +'<button class="btn2" data-export="all" title="Month to date, Daily and Weekly in one workbook">&#8595; Export all</button>'
+    +'</div></div>';
 }
 
+/* ===== THE REPORTS AS DATA — one column list draws the screen AND fills the export =====
+   Each report is {cols, rows, total}: cols are [label, fn(row)] pairs whose fn returns the
+   HTML the cell prints (an optional third fn returns the export cell when the screen's
+   would not do — the Daily "Agent" cell carries a name and a code in one). The renderer
+   and exportReports() both walk these, so the workbook can never carry a column, a
+   rounding or a sort the screen does not — the rule VAS's own exportReport keeps. */
+function sortBySpd(list){ return list.slice().sort(function(x,y){return (y.spd||0)-(x.spd||0);}); }
+function coveredAgents(){ return (D.agents||[]).filter(function(a){return a.covered;}); }
+function reportMTD(){
+  var mine=coveredAgents();
+  return {sheet:'MTD', cols:mtdRows(), rows:sortBySpd(mine), total:mine.length?teamAgg(mine):null};
+}
 function pageMTD(){
-  var mine=(D.agents||[]).filter(function(a){return a.covered;});
-  if(!mine.length) return reportsTabs('mtd_team')+'<div class="card"><h3>Month to date</h3>'
+  var r=reportMTD();
+  if(!r.rows.length) return reportsTabs('mtd_team')+'<div class="card"><h3>Month to date</h3>'
     +'<p class="why">Nobody on your team has figures published for this month yet.</p></div>';
-  var total=teamAgg(mine);
   return reportsTabs('mtd_team')+'<div class="card">'
     +'<h3>Month to date <span class="cnt">'+esc(prettyPeriod())+'</span></h3>'
     +'<p class="why">The same table management reads — one row per agent, your team\'s totals on the last row. Nothing here is worked out twice; these are the published figures.</p>'
-    +vasAgentsTable(mine,total,mtdRows())
+    +vasAgentsTable(r.rows,r.total,r.cols)
     +'<p class="why" style="margin-top:12px">Dialling days this month: <b>'+num(D.diallingDays)+'</b> '
     +'· working days: <b>'+num(D.workingDays)+'</b>. A dash means that figure has not been supplied for '
     +'this month — it is not a zero.</p>'
@@ -1243,14 +1275,10 @@ function pageMTD(){
    particular cannot be re-derived here because the threshold is a VAS setting, so it
    travels with the block. The campaign total is an aggregate with nobody named in it. A
    digest published before the block existed gets one sentence, never an empty table. */
-function tlSummaryCard(){
-  var s=D.summary;
-  if(!s) return '<div class="card"><h3>Team leader summary</h3><p class="why">The team-leader summary '
-    +'(Employed HC, Agents on Target, the campaign total) is not in the published figures yet — it appears '
-    +'within a couple of minutes of a signed-in management dashboard session being open. Nothing is missing from the data itself.</p></div>';
-  if(!s.teams||!s.teams.length) return '';
+var TL_CAMP_LABEL={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',Nesting:'Nesting',VT:'Matrix Tracker'};
+function tlSummaryRows(){
   var dd=D.diallingDays;
-  var rows=[
+  return [
     ['Dialing Days',          function(){return num(dd);}],
     ['Employed HC',           function(o){return num(o.hc);}],
     ['Total Employed Shifts', function(o){return num(o.emp,o.emp%1?1:0);}],
@@ -1272,10 +1300,32 @@ function tlSummaryCard(){
     ['Agents on Target',      function(o){return num(o.onT);}],
     ['% Agents on Target',    function(o){return o.hc?pct(o.onT/o.hc,0):'–';}],
   ];
-  var lab={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',Nesting:'Nesting',VT:'Matrix Tracker'};
+}
+/* The block as ONE sheet: Metric, then each team leader's column followed by their
+   campaign's total — a single team for a team leader, every team for staff scope. */
+function reportTLSummary(){
+  var s=D.summary;
+  if(!s||!s.teams||!s.teams.length) return null;
+  var head=['Metric'], cols=[];
+  s.teams.forEach(function(t){
+    head.push(t.tl); cols.push(t);
+    head.push((TL_CAMP_LABEL[t.camp]||t.camp)+' total'); cols.push((s.campaigns&&s.campaigns[t.camp])||null);
+  });
+  var rows=tlSummaryRows().map(function(r){
+    return [r[0]].concat(cols.map(function(o){return o?r[1](o):'–';}));
+  });
+  return {sheet:'TL MTD', head:head, rows:rows};
+}
+function tlSummaryCard(){
+  var s=D.summary;
+  if(!s) return '<div class="card"><h3>Team leader summary</h3><p class="why">The team-leader summary '
+    +'(Employed HC, Agents on Target, the campaign total) is not in the published figures yet — it appears '
+    +'within a couple of minutes of a signed-in management dashboard session being open. Nothing is missing from the data itself.</p></div>';
+  if(!s.teams||!s.teams.length) return '';
+  var rows=tlSummaryRows();
   return s.teams.map(function(t){
     var c=s.campaigns&&s.campaigns[t.camp];
-    return '<div class="card"><h3>'+esc(lab[t.camp]||t.camp)+' — team leader summary</h3>'
+    return '<div class="card"><h3>'+esc(TL_CAMP_LABEL[t.camp]||t.camp)+' — team leader summary</h3>'
       +'<p class="why">The "Team Leaders" block of management\'s Month to Date: your team beside the campaign total. '
       +'An agent is on target at or above '+esc(pct(s.onTarget,0))+' of their sales target.</p>'
       +'<div class="scroller"><table class="tbl vastbl"><thead><tr><th class="l stick">Metric</th>'
@@ -1291,20 +1341,21 @@ function tlSummaryCard(){
    Grand Total row re-derived from sums — never a mean of the rows above it. The earlier
    transpose (metrics as rows) squeezed a column per agent and became unreadable past
    eight people. Sorted by SPD like the source table; the first column stays put while
-   the rest scroll. */
+   the rest scroll. The caller hands rows already in report order (sortBySpd), so the
+   export walks the same rows in the same order. */
 function vasAgentsTable(list,total,cols){
-  var byS=list.slice().sort(function(x,y){return (y.spd||0)-(x.spd||0);});
   return '<div class="scroller"><table class="tbl vastbl"><thead><tr>'
     +'<th class="l stick">Agent</th>'
     +cols.map(function(c){return '<th>'+esc(c[0])+'</th>';}).join('')
     +'</tr></thead><tbody>'
-    +byS.map(function(a){
+    +list.map(function(a){
       return '<tr><td class="l stick"><b>'+esc(a.name)+'</b><div class="sub2">'+esc(a.code)+'</div></td>'
         +cols.map(function(c){return '<td class="num">'+c[1](a)+'</td>';}).join('')+'</tr>';
     }).join('')
-    +'<tr class="grand"><td class="l stick"><b>Grand Total</b></td>'
-    +cols.map(function(c){return '<td class="num">'+c[1](total)+'</td>';}).join('')
-    +'</tr></tbody></table></div>';
+    +(total?'<tr class="grand"><td class="l stick"><b>Grand Total</b></td>'
+      +cols.map(function(c){return '<td class="num">'+c[1](total)+'</td>';}).join('')
+      +'</tr>':'')
+    +'</tbody></table></div>';
 }
 
 /* ===================== WEEKLY & DAILY, FOR THE TEAM LEADER =====================
@@ -1350,108 +1401,186 @@ function weeklyRows(){
     ['Referrals',       function(o){return num(o.r);}],
   ];
 }
-function pageWeeklyTeam(){
-  var mine=(D.agents||[]).filter(function(a){return a.covered;});
-  if(!mine.length) return reportsTabs('weekly_team')+'<div class="card"><h3>Weekly</h3><p class="why">Nobody on your team has figures published for this month yet.</p></div>';
+/* Every week that carries figures, newest first: [{num, from, to, sheet, cols, rows, total}].
+   THE VAS WEEKLY TABLE, COLUMN FOR COLUMN (Nick, 2026-09-10). Each agent's week arrives as
+   PULSE's own wtdCC aggregate (a.wk), so the columns are the management Weekly's — the
+   month table without its cancellation pair and without Score, exactly as PULSE's Weekly
+   calls aggCols. A digest published before the weekly rows travelled falls back to the
+   ten columns the day rows can support. Returns null when there is nothing to build from
+   (the page prints why; the export says nothing is there yet). */
+function reportWeekly(){
+  var mine=coveredAgents();
+  if(!mine.length) return null;
   var weeks=(D.weeks||[]).slice().reverse();
-  /* THE VAS WEEKLY TABLE, COLUMN FOR COLUMN (Nick, 2026-09-10). Each agent's week arrives as
-     PULSE's own wtdCC aggregate (a.wk), so the columns are the management Weekly's — the
-     month table without its cancellation pair and without Score, exactly as PULSE's Weekly
-     calls aggCols. A digest published before the weekly rows travelled falls back to the
-     eight columns the day rows can support, below. */
   var hasWk=mine.some(function(a){return Array.isArray(a.wk)&&a.wk.length;});
   if(hasWk&&weeks.length){
     var cols=mtdRows().filter(function(r){return r[0].indexOf('Canc')<0&&r[0]!=='Score';});
-    var out=weeks.map(function(w){
+    return weeks.map(function(w){
       var per=mine.map(function(a){
         var wk=null; (a.wk||[]).forEach(function(x){ if(x.n===w.num) wk=x; });
         if(!wk) return null;
         var o={}; for(var k in wk) o[k]=wk[k];
         o.name=a.name; o.code=a.code; o.tenure=a.tenure; o.covered=true; return o;
       }).filter(Boolean);
-      if(!per.length) return '';
-      return '<div class="card" style="margin-bottom:14px">'
-        +'<h3>Week '+esc(String(w.num))+' <span class="cnt">'+esc(w.from)+' → '+esc(w.to)+'</span></h3>'
-        +vasAgentsTable(per,teamAgg(per),cols)+'</div>';
-    }).join('');
-    return reportsTabs('weekly_team')+(out||'<div class="card"><h3>Weekly</h3><p class="why">No week in this month carries figures yet.</p></div>');
+      if(!per.length) return null;
+      return {num:w.num,from:w.from,to:w.to,sheet:'WTD - Week '+w.num,cols:cols,rows:sortBySpd(per),total:teamAgg(per)};
+    }).filter(Boolean);
   }
-  if(!daysPublished()) return reportsTabs('weekly_team')+staleDaysCard('Weekly');
-  if(!weeks.length) return reportsTabs('weekly_team')+staleDaysCard('Weekly');
+  if(!daysPublished()||!weeks.length) return null;
   var cols0=weeklyRows();
-  return reportsTabs('weekly_team')+(weeks.map(function(w){
+  return weeks.map(function(w){
     var per=mine.map(function(a){var o=sumDays(a,w.from,w.to);
-        return {name:a.name,code:a.code,o:o,spd:(o.act?o.s/o.act:0)};})
-      .filter(function(x){return x.o.any;});
-    if(!per.length) return '';
-    var tot={emp:0,act:0,t:0,s:0,x:0,tk:0,c:0,r:0,any:true,dc:false};
-    per.forEach(function(x){var o=x.o; tot.emp+=o.emp;tot.act+=o.act;tot.t+=o.t;tot.s+=o.s;
+        o.name=a.name; o.code=a.code; o.spd=(o.act?o.s/o.act:0); return o;})
+      .filter(function(o){return o.any;});
+    if(!per.length) return null;
+    var tot={emp:0,act:0,t:0,s:0,x:0,tk:0,c:0,r:0,any:true,dc:false,name:'Grand Total',code:''};
+    per.forEach(function(o){tot.emp+=o.emp;tot.act+=o.act;tot.t+=o.t;tot.s+=o.s;
       tot.x+=o.x;tot.tk+=o.tk;tot.c+=o.c;tot.r+=o.r; if(o.dc)tot.dc=true;});
-    var byS=per.slice().sort(function(x,y){return y.spd-x.spd;});
+    return {num:w.num,from:w.from,to:w.to,sheet:'WTD - Week '+w.num,cols:cols0,rows:sortBySpd(per),total:tot};
+  }).filter(Boolean);
+}
+function pageWeeklyTeam(){
+  var mine=coveredAgents();
+  if(!mine.length) return reportsTabs('weekly_team')+'<div class="card"><h3>Weekly</h3><p class="why">Nobody on your team has figures published for this month yet.</p></div>';
+  var weeks=reportWeekly();
+  if(!weeks) return reportsTabs('weekly_team')+staleDaysCard('Weekly');
+  if(!weeks.length) return reportsTabs('weekly_team')+'<div class="card"><h3>Weekly</h3><p class="why">No week in this month carries figures yet.</p></div>';
+  return reportsTabs('weekly_team')+weeks.map(function(w){
     return '<div class="card" style="margin-bottom:14px">'
       +'<h3>Week '+esc(String(w.num))+' <span class="cnt">'+esc(w.from)+' → '+esc(w.to)+'</span></h3>'
-      +'<div class="scroller"><table class="tbl vastbl"><thead><tr>'
-      +'<th class="l stick">Agent</th>'
-      +cols0.map(function(c){return '<th>'+esc(c[0])+'</th>';}).join('')
-      +'</tr></thead><tbody>'
-      +byS.map(function(x){
-        return '<tr><td class="l stick"><b>'+esc(x.name)+'</b><div class="sub2">'+esc(x.code)+'</div></td>'
-          +cols0.map(function(c){return '<td class="num">'+c[1](x.o)+'</td>';}).join('')+'</tr>';
-      }).join('')
-      +'<tr class="grand"><td class="l stick"><b>Grand Total</b></td>'
-      +cols0.map(function(c){return '<td class="num">'+c[1](tot)+'</td>';}).join('')
-      +'</tr></tbody></table></div></div>';
-  }).join('')||staleDaysCard('Weekly'));
+      +vasAgentsTable(w.rows,w.total,w.cols)+'</div>';
+  }).join('');
 }
 /* The Daily sub-tab's day filter — '' is every day, else one YYYY-MM-DD. Session-only,
    like the management Daily's own day picker. */
 var DAY_FILTER='';
+/* The Daily columns. The first two are the DAY columns — the screen prints them on the
+   first row of each day only (the renderer knows them by position); the export prints
+   them on every row, because a filtered spreadsheet with blank dates is useless. Agent
+   splits into name + code on export (third fn) where the screen shows both in one cell. */
+function dailyCols(){
+  var dash='–';
+  return [
+    ['Date',   function(r){return '<b>'+esc(r.f.d)+'</b>';}, function(r){return r.f.d;}],
+    ['W',      function(r){return 'W'+esc(String(r.f.w));}, function(r){return 'W'+r.f.w;}],
+    ['Agent',  function(r){return '<b>'+esc(firstName(r.a.name))+'</b> <span class="sub2" style="display:inline">'+esc(r.a.code)+'</span>';},
+               function(r){return r.a.name;}],
+    ['Code',   null, function(r){return r.a.code;}],
+    ['Emp',    function(r){return num(r.f.emp,r.f.emp%1?1:0);}],
+    ['Act',    function(r){return num(r.f.act,r.f.act%1?1:0);}],
+    ['Target', function(r){return num(r.f.t);}],
+    ['Sales',  function(r){return '<b>'+num(r.f.s)+'</b>'+(r.f.p?' <span class="pill a" title="from call dispositions — provisional until the money file lands">±</span>':'');},
+               function(r){return num(r.f.s)+(r.f.p?' (provisional)':'');}],
+    ['% Target', function(r){return r.f.t?pctPill(r.f.s/r.f.t):dash;}],
+    ['Talk',   function(r){return (r.f.tk>0||r.f.dc)?durShort(r.f.tk):'<span title="no dialler file covers this agent on this day">'+dash+'</span>';}],
+    [talkHdr('Talk / Worked'), function(r){var f=r.f;
+      return f.act?fmtTalkAve(f.tk/f.act):(f.tk?'<span class="pill r" title="talk recorded but no shift credited">no shift</span>':dash);}],
+    ['Calls',  function(r){return r.f.c?num(r.f.c):dash;}],
+    ['GWP',    function(r){return R(r.f.x);}],
+    ['Ave GWP', function(r){return r.f.s?R(r.f.x/r.f.s,1):dash;}],
+    ['Referrals', function(r){return r.f.r?num(r.f.r):dash;}],
+  ];
+}
+/* {sheet, cols, rows:[{a,f}], days:[...]} — newest day first, sales-desc within a day, the
+   day picker applied unless wholeMonth is set. rows is empty when no day rows travelled (the
+   page says why). Export all passes wholeMonth: the picker is a Daily-tab setting that stays
+   put when the leader moves to another sub-tab, and a workbook promised as the whole month
+   must not quietly carry one day because of it (caught in review, 2026-09-11). */
+function reportDaily(wholeMonth){
+  var mine=coveredAgents();
+  var all=[]; var daySet={};
+  mine.forEach(function(a){ (a.days||[]).forEach(function(f){ all.push({a:a,f:f}); daySet[f.d]=1; }); });
+  var days=Object.keys(daySet).sort().reverse();
+  if(DAY_FILTER&&!daySet[DAY_FILTER]) DAY_FILTER='';     // a day that is no longer in the month is not a filter
+  var flt=wholeMonth?'':DAY_FILTER;
+  var rows=flt?all.filter(function(r){return r.f.d===flt;}):all;
+  rows.sort(function(x,y){ return x.f.d<y.f.d?1:(x.f.d>y.f.d?-1:(y.f.s-x.f.s)); });
+  return {sheet:flt?('Daily '+flt):'Daily', cols:dailyCols(), rows:rows, days:days};
+}
 function pageDailyTeam(){
-  var mine=(D.agents||[]).filter(function(a){return a.covered;});
+  var mine=coveredAgents();
   if(!mine.length) return reportsTabs('daily_team')+'<div class="card"><h3>Daily</h3><p class="why">Nobody on your team has figures published for this month yet.</p></div>';
   if(!daysPublished()) return reportsTabs('daily_team')+staleDaysCard('Daily');
   /* ONE FLAT TABLE, newest day first — the management dashboard's Daily detail, scoped
      to this team. A day the dialler never covered shows a dash (unknown), never a zero,
      and talk with no shift credited keeps its flag: that anomaly is the whole reason a
      daily view exists. */
-  var all=[]; var daySet={};
-  mine.forEach(function(a){ (a.days||[]).forEach(function(f){ all.push({a:a,f:f}); daySet[f.d]=1; }); });
-  if(!all.length) return reportsTabs('daily_team')+staleDaysCard('Daily');
-  var days=Object.keys(daySet).sort().reverse();
-  if(DAY_FILTER&&!daySet[DAY_FILTER]) DAY_FILTER='';     // a day that is no longer in the month is not a filter
-  var rows=DAY_FILTER?all.filter(function(r){return r.f.d===DAY_FILTER;}):all;
-  rows.sort(function(x,y){ return x.f.d<y.f.d?1:(x.f.d>y.f.d?-1:(y.f.s-x.f.s)); });
+  var rep=reportDaily();
+  if(!rep.days.length) return reportsTabs('daily_team')+staleDaysCard('Daily');
+  var rows=rep.rows, cols=rep.cols.filter(function(c){return !!c[1];});   // export-only columns stay off the screen
   /* the day picker — the management Daily has one, and a team leader looking for yesterday
      should not scroll past a fortnight to find it */
   var picker='<select id="dayFilter" class="kc" style="max-width:220px"><option value="">All days</option>'
-    +days.map(function(d){return '<option value="'+esc(d)+'"'+(d===DAY_FILTER?' selected':'')+'>'+esc(d)+'</option>';}).join('')+'</select>';
-  var dash='–';
+    +rep.days.map(function(d){return '<option value="'+esc(d)+'"'+(d===DAY_FILTER?' selected':'')+'>'+esc(d)+'</option>';}).join('')+'</select>';
   return reportsTabs('daily_team')+'<div class="card">'
     +'<h3>Daily detail <span class="cnt">'+num(rows.length)+' agent-days · '+esc(prettyPeriod())+'</span></h3>'
     +'<div style="margin-top:8px">'+picker+'</div>'
     +'<div class="scroller"><table class="tbl vastbl"><thead><tr>'
-    +'<th class="l stick">Date</th><th>W</th><th class="l">Agent</th><th>Emp</th><th>Act</th>'
-    +'<th>Target</th><th>Sales</th><th>% Target</th><th>Talk</th><th>'+esc(talkHdr('Talk / Worked'))+'</th>'
-    +'<th>Calls</th><th>GWP</th><th>Ave GWP</th><th>Referrals</th>'
+    +cols.map(function(c,i){return '<th class="'+(i===0?'l stick':(i===2?'l':''))+'">'+esc(c[0])+'</th>';}).join('')
     +'</tr></thead><tbody>'
-    +rows.map(function(r,i){var f=r.f;
-      var first=(i===0||rows[i-1].f.d!==f.d);
-      var tw=f.act?fmtTalkAve(f.tk/f.act):(f.tk?'<span class="pill r" title="talk recorded but no shift credited">no shift</span>':dash);
-      return '<tr'+(first?' class="dayfirst"':'')+'><td class="l stick">'+(first?'<b>'+esc(f.d)+'</b>':'')+'</td>'
-        +'<td class="num">'+(first?'W'+esc(String(f.w)):'')+'</td>'
-        +'<td class="l"><b>'+esc(firstName(r.a.name))+'</b> <span class="sub2" style="display:inline">'+esc(r.a.code)+'</span></td>'
-        +'<td class="num">'+num(f.emp,f.emp%1?1:0)+'</td><td class="num">'+num(f.act,f.act%1?1:0)+'</td>'
-        +'<td class="num">'+num(f.t)+'</td>'
-        +'<td class="num"><b>'+num(f.s)+'</b>'+(f.p?' <span class="pill a" title="from call dispositions — provisional until the money file lands">±</span>':'')+'</td>'
-        +'<td class="num">'+(f.t?pctPill(f.s/f.t):dash)+'</td>'
-        +'<td class="num">'+((f.tk>0||f.dc)?durShort(f.tk):'<span title="no dialler file covers this agent on this day">'+dash+'</span>')+'</td>'
-        +'<td class="num">'+tw+'</td>'
-        +'<td class="num">'+(f.c?num(f.c):dash)+'</td>'
-        +'<td class="num">'+R(f.x)+'</td>'
-        +'<td class="num">'+(f.s?R(f.x/f.s,1):dash)+'</td>'
-        +'<td class="num">'+(f.r?num(f.r):dash)+'</td></tr>';
+    +rows.map(function(r,i){
+      var first=(i===0||rows[i-1].f.d!==r.f.d);
+      return '<tr'+(first?' class="dayfirst"':'')+'>'
+        +cols.map(function(c,j){
+          var cell=(j<2&&!first)?'':c[1](r);        // the two DAY columns print once per day
+          return '<td class="'+(j===0?'l stick':(j===2?'l':'num'))+'">'+cell+'</td>';
+        }).join('')+'</tr>';
     }).join('')
     +'</tbody></table></div></div>';
+}
+
+/* ===================== EXPORT (Nick, 2026-09-11: "must be exportable") =====================
+   An .xlsx built from the SAME column lists the screen is drawn from — a cell is whatever the
+   table prints, with the markup stripped and the printed number read back as a number
+   ("R 1 234,5" → 1234.5, "95%" → 0.95) so the sheet sorts and sums. A dash stays an empty
+   cell: it means "not supplied", and a 0 would be a lie in a spreadsheet just as on screen.
+   SheetJS is the copy the VAS export uses (/xlsx.full.min.js, same origin, deferred). */
+function cellOf(html){
+  var s=String(html==null?'':html).replace(/<[^>]*>/g,'')
+    .replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+    .replace(/&#39;/g,"'").replace(/&quot;/g,'"').trim();
+  if(s===''||s==='–'||s==='—') return '';
+  var t=s.replace(/^R\s*/,'').replace(/[\s  ]/g,'').replace(',','.');
+  if(/^-?\d+(\.\d+)?%$/.test(t)) return {t:'n',v:Number(t.slice(0,-1))/100,z:(t.indexOf('.')>=0?'0.0%':'0%')};
+  if(/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+  return s;
+}
+function exportReports(which){
+  if(!D){ toast('Nothing to export yet.'); return; }
+  if(typeof XLSX==='undefined'||!XLSX.writeFile){ toast('The spreadsheet library has not finished loading — give it a second and try again.',5000); return; }
+  var wb=XLSX.utils.book_new(), used={}, n=0;
+  var add=function(name,aoa){
+    var nm=String(name).replace(/[:\\\/?*\[\]]/g,'-').slice(0,31), i=1;
+    while(used[nm]) nm=(String(name).slice(0,27)+' ~'+(i++)).slice(0,31);
+    used[nm]=1;
+    var ws=XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols']=aoa[0].map(function(h){return {wch:Math.max(9,Math.min(34,String(h).length+2))};});
+    XLSX.utils.book_append_sheet(wb,ws,nm); n++;
+  };
+  var table=function(cols,rows,total){          // the agents-as-rows tables: MTD and every week
+    var out=[['Agent','Code'].concat(cols.map(function(c){return c[0];}))];
+    rows.forEach(function(r){ out.push([r.name,r.code].concat(cols.map(function(c){return cellOf(c[1](r));}))); });
+    if(total) out.push(['Grand Total',''].concat(cols.map(function(c){return cellOf(c[1](total));})));
+    return out;
+  };
+  var parts=which==='all'?['mtd_team','daily_team','weekly_team']:[which];
+  parts.forEach(function(p){
+    if(p==='mtd_team'){
+      var m=reportMTD(); if(m.rows.length) add(m.sheet,table(m.cols,m.rows,m.total));
+      var s=reportTLSummary(); if(s) add(s.sheet,[s.head].concat(s.rows.map(function(r){return r.map(cellOf);})));
+    }
+    if(p==='weekly_team') (reportWeekly()||[]).forEach(function(w){ add(w.sheet,table(w.cols,w.rows,w.total)); });
+    if(p==='daily_team'){
+      var d=reportDaily(which==='all');   // Export all is the whole month; Export on Daily is what is on screen
+      if(d.rows.length) add(d.sheet,[d.cols.map(function(c){return c[0];})]
+        .concat(d.rows.map(function(r){ return d.cols.map(function(c){return cellOf((c[2]||c[1])(r));}); })));
+    }
+  });
+  if(!n){ toast('Nothing to export yet — no figures are published for this report.',5000); return; }
+  var label=which==='all'?'Reports':((REPORT_TABS.filter(function(t){return t[0]===which;})[0]||[])[1]||'Report');
+  var team=String(D.team||'team').replace(/[\\\/:*?"<>|]+/g,'-');
+  XLSX.writeFile(wb,'TL '+label+' - '+team+' - '+prettyPeriod()+'.xlsx');
+  toast('Workbook exported (.xlsx) — '+n+' sheet'+(n>1?'s':'')+'.');
 }
 
 /* THERE IS NO AGENT MONTH TO DATE (Nick, 2026-08-24). Month to date is the
@@ -3379,6 +3508,8 @@ function wireShell(){
 function render(){
   if(!D) return;
   if(PW_OPEN) return;   // the person is mid-way through changing their password — leave the form alone
+  /* a refresh that arrived while a form was open (LIVE.pending) lands now, if this render is safe */
+  if(LIVE.pending&&liveTeamScope()&&liveSafeToRender()){ var fr=LIVE.pending; LIVE.pending=null; D=fr; TEAM=D; }
   /* The campaign manager is the third branch, decided by what is LOADED —
      the same rule as isTeam below. */
   if(D.scope==='campaign'&&!D.me){
@@ -3506,7 +3637,7 @@ function loadPortal(){
     if(!r.ok) return fatal('We could not open your page', r.json.error||'Please try again in a minute.', r.status>=500);
     D=r.json;
     if(D.scope==='campaign') return cmView();
-    if(D.role==='team_leader'||D.scope==='team'||D.scope==='all') return teamView();
+    if(D.role==='team_leader'||D.scope==='team'||D.scope==='all'){ startLiveRefresh(); return teamView(); }
     if(D.notReported) return notReported();
     if(!D.me) return fatal('Nothing to show yet','No figures have been published for you this month.');
     show(D.me);
@@ -3518,6 +3649,65 @@ function loadPortal(){
   .catch(function(e){
     fatal('We could not draw your page', String((e&&e.message)||e||'Unexpected error')+'. Please try again.', true);
   });
+}
+
+/* ===================== NEVER STATIC (Nick, 2026-09-11) =====================
+   "When the month to date in VAS Analytics is updated it is updated in the team leader view."
+   The page used to ask for /api/portal/overview once, at sign-in, and never again — a leader
+   who left the tab open all afternoon read the morning's figures under a "Numbers updated"
+   stamp that never moved. Upstream is already live: PULSE republishes the digest within
+   seconds of an upload and every 90 s while a tab is open; the Worker re-reads it inside a
+   minute. So the page re-asks: every two minutes while it is on screen, when the tab comes
+   back into view, on window focus, and on the toolbar's Refresh. A copy whose figures did
+   not change is swapped in silently (the stamp moves, nothing else); one whose figures did
+   is re-rendered in place, scroll kept, and said out loud. Never while a form is being
+   typed into — that copy waits (LIVE.pending) and lands on the next safe render. */
+var LIVE={at:0,busy:false,timer:null,pending:null};
+var LIVE_EVERY_MS=120000, LIVE_MIN_GAP_MS=30000;
+var LIVE_SAFE_VIEWS=['team','results','reports','mtd_team','daily_team','weekly_team','forms'];
+function liveTeamScope(){ return !!(D&&!D.__back&&!D.me&&(D.role==='team_leader'||D.scope==='team'||D.scope==='all')); }
+function liveSafeToRender(){
+  return !PW_OPEN&&LIVE_SAFE_VIEWS.indexOf(VIEW)>=0
+    &&!(typeof FORM!=='undefined'&&FORM.id)&&!(typeof CFORM!=='undefined'&&CFORM.type);
+}
+function startLiveRefresh(){
+  if(LIVE.timer||typeof document.addEventListener!=='function') return;
+  LIVE.at=Date.now();
+  LIVE.timer=setInterval(function(){ if(!document.hidden) refreshPortal(false); },LIVE_EVERY_MS);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden&&Date.now()-LIVE.at>LIVE_MIN_GAP_MS) refreshPortal(false); });
+  window.addEventListener('focus',function(){ if(Date.now()-LIVE.at>LIVE_MIN_GAP_MS) refreshPortal(false); });
+}
+/* Did management publish different FIGURES, or only a new timestamp? The runner and the
+   self-heal republish identical numbers; those must not shout "updated" at the leader. */
+function liveFiguresChanged(fresh){
+  var keys=['agents','summary','weeks','totals','diallingDays','workingDays','dates','nba'];
+  for(var i=0;i<keys.length;i++) if(JSON.stringify(fresh[keys[i]])!==JSON.stringify(D[keys[i]])) return true;
+  return false;
+}
+function refreshPortal(manual){
+  if(LIVE.busy||!liveTeamScope()) return Promise.resolve();
+  LIVE.busy=true; LIVE.at=Date.now();
+  var b=$('repRefresh'); if(b){ b.disabled=true; b.textContent='Refreshing…'; }
+  var restore=function(){ var x=$('repRefresh'); if(x){ x.disabled=false; x.innerHTML='&#8635; Refresh'; } };
+  return api('/api/portal/overview').then(function(r){
+    LIVE.busy=false;
+    if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} return loginScreen('Your session has expired. Please sign in again.'); }
+    if(!r.ok){ restore(); if(manual) toast('Could not refresh — '+(r.json.error||'please try again in a minute.'),5000); return; }
+    var fresh=r.json;
+    if(!liveTeamScope()){ restore(); return; }                 // the leader drilled into an agent meanwhile
+    if(fresh.scope==='campaign'||fresh.me){ restore(); return; } // not a team payload — never swap shapes underneath a view
+    var changed=liveFiguresChanged(fresh);
+    if(!changed&&fresh.updatedAt===D.updatedAt){ restore(); if(manual) toast('Already on the latest published figures ('+stamp()+').'); return; }
+    if(!liveSafeToRender()){ LIVE.pending=fresh; restore(); if(manual) toast('New figures are ready — they will show when you leave this form.',5000); return; }
+    applyFresh(fresh,changed,manual);
+  }).catch(function(){ LIVE.busy=false; restore(); if(manual) toast('Could not refresh — please try again in a minute.',5000); });
+}
+function applyFresh(fresh,changed,manual){
+  var y=window.scrollY||0;
+  LIVE.pending=null; D=fresh; TEAM=D; render();
+  try{ window.scrollTo(0,y); }catch(e){}
+  if(changed) toast((manual?'Figures refreshed':'Figures updated')+' — management published new numbers at '+stamp()+'.',6000);
+  else if(manual) toast('Already on the latest published figures ('+stamp()+').');
 }
 
 /* On the roster, but this engine does not report their campaign — or they have
@@ -4392,6 +4582,11 @@ function teamView(){
     b.onclick=function(){ VIEW=b.getAttribute('data-report'); render(); };
   });
   var df=$('dayFilter'); if(df) df.onchange=function(){ DAY_FILTER=df.value; render(); };
+  /* the Reports toolbar (2026-09-11): Refresh asks the Worker now; Export builds the workbook */
+  var rr=$('repRefresh'); if(rr) rr.onclick=function(){ refreshPortal(true); };
+  Array.prototype.forEach.call(document.querySelectorAll('[data-export]'),function(b){
+    b.onclick=function(){ exportReports(b.getAttribute('data-export')); };
+  });
   Array.prototype.forEach.call(document.querySelectorAll('[data-expand]'),function(b){
     b.onclick=function(e){ e.stopPropagation();
       var cb=b.getAttribute('data-expand'); EXPANDED[cb]=!EXPANDED[cb]; render(); };

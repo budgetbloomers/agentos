@@ -2445,7 +2445,7 @@ const INGEST={
       :{hash:feKey,at:new Date().toISOString().slice(0,16).replace('T',' '),asOf,file:name,agents:0,moved:0,fresh:0,left:0};
     fe.agents+=out.length; fe.moved+=moved; fe.fresh+=fresh; fe.left+=left; fe.pending=1;
     S.rosterEffect=fe;
-    setTimeout(function(){try{window.__agentDigestPush&&window.__agentDigestPush()}catch(e){}},2500);
+    if(typeof kickAgentDigest==='function') kickAgentDigest();   // guarded: the ingest also runs under the diagnostics harness
     /* AND TELL OPS AT ONCE (Nick, 2026-08-28). Ops keeps its own copy of the Agent List and
        only re-ingests when somebody opens it — so a list uploaded here sat unseen there for
        two days, showing the old team leader and the old tenure. Pinging /api/roster?fresh=1
@@ -8103,6 +8103,7 @@ async function handleFiles(list, expected){
     const ds=[...allDataDates()];
     if(r&&!ds.some(d=>d>=r.from&&d<=r.to)&&ds.length){ S.ui.preset=''; S.ui.month=latestMonth(); }  // a sticky 'today/7d' preset outside the data's range would show "No data yet" right after a successful upload
     save(); rebuild(); renderAll();
+    if(typeof kickAgentDigest==='function') kickAgentDigest();   // the team leader view follows within seconds, not at the next 90 s tick (2026-09-11)
     toast(ok+' file'+(ok>1?'s':'')+' loaded'+(skipped?' · '+skipped+' skipped (already uploaded)':''));
   }else if(skipped){
     toast(skipped+' file'+(skipped>1?'s':'')+' skipped — already uploaded, nothing new to add');
@@ -8620,6 +8621,13 @@ function tlSummary(o){
     }catch(e){}
   }
   window.__agentDigestPush=push;                              // manual trigger + the test harness
+  /* PUBLISH WHEN THE MONTH CHANGES, NOT ONLY ON THE CLOCK (Nick, 2026-09-11: "when the month to date in
+     VAS analytics is updated it is updated in team leader view"). The Agent List ingest already asked for
+     an immediate push; every other upload waited for the next 90 s tick. Now any completed upload and
+     the referrals sync kick the same push. Debounced, because a multi-file drop ends in one rebuild
+     per file; and push() itself publishes only when the payload actually changed. */
+  var kickT=null;
+  window.kickAgentDigest=function(ms){ clearTimeout(kickT); kickT=setTimeout(function(){try{push()}catch(e){}},ms||2500); };
   setInterval(push,90000);
   document.addEventListener('cbx-authed',function(){setTimeout(push,8000)});
   setTimeout(push,11000);
@@ -8715,6 +8723,7 @@ window.__hlSyncVAS=function(quiet){
       if(typeof INGEST==='undefined'||!INGEST.referrals)throw new Error('app not ready');
       INGEST.referrals(recs,'HighLevel API');   // toasts its own summary
       if(typeof save==='function')save();if(typeof rebuild==='function')rebuild();if(typeof renderAll==='function')renderAll();
+      if(typeof kickAgentDigest==='function')kickAgentDigest();
       done();
     }).catch(function(e){if(!quiet)say('Referrals sync failed: '+(e.message||e));done()});
   }catch(e){done()}

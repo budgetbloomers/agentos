@@ -1438,6 +1438,11 @@ export default {
         });
         if (!sr.ok) return json({ error: 'store failed: ' + sr.status + ' ' + (await sr.text()).slice(0, 150) }, 500);
         await DB.insert('rules', [{ key: 'kv:' + qk, value: { store: objPath }, updated_by: user.username, updated_at: new Date().toISOString() }], true);
+        /* THE PORTAL'S COPY IS DROPPED THE MOMENT A NEW DIGEST LANDS (2026-09-11). loadDigest() keeps a
+           60 s copy per isolate so a floor of agents does not read Storage on every open; a team
+           leader's Refresh a few seconds after a VAS upload used to get the old copy from it. Only
+           this isolate's copy can be dropped — another isolate's ages out inside the minute. */
+        if (/^agent-digest(-\d{4}-\d{2})?$/.test(qk) && globalThis.__digestCaches) delete globalThis.__digestCaches['kv:' + qk];
         /* THE AGENT→TEAM MAP FOLLOWS THE DIGEST (audit round 3, 2026-08-27). It is the
            authorisation FLOOR for team-leader scoping, and refreshing it only from
            /api/roster left it stale whenever nobody happened to open Ops — measured: it

@@ -37,6 +37,7 @@ const ROOT = path.join(HERE, '..', '..');            // agentos/
 const rd = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 
 let fails = 0, checks = 0;
+const PENDING = [];   // promise-based checks (the live refresh) — awaited before the summary
 const ok = (m) => { checks++; console.log('  \x1b[32m✓\x1b[0m ' + m); };
 const bad = (m, d) => { checks++; fails++; console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? '\n      ' + d : '')); };
 const head = (m) => console.log('\n\x1b[1m' + m + '\x1b[0m');
@@ -592,11 +593,19 @@ const CODE = PAGE
      proves that against the live digest); these three views must never reach past D.agents to
      any other collection, or the server-side scope stops being the whole story. */
   (function(){
-    for (const fn of ['function pageMTD()', 'function pageWeeklyTeam()', 'function pageDailyTeam()']) {
-      const i = PAGE.indexOf(fn);
-      const body = PAGE.slice(i, PAGE.indexOf('\nfunction ', i + 10));
-      (i >= 0 && /\(D\.agents\|\|\[\]\)/.test(body) && body.indexOf('notCovered') < 0)
-        ? ok(fn.replace('function ', '').replace('()', '') + ' reads only the scoped team list (D.agents)')
+    /* Since 2026-09-11 the three pages and the export all read through coveredAgents(), which
+       is the ONE place the list is taken from — so that helper must read D.agents, and every
+       report builder must go through it and never touch notCovered. */
+    const fnBody = (fn) => { const i = PAGE.indexOf(fn); return i < 0 ? null : PAGE.slice(i, PAGE.indexOf('\nfunction ', i + 10)); };
+    const ca = fnBody('function coveredAgents()');
+    (ca && /\(D\.agents\|\|\[\]\)/.test(ca) && ca.indexOf('notCovered') < 0)
+      ? ok('coveredAgents() reads only the scoped team list (D.agents)')
+      : bad('coveredAgents() does not read D.agents alone');
+    for (const fn of ['function reportMTD()', 'function reportWeekly()', 'function reportDaily(',
+                      'function pageMTD()', 'function pageWeeklyTeam()', 'function pageDailyTeam()']) {
+      const body = fnBody(fn);
+      (body && /coveredAgents\(\)|reportMTD\(\)|reportDaily\(|reportWeekly\(\)/.test(body) && body.indexOf('notCovered') < 0 && body.indexOf('D.agents') < 0)
+        ? ok(fn.replace('function ', '').replace(/\(\)?$/, '') + ' reads the team through coveredAgents() only')
         : bad(fn + ' reaches past the scoped list');
     }
   })();
@@ -628,9 +637,40 @@ const CODE = PAGE
   /tlAgg:Object\.keys\(M\.tlAgg/.test(PULSE) && /wk:\(M\.weeks\|\|\[\]\)\.map/.test(PULSE) && /aveTalk:r2\(g\.aveTalk\),/.test(PULSE)
     ? ok('PULSE publishes the summary block, the weekly rows and the two talk averages')
     : bad('the digest does not carry the new figures');
-  /a\.wk\|\|\[\]/.test(PAGE.slice(PAGE.indexOf('function pageWeeklyTeam(')))
+  /a\.wk\|\|\[\]/.test(PAGE.slice(PAGE.indexOf('function reportWeekly('), PAGE.indexOf('function pageWeeklyTeam(')))
     ? ok('Weekly reads the engine\'s own per-week rows (a.wk), so it carries every VAS Weekly column')
     : bad('Weekly still re-derives its columns from day rows');
+
+  /* ---- 2026-09-11 (Nick): "the month to date reports weekly, daily, month to date, for the team
+     leader view must be exportable, and make sure it's not static — when the month to date in VAS
+     Analytics is updated it is updated in the team leader view". Two things, both on the page:
+     an .xlsx export built from the SAME column lists the tables are drawn from, and a re-ask of
+     /api/portal/overview on a timer, on focus and on demand, applied in place. The rendering
+     half is exercised below in section C with a stubbed Worker. */
+  /<script src="\/xlsx\.full\.min\.js" defer><\/script>/.test(PAGE)
+    ? ok('the page loads the same self-hosted SheetJS the VAS export uses, deferred')
+    : bad('SheetJS is not loaded — Export cannot build a workbook');
+  (function(){
+    const ex = PAGE.slice(PAGE.indexOf('function exportReports('), PAGE.indexOf('\nfunction ', PAGE.indexOf('function exportReports(') + 10));
+    (/reportMTD\(\)/.test(ex) && /reportTLSummary\(\)/.test(ex) && /reportWeekly\(\)/.test(ex) && /reportDaily\(which==='all'\)/.test(ex))
+      ? ok('the export walks the same report builders the three pages render from — no second column list')
+      : bad('the export builds its own columns');
+    /XLSX\.writeFile\(wb,'TL '/.test(ex) ? ok('the workbook is written as an .xlsx named for the report, the team and the month') : bad('the export does not write an .xlsx');
+    /data-export="'\+active\+'"/.test(PAGE) && /data-export="all"/.test(PAGE) && /id="repRefresh"/.test(PAGE)
+      ? ok('every Reports sub-tab carries Export, Export all and Refresh in its toolbar')
+      : bad('the Reports toolbar is missing a button');
+  })();
+  (function(){
+    const lp = PAGE.slice(PAGE.indexOf('function loadPortal('), PAGE.indexOf('function notReported('));
+    /startLiveRefresh\(\); return teamView\(\);/.test(lp) ? ok('a team payload starts the live re-ask the moment it loads') : bad('the live refresh is never started');
+    /setInterval\(function\(\)\{ if\(!document\.hidden\) refreshPortal\(false\); \},LIVE_EVERY_MS\)/.test(lp)
+      && /addEventListener\('visibilitychange'/.test(lp) && /addEventListener\('focus'/.test(lp)
+      ? ok('the page re-asks on a timer while visible, when the tab comes back, and on focus')
+      : bad('one of the refresh triggers is missing');
+    /if\(!liveSafeToRender\(\)\)\{ LIVE\.pending=fresh;/.test(lp) && /if\(LIVE\.pending&&liveTeamScope\(\)&&liveSafeToRender\(\)\)/.test(PAGE)
+      ? ok('a refresh that lands mid-form waits and is applied on the next safe render — never over a half-typed form')
+      : bad('a background refresh can wipe an open form');
+  })();
 
   /* ---- 2026-09-11 (Nick): the Score Journey — "a button ... must show the breakdown of the agent score",
      then "remove agent, its static just showing the team leaders and agents how to calculate the agent
@@ -697,7 +737,7 @@ const CODE = PAGE
    ══════════════════════════════════════════════════════════════════════════ */
 head('C · The page renders for every shape of agent');
 
-function loadPage() {
+function loadPage(fetchImpl) {
   const m = PAGE.match(/<script>\n"use strict";([\s\S]*?)<\/script>/);
   if (!m) throw new Error('could not find the page script');
   const src = m[1].replace(/\nboot\(\);\s*$/, '\n');            // do not auto-run the fetch
@@ -720,10 +760,11 @@ function loadPage() {
   };
   const fn = new Function(
     'document', 'window', 'localStorage', 'location', 'fetch', 'URLSearchParams', 'setTimeout', 'Intl', 'console',
-    src + '\nreturn {show,notReported,commCalc,heroHTML,doneHTML,trackHTML,standHTML,whatIfHTML,comsPage,coachHTML,coachTeamHTML,teamView,loginScreen,greeting,sastHour,prettyPeriod,setD:function(d){D=d},setMe:function(m){ME=m},setTeam:function(t){TEAM=t},setView:function(v){VIEW=v}};'
+    src + '\nreturn {show,notReported,commCalc,heroHTML,doneHTML,trackHTML,standHTML,whatIfHTML,comsPage,coachHTML,coachTeamHTML,teamView,loginScreen,greeting,sastHour,prettyPeriod,setD:function(d){D=d},setMe:function(m){ME=m},setTeam:function(t){TEAM=t},setView:function(v){VIEW=v},'
+    + 'getD:function(){return D},getView:function(){return VIEW},cellOf,reportMTD,reportWeekly,reportDaily,reportTLSummary,exportReports,refreshPortal,liveFiguresChanged,setDayFilter:function(d){DAY_FILTER=d},setForm:function(f){FORM=f},render};'
   );
   return {
-    api: fn(doc, win, win.localStorage, win.location, () => Promise.reject(new Error('no network in test')),
+    api: fn(doc, win, win.localStorage, win.location, fetchImpl || (() => Promise.reject(new Error('no network in test'))),
       URLSearchParams, (f) => f, Intl, { log() {}, error() {} }),
     nodes,
   };
@@ -860,6 +901,113 @@ try {
   if (!/Team target/.test(myTeam)) throw new Error('My Team has no team target card');
   if (!/Scores are not published yet/.test(myTeam)) throw new Error('a missing NBA digest is not stated on My Team');
   if (/undefined|NaN|\[object Object\]/.test(myTeam)) throw new Error('My Team rendered a placeholder value');
+
+  /* ---- Export (2026-09-11): the workbook is the screen, sheet for sheet ----
+     A fixture with day rows, week rows and the summary block; XLSX is stubbed to capture
+     what would be written. Each sheet's header must be the on-screen table's header, the
+     Grand Total row must be last, printed rand and percentages must come back as numbers,
+     and a dash must come back as an EMPTY cell — never a nought. */
+  (function(){
+    const days = [
+      { d: '2026-08-03', w: 32, emp: 1, act: 1, t: 5, s: 6, x: 1200.5, tk: 5400, c: 40, r: 1 },
+      { d: '2026-08-04', w: 32, emp: 1, act: 0, t: 5, s: 0, x: 0, tk: 0, c: 0, r: 0, dc: false },
+    ];
+    const rich = team.map((a, i) => ({ ...a, emp: 10, act: 9, att: 0.9, spd: 1.5 - i, aveG: 90, qa: 0.95, ref: 2, canc: 1, talk: 90000, aveTalk: 9000, talkPerWorked: 10000,
+      gwpT: 8000, score: 0.8, days, wk: [{ n: 32, emp: 2, act: 1, sales: 6, target: 10, pctT: 0.6, spd: 6, gwpEx: 1200.5, gwpT: 1600, aveG: 200, att: 0.5, qa: 0.95, ref: 1, talk: 5400, aveTalk: 2700, talkPerWorked: 5400 }] }));
+    const summary = { onTarget: 1, talkUnit: 'minutes', teams: [{ tl: 'A Leader', camp: 'Courtesy', hc: 2, emp: 20, act: 18, att: 0.9, target: 160, sales: 130, pctT: 0.8125, spd: 7.2, canc: 2, cancPct: 0.015, gwpT: 16000, gwp: 12000, pctG: 0.75, aveG: 92.3, aveTalk: 9000, ref: 4, refPct: 0.03, onT: 1 }],
+      campaigns: { Courtesy: { hc: 40, emp: 400, act: 360, att: 0.9, target: 3200, sales: 2600, pctT: 0.8125, spd: 7.2, canc: 40, cancPct: 0.015, gwpT: 320000, gwp: 240000, pctG: 0.75, aveG: 92.3, aveTalk: 9000, ref: 80, refPct: 0.03, onT: 20 } } };
+    const full = { ...payload, agents: rich, summary, talkUnit: 'minutes', weeks: [{ num: 32, from: '2026-08-03', to: '2026-08-09' }], updatedAt: '2026-08-04T10:00:00Z' };
+    P.setD(full); P.setTeam(full); P.setDayFilter('');
+    const sheets = []; let written = null;
+    globalThis.XLSX = { utils: { book_new: () => ({}), aoa_to_sheet: (aoa) => ({ aoa }), book_append_sheet: (wb, ws, nm) => sheets.push([nm, ws.aoa]) }, writeFile: (wb, name) => { written = name; } };
+    try {
+      P.setView('mtd_team'); P.teamView();
+      const mtdHtml = N.root.innerHTML;
+      const heads = [...mtdHtml.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
+      P.exportReports('all');
+      const names = sheets.map((s) => s[0]);
+      if (!written || !/^TL Reports - A Leader - .*\.xlsx$/.test(written)) throw new Error('workbook not written or misnamed: ' + written);
+      if (JSON.stringify(names) !== JSON.stringify(['MTD', 'TL MTD', 'Daily', 'WTD - Week 32'])) throw new Error('unexpected sheets: ' + names.join(', '));
+      const mtd = sheets[0][1];
+      const want = ['Agent', 'Code'].concat(heads.slice(1, heads.indexOf('Metric')).filter((h) => h !== 'Agent'));
+      if (JSON.stringify(mtd[0]) !== JSON.stringify(want)) throw new Error('MTD sheet header is not the on-screen header:\n      ' + mtd[0].join('|') + '\n      ' + want.join('|'));
+      if (mtd[mtd.length - 1][0] !== 'Grand Total') throw new Error('the MTD sheet has no Grand Total row last');
+      if (mtd[1][0] !== 'Sipho Ndlovu' || mtd[2][0] !== 'Nomsa Zulu') throw new Error('MTD rows are not in the on-screen SPD order');
+      const gwpCol = mtd[0].indexOf('GWP Achieved'); const attCol = mtd[0].indexOf('Att %');
+      if (mtd[1][gwpCol] !== 9000) throw new Error('printed rand did not come back as a number: ' + JSON.stringify(mtd[1][gwpCol]));
+      if (!mtd[1][attCol] || mtd[1][attCol].v !== 0.9) throw new Error('printed percentage did not come back as a number: ' + JSON.stringify(mtd[1][attCol]));
+      const tl = sheets[1][1];
+      if (JSON.stringify(tl[0]) !== JSON.stringify(['Metric', 'A Leader', 'Matrix Courtesy total'])) throw new Error('TL MTD header: ' + tl[0].join('|'));
+      if (tl.find((r) => r[0] === 'Agents on Target')[2] !== 20) throw new Error('the campaign total column is not the campaign aggregate');
+      const daily = sheets[2][1];
+      if (daily[0][0] !== 'Date' || daily[0][2] !== 'Agent' || daily[0][3] !== 'Code') throw new Error('Daily sheet header: ' + daily[0].join('|'));
+      if (daily.length !== 5) throw new Error('Daily should carry 2 agents × 2 days = 4 rows, got ' + (daily.length - 1));
+      if (daily[1][0] !== '2026-08-04' || daily[2][0] !== '2026-08-04') throw new Error('the export must print the date on EVERY row (the screen prints it once per day)');
+      const talkCol = daily[0].indexOf('Talk');
+      if (daily[1][talkCol] !== '') throw new Error('an unknown talk figure (dash on screen) must export as an empty cell, got ' + JSON.stringify(daily[1][talkCol]));
+      const wk = sheets[3][1];
+      if (wk[0].indexOf('Score') >= 0 || wk[0].some((h) => /Canc/.test(h))) throw new Error('the weekly sheet carries a column the VAS Weekly does not');
+      if (wk[wk.length - 1][0] !== 'Grand Total') throw new Error('the weekly sheet has no Grand Total row');
+      ok('Export all writes MTD, TL MTD, Daily and one WTD sheet per week — headers, order and totals as on screen; rand and % as numbers; a dash as an empty cell');
+      /* the day picker narrows the export the way it narrows the screen */
+      sheets.length = 0; P.setDayFilter('2026-08-03'); P.exportReports('daily_team');
+      (sheets.length === 1 && sheets[0][0] === 'Daily 2026-08-03' && sheets[0][1].length === 3)
+        ? ok('Export on Daily honours the day picker — one day, two rows, named for the day')
+        : bad('the Daily export ignores the day picker', JSON.stringify(sheets.map((s) => [s[0], s[1].length])));
+      /* …but Export ALL is the whole month even when the picker was left on a day (review, 2026-09-11) */
+      sheets.length = 0; P.exportReports('all');
+      (sheets[2] && sheets[2][0] === 'Daily' && sheets[2][1].length === 5)
+        ? ok('Export all ignores a day picker left over from the Daily tab — its Daily sheet is the whole month')
+        : bad('Export all carried the Daily day picker', JSON.stringify(sheets.map((s) => [s[0], s[1].length])));
+      P.setDayFilter('');
+      /* cellOf: the four shapes a cell can take */
+      const c = P.cellOf;
+      (c('<b>R 1&nbsp;234,5</b>') === 1234.5 && c('95%').v === 0.95 && c('–') === '' && c('Exp') === 'Exp' && c('<span class="pill r">no shift</span>') === 'no shift')
+        ? ok('cellOf reads printed rand and percentages back as numbers, keeps words as words, and makes a dash an empty cell')
+        : bad('cellOf mis-reads a printed cell');
+    } catch (e) { bad('the export does not mirror the screen', e.message); }
+    finally { delete globalThis.XLSX; }
+    P.setD(payload); P.setTeam(payload);
+  })();
+
+  /* ---- Never static (2026-09-11): the refresh lands in place ----
+     A second page instance whose Worker is a stub. Same figures → the stamp moves and the
+     page is NOT redrawn; new figures → redrawn in place on the same sub-tab, and the new
+     name is on screen. A refresh that arrives while a KPI form is open waits. */
+  (function(){
+    let reply = null;
+    const stub = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(reply) });
+    const { api: Q, nodes: M } = loadPage(stub);
+    const base = { ...payload, updatedAt: '2026-08-04T10:00:00Z' };
+    Q.setD(base); Q.setTeam(base); Q.setView('mtd_team'); Q.teamView();
+    const before = M.root.innerHTML;
+    if (!/Published /.test(before)) { bad('the Reports toolbar does not show when the figures were published'); return; }
+    reply = { ...base, updatedAt: '2026-08-04T10:05:00Z' };                         // same figures, later stamp
+    PENDING.push(Q.refreshPortal(true).then(() => {
+      (Q.getD().updatedAt === '2026-08-04T10:05:00Z' && Q.liveFiguresChanged(base) === false)
+        ? ok('a republish with the same figures is taken silently — the stamp moves, nothing is shouted')
+        : bad('a same-figures republish was not applied');
+      reply = { ...base, updatedAt: '2026-08-04T10:10:00Z', agents: [...team, { code: 'CB9', name: 'Zanele Mokoena', tl: 'A Leader', campaign: 'Courtesy', tenure: 'M0', covered: true, gwpEx: 500, sales: 5, target: 10, pctT: 0.5, spark: [1] }] };
+      return Q.refreshPortal(true);
+    }).then(() => {
+      const after = M.root.innerHTML;
+      (after.indexOf('Zanele Mokoena') >= 0 && Q.getView() === 'mtd_team' && /Published /.test(after))
+        ? ok('new figures from VAS are redrawn in place on the same sub-tab — the team leader never reloads')
+        : bad('new figures were not applied to the open report');
+      /* mid-form: the copy waits */
+      Q.setForm({ id: 'f1', kind: 'monthly', meta: null, data: {}, page: 1, dirty: true, saving: false }); Q.setView('kpihub');
+      reply = { ...reply, updatedAt: '2026-08-04T10:15:00Z', agents: team };
+      return Q.refreshPortal(false);
+    }).then(() => {
+      (Q.getD().updatedAt === '2026-08-04T10:10:00Z')
+        ? ok('a refresh that arrives while a KPI form is open is held back, not painted over the form')
+        : bad('a background refresh re-rendered over an open form');
+      Q.setForm({ id: null, kind: 'monthly', meta: null, data: null, page: 1, dirty: false, saving: false }); Q.setView('mtd_team'); Q.render();
+      (Q.getD().updatedAt === '2026-08-04T10:15:00Z')
+        ? ok('…and lands on the next safe render, once the form is closed')
+        : bad('the held-back refresh never landed');
+    }).catch((e) => bad('the live refresh threw', e.message)));
+  })();
 
   P.setView('results'); P.teamView();
   const html = N.root.innerHTML;
@@ -1165,6 +1313,7 @@ head('Links tab (Nick, 2026-09-08) — agent view only');
 /indexOf\('data:image\/'\)===0/.test(PAGE) ? ok('only a data-URI screenshot the Worker served is ever painted') : bad('screenshot source not guarded');
 /rel="noopener noreferrer"/.test(PAGE) && /lk-off/.test(PAGE) ? ok('live links open in a new tab; a link without an address is shown greyed, never invented') : bad('link cards missing the safe-open or the greyed state');
 
+await Promise.all(PENDING);
 head(fails ? `\x1b[31m${fails} of ${checks} checks FAILED — do not deploy\x1b[0m`
            : `\x1b[32mAll ${checks} checks passed\x1b[0m`);
 process.exit(fails ? 1 : 0);
