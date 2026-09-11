@@ -5526,6 +5526,9 @@ setTimeout(function(){
            passes; salesLow is where R4A fires. */
         targetAch:nbaVal('targetAch',100), salesLow:nbaVal('salesLow',70),
         talkTargetMin:T('talkTargetMin'),talkFloorMin:T('talkFloorMin')},
+      /* the penalty rule this engine ran under — a copy without it was built by an older engine
+         (see push's self-heal); 0/0/0 since 2026-09-11 */
+      rules:{pen:[nbaVal('pen1',0),nbaVal('pen2',0),nbaVal('pen3',0)]},
       agents:agents};
   }
   function push(){
@@ -5535,7 +5538,14 @@ setTimeout(function(){
       if(!Object.keys(state.cbInfo||{}).length)return;   // an empty session must never overwrite
       var p=build(); if(!p||!p.agents.length)return;
       var cmp=JSON.stringify(p.agents)+p.period.from+p.period.to;   // ignore updatedAt churn
-      if(cmp===last)return; last=cmp;
+      /* A STALE PUBLISHER MUST NOT WIN (2026-09-11): the runner republishes this key every fifteen
+         minutes from main's code; a copy without `rules` came from an engine that still deducted
+         R2A points, and this tab republishes over it even though its own payload is unchanged. */
+      if(cmp===last){
+        try{ Promise.resolve(window.storage.get('nba-digest')).then(function(t){ var d=null; try{ d=JSON.parse(t||''); }catch(e){}
+          if(d&&!d.rules) window.storage.set('nba-digest', JSON.stringify(p)); }).catch(function(){}); }catch(e){}
+        return; }
+      last=cmp;
       window.storage.set('nba-digest', JSON.stringify(p));
     }catch(e){}
   }

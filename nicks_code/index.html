@@ -8574,7 +8574,15 @@ function tlSummary(o){
       if(!/^\d{4}-\d{2}-01$/.test((p.period&&p.period.from)||'')) return;
       var body=JSON.stringify(p);
       var cmp=JSON.stringify(p.agents)+p.period.from+p.period.to;   // ignore updatedAt churn
-      if(cmp===last) return; last=cmp;
+      /* A STALE PUBLISHER MUST NOT WIN (2026-09-11). The GitHub runner republishes this key every
+         fifteen minutes from whatever code main carries; while main lagged the deploy it put the
+         retired R2A deductions back on 31 agents and dropped the Reports-tab summary, and an open
+         tab on the right build did nothing about it because its OWN payload had not changed. So
+         when nothing changed here, look at the live copy: a digest without tlAgg was built by an
+         older engine, and this tab's is republished over it. A copy that has it is left alone —
+         two current tabs never ping-pong. */
+      if(cmp===last){ healStaleDigest(body,tk); return; }
+      last=cmp;
       /* THE LIVE DIGEST IS THE CURRENT MONTH — NOTHING ELSE (Nick, 2026-09-03: "for
          agents, their past months data keeps on showing"). The guard above only
          asked for a period starting on the 1st, so a VAS browser reviewing AUGUST
@@ -8595,6 +8603,20 @@ function tlSummary(o){
         fetch(API+'/api/kv?key=agent-digest-'+__dm,{method:'POST',
           headers:{'Content-Type':'text/plain','Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'},
           body:body}).catch(function(){});
+    }catch(e){}
+  }
+  function healStaleDigest(body,tk){
+    try{
+      var __cur=new Date(Date.now()+2*3600000).toISOString().slice(0,7);
+      fetch(API+'/api/kv?key=agent-digest',{headers:{'Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'}})
+        .then(function(r){return r.ok?r.text():null}).then(function(t){
+          if(!t) return; var d=null; try{ d=JSON.parse(t); }catch(e){ return; }
+          if(d&&Array.isArray(d.tlAgg)) return;                                   // a current engine wrote it
+          if(!d||!d.period||String(d.period.from).slice(0,7)!==__cur) return;    // not this month's copy — not ours to touch
+          var H={'Content-Type':'text/plain','Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'};
+          fetch(API+'/api/kv?key=agent-digest',{method:'POST',headers:H,body:body}).catch(function(){});
+          fetch(API+'/api/kv?key=agent-digest-'+__cur,{method:'POST',headers:H,body:body}).catch(function(){});
+        }).catch(function(){});
     }catch(e){}
   }
   window.__agentDigestPush=push;                              // manual trigger + the test harness
