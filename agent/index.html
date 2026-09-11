@@ -518,8 +518,23 @@ details.tool summary .chev{margin-left:auto;color:var(--muted);font-size:11px}
 .qrow .qsub{color:var(--muted);font-size:11.5px;min-width:96px;text-align:right}
 .banner{background:var(--blue-soft);border:1px solid #CFE0FF;color:var(--ink);border-radius:12px;
   padding:11px 14px;font-size:13px;font-weight:600;margin-bottom:14px}
-.nbatbl{min-width:1040px}
-.nbatbl td.sml{font-size:12px;line-height:1.5;color:var(--body);max-width:300px;white-space:normal}
+/* THE LADDER FITS THE CARD (Nick, 2026-09-11: "format correctly" — the Action column ran off
+   the right edge). A fixed 1040px table inside the scroller pushed Action, By and Composite
+   past the card's edge on a normal laptop screen, and a horizontal scrollbar under a table of
+   sentences is easy to miss. Now the six columns share the card's width in fixed proportions:
+   Reason and Action wrap; the NBA pill, the deadline and the score do not. Below 820px the
+   scroller still takes over. */
+.nbatbl{min-width:820px;table-layout:fixed}
+.nbatbl th:nth-child(1),.nbatbl td:nth-child(1){width:18%}
+.nbatbl th:nth-child(2),.nbatbl td:nth-child(2){width:15%}
+.nbatbl th:nth-child(3),.nbatbl td:nth-child(3){width:22%}
+.nbatbl th:nth-child(4),.nbatbl td:nth-child(4){width:28%}
+.nbatbl th:nth-child(5),.nbatbl td:nth-child(5){width:9%}
+.nbatbl th:nth-child(6),.nbatbl td:nth-child(6){width:8%}
+.nbatbl td{vertical-align:top}
+.nbatbl td.sml{font-size:12px;line-height:1.5;color:var(--body);white-space:normal;overflow-wrap:anywhere}
+.nbatbl td .pill{white-space:nowrap}
+.nbatbl td:nth-child(6){white-space:nowrap}   /* the score; the By phrase may wrap to two lines */
 .nbatbl td.l,.nbatbl th.l{text-align:left}
 
 /* ============ NIKOLA ============ */
