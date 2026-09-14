@@ -2557,12 +2557,18 @@ function renderTrustbar(){
    +'<span class="chip '+worst+'" style="cursor:pointer" onclick="state.trustOpen=!state.trustOpen;render()" title="Click to '+(state.trustOpen?'collapse':'expand')+' per-source freshness"><span class="dot"></span>'+wLabel+' · '+SRC_KEYS.length+' sources '+(state.trustOpen?'▾':'▸')+'</span>'
    +(state.trustOpen?chips:'')
    +'<button class="btn small" style="margin-left:auto" onclick="go(\'uploads\')">Manage uploads →</button>';
-  const stale=SRC_KEYS.filter(k=>['a','r'].includes(freshness(k).state));
+  const win=periodWindow();
+  /* A RETIRED SOURCE IS NOT STALE (Ops audit, 2026-09-14). CallX stopped on CALLX_RETIRED by
+     design; naming it in the "treat with care" and "no rows in the selected period" banners on
+     every September view trained people to read past the banner — and the one source that IS
+     stale (the open-cases snapshot) sat in the same sentence. Once the window starts after the
+     cutover, CallX is neither stale nor a gap. */
+  const retiredHere=k=>k==='CALLX_CALL_RECORDS'&&win.from>=CALLX_RETIRED;
+  const stale=SRC_KEYS.filter(k=>['a','r'].includes(freshness(k).state)&&!retiredHere(k));
   // Window-coverage gaps: a time-series source can have rows yet NONE inside the
   // active date window (e.g. attendance data ending before a 30-day window anchored
   // on fresher sources) — its KPIs render as silent zeros/dashes. Flag it instead.
-  const win=periodWindow();
-  const gaps=SRC_KEYS.filter(k=>{if(SOURCES[k].snapshot)return false;const rows=state.facts[k]||[];
+  const gaps=SRC_KEYS.filter(k=>{if(SOURCES[k].snapshot||retiredHere(k))return false;const rows=state.facts[k]||[];
     return rows.some(r=>r._d)&&!rows.some(r=>r._d&&r._d>=win.from&&r._d<=win.to)})
    .map(k=>{let mn=null,mx=null;(state.facts[k]||[]).forEach(r=>{if(!r._d)return;if(!mx||r._d>mx)mx=r._d;if(!mn||r._d<mn)mn=r._d});
     return esc(SOURCES[k].label)+' ('+(mx&&mx<win.from?'data ends '+esc(mx):mn&&mn>win.to?'data starts '+esc(mn):'data spans '+esc(mn)+' → '+esc(mx))+')'});
@@ -2832,6 +2838,14 @@ function kpiTile(k,win){
    dropped where none does (unique calls, outbound calls — the ViciDial export has no such cut), with a
    line saying so. A window that spans the cutover keeps both — August's CallX history still counts. */
 const CALLX_TO_VICI={total_calls:'vici_dials',answer_rate:'vici_answer',talk_time:'vici_talk'};
+/* the id to read for a window — the ViciDial twin once the window starts after the cutover.
+   Used by every Executive path that names a KPI directly (rings, the nutshell sentence, the
+   "where value is leaking" checks), which kpiRow's swap below does not reach. */
+function kpiIdFor(id,win){
+  if(!(win&&win.from&&win.from>=CALLX_RETIRED))return id;
+  const k=state.kpis.find(x=>x.id===id);
+  return (k&&k.src==='CALLX_CALL_RECORDS'&&CALLX_TO_VICI[id])?CALLX_TO_VICI[id]:id;
+}
 function kpiRow(domain,win,ids){
   const afterCutover=!!(win&&win.from&&win.from>=CALLX_RETIRED);
   const isCallx=k=>k.src==='CALLX_CALL_RECORDS';
@@ -2876,7 +2890,7 @@ function deptStatus(domain){
     if(r==='r')worst='r';else if(r==='a'&&worst!=='r')worst='a'});
   return any?worst:'n';
 }
-function nf(id,win){const k=state.kpis.find(x=>x.id===id);return k?fmtVal(evalKPI(k,win),k.format):'—'}
+function nf(id0,win){const id=kpiIdFor(id0,win);const k=state.kpis.find(x=>x.id===id);return k?fmtVal(evalKPI(k,win),k.format):'—'}
 function nutshell(win){
   const depts=[
    {dom:'Sales',label:'Sales Production',icon:'phone',page:'sales',
@@ -2919,7 +2933,7 @@ function pageExec(win){
   /* Client 2026-07-20: headline QA metric is the AVERAGE SCORE, not pass rate. */
   const qaTrend=dailySeries(qaRows,win,rs=>{const v=rs.map(r=>parseFloat(r.score_percent)).filter(x=>!isNaN(x));return v.length?v.reduce((a,b)=>a+b,0)/v.length:null});
   /* ---- command wall: gauge rings (same KPIs, evalKPI unchanged) ---- */
-  const ring=id=>{const k=state.kpis.find(x=>x.id===id);if(!k)return '';const v=evalKPI(k,win);const rag=ragOf(k,v);
+  const ring=id0=>{const id=kpiIdFor(id0,win);const k=state.kpis.find(x=>x.id===id);if(!k)return '';const v=evalKPI(k,win);const rag=ragOf(k,v);
     const c=rag==='g'?'var(--green)':rag==='a'?'var(--amber)':rag==='r'?'var(--red)':'var(--blue)';
     return '<div class="card ringbox"><span class="ring" style="--p:'+(v==null?0:Math.max(0,Math.min(100,Math.round(v))))+';--c:'+c+'"><i class="num">'+fmtVal(v,k.format)+'</i></span>'
      +'<span><div class="ring-name">'+esc(k.name)+'</div><div class="ring-sub">'+(k.green!=null?('target '+(k.dir==='higher'?'≥ ':'≤ ')+k.green+(k.format==='pct'?'%':'')):'monitored')+'</div>'
@@ -2995,7 +3009,7 @@ function leakTable(win){
      Rate is amber from 45) and a threshold edit moved the dot but never the list — which
      teaches people that one of the two is lying. The file's rule: a threshold that belongs to
      a rule is never written as a literal. */
-  const under=id=>{const k=K(id);if(!k)return null;const v=evalKPI(k,win);
+  const under=id0=>{const id=kpiIdFor(id0,win);const k=K(id);if(!k)return null;const v=evalKPI(k,win);
     const lim=k.amber!=null?k.amber:k.green;
     if(v==null||lim==null)return null;
     return (k.dir==='higher'?v<lim:v>lim)?{v,lim}:null};

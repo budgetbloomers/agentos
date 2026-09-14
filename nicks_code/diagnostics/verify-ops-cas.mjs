@@ -166,6 +166,10 @@ console.log('\nG · the Executive page after the CallX cutover reads ViciDial, n
   (/>Total Calls</.test(aug) && !/Vici Dials/.test(aug)) ? ok('an August window keeps the CallX tiles — that history still counts') : bad('a pre-cutover window lost its CallX tiles');
   const salesSept = G.kpiRow('Sales', { from: '2026-09-01', to: '2026-09-13' });
   (/CallX tile/.test(salesSept) && /hidden/.test(salesSept) && !/>Unique Calls</.test(salesSept)) ? ok('the Sales page hides the CallX-only tiles for September and says so') : bad('CallX-only tiles still render as zeros on the Sales page');
+  (G.kpiIdFor('answer_rate', { from: '2026-09-01', to: '2026-09-13' }) === 'vici_answer' && G.kpiIdFor('answer_rate', { from: '2026-08-01', to: '2026-08-31' }) === 'answer_rate' && G.kpiIdFor('avg_qa_score', { from: '2026-09-01', to: '2026-09-13' }) === 'avg_qa_score')
+    ? ok('kpiIdFor maps a CallX id to its ViciDial twin only after the cutover — the rings, the nutshell sentence and the value-leak checks read through it') : bad('kpiIdFor mapping wrong');
+  (PAGE.includes('const ring=id0=>{const id=kpiIdFor(id0,win)') && PAGE.includes('function nf(id0,win){const id=kpiIdFor(id0,win)') && PAGE.includes('const under=id0=>{const id=kpiIdFor(id0,win)')) ? ok('…and all three paths do') : bad('a direct KPI path still bypasses kpiIdFor');
+  (PAGE.includes("const retiredHere=k=>k==='CALLX_CALL_RECORDS'&&win.from>=CALLX_RETIRED;") && PAGE.includes('.state)&&!retiredHere(k))')) ? ok('the stale / no-rows banners no longer name the retired source on a post-cutover window') : bad('banners still flag CallX as stale');
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
