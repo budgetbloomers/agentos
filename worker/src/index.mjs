@@ -1473,7 +1473,12 @@ export default {
           if (row) {
             const busy = row.value && row.value.writing && Date.now() - Date.parse(row.value.writing) < KV_WRITING_TTL_MS;
             if (busy) return json({ error: 'version_conflict', current: curAt, reason: 'write_in_progress' }, 409);
-            const won = await DB.updateReturning(pk + '&updated_at=eq.' + encodeURIComponent(curAt),
+            /* the claim does not move the version, so the filter must ALSO say "nobody holds a
+               live claim" — or two writers that read the same base would both match it (proved
+               live on the probe key, 2026-09-14: 200/200). A claim past the TTL counts as free. */
+            const cutoff = new Date(Date.now() - KV_WRITING_TTL_MS).toISOString();
+            const won = await DB.updateReturning(pk + '&updated_at=eq.' + encodeURIComponent(curAt)
+                + '&or=' + encodeURIComponent('(value->>writing.is.null,value->>writing.lt.' + cutoff + ')'),
               { value: { ...(row.value || {}), writing: mark } });
             if (!won || !won.length) return json({ error: 'version_conflict', current: 'changed' }, 409);
           } else {
