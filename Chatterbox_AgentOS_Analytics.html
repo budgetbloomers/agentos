@@ -1971,7 +1971,18 @@ async function syncUploadsFromVAS(){
             continue;
           }
         }
-        if(state.batches.find(b=>b.file_hash===parsed.textHash&&b.source_type===src&&b.validation_status!=='failed'))continue;
+        const had=state.batches.find(b=>b.file_hash===parsed.textHash&&b.source_type===src&&b.validation_status!=='failed');
+        if(had){
+          /* THE AUDIT SAYS LOADED, THE STORE HAS NONE OF ITS ROWS — the lost-update signature (2026-09-14:
+             ViciDial 27–29 Aug and 3 Sep, each loaded by one session and saved over by another). Only
+             ViciDial can be judged this way: its daily files do not overlap, so a loaded file's rows are
+             always still there. Every other source supersedes by key across files — an old QA or BI
+             batch with no rows left is normal, and re-applying it would put old rows over new. The
+             file is re-applied under its own batch id (applyLoad's same-file path). */
+          const lost=src==='VICI_CALL_REPORT'&&had.loaded_row_count>0&&!(state.facts[src]||[]).some(r=>r._batch===had.batch_id);
+          if(!lost)continue;
+          toast('Relayed "'+esc(fm.n)+'" was loaded before but none of its rows are in the store — re-applying it.','',9000);
+        }
         const res=applyLoad(src,file,parsed,'auto-relayed from the VAS Upload Station');
         if(res&&res.batch&&fm.at) res.batch.relay_at=fm.at;   // what the guard above compares against
         touched.add(src);

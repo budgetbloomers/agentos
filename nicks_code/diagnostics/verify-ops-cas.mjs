@@ -145,5 +145,15 @@ console.log('\nE · the wire contract: shim ↔ Worker');
   /window\.storage\.ver\[mk\]=stamp;/.test(PAGE) ? ok('a store reused from the local mirror is stamped with its cloud version at boot') : bad('boot does not stamp reused stores — their first save would conflict');
 }
 
+console.log('\nF · the relay re-applies a ViciDial file the audit says loaded but the store has lost');
+{
+  const at = PAGE.indexOf('async function syncUploadsFromVAS');
+  const relay = PAGE.slice(at, at + 14000);
+  /const lost=src==='VICI_CALL_REPORT'&&had\.loaded_row_count>0&&!\(state\.facts\[src\]\|\|\[\]\)\.some\(r=>r\._batch===had\.batch_id\)/.test(relay)
+    ? ok('a ViciDial file with an audit record but no rows in the store is re-applied — the lost-update signature heals itself')
+    : bad('the relay still skips a file on its audit record alone');
+  /if\(!lost\)continue;/.test(relay) ? ok('…and only ViciDial is judged that way — key-superseding sources keep their skip') : bad('the re-apply is not restricted to ViciDial');
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
