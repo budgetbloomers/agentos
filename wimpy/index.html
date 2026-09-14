@@ -308,7 +308,13 @@ function wMenuPage(){
     }
   }
   var header='<div class="wp-title"><h2>'+esc(WMENU.title||'Weekday Value Menu')+'</h2>'
-    +'<span class="sub">3 breakfasts · 3 burgers · 3 toasteds · today’s Big One — made fresh, served as it comes</span></div>';
+    /* COUNTED FROM THE MENU, NEVER TYPED (Nick, 2026-09-14: "the toasteds still say 3 when there is 2").
+       The Worker's menu is the only source of what is on offer; the header reads it. */
+    +'<span class="sub">'+(WMENU.categories||[]).map(function(c){
+        var n=(WMENU.items||[]).filter(function(i){return i.category===c.id&&!(WMENU.bigOne&&i.id===WMENU.bigOne.id);}).length;
+        var w=String(c.label||c.id).toLowerCase(); if(n!==1&&!/s$/.test(w)) w+='s';   // breakfast → breakfasts
+        return n+' '+esc(w);
+      }).join(' · ')+' · today’s Big One — made fresh, served as it comes</span></div>';
   var cats='<div class="wp-cats">'+(WMENU.categories||[]).map(function(c){
     return '<button type="button" class="wp-cat'+(c.id===WCAT?' on':'')+'" data-wcat="'+esc(c.id)+'">'+esc(c.label)+' <span class="ct">3</span></button>';
   }).join('')+'</div>';

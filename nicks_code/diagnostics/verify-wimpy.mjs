@@ -374,6 +374,9 @@ head('M · THE APP: SIGN IN WITH A CB NUMBER, ORDER, SEND');
     ok(signins === 1, 'the CB signs in through /api/wimpy/signin', String(signins));
     ok(/Ordering is open/.test(menu), 'the window state comes from the payload, not the page’s clock');
     ok(/08:00–17:00/.test(menu), '...and reads 08:00–17:00', (menu.match(/\d\d:\d\d–\d\d:\d\d/) || [])[0]);
+    /* the header counts what the menu actually carries (Nick, 2026-09-14: "the toasteds still say 3 when there is 2") */
+    const sub = await pg.evaluate(() => (document.querySelector('.wp-title .sub') || {}).innerText || '');
+    ok(/3 breakfasts · 3 burgers · 2 toasteds/.test(sub), 'the header says 3 breakfasts · 3 burgers · 2 toasteds — counted from the menu, not typed', sub);
     await pg.click('[data-wadd="mzansi_brekkie"]');
     await pg.waitForSelector('#wpReview', { timeout: 10000 });
     ok(/1 × Mzansi Brekkie/.test(await pg.evaluate(() => document.querySelector('.wp-cart').innerText)),
