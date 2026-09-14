@@ -1,7 +1,8 @@
 /**
  * WIMPY WEEKDAY VALUE MENU — the 3–3–3–1 operating model (Nick, 2026-08-31).
  *
- * 3 Breakfasts + 3 Burgers + 3 Toasteds + 1 Daily Big One. The customer sees
+ * 3 Breakfasts + 3 Burgers + 2 Toasteds + 1 Daily Big One (Cheese & Tomato Toasted
+ * removed 2026-09-14). The customer sees
  * ten choices; the kitchen runs THIRTEEN core ingredients — and the overlap is
  * not a design aspiration, it is ENFORCED: every item declares its ingredients
  * from the ING table below, verify-wimpy fails if any ingredient is used by
@@ -140,13 +141,8 @@ const ITEMS = [
     includedIngredients: [inc('2 beef patties'), inc('Double cheese'), inc('Lettuce'),
       inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },
 
-  // ---- TOASTEDS — 3 ----
-  { id: 'toasted_cheese_tomato', name: 'Cheese & Tomato Toasted', category: 'toasteds',
-    basePrice: 49.90, wasPrice: 75.90, /* SUPPLIED */ prep: 'LOW',
-    description: 'Melted cheese and tomato on toasted bread, with chips.',
-    ing: { cheese: 1, tomato: 1, bread: 2, chips: 1 },
-    includedIngredients: [inc('Cheese'), inc('Tomato'), inc('Toasted bread'), inc('Chips')] },
-
+  // ---- TOASTEDS — 2 (Cheese & Tomato Toasted removed, Nick 2026-09-14; cheese, tomato,
+  //      bread and chips are still each shared by other items, so the overlap rule holds) ----
   { id: 'toasted_chicken_mayo', name: 'Chicken Mayo Toasted', category: 'toasteds',
     basePrice: 53.90, wasPrice: 80.90, /* SUPPLIED */ prep: 'LOW',
     description: 'Creamy chicken mayo on toasted bread, with chips.',
@@ -352,8 +348,9 @@ export function priceOrder(body, now = Date.now()) {
 }
 
 /** The human-readable order n8n forwards downstream. */
-export function formatOrder({ agentName, cb, listName, items, total, notes }) {
+export function formatOrder({ agentName, cb, listName, phone, items, total, notes }) {
   const L = ['WIMPY ORDER', '', 'Name: ' + agentName, 'CB Number: ' + cb];
+  if (phone) L.push('Phone: ' + phone);
   if (listName && listName !== agentName) L.push('On the Agent List as: ' + listName);
   L.push('');
   for (const it of items) {
@@ -374,24 +371,35 @@ export function formatOrder({ agentName, cb, listName, items, total, notes }) {
    and apostrophes, 2–40 characters — enough for every name on the list and
    nothing that could carry an instruction to the kitchen. */
 const NAME_RE = /^[\p{L}][\p{L}\s'’\-.]{0,39}$/u;
+/* A SOUTH AFRICAN MOBILE OR LANDLINE (Nick, 2026-09-14: "the user must add their phone number").
+   Typed however people type it — 082 123 4567, 0821234567, +27 82 123 4567, 27821234567 — and
+   normalised to the ten-digit local form (0821234567) so the kitchen sheet gets one shape. */
+export function normPhone(v) {
+  const d = String(v || '').replace(/[^0-9+]/g, '');
+  const m = /^(?:\+?27|0)?([1-9]\d{8})$/.exec(d.replace(/^\+/, ''));
+  return m ? '0' + m[1] : null;
+}
 export function whoIsOrdering(user, who) {
   const w = who && typeof who === 'object' ? who : {};
   const typedCb = String(w.cb || '').trim();
   const first = String(w.first_name || '').trim().replace(/\s+/g, ' ');
   const last = String(w.surname || '').trim().replace(/\s+/g, ' ');
+  const phone = normPhone(w.phone);
   const own = String(user.cb || '').trim();
   const norm = (v) => /^\s*(cb)?[\s-]*0*\d+\s*$/i.test(v) ? 'CB' + String(parseInt(String(v).replace(/[^0-9]/g, ''), 10)) : String(v).trim().toLowerCase();
   if (!typedCb) return { error: 'Type your CB number.' };
   if (!first || !NAME_RE.test(first) || first.length < 2) return { error: 'Type your name (letters only, 2 to 40 characters).' };
   if (!last || !NAME_RE.test(last) || last.length < 2) return { error: 'Type your surname (letters only, 2 to 40 characters).' };
+  if (!String(w.phone || '').trim()) return { error: 'Type your phone number.' };
+  if (!phone) return { error: 'That phone number does not look right — type a South African number, e.g. 082 123 4567.' };
   if (own) {
     if (norm(typedCb) !== norm(own)) return { error: 'That CB number is not the one you signed in with (' + own.toUpperCase() + '). An order can only be placed in your own name — sign in as that person to order for them.' };
-    return { cb: own.toUpperCase(), first, last };
+    return { cb: own.toUpperCase(), first, last, phone };
   }
   /* management: no CB on the account, the username is the handle */
   if (norm(typedCb) !== String(user.username || '').trim().toLowerCase())
     return { error: 'You have no CB number on your account — type your username (' + user.username + ') in the CB number box.' };
-  return { cb: String(user.username).toLowerCase(), first, last };
+  return { cb: String(user.username).toLowerCase(), first, last, phone };
 }
 
 /* South African local time. SAST is UTC+2 all year — no daylight saving. */
@@ -439,10 +447,11 @@ export async function submitWimpyOrder(env, user, body, now = Date.now()) {
     agent_name: agentName,
     first_name: who.first,
     surname: who.last,
+    phone_number: who.phone,
     list_name: listName,
     timestamp: sastNow(),
     total_price: priced.total,
-    order_formatted: formatOrder({ agentName, cb, listName, items: priced.items, total: priced.total, notes }),
+    order_formatted: formatOrder({ agentName, cb, listName, phone: who.phone, items: priced.items, total: priced.total, notes }),
     order: { items: priced.items, additional_notes: notes },
   };
   if (mismatch) payload.price_mismatch = mismatch;

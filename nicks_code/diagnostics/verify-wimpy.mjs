@@ -50,13 +50,15 @@ const outWindow = (dow) => onDay(dow) + 9 * 3600000;
 /* the payload the page half is served, built by the module itself — never a hand-typed menu */
 const MENU_FIXTURE = wimpyMenu(inWindow(3));
 
-head('A · THE STRUCTURE IS 3 + 3 + 3 + 1');
+head('A · THE STRUCTURE IS 3 + 3 + 2 + 1 (Cheese & Tomato Toasted removed 2026-09-14)');
 {
   const m = wimpyMenu(MON);
   ok(m.categories.map((c) => c.id).join(',') === 'breakfast,burgers,toasteds', 'three categories, in menu order');
-  for (const c of ['breakfast', 'burgers', 'toasteds'])
+  for (const c of ['breakfast', 'burgers'])
     ok(m.items.filter((i) => i.category === c).length === 3, 'exactly three ' + c + ' choices');
-  ok(m.items.length === 10, 'the customer sees TEN choices — nine core plus today’s Big One', m.items.length);
+  ok(m.items.filter((i) => i.category === 'toasteds').length === 2, 'exactly two toasted choices');
+  ok(!m.items.some((i) => /cheese.*tomato/i.test(i.name)), 'Cheese & Tomato Toasted is off the menu (Nick, 2026-09-14)');
+  ok(m.items.length === 9, 'the customer sees NINE choices — eight core plus today’s Big One', m.items.length);
   ok(m.bigOne && m.items.some((i) => i.id === m.bigOne.id), 'the Big One is one of them');
   ok(m.title === 'Weekday Value Menu', 'and the menu says what it is', m.title);
 }
@@ -66,7 +68,7 @@ head('B · EVERY PRICE IS THE BRIEF’S, TO THE CENT');
   const WANT = {
     mzansi_brekkie: 45.90, double_up_breakfast: 65.90, farmhouse_breakfast: 77.90,
     cheese_burger: 54.90, bacon_cheese_burger: 82.90, big_cheese_burger: 95.90,
-    toasted_cheese_tomato: 49.90, toasted_chicken_mayo: 53.90, toasted_bacon_egg: 55.90,
+    toasted_chicken_mayo: 53.90, toasted_bacon_egg: 55.90,
     mega_breakfast: 95.90, dagwood: 97.90, big_bacon_cheese: 103.90,
     big_champion: 115.90, fully_loaded_dagwood: 127.90,
   };
@@ -74,7 +76,7 @@ head('B · EVERY PRICE IS THE BRIEF’S, TO THE CENT');
     const d = ALL_ITEMS.find((i) => i.id === id);
     ok(d && d.basePrice === price, (d ? d.name : id) + ' is R' + price.toFixed(2), d ? 'got ' + d.basePrice : 'missing');
   }
-  ok(ALL_ITEMS.length === 14, 'fourteen definitions in total — nine core, five Big Ones, nothing invented', ALL_ITEMS.length);
+  ok(ALL_ITEMS.length === 13, 'thirteen definitions in total — eight core, five Big Ones, nothing invented', ALL_ITEMS.length);
   ok(!ALL_ITEMS.some((i) => /wing|mince|liver|kids|dessert/i.test(i.name)),
     'the exclusions hold: no wings, mince, livers, kids meals or desserts');
 }
@@ -122,7 +124,7 @@ head('E · WEEKENDS: NOTHING INVENTED, MONDAY TRAILED');
 {
   for (const [label, t] of [['Saturday', SAT], ['Sunday', SUN]]) {
     const m = wimpyMenu(t);
-    ok(m.bigOne === null && m.items.length === 9, label + ' serves the nine core items and no hero');
+    ok(m.bigOne === null && m.items.length === 8, label + ' serves the eight core items and no hero');
     ok(m.weekend && m.weekend.next.name === 'Mega Breakfast' && m.weekend.next.dayName === 'Monday',
       '...and trails Monday’s ' + m.weekend.next.name);
   }
@@ -154,7 +156,7 @@ head('G · THE SERVER PRICES, AND QUANTITY IS THE ONLY EDIT');
      order than the person believes they placed. */
   const rm = priceOrder({ order: { items: [{ id: 'cheese_burger', quantity: 1, removed: ['Onion'] }] } }, WED);
   ok(!rm.ok && /as it is/.test(rm.errors[0]), 'a removal is refused — every item comes as it is', rm.errors[0]);
-  const ao = priceOrder({ order: { items: [{ id: 'toasted_cheese_tomato', quantity: 1, added: ['extra_patty'] }] } }, WED);
+  const ao = priceOrder({ order: { items: [{ id: 'toasted_chicken_mayo', quantity: 1, added: ['extra_patty'] }] } }, WED);
   ok(!ao.ok && /as it is/.test(ao.errors[0]), 'an add-on is refused the same way', ao.errors[0]);
   const cz = priceOrder({ order: { items: [{ id: 'cheese_burger', quantity: 1, customisations: { added: [{ name: 'Extra cheese' }], removed: [] } }] } }, WED);
   ok(!cz.ok && /as it is/.test(cz.errors[0]), '...and so is an old client’s customisations object', cz.errors[0]);
@@ -177,23 +179,28 @@ head('G · THE SERVER PRICES, AND QUANTITY IS THE ONLY EDIT');
 head('H · WHO IS ORDERING: CB NUMBER, NAME, SURNAME');
 {
   const agent = { full_name: 'Ann Smith', username: 'cb999', cb: 'CB999' };
-  const good = whoIsOrdering(agent, { cb: 'CB999', first_name: 'Ann', surname: 'Smith' });
+  const good = whoIsOrdering(agent, { cb: 'CB999', first_name: 'Ann', surname: 'Smith', phone: '082 123 4567' });
   ok(!good.error && good.cb === 'CB999' && good.first === 'Ann' && good.last === 'Smith',
     'the three typed fields are taken as typed', JSON.stringify(good));
-  ok(!whoIsOrdering(agent, { cb: 'cb 999', first_name: 'Ann', surname: 'Smith' }).error, 'the CB is matched however it is spelt (cb 999)');
-  const other = whoIsOrdering(agent, { cb: 'CB998', first_name: 'Ann', surname: 'Smith' });
+  ok(!whoIsOrdering(agent, { cb: 'cb 999', first_name: 'Ann', surname: 'Smith', phone: '082 123 4567' }).error, 'the CB is matched however it is spelt (cb 999)');
+  const other = whoIsOrdering(agent, { cb: 'CB998', first_name: 'Ann', surname: 'Smith', phone: '082 123 4567' });
   ok(/not the one you signed in with/.test(other.error || ''), 'a colleague’s CB is refused — an order is placed in your own name only', other.error);
-  ok(/CB number/.test(whoIsOrdering(agent, { first_name: 'Ann', surname: 'Smith' }).error || ''), 'a missing CB number is refused');
-  ok(/name/.test(whoIsOrdering(agent, { cb: 'CB999', surname: 'Smith' }).error || ''), 'a missing name is refused');
-  ok(/surname/.test(whoIsOrdering(agent, { cb: 'CB999', first_name: 'Ann' }).error || ''), 'a missing surname is refused');
-  ok(/name/.test(whoIsOrdering(agent, { cb: 'CB999', first_name: 'A1', surname: 'Smith' }).error || ''), 'digits in a name are refused');
-  const marks = whoIsOrdering(agent, { cb: 'CB999', first_name: 'O’Brien', surname: 'van der Merwe' });
+  ok(/CB number/.test(whoIsOrdering(agent, { first_name: 'Ann', surname: 'Smith', phone: '082 123 4567' }).error || ''), 'a missing CB number is refused');
+  ok(/name/.test(whoIsOrdering(agent, { cb: 'CB999', surname: 'Smith', phone: '082 123 4567' }).error || ''), 'a missing name is refused');
+  ok(/surname/.test(whoIsOrdering(agent, { cb: 'CB999', first_name: 'Ann', phone: '082 123 4567' }).error || ''), 'a missing surname is refused');
+  ok(/name/.test(whoIsOrdering(agent, { cb: 'CB999', first_name: 'A1', surname: 'Smith', phone: '082 123 4567' }).error || ''), 'digits in a name are refused');
+  /* the phone number (Nick, 2026-09-14) — required, South African, normalised to 0XXXXXXXXX */
+  ok(/phone/.test(whoIsOrdering(agent, { cb: 'CB999', first_name: 'Ann', surname: 'Smith' }).error || ''), 'a missing phone number is refused');
+  ok(/phone number does not look right/.test(whoIsOrdering(agent, { cb: 'CB999', first_name: 'Ann', surname: 'Smith', phone: '12345' }).error || ''), 'a number that is not a South African number is refused');
+  for (const [typed, want] of [['082 123 4567', '0821234567'], ['0821234567', '0821234567'], ['+27 82 123 4567', '0821234567'], ['27821234567', '0821234567'], ['031 555 0100', '0315550100']])
+    ok(whoIsOrdering(agent, { cb: 'CB999', first_name: 'Ann', surname: 'Smith', phone: typed }).phone === want, 'phone "' + typed + '" travels as ' + want);
+  const marks = whoIsOrdering(agent, { cb: 'CB999', first_name: 'O’Brien', surname: 'van der Merwe', phone: '082 123 4567' });
   ok(!marks.error, 'real names survive: apostrophes, spaces and lower-case particles', JSON.stringify(marks));
   /* management: no CB on the account, the username is the handle — everyone can order */
   const mgr = { full_name: 'Dalwin Naidoo', username: 'dalwin', cb: '' };
-  const m1 = whoIsOrdering(mgr, { cb: 'dalwin', first_name: 'Dalwin', surname: 'Naidoo' });
+  const m1 = whoIsOrdering(mgr, { cb: 'dalwin', first_name: 'Dalwin', surname: 'Naidoo', phone: '082 123 4567' });
   ok(!m1.error && m1.cb === 'dalwin', 'a manager with no CB orders under their username', JSON.stringify(m1));
-  ok(/username/.test(whoIsOrdering(mgr, { cb: 'CB1', first_name: 'Dalwin', surname: 'Naidoo' }).error || ''), '...and cannot invent a CB number');
+  ok(/username/.test(whoIsOrdering(mgr, { cb: 'CB1', first_name: 'Dalwin', surname: 'Naidoo', phone: '082 123 4567' }).error || ''), '...and cannot invent a CB number');
 }
 
 head('I · THE ORDER REACHES THE KITCHEN WITH ALL OF IT');
@@ -205,7 +212,7 @@ head('I · THE ORDER REACHES THE KITCHEN WITH ALL OF IT');
     const NOW = inWindow(3);
     const user = { full_name: 'Ann Smith', username: 'cb999', cb: 'CB999' };
     const pick = todaysBigOne(NOW);
-    const who = { cb: 'CB999', first_name: 'Annie', surname: 'Smith' };     // a nickname, deliberately
+    const who = { cb: 'CB999', first_name: 'Annie', surname: 'Smith', phone: '082 123 4567' };     // a nickname, deliberately
     const body = { who, total_price: 1.00,                                  // a lying client
       order: { items: [{ id: pick.id, quantity: 2 }], additional_notes: 'collect at reception' } };
     const res = await submitWimpyOrder({}, user, body, NOW);
@@ -215,6 +222,8 @@ head('I · THE ORDER REACHES THE KITCHEN WITH ALL OF IT');
     ok(sent.price_mismatch && sent.price_mismatch.client_total === 1.00, 'the client’s wrong figure travels as price_mismatch, never adopted');
     ok(sent.cb_number === 'CB999' && sent.first_name === 'Annie' && sent.surname === 'Smith' && sent.agent_name === 'Annie Smith',
       'the typed CB, name and surname reach the kitchen as typed', JSON.stringify({ cb: sent.cb_number, f: sent.first_name, s: sent.surname }));
+    ok(sent.phone_number === '0821234567', 'the phone number reaches the kitchen as its own variable, normalised (phone_number)', JSON.stringify(sent.phone_number));
+    ok(/Phone: 0821234567/.test(sent.order_formatted || ''), '…and is printed on the order sheet');
     ok(sent.list_name === 'Ann Smith', '...and the Agent List’s own name travels beside them, never silently correcting the typed one', sent.list_name);
     ok(/On the Agent List as: Ann Smith/.test(sent.order_formatted), 'the kitchen slip shows both names when they differ');
     ok(sent.order_formatted.includes('(TODAY’S BIG ONE)'), 'the slip marks the Big One');
@@ -222,7 +231,7 @@ head('I · THE ORDER REACHES THE KITCHEN WITH ALL OF IT');
     ok(/\+02:00$/.test(sent.timestamp), 'timestamped in SAST');
     ok(sent.order.items.every((i) => !('customisations' in i)), 'no line carries a customisations field');
 
-    const wrongCb = await submitWimpyOrder({}, user, { ...body, who: { cb: 'CB998', first_name: 'Ann', surname: 'Smith' } }, NOW);
+    const wrongCb = await submitWimpyOrder({}, user, { ...body, who: { cb: 'CB998', first_name: 'Ann', surname: 'Smith', phone: '082 123 4567' } }, NOW);
     ok(wrongCb.status === 400 && /not the one you signed in with/.test(wrongCb.body.error), 'an order for somebody else is refused', wrongCb.body.error);
 
     globalThis.fetch = async () => { throw new Error('boom'); };
@@ -260,7 +269,7 @@ head('K · THE REAL PRICE, AND THE SAVING');
 
   /* The four Nick actually gave a Wimpy price for, in the first brief. These are
      the only ones claiming a real till price, and they must match it exactly. */
-  const SUPPLIED = { toasted_cheese_tomato: 75.90, toasted_chicken_mayo: 80.90,
+  const SUPPLIED = { toasted_chicken_mayo: 80.90,
     toasted_bacon_egg: 84.90, dagwood: 149.90 };
   for (const [id, was] of Object.entries(SUPPLIED)) {
     const d = all.find((i) => i.id === id);
@@ -378,13 +387,19 @@ head('M · THE APP: SIGN IN WITH A CB NUMBER, ORDER, SEND');
       cb: document.querySelector('#fcb').value, fn: document.querySelector('#ffn').value, ln: document.querySelector('#fln').value }));
     ok(form.cb === 'CB999' && form.fn === 'Ann' && form.ln === 'Smith',
       'the form asks for CB number, name and surname, pre-filled from the account', JSON.stringify(form));
+    /* submitting without a phone number is refused on the page itself (2026-09-14) */
+    await pg.click('#of button[type=submit]');
+    await pg.waitForTimeout(300);
+    ok(!(await pg.$('#wpSend')) && /phone/i.test(await pg.evaluate(() => (document.querySelector('.msg.bad') || {}).innerText || '')), 'the form refuses to go on without a phone number');
+    await pg.fill('#fph', '082 123 4567');
     await pg.click('#of button[type=submit]');
     await pg.waitForSelector('#wpSend', { timeout: 10000 });
     await pg.click('#wpSend');
     await pg.waitForSelector('.wp-ok', { timeout: 10000 });
     ok(orders === 1, 'ONE press, ONE order posted', String(orders));
     ok(posted && posted.who && posted.who.cb === 'CB999' && posted.who.first_name === 'Ann' && posted.who.surname === 'Smith',
-      'the order carries the three typed fields', JSON.stringify(posted && posted.who));
+      'the order carries the typed fields', JSON.stringify(posted && posted.who));
+    ok(posted && posted.who && posted.who.phone, 'the page sends the phone number the person typed', JSON.stringify(posted && posted.who && posted.who.phone));
     ok(posted && posted.order.items.length === 1 && posted.order.items[0].quantity === 2
       && !('added' in posted.order.items[0]) && !('customisations' in posted.order.items[0]),
       'a line is an id and a quantity, nothing else', JSON.stringify(posted && posted.order.items));
@@ -411,7 +426,7 @@ head('N · THE WINDOW: 08:00–17:00 SAST, MONDAY TO FRIDAY');
   globalThis.fetch = async () => { reached = true; return { ok: true, text: async () => '' }; };
   try {
     const user = { full_name: 'Ann Smith', username: 'cb999', cb: 'CB999' };
-    const body = { who: { cb: 'CB999', first_name: 'Ann', surname: 'Smith' },
+    const body = { who: { cb: 'CB999', first_name: 'Ann', surname: 'Smith', phone: '082 123 4567' },
       total_price: 54.90, order: { items: [{ id: 'cheese_burger', quantity: 1 }] } };
     const late = await submitWimpyOrder({}, user, body, outWindow(3));
     ok(late.status === 403 && /08:00 and 17:00/.test(late.body.error),

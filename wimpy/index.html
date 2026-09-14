@@ -165,7 +165,7 @@ var API='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
 var TKEY='cbx_wimpy_token';                     // never cbx_token — a lunch session is not a management one
 var U=null;                                     // {username, full_name, cb, role, scope}
 var WMENU=null, WCART=[], WCAT='breakfast', WDAY=null, WOPEN=false, WSTATE='order', WERR='', WBUSY=false, WDONE=null;
-var WHO={cb:'',first:'',last:'',notes:''};      // the order form, typed by the person
+var WHO={cb:'',first:'',last:'',phone:'',notes:''};      // the order form, typed by the person
 var MAX_QTY=10;                                 // quantity is the one thing a person may change
 
 function $(id){ return document.getElementById(id); }
@@ -353,12 +353,13 @@ function wAdd(id){
 function wFormPage(){
   return '<div class="card" style="max-width:640px">'
     +'<h3>Who is this order for?</h3>'
-    +'<p class="why">Type your CB number, name and surname. The CB number must be the one you signed in with — an order can only be placed in your own name.</p>'
+    +'<p class="why">Type your CB number, name, surname and phone number. The CB number must be the one you signed in with — an order can only be placed in your own name.</p>'
     +(WERR?'<div class="msg bad">'+esc(WERR)+'</div>':'')
     +'<form id="of" autocomplete="off">'
     +'<div class="f"><label class="lab" for="fcb">CB number</label><input class="inp" id="fcb" value="'+esc(WHO.cb)+'" autocapitalize="characters"></div>'
     +'<div class="frow"><div class="f"><label class="lab" for="ffn">Name</label><input class="inp" id="ffn" value="'+esc(WHO.first)+'" autocapitalize="words"></div>'
     +'<div class="f"><label class="lab" for="fln">Surname</label><input class="inp" id="fln" value="'+esc(WHO.last)+'" autocapitalize="words"></div></div>'
+    +'<div class="f"><label class="lab" for="fph">Phone number</label><input class="inp" id="fph" type="tel" inputmode="tel" value="'+esc(WHO.phone)+'" placeholder="e.g. 082 123 4567" maxlength="20"></div>'
     +'<div class="f"><label class="lab" for="fnt">Notes for the kitchen (optional)</label><input class="inp" id="fnt" value="'+esc(WHO.notes)+'" placeholder="e.g. collect at reception" maxlength="200"></div>'
     +'<div class="actions"><button type="button" class="btn" id="wpBack">Back to menu</button><button class="btn primary" type="submit">Review order</button></div>'
     +'</form></div>';
@@ -369,6 +370,8 @@ function wValidate(){
   if(!String(WHO.cb||'').trim()) return 'Type your CB number.';
   if(!String(WHO.first||'').trim()) return 'Type your name.';
   if(!String(WHO.last||'').trim()) return 'Type your surname.';
+  if(!String(WHO.phone||'').trim()) return 'Type your phone number.';
+  if(!/^(\+?27|0)?[1-9]\d{8}$/.test(String(WHO.phone).replace(/[^0-9+]/g,'').replace(/^\+/,''))) return 'That phone number does not look right — type a South African number, e.g. 082 123 4567.';
   for(var i=0;i<WCART.length;i++){
     var l=WCART[i], d=wItemDef(l.id);
     if(!d) return 'One of the items is no longer on the menu — remove it and add it again.';
@@ -403,7 +406,7 @@ function wSubmit(){
   var bad=wValidate(); if(bad){ WERR=bad; WSTATE='form'; return render(); }
   WBUSY=true; WERR=''; render();
   api('/api/wimpy/order',{
-    who:{cb:WHO.cb, first_name:WHO.first, surname:WHO.last},
+    who:{cb:WHO.cb, first_name:WHO.first, surname:WHO.last, phone:WHO.phone},
     total_price: wTotalCents()/100,
     order:{ items: WCART.map(function(l){ return {id:l.id, quantity:l.quantity}; }), additional_notes: WHO.notes||'' }
   }).then(function(r){
@@ -411,7 +414,7 @@ function wSubmit(){
     if(r.ok&&r.json&&r.json.ok){
       WDONE={total:r.json.total_price, slip:r.json.order_formatted||''}; WCART=[]; WHO.notes=''; WSTATE='done'; WERR='';
     } else if(r.status===401){ signOut(); return; }
-    else { WERR=(r.json&&r.json.error)||'Unable to send the order. Please try again.'; if(r.status===400&&/CB number|name|surname/i.test(WERR)) WSTATE='form'; }
+    else { WERR=(r.json&&r.json.error)||'Unable to send the order. Please try again.'; if(r.status===400&&/CB number|name|surname|phone/i.test(WERR)) WSTATE='form'; }
     render();
   });
 }
@@ -427,7 +430,7 @@ function wire(){
   var rev=$('wpReview'); if(rev) rev.onclick=function(){ WERR=''; WSTATE='form'; render(); };
   var back=$('wpBack'); if(back) back.onclick=function(){ WSTATE='order'; WERR=''; render(); };
   var of=$('of'); if(of) of.onsubmit=function(e){ e.preventDefault();
-    WHO.cb=String($('fcb').value||'').trim().toUpperCase(); WHO.first=String($('ffn').value||'').trim(); WHO.last=String($('fln').value||'').trim(); WHO.notes=String($('fnt').value||'').trim();
+    WHO.cb=String($('fcb').value||'').trim().toUpperCase(); WHO.first=String($('ffn').value||'').trim(); WHO.last=String($('fln').value||'').trim(); WHO.phone=String(($('fph')||{}).value||'').trim(); WHO.notes=String($('fnt').value||'').trim();
     var bad=wValidate(); if(bad){ WERR=bad; return render(); }
     WERR=''; WSTATE='confirm'; render(); };
   var ed=$('wpEdit'); if(ed) ed.onclick=function(){ WSTATE='form'; WERR=''; render(); };
