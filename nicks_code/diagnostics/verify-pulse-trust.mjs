@@ -104,7 +104,13 @@ const trust = await page.evaluate(() => (document.getElementById('vasTrust') || 
 console.log('TRUST BAR: ' + trust.replace(/\n/g, ' · '));
 ok('Manual Stats (board) loaded', has(/^board/), snap.files.join(' || '));
 ok('trust bar counts 8/8 sources (referrals chip dropped — API-synced, not a daily file)', /8\/8 sources/.test(trust), trust);
-ok('trust bar reads All sources fresh', /All sources fresh/.test(trust), trust);
+/* THE FIXTURE AGES, THE APP DOES NOT (2026-09-14). The package is dated 13/08; a month on, the
+   bar rightly says every source is late — that is the freshness rule working. What this must
+   prove is that every chip reads the fixture's own date: "fresh" when run within a day of it,
+   otherwise uniformly "to 13/08" and late, never a missing source. */
+const datedChips = (trust.match(/to \d\d\/\d\d/g) || []);
+ok('trust bar reads All sources fresh — or, once the 13/08 fixture has aged, every source dated 13/08 and late',
+  /All sources fresh/.test(trust) || (datedChips.length >= 4 && datedChips.every((c) => c === 'to 13/08') && !/missing/i.test(trust.replace('Stale or missing sources', ''))), trust);
 
 // open the chips and confirm every one of the seven names is present and fresh
 await page.evaluate(() => window.__vasTrustToggle());

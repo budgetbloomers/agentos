@@ -72,6 +72,10 @@ THE MANUAL TAB (both apps carry this content):
 
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', ...headers } });
+/* How long a compare-and-set writer's claim on a kv pointer stands before readers and other
+   writers treat it as abandoned (the /api/kv CAS path, 2026-09-14). A fact-store upload is
+   seconds; two minutes is a dead Worker, not a slow one. */
+const KV_WRITING_TTL_MS = 120000;
 
 
 /* ============ ONE ROSTER, EVERY STORE — the sync spine ============================
@@ -407,7 +411,10 @@ export default {
     // CORS: the suite (pages.dev + preview subdomains) may call this API.
     const origin = req.headers.get('origin') || '';
     const okOrigin = origin === 'https://chatterbox-agentos.pages.dev' || /^https:\/\/[a-z0-9-]+\.chatterbox-agentos\.pages\.dev$/.test(origin);
-    const cors = okOrigin ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true', 'Vary': 'Origin' } : {};
+    /* X-Cbx-Version is EXPOSED so a page can read the version stamp off a /api/kv response —
+       a response header not named here is invisible to the page, the read-side twin of the
+       Content-Encoding lesson below (2026-09-14, the fact-store lost-update fix). */
+    const cors = okOrigin ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true', 'Vary': 'Origin', 'Access-Control-Expose-Headers': 'X-Cbx-Version' } : {};
     /* EVERY HEADER A CLIENT SENDS MUST BE NAMED HERE. Content-Encoding was not, and
        PULSE's gzipped state save (28 Aug) set it — so for four days the browser refused
        to send the request at all and the whole floor's uploads stopped reaching the
@@ -418,7 +425,7 @@ export default {
        Note the cache: Access-Control-Max-Age keeps a browser on the previous answer for
        24 hours, so widening this list cannot rescue a client already being refused —
        the client must also stop sending the header. Both were done. */
-    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...cors, 'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Cbx-Client,Content-Encoding', 'Access-Control-Max-Age': '86400' } });
+    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...cors, 'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Cbx-Client,Content-Encoding,X-Cbx-Base', 'Access-Control-Max-Age': '86400' } });
     const res = await this.handle(req, env, ctx);
     const h = new Headers(res.headers); for (const [k, v] of Object.entries(cors)) h.set(k, v);
     return new Response(res.body, { status: res.status, headers: h });
@@ -1353,12 +1360,20 @@ export default {
         if (key === 'vas-state' && !url.searchParams.get('meta')) stampAppOpen(DB, ctx, 'vas');   // the PULSE boot
         else if (key === 'cb-config' && !url.searchParams.get('meta')) stampAppOpen(DB, ctx, 'ops');
         const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:' + key)}&select=value,updated_at`);
-        if (!r || !r.length) return json({ found: false }, 404);
+        if (!r || !r.length) return json({ found: false }, 404, { 'X-Cbx-Version': 'none' });
         // meta mode: freshness beacon only — lets open tabs poll for other users'
         // uploads cheaply (no payload streamed) and re-pull when it changes.
         if (url.searchParams.get('meta')) return json({ found: true, updated_at: r[0].updated_at || '' });
         const v = r[0].value || {};
-        const hs = { 'Content-Type': 'text/plain; charset=utf-8' };
+        /* A WRITE IN FLIGHT IS NOT READABLE (2026-09-14). A compare-and-set writer (below) marks the
+           pointer `writing` before it uploads the blob, and clears it — with the new version — only
+           once the blob is in place. Serving the blob in between would hand a reader the OLD bytes
+           under whatever stamp it sees, and a writer working from that copy would later win a
+           compare-and-set it should have lost. So the reader is asked to come back in a moment.
+           A mark older than the TTL is a writer that died mid-way and is ignored. */
+        if (v.writing && Date.now() - Date.parse(v.writing) < KV_WRITING_TTL_MS)
+          return json({ error: 'write_in_progress', retry_in_ms: 1500 }, 425, { 'Retry-After': '2' });
+        const hs = { 'Content-Type': 'text/plain; charset=utf-8', 'X-Cbx-Version': r[0].updated_at || '' };
         if (v.store) { // payload in Storage — stream it straight through
           const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${v.store}`, { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY } });
           if (!sr.ok) return json({ found: false }, 404);
@@ -1431,13 +1446,57 @@ export default {
             return json({ error: 'wipe_blocked: refusing to replace ' + cur + 'B of stored data with ' + body.length + 'B. If this clear is deliberate, use the app\'s Danger zone.' }, 409);
           }
         }
+        /* COMPARE-AND-SET (2026-09-14 — the Ops fact-store lost update). Every Ops session — a
+           browser tab, the headless relay in GitHub Actions — merges a file into the copy of a
+           store it loaded at boot and writes the WHOLE store back. Two sessions, two boots, one
+           key: the second save silently dropped whatever the first had loaded. Found in the audit:
+           ViciDial lost 27–29 Aug and 3 Sep (19,121 rows the batch audit says were loaded) that way.
+           A client that sends `X-Cbx-Base: <version it last read>` now gets the write only if that
+           is still the current version, and 409 version_conflict otherwise — it then reloads and
+           replays its own batches on top. `none` means "I read that there was no row".
+           Atomicity: the pointer row is CLAIMED first — one PATCH whose filter is the base version
+           and "not already being written" — so of two writers with the same base exactly one
+           proceeds; the blob is uploaded second; the claim is turned into the new version third.
+           Readers of a claimed pointer are told to retry (GET above), so the blob is never served
+           under a stamp it does not belong to. A dead writer's claim expires after KV_WRITING_TTL_MS.
+           Clients that send no base — PULSE, the tools — keep the plain upsert path below. */
+        const base = req.headers.get('X-Cbx-Base');
+        const pk = 'rules?key=eq.' + encodeURIComponent('kv:' + qk);
+        let claimed = null;
+        if (base != null) {
+          const cur = await DB.select(pk + '&select=value,updated_at');
+          const row = cur && cur[0];
+          const curAt = row ? String(row.updated_at || '') : '';
+          if ((base === 'none') !== !row || (row && base !== curAt))
+            return json({ error: 'version_conflict', current: curAt || 'none' }, 409);
+          const mark = new Date().toISOString();
+          if (row) {
+            const busy = row.value && row.value.writing && Date.now() - Date.parse(row.value.writing) < KV_WRITING_TTL_MS;
+            if (busy) return json({ error: 'version_conflict', current: curAt, reason: 'write_in_progress' }, 409);
+            const won = await DB.updateReturning(pk + '&updated_at=eq.' + encodeURIComponent(curAt),
+              { value: { ...(row.value || {}), writing: mark } });
+            if (!won || !won.length) return json({ error: 'version_conflict', current: 'changed' }, 409);
+          } else {
+            try { await DB.insert('rules', [{ key: 'kv:' + qk, value: { writing: mark }, updated_by: user.username, updated_at: mark }], false); }
+            catch (e) { return json({ error: 'version_conflict', current: 'created' }, 409); }   // somebody created it first
+          }
+          claimed = mark;
+        }
         const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {
           method: 'POST',
           headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'text/plain', 'x-upsert': 'true' },
           body: body,
         });
-        if (!sr.ok) return json({ error: 'store failed: ' + sr.status + ' ' + (await sr.text()).slice(0, 150) }, 500);
-        await DB.insert('rules', [{ key: 'kv:' + qk, value: { store: objPath }, updated_by: user.username, updated_at: new Date().toISOString() }], true);
+        if (!sr.ok) {
+          if (claimed) { try { const cur = await DB.select(pk + '&select=value'); const v = { ...((cur && cur[0] && cur[0].value) || {}) }; delete v.writing; await DB.update(pk, { value: v }); } catch (e) {} }
+          return json({ error: 'store failed: ' + sr.status + ' ' + (await sr.text()).slice(0, 150) }, 500);
+        }
+        const newAt = new Date().toISOString();
+        await DB.insert('rules', [{ key: 'kv:' + qk, value: { store: objPath }, updated_by: user.username, updated_at: newAt }], true);
+        /* the version the client should hold from now on — as the database renders it, which is
+           what every later compare is made against */
+        let newVer = newAt;
+        if (claimed) { try { const vr = await DB.select(pk + '&select=updated_at'); newVer = (vr && vr[0] && vr[0].updated_at) || newAt; } catch (e) {} }
         /* THE PORTAL'S COPY IS DROPPED THE MOMENT A NEW DIGEST LANDS (2026-09-11). loadDigest() keeps a
            60 s copy per isolate so a floor of agents does not read Storage on every open; a team
            leader's Refresh a few seconds after a VAS upload used to get the old copy from it. Only
@@ -1474,7 +1533,7 @@ export default {
            query rather than an archaeology dig through Storage timestamps. Deferred and
            best-effort — logging must never slow or fail the save it records. */
         ctx.waitUntil(logKvWrite(DB, qk, body.length, user && user.username));
-        return json({ ok: true });
+        return json({ ok: true, version: newVer }, 200, { 'X-Cbx-Version': newVer });
       }
       // Real delete (Upload Station "Delete file"): remove BOTH the Storage object and the
       // pointer row, so the source is gone from the database — not just cleared to empty.

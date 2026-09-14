@@ -37,6 +37,9 @@ globalThis.fetch = async (u, o = {}) => {
   if (url.includes('/storage/v1/object/')) {
     const p = url.split('/storage/v1/object/')[1].split('?')[0];
     if (method === 'GET') return { ok: !!storage[p], status: storage[p] ? 200 : 404, headers: new Map(), text: async () => storage[p] || '' };
+    /* a Storage LIST is a POST too (the cron's manifest reconcile lists raw/uploads/ since
+       2026-09-08) — it reads, it does not write, and it expects JSON back */
+    if (p.startsWith('list/')) return { ok: true, status: 200, headers: new Map(), json: async () => [], text: async () => '[]' };
     storage[p] = o.body; writes.push(p);
     return { ok: true, status: 200, headers: new Map(), text: async () => '' };
   }

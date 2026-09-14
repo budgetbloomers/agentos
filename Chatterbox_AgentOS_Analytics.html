@@ -878,11 +878,11 @@ function idbPut(k,v){
   })).catch(()=>false);
   __idbPutP[k]=p; return p;
 }
-async function store(key,val){
+async function store(key,val,opts){
   idbPut(key,val);   // local mirror first — what the user sees survives a cloud hiccup
-  if(!window.storage){state.persistOk=false;return}
-  try{await window.storage.set(key,JSON.stringify(val))}
-  catch(e){state.persistOk=false;toast('Could not persist "'+key+'" — data kept for this session only.','err')}
+  if(!window.storage){state.persistOk=false;return {failed:true}}
+  try{const r=await window.storage.set(key,JSON.stringify(val),opts);return r||{ok:true}}
+  catch(e){state.persistOk=false;toast('Could not persist "'+key+'" — data kept for this session only.','err');return {failed:true}}
 }
 async function load(key){
   if(!window.storage)return null;
@@ -890,9 +890,82 @@ async function load(key){
     if(v!=null)idbPut(key,v);   // refresh the local mirror with the cloud truth
     return v}catch(e){return null}
 }
-const saveConfig=()=>(bumpDataVer(),store('cb-config',{kpis:state.kpis,rules:state.rules,agentMap:state.agentMap,sfOwnerMap:state.sfOwnerMap,cbInfo:state.cbInfo,user:state.user,syncedUploads:state.syncedUploads||{}}));
-const saveAudit =()=>store('cb-audit',{batches:state.batches,exceptions:state.exceptions.slice(0,600)});
-const saveFacts =src=>store('cb-facts-'+src,state.facts[src]||[]);
+/* ===== SAVES ARE COMPARE-AND-SET (2026-09-14 — the lost-update audit finding) =====
+   Every session — a browser tab, the headless relay the GitHub runner boots every fifteen
+   minutes — merges a file into the copy of a store it loaded at boot and writes the WHOLE store
+   back. Two sessions, two boots, one key: whichever saved second silently dropped what the
+   first had loaded. The batch audit said ViciDial's 3 Sep file (B0160, 19,121 rows) loaded on
+   7 Sep 08:37; by 10:33 another session had saved the store without it, and 27–29 Aug went the
+   same way. Now a save carries the version it was based on (the shim's X-Cbx-Base); the Worker
+   refuses it when the store has moved on, and the saver RELOADS the store and REPLAYS the
+   batches this session applied on top of the other session's copy — the supersede rules are
+   key-based and idempotent, so a replay is the same operation as the first application. */
+const cfgPayload=()=>({kpis:state.kpis,rules:state.rules,agentMap:state.agentMap,sfOwnerMap:state.sfOwnerMap,cbInfo:state.cbInfo,user:state.user,syncedUploads:state.syncedUploads||{}});
+const SAVE_TRIES=4;
+async function saveConfig(){
+  bumpDataVer();
+  for(let a=0;a<SAVE_TRIES;a++){
+    const r=await store('cb-config',cfgPayload(),{cas:true});
+    if(!r||!r.conflict) return r;
+    /* the other session's decisions are kept; this session's are added; a rule or KPI edit made
+       here wins (the editor on screen is the intent), which is the only field that cannot merge */
+    const fresh=await load('cb-config');
+    if(fresh){
+      state.syncedUploads=Object.assign({},fresh.syncedUploads||{},state.syncedUploads||{});
+      for(const k of ['cbInfo','agentMap','sfOwnerMap']) state[k]=Object.assign({},fresh[k]||{},state[k]||{});
+    }
+  }
+  toast('Settings could not be saved — another session kept changing them. Try again.','err');return {failed:true};
+}
+async function saveAudit(){
+  for(let a=0;a<SAVE_TRIES;a++){
+    const r=await store('cb-audit',{batches:state.batches,exceptions:state.exceptions.slice(0,600)},{cas:true});
+    if(!r||!r.conflict) return r;
+    const fresh=await load('cb-audit');
+    if(fresh){ // union by batch id — this session's record wins for an id it owns
+      const mine=new Map((state.batches||[]).map(b=>[b.batch_id,b]));
+      for(const b of (fresh.batches||[])) if(!mine.has(b.batch_id)) mine.set(b.batch_id,b);
+      state.batches=[...mine.values()].sort((x,y)=>String(y.uploaded_at||'').localeCompare(String(x.uploaded_at||'')));
+      const seenX=new Set((state.exceptions||[]).map(x=>JSON.stringify(x)));
+      state.exceptions=(state.exceptions||[]).concat((fresh.exceptions||[]).filter(x=>!seenX.has(JSON.stringify(x)))).slice(0,600);
+    }
+  }
+  toast('The batch audit could not be saved — another session kept changing it.','err');return {failed:true};
+}
+async function saveFacts(src){
+  const key='cb-facts-'+src;
+  for(let a=0;a<SAVE_TRIES;a++){
+    const r=await store(key,state.facts[src]||[],{cas:true});
+    if(!r||!r.conflict){ if(r&&r.ok&&state.pending) delete state.pending[src]; return r; }
+    /* ANOTHER SESSION WROTE THIS STORE SINCE WE READ IT. Take its copy as the base and re-apply
+       every batch this session loaded, oldest first. A batch id the other session also minted —
+       both count max+1 from the same boot copy — for a DIFFERENT file is re-minted first, or the
+       replay's own "drop my previous rows" step would drop theirs. */
+    const fresh=(await load(key))||[];
+    const mine=(state.pending&&state.pending[src])||[];
+    let audit=null; try{ audit=await load('cb-audit'); }catch(e){}
+    const theirs=new Map(((audit&&audit.batches)||[]).map(b=>[b.batch_id,b]));
+    let rows=fresh, remint=0;
+    for(const p of mine){
+      const clash=theirs.get(p.batch.batch_id);
+      if(clash&&clash.file_hash!==p.batch.file_hash){
+        const used=new Set([...theirs.keys(),...(state.batches||[]).map(b=>b.batch_id)]);
+        let n=(state.batches||[]).concat([...theirs.values()]).reduce((m,b)=>{const v=parseInt(String(b.batch_id||'').replace(/^B/,''),10);return isFinite(v)&&v>m?v:m},0);
+        let id; do{ id='B'+String(++n).padStart(4,'0'); }while(used.has(id));
+        p.loaded.forEach(r=>{r._batch=id}); p.batch.batch_id=id; remint++;
+      }
+      state.facts[src]=rows.filter(r=>r._batch!==p.batch.batch_id);
+      mergeIntoStore(src,p.file,p.loaded.slice(),p.batch);
+      rows=state.facts[src];
+    }
+    state.facts[src]=rows; bumpDataVer();
+    console.info('[AgentOS] '+key+' changed under this session — merged '+mine.length+' batch(es) onto the newer copy'+(remint?' ('+remint+' batch id(s) re-minted)':''));
+    if(a===0) toast(SOURCES[src]?SOURCES[src].label+' was updated by another session while this one was loading — both sets of files are kept.':key+' merged with another session\'s copy.','',7000);
+  }
+  toast('"'+src+'" could not be saved after '+SAVE_TRIES+' attempts — another session kept writing it. Keep this tab open and retry the upload.','err');return {failed:true};
+}
+/* a compare-and-set retry from the shim's queue that lost — the app owns the merge */
+window.__cbxOnConflict=function(k){ const m=/^cb-facts-(.+)$/.exec(k); if(m) saveFacts(m[1]); else if(k==='cb-config') saveConfig(); else if(k==='cb-audit') saveAudit(); };
 
 /* =====================================================================
    FILE READING — Salesforce .xls files are HTML tables; .xlsx via SheetJS
@@ -1267,7 +1340,7 @@ async function confirmLoad(){
   (async()=>{
     try{
       if(srcKey==='BI_ACTIVE_CASES')await pushBI(res.batch,file);  // real rows + raw archive
-      await Promise.all([saveFacts(srcKey),saveAudit()]);
+      await saveFacts(srcKey);await saveAudit();
     }catch(e){toast('Saved on screen, but the cloud save failed: '+esc(e.message||e),'err')}
   })();
   if(res.loaded)archiveForVAS(file,srcKey);   // the relay works BOTH ways — see archiveForVAS
@@ -1276,59 +1349,13 @@ async function confirmLoad(){
 }
 /* The load core — parse-validated rows into state with every dedup guarantee. Shared by
    the single-file confirm modal and the bulk intake, so the two paths can never drift. */
-function applyLoad(srcKey,file,parsed,notes){
+/* THE MERGE, ON ITS OWN: prev rows (state.facts[srcKey]) + the new file's rows → the store, under
+   the source's supersede rule. Called once from applyLoad and again by saveFacts when a
+   compare-and-set save loses — every rule here is keyed, so applying a batch twice is the same
+   as applying it once. Returns the (possibly deduped) loaded rows and the batch counters. */
+function mergeIntoStore(srcKey,file,loaded,batch){
   const spec=SOURCES[srcKey];
-  // SAME FILE RE-UPLOADED = UPDATE, not a second copy. The file hash identifies the file;
-  // if this exact file was loaded before, we reuse its batch id and drop its previous rows
-  // (below) so a re-pull or correction REFRESHES it in place. A DIFFERENT file never
-  // updates anything — it lands as its own new batch alongside what is already loaded.
-  const prevSame=state.batches.find(b=>b.file_hash===parsed.textHash&&b.source_type===srcKey&&b.validation_status!=='failed');
-  /* HIGHEST EXISTING id + 1, never the array LENGTH (audit round 3, 2026-08-27). Clearing a
-     source removes its batch records, so the length ran BACKWARDS and re-issued ids that were
-     still in use — and applyLoad deletes rows by batch id, so the next upload could wipe an
-     unrelated batch's rows and the snapshot reader would mix two files. */
-  const __maxB=(state.batches||[]).reduce((m,b)=>{const n=parseInt(String(b.batch_id||'').replace(/^B/,''),10);return isFinite(n)&&n>m?n:m},0);
-  const batch_id=prevSame?prevSame.batch_id:('B'+String(__maxB+1).padStart(4,'0'));
-  let loaded=[],rejects=[];
-  parsed.data.forEach((raw,i)=>{
-    const why=rowValid(srcKey,raw);
-    if(why){rejects.push({batch_id,source:srcKey,row:i+2,reason:why,sample:esc(String(Object.values(raw)[1]||Object.values(raw)[0]||'').slice(0,40))});return}
-    const fact=TRANSFORM[srcKey](raw);fact._batch=batch_id;loaded.push(fact);
-  });
-  const dates=loaded.map(r=>r._d).filter(Boolean).sort();
-  const batch={batch_id,source_type:srcKey,source_system:spec.system,uploaded_by:state.user,
-    uploaded_at:new Date().toISOString(),period_start:dates[0]||null,period_end:dates[dates.length-1]||null,
-    original_file_name:file.name,file_hash:parsed.textHash,raw_row_count:parsed.data.length,
-    loaded_row_count:loaded.length,rejected_row_count:rejects.length,
-    /* A FILE THAT LOADED NOTHING HAS NOT PASSED (audit round 7, 2026-08-28). With zero data
-       rows there are also zero rejects, so this said 'passed' — and a snapshot source was
-       then replaced with [], wiping it, while the trust bar, the System Health line and the
-       slot chip all went green and reported it as fresh today. That is exactly the shape of
-       a Salesforce frameset-shell export (headers, no rows), which PULSE refuses outright.
-       'failed' keeps it out of freshness() and out of the snapshot replace below. */
-    validation_status:rejects.length===0?(loaded.length?'passed':'failed'):(loaded.length?'warning':'failed'),
-    parser_version:'v1.0',notes:notes||''};
-  let replaced=0,refreshed=0,fullerDays=0;
-  if(prevSame){
-    // drop this file's OWN previous rows (tagged with its batch id) and retire the old
-    // batch record — everything else stays exactly where it is. This is the update.
-    const before=(state.facts[srcKey]||[]).length;
-    state.facts[srcKey]=(state.facts[srcKey]||[]).filter(r=>r._batch!==prevSame.batch_id);
-    refreshed=before-(state.facts[srcKey]||[]).length;
-    state.batches=state.batches.filter(b=>b.batch_id!==prevSame.batch_id);
-    batch.updated_at=batch.uploaded_at;batch.first_uploaded_at=prevSame.first_uploaded_at||prevSame.uploaded_at;
-  }
-  if(srcKey==='AGENT_LIST'&&loaded.length){
-    // One roster row per agent. A code appearing on two loaded tabs keeps the LAST
-    // tab's row (the fresher assignment); the drop is counted on the batch, never silent.
-    const seen=new Map();loaded.forEach((r,i)=>{seen.set(r.cb_norm||('#row'+i),r)});
-    if(seen.size<loaded.length){batch.deduped_roster_rows=loaded.length-seen.size;
-      loaded=[...seen.values()];batch.loaded_row_count=loaded.length}
-  }
-  /* A SNAPSHOT REPLACES THE WHOLE SOURCE — so an EMPTY one must never do it (audit round 7,
-     2026-08-28). A Salesforce frameset shell (headers, no rows) would otherwise replace the
-     entire open-cases book with nothing and report success. Refusing is the same answer
-     PULSE gives the same file. An intentional clear goes through Danger zone, not an upload. */
+  let replaced=0,fullerDays=0;
   if(spec.snapshot){
     if(!loaded.length){
       toast('"'+esc(file&&file.name||srcKey)+'" contains no data rows — '+esc(spec.label)+' was left as it was. '
@@ -1432,6 +1459,64 @@ function applyLoad(srcKey,file,parsed,notes){
         replaced=prev.length-keep.length;prev=keep;
         if(replaced)batch.superseded_prev_rows=replaced}}
     state.facts[srcKey]=prev.concat(loaded)}                          // time-series append
+  return {loaded,replaced,fullerDays};
+}
+function applyLoad(srcKey,file,parsed,notes){
+  const spec=SOURCES[srcKey];
+  // SAME FILE RE-UPLOADED = UPDATE, not a second copy. The file hash identifies the file;
+  // if this exact file was loaded before, we reuse its batch id and drop its previous rows
+  // (below) so a re-pull or correction REFRESHES it in place. A DIFFERENT file never
+  // updates anything — it lands as its own new batch alongside what is already loaded.
+  const prevSame=state.batches.find(b=>b.file_hash===parsed.textHash&&b.source_type===srcKey&&b.validation_status!=='failed');
+  /* HIGHEST EXISTING id + 1, never the array LENGTH (audit round 3, 2026-08-27). Clearing a
+     source removes its batch records, so the length ran BACKWARDS and re-issued ids that were
+     still in use — and applyLoad deletes rows by batch id, so the next upload could wipe an
+     unrelated batch's rows and the snapshot reader would mix two files. */
+  const __maxB=(state.batches||[]).reduce((m,b)=>{const n=parseInt(String(b.batch_id||'').replace(/^B/,''),10);return isFinite(n)&&n>m?n:m},0);
+  const batch_id=prevSame?prevSame.batch_id:('B'+String(__maxB+1).padStart(4,'0'));
+  let loaded=[],rejects=[];
+  parsed.data.forEach((raw,i)=>{
+    const why=rowValid(srcKey,raw);
+    if(why){rejects.push({batch_id,source:srcKey,row:i+2,reason:why,sample:esc(String(Object.values(raw)[1]||Object.values(raw)[0]||'').slice(0,40))});return}
+    const fact=TRANSFORM[srcKey](raw);fact._batch=batch_id;loaded.push(fact);
+  });
+  const dates=loaded.map(r=>r._d).filter(Boolean).sort();
+  const batch={batch_id,source_type:srcKey,source_system:spec.system,uploaded_by:state.user,
+    uploaded_at:new Date().toISOString(),period_start:dates[0]||null,period_end:dates[dates.length-1]||null,
+    original_file_name:file.name,file_hash:parsed.textHash,raw_row_count:parsed.data.length,
+    loaded_row_count:loaded.length,rejected_row_count:rejects.length,
+    /* A FILE THAT LOADED NOTHING HAS NOT PASSED (audit round 7, 2026-08-28). With zero data
+       rows there are also zero rejects, so this said 'passed' — and a snapshot source was
+       then replaced with [], wiping it, while the trust bar, the System Health line and the
+       slot chip all went green and reported it as fresh today. That is exactly the shape of
+       a Salesforce frameset-shell export (headers, no rows), which PULSE refuses outright.
+       'failed' keeps it out of freshness() and out of the snapshot replace below. */
+    validation_status:rejects.length===0?(loaded.length?'passed':'failed'):(loaded.length?'warning':'failed'),
+    parser_version:'v1.0',notes:notes||''};
+  let replaced=0,refreshed=0,fullerDays=0;
+  if(prevSame){
+    // drop this file's OWN previous rows (tagged with its batch id) and retire the old
+    // batch record — everything else stays exactly where it is. This is the update.
+    const before=(state.facts[srcKey]||[]).length;
+    state.facts[srcKey]=(state.facts[srcKey]||[]).filter(r=>r._batch!==prevSame.batch_id);
+    refreshed=before-(state.facts[srcKey]||[]).length;
+    state.batches=state.batches.filter(b=>b.batch_id!==prevSame.batch_id);
+    batch.updated_at=batch.uploaded_at;batch.first_uploaded_at=prevSame.first_uploaded_at||prevSame.uploaded_at;
+  }
+  if(srcKey==='AGENT_LIST'&&loaded.length){
+    // One roster row per agent. A code appearing on two loaded tabs keeps the LAST
+    // tab's row (the fresher assignment); the drop is counted on the batch, never silent.
+    const seen=new Map();loaded.forEach((r,i)=>{seen.set(r.cb_norm||('#row'+i),r)});
+    if(seen.size<loaded.length){batch.deduped_roster_rows=loaded.length-seen.size;
+      loaded=[...seen.values()];batch.loaded_row_count=loaded.length}
+  }
+  /* A SNAPSHOT REPLACES THE WHOLE SOURCE — so an EMPTY one must never do it (audit round 7,
+     2026-08-28). A Salesforce frameset shell (headers, no rows) would otherwise replace the
+     entire open-cases book with nothing and report success. Refusing is the same answer
+     PULSE gives the same file. An intentional clear goes through Danger zone, not an upload. */
+  const __m=mergeIntoStore(srcKey,file,loaded,batch);loaded=__m.loaded;replaced=__m.replaced;fullerDays=__m.fullerDays;
+  /* remembered for the compare-and-set replay (saveFacts): what this session applied, in order */
+  state.pending=state.pending||{};(state.pending[srcKey]=state.pending[srcKey]||[]).push({batch,loaded,file:{name:file&&file.name||''}});
   state.batches.unshift(batch);
   bumpDataVer();
   state.exceptions=rejects.concat(state.exceptions).slice(0,600);
@@ -1584,7 +1669,7 @@ async function syncReferralsFromAPI(quiet){
       data:d.rows.map(x=>({'Contact Id':x.id,'Created':x.created,'Agent Name':x.agent,'Referrer':x.referrer,'Referral Count':x.count})),
       textHash:hashStr('hl-referrals|'+d.rows.length+'|'+hashStr(JSON.stringify(d.rows)))};
     const res=applyLoad('REFERRALS',{name:'HighLevel API'},parsed,'HighLevel API sync '+(d.pulled_at||'').slice(0,16));
-    (async()=>{try{await Promise.all([saveFacts('REFERRALS'),saveAudit()])}catch(e){}})();
+    (async()=>{try{await saveFacts('REFERRALS');await saveAudit()}catch(e){}})();
     autoMapAgents();render();
     if(!quiet)toast('Referrals synced from HighLevel: '+loadMsg('REFERRALS',res),'ok');
   }catch(e){if(!quiet)toast('Referrals sync failed: '+esc(e.message||e),'err')}
@@ -1749,7 +1834,7 @@ async function syncRosterFromVAS(){
     const res=applyLoad('AGENT_LIST',{name:'Agent List — synced from VAS'+(j.as_of?' (as of '+j.as_of+')':'')},
       {data:rows,textHash:j.fingerprint},'auto-synced from the VAS Upload Station roster');
     window.__cbxLastWrite=Date.now();                               // this tab wrote — cbx-fresh adopts, doesn't re-init
-    try{await Promise.all([saveFacts('AGENT_LIST'),saveAudit()])}
+    try{await saveFacts('AGENT_LIST');await saveAudit()}
     catch(e){toast('Agent List synced on screen, but the cloud save failed: '+esc(e.message||e),'err')}
     autoMapAgents();bumpDataVer();render();
     toast('Agent List synced from VAS — '+res.loaded.toLocaleString()+' agents'+(j.as_of?' (list as of '+esc(j.as_of)+')':''));
@@ -5335,6 +5420,7 @@ async function init(){
     const mk='cb-facts-'+k;
     const stamp=__cloudMeta&&__cloudMeta[mk];
     if(stamp&&__localMeta&&__localMeta[mk]===stamp){
+      if(window.storage&&window.storage.ver) window.storage.ver[mk]=stamp;   // the version this copy IS — a compare-and-set save needs it
       if(state.facts[k]&&state.facts[k].length){__reused++;return}     // Phase A already painted it
       const f0=await idbGet(mk);
       if(f0&&f0.length){state.facts[k]=f0;__reused++;return}           // mirror has it — no download

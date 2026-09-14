@@ -23,6 +23,10 @@ export function db(env) {
         ? { Prefer: 'resolution=merge-duplicates,return=minimal' }
         : { Prefer: 'return=minimal' }),
     update: (path, patch) => q('PATCH', path, patch, { Prefer: 'return=minimal' }),
+    /* A PATCH that says whether it matched. PostgREST applies the filter and the update in ONE
+       statement, so a filter on the current version (`updated_at=eq.<base>`) is an atomic
+       compare-and-set: an empty array back means somebody else got there first. */
+    updateReturning: (path, patch) => q('PATCH', path, patch, { Prefer: 'return=representation' }),
     del: (path) => q('DELETE', path),
     /* Call a Postgres function. THE ONLY WAY TO GET A TRANSACTION from here: a
        sequence of the calls above cannot be atomic, so anything that must apply

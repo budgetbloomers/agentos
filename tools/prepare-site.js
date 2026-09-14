@@ -71,16 +71,21 @@ if (!window.storage) {
           body: JSON.stringify({ app: 'ops', key: k, status: String(why || '?'), build: window.CBX_BUILD || '', bytes: (v || '').length }) }).catch(function () {});
       } catch (e) {}
     }
-    function cbxSaveFail(k, v, why) {
-      cbxFailed[k] = v; cbxUnsavedBanner(); cbxSaveReport(k, why, v);
+    var cbxFailedOpts = {};   // the set() options a queued save was made with (cas keeps its guard on retry)
+    function cbxSaveFail(k, v, why, opts) {
+      cbxFailed[k] = v; if (opts) cbxFailedOpts[k] = opts; cbxUnsavedBanner(); cbxSaveReport(k, why, v);
       if (cbxRetryT) return;
       cbxFailN++;
       var d = window.__cbxRetryMs || [30000, 120000, 300000][Math.min(cbxFailN - 1, 2)];   // override = test hook
       cbxRetryT = setTimeout(function () {
         cbxRetryT = null;
         Object.keys(cbxFailed).forEach(function (k2) {
-          var v2 = cbxFailed[k2]; delete cbxFailed[k2];   // set() re-queues it if it fails again
-          window.storage.set(k2, v2);
+          var v2 = cbxFailed[k2], o2 = cbxFailedOpts[k2]; delete cbxFailed[k2]; delete cbxFailedOpts[k2];   // set() re-queues it if it fails again
+          Promise.resolve(window.storage.set(k2, v2, o2)).then(function (res) {
+            /* a retried compare-and-set that finds the store moved on hands the key back to the
+               app, which owns the merge (Ops registers this); the stale payload is never forced */
+            if (res && res.conflict && typeof window.__cbxOnConflict === 'function') window.__cbxOnConflict(k2, res.current);
+          });
         });
       }, d);
     }
@@ -109,21 +114,38 @@ if (!window.storage) {
        copy as current on every later boot (audit round 3, 2026-08-27). Per key,
        because boot reads run in parallel. */
     var fresh = {};
+    /* THE VERSION THIS DEVICE HOLDS, PER KEY (2026-09-14 — the fact-store lost update). Every
+       cloud read records the X-Cbx-Version stamp it came with; a caller that asks for a
+       compare-and-set write (set(k, v, {cas:true})) sends that stamp back as X-Cbx-Base, and the
+       Worker refuses the write if the store has moved on since. Ops' boot also stamps a store it
+       reuses from its local mirror (it knows the cloud version from /api/kv-meta). 'none' is a
+       real answer: this device read that no row existed. */
+    var ver = {};
+    var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
     window.storage = {
       fresh: fresh,
+      ver: ver,
       async get(k) {
         await tokenWait;
         fresh[k] = false;
         var h = authHdr();
         if (h) {
           try {
-            var r = await fetch(API + '?key=' + encodeURIComponent(k), { headers: h });
+            var r = null;
+            /* a 425 is a compare-and-set writer mid-upload on this key: wait it out rather than
+               fall back to a cache copy that a later write would then be based on */
+            for (var tries = 0; tries < 5; tries++) {
+              r = await fetch(API + '?key=' + encodeURIComponent(k), { headers: h });
+              if (r.status !== 425) break;
+              await sleep(1500);
+            }
             if (r.status === 404) {
               // Cloud is authoritative and has nothing here — purge any stale
               // local copy so this device can NEVER push old data back up.
               delete mem[k];
               try { localStorage.removeItem('cbx:' + k); } catch (e) {}
               fresh[k] = true;                 // an authoritative "nothing here" IS a cloud answer
+              ver[k] = 'none';
               return null;
             }
             if (r.ok) {
@@ -131,6 +153,7 @@ if (!window.storage) {
               mem[k] = data;
               try { localStorage.setItem('cbx:' + k, data); } catch (e) { /* quota — mem cache still holds it */ }
               fresh[k] = true;
+              var stamp = r.headers.get('X-Cbx-Version'); if (stamp) ver[k] = stamp;
               return { value: data };
             }
             // 401/5xx etc: don't treat as authoritative-empty; fall through to cache (no push)
@@ -139,15 +162,19 @@ if (!window.storage) {
         if (mem[k] != null) return { value: mem[k] };
         try { var v = localStorage.getItem('cbx:' + k); return v == null ? null : { value: v }; } catch (e) { return null; }
       },
-      async set(k, v) {
+      /* Returns {ok:true} | {conflict:true, current} | {failed:true}. A conflict is NOT queued
+         for retry — retrying the same stale payload is exactly the overwrite the check exists to
+         stop; the caller reloads, merges and saves again with the new base. */
+      async set(k, v, opts) {
         // user-initiated write: cache locally + push to the cloud (the truth)
         window.__cbxLastWrite = Date.now(); // freshness watcher: skip self-triggered re-inits
         mem[k] = v;
         try { localStorage.setItem('cbx:' + k, v); } catch (e) { /* quota — cloud still saves below */ }
         var h = authHdr();
-        if (!h) { cbxSaveWarn('Not signed in — this data was NOT saved to the database.'); cbxSaveFail(k, v, 'no-token'); return; }
+        if (!h) { cbxSaveWarn('Not signed in — this data was NOT saved to the database.'); cbxSaveFail(k, v, 'no-token', opts); return { failed: true }; }
         try {
           var hdrs = { 'Authorization': h.Authorization, 'Content-Type': 'text/plain', 'X-Cbx-Client': 'v5' };
+          if (opts && opts.cas) hdrs['X-Cbx-Base'] = ver[k] || 'none';
           var payload = v;
           /* Gzip the body when the browser can (perf, 2026-08-28) — fact blobs are tens of MB
              and compress about ten to one. NO Content-Encoding HEADER: it is not a CORS-
@@ -160,10 +187,16 @@ if (!window.storage) {
             catch (e) { payload = v; }
           }
           var r = await fetch(API + '?key=' + encodeURIComponent(k), { method: 'POST', headers: hdrs, body: payload });
+          if (r.status === 409 && opts && opts.cas) {
+            var cj = null; try { cj = await r.json(); } catch (e3) {}
+            if (cj && cj.error === 'version_conflict') return { conflict: true, current: cj.current || '' };
+          }
           if (!r.ok) { var why = r.status + ''; try { why += ' ' + (await r.text()).slice(0, 160); } catch (e2) {}
-            cbxSaveWarn('Cloud save failed (' + r.status + ') — "' + k + '" is NOT in the database yet. Keep this tab open; it is retrying.'); cbxSaveFail(k, v, why); return; }
+            cbxSaveWarn('Cloud save failed (' + r.status + ') — "' + k + '" is NOT in the database yet. Keep this tab open; it is retrying.'); cbxSaveFail(k, v, why, opts); return { failed: true }; }
+          var nv = r.headers.get('X-Cbx-Version'); if (nv) ver[k] = nv;
           cbxSaveOkFor(k);
-        } catch (e) { cbxSaveWarn('Cloud save failed (network) — "' + k + '" is NOT in the database yet. Keep this tab open; it is retrying.'); cbxSaveFail(k, v, 'network ' + String(e && e.message || e).slice(0, 120)); }
+          return { ok: true };
+        } catch (e) { cbxSaveWarn('Cloud save failed (network) — "' + k + '" is NOT in the database yet. Keep this tab open; it is retrying.'); cbxSaveFail(k, v, 'network ' + String(e && e.message || e).slice(0, 120), opts); return { failed: true }; }
       },
       async delete(k) {
         // real delete: drop the local copy AND remove it from the database (Storage
