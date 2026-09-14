@@ -52,7 +52,7 @@ const sandbox = {
 };
 sandbox.window = sandbox; sandbox.globalThis = sandbox; sandbox.setInterval = () => 0;
 vm.createContext(sandbox);
-try { vm.runInContext(blocks.join('\n;\n') + '\n;window.__T={SOURCES,TRANSFORM};', sandbox, { filename: 'ops-inline.js' }); }
+try { vm.runInContext(blocks.join('\n;\n') + '\n;window.__T={SOURCES,TRANSFORM,DEFAULT_KPIS,DEFAULT_RULES};', sandbox, { filename: 'ops-inline.js' }); }
 catch (e) { console.error('page did not load: ' + e.message); process.exit(1); }
 const G = sandbox; Object.assign(G, G.__T || {});
 if (typeof G.applyLoad !== 'function' || typeof G.saveFacts !== 'function' || typeof G.mergeIntoStore !== 'function') { console.error('FATAL: applyLoad / saveFacts / mergeIntoStore not found'); process.exit(1); }
@@ -153,6 +153,19 @@ console.log('\nF · the relay re-applies a ViciDial file the audit says loaded b
     ? ok('a ViciDial file with an audit record but no rows in the store is re-applied — the lost-update signature heals itself')
     : bad('the relay still skips a file on its audit record alone');
   /if\(!lost\)continue;/.test(relay) ? ok('…and only ViciDial is judged that way — key-superseding sources keep their skip') : bad('the re-apply is not restricted to ViciDial');
+}
+
+console.log('\nG · the Executive page after the CallX cutover reads ViciDial, not zeros');
+{
+  S.facts = {}; S.rules = JSON.parse(JSON.stringify(G.DEFAULT_RULES)); S.kpis = JSON.parse(JSON.stringify(G.DEFAULT_KPIS)).map((k) => ({ show: true, ...k }));
+  const EXEC = ['total_calls', 'answer_rate', 'activations', 'lead_conversion', 'clean_sale_rate', 'avg_qa_score', 'attendance_rate', 'open_backlog', 'critical_rate'];
+  let sept=''; try { sept = G.kpiRow(null, { from: '2026-09-01', to: '2026-09-13' }, EXEC); } catch (e) { console.log('   kpiRow threw: ' + e.message); }
+  (/Vici Dials/.test(sept) && /Vici Answer Rate/.test(sept) && !/>Total Calls</.test(sept) && !/>Answer Rate</.test(sept))
+    ? ok('a September window swaps Total Calls / Answer Rate for Vici Dials / Vici Answer Rate') : bad('the Executive tiles still read CallX after the cutover');
+  const aug = G.kpiRow(null, { from: '2026-08-01', to: '2026-08-31' }, EXEC);
+  (/>Total Calls</.test(aug) && !/Vici Dials/.test(aug)) ? ok('an August window keeps the CallX tiles — that history still counts') : bad('a pre-cutover window lost its CallX tiles');
+  const salesSept = G.kpiRow('Sales', { from: '2026-09-01', to: '2026-09-13' });
+  (/CallX tile/.test(salesSept) && /hidden/.test(salesSept) && !/>Unique Calls</.test(salesSept)) ? ok('the Sales page hides the CallX-only tiles for September and says so') : bad('CallX-only tiles still render as zeros on the Sales page');
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

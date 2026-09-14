@@ -2825,10 +2825,24 @@ function kpiTile(k,win){
     +'<div class="kpi-val num">'+(k.format==='zar'&&v!=null?zarStack(v):fmtVal(v,k.format))+unitTag+'</div>'
     +foot+'</div>';
 }
+/* CALLX IS RETIRED, THE TILES ARE NOT (Ops audit, 2026-09-14). The Executive Command Centre led with
+   'Total Calls 0 ↓ 100%' and 'Answer Rate —' for the whole of September: those tiles read
+   CALLX_CALL_RECORDS, and the floor has dialled on ViciDial since CALLX_RETIRED. For a window that
+   starts on or after the cutover a CallX tile is SWAPPED for its ViciDial twin where one exists and
+   dropped where none does (unique calls, outbound calls — the ViciDial export has no such cut), with a
+   line saying so. A window that spans the cutover keeps both — August's CallX history still counts. */
+const CALLX_TO_VICI={total_calls:'vici_dials',answer_rate:'vici_answer',talk_time:'vici_talk'};
 function kpiRow(domain,win,ids){
-  const ks=state.kpis.filter(k=>k.show&&(ids?ids.includes(k.id):k.domain===domain));
+  const afterCutover=!!(win&&win.from&&win.from>=CALLX_RETIRED);
+  const isCallx=k=>k.src==='CALLX_CALL_RECORDS';
+  let want=ids;
+  if(afterCutover&&ids) want=[...new Set(ids.map(id=>{const k=state.kpis.find(x=>x.id===id);return (k&&isCallx(k)&&CALLX_TO_VICI[id])?CALLX_TO_VICI[id]:id}))];
+  let ks=state.kpis.filter(k=>k.show&&(want?want.includes(k.id):k.domain===domain));
+  let hidden=0;
+  if(afterCutover){const b4=ks.length;ks=ks.filter(k=>!isCallx(k));hidden=b4-ks.length}
+  const note=hidden?'<div class="note" style="margin:-4px 0 10px;font-size:12px;color:var(--muted)">'+hidden+' CallX tile'+(hidden>1?'s':'')+' hidden — CallX was retired on '+CALLX_RETIRED+'; the floor dials on ViciDial, whose tiles carry this window.</div>':'';
   const bar=domain?'<div style="display:flex;justify-content:flex-end;margin:-2px 0 8px"><button class="btn small" onclick="openThresh(&#39;'+domain+'&#39;)">⚙ Thresholds &amp; rules for this area</button></div>':'';
-  return bar+'<div class="kpi-grid">'+ks.map(k=>kpiTile(k,win)).join('')+'</div>';
+  return bar+note+'<div class="kpi-grid">'+ks.map(k=>kpiTile(k,win)).join('')+'</div>';
 }
 function openThresh(dom){state.threshDomain=dom||'';state.dictTab='thresh';go('dict')}
 function kpiInfo(id){
