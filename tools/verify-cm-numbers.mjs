@@ -100,7 +100,14 @@ try {
     ok(near(k.canc.rate, (sales + canc) ? canc / (sales + canc) : null, 1e-9), '  Cancellation rate = cancels / (sales + cancels)');
     ok(k.crit.fails === fails, '  Critical failures = Σ compliance exceptions (' + fails + ')', 'served ' + k.crit.fails);
     /* the lead measures — the ones added 2026-08-30 */
-    if (leadRows.length) {
+    if (leadRows.length && !leads) {
+      /* A CAMPAIGN WITH NO UNIQUE LEADS HAS NO CONVERSION (2026-09-14: Download & Test, whose
+         agents do not dial the Salesforce lead book). The Worker serves null for the ratio, the
+         attempts and the cover — never sales ÷ 0 — and the lead volume itself is the zero. */
+      ok(!k.conv || k.conv.v == null, '  Conversion is NOT served when there are no unique leads (' + (k.conv ? 'served ' + k.conv.v : 'null') + ')');
+      ok(!k.attempts || k.attempts.v == null, '  Attempts per Lead is not served either');
+      ok(k.leads == null || k.leads.v === 0, '  Lead Volume = 0');
+    } else if (leadRows.length) {
       ok(k.conv && near(k.conv.v, leads ? sales / leads : null, 1e-9),
         '  Conversion = sales / UNIQUE LEADS (' + (leads ? (sales / leads * 100).toFixed(2) : '—') + '%)',
         'served ' + (k.conv ? (k.conv.v * 100).toFixed(2) : 'null') + '% — must never be sales per call');
