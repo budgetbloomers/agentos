@@ -76,7 +76,9 @@ const json = (data, status = 200, headers = {}) =>
    writers treat it as abandoned (the /api/kv CAS path, 2026-09-14). A fact-store upload is
    seconds; two minutes is a dead Worker, not a slow one. */
 const KV_WRITING_TTL_MS = 120000;
-const REVIEW_REMOVALS = 5;                              // a publish removing this many agents gets a review note (never a refusal)
+const REVIEW_REMOVALS = 5;
+/* who sees the health banner (Nick, 2026-09-15) — `nick` is Nicholas's second admin login */
+const HEALTH_RECIPIENTS = new Set(['aarav', 'nicholas', 'nick', 'barry']);                              // a publish removing this many agents gets a review note (never a refusal)
 
 /* WHAT TRAVELS WITH THE ROSTER (2026-09-15). The Agent List names agents; two other things
    belong to the same record and are served beside it on every /api/roster answer:
@@ -1427,6 +1429,17 @@ export default {
       }
       if (path === '/api/kv' && req.method === 'GET') {
         const key = url.searchParams.get('key') || '';
+        /* THE HEALTH BANNER HAS THREE READERS (Nick, 2026-09-15: "all these notifications must only be
+           sent to aarav, nicholas and barry"). Every open PULSE and Ops tab polls this key; anyone else
+           now receives an empty alert list — the cadence still travels, since the Upload Station's
+           "expected by" strip is not a notification. The sentinel itself keeps writing for everyone. */
+        if (key === 'health-alerts' && !HEALTH_RECIPIENTS.has(String((user && user.username) || '').toLowerCase())) {
+          const hr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:health-alerts')}&select=value,updated_at`).catch(() => null);
+          let cad = [], at = '';
+          try { const v = JSON.parse((hr && hr[0] && hr[0].value && hr[0].value.data) || '{}'); cad = v.cadence || []; at = v.checked_at || ''; } catch (e) {}
+          return new Response(JSON.stringify({ alerts: [], checked_at: at, cadence: cad, recipients_only: true }),
+            { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Cbx-Version': (hr && hr[0] && hr[0].updated_at) || '' } });
+        }
         if (key === 'vas-state' && !url.searchParams.get('meta')) stampAppOpen(DB, ctx, 'vas');   // the PULSE boot
         else if (key === 'cb-config' && !url.searchParams.get('meta')) stampAppOpen(DB, ctx, 'ops');
         const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:' + key)}&select=value,updated_at`);

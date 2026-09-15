@@ -178,7 +178,11 @@ export function evaluateFreshness(t) {
     if (newest && SAST_WORKING(now) && now - newest > 45 * 60000) {
       alerts.push({ id: 'runner-silent', severity: 'critical',
         message: 'The scheduled runner has not reported since ' + sast(newest) + ' — nothing is republishing or relaying.'
-          + (t.kick && t.kick.at ? ' The Worker asked GitHub to run it at ' + sast(Date.parse(t.kick.at)).slice(11) + ' (HTTP ' + t.kick.http + ')' + (t.kick.http === 204 ? '; if this stays red the run itself is failing — read its log.' : ' — the ask was refused; check GH_DISPATCH_TOKEN.') : ' GitHub drops scheduled runs under load; the Worker re-asks for the tick by itself once the GH_DISPATCH_TOKEN secret is set on the Worker (cd worker && npx wrangler secret put GH_DISPATCH_TOKEN).'),
+          + (t.kick && t.kick.at ? ' The Worker asked GitHub to run it at ' + sast(Date.parse(t.kick.at)).slice(11) + ' (HTTP ' + t.kick.http + ')'
+            + (t.kick.last_run && t.kick.last_run.conclusion !== 'success'
+              ? '. GitHub says of run #' + t.kick.last_run.number + ': "' + (t.kick.last_run.reason || t.kick.last_run.conclusion) + '"'
+                + (/payments|spending limit|billing/i.test(t.kick.last_run.reason || '') ? ' — a GitHub billing setting on the repository owner\'s account; nothing in the code can fix it.' : '.')
+              : (t.kick.http === 204 ? '; if this stays red the run itself is failing — read its log.' : ' — the ask was refused; check GH_DISPATCH_TOKEN.')) : ' GitHub drops scheduled runs under load; the Worker re-asks for the tick by itself once the GH_DISPATCH_TOKEN secret is set on the Worker (cd worker && npx wrangler secret put GH_DISPATCH_TOKEN).'),
         since: new Date(newest).toISOString() });
     }
     const red = steps.filter(([k, v]) => /^verify/.test(k) && v.ok === false && now - ms(v.ranAt) < 24 * HOUR);
