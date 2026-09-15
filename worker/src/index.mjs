@@ -1109,14 +1109,18 @@ export default {
         }
         const clean = Array.isArray(plan.roster) ? plan.roster : [];
         if (!clean.length) return json({ accepted: false, reason: 'no agent rows in the file — never stored', publish: plan }, 200);
-        let h = 0x811c9dc5;                                   // same FNV-1a the GET fingerprint uses
-        /* the leaders' sheet is part of the list (migration-040): a file whose only change is a
-           leader's CB, campaign or manager must not read as "identical" and be refused */
-        const leaderRows = raw.filter((r) => r && r.role === 'leader').map((r) => ['L', r.code, r.name, r.campaign, r.manager, r.callx].join('|'));
-        for (const s of clean.map((a) => [a.code, a.name, a.tl, a.campaign, a.tenure, a.callx, a.sf, a.target, a.start].join('|')).concat(leaderRows).sort())
-          for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-        const fp = 'list:' + h.toString(16);
-        if (prev && prev.fingerprint === fp)
+        const fnv = (strs) => { let h = 0x811c9dc5; for (const s of strs.slice().sort()) for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16); };
+        const fp = 'list:' + fnv(clean.map((a) => [a.code, a.name, a.tl, a.campaign, a.tenure, a.callx, a.sf, a.target, a.start].join('|')));   // same FNV-1a the GET fingerprint uses
+        /* THE LEADERS' SHEET IS PART OF THE LIST (migration-040) BUT NOT OF THE AGENT FINGERPRINT
+           (2026-09-15). Folding leader rows into fp made every post that carried NO sheet — Ops,
+           a tab posting its classified roster — a "different" list from the same file with the
+           sheet, and the record flip-flopped between two fingerprints on every post, re-running
+           the syncs each time. The agents' fingerprint is the list's identity; the leaders travel
+           as their own signature, and a post is identical only when the agents match AND it either
+           brought no sheet or brought the same sheet as the record holds. */
+        const leaderRows = raw.filter((r) => r && r.role === 'leader').map((r) => ['L', normCb(r.code), r.name, r.campaign, r.manager, r.callx].join('|'));
+        const leadersSig = leaderRows.length ? 'tl:' + fnv(leaderRows) : '';
+        if (prev && prev.fingerprint === fp && (!leadersSig || leadersSig === (prev.leaders_sig || '')))
           return json({ accepted: false, reason: 'identical list already published', fingerprint: fp, as_of: prev.as_of || '',
             on_file: plan.on_file, dropped: plan.dropped || [] });
         /* APPLY: logins, leader views, campaigns — all or nothing */
@@ -1128,7 +1132,7 @@ export default {
             on_file: out && out.on_file, dropped: (out && out.dropped) || [], publish: out }, 200);
         }
         await DB.del('rules?key=eq.' + encodeURIComponent('kv:roster-refused')).catch(() => {});   // accepted: the refusal is over
-        const rec = { v: 1, fingerprint: fp, as_of: asOf, n: clean.length, roster: clean,
+        const rec = { v: 1, fingerprint: fp, leaders_sig: leadersSig || (prev && prev.fingerprint === fp ? (prev.leaders_sig || '') : ''), as_of: asOf, n: clean.length, roster: clean,
           on_file: out.on_file, dropped: (out.dropped || []).length,
           file: String(body.file || '').slice(0, 120), source: String(body.source || '').slice(0, 16),
           uploaded_by: actor, uploaded_at: now,

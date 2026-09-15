@@ -2462,7 +2462,15 @@ const INGEST={
        the list they ingested and the server decides which one the suite is on. The reply
        says whether it was accepted, so an older list being refused is visible rather than
        silently doing nothing. */
+    /* THE ADOPTED RECORD IS NEVER RE-PUBLISHED (2026-09-15). rosterFp was the only guard, and it
+       is a shared-state field: a tab that hydrated a state whose rosterFp had been cleared adopted
+       the record and, three seconds later, POSTed its own in-memory roster back as a NEW list —
+       Sharoma's tab re-created two leavers (CB44, CB131) and removed them again four seconds on.
+       The synthetic name the adoption ingests under is the structural guard: nothing ingested
+       under it may publish, whatever the fingerprint says. */
+    const adopted=/^Agent List — published/.test(String(name||''));
     setTimeout(function(){ try{
+      if(adopted) return;                                  // the record does not publish itself
       var t=sessionStorage.getItem('cbx_token'); if(!t) return;
       if(S.rosterFp) return;                               // this list came FROM the record
       /* SAY WHAT THE UPLOAD DID TO PEOPLE'S ACCOUNTS (Nick, 2026-08-30: the list is the
@@ -7982,7 +7990,20 @@ async function adoptRosterFromRecord(given){
        fingerprint is unchanged — the map can move without the list moving. */
     if(Array.isArray(j.leaders)){ const m={}; j.leaders.forEach(function(l){ const c=l&&cbCode(String(l.cb||'')); if(c) m[c]=l.name||''; });
       if(JSON.stringify(m)!==JSON.stringify(S.tlCbs||{})){ S.tlCbs=m; save(); } }
-    if(!j.fingerprint||j.fingerprint===S.rosterFp)return;             // already on this list
+    /* ALREADY ON THIS LIST — but is the roster on screen actually the record's? A tab on an older
+       build kept saving a stale 131-agent roster over the shared state while the record said 129
+       (2026-09-15), and a matching fingerprint skipped everything below. Reconcile the code set on
+       every poll: anyone the record does not name is removed, named, whatever the fingerprint says. */
+    if(!j.fingerprint||j.fingerprint===S.rosterFp){
+      const codes=new Set(j.roster.map(a=>cbCode(String(a.code||''))).filter(Boolean));
+      const gone=(S.roster||[]).filter(a=>!codes.has(a.code));
+      if(gone.length&&gone.length<(S.roster||[]).length&&codes.size>=25){
+        S.roster=(S.roster||[]).filter(a=>codes.has(a.code));
+        toast(gone.length+' agent(s) are not on the published Agent List — removed: '+gone.slice(0,6).map(a=>a.code+' '+(a.name||'')).join(', ')+(gone.length>6?' +'+(gone.length-6)+' more':''),10000);
+        try{ save(); rebuild(); renderAll(); }catch(e){}
+      }
+      return;
+    }
     const rows=j.roster
       .filter(a=>a&&String(a.code||'').trim()&&String(a.name||'').trim())
       .map(a=>({'Employee Code':a.code,'Agent Name':a.name,'Sales Force':a.sf||a.name,
@@ -7993,6 +8014,17 @@ async function adoptRosterFromRecord(given){
     __curFileHash=null;                                   // the record has no file bytes: regFile must not stamp the LAST upload's hash on it (it did — BI Inactive's, 2026-09-10)
     const res=INGEST.roster(rows,'Agent List — published '+(j.as_of?'as of '+j.as_of:'by '+(j.source||'the other station')),null);
     if(!res||!(S.roster||[]).length) return;                          // refused, or it emptied the roster
+    /* THE RECORD IS THE WHOLE FLOOR (2026-09-15). INGEST.roster replaces by campaign and by code,
+       so an agent whose whole campaign left the list — CB44 and CB131, the last two of Download &
+       Test, removed on 14 Sep — was never replaced by anything and sat on the roster for a day
+       after the record dropped them, reading 131 against a record of 129. A hand upload prunes
+       against every code the file names (ingestText); the adopted record gets the same rule. */
+    { const codes=new Set(rows.map(r=>cbCode(String(r['Employee Code']||'')))); codes.delete(null); codes.delete('');
+      const gone=(S.roster||[]).filter(a=>!codes.has(a.code));
+      if(gone.length&&gone.length<(S.roster||[]).length){
+        S.roster=(S.roster||[]).filter(a=>codes.has(a.code));
+        toast(gone.length+' agent(s) are not on the published Agent List — removed: '+gone.slice(0,6).map(a=>a.code+' '+(a.name||'')).join(', ')+(gone.length>6?' +'+(gone.length-6)+' more':''),10000);
+      } }
     S.rosterFp=j.fingerprint;                                         // set BEFORE the ingest's delayed publish fires
     /* Set AFTER the ingest, which clears it: the marker says "the roster on screen is the
        published one", so the publish scheduled by that ingest sees it three seconds later
