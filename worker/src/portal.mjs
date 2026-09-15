@@ -252,6 +252,23 @@ export function authorise(user, digest) {
 const peersFor = (digest, row) =>
   (row && digest.groups && digest.groups[row.campaign + '|' + row.tenure]) || null;
 
+/* THE TOP PERFORMERS (Nick, 2026-09-15: "the top performers … add that to the agent view in
+   agent analytics"). This deliberately opens the one window the agent view kept shut — colleagues
+   are NAMED here, with their sales and premium — because Nick asked for exactly that. Bounded:
+   the floor's top TOP_N and the top five of the agent's own team, by premium written (the same
+   basis as the rank boxes), from the digest's reported agents only. Nobody below the cut travels. */
+const TOP_N = 10;
+const topPerformers = (digest, cb) => {
+  const rows = (digest.agents || []).filter((a) => a && a.code && ((a.gwpEx || 0) > 0 || (a.sales || 0) > 0))
+    .sort((a, b) => (b.gwpEx || 0) - (a.gwpEx || 0) || (b.sales || 0) - (a.sales || 0));
+  const pick = (a, i) => ({ pos: i + 1, name: a.name || a.code, campaign: a.campaign || '', tl: a.tl || '', tenure: a.tenure || '',
+    sales: a.sales || 0, gwpEx: a.gwpEx || 0, me: normCb(a.code) === cb });
+  const mine = rows.find((a) => normCb(a.code) === cb) || null;
+  const team = mine && mine.tl ? rows.filter((a) => a.tl === mine.tl).slice(0, 5).map(pick) : [];
+  return { floor: rows.slice(0, TOP_N).map(pick), team, myPos: mine ? rows.indexOf(mine) + 1 : null, n: rows.length,
+    basis: 'premium written (ex-VAT), month to date' };
+};
+
 /** The bits of the digest that are not about any particular person. */
 const envelope = (digest) => ({
   period: digest.period,
@@ -459,6 +476,7 @@ export async function overview(env, DB, user, digest, months, extra) {
         /* Not in this period's data — say which of the two reasons it is. */
         notReported: auth.missing ? (digest.notCovered || []).find((n) => n.code === auth.cb) || { why: 'nodata' } : null,
         peers: peersFor(digest, me),
+        top: topPerformers(digest, auth.cb),
         team: auth.team,
         coaching,
         nba,

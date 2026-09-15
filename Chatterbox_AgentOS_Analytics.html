@@ -1437,10 +1437,12 @@ function mergeIntoStore(srcKey,file,loaded,batch){
          relay between the apps as raw files: a file PULSE refused still archives and would
          land its retired rows through this parser. Earlier days keep loading as history.
          Mirror of specs/mtd_engine_rules.json sources[id=call_x_call].retired. */
-      const b4r=loaded.length;loaded=loaded.filter(r=>!r._d||r._d<CALLX_RETIRED);
-      if(b4r>loaded.length){batch.callx_retired_rows=b4r-loaded.length;batch.loaded_row_count=loaded.length;
-        if(typeof toast==='function')toast('CallX retired '+CALLX_RETIRED+' — '+(b4r-loaded.length).toLocaleString()
-          +' row(s) dated on/after the cutover refused. The floor dials on ViciDial now: upload EXPORT_CALL_REPORT with every user group ticked.');}
+      /* EVERY ROW, WHATEVER ITS DATE (Nick, 2026-09-15: "remove all records because it all comes
+         from vici dial now not call x") — a Call Records file loads nothing any more. */
+      const b4r=loaded.length;loaded=[];
+      batch.callx_retired_rows=b4r;batch.loaded_row_count=0;
+      if(typeof toast==='function')toast('Call Records (CallX) are retired — '+b4r.toLocaleString()
+        +' row(s) in this file were not loaded. The whole floor dials on ViciDial: upload EXPORT_CALL_REPORT with every user group ticked.');
       if(!loaded.length){/* nothing pre-cutover survived — fall through with zero rows; the batch audit says why */}
     }
     if(srcKey==='CALLX_CALL_RECORDS'&&loaded.length){
@@ -3463,7 +3465,7 @@ function pageSales(win){
        +'<td class="num" style="font-weight:800">'+a.t.toLocaleString()+'</td>'
        +'<td class="num">'+a.uniq.size.toLocaleString()+'</td>'
        +'<td class="num">'+fmtVal(a.talk,'hours')+'</td></tr>').join('')
-     +'</tbody></table></div>'+(unmappedCallAgents?'<div class="stale-banner" style="margin-top:8px">⚠ '+unmappedCallAgents+' dialler agent string(s) matched no roster entry (no CB code found or code not on today\'s list) — flagged above, fix in Mappings or the daily Agent List.</div>':''):'<div class="empty">Upload CallX call records.</div>')
+     +'</tbody></table></div>'+(unmappedCallAgents?'<div class="stale-banner" style="margin-top:8px">⚠ '+unmappedCallAgents+' dialler agent string(s) matched no roster entry (no CB code found or code not on today\'s list) — flagged above, fix in Mappings or the daily Agent List.</div>':''):'<div class="empty">No CallX call records in this window — Call Records were retired 1 Sep 2026; the floor dials on ViciDial (see the Vici tiles).</div>')
    +'</div>'
    +'<div class="card"><div class="card-h"><span class="t">Call type mix</span><span class="s">band rule applied live</span></div><div class="chart-wrap short"><canvas id="chS11"></canvas></div></div></div>'
    +(vAll.length?'<div class="card" style="margin-bottom:16px"><div class="card-h"><span class="t">ViciDial dial report by agent</span>'
@@ -3663,7 +3665,7 @@ function pageQA(win){
    +(drop.total?'<table class="tbl"><tbody>'+drop.labels.map((l,i)=>{const n=drop.dist[l]||0;const pct=drop.total?Math.round(n/drop.total*100):0;
        const col=i===0?'var(--red)':i===1?'#B45309':i>=drop.labels.length-1?'#158A4C':'var(--blue)';
        return '<tr><td style="width:120px"><b>'+esc(l)+'</b></td><td><div class="bar-track" style="background:#EEF2F8;border-radius:4px;height:15px"><div style="width:'+Math.max(pct,2)+'%;background:'+col+';height:15px;border-radius:4px"></div></div></td><td class="num" style="width:70px;font-weight:800">'+n.toLocaleString()+'</td><td class="num" style="width:44px;color:var(--muted)">'+pct+'%</td></tr>'}).join('')
-     +'</tbody></table><div style="font-size:11px;color:var(--muted);margin-top:8px">Earliest phases first — a heavy Introduction/Body bar means calls are being cut off before the pitch. Tune the phase boundaries in the Dictionary.</div>':'<div class="empty">Upload CallX call records to see phase drop-off.</div>')
+     +'</tbody></table><div style="font-size:11px;color:var(--muted);margin-top:8px">Earliest phases first — a heavy Introduction/Body bar means calls are being cut off before the pitch. Tune the phase boundaries in the Dictionary.</div>':'<div class="empty">No CallX call records in this window — Call Records were retired 1 Sep 2026; phase drop-off was a CallX measure and ends with August.</div>')
    +'</div></div>'
    +'<div class="grid g21">'
    +'<div class="card"><div class="card-h"><span class="t">QA by agent</span><span class="info" title="Sales Agent CB is normalised (CB-97 = CB97) and matched to the roster; blank codes fall back to the agent name via the Agent List.">i</span><span class="s">score · decisions · total QA&#39;d — top 15</span></div>'
@@ -5165,7 +5167,7 @@ function pageDict(){
      +(names.length?'<div style="max-height:300px;overflow-y:auto"><table class="tbl"><thead><tr><th class="noclick">Dialler agent name</th><th class="noclick">Calls</th><th class="noclick">CB code</th></tr></thead><tbody>'
       +names.map(n=>{const cnt=callCount[n]||0;
         return '<tr><td><b>'+maskName(n)+'</b></td><td class="num">'+cnt.toLocaleString()+'</td><td><select data-name="'+esc(n)+'" onchange="mapAgent(this.dataset.name,this.value)"><option value="">— unmapped —</option>'+codes.map(c=>'<option '+(normCB(state.agentMap[n])===normCB(c)?'selected':'')+'>'+c+'</option>').join('')+'</select></td></tr>'}).join('')
-      +'</tbody></table></div>':'<div class="empty">Upload CallX call records first.</div>')+'</div>'
+      +'</tbody></table></div>':'<div class="empty">No CallX call records — Call Records were retired 1 Sep 2026; the floor dials on ViciDial.</div>')+'</div>'
      +'</div>';
   }
   return '<div class="tabs">'

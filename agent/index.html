@@ -4873,11 +4873,11 @@ function show(a){
       : VIEW==='nik' ? nikolaPage(a,c)
       /* A DRILL-DOWN SHOWS EVERYTHING THE NAME WAS LISTED FOR. Clicking a name in
          Team Results opened only the month, which is not why it was clicked. */
-      : D.__back ? nbaDetail()+agentKpis(a,c)+heroHTML(c)+breakdownHTML(c)+doneHTML()+trackHTML()+standHTML()
+      : D.__back ? nbaDetail()+agentKpis(a,c)+heroHTML(c)+breakdownHTML(c)+doneHTML()+trackHTML()+standHTML()+topHTML()
       /* ONE HOME PER FIGURE (Nick, 2026-09-03: "why are we repeating the agent's
          tracking on each page"). The rand projection lives on Projected Commission
          and nowhere else; Today keeps tracking-vs-target and a one-line pointer. */
-      : agentKpis(a,c)+todayHTML(c)+trackHTML()+commPointer(c))
+      : agentKpis(a,c)+todayHTML(c)+trackHTML()+topHTML()+commPointer(c))
     +'<div class="foot">'+(reachLabel()?'Figures to '+esc(reachLabel())+'<br>':'')+(isAgentUser()?'':'Numbers updated '+esc(stamp())+'<br>')
     +'<button id="notme">'+(D.__back?'Back to my team':'Sign out')+'</button></div>',
     VIEW,
@@ -6291,7 +6291,7 @@ function standHTML(){
               :'You are '+R(Math.abs(diff))+' off that pace — very catchable.')+'</p>';
   }
   return '<div class="card"><h2>Where you stand</h2>'
-    +'<p class="why">Your position by premium written. Nobody else\'s numbers are shown here — and yours are not shown to them.</p>'
+    +'<p class="why">Your position by premium written. The floor\'s top performers are named on their own card; everyone else\'s figures stay private.</p>'
     +'<div class="rankrow">'
     +'<div class="rank"><div class="pos num">'+(ME.rankTeam?ME.rankTeam:'—')+'<small> of '+num(ME.nTeam)+'</small></div>'
     +'<div class="lab">in your team</div></div>'
@@ -6302,6 +6302,28 @@ function standHTML(){
     +(ME.badges&&ME.badges.length?'<div class="badges">'+ME.badges.map(function(b){
         return '<div class="badge"><b>'+esc(b[0])+'</b>'+esc(b[1])+'</div>';}).join('')+'</div>':'')
     +cmp
+    +'</div>';
+}
+
+/* ---- 4b. top performers (Nick, 2026-09-15: "the top performers … add that to the agent view") ----
+   The one place colleagues are named on this screen: the floor's top ten by premium written and
+   the top five in the agent's own team, with the agent's own row lit. The Worker decides who
+   travels (portal.mjs topPerformers); this only draws what it is handed. */
+function topHTML(){
+  var T=D.top; if(!T||!(T.floor&&T.floor.length)) return '';
+  var tbl=function(list){
+    return '<div class="scroller"><table class="tbl"><thead><tr><th>#</th><th class="l">Agent</th><th class="l">Campaign</th><th>Sales</th><th>Premium</th></tr></thead><tbody>'
+      +list.map(function(r){
+        return '<tr'+(r.me?' style="background:var(--green-soft);font-weight:800"':'')+'><td class="num">'+num(r.pos)+'</td>'
+          +'<td class="l">'+esc(r.name)+(r.me?' <span style="color:var(--green)">(you)</span>':'')+'</td>'
+          +'<td class="l">'+esc(r.campaign)+'</td><td class="num">'+num(r.sales)+'</td><td class="num">'+R(r.gwpEx)+'</td></tr>';
+      }).join('')+'</tbody></table></div>';
+  };
+  return '<div class="card"><h2>Top performers</h2>'
+    +'<p class="why">The floor\'s top '+num(T.floor.length)+' by '+esc(T.basis||'premium written')
+    +(T.myPos?' — you are <b>#'+num(T.myPos)+' of '+num(T.n)+'</b>':'')+'.</p>'
+    +tbl(T.floor)
+    +(T.team&&T.team.length?'<h3 style="margin:14px 0 6px">Top of your team</h3>'+tbl(T.team):'')
     +'</div>';
 }
 

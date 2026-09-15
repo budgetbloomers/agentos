@@ -403,6 +403,14 @@ const CODE = PAGE
   eps.includes('/api/portal/overview')
     ? ok('the page loads its data from the scoped portal route')
     : bad('the page does not call /api/portal/overview');
+  /* TOP PERFORMERS (Nick, 2026-09-15: "the top performers … add that to the agent view"): the one
+     card that names colleagues — drawn from the Worker's `top` payload, never computed on the page. */
+  /function topHTML\(\)/.test(PAGE) && /topHTML\(\)\+commPointer/.test(PAGE)
+    ? ok('the agent home names the top performers from the Worker\'s top payload')
+    : bad('the Top performers card is missing from the agent home');
+  /D\.top\b/.test(PAGE) && !/rankAll|sort\(.*gwpEx/.test(PAGE.slice(PAGE.indexOf('function topHTML'), PAGE.indexOf('function topHTML') + 1800))
+    ? ok('…and only draws what it is handed (no ranking computed in the browser)')
+    : bad('topHTML ranks agents in the browser — the Worker decides who travels');
   eps.includes('/api/agent-digest')
     ? bad('the page still calls the retired shared-link digest route')
     : ok('the retired shared-link digest route is gone from the page');

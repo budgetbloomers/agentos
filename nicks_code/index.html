@@ -2261,7 +2261,10 @@ const INGEST={
       const d=parseDateLoose(r['Date & Time']); if(!d){ skip++; continue; }
       /* CALLX IS RETIRED for days on/after the cutover — the whole floor is on ViciDial.
          Earlier days still load, so an August correction can always land. */
-      if(MTD_RULES.callxRetired&&d>=MTD_RULES.callxRetired){ retired++; continue; }
+      /* EVERY ROW, WHATEVER ITS DATE (Nick, 2026-09-15: "remove all records because it all comes
+         from vici dial now not call x"). Until today rows before the cutover still loaded as history
+         corrections; now a Call Records file loads nothing — the ViciDial slot is the only dialler. */
+      if(MTD_RULES.callxRetired){ retired++; continue; }
       const agent=(r['Agent']||'').trim(); if(!agent){ skip++; continue; }  // before dates.add: a day of only agent-less rows must not claim the date with an empty bucket
       dates.add(d);
       const key=agent;   // resolved to an employee code at report-build time
@@ -2309,9 +2312,9 @@ const INGEST={
       stored.push(d);
     }
     if(kept) toast(kept+' day'+(kept>1?'s':'')+' in '+name+' already covered more fully — kept the fuller data');
-    if(retired) toast('CallX retired '+MTD_RULES.callxRetired+' — '+fmtNum(retired)+' row(s) in "'+name
-      +'" dated on/after the cutover were refused. The whole floor dials on ViciDial now: pull EXPORT_CALL_REPORT '
-      +'with every user group ticked and drop it on the ViciDial slot.'+(dates.size?' Earlier days in this file loaded as history.':''),12000);
+    if(retired) toast('Call Records (CallX) are retired — '+fmtNum(retired)+' row(s) in "'+name
+      +'" were not loaded. The whole floor dials on ViciDial: pull EXPORT_CALL_REPORT '
+      +'with every user group ticked and drop it on the ViciDial slot.',12000);
     if(!stored.length&&dates.size) return regFile(name,'calls',[],recs.length,{skip,retired}); // recognised, but every day was fuller elsewhere
     if(!dates.size) return retired?regFile(name,'calls',[],recs.length,{skip,retired}):null;   // all-retired file: acknowledged, nothing stored; otherwise not a load — fail loudly
     return regFile(name,'calls',stored,recs.length,{skip,retired});
@@ -5995,7 +5998,7 @@ function diallerWarning(){
     const d=M.noDialler;
     out.push('<b>No dialler data for '+d.length+' working day'+(d.length>1?'s':'')+'</b> ('
       +d.map(x=>esc(x)).join(', ')+'). Talk time shows 0:00:00 on those days, and every average '
-      +'that divides by shifts is understated. Upload the Call Records / ViciDial exports covering them.');
+      +'that divides by shifts is understated. Upload the ViciDial export (EXPORT_CALL_REPORT) covering them.');
   }
   if(M.viciSkipped && M.viciSkipped.length){
     out.push('<b>A ViciDial export could not be counted.</b> '
@@ -6467,8 +6470,8 @@ function varianceCoverageNote(VR){
       so their Dialer columns read “no pull” rather than a number.</div>
     <p class="note" style="margin:7px 0 0">Affected: ${Object.entries(byCamp).map(([c,n])=>esc(c)+' '+fmtNum(n)).join(' · ')}
       — on ${days.length===1?esc(days[0]):esc(days[0])+' → '+esc(days[days.length-1])}.
-      Courtesy dials on <b>CallX</b> (the call_records export) and Cuddle on <b>ViciDial</b>, so a gap in one
-      says nothing about the other. Upload the missing export for those days and these fill in.
+      The whole floor dials on <b>ViciDial</b> (Call Records / CallX retired 1 Sep 2026). Pull EXPORT_CALL_REPORT
+      for those days with every user group ticked, drop it on the ViciDial slot, and these fill in.
       If most of the page looks blank, check the campaign filter first — a floor with no file for the
       chosen window will read empty even when every other floor is complete.</p></div>`;
 }
@@ -6590,7 +6593,7 @@ function vrDailyTab(VR,rows){
       <div class="sub">${dr.length} agent(s)${(S.ui.varOnly&&(fullByDay[d]||0)>dr.length)?` of ${fullByDay[d]} · <b style="color:var(--amber)">variances only is ON — ${fullByDay[d]-dr.length} agent(s) with an exact day are hidden</b> · <a class="linky" onclick="S.ui.varOnly=false;saveUI();renderPage()">show all agents</a>`:''}${meta.skew?' · <b style="color:var(--amber)">snapshot skew — variances indeterminate (RC1)</b>':''}${cov.length?' · no coverage: '+cov.join(', '):''}</div>
       ${dayNotes.length?`<div class="sub" style="color:var(--amber);margin-top:4px">${dayNotes.map(esc).join(' · ')}</div>`:''}</div></div>
       <div class="tablewrap"><table class="data"><thead><tr>
-        <th class="l">TL</th><th class="l">Agent</th><th class="l">Campaign</th><th title="Sale dispositions from the dialler that covers the agent’s floor: ViciDial for Cuddle, CallX call recordings for Courtesy — one column, the right source per campaign.">Total Dialer Sales</th><th>VAS Tracker</th><th>Sales Force</th><th title="Salesforce − VAS Tracker, sales (DV01 as stored)">Variance (SF vs VAS Tracker)</th><th title="Salesforce − dialler sale dispositions (ViciDial for Cuddle, CallX for Courtesy). Informational, like the dialler count itself — no tolerance band in the spec. Dash when the dialler cannot answer for this agent-day.">Variance (SF vs Dialer)</th><th title="Salesforce GWP (DV02 verdict still colours Status)">Total GWP</th><th>Ave GWP</th><th class="l" title="Click a cell to add or edit — saved with the data, synced to every device">Comments</th><th class="l">Flags</th><th>Status</th><th class="l">Root cause</th>
+        <th class="l">TL</th><th class="l">Agent</th><th class="l">Campaign</th><th title="Sale dispositions from ViciDial, the one dialler for the whole floor since 1 Sep 2026.">Total Dialer Sales</th><th>VAS Tracker</th><th>Sales Force</th><th title="Salesforce − VAS Tracker, sales (DV01 as stored)">Variance (SF vs VAS Tracker)</th><th title="Salesforce − dialler sale dispositions (ViciDial for Cuddle, CallX for Courtesy). Informational, like the dialler count itself — no tolerance band in the spec. Dash when the dialler cannot answer for this agent-day.">Variance (SF vs Dialer)</th><th title="Salesforce GWP (DV02 verdict still colours Status)">Total GWP</th><th>Ave GWP</th><th class="l" title="Click a cell to add or edit — saved with the data, synced to every device">Comments</th><th class="l">Flags</th><th>Status</th><th class="l">Root cause</th>
       </tr></thead><tbody>${trs}</tbody></table></div></div>`;
   }).join('');
 }
@@ -6752,7 +6755,7 @@ function exportVariance(){
 }
 
 PAGES.data=()=>{
-  const typeLabel={bi:'Power BI - Active Cases',calls:'Call records — CallX (retired 1 Sep)',attendance:'Attendance',evals:'QA evaluations',
+  const typeLabel={bi:'Power BI - Active Cases',calls:'Call records — CallX (retired; August history only)',attendance:'Attendance',evals:'QA evaluations',
     roster:'Agent list','open cases':'Open cases — Lead Allocation (removed)','open cases (lead mgmt)':'Open cases — Lead Management','closed cases':'Closed cases (lead funnel)','tracker daily':'Tracker workbook',cancellations:'Cancellations (BI Inactive)','calls (ViciDial)':'ViciDial','vici range':'ViciDial - multi-day aggregate',referrals:'Referrals (HighLevel)',board:'Manual Stats (daily board)'};
 
   // per-slot status from the file registry
