@@ -28,6 +28,10 @@ const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 
 const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json' };
 const REST = env.SUPABASE_URL + '/rest/v1/';
 const FORCE = process.argv.includes('--force'), CHECK = process.argv.includes('--check');
+/* --primary: THIS machine IS the runner (an always-on server, tools/install-server-tick.sh) — run every
+   call in working hours, no waiting for GitHub to go quiet. GitHub's schedule can then be trimmed to the
+   daily jobs its free minutes cover. Nick, 15 Sep: "the github and my pc cannot be always on". */
+const PRIMARY = process.argv.includes('--primary');
 const HOST = 'local:' + os.hostname();
 const SILENT_MIN = 20;                       // the Worker's TICK_OVERDUE_MIN — cron cadence 15 + slack
 const LOG = path.join(ROOT, 'reports', 'tick-local.log');
@@ -43,7 +47,7 @@ try { const v = (cur && cur.value) || {}; doc = v.steps ? v : (v.data ? JSON.par
 const TICK = ['agent-digest', 'ops-relay', 'nba-digest'];
 const newest = TICK.map((k) => Date.parse((doc.steps[k] || {}).ranAt || 0) || 0).reduce((a, b) => Math.max(a, b), 0);
 const silentMin = newest ? Math.round((Date.now() - newest) / 60000) : null;
-const due = FORCE || (working && (silentMin == null || silentMin > SILENT_MIN));
+const due = FORCE || (working && (PRIMARY || silentMin == null || silentMin > SILENT_MIN));
 say('tick newest ' + (newest ? new Date(newest).toISOString() : 'never') + ' · silent ' + silentMin + ' min · working ' + working + ' · ' + (due ? 'RUN' : 'nothing to do'));
 if (CHECK || !due) process.exit(0);
 
