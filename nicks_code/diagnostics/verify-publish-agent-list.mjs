@@ -126,7 +126,10 @@ try {
   head('E · INTEGRITY: THE LIST, THE LOGINS AND THE CAMPAIGNS AGREE');
   const integ = async () => Object.fromEntries((await q(`select check_name, failures, severity from agent_list_integrity`)).map((r) => [r.check_name, r]));
   let I = await integ();
-  ok(Object.keys(I).length === 6, 'six sentence-checks', Object.keys(I).join(' | '));
+  /* seven since migration-037 (2026-09-10): the Wimpy app grant is the seventh sentence. */
+  ok(Object.keys(I).length === 7, 'seven sentence-checks', Object.keys(I).join(' | '));
+  ok(I['active agent login without the Wimpy app'] && I['active agent login without the Wimpy app'].severity === 'warning',
+    'the Wimpy grant check exists and is a warning, not critical');
   ok(I['agent on the latest list with no active login'].failures === 0, 'every agent on the list has a login');
   ok(I['agent login that is not on the latest list'].failures === 0, 'no login is off the list');
   ok(I['campaign on the latest list that does not exist'].failures === 0 && I['campaign that the latest list does not carry'].failures === 0, 'campaigns agree both ways');
