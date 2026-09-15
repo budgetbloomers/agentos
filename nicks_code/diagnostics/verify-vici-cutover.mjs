@@ -81,9 +81,11 @@ console.log('\n== PULSE — the station refuses retired days, Vici fills the cal
   });
 
   ok('MTD_RULES.callxRetired matches the spec', out.cut === SPEC_CUT && !!SPEC_CUT, `${out.cut} vs ${SPEC_CUT}`);
-  ok('pre-cutover CallX day loads (history corrections stay possible)', out.augTalk === 120, 'talk=' + out.augTalk);
+  /* EVERY CallX row is refused since 2026-09-15 (Nick: "remove all records because it all comes from vici
+     dial now not call x") — a pre-cutover day no longer loads as a history correction either. */
+  ok('pre-cutover CallX day does NOT load (Call Records are retired whole)', out.augTalk == null, 'talk=' + out.augTalk);
   ok('post-cutover CallX day is REFUSED', !out.sepLoaded);
-  ok('the refusal is registered, never silent (retired count on the file entry)', out.regRetired === 1, String(out.regRetired));
+  ok('the refusal is registered, never silent (retired count = every row on the file entry)', out.regRetired === 2, String(out.regRetired));
   ok('post-cutover Vici talk lands in the call book', out.viciTalk === 200, 'talk=' + out.viciTalk);
   ok('…flagged as Vici-sourced (v:1)', out.viciV === 1, 'v=' + out.viciV);
   ok('PULSE: no page errors', !errs.length, errs.join(' | '));
@@ -137,9 +139,9 @@ console.log('\n== Ops — intake gate, scoring union, page series ==');
   });
 
   ok('CALLX_RETIRED matches the spec', out.cut === SPEC_CUT, `${out.cut} vs ${SPEC_CUT}`);
-  ok('intake keeps pre-cutover CallX rows', out.preRows === 1, String(out.preRows));
+  ok('intake refuses pre-cutover CallX rows too (Call Records retired whole, 2026-09-15)', out.preRows === 0, String(out.preRows));
   ok('intake refuses post-cutover CallX rows', out.postRows === 0, String(out.postRows));
-  ok('the batch audit records the refusal count', out.refusedInBatch === 2, String(out.refusedInBatch));
+  ok('the batch audit records the refusal count (every row)', out.refusedInBatch === 3, String(out.refusedInBatch));
   ok('September scoring reads the Vici row (talk driver exists)', out.sepSec === 200 && out.sepN === 1 && out.sepDays === 1,
     JSON.stringify({ sec: out.sepSec, n: out.sepN, days: out.sepDays }));
   ok('August scoring does NOT move (pre-cutover Vici stays out of C.call)', !out.augInCall);

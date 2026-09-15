@@ -97,6 +97,20 @@ list. Every Upload Station slot shows its newest archived file.
 
 ---
 
+## 3b · Second audit run — 15 Sep, 18:30 SAST (after the reversal, the CallX purge and Top performers)
+
+Nick: "go again and do an audit as well to make sure the correct data is showing." Twenty-four suites over the
+live data and the deployed builds, all green: VAS MTD 18, all tabs 50 (identity chain + money reconciliation),
+controls 89, agent cards 896, composite recompute 4,244, departures 20 (leavers OFF), engine rules 43, Saturday
+33, history 39, Vici cutover 16 (every CallX row refused), agent portal 86 (Top performers bounded, nobody else
+named), agent analytics 140, agent sync 80, publish-agent-list 60, store freshness 42, composite score 52, rule
+constants 8, lead book 29, Wimpy 169, rake 38, no-duplicates 14, upload formats 32, password lifecycle 19; live
+CORS 13, live save 5. Live state: 129 agents on the 15 Sep list; ViciDial, sales and attendance all reach 14 Sep
+(current — by 13:00 SAST a source carries yesterday); digest republished 69 agents, current list only.
+Open: one warning banner — Charlotte Govender (team leader on the list, no CB, no login). The hand-run
+`verify-agent-progress` sweep is stale since 7 Sep (it mocks the API the Worker now decides the checks on) and
+is marked superseded by `verify-agent-card`.
+
 ## 4 · Order of work — status at 15 Sep, 16:40 SAST
 
 1. ~~Leavers keep their days (1.1)~~ built, then **reversed by Nick the same afternoon** — leavers are off the reports; only the current list counts. The Vici slot's "· 14 days" (days covered) read as staleness and now says "covers 08-25 → 09-14 (14 days of data)".

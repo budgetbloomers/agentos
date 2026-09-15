@@ -53,7 +53,21 @@ const FLOOR_EX = TH.gwpFloor / 1.15;
 console.log('digest: ' + (digest.agents || []).length + ' agents · period ' + digest.period.from + '..' + digest.period.to);
 
 /* ---- serve the real page ---- */
-const server = http.createServer((q, s) => { s.writeHead(200, { 'Content-Type': 'text/html' }); fs.createReadStream(HTML).pipe(s); });
+/* SUPERSEDED (2026-09-15 audit). Since "one number, one verdict" (2026-09-07) the two checks are DECIDED
+   BY THE WORKER (me.checks on /api/portal/overview) and the page only paints them; this sweep mocks every
+   /api/** route, so no checks ever arrive and the value/volume assertions read empty for every agent.
+   The coverage lives in verify-agent-card.mjs (every rated agent's card vs the engine, nightly) and
+   verify-agent-portal.mjs (scoping + payload). Kept for its Today-tab and NaN sweeps; not in the nightly list. */
+/* The page has loaded /xlsx.full.min.js since the Reports export (2026-09-11); a server that answered
+   every path with the HTML made the browser parse markup as a script ("Unexpected token '<'") and the
+   whole sweep read as 138 failures for a reason that had nothing to do with any agent's numbers. */
+const XLSX_JS = path.join(REPO, 'site', 'xlsx.full.min.js');
+const server = http.createServer((q, s) => {
+  const p = q.url.split('?')[0];
+  if (p === '/xlsx.full.min.js' && fs.existsSync(XLSX_JS)) { s.writeHead(200, { 'Content-Type': 'text/javascript' }); fs.createReadStream(XLSX_JS).pipe(s); return; }
+  if (p !== '/' && p !== '/index.html') { s.writeHead(404); s.end(); return; }
+  s.writeHead(200, { 'Content-Type': 'text/html' }); fs.createReadStream(HTML).pipe(s);
+});
 await new Promise(r => server.listen(8143, '127.0.0.1', r));
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
