@@ -1088,10 +1088,25 @@ export default {
           return json({ accepted: false, reason: 'an older list never replaces a newer one',
             fingerprint: prev.fingerprint, as_of: prev.as_of, yours: asOf });
         /* PLAN: derive the roster, nothing written */
+        /* A REFUSAL IS RECORDED, NOT JUST ANSWERED (2026-09-15). Five daily lists were refused in
+           a row and nobody knew: the reply went to one tab as a toast. kv:roster-refused holds the
+           last refusal — file, uploader, stage, the named errors — until a publish is accepted;
+           the health cron turns it into the agent-list-not-published alert in both apps. */
+        const namedErrors = (p) => { const out = []; const walk = (v) => { if (!v) return; if (typeof v === 'string') out.push(v);
+            else if (Array.isArray(v)) v.forEach(walk); else if (typeof v === 'object') { if (v.cb && v.names) out.push(v.cb + ' appears ' + (v.n || v.names.length) + ' times as ' + v.names.map((s) => '"' + s + '"').join(' and ')); else if (v.errors) walk(v.errors); } };
+          walk(p && p.agents && p.agents.errors); walk(p && p.errors); return out.slice(0, 6); };
+        const recordRefusal = async (p, reason) => {
+          const rec = { at: now, file: String(body.file || '').slice(0, 120), actor, stage: (p && p.stage) || 'agents', reason,
+            detail: (p && p.detail) || '', errors: namedErrors(p) };
+          await DB.insert('rules', [{ key: 'kv:roster-refused', value: { data: JSON.stringify(rec) }, updated_by: actor, updated_at: now }], true).catch(() => {});
+          return rec;
+        };
         const plan = await publishAgentList(DB, raw, { asOf, actor, planOnly: true });
-        if (!plan || (plan.status !== 'PLAN' && plan.status !== 'NEEDS_HASHES'))
-          return json({ accepted: false, reason: (plan && (plan.reason || plan.status)) || 'the publish returned nothing',
-            stage: plan && plan.stage, detail: plan && plan.detail, publish: plan }, 200);
+        if (!plan || (plan.status !== 'PLAN' && plan.status !== 'NEEDS_HASHES')) {
+          const reason = (plan && (plan.reason || plan.status)) || 'the publish returned nothing';
+          const refusal = await recordRefusal(plan, reason);
+          return json({ accepted: false, reason, stage: plan && plan.stage, detail: plan && plan.detail, errors: refusal.errors, publish: plan }, 200);
+        }
         const clean = Array.isArray(plan.roster) ? plan.roster : [];
         if (!clean.length) return json({ accepted: false, reason: 'no agent rows in the file — never stored', publish: plan }, 200);
         let h = 0x811c9dc5;                                   // same FNV-1a the GET fingerprint uses
@@ -1103,10 +1118,13 @@ export default {
             on_file: plan.on_file, dropped: plan.dropped || [] });
         /* APPLY: logins, leader views, campaigns — all or nothing */
         const out = await publishAgentList(DB, raw, { asOf, actor, fingerprint: fp });
-        if (!out || out.status !== 'SUCCESS')
-          return json({ accepted: false, reason: (out && (out.reason || out.status)) || 'the publish returned nothing',
-            stage: out && out.stage, detail: out && out.detail, on_file: out && out.on_file, dropped: (out && out.dropped) || [],
-            publish: out }, 200);
+        if (!out || out.status !== 'SUCCESS') {
+          const reason = (out && (out.reason || out.status)) || 'the publish returned nothing';
+          const refusal = await recordRefusal(out, reason);
+          return json({ accepted: false, reason, stage: out && out.stage, detail: out && out.detail, errors: refusal.errors,
+            on_file: out && out.on_file, dropped: (out && out.dropped) || [], publish: out }, 200);
+        }
+        await DB.del('rules?key=eq.' + encodeURIComponent('kv:roster-refused')).catch(() => {});   // accepted: the refusal is over
         const rec = { v: 1, fingerprint: fp, as_of: asOf, n: clean.length, roster: clean,
           on_file: out.on_file, dropped: (out.dropped || []).length,
           file: String(body.file || '').slice(0, 120), source: String(body.source || '').slice(0, 16),

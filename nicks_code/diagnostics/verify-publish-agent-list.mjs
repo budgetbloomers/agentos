@@ -123,6 +123,25 @@ try {
   ok(rawDropped.length === 3 && rawDropped.every((r) => r.why), '…with the dropped rows marked and their reasons', JSON.stringify(rawDropped));
   ok((await one(`select count(*)::int n from agent_list_raw where as_of = $1 and sheet = 'VT' and campaign = 'VT'`, [ASOF])).n === 4, '…and the VT rows classified VT');
 
+  head('D2 · A LEGACY SHEET IS NOT THE RECORD (migration-039)');
+  {
+    /* The workbook's frozen "May" tab spells CB156 differently from the live "VAS" tab. Posted
+       together (which PULSE does — every row of every sheet), the duplicate rule refused five
+       daily lists in a row (10–14 Sep 2026). The legacy tab must lose to the live one, named. */
+    const live = file.slice(0, 26).map((r) => ({ ...r, sheet: 'VAS' }));
+    const legacy = [{ ...file[0], sheet: 'May', name: 'Test Agent 1 Misspelt', sf: 'Test Agent 1 Misspelt', campaign: 'Courtesy Calls' },
+      { ...file[1], sheet: 'Sheet1' }, { ...row(900, 'Courtesy'), sheet: 'May' }];   // one duplicate spelt differently, one exact twin, one May-only leaver
+    const p = await publish([...legacy, ...live], { asOf: ASOF });
+    ok(p.status === 'PLAN', 'a live sheet plus a legacy month-named sheet PLANS instead of being refused as a duplicate', p.status + ' ' + JSON.stringify(p.detail || p.reason || '').slice(0, 120));
+    ok((p.roster || []).length === 26, 'the roster is the live sheet alone (26)', String((p.roster || []).length));
+    const dropped = (p.dropped || []).filter((d) => /legacy sheet/.test(d.why));
+    ok(dropped.length === 3 && dropped.every((d) => /^(May|Sheet1)$/.test(d.sheet)), 'all three legacy rows are dropped with the reason named', JSON.stringify(dropped.map((d) => d.sheet + ':' + d.code + ':' + d.why)));
+    ok(!(p.roster || []).some((a) => a.code === 'CB900900'), 'a person on the legacy tab only is NOT resurrected onto the roster');
+    ok((p.roster || []).find((a) => a.code === 'CB900001').name === file[0].sf, 'the live tab’s spelling is the one kept');
+    const only = await publish(legacy.slice(0, 1).concat([{ ...row(2, 'Courtesy'), sheet: 'May' }]).concat(Array.from({ length: 24 }, (_, i) => ({ ...row(10 + i, 'Courtesy'), sheet: 'May' }))), { asOf: ASOF });
+    ok(only.status === 'PLAN' && (only.roster || []).length === 26, 'a file that is ONLY a legacy-format sheet is still taken whole (an old-format list)', only.status + ' ' + (only.roster || []).length);
+  }
+
   head('E · INTEGRITY: THE LIST, THE LOGINS AND THE CAMPAIGNS AGREE');
   const integ = async () => Object.fromEntries((await q(`select check_name, failures, severity from agent_list_integrity`)).map((r) => [r.check_name, r]));
   let I = await integ();

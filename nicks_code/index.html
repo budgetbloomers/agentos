@@ -2477,13 +2477,16 @@ const INGEST={
           if(j&&j.accepted===false&&/older list/.test(j.reason||''))
             toast('This Agent List is dated '+(asOf||'?')+' and the suite already has one from '
               +(j.as_of||'?')+' — the newer list is being kept. Upload the latest list if that is wrong.',12000);
-          else if(j&&j.accepted){ reportListSync(j.sync); reportListPublish(j);
+          else if(j&&j.accepted){ if(S.rosterRefused){ S.rosterRefused=null; save(); } reportListSync(j.sync); reportListPublish(j);
             /* ADOPT THE RECORD. The server derived the roster from the whole file; what this
                tab classified is a preview. Pull the record now so this screen shows exactly
                what every other app shows. */
             if(j.roster&&j.roster.length) setTimeout(function(){try{adoptRosterFromRecord({roster:j.roster,fingerprint:j.fingerprint,as_of:j.as_of,source:'record'})}catch(e){}},800); }
-          else if(j&&j.accepted===false&&j.publish) reportListRefused(j);
-        }).catch(function(){});
+          else if(j&&j.accepted===false&&j.publish) reportListRefused(Object.assign({file:name},j));
+          /* an answer that is neither (a 4xx/5xx became null above, or an unlisted refusal) is
+             still a list that did not publish — say so rather than nothing */
+          else if(!j||(j.accepted===false&&!/identical list/.test(j.reason||''))) reportListRefused({file:name,reason:(j&&j.reason)||'the server did not accept the list (no reply)',detail:(j&&j.detail)||''});
+        }).catch(function(){ reportListRefused({file:name,reason:'the publish request failed (network)',detail:''}); });
     }catch(e){} },3000);
     // the agent list is a LIVE SNAPSHOT, not history — a new upload supersedes any earlier
     // agent-list file in the registry (kept per-file, so a multi-sheet workbook's own roster
@@ -5960,7 +5963,7 @@ PAGES.mtd=()=>{
     return `<div class="card mt"><div class="cardhead"><div><h3>${CAMPLAB[camp]||camp} — team leaders</h3></div></div>${tableHTML(cols,metricRows)}</div>`;
   };
   return `
-  ${listAppliedBanner()}${grainWarn}${diallerWarning()}${coverageNote()}<div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialling day${M.diallingDays===1?'':'s'}${S.ui.asAt?' · <b>as at '+esc(S.ui.asAt)+'</b>':''} · sorted by SPD</div>
+  ${listRefusedBanner()}${listAppliedBanner()}${grainWarn}${diallerWarning()}${coverageNote()}<div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialling day${M.diallingDays===1?'':'s'}${S.ui.asAt?' · <b>as at '+esc(S.ui.asAt)+'</b>':''} · sorted by SPD</div>
     <div class="spacer"></div><button class="btn small" onclick="exportTracker()">${I.download}<span>Generate MTD tracker</span></button><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
   <div class="chiprow" style="margin-bottom:14px">
     ${[...CAMPS.map(c=>[c,CAMPLAB[c]||c]),['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}${camp0&&t!==camp0?' off':''}" ${camp0&&t!==camp0?'disabled title="the header Campaign filter is set to '+esc(CAMPLAB[camp0]||camp0)+'"':''} onclick="S.ui.mtdSub='${t}';saveUI();renderPage()">${esc(l)}</button>`).join('')}
@@ -6682,7 +6685,7 @@ PAGES.data=()=>{
     ${un.map(([k,v])=>`<tr><td class="l"><code>${esc(k)}</code></td><td class="l">${v.src}</td><td>${v.n}${v.gwp?' · R'+fmtNum(v.gwp):''}</td>
       <td class="l"><select onchange="mapIdentity(this.dataset.k,this.value)" onfocus="fillAgentOptions(this)" data-k="${esc(k)}"><option value="">— choose —</option><option value="__ignore__">Ignore</option></select></td></tr>`).join('')}
     </tbody></table></div></div>`:'';
-  return `${listAppliedBanner()}${staleGrainBanner()}<div class="page-head"><h2>Upload station</h2>
+  return `${listRefusedBanner()}${listAppliedBanner()}${staleGrainBanner()}<div class="page-head"><h2>Upload station</h2>
     <div class="sub">one slot per file — drop the file on its slot or click Choose file. Renamed files are fine: the type is confirmed from the file's own columns, and anything dropped on the wrong slot gets filed correctly with a heads-up.</div></div>
   <div class="slots">${slotCards}</div>
   ${largeFileCard()}
@@ -7906,9 +7909,28 @@ function reportListPublish(j){
 }
 /* The server refused the whole publish — all or nothing, so NOTHING moved: not the roster,
    not a login, not a campaign. Said as loudly as a success, with the stage and the reason. */
+/* A REFUSAL IS A STATE, NOT A TOAST (2026-09-15). Five uploads in a row (10–14 Sep) were refused —
+   the workbook's legacy "May" tab spelt CB156 differently from the live tab — and each one showed
+   for twenty seconds in the uploader's tab and was gone. The suite ran five days on an 8 Sep list
+   with the Upload Station reading "Agent List applied". The refusal now persists (S.rosterRefused)
+   until a publish is ACCEPTED, renders as a red banner on Month to date and the Upload Station with
+   the rows named, and the Worker raises the same thing as a health alert for everyone else. */
 function reportListRefused(j){
+  const errs=(j.errors&&j.errors.length)?j.errors:(j.publish&&j.publish.agents&&Array.isArray(j.publish.agents.errors)
+    ?j.publish.agents.errors.flatMap(e=>typeof e==='string'?[e]:(Array.isArray(e)?e.map(d=>d.cb+' appears '+(d.n||'')+' times as '+(d.names||[]).map(s=>'"'+s+'"').join(' and ')):[])):[]);
+  S.rosterRefused={at:new Date().toISOString().slice(0,16).replace('T',' '),file:j.file||'',stage:j.stage||'',
+    detail:j.detail||j.reason||'refused',errors:errs.slice(0,6)};
+  save();
   toast('Agent List NOT published'+(j.stage?' (refused at the '+j.stage+' stage)':'')+' — '+(j.detail||j.reason||'refused')
-    +' No roster, login or campaign was changed; the previous list is still in force.',20000);
+    +(errs.length?' '+errs[0]:'')+' No roster, login or campaign was changed; the previous list is still in force.',20000);
+  try{ renderPage(); }catch(e){}
+}
+function listRefusedBanner(){
+  const r=S.rosterRefused; if(!r) return '';
+  return `<div class="card" style="border-left:3px solid #C42D2D;margin-bottom:14px">
+    <div style="font-size:14px"><b>The last Agent List upload was NOT published</b> (${esc(r.at)}${r.stage?', refused at the '+esc(r.stage)+' stage':''}) — every login, campaign and team view is still on the previous list.</div>
+    <p class="note" style="margin:7px 0 0">${esc(r.detail)}${r.errors&&r.errors.length?' — '+r.errors.map(esc).join('; '):''}.
+    Fix the sheet at source and upload it again in <a class="linky" onclick="go('data')">Upload Station</a>; this notice clears itself when a list is accepted.</p></div>`;
 }
 
 async function adoptRosterFromRecord(given){

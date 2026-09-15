@@ -222,6 +222,29 @@ export function evaluateFreshness(t) {
   /* THE RAKE (Data Rake, Phase 1). A large file received but not picked up within an hour, a file that
      failed three times, or a message in the dead-letter queue is an alert — the station said
      "received", so somebody is waiting for those rows. */
+  /* AN AGENT LIST UPLOADED BUT NOT PUBLISHED (2026-09-15). Five daily uploads (10–14 Sep) were
+     refused by the publish — a legacy sheet duplicated a CB — and the only sign was a 20-second
+     toast in the uploader's tab; the integrity view stayed green because everything downstream
+     agreed with an 8 Sep record. Two signals, either raises: the newest Agent List in the archive
+     is older than the roster of record's own upload stamp by more than the grace, or the Worker
+     recorded a refusal since the last accepted publish (kv:roster-refused). The message names
+     the reason, so the fix is on the sheet, not in a log. */
+  if (t.roster) {
+    const r = t.roster; const GRACE = 90 * 60000;
+    const sast = (m) => new Date(m + 2 * 3600000).toISOString().slice(0, 16).replace('T', ' ') + ' SAST';
+    const newest = ms(r.newestListAt), published = ms(r.recordUploadedAt);
+    const refused = r.refused && r.refused.at ? r.refused : null;
+    const unpublished = newest && (!published || newest - published > GRACE) && now - newest > GRACE;
+    if (refused || unpublished) {
+      const why = refused ? ('The last publish was REFUSED' + (refused.stage ? ' at the ' + refused.stage + ' stage' : '')
+          + (refused.file ? ' ("' + refused.file + '"' + (refused.actor ? ', uploaded by ' + refused.actor : '') + ')' : '')
+          + ': ' + (refused.errors && refused.errors.length ? refused.errors.join('; ') : (refused.detail || 'no reason given')) + '.')
+        : ('An Agent List archived at ' + sast(newest) + ' has not been published; the roster of record is still the list uploaded at ' + (published ? sast(published) : '(never)') + '.');
+      alerts.push({ id: 'agent-list-not-published', severity: 'critical',
+        message: 'The Agent List is NOT coming through: ' + why + ' Every login, campaign and team view is still on the previous list. Fix the sheet and upload it again in the Upload Station.',
+        since: (refused && refused.at) || r.newestListAt });
+    }
+  }
   if (t.rake) {
     const k = t.rake; const bits = [];
     if (k.received_stuck > 0) bits.push(k.received_stuck + ' file' + (k.received_stuck === 1 ? '' : 's') + ' received over an hour ago and not picked up');
@@ -292,9 +315,20 @@ export async function runHealthChecks(DB) {
   let saveFailures = [];
   try { saveFailures = (await DB.select('save_failures?at=gte.' + new Date(Date.now() - HOUR).toISOString() + '&select=at,username,app,key,status&order=at.desc&limit=100')) || []; }
   catch (e) { saveFailures = []; }
+  /* the Agent List: newest upload in the archive vs the roster of record, and any stored refusal */
+  let roster = null;
+  try {
+    const rr = await DB.select('rules?key=in.(' + encodeURIComponent('kv:roster-current,kv:roster-refused,kv:upload-manifest') + ')&select=key,value');
+    const byKey = {}; for (const r of rr || []) byKey[r.key] = r.value;
+    const files = ((byKey['kv:upload-manifest'] || {}).files) || [];
+    const newest = files.filter((f) => /agent list|matrix/i.test(String(f.n || f.name || ''))).map((f) => f.at).sort().pop() || null;
+    const rec = byKey['kv:roster-current'] || {};
+    const refused = byKey['kv:roster-refused'] ? (typeof byKey['kv:roster-refused'].data === 'string' ? JSON.parse(byKey['kv:roster-refused'].data) : byKey['kv:roster-refused']) : null;
+    roster = { newestListAt: newest, recordUploadedAt: rec.uploaded_at || null, refused };
+  } catch (e) { roster = null; }
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);
