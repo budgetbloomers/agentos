@@ -1790,6 +1790,10 @@ function detectType(header, sheetName, recs){
      both carry agent-name columns but neither has Team Leader. */
   if(has('agent name','referral count')) return 'referrals';
   if(has('agent_name','referrals')) return 'referralsAgg';
+  /* THE LEADERS' OWN SHEET (Nick, 2026-09-15): "VAS TL" — Employee Code | Team Leader Name |
+     Sales Manager | Campaign | VICCI Dial. Checked before the roster shape (it has no Agent
+     Name, so it could never have been mistaken for one, but the order says what it is). */
+  if(has('team leader name','employee code')) return 'leaders';
   if(has('team leader','agent name')&&(has('sales force')||has('call x'))) return 'roster';
   if(has('date','team leader','emp code','sales achieved')) return 'trackerDaily';
   return null;
@@ -2498,6 +2502,30 @@ const INGEST={
        the roster is the opposite of a refusal. */
     rosterFileLoaded=true;
     return regFile(name,'roster'+(sheet?' ('+sheet+')':''),[],out.length,{asOf,moved,fresh});
+  },
+  /* THE TEAM LEADERS, FROM THE LIST ITSELF (Nick, 2026-09-15: "the upload matrix list with their cb
+     number — from now this is how it will come — put them in their respected campaigns"). Every row
+     of the "VAS TL" sheet travels to the server in the same post as the agents, marked role='leader';
+     publish_agent_list (migration-040) writes the leader map from it — CB, campaign, sales manager —
+     and sync_team_leaders keeps a login for every leader the sheet names, agents or none. Nothing is
+     classified here beyond the CB; the server is the record. The sheet is also kept locally
+     (S.tlCbs) so the dialler notice can class a leader's login before the round trip. */
+  leaders(recs,name,sheet){
+    if(!rosterRaw||rosterRaw.name!==name) rosterRaw={name,rows:[]};
+    let n=0; const local={};
+    for(const r of recs){
+      const code=String(r['Employee Code']||'').trim(), nm=String(r['Team Leader Name']||'').trim();
+      if(!code||!nm) continue;
+      rosterRaw.rows.push({sheet:sheet||'',role:'leader',code,name:nm,sf:'',tl:'',
+        campaign:String(r['Campaign']||'').trim(),tenure:'',callx:String(r['VICCI Dial']||r['Vicci Dial']||'').trim(),
+        manager:String(r['Sales Manager']||'').trim(),target:null,start:''});
+      const c=cbCode(code); if(c) local[c]=nm; n++;
+    }
+    window.__rosterRaw=rosterRaw;
+    if(!n){ toast('"'+name+'"'+(sheet?' (sheet '+sheet+')':'')+' has the team-leader columns but no rows with both an Employee Code and a Team Leader Name — nothing was taken from it.'); return null; }
+    S.tlCbs=Object.assign({},S.tlCbs||{},local);
+    toast(n+' team leader'+(n===1?'':'s')+' read from "'+(sheet||name)+'" with their CB numbers and campaigns — published with the list.',8000);
+    return regFile(name,'leaders'+(sheet?' ('+sheet+')':''),[],n,{leaders:n});
   },
   trackerDaily(recs,name,sheet){
     const dates=new Set();

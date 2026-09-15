@@ -1021,8 +1021,8 @@ export default {
            filed six of them under "dialler logins the Agent List does not know" — the one bucket
            that tells a person to act. Served here so both apps can class a leader's login as a
            leader, never as a missing agent. */
-        const leaders = (await DB.select('team_leader_cbs?select=leader_name,employee_code').catch(() => null) || [])
-          .filter((l) => l && l.employee_code).map((l) => ({ name: l.leader_name, cb: normCb(l.employee_code) }));
+        const leaders = (await DB.select('team_leader_cbs?select=leader_name,employee_code,campaign,manager,on_list_as_of').catch(() => null) || [])
+          .filter((l) => l && l.employee_code).map((l) => ({ name: l.leader_name, cb: normCb(l.employee_code), campaign: l.campaign || '', manager: l.manager || '', on_list_as_of: l.on_list_as_of || '' }));
         if (rec && Array.isArray(rec.roster) && rec.roster.length && rec.source !== 'seed') {
           return json({ fingerprint: rec.fingerprint, n: rec.roster.length, as_of: rec.as_of || '',
             file: rec.file || '', source: rec.source || '', uploaded_by: rec.uploaded_by || '',
@@ -1110,7 +1110,10 @@ export default {
         const clean = Array.isArray(plan.roster) ? plan.roster : [];
         if (!clean.length) return json({ accepted: false, reason: 'no agent rows in the file — never stored', publish: plan }, 200);
         let h = 0x811c9dc5;                                   // same FNV-1a the GET fingerprint uses
-        for (const s of clean.map((a) => [a.code, a.name, a.tl, a.campaign, a.tenure, a.callx, a.sf, a.target, a.start].join('|')).sort())
+        /* the leaders' sheet is part of the list (migration-040): a file whose only change is a
+           leader's CB, campaign or manager must not read as "identical" and be refused */
+        const leaderRows = raw.filter((r) => r && r.role === 'leader').map((r) => ['L', r.code, r.name, r.campaign, r.manager, r.callx].join('|'));
+        for (const s of clean.map((a) => [a.code, a.name, a.tl, a.campaign, a.tenure, a.callx, a.sf, a.target, a.start].join('|')).concat(leaderRows).sort())
           for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
         const fp = 'list:' + h.toString(16);
         if (prev && prev.fingerprint === fp)

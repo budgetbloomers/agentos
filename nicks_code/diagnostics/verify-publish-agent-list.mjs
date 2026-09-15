@@ -142,6 +142,36 @@ try {
     ok(only.status === 'PLAN' && (only.roster || []).length === 26, 'a file that is ONLY a legacy-format sheet is still taken whole (an old-format list)', only.status + ' ' + (only.roster || []).length);
   }
 
+  head('D3 · THE LEADERS COME ON THE LIST (migration-040, the "VAS TL" sheet)');
+  {
+    /* Nick, 2026-09-15: the workbook now carries the leaders with their CB numbers — "put them in
+       their respected campaigns". A leader on the sheet gets a login even with no agents this month;
+       the map is written from the sheet with campaign and manager; the agent derive never sees them. */
+    /* the WHOLE fixture file (as D published it), so the applies below leave the floor exactly as D left it for F */
+    const live = file.map((r) => ({ ...r, sheet: r.sheet || 'VAS' }));
+    const nLive = (await publish(live, { asOf: ASOF })).roster.length;
+    const sheet = [
+      { sheet: 'VAS TL', role: 'leader', code: 'CB900801', name: 'Test Leader One', campaign: 'Courtesy', manager: 'Test Manager', callx: 'CB900801' },   // leads people on the list
+      { sheet: 'VAS TL', role: 'leader', code: 'CB900809', name: 'Test Leader Nine', campaign: 'Nesting', manager: 'Test Manager', callx: 'CB900809' },   // leads nobody this month
+    ];
+    const p = await publish([...sheet, ...live], { asOf: ASOF });
+    ok(['PLAN', 'NEEDS_HASHES'].includes(p.status), 'a list with a "VAS TL" sheet plans', p.status + ' ' + JSON.stringify(p.detail || p.reason || '').slice(0, 120));
+    ok((p.roster || []).length === nLive && !(p.roster || []).some((a) => /^CB90080/.test(a.code)), 'leader rows never become agents', (p.roster || []).length + ' vs ' + nLive);
+    const need = new Set(p.needs_hashes || []);
+    ok(need.has('CB900809'), 'a leader with NO agents on the list still gets a login from the sheet (hash requested for CB900809)', JSON.stringify([...need]));
+    const hashes = Object.fromEntries([...need].map((cb) => [cb, HASH]));
+    const out = await publish([...sheet, ...live], { asOf: ASOF, apply: true, hashes });
+    ok(out.status === 'SUCCESS', 'applies', out.status + ' ' + JSON.stringify(out.detail || out.reason || '').slice(0, 120));
+    const map = await q(`select leader_name, employee_code, campaign, manager, on_list_as_of::text d from team_leader_cbs where leader_name like 'Test Leader %' order by leader_name`);
+    ok(map.length === 2 && map.every((m) => m.d === ASOF && m.manager === 'Test Manager'), 'the map is written from the sheet, stamped with the list date', JSON.stringify(map));
+    ok(map.find((m) => m.leader_name === 'Test Leader Nine').campaign === 'Nesting' && map.find((m) => m.leader_name === 'Test Leader One').campaign === 'Courtesy', '…with each leader in their respected campaign');
+    const acct = await q(`select username, role, team, active from app_users where username in ('cb900801','cb900809') order by username`);
+    ok(acct.length === 2 && acct.every((a) => a.role === 'team_leader' && a.active), 'both leaders have active team_leader logins, agents or none', JSON.stringify(acct));
+    /* the next publish WITHOUT the sheet (an older-format upload) must not remove the no-agent leader: the map remembers */
+    const again = await publish(live, { asOf: ASOF, apply: true });
+    ok(again.status === 'SUCCESS' && !((again.leaders || {}).removed || []).some((r) => r.username === 'cb900809'), 'a later publish without the sheet keeps the no-agent leader (on_list_as_of remembers)', JSON.stringify((again.leaders || {}).removed));
+  }
+
   head('E · INTEGRITY: THE LIST, THE LOGINS AND THE CAMPAIGNS AGREE');
   const integ = async () => Object.fromEntries((await q(`select check_name, failures, severity from agent_list_integrity`)).map((r) => [r.check_name, r]));
   let I = await integ();
