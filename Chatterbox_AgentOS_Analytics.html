@@ -1922,6 +1922,19 @@ async function syncUploadsFromVAS(){
        whole list and nothing was wrong; the moment the manifest passes forty it becomes a
        permanent relay stall, with new uploads never even considered. Take the newest forty
        and apply them oldest-first, which is what the comment always intended. */
+    /* DECIDED IS NOT THE SAME AS SAVED (2026-09-15). A file is marked decided the moment it is parsed;
+       the store that carries its rows is saved afterwards, and that save can fail — a network blip at
+       20:22 on 15 Sep lost the day's ViciDial rows while the small config save that carried the mark
+       succeeded, so Ops believed it had today's calls and did not. ViciDial's daily files never
+       overlap, so a decided file none of whose rows are in the store is a lost save, not history:
+       its mark is lifted here and the file is fetched and applied again. Other sources supersede by
+       key across files and cannot be judged this way. */
+    { const vici=state.facts.VICI_CALL_REPORT||[]; const batchesIn=new Set(vici.map(r=>r._batch));
+      for(const f of (man.files||[])){ if(!f||!f.h||!seen[f.h]||!/EXPORT_CALL_REPORT|vici/i.test(f.n||'')) continue;
+        const b=(state.batches||[]).find(x=>x.file_name===f.n&&x.source_type==='VICI_CALL_REPORT'&&x.validation_status!=='failed');
+        if(b&&b.loaded_row_count>0&&!batchesIn.has(b.batch_id)){ delete seen[f.h]; }
+        else if(!b&&String(f.at||'')>new Date(Date.now()-3*86400000).toISOString()){ delete seen[f.h]; }   // decided in the last 3 days with no batch at all: the parse never reached the audit
+      } }
     const fresh=(man.files||[]).filter(f=>f&&f.h&&!seen[f.h]).slice(0,40).reverse();   // oldest first, so overlapping exports supersede in the right order
     if(!fresh.length)return;
     /* SAY THAT IT IS CATCHING UP (Nick, 2026-08-28: "when information is uploaded in vas it
