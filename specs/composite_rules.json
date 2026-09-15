@@ -1,258 +1,277 @@
 {
-  "_source": "Chatterbox_Decision_Rules.xlsx — DRIVERS, TENURE_GROUPS, THRESHOLDS, NBA_THRESHOLDS, R2A_TIERS, CX_THRESHOLDS, BANDS",
-  "_generated": "2026-08-31 — regenerated from the operative COMPOSITE_RULES in nicks_code/index.html",
-  "_calibration": {
-    "note": "THE WORKBOOK IS STALE ON TWO POINTS AND THIS FILE FOLLOWS THE APP UNTIL IT IS RE-ISSUED.",
-    "conversionTargets": "Chatterbox_Decision_Rules.xlsx TENURE_GROUPS still carries 8 / 10 / 12 / 40, which pre-date this engine holding any lead data and were never calibrated against sales divided by UNIQUE LEADS — the only conversion it can compute. Measured over the live floor before the change: not one agent in any group reached the old target, so the driver was a flat penalty rather than a measure, and the spec own open decision had already flagged the EXP-Cuddle 40% as unusable. Nick, 2026-08-30: reset to what the floor actually achieves. Medians when set: Courtesy 5.4, M1 2.2, M2 3.9, Cuddle 26.4, Nesting 1.5.",
-    "nestingGroup": "The workbook has no Nesting row. Sixteen live agents sat outside every group, so they carried no GWP floor and no conversion target and were measured as nothing rather than as failing.",
-    "action": "Re-issue Chatterbox_Decision_Rules.xlsx with these values so the workbook is the source again; diagnostics/verify-composite-score.mjs now fails if this file and the app diverge on tenure groups.",
-    "gwpFloorCentBasis": "2026-09-03 scoring audit: min_gwp_per_sale is R99 INCL VAT, but Salesforce books a R99 product's ex-VAT charge as R86,08 while R99 ÷ 1.15 = 86,0869. Compared raw, an agent whose every sale WAS the R99 product read 'To go' at 25/25 points (30 of 59 rated agents) and Total GWP fell cents short of a met target; on the Ops side R4 GWP Value Failure would fire on the same people. Both engines now take the floor down to the cent ex-VAT (Math.floor(99/1.15*100)/100) — the basis the money is stored on — and the Ops ladder grosses that back up through vatRate. The rule value (99) is unchanged."
+ "_source": "Chatterbox_Decision_Rules.xlsx — DRIVERS, TENURE_GROUPS, THRESHOLDS, NBA_THRESHOLDS, R2A_TIERS, CX_THRESHOLDS, BANDS",
+ "_generated": "2026-08-31 — regenerated from the operative COMPOSITE_RULES in nicks_code/index.html",
+ "_calibration": {
+  "note": "THE WORKBOOK IS STALE ON TWO POINTS AND THIS FILE FOLLOWS THE APP UNTIL IT IS RE-ISSUED.",
+  "conversionTargets": "Chatterbox_Decision_Rules.xlsx TENURE_GROUPS still carries 8 / 10 / 12 / 40, which pre-date this engine holding any lead data and were never calibrated against sales divided by UNIQUE LEADS — the only conversion it can compute. Measured over the live floor before the change: not one agent in any group reached the old target, so the driver was a flat penalty rather than a measure, and the spec own open decision had already flagged the EXP-Cuddle 40% as unusable. Nick, 2026-08-30: reset to what the floor actually achieves. Medians when set: Courtesy 5.4, M1 2.2, M2 3.9, Cuddle 26.4, Nesting 1.5.",
+  "nestingGroup": "The workbook has no Nesting row. Sixteen live agents sat outside every group, so they carried no GWP floor and no conversion target and were measured as nothing rather than as failing.",
+  "action": "Re-issue Chatterbox_Decision_Rules.xlsx with these values so the workbook is the source again; diagnostics/verify-composite-score.mjs now fails if this file and the app diverge on tenure groups.",
+  "gwpFloorCentBasis": "2026-09-03 scoring audit: min_gwp_per_sale is R99 INCL VAT, but Salesforce books a R99 product's ex-VAT charge as R86,08 while R99 ÷ 1.15 = 86,0869. Compared raw, an agent whose every sale WAS the R99 product read 'To go' at 25/25 points (30 of 59 rated agents) and Total GWP fell cents short of a met target; on the Ops side R4 GWP Value Failure would fire on the same people. Both engines now take the floor down to the cent ex-VAT (Math.floor(99/1.15*100)/100) — the basis the money is stored on — and the Ops ladder grosses that back up through vatRate. The rule value (99) is unchanged."
+ },
+ "version": "nba-3.0+coaching-1.0",
+ "floor": 0.5,
+ "windowSessions": 5,
+ "attendanceWindow": "scheduled",
+ "convMinDataDays": 1,
+ "_scoringNotes": {
+  "attendanceWindow": "2026-09-03 audit: attendance is averaged over the last windowSessions SCHEDULED shifts (rows with an employed shift, worked or not). Over WORKED sessions it was 100% for every agent by construction — a driver that could not fail.",
+  "convMinDataDays": "2026-09-07 (Nick: their conversion must show — scored from the first data day). Was 5 from the 3 Sep audit, because conversion (MTD sales ÷ the month's open leads) ramps through the month and day-2 figures failed 56/59 agents; the card's note still says so. Previously: SHOWN but not scored until the month carried this many working days of data; on day 2 of a month 56 of 59 agents failed it by construction. The other drivers renormalise, as for any unmeasured driver.",
+  "windowConfirmedOnly": "2026-09-15 (Nick: \"go over all the agent ratings because I feel something is wrong\"): the five sessions are CONFIRMED ones. A session whose sales are provisional — dialler Sale Made dispositions priced at the placeholder R89 because the day's BI file has not landed — was inside 62 of 69 windows every evening, pulling Avg GWP per Sale under the floor for 58 agents and inflating Target Achievement; the next morning's BI file corrected it. A provisional session is shown on the card (Sales by session) and rated once its money is confirmed.",
+  "convSalesOverLeads": "2026-09-15: when an agent has more BI sales than leads on record (two cards read 457 % and 153 %), conversion is unmeasured for the month — renormalised, with the reason on the card — never printed as a percentage over 100."
+ },
+ "drivers": [
+  {
+   "k": "gwpSale",
+   "label": "Avg GWP per Sale",
+   "w": 25,
+   "note": "What the average sale you write is worth to the business.",
+   "appNote": "Check 1, scored independently of volume."
   },
-  "version": "nba-3.0+coaching-1.0",
-  "floor": 0.5,
-  "windowSessions": 5,
-  "attendanceWindow": "scheduled",
-  "convMinDataDays": 1,
-  "_scoringNotes": {
-    "attendanceWindow": "2026-09-03 audit: attendance is averaged over the last windowSessions SCHEDULED shifts (rows with an employed shift, worked or not). Over WORKED sessions it was 100% for every agent by construction — a driver that could not fail.",
-    "convMinDataDays": "2026-09-07 (Nick: their conversion must show — scored from the first data day). Was 5 from the 3 Sep audit, because conversion (MTD sales ÷ the month's open leads) ramps through the month and day-2 figures failed 56/59 agents; the card's note still says so. Previously: SHOWN but not scored until the month carried this many working days of data; on day 2 of a month 56 of 59 agents failed it by construction. The other drivers renormalise, as for any unmeasured driver."
+  {
+   "k": "targetAch",
+   "label": "Target Achievement",
+   "w": 20,
+   "note": "How close your daily sales come to your target.",
+   "appNote": "Check 2, daily sales against the tenure target."
   },
-  "drivers": [
-    {
-      "k": "gwpSale",
-      "label": "Avg GWP per Sale",
-      "w": 25,
-      "note": "What the average sale you write is worth to the business.",
-      "appNote": "Check 1, scored independently of volume."
-    },
-    {
-      "k": "targetAch",
-      "label": "Target Achievement",
-      "w": 20,
-      "note": "How close your daily sales come to your target.",
-      "appNote": "Check 2, daily sales against the tenure target."
-    },
-    {
-      "k": "qa",
-      "label": "QA Score",
-      "w": 20,
-      "note": "Your call quality score. A critical fail scores that call zero.",
-      "appNote": "Critical-fail calls are scored 0 and included."
-    },
-    {
-      "k": "gwpTotal",
-      "label": "Total GWP",
-      "w": 15,
-      "note": "The total value you have written this period against your own target.",
-      "appNote": "Against the agent’s own period GWP target."
-    },
-    {
-      "k": "conv",
-      "label": "Conversion",
-      "w": 10,
-      "note": "Out of every 100 leads you get, how many become a sale.",
-      "appNote": "Against the tenure conversion target."
-    },
-    {
-      "k": "talk",
-      "label": "Talk Time",
-      "w": 5,
-      "note": "Minutes on the phone on the days you work.",
-      "appNote": "Per attended day."
-    },
-    {
-      "k": "attendance",
-      "label": "Attendance",
-      "w": 5,
-      "note": "Being here, on time, for the whole session.",
-      "appNote": "Enables call days."
-    }
-  ],
-  "targets": {
-    "targetAch": 100,
-    "qa": 90,
-    "talk": 210,
-    "attendance": 95
+  {
+   "k": "qa",
+   "label": "QA Score",
+   "w": 20,
+   "note": "Your call quality score. A critical fail scores that call zero.",
+   "appNote": "Critical-fail calls are scored 0 and included."
   },
-  "tenureGroups": [
-    {
-      "key": "m0",
-      "label": "M0",
-      "tenure": "M0",
-      "campaign": "",
-      "dailySales": 3,
-      "minGwpSale": 99,
-      "convTarget": 3
-    },
-    {
-      "key": "m1",
-      "label": "M1",
-      "tenure": "M1",
-      "campaign": "",
-      "dailySales": 3,
-      "minGwpSale": 99,
-      "convTarget": 3
-    },
-    {
-      "key": "m2",
-      "label": "M2",
-      "tenure": "M2",
-      "campaign": "",
-      "dailySales": 4,
-      "minGwpSale": 99,
-      "convTarget": 5
-    },
-    {
-      "key": "exp_court",
-      "label": "EXP – Courtesy",
-      "tenure": "Experienced",
-      "campaign": "courtesy",
-      "dailySales": 5,
-      "minGwpSale": 99,
-      "convTarget": 7
-    },
-    {
-      "key": "exp_cudd",
-      "label": "EXP – Cuddle",
-      "tenure": "Experienced",
-      "campaign": "cuddle",
-      "dailySales": 8,
-      "minGwpSale": 99,
-      "convTarget": 30
-    },
-    {
-      "key": "nesting",
-      "label": "Nesting",
-      "tenure": "",
-      "campaign": "nesting",
-      "dailySales": null,
-      "minGwpSale": 99,
-      "convTarget": 3
-    }
-  ],
-  "gwpFloorDefault": 99,
-  "r2aTiers": [
-    {
-      "tier": "R2A-3",
-      "rule": "Critical Compliance Fail",
-      "level": 1,
-      "failsMin": 4,
-      "failsMax": null,
-      "cfrMin": 30,
-      "cfrMax": null,
-      "penalty": 0,
-      "elite": "Blocked"
-    },
-    {
-      "tier": "R2A-2",
-      "rule": "Compliance Risk",
-      "level": 2,
-      "failsMin": 2,
-      "failsMax": 3,
-      "cfrMin": 10,
-      "cfrMax": 30,
-      "penalty": 0,
-      "elite": "Blocked"
-    },
-    {
-      "tier": "R2A-1",
-      "rule": "Compliance Note",
-      "level": 3,
-      "failsMin": 1,
-      "failsMax": 1,
-      "cfrMin": 0,
-      "cfrMax": 10,
-      "penalty": 0,
-      "elite": "Retained"
-    },
-    {
-      "tier": "Tier 0",
-      "rule": "Clean",
-      "level": 0,
-      "failsMin": 0,
-      "failsMax": 0,
-      "cfrMin": 0,
-      "cfrMax": 0,
-      "penalty": 0,
-      "elite": "Eligible"
-    }
-  ],
-  "r2aCap": 10,
-  "cx": {
-    "windowDays": 30,
-    "repeatMin": 2,
-    "persistentMin": 5,
-    "penRepeat": 2,
-    "penPersistent": 5,
-    "penCap": 5,
-    "minConf": 0.6,
-    "staleDays": 14
+  {
+   "k": "gwpTotal",
+   "label": "Total GWP",
+   "w": 15,
+   "note": "The total value you have written this period against your own target.",
+   "appNote": "Against the agent’s own period GWP target."
   },
-  "combinedCap": 15,
-  "bands": [
-    {
-      "label": "Elite",
-      "min": 90
-    },
-    {
-      "label": "Strong",
-      "min": 80
-    },
-    {
-      "label": "On track",
-      "min": 70
-    },
-    {
-      "label": "Building",
-      "min": 60
-    },
-    {
-      "label": "Needs support",
-      "min": 0
-    }
-  ],
-  "_driver_notes": "note = the workbook DRIVERS tab plain_english column, which is what an agent is shown. appNote = the app internal shorthand, kept beside it rather than overwriting the workbook prose.",
-  "_removed_signIn": "THE SIGN-IN BONUS WAS REMOVED 2026-08-31 (Nick: \"remove the five points that the agent gets for logging in\"). It ran from 2026-08-28: one point per weekday an agent opened Agent Analytics, capped at 5, added AFTER the deductions and never weighted as an eighth driver. The adjusted score is now the composite less its deductions and nothing else. Nothing in the workbook ever carried it, so there is nothing to re-issue; this line is the record that it existed and why it went.",
-  "_changes": [
-    {
-      "date": "2026-09-03",
-      "by": "Nick / audit",
-      "key": "attendanceWindow",
-      "from": "worked",
-      "to": "scheduled",
-      "why": "attendance over worked sessions was 100% by definition"
-    },
-    {
-      "date": "2026-09-03",
-      "by": "Nick / audit",
-      "key": "convMinDataDays",
-      "from": 0,
-      "to": 5,
-      "why": "day-2 conversion failed 56/59 agents; shown, not scored until the 5th data day"
-    },
-    {
-      "date": "2026-09-07",
-      "by": "Nick",
-      "key": "convMinDataDays",
-      "from": 5,
-      "to": 1,
-      "why": "\"their conversion must show\" — scored from the first data day"
-    },
-    {
-      "date": "2026-09-10",
-      "by": "Nick / nightly verification",
-      "key": "tenureGroups",
-      "from": "no M0 group",
-      "to": "M0 measured under the M1 targets (3 sales/day, R99 floor, 3% conversion)",
-      "why": "the 8 Sep Agent List carries M0 (first month) on Courtesy for the first time — CB330/CB332/CB334 were rated with no group, so no GWP floor and no conversion target; verify-composite-recompute failed nightly. M0 is the spec vocabulary (mtd_engine_rules Tenure allowed_values). Targets mirror M1 pending a matrix row from Nick."
-    },
-    {
-      "date": "2026-09-11",
-      "by": "Nick",
-      "key": "r2aTiers[].penalty",
-      "from": "R2A-3:10, R2A-2:5, R2A-1:2, Tier 0:0",
-      "to": "0 for every tier",
-      "why": "\"nba priority rules must not affect the agent scores\" — the R2A critical-fail tier (NBA priority rule 2A) still classifies (tier, elite eligibility travel for coaching) but deducts nothing; adj equals the composite. 31 of 83 rated agents were carrying 2–10 points off on 10 Sep."
-    }
-  ]
+  {
+   "k": "conv",
+   "label": "Conversion",
+   "w": 10,
+   "note": "Out of every 100 leads you get, how many become a sale.",
+   "appNote": "Against the tenure conversion target."
+  },
+  {
+   "k": "talk",
+   "label": "Talk Time",
+   "w": 5,
+   "note": "Minutes on the phone on the days you work.",
+   "appNote": "Per attended day."
+  },
+  {
+   "k": "attendance",
+   "label": "Attendance",
+   "w": 5,
+   "note": "Being here, on time, for the whole session.",
+   "appNote": "Enables call days."
+  }
+ ],
+ "targets": {
+  "targetAch": 100,
+  "qa": 90,
+  "talk": 210,
+  "attendance": 95
+ },
+ "tenureGroups": [
+  {
+   "key": "m0",
+   "label": "M0",
+   "tenure": "M0",
+   "campaign": "",
+   "dailySales": 3,
+   "minGwpSale": 99,
+   "convTarget": 3
+  },
+  {
+   "key": "m1",
+   "label": "M1",
+   "tenure": "M1",
+   "campaign": "",
+   "dailySales": 3,
+   "minGwpSale": 99,
+   "convTarget": 3
+  },
+  {
+   "key": "m2",
+   "label": "M2",
+   "tenure": "M2",
+   "campaign": "",
+   "dailySales": 4,
+   "minGwpSale": 99,
+   "convTarget": 5
+  },
+  {
+   "key": "exp_court",
+   "label": "EXP – Courtesy",
+   "tenure": "Experienced",
+   "campaign": "courtesy",
+   "dailySales": 5,
+   "minGwpSale": 99,
+   "convTarget": 7
+  },
+  {
+   "key": "exp_cudd",
+   "label": "EXP – Cuddle",
+   "tenure": "Experienced",
+   "campaign": "cuddle",
+   "dailySales": 8,
+   "minGwpSale": 99,
+   "convTarget": 30
+  },
+  {
+   "key": "nesting",
+   "label": "Nesting",
+   "tenure": "",
+   "campaign": "nesting",
+   "dailySales": null,
+   "minGwpSale": 99,
+   "convTarget": 3
+  }
+ ],
+ "gwpFloorDefault": 99,
+ "r2aTiers": [
+  {
+   "tier": "R2A-3",
+   "rule": "Critical Compliance Fail",
+   "level": 1,
+   "failsMin": 4,
+   "failsMax": null,
+   "cfrMin": 30,
+   "cfrMax": null,
+   "penalty": 0,
+   "elite": "Blocked"
+  },
+  {
+   "tier": "R2A-2",
+   "rule": "Compliance Risk",
+   "level": 2,
+   "failsMin": 2,
+   "failsMax": 3,
+   "cfrMin": 10,
+   "cfrMax": 30,
+   "penalty": 0,
+   "elite": "Blocked"
+  },
+  {
+   "tier": "R2A-1",
+   "rule": "Compliance Note",
+   "level": 3,
+   "failsMin": 1,
+   "failsMax": 1,
+   "cfrMin": 0,
+   "cfrMax": 10,
+   "penalty": 0,
+   "elite": "Retained"
+  },
+  {
+   "tier": "Tier 0",
+   "rule": "Clean",
+   "level": 0,
+   "failsMin": 0,
+   "failsMax": 0,
+   "cfrMin": 0,
+   "cfrMax": 0,
+   "penalty": 0,
+   "elite": "Eligible"
+  }
+ ],
+ "r2aCap": 10,
+ "cx": {
+  "windowDays": 30,
+  "repeatMin": 2,
+  "persistentMin": 5,
+  "penRepeat": 2,
+  "penPersistent": 5,
+  "penCap": 5,
+  "minConf": 0.6,
+  "staleDays": 14
+ },
+ "combinedCap": 15,
+ "bands": [
+  {
+   "label": "Elite",
+   "min": 90
+  },
+  {
+   "label": "Strong",
+   "min": 80
+  },
+  {
+   "label": "On track",
+   "min": 70
+  },
+  {
+   "label": "Building",
+   "min": 60
+  },
+  {
+   "label": "Needs support",
+   "min": 0
+  }
+ ],
+ "_driver_notes": "note = the workbook DRIVERS tab plain_english column, which is what an agent is shown. appNote = the app internal shorthand, kept beside it rather than overwriting the workbook prose.",
+ "_removed_signIn": "THE SIGN-IN BONUS WAS REMOVED 2026-08-31 (Nick: \"remove the five points that the agent gets for logging in\"). It ran from 2026-08-28: one point per weekday an agent opened Agent Analytics, capped at 5, added AFTER the deductions and never weighted as an eighth driver. The adjusted score is now the composite less its deductions and nothing else. Nothing in the workbook ever carried it, so there is nothing to re-issue; this line is the record that it existed and why it went.",
+ "_changes": [
+  {
+   "date": "2026-09-03",
+   "by": "Nick / audit",
+   "key": "attendanceWindow",
+   "from": "worked",
+   "to": "scheduled",
+   "why": "attendance over worked sessions was 100% by definition"
+  },
+  {
+   "date": "2026-09-03",
+   "by": "Nick / audit",
+   "key": "convMinDataDays",
+   "from": 0,
+   "to": 5,
+   "why": "day-2 conversion failed 56/59 agents; shown, not scored until the 5th data day"
+  },
+  {
+   "date": "2026-09-07",
+   "by": "Nick",
+   "key": "convMinDataDays",
+   "from": 5,
+   "to": 1,
+   "why": "\"their conversion must show\" — scored from the first data day"
+  },
+  {
+   "date": "2026-09-10",
+   "by": "Nick / nightly verification",
+   "key": "tenureGroups",
+   "from": "no M0 group",
+   "to": "M0 measured under the M1 targets (3 sales/day, R99 floor, 3% conversion)",
+   "why": "the 8 Sep Agent List carries M0 (first month) on Courtesy for the first time — CB330/CB332/CB334 were rated with no group, so no GWP floor and no conversion target; verify-composite-recompute failed nightly. M0 is the spec vocabulary (mtd_engine_rules Tenure allowed_values). Targets mirror M1 pending a matrix row from Nick."
+  },
+  {
+   "date": "2026-09-11",
+   "by": "Nick",
+   "key": "r2aTiers[].penalty",
+   "from": "R2A-3:10, R2A-2:5, R2A-1:2, Tier 0:0",
+   "to": "0 for every tier",
+   "why": "\"nba priority rules must not affect the agent scores\" — the R2A critical-fail tier (NBA priority rule 2A) still classifies (tier, elite eligibility travel for coaching) but deducts nothing; adj equals the composite. 31 of 83 rated agents were carrying 2–10 points off on 10 Sep."
+  },
+  {
+   "date": "2026-09-15",
+   "by": "Nick",
+   "key": "windowConfirmedOnly",
+   "from": "the last 5 worked sessions, provisional sales included",
+   "to": "the last 5 CONFIRMED worked sessions; provisional sessions shown, not rated",
+   "why": "\"go over all the agent ratings because I feel something is wrong\" — 62/69 windows carried a placeholder-priced day every evening"
+  },
+  {
+   "date": "2026-09-15",
+   "by": "Nick",
+   "key": "conv",
+   "from": "sales ÷ unique leads, whatever the ratio",
+   "to": "unmeasured when sales exceed leads on record",
+   "why": "two cards read 457 % and 153 % conversion"
+  }
+ ],
+ "windowConfirmedOnly": true
 }

@@ -1143,6 +1143,7 @@ const COMPOSITE_RULES = {
   floor:0.5,                                   // rating_floor — attainment below which a driver pays nothing
   windowSessions:5,                            // rating_window_sessions — worked sessions every driver averages over
   attendanceWindow:'scheduled',                // 2026-09-03: attendance over the last N SCHEDULED shifts, not worked ones (worked = 100% by construction)
+  windowConfirmedOnly:true,                    // 2026-09-15 (Nick: "something is wrong"): a PROVISIONAL session (dialler dispositions at the placeholder price, BI file not in) is shown, not rated
   convMinDataDays:1,                           // 2026-09-07 (Nick: "their conversion must show"): scored from the first data day; was 5 (3 Sep) to spare the early-month ramp — the note on the card still says the figure grows through the month
   drivers:[
     {k:'gwpSale',   label:'Avg GWP per Sale',   w:25, note:'Check 1, scored independently of volume.'},
@@ -4635,11 +4636,23 @@ function perfScore(a){
    window is what makes the score coachable: month-to-date stops moving by the
    20th, so an agent who turns things around sees nothing happen. Days they were
    not scheduled are not counted against them. */
+/* …AND THE FIVE SESSIONS ARE CONFIRMED ONES (Nick, 2026-09-15: "go over all the agent ratings
+   because I feel something is wrong"). A session whose sales are PROVISIONAL — the dialler's
+   "Sale Made" dispositions priced at the placeholder R89 because the day's BI money file has not
+   landed — was inside the window every evening: 62 of 69 agents, with Avg GWP per Sale (the
+   25-point driver) pulled under the R86,08 floor for 58 of them by a price that was never real,
+   and Target Achievement inflated by dispositions that may not book. The next morning's BI file
+   corrected it all — so the rating everyone read at 17:00 was wrong by construction. A provisional
+   session is now shown on the card and left out of the rating until its money is confirmed. */
 function compositeWindow(code){
   const rows=(M&&M.byAgentDay&&M.byAgentDay[code])||[];
-  const worked=rows.filter(f=>f.act>0).sort((a,b)=>a.date.localeCompare(b.date));
+  const worked=rows.filter(f=>f.act>0&&!f.provisional).sort((a,b)=>a.date.localeCompare(b.date));
   const n=+COMPOSITE_RULES.windowSessions||5;
   return worked.slice(-n);
+}
+function compositeProvisional(code){
+  const rows=(M&&M.byAgentDay&&M.byAgentDay[code])||[];
+  return rows.filter(f=>f.act>0&&f.provisional).map(f=>f.date).sort();
 }
 function tenureGroupOf(tenure,campaign){
   const t=String(tenure||'').trim().toLowerCase(), c=String(campaign||'').trim().toLowerCase();
@@ -4755,6 +4768,7 @@ function compositeFor(code, agent){
      rounding of the result, not a second VAT rate. */
   const gwpFloorEx=Math.floor(((grp&&grp.minGwpSale)||R.gwpFloorDefault||99)/MTD_VAT*100)/100;
   let convShown=null;                      // conversion when the month is too young to score it
+  let convNote=null;                       // why conversion is unmeasured, when it is
   /* QA over the window's own days — evaluations are dated on the call, and an
      agent-day the window does not contain is not part of this rating. */
   const days=new Set(win.map(f=>f.date));
@@ -4792,6 +4806,10 @@ function compositeFor(code, agent){
                  var L=leadsFor(code); if(!L) return null;
                  var pa=(typeof primaryAgg==='function'?primaryAgg(code):null)||{};
                  var ps=+pa.sales||0;
+                 /* MORE SALES THAN LEADS ON RECORD IS NOT A CONVERSION (2026-09-15: two cards read
+                    457 % and 153 %). BI books sales the lead book never held as leads, so the ratio
+                    has no meaning for that agent this month — unmeasured, renormalised, said why. */
+                 if(ps>L){ convShown=null; convNote='more sales booked ('+ps+') than leads on record ('+L+') — conversion cannot be read this month'; return null; }
                  var v=ps?ps/L*100:0;      /* leads but no sales IS zero, not unmeasured */
                  if(dataDays<CONV_MIN_DAYS){ convShown=v; return null; }   /* too early in the month: shown, not scored */
                  return v;
@@ -4808,9 +4826,9 @@ function compositeFor(code, agent){
      window it covers — because it is the one driver that is not the five-session
      window the rest of the card is built from. */
   const shownFor={}; if(convShown!=null) shownFor.conv=convShown;
-  const shownNote={ conv:dataDays<CONV_MIN_DAYS
+  const shownNote={ conv:convNote?convNote:(dataDays<CONV_MIN_DAYS
     ?'your month to date so far (sales ÷ unique leads) — scored from the month\'s '+CONV_MIN_DAYS+'th working day, when it means something'
-    :'your month to date — sales ÷ your unique leads' };
+    :'your month to date — sales ÷ your unique leads') };
   let raw=0,wsum=0;
   /* NO WORKED SESSION IS NOT A ZERO. An agent published before they have worked a day
      in the period — a new starter, or the first morning of a month — has nothing to
@@ -4868,6 +4886,8 @@ function compositeFor(code, agent){
       available:sorted[0].available}:null,
     window:win.length, windowFrom:win.length?win[0].date:null,
     windowTo:win.length?win[win.length-1].date:null,
+    provisional:compositeProvisional(code),   // worked sessions whose money is not confirmed yet — shown, not rated
+
     group:grp?grp.label:(camp||'')+(tenure?' – '+tenure:''),
     eliteEligible:r2a.elite==='Eligible'||r2a.elite==='Retained'};
 }
@@ -7011,9 +7031,15 @@ async function rakeInPage(file, id, say){
   reader.end(); while(slice.length){ while(queued>=2&&!failed) await new Promise(r=>setTimeout(r,40)); if(failed) break; flush(); } await pending; if(failed) throw failed;
   if(!src) throw new Error('no header row found');
   const rowsIn=seq; say('Merging '+fmtNum(rowsIn)+' rows into the lake…');
-  let merged=0,rejected=0; const MERGE=20000;
-  for(let from=0;from<rowsIn;from+=MERGE){ const j=await step('merge',{p_file:id,p_from:from,p_to:Math.min(from+MERGE,rowsIn)}); merged+=j.merged||0; rejected+=j.rejected||0;
-    say('Merging '+file.name+' — '+fmtNum(Math.min(from+MERGE,rowsIn))+' of '+fmtNum(rowsIn)+' rows…'); }
+  /* ADAPTIVE SLICES: a merge that updates existing rows (a re-load of the same snapshot day) is
+     several times slower than one that inserts; on a statement timeout the slice halves and the
+     same range is retried — an upsert repeated is the same upsert. Never below 1,000. */
+  let merged=0,rejected=0,MERGE=20000;
+  for(let from=0;from<rowsIn;){ const to=Math.min(from+MERGE,rowsIn); let j;
+    try{ j=await step('merge',{p_file:id,p_from:from,p_to:to}); }
+    catch(e){ if(/statement timeout|57014/.test(String(e&&e.message||e))&&MERGE>1000){ MERGE=Math.max(1000,Math.floor(MERGE/2)); say('Merging '+file.name+' — slower than usual, retrying in slices of '+fmtNum(MERGE)+'…'); continue; } throw e; }
+    merged+=j.merged||0; rejected+=j.rejected||0; from=to;
+    say('Merging '+file.name+' — '+fmtNum(to)+' of '+fmtNum(rowsIn)+' rows…'); }
   await step('finish',{p_file:id,p_rows_in:rowsIn});
   say('Loaded '+file.name+' — '+fmtNum(merged)+' rows into the lake'+(rejected?' ('+fmtNum(rejected)+' rejected)':'')+'. The lead book refreshes within ten minutes.');
   if(src==='SF_OPEN_CASES'&&typeof syncLeadBookFromLake==='function') setTimeout(()=>{ try{ syncLeadBookFromLake(true); }catch(e){} },2000);

@@ -5310,6 +5310,10 @@ function pgComposite(){
     +num(c.window)+' worked session'+(c.window===1?'':'s')
     +(c.windowFrom?' ('+esc(c.windowFrom)+' to '+esc(c.windowTo)+')':'')
     +' against the targets for your level. It is never a ranking against your colleagues.'
+    /* a session whose money is not confirmed yet is shown in Sales by session but not rated (2026-09-15) */
+    +(c.provisional&&c.provisional.length?' Your session'+(c.provisional.length===1?'':'s')+' on '+esc(c.provisional.map(function(d){return d.slice(5);}).join(', '))
+      +(c.provisional.length===1?' is':' are')+' provisional — the sales file for '+(c.provisional.length===1?'that day':'those days')+' has not landed yet, so '
+      +(c.provisional.length===1?'it is':'they are')+' shown below but not rated until it does.':'')
     +(c.unmeasured&&c.unmeasured.length?' '+esc(c.unmeasured.join(' and '))
       +(c.unmeasured.length===1?' is':' are')+' not reported this period, so '
       +(c.unmeasured.length===1?'it carries':'they carry')+' none of your points rather than counting against you.':'')
