@@ -358,6 +358,13 @@
    "source": "Nick, 2026-09-07: 'for the month to date add the data but do not add to the numerator for saturday only' — numerator of Attendance and denominator of SPD are both Actual Shifts.",
    "note": "Effective-dated so the August reference period, verified row-for-row, is untouched. Mirror: MTD_RULES.saturdayShiftsFrom."
   },
+  "departures": {
+   "keep_days_until_left": true,
+   "since": "2026-09-15",
+   "rule": "An agent a later Agent List stops naming has LEFT (not moved). They keep every fact up to the date of the first list that did not name them — the archive's word (agent_list_leavers, migration-041), served as /api/roster leavers[] and recorded by a hand upload from the rows it dropped. Their identity stays resolvable (soft-indexed: a live agent always wins a clash), they are employed until that date, a fact dated after it still counts and implies its shift, and every table marks them 'left'. Movers are untouched: the list still wins its whole month for them (27 Aug).",
+   "source": "Nick, 2026-09-15: 'I will always be changing the list … I agree with your plan' — the 14 Sep list removed 17 agents whose 49 sales, R4,311 GWP and 205.8 h of talk were credited to nobody.",
+   "note": "Mirror: MTD_RULES.departures. Proven nightly by verify-departures.mjs; verify-vas-mtd's leaver simulation asserts they stay in the report, marked."
+  },
   "sales_target_matrix": {
    "_source": "agent_roster 'Target' column, keyed Campaign|Tenure. Read at runtime - values below are the observed state.",
    "Cuddle|Exp": 8,
@@ -1825,6 +1832,14 @@
    "from": "h:mm:ss over employed shifts",
    "to": "minutes (1 dp) over employed shifts; pivot export aligned from actual to employed",
    "why": "\"total talk time divided by shifts, and must be in minutes\""
+  },
+  {
+   "date": "2026-09-15",
+   "by": "Nick",
+   "key": "reference_data.departures",
+   "from": "the list wins its whole month for everyone — an agent dropped from the list vanished from the month",
+   "to": "a leaver keeps their days up to the date of the first list that did not name them; movers unchanged",
+   "why": "\"I will always be changing the list … I agree with your plan\" — 17 agents removed on 14 Sep had 49 sales and 205.8 h credited to nobody"
   }
  ]
 }

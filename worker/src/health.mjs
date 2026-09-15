@@ -253,6 +253,31 @@ export function evaluateFreshness(t) {
     if (bits.length) alerts.push({ id: 'rake-stuck', severity: k.received_stuck > 0 || k.dlq_depth > 0 ? 'critical' : 'warning',
       message: 'Large-file uploads need attention: ' + bits.join('; ') + '. Upload Station → Large files shows each one with its reason.', since: 'rake' });
   }
+  /* A PUBLISH THAT REMOVED MANY PEOPLE OR A CAMPAIGN — published, and questioned for three days.
+     The list wins (Nick: "I will always be changing the list"); this only asks a person to look. */
+  if (t.roster && t.roster.review && t.roster.review.at && now - Date.parse(t.roster.review.at) < 72 * HOUR) {
+    const v = t.roster.review;
+    const who = (v.removed || []).slice(0, 8).map((a) => (a.name || a.code) + (a.tl ? ' (' + a.tl + ')' : '')).join(', ') + ((v.removed_n || 0) > 8 ? ' +' + (v.removed_n - 8) + ' more' : '');
+    alerts.push({ id: 'agent-list-review', severity: 'warning',
+      message: 'The Agent List published ' + (v.as_of ? 'as of ' + v.as_of : sast(Date.parse(v.at))) + (v.file ? ' ("' + v.file + '")' : '') + ' removed '
+        + ((v.removed_n || 0) ? (v.removed_n + ' agent' + (v.removed_n === 1 ? '' : 's') + ': ' + who) : '')
+        + ((v.campaigns_gone || []).length ? ((v.removed_n ? '; and ' : '') + 'the whole ' + v.campaigns_gone.join(', ') + ' campaign' + (v.campaigns_gone.length === 1 ? '' : 's')) : '')
+        + '. Their days up to that list still count; if any of them should still be on the list, upload the corrected list.',
+      since: v.at });
+  }
+  /* THE DISK (migration-041). 15 Sep: the database filled the disk and Postgres restarted with no
+     warning anywhere. Warn at 4 GB, critical at 6 GB of an 8 GB disk; a table carrying more than
+     two million dead tuples is the September open-cases partition all over again. */
+  if (t.db && t.db.db_bytes != null) {
+    const gb = (n) => (n / 1073741824).toFixed(2) + ' GB';
+    const bits = [];
+    if (t.db.db_bytes >= 4 * 1073741824) bits.push('the database is ' + gb(t.db.db_bytes));
+    if (t.db.wal_bytes != null && t.db.wal_bytes >= 1073741824) bits.push('WAL is ' + gb(t.db.wal_bytes));
+    const heavy = (t.db.dead_heavy || []).filter((x) => x && x.dead >= 2000000);
+    if (heavy.length) bits.push(heavy.map((x) => x.table + ' carries ' + Math.round(x.dead / 1e6) + 'M dead rows').join(', '));
+    if (bits.length) alerts.push({ id: 'database-size', severity: t.db.db_bytes >= 6 * 1073741824 ? 'critical' : 'warning',
+      message: 'The database needs attention: ' + bits.join('; ') + '. The weekly vacuum runs Sunday 03:30 SAST; run VACUUM (ANALYZE) on the named table now if this is red.', since: 'db' });
+  }
   /* No alert about the start password: keeping it is allowed (Nick, 2026-09-08 — "only if they want
      to"). accounts_on_default_password remains the audit view for whoever asks. */
   return alerts;
@@ -299,6 +324,9 @@ export async function runHealthChecks(DB) {
   /* the rake's own health (migration-028): stuck, failed, dead-lettered */
   let rake = null;
   try { rake = await DB.rpc('rake_health', {}); } catch (e) { rake = null; }
+  /* the disk (migration-041): size, WAL, dead tuples — the 15 Sep disk-full had no warning at all */
+  let dbh = null;
+  try { dbh = await DB.rpc('db_health', {}); } catch (e) { dbh = null; }
   /* the Worker's last ask for the GitHub tick (runner.mjs) — so the alert says what was already done */
   let kick = null;
   try { const kr = await DB.select('rules?key=eq.' + encodeURIComponent('kv:runner-kick') + '&select=value'); kick = kr && kr[0] && kr[0].value ? JSON.parse(kr[0].value.data || 'null') : null; } catch (e) { kick = null; }
@@ -324,11 +352,11 @@ export async function runHealthChecks(DB) {
     const newest = files.filter((f) => /agent list|matrix/i.test(String(f.n || f.name || ''))).map((f) => f.at).sort().pop() || null;
     const rec = byKey['kv:roster-current'] || {};
     const refused = byKey['kv:roster-refused'] ? (typeof byKey['kv:roster-refused'].data === 'string' ? JSON.parse(byKey['kv:roster-refused'].data) : byKey['kv:roster-refused']) : null;
-    roster = { newestListAt: newest, recordUploadedAt: rec.uploaded_at || null, refused };
+    roster = { newestListAt: newest, recordUploadedAt: rec.uploaded_at || null, refused, review: rec.review || null };
   } catch (e) { roster = null; }
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster, db: dbh,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);
@@ -342,11 +370,14 @@ export async function runHealthChecks(DB) {
      for days while alerts sit empty is itself the sign to look at the cron. */
   const neverWritten = !(prev && prev.length);
   /* the MESSAGE counts too (2026-09-08): a wording change — UTC → SAST — must reach the banner without waiting for an alert to come or go */
+  let prevCadence = null;
+  try { prevCadence = JSON.parse((prev && prev[0] && prev[0].value && prev[0].value.data) || '{}').cadence || null; } catch (e) {}
   const changed = neverWritten || JSON.stringify(alerts.map((a) => a.id + a.since + a.message))
-    !== JSON.stringify(prevAlerts.map((a) => a.id + a.since + a.message));
+    !== JSON.stringify(prevAlerts.map((a) => a.id + a.since + a.message))
+    || JSON.stringify(prevCadence) !== JSON.stringify(cadence);
   if (changed) {
     await DB.insert('rules', [{ key: ALERTS_KEY,
-      value: { data: JSON.stringify({ alerts, checked_at: new Date().toISOString() }) },
+      value: { data: JSON.stringify({ alerts, checked_at: new Date().toISOString(), cadence }) },
       updated_by: 'health-cron', updated_at: new Date().toISOString() }], true);
   }
   if (alerts.length) console.warn('[health] ' + alerts.map((a) => a.id).join(', ') + ' — ' + alerts[0].message);

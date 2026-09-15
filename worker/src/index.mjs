@@ -76,6 +76,25 @@ const json = (data, status = 200, headers = {}) =>
    writers treat it as abandoned (the /api/kv CAS path, 2026-09-14). A fact-store upload is
    seconds; two minutes is a dead Worker, not a slow one. */
 const KV_WRITING_TTL_MS = 120000;
+const REVIEW_REMOVALS = 5;                              // a publish removing this many agents gets a review note (never a refusal)
+
+/* WHAT TRAVELS WITH THE ROSTER (2026-09-15). The Agent List names agents; two other things
+   belong to the same record and are served beside it on every /api/roster answer:
+     · leaders — team_leader_cbs (migration-018/040): the leaders' CB numbers, campaign, manager,
+       so a leader dialling under their code is classed as a leader, never as a missing agent;
+     · leavers — agent_list_leavers() (migration-041): everyone on a list in the last 90 days who
+       is NOT on the current one, with the date of the first list that stopped naming them. The
+       apps keep a leaver's facts attributed up to that date (Nick, 15 Sep: the 17 agents the
+       14 Sep list removed had 49 sales and 205 h of talk credited to nobody). The archive says
+       who left and when; no browser derives it. */
+async function rosterExtras(DB) {
+  const leaders = (await DB.select('team_leader_cbs?select=leader_name,employee_code,campaign,manager,on_list_as_of').catch(() => null) || [])
+    .filter((l) => l && l.employee_code).map((l) => ({ name: l.leader_name, cb: normCb(l.employee_code), campaign: l.campaign || '', manager: l.manager || '', on_list_as_of: l.on_list_as_of || '' }));
+  const leavers = (await DB.rpc('agent_list_leavers', { p_days: 90 }).catch(() => null) || [])
+    .filter((r) => r && r.code && r.left_on).map((r) => ({ code: String(r.code).toUpperCase(), name: r.name || '', sf: r.sf || '', callx: r.callx || '',
+      tl: r.tl || '', campaign: r.campaign || '', tenure: r.tenure || '', target: r.target, start: r.start_date || '', last_on: r.last_on, left: r.left_on }));
+  return { leaders, leavers };
+}
 
 
 /* ============ ONE ROSTER, EVERY STORE — the sync spine ============================
@@ -1021,17 +1040,16 @@ export default {
            filed six of them under "dialler logins the Agent List does not know" — the one bucket
            that tells a person to act. Served here so both apps can class a leader's login as a
            leader, never as a missing agent. */
-        const leaders = (await DB.select('team_leader_cbs?select=leader_name,employee_code,campaign,manager,on_list_as_of').catch(() => null) || [])
-          .filter((l) => l && l.employee_code).map((l) => ({ name: l.leader_name, cb: normCb(l.employee_code), campaign: l.campaign || '', manager: l.manager || '', on_list_as_of: l.on_list_as_of || '' }));
+        const { leaders, leavers } = await rosterExtras(DB);
         if (rec && Array.isArray(rec.roster) && rec.roster.length && rec.source !== 'seed') {
           return json({ fingerprint: rec.fingerprint, n: rec.roster.length, as_of: rec.as_of || '',
             file: rec.file || '', source: rec.source || '', uploaded_by: rec.uploaded_by || '',
             uploaded_at: rec.uploaded_at || '', state_updated_at: (cur[0].updated_at || ''),
-            targets_stamp: tstamp, roster: applyTargets(rec.roster), leaders });
+            targets_stamp: tstamp, roster: applyTargets(rec.roster), leaders, leavers, review: rec.review || null });
         }
         const payload = await rosterSync(env, DB, { fresh: !!url.searchParams.get('fresh'), who: user && user.username });
         if (payload && payload.error) return json({ error: payload.error }, payload.status || 500);
-        if (payload && Array.isArray(payload.roster)) { payload.roster = applyTargets(payload.roster); payload.targets_stamp = tstamp; payload.leaders = leaders; }
+        if (payload && Array.isArray(payload.roster)) { payload.roster = applyTargets(payload.roster); payload.targets_stamp = tstamp; payload.leaders = leaders; payload.leavers = leavers; }
         return json(payload);
       }
 
@@ -1132,10 +1150,25 @@ export default {
             on_file: out && out.on_file, dropped: (out && out.dropped) || [], publish: out }, 200);
         }
         await DB.del('rules?key=eq.' + encodeURIComponent('kv:roster-refused')).catch(() => {});   // accepted: the refusal is over
+        /* A BIG REMOVAL IS PUBLISHED AND THEN QUESTIONED (2026-09-15). The list is the record and
+           it always wins — but a list that drops many people, or a whole campaign, deserves a second
+           look by a person: the only guard before this was the 25 % cap on login removals, which a
+           17-agent drop on a 146-agent list sails under. The review is a NOTE on the record — who
+           left, which campaigns went — that the health cron shows as a banner for three days and
+           the next publish replaces. Nothing is refused by it. */
+        let review = null;
+        if (prev && Array.isArray(prev.roster) && prev.roster.length) {
+          const nowCodes = new Set(clean.map((a) => normCb(a.code)));
+          const removed = prev.roster.filter((a) => a && !nowCodes.has(normCb(a.code))).map((a) => ({ code: a.code, name: a.name || '', tl: a.tl || '', campaign: a.campaign || '' }));
+          const nowCamps = new Set(clean.map((a) => a.campaign).filter(Boolean));
+          const campaignsGone = [...new Set(prev.roster.map((a) => a && a.campaign).filter(Boolean))].filter((c) => !nowCamps.has(c));
+          if (removed.length >= REVIEW_REMOVALS || campaignsGone.length)
+            review = { at: now, as_of: asOf, file: String(body.file || '').slice(0, 120), by: actor, removed: removed.slice(0, 60), removed_n: removed.length, campaigns_gone: campaignsGone };
+        }
         const rec = { v: 1, fingerprint: fp, leaders_sig: leadersSig || (prev && prev.fingerprint === fp ? (prev.leaders_sig || '') : ''), as_of: asOf, n: clean.length, roster: clean,
           on_file: out.on_file, dropped: (out.dropped || []).length,
           file: String(body.file || '').slice(0, 120), source: String(body.source || '').slice(0, 16),
-          uploaded_by: actor, uploaded_at: now,
+          uploaded_by: actor, uploaded_at: now, review,
           replaced: prev ? { fingerprint: prev.fingerprint, as_of: prev.as_of || '', at: prev.uploaded_at || '' } : null };
         await DB.insert('rules', [{ key: 'kv:roster-current', value: rec, updated_by: actor, updated_at: now }], true);
         globalThis.__rosterCache = null;                      // the GET must not serve the previous list
@@ -1145,9 +1178,13 @@ export default {
         let mirrored = true;
         try { await rosterSync(env, DB, { fresh: true, who: 'roster-post' }); }
         catch (e) { mirrored = false; }
+        /* THE ANSWER IS THE RECORD (one classifier, 2026-09-15): the station that posted the raw rows
+           adopts the roster, the leaders and the leavers exactly as served to everyone else. */
+        const extras = await rosterExtras(DB).catch(() => ({ leaders: [], leavers: [] }));
         return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length, on_file: out.on_file, roster: clean,
           dropped: out.dropped || [], blank_campaign: out.blank_campaign || [], campaigns_on_list: out.campaigns_on_list || [],
-          mirrored, replaced: rec.replaced, sync: out.agents, leaders: out.leaders, campaigns: out.campaigns });
+          mirrored, replaced: rec.replaced, sync: out.agents, leaders: out.leaders, campaigns: out.campaigns,
+          review, record_leaders: extras.leaders, leavers: extras.leavers });
       }
 
       // ---------- upload relay: one Upload Station feeds BOTH dashboards ----------

@@ -14,7 +14,7 @@ Every number below is from today's live stores.
 
 ## 1 · What is broken today (in order of damage)
 
-### 1.1 A leaver's month vanishes from every VAS report (BROKEN, unfixed — needs your decision)
+### 1.1 A leaver's month vanishes from every VAS report (FIXED 15 Sep PM — Nick agreed; rule `departures`, migration-041, verify-departures 26/26)
 The 14 Sep list removed 17 agents. By the rule you set on 27 Aug ("the list wins its whole month") the
 roster no longer knows them, so their **September facts still in the store are credited to nobody**:
 
@@ -37,7 +37,7 @@ date (the first list that no longer names them); their shifts and dialling days 
 TL and campaign tables show them with a "left 14 Sep" marker. Movers keep the month-grain rule; only
 departures become day-grain. A rule-book change (non-negotiable 11) with a dated `_changes[]` entry.
 
-### 1.2 The shared state can be overwritten by any open tab (BROKEN — structural)
+### 1.2 The shared state can be overwritten by any open tab (FIXED 15 Sep PM — `X-Cbx-Base` + `mergeStates` replay)
 PULSE saves `vas-state` as one blob with a timestamp tie-break and **no compare-and-set**. Ops got
 compare-and-set on 14 Sep (`X-Cbx-Base`, reload-and-replay) after the lost-update race that erased
 ViciDial days; PULSE never did. Today a colleague's tab on an older build saved a stale 131-agent roster
@@ -64,7 +64,7 @@ Govender** leads 19 VT agents and has no CB anywhere in the workbook.
 Salesforce moved the pool into "Courtesy call- Panimax"; the owner rule was a name list; the book grew to
 46 MB and timed out; the tab kept an old book. Fixed by a shape rule and a size sentinel (migration-038).
 
-### 1.6 Two classifiers, two answers (PARTLY FIXED)
+### 1.6 Two classifiers, two answers (FIXED 15 Sep PM — the publish answer carries the record's roster, leaders and leavers, and PULSE adopts it; the browser's classification lives for the seconds before the answer)
 PULSE still classifies the roster in the browser as a "preview" while the server derives the record;
 today they disagreed (131 vs 129) and the preview was what people saw. The reconciliation now forces the
 record's code set, but PULSE keeps its own campaign folding, legacy-sheet ranking and leader detection.
@@ -97,11 +97,15 @@ list. Every Upload Station slot shows its newest archived file.
 
 ---
 
-## 4 · Order of work
+## 4 · Order of work — status at 15 Sep, 16:40 SAST
 
-1. **Leavers keep their days (1.1)** — the one thing making VAS reports wrong now. Needs your yes.
-2. **Compare-and-set for PULSE saves (1.2).**
-3. **One classifier (1.6).**
-4. **Cheap proofs on the tick + the "expected by" strip.**
-5. **Vacuum cron + disk sentinel.**
-6. Charlotte Govender's CB on the sheet (yours); the 26 dialler logins on no list (yours / Ashton's).
+1. ~~Leavers keep their days (1.1)~~ **built** — Nick: "I agree with your plan".
+2. ~~Compare-and-set for PULSE saves (1.2)~~ **built**.
+3. ~~One classifier (1.6)~~ **built** (publish answer adopted).
+4. ~~The "expected by" strip~~ **built** on every source slot, owner from `source_cadence`; the cheap proofs
+   (integrity, freshness, refusal, disk) were already on the 10-minute cron — the strip is what was missing.
+5. ~~Vacuum cron + disk sentinel~~ **built** (migration-041 `vacuum-lake-weekly`, `db_health` → alert `database-size`).
+6. ~~Plausibility note on a publish~~ **built** — ≥ 5 removals or a campaign gone → `agent-list-review` banner for 72 h; never a refusal.
+7. Accounts: Nick 15 Sep — "if they not on the agent list they dont need to have an account"; that is how
+   `sync_agent_list` already works, so the 26 dialler logins on no list stay a REPORTING note on MTD, not an
+   accounts task. Charlotte Govender's CB on the VAS TL sheet is still Nick's.

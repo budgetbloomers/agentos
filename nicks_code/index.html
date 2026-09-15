@@ -636,6 +636,15 @@ const MTD_RULES = {
   /* §5 — agents excluded from the fact table. NOT DERIVABLE FROM THE DATA: CB143 has an
      identical all-period Sick Leave status and IS included, so no rule separates them.
      Maintained by hand and confirmed monthly — see open item OI-10. */
+  /* DEPARTURES ARE DAY-GRAIN (Nick, 2026-09-15: "I will always be changing the list"). The list
+     wins its whole month for MOVERS (recordOrgList, 27 Aug) — but an agent a later list stops
+     naming has not moved, they have LEFT, and "the list wins the month" credited their month to
+     nobody: the 14 Sep list removed 17 agents whose 49 sales, R4,311 GWP and 205.8 h of talk sat
+     under "dialler logins the Agent List does not know". A leaver keeps every fact up to the day
+     they left — the date of the first list that did not name them, as the archive tells it
+     (agent_list_leavers, migration-041) — their shifts stop on that date, and every report shows
+     them with a "left" marker. Nothing about movers changes. */
+  departures: { keepDaysUntilLeft: true, since: '2026-09-15' },
   excludeAgents: { CB67:'Theva Pragasen — Sick Leave all period', CB205:'Darrien Govender — Suspended all period', CB265:'Amanda Mani — no attendance record, likely not started' },
 
   /* §3 — superseded QA codes, later code canonical. APPLY TO QA ROWS ONLY: CB207 is also
@@ -1206,6 +1215,7 @@ function freshState(){
     tracker:{},  // date -> CBnnn -> imported tracker daily row
     board:{},    // date -> normName(agent) -> {name,sales,gwp,ref,cells,cellGwp} — Manual Stats (agent-logged daily board), rows keyed RAW and resolved at report-build time so a later mapping repairs old days
     orgHist:{},  // CBnnn -> [{d,tl,campaign,tenure,src}] effective-dated org attribution, one entry per CHANGE
+    leavers:{},  // CBnnn -> the last Agent List row that named them + {left:'YYYY-MM-DD'} — the first list that did not. From the record (/api/roster leavers[]); their days up to `left` still count
     adjust:{},   // periodKey -> CBnnn -> {c,r}
     map:{},      // identityKey -> CBnnn (manual mapping)
     files:[],    // {name,type,dates:[..],rows,at}
@@ -1264,6 +1274,7 @@ function normalizeState(){
      does have to be seeded here — hydrate() adopts a cloud blob wholesale, so a store an
      older client never pushed comes back undefined and then gets pushed back out that way. */
   if(!S.orgHist) S.orgHist={};
+  if(!S.leavers||typeof S.leavers!=='object'||Array.isArray(S.leavers)) S.leavers={};   // departures (rule departures, 2026-09-15) — a blob saved before it must not read as "nobody ever left"
   if(S.refs===undefined) S.refs=null;   // referrals snapshot — must survive a hydrate from an older cloud blob
   /* ONE ROW PER AGENT ON THE ROSTER. The ingest replaces by campaign and by code, so it
      cannot mint a duplicate any more — but a state blob saved before that fix can still
@@ -1396,6 +1407,62 @@ window.addEventListener('beforeunload',function(e){
   if(window.__vasDirtySince){ e.preventDefault(); e.returnValue=''; }
 });
 
+/* RELOAD AND REPLAY, FOR A BLOB (compare-and-set, 2026-09-15). Ops replays batches; PULSE has no
+   batch log, so the replay is structural: the cloud copy is the base and this tab's NEWER facts
+   are laid over it. A day belongs to whichever side's newest file covering it was uploaded later
+   (the file registry carries the dates and the upload stamp); a day no file covers — a tracker
+   edit, a manual row — stays with this tab. Row-keyed stores union with this tab winning its own
+   keys; snapshots take the newer stamp; the Agent List and everything that hangs off it move
+   together, to the later receipt. Nothing either side uploaded is dropped. */
+function mergeStates(mine,theirs){
+  const out=Object.assign({},theirs);
+  const fileKey=f=>f.hash||(String(f.name||'')+'|'+String(f.at||''));
+  const myFiles=mine.files||[], thFiles=theirs.files||[];
+  const have=new Set(thFiles.map(fileKey));
+  out.files=thFiles.concat(myFiles.filter(f=>!have.has(fileKey(f))));
+  const newestAt=files=>{ const m={}; for(const f of files) for(const d of (f.dates||[])) if(!m[d]||String(f.at||'')>m[d]) m[d]=String(f.at||''); return m; };
+  const mineAt=newestAt(myFiles), thAt=newestAt(thFiles);
+  const mineWins=d=>{ const a=mineAt[d], b=thAt[d]; if(a==null&&b==null) return true; if(a==null) return false; if(b==null) return true; return a>=b; };
+  for(const k of ['sales','calls','att','evals','tracker','board','viciDays']){
+    const m=mine[k]||{}, t=theirs[k]||{}, r={};
+    for(const d of new Set([...Object.keys(m),...Object.keys(t)])) r[d]=(m[d]&&t[d])?(mineWins(d)?m[d]:t[d]):(m[d]||t[d]);
+    out[k]=r; }
+  for(const k of ['cancRows','map','adjust','vici']) out[k]=Object.assign({},theirs[k]||{},mine[k]||{});
+  for(const k of ['refs','opencasesLM']){ const m=mine[k],t=theirs[k]; out[k]=!t?m:(!m?t:(String(m.at||'')>=String(t.at||'')?m:t)); }
+  { const m=mine.closedcases,t=theirs.closedcases;
+    out.closedcases=!t?m:(!m?t:Object.assign({},String(m.at||'')>=String(t.at||'')?m:t,{rows:Object.assign({},t.rows||{},m.rows||{})})); }
+  const myL=String((mine.rosterEffect||{}).at||''), thL=String((theirs.rosterEffect||{}).at||'');
+  const listFrom=myL>=thL?mine:theirs;
+  for(const k of ['roster','rosterFp','rosterEffect','rosterRefused','tlCbs','leavers']) out[k]=listFrom[k];
+  { const r=Object.assign({},theirs.orgHist||{}); for(const c in (mine.orgHist||{})){ const m=mine.orgHist[c], t=r[c]; if(!t||listFrom===mine||(m&&t&&m.length>t.length)) r[c]=m; } out.orgHist=r; }
+  out.settings=Object.assign({},theirs.settings||{},mine.settings||{});
+  if(mine.gwpPerUnit!=null) out.gwpPerUnit=mine.gwpPerUnit;
+  out.cmTargets=String((mine.cmTargets||{}).stamp||'')>=String((theirs.cmTargets||{}).stamp||'')?mine.cmTargets:theirs.cmTargets;
+  for(const k in mine) if(!(k in out)) out[k]=mine[k];
+  out._rev=Math.max(+mine._rev||0,+theirs._rev||0)+1;
+  delete out.ui;
+  return out;
+}
+function __cloudReplay(kl){
+  var t=sessionStorage.getItem('cbx_token'); if(!t) return;
+  fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=vas-state',{headers:{'Authorization':'Bearer '+t}})
+    .then(function(r){
+      if(r.status===404){ window.__vasBase='none'; __cloudPush(kl); return; }
+      if(!r.ok){ __saveFail('⚠ Cloud save failed — another session saved first and the reload failed ('+r.status+'). Keep this tab open; it is retrying.','replay '+r.status); return; }
+      var ver=r.headers.get('X-Cbx-Version')||null;
+      return r.text().then(function(x){
+        var cloud=null; try{ cloud=JSON.parse(x); }catch(e){}
+        if(!cloud||typeof cloud!=='object'){ __saveFail('⚠ Cloud save failed — the cloud copy could not be read. Keep this tab open; it is retrying.','replay parse'); return; }
+        var merged=mergeStates(S,cloud);
+        var ui=S.ui; Object.keys(S).forEach(function(k){delete S[k]}); Object.assign(S,merged); if(ui) S.ui=ui;
+        window.__vasBase=ver;
+        try{ var u=S.ui,b; try{ delete S.ui; b=JSON.stringify(S); } finally { S.ui=u; } localStorage.setItem('vas_mtd_tracker_v1',b); }catch(e){}
+        try{ if(typeof rebuild==='function') rebuild(); if(typeof renderAll==='function') renderAll(); }catch(e){}
+        if(typeof toast==='function') toast('Another session saved while you were working — their data has been merged with yours; saving again.',6000);
+        __cloudPush(kl);
+      });
+    }).catch(function(){ __saveFail('⚠ Cloud save failed (network) while merging another session\'s save. Keep this tab open; it is retrying.','replay network'); });
+}
 var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_token');/* A SILENT no-op here is how Nick's 13-Aug Cuddle upload vanished: uploaded into a tab with no token (or one that never hydrated), it rendered perfectly from memory, pushed nothing, and the next refresh erased it without a trace. If this function cannot save, it must SAY so - the user is holding a file they believe is safe. */if(!t){if(typeof toast==='function')toast('⚠ Not signed in — this upload is NOT saved to the database. Sign in and re-upload it.',9000);return}if(!window.__vasHydrated){if(typeof toast==='function')toast('⚠ Still syncing with the database — your upload is NOT saved yet. Keep this tab open; it will retry, or re-upload after the page settles.',9000);clearTimeout(__cloudT);__cloudT=setTimeout(function(){__cloudPush(kl)},5000);return}if((!S.files||!S.files.length)&&!(window.__cbxIntentionalClear&&Date.now()-window.__cbxIntentionalClear<600000)){if(typeof toast==="function")toast("⚠ Refusing to overwrite the database with an EMPTY state — your uploads in the cloud are safe. Use Danger zone → Remove all uploaded data if you really mean to clear them.",9000);return}try{window.__vasLastPush=Date.now();window.__vasPushRev=S._rev;/* THE VIEW IS NOT DATA, AND THE BLOB IS SHARED. S.ui carries the period preset, the team and campaign filters and the open tab — one person's way of looking at the numbers. It used to ride along in this push, so whoever last uploaded a file stamped THEIR view on everyone: a 'yesterday' preset left on 24 Aug showed the whole floor a single day's figures and read as every number being wrong (Enoch 4 sales instead of 176). saveUI() already keeps ui in localStorage, which is where a per-person preference belongs. */var __ui=S.ui;var b;try{delete S.ui;b=JSON.stringify(S);}finally{S.ui=__ui;}(function(){/* GZIP THE UPLOAD (perf, 2026-08-28). The state is ~90% repetitive case rows and
    compresses about ten to one; browsers never compress request bodies on their own, so every
    save pushed the full 8.8 MB up a slow link. The Worker decompresses, so what is STORED is
@@ -1403,6 +1470,13 @@ var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_tok
    keepalive (page-unload) push needs the synchronous path. */
    var url='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=vas-state'+((window.__cbxIntentionalClear&&Date.now()-window.__cbxIntentionalClear<600000)?'&force=1':'');
    var hdr={'Content-Type':'text/plain','Authorization':'Bearer '+t,'X-Cbx-Client':'v5'};
+   /* THE SAVE CARRIES THE VERSION IT WAS BASED ON (2026-09-15). Ops has had this since the 14 Sep
+      lost-update audit; PULSE saved the whole blob on a timestamp tie-break, so any open tab could
+      overwrite everyone — a colleague's tab on an older build saved a stale roster over the record
+      three times in an hour. The Worker refuses a save whose base has moved on (409
+      version_conflict); this tab then reloads the blob, merges its own newer facts over it
+      (mergeStates) and saves again. A tab that never hydrated has no base and cannot push at all. */
+   if(window.__vasBase!=null) hdr['X-Cbx-Base']=String(window.__vasBase);
    var keep=!!(kl&&b.length<60000);
    /* NEVER COMPRESS ON THE WAY OUT (audit round 6, second pass). Compression is async, and a
       promise started during pagehide does not settle before the tab is gone — so gating on
@@ -1434,9 +1508,11 @@ var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_tok
          function(){ return fetch(url,{method:'POST',headers:hdr,body:b}); });
    }
    return fetch(url,{method:'POST',headers:hdr,body:b,keepalive:keep});
- })().then(function(r){if(r&&r.ok){__saveAck();return}
+ })().then(function(r){if(r&&r.ok){ try{ var nv=r.headers.get('X-Cbx-Version'); if(nv) window.__vasBase=nv; }catch(e){} window.__vasCasTries=0; __saveAck(); return }
      var why=(r?r.status:'?')+'';
-     var say=function(){__saveFail('⚠ Cloud save failed ('+(r?r.status:'?')+') — your upload is NOT in the database yet. Keep this tab open; it is retrying.',why)};
+     var say=function(){
+       if(r&&r.status===409&&/version_conflict/.test(why)&&window.__vasBase!=null&&(window.__vasCasTries=(window.__vasCasTries||0)+1)<=4){ __cloudReplay(kl); return; }
+       __saveFail('⚠ Cloud save failed ('+(r?r.status:'?')+') — your upload is NOT in the database yet. Keep this tab open; it is retrying.',why)};
      if(r&&r.text) r.text().then(function(t){why+=' '+String(t||'').slice(0,160)}).catch(function(){}).then(say); else say();})
    .catch(function(e){__saveFail('⚠ Cloud save failed (network) — your upload is NOT in the database yet. Keep this tab open; it is retrying.','network '+String(e&&e.message||e).slice(0,120))})}
  catch(e){ /* A THROW HERE USED TO VANISH. The outer try wraps the stringify, the gzip and
@@ -1459,7 +1535,7 @@ function __healthPoll(){
     fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=health-alerts',{headers:{'Authorization':'Bearer '+t,'X-Cbx-Client':'v5'}})
       .then(function(r){return r.ok?r.text():null})
       .then(function(x){
-        var alerts=[]; try{ alerts=(JSON.parse(x||'{}').alerts)||[]; }catch(e){}
+        var alerts=[]; try{ var hj=JSON.parse(x||'{}'); alerts=hj.alerts||[]; if(Array.isArray(hj.cadence)) window.__cbxCadence=hj.cadence; }catch(e){}
         var el=document.getElementById('cbxHealth');
         if(!alerts.length){ if(el) el.remove(); return; }
         if(!el){ el=document.createElement('div'); el.id='cbxHealth'; document.body.appendChild(el); }
@@ -1644,6 +1720,29 @@ function recordOrg(code,d,val,src){
   // a later segment that now repeats its predecessor is noise, not a movement
   for(let k=1;k<list.length;k++) if(sameOrg(list[k-1],list[k])){ list.splice(k,1); k--; }
   return moved;
+}
+/* WHO LEFT, AND WHEN (rule departures, 2026-09-15). S.leavers holds the last list row that named
+   each agent plus `left`, the date of the first list that did not. The RECORD states it —
+   /api/roster serves leavers[] from the archive on every poll and on every publish — and a hand
+   upload records the same thing from the rows it dropped, so the two paths agree to the day. An
+   agent named again by a later list stops being a leaver. */
+function noteDepartures(rows,asOf,back){
+  if(!S.leavers||typeof S.leavers!=='object') S.leavers={};
+  if(/^\d{4}-\d{2}-\d{2}$/.test(asOf||'')) for(const a of rows||[]) if(a&&a.code&&!S.leavers[a.code]) S.leavers[a.code]=Object.assign({},a,{left:asOf});
+  for(const a of back||[]) if(a&&a.code) delete S.leavers[a.code];
+}
+function adoptLeavers(list){
+  const on=new Set((S.roster||[]).map(a=>a.code)), m={};
+  for(const l of list||[]){ const c=l&&cbCode(String(l.code||'')); if(!c||on.has(c)||!/^\d{4}-\d{2}-\d{2}$/.test(String(l.left||''))) continue;
+    m[c]={code:c,name:l.name||'',sf:l.sf||l.name||'',callx:l.callx||'',tl:l.tl||'',campaign:l.campaign||'',tenure:l.tenure||'',
+          target:(l.target!=null&&l.target!=='')?+l.target:0,start:l.start||'',left:String(l.left).slice(0,10)}; }
+  if(JSON.stringify(m)!==JSON.stringify(S.leavers||{})){ S.leavers=m; return true; }
+  return false;
+}
+function leftPill(code){
+  const a=S.leavers&&S.leavers[code]; if(!a||!a.left) return '';
+  if((S.roster||[]).some(r=>r.code===code)) return '';
+  return ' <span class="pill pmuted" title="Not on the Agent List since '+esc(a.left)+' — their days up to then still count in every report (rule departures, 2026-09-15)">left '+esc(String(a.left).slice(5))+'</span>';
 }
 function orgAt(code,d){
   const list=S.orgHist&&S.orgHist[code];
@@ -2420,7 +2519,8 @@ const INGEST={
       for(const a of out){ const p=prev.get(a.code);
         if(p&&provisionalTL(a.tl)&&!provisionalTL(p.tl)) a.tl=p.tl; } }
     const incoming=new Set(out.map(a=>a.code));
-    const left=S.roster.filter(a=>covered.has(a.campaign)&&!incoming.has(a.code)).length;
+    const leftRows=S.roster.filter(a=>covered.has(a.campaign)&&!incoming.has(a.code));
+    const left=leftRows.length;
     S.roster=S.roster.filter(a=>!covered.has(a.campaign)&&!incoming.has(a.code)).concat(out);
     /* STAMP THE SNAPSHOT INTO HISTORY BEFORE IT BECOMES "current". The roster above is the
        live picture and is replaced wholesale on every upload; this is the part that has to
@@ -2428,6 +2528,7 @@ const INGEST={
        team leader / campaign for every day of the current month, so the dashboards follow
        the list the moment it lands — earlier months keep the org they were worked under. */
     const asOf=rosterAsOf(name); let moved=0, fresh=0, backdated=0;
+    noteDepartures(leftRows,asOf,out);                // a leaver keeps their days up to this list's date (rule departures)
     for(const a of out){
       const hist=S.orgHist[a.code]||[]; const had=!!hist.length;
       if(had&&!provisionalTL(a.tl)&&hist.every(s=>provisionalTL(s.tl))) backdated++;
@@ -2493,7 +2594,7 @@ const INGEST={
             /* ADOPT THE RECORD. The server derived the roster from the whole file; what this
                tab classified is a preview. Pull the record now so this screen shows exactly
                what every other app shows. */
-            if(j.roster&&j.roster.length) setTimeout(function(){try{adoptRosterFromRecord({roster:j.roster,fingerprint:j.fingerprint,as_of:j.as_of,source:'record'})}catch(e){}},800); }
+            if(j.roster&&j.roster.length) setTimeout(function(){try{adoptRosterFromRecord({roster:j.roster,fingerprint:j.fingerprint,as_of:j.as_of,source:'record',leaders:j.record_leaders,leavers:j.leavers})}catch(e){}},800); }
           else if(j&&j.accepted===false&&j.publish) reportListRefused(Object.assign({file:name},j));
           /* an answer that is neither (a 4xx/5xx became null above, or an unlisted refusal) is
              still a list that did not publish — say so rather than nothing */
@@ -3134,15 +3235,22 @@ function buildIndex(){
      OI-06 records that it does: 18 QA codes and 18 attendance codes match no roster sheet. */
   for(const k in MTD_RULES.diallerLabelCorrections) IDX.ruleLabel[normFull(k)]=MTD_RULES.diallerLabelCorrections[k];
   for(const k in MTD_RULES.nameAliases) IDX.ruleAlias[normName(k)]=normName(MTD_RULES.nameAliases[k]);
-  for(const a of S.roster){
+  const index=(a,soft)=>{
+    if(soft&&IDX.byCode[a.code]) return;           // a live roster row always wins its code
     IDX.byCode[a.code]=a;
     // dialer names can carry a DIFFERENT CB number than the employee code
     // (e.g. "Kyle Kisten CB-138" is employee CB137) — so the full "Call x"
     // string wins over the embedded code when resolving call records.
-    if(a.callx) IDX.byCallx[normFull(a.callx)]=a.code;
-    for(const n of [a.name,a.sf,a.callx]) if(n){ const k=normName(n); if(k) IDX.byName[k]=a.code; }
+    if(a.callx){ const k=normFull(a.callx); if(!soft||!IDX.byCallx[k]) IDX.byCallx[k]=a.code; }
+    for(const n of [a.name,a.sf,a.callx]) if(n){ const k=normName(n); if(k&&(!soft||!IDX.byName[k])) IDX.byName[k]=a.code; }
     { const t=nameTokens(a.name); if(t.length>=2) IDX.tok.push({code:a.code,t}); }
-  }
+  };
+  for(const a of S.roster) index(a,false);
+  /* LEAVERS RESOLVE TOO (rule departures, 2026-09-15). An agent the latest list stopped naming
+     still owns the sales, calls and shifts they made before they left; with them out of the index
+     every one of those facts fell to "unmatched" the moment the list published. Indexed SOFTLY —
+     a live agent's code, name or dialler label is never overridden by a leaver's. */
+  for(const c in (S.leavers||{})){ const a=S.leavers[c]; if(a&&a.code) index(a,true); }
 }
 /* MEMOISED (perf audit, 2026-08-27). The fallback chain below runs several string
    normalisations and, for owner-name keys that miss every index, an O(roster) token
@@ -3373,6 +3481,7 @@ function validateMTD(m){
   const out=[], add=(id,sev,ok,msg)=>out.push({id,sev,ok,msg});
   const F=m.facts, R=m.range;
   const rosterCodes=new Set(S.roster.map(a=>a.code));
+  for(const c in (S.leavers||{})) rosterCodes.add(c);                     // a leaver's money is still the floor's money
   const money=F.filter(f=>f.campaign!=='VT');   // VT carries dialler-counted sales and no GWP
 
   /* V01 — one row per agent per day. A duplicate double-counts everything on the row.
@@ -3395,6 +3504,7 @@ function validateMTD(m){
      including that money on the recompute side would report a permanent R4 278 discrepancy
      that is not one. Unmapped owners are outside both sides and are V14's job, not this. */
   { const campOfCode={}; S.roster.forEach(a=>campOfCode[a.code]=a.campaign);
+    for(const c in (S.leavers||{})) if(!campOfCode[c]) campOfCode[c]=S.leavers[c].campaign;
     let n=0,g=0;
     for(const d in S.sales){ if(d<R.from||d>R.to) continue;
       for(const k in S.sales[d]){ const c=resolveKey(k); if(!c||!rosterCodes.has(c)) continue;
@@ -3703,6 +3813,11 @@ function buildModel(range, periodKey){
   const offCampaign={};
   const attCovered=d=>!!S.att[d]&&Object.keys(S.att[d]).length>0;
   const metaOf={}; S.roster.forEach(a=>{ metaOf[a.code]=a; });
+  /* LEAVERS (rule departures, 2026-09-15): on the floor for every day before `left`, and on any
+     day they still have a fact — a sale or a call dated after the list dropped them is a fact,
+     not a rounding error. Off the roster, so never doubled with a live row. */
+  const leaverRows=Object.values(S.leavers||{}).filter(a=>a&&a.code&&/^\d{4}-\d{2}-\d{2}$/.test(String(a.left||''))&&!metaOf[a.code]);
+  for(const a of leaverRows) metaOf[a.code]=a;
   /* hoisted above the facts loop — the loop reads it, and the fuller referral block below
      (refsFromFile / refOf) runs after the loop for the aggregate paths */
   const refsByDay=(S.refs&&S.refs.by&&S.refs.byDay)?S.refs.byDay:null;
@@ -3711,7 +3826,8 @@ function buildModel(range, periodKey){
     // On days whose only record is an imported tracker workbook, the workbook's rows ARE
     // the register — don't synthesise shifts for roster agents it doesn't contain.
     const trackerOnlyDay=!hasSalesData&&!S.calls[d]&&Object.keys(trk).length>0;
-    const codes=trackerOnlyDay?new Set(Object.keys(trk)):new Set([...S.roster.map(a=>a.code),...Object.keys(trk)]);
+    const codes=trackerOnlyDay?new Set(Object.keys(trk)):new Set([...S.roster.map(a=>a.code),
+      ...leaverRows.filter(a=>a.left>d||(salesBy[d]||{})[a.code]||(callsBy[d]||{})[a.code]).map(a=>a.code),...Object.keys(trk)]);
     for(const code of codes){
       /* AGENT EXCLUSION LIST (spec §5). Three agents the reference tracker leaves out
          entirely — sick leave, suspension, and one who never started. This is NOT derivable
@@ -3737,7 +3853,7 @@ function buildModel(range, periodKey){
         continue;
       }
       const started=tr?true:(!a?.start||a.start<=d);
-      const terminated=term[code]&&d>=term[code];
+      const terminated=(term[code]&&d>=term[code])||!!(a&&a.left&&d>=a.left);   // the register's word, or the list's: no shift from the day they left
       let emp=(started&&!terminated)?1:0;
       const sd=salesBy[d][code], cd=callsBy[d][code];
       let sales=0,gwp=0,gwpEx=0,canc=(cancBy[d]||{})[code]||0,provisional=false;
@@ -4047,7 +4163,7 @@ function buildModel(range, periodKey){
   facts.forEach(f=>{ const p=lastFact[f.code]; if(!p||f.date>=p.date) lastFact[f.code]=f;
     if(f.tl) (tlsIn[f.code]=tlsIn[f.code]||new Set()).add(f.tl); });
   const tlSplit=c=>((tlsIn[c]&&tlsIn[c].size)||0)>1;
-  for(const a of S.roster) if(byAgentDay[a.code]){ const lf=lastFact[a.code];
+  for(const a of [...S.roster,...leaverRows]) if(byAgentDay[a.code]&&!seen.has(a.code)){ const lf=lastFact[a.code];
     agents.push({...a, tl:(lf&&lf.tl)||a.tl, tlNow:a.tl, movedInPeriod:tlSplit(a.code)}); seen.add(a.code); }
   for(const f of facts) if(!seen.has(f.code)){ seen.add(f.code);
     agents.push({code:f.code,name:f.agent,tl:f.tl,tlNow:f.tlNow||f.tl,movedInPeriod:tlSplit(f.code),
@@ -5639,7 +5755,7 @@ function dashTable(ranked){
   </tr></thead><tbody>
   ${view.map(x=>{ const t=trendOf(x.a.code);
     return `<tr class="rowlink" onclick="openDrawer('${x.a.code}')">
-    <td class="l"><span class="agentcell">${avatarOf(x.a.name,x.a.code)}<span class="nm">${esc(x.a.name)}<small>${x.a.code} · ${M.primaryCamp[x.a.code]||''}</small></span></span></td>
+    <td class="l"><span class="agentcell">${avatarOf(x.a.name,x.a.code)}<span class="nm">${esc(x.a.name)}${leftPill(x.a.code)}<small>${x.a.code} · ${M.primaryCamp[x.a.code]||''}</small></span></span></td>
     <td class="l">${esc(x.a.tl)}</td>
     <td><b>${fmtR(x.g.gwp)}</b></td><td>${fmtNum(x.g.sales)}</td><td>${pctPill(x.g.pctT)}</td>
     <td>${x.g.qa?fmtPct(x.g.qa.avg,1):'–'}</td><td>${fmtPct(x.g.att,1)}</td>
@@ -5697,7 +5813,7 @@ PAGES.agents=()=>{
     ${th('qa','QA')}${th('att','Att %')}${th('calls','Calls')}${th('aht','AHT')}<th>Trend</th>${th('sc','Score')}<th>Risk</th><th>Coaching</th><th>Last Eval</th><th></th>
   </tr></thead><tbody>
   ${rows.map(x=>`<tr class="rowlink" onclick="openDrawer('${x.a.code}')">
-    <td class="l"><span class="agentcell">${avatarOf(x.a.name,x.a.code)}<span class="nm">${esc(x.a.name)}<small>${x.a.code} · ${M.primaryCamp[x.a.code]||''} · ${esc(x.a.tenure)}</small></span></span></td>
+    <td class="l"><span class="agentcell">${avatarOf(x.a.name,x.a.code)}<span class="nm">${esc(x.a.name)}${leftPill(x.a.code)}<small>${x.a.code} · ${M.primaryCamp[x.a.code]||''} · ${esc(x.a.tenure)}</small></span></span></td>
     <td class="l">${esc(x.a.tl)}</td>
     <td><b>${fmtR(x.g.gwp)}</b></td><td>${fmtNum(x.g.sales)}</td><td>${pctPill(x.g.pctT)}</td><td>${fmtNum(x.g.spd,2)}</td>
     <td>${x.g.qa?fmtPct(x.g.qa.avg,1):'–'}</td><td>${fmtPct(x.g.att,1)}</td>
@@ -6105,7 +6221,7 @@ PAGES.attend=()=>{
     return '<span class="attcell att0">✕</span>'; };
   const head='<th class="l">Agent</th><th class="l">Team</th>'+days.map(d=>`<th>${d.slice(8)}/${d.slice(5,7)}</th>`).join('')+'<th>Att %</th>';
   const body=rows.map(r=>`<tr class="rowlink" onclick="openDrawer('${r.a.code}')">
-    <td class="l"><span class="agentcell">${avatarOf(r.a.name,r.a.code)}<span class="nm">${esc(r.a.name)}<small>${r.a.code} · ${esc(r.a.tl)}</small></span></span></td>
+    <td class="l"><span class="agentcell">${avatarOf(r.a.name,r.a.code)}<span class="nm">${esc(r.a.name)}${leftPill(r.a.code)}<small>${r.a.code} · ${esc(r.a.tl)}</small></span></span></td>
     <td class="l">${campChip(M.primaryCamp[r.a.code]||r.a.campaign)}</td>`+
     days.map(d=>`<td>${cell(r.per[d])}</td>`).join('')+
     `<td>${r.att!=null?`<span class="pill ${r.att>=0.95?'pgood':(r.att>=0.85?'pwarn':'pcrit')}">${fmtPct(r.att,1)}</span>`:'–'}</td></tr>`).join('');
@@ -6659,22 +6775,36 @@ PAGES.data=()=>{
       <span>${dates.length?dates[0].slice(5)+' → '+dates[dates.length-1].slice(5)+' · '+dates.length+' day'+(dates.length>1?'s':''):esc(last.name.slice(0,26))}</span>`
       +(newest&&newest.at?`<span class="smuted" title="${esc(newest.name)} — ${esc(String(newest.rows||0))} rows${(newest.dates||[]).length?', covering '+(newest.dates||[]).length+' day(s) of calls':''}">last upload ${upStamp(newest.at)}</span>`:'');
   };
+  /* EXPECTED BY (never-stale, 2026-09-15). Each source's slot says the day it should cover right
+     now — the same rule the health cron and the digest use (expectedReach: 13:00 SAST carries
+     yesterday, no Sunday, Saturday only for sources that dial) — with the owner from source_cadence,
+     which the health poll keeps beside the alerts. Red the moment a source is behind, on the slot
+     the person is looking at, not at 22:33 in a nightly log. */
+  const expectedLine=k=>{ try{
+    const cad=(window.__cbxCadence||[]).find(c=>c&&c.source===k)||{};
+    const sat=cad.saturday!=null?!!cad.saturday:(k==='sales'||k==='calls');
+    const exp=expectedReach(Date.now(),sat), reach=dataReach()[k];
+    const behind=!reach||reach<exp;
+    const days=reach?Math.round((Date.parse(exp)-Date.parse(reach))/86400000):null;
+    return `<div class="sstat" style="margin-top:4px"><span class="pill ${behind?'pcrit':'pgood'}" title="The day this source should cover by now: by 13:00 SAST it carries yesterday; there is no Sunday data">${behind?'behind — covers '+(reach||'nothing')+', expected '+exp+(days!=null&&days>0?' ('+days+'d short)':''):'up to date — covers '+exp}</span>${cad.owner?`<span class="smuted">owner ${esc(String(cad.owner))}${cad.grace_hours?' · grace '+esc(String(cad.grace_hours))+'h':''}</span>`:''}</div>`;
+  }catch(e){ return ''; } };
   const SLOTS=[
-    {t:'bi',icon:I.money,color:'var(--accent)',name:'Power BI - Active Cases',desc:'THE money source. GWP = Σ Charge Amount per account × VAT (charges are ex-VAT); sales are unique accounts, dated by Contract Create Date, agent from Owner. Upload monthly — months accumulate and you can filter to any month.',stat:statFor(['bi','sales'])},
+    {t:'bi',reach:'sales',icon:I.money,color:'var(--accent)',name:'Power BI - Active Cases',desc:'THE money source. GWP = Σ Charge Amount per account × VAT (charges are ex-VAT); sales are unique accounts, dated by Contract Create Date, agent from Owner. Upload monthly — months accumulate and you can filter to any month.',stat:statFor(['bi','sales'])},
     /* CALL RECORDS (CallX) RETIRED 2026-09-01 (Nick: "there is no longer a need for call
        x/call records all the agents will be on vicci now"). The slot is gone; the parser
        still loads pre-cutover days (history corrections) and refuses anything on or after
        the cutover with a pointer at the ViciDial slot — same doctrine as Lead Allocation:
        a retired pull must not silently land anywhere. */
-    {t:'attendance',icon:I.users,color:'var(--amber)',name:'Attendance',desc:'Attendance register export — shifts, leave, terminations. Exports cap at 1,000 rows, so pull short ranges.',stat:statFor(['attendance'])},
-    {t:'evals',icon:I.shield,color:'var(--good)',name:'QA Evaluations',desc:'CallBi full evaluations export — scores, decisions and coaching categories per call.',stat:statFor(['evals'])},
+    {t:'attendance',reach:'attendance',icon:I.users,color:'var(--amber)',name:'Attendance',desc:'Attendance register export — shifts, leave, terminations. Exports cap at 1,000 rows, so pull short ranges.',stat:statFor(['attendance'])},
+    {t:'evals',reach:'qa',icon:I.shield,color:'var(--good)',name:'QA Evaluations',desc:'CallBi full evaluations export — scores, decisions and coaching categories per call.',stat:statFor(['evals'])},
     {t:'roster',icon:I.grid,color:'var(--violet)',name:'Agent List',desc:'Matrix agent list — team leaders, campaigns, tenure, daily targets, start dates. Replaces the current roster, and the assignments apply to the WHOLE current month the moment it lands.',
       stat:(()=>{const fe=S.rosterEffect;
-        return `<span class="pill pgood">${S.roster.length} agents</span>`
+        const lv=Object.values(S.leavers||{}).filter(a=>a&&a.left&&a.left>=dkey(new Date()).slice(0,7)+'-01').length;
+        return `<span class="pill pgood">${S.roster.length} agents</span>`+(lv?`<span class="pill pmuted" title="Not on the latest list; their days up to the list that dropped them still count in every report (rule departures)">${lv} left this month · days kept</span>`:'')
           +(fe?`<span>as of ${esc(String(fe.asOf||''))} · applied to whole of ${esc(String(fe.asOf||'').slice(0,7))}</span>
             <span class="smuted" title="${esc(String(fe.file||''))}">${fmtNum(fe.moved)} moved · ${fmtNum(fe.fresh)} new · ${fmtNum(fe.left)} left · last upload ${esc(String(fe.at||''))}</span>`:'');})()},
     {t:'inactive',icon:I.alert,color:'var(--rose)',name:'Cancellations (BI Inactive)',desc:'Power BI Inactive export — cancelled contracts, counted per agent by Contract Deactivate Date. This is where the MTD Cancellations and % of Cancellations columns come from. Upload daily; each upload replaces the days it covers, so overlapping pulls never double-count.',stat:statFor(['cancellations'])},
-    {t:'vici',icon:I.phone,color:'var(--cuddle)',name:'ViciDial — all agents',desc:'<b>The one dialler source for the whole floor since 1 Sep 2026</b> — Courtesy and Nesting included, CallX retired. Pull <b>EXPORT_CALL_REPORT</b> (tab-separated .txt) with <b>every user group ticked</b>: an unticked group doesn\'t error, its agents just read as never having dialled. One row per call, dated per call, so any date range splits across its days correctly. Talk time is every call\'s length on the agent\'s CB number; the upload says how much of it is ringing rather than talking. The older <b>Agent Performance Detail</b> is one row per agent for the range in its own "Time range:" line — export that ONE DAY AT A TIME, because a multi-day pull is a single total per agent and cannot be split across days.',stat:statFor(['calls (ViciDial)','vici range'])},
+    {t:'vici',reach:'calls',icon:I.phone,color:'var(--cuddle)',name:'ViciDial — all agents',desc:'<b>The one dialler source for the whole floor since 1 Sep 2026</b> — Courtesy and Nesting included, CallX retired. Pull <b>EXPORT_CALL_REPORT</b> (tab-separated .txt) with <b>every user group ticked</b>: an unticked group doesn\'t error, its agents just read as never having dialled. One row per call, dated per call, so any date range splits across its days correctly. Talk time is every call\'s length on the agent\'s CB number; the upload says how much of it is ringing rather than talking. The older <b>Agent Performance Detail</b> is one row per agent for the range in its own "Time range:" line — export that ONE DAY AT A TIME, because a multi-day pull is a single total per agent and cannot be split across days.',stat:statFor(['calls (ViciDial)','vici range'])},
     {t:'board',icon:I.scale,color:'var(--courtesy)',name:'Manual Stats',desc:'The agent-logged daily board that feeds <b>VAS Analytics → Variance Report</b>: Agent Name + Sale 1..Sale 27 (cell value = GWP) + Total Sales / Total GWP / Referrals. <b>One day per sheet, named DD.MM</b> (e.g. 13.08) — re-uploading a day replaces exactly that day, and a workbook of historical DD.MM tabs loads each day separately. Agents match through the Agent List; unmatched names are reported on the Variance page, never guessed.',stat:statFor(['board'])},
     /* The lead book. Lead Management moved here from Ops on 2026-08-18; the Lead Allocation
        page and its own Open Cases slot were removed 2026-08-27 (Nick), so only the Lead
@@ -6696,7 +6826,7 @@ PAGES.data=()=>{
     <div class="slot" data-slot="${s.t}" tabindex="0" role="button" aria-label="Upload ${s.name}">
       <div class="shead"><span class="kic" style="--c:${s.color}">${s.icon}</span><b>${s.name}</b><span class="spacer" style="flex:1"></span><button class="btn small">Choose file</button></div>
       <div class="sdesc">${s.desc}</div>
-      <div class="sstat">${s.stat}</div>
+      <div class="sstat">${s.stat}</div>${s.reach?expectedLine(s.reach):''}
     </div>`).join('');
 
   const reg=S.files.length?`<div class="tablewrap" style="max-height:340px"><table class="data"><thead><tr>
@@ -6842,7 +6972,7 @@ PAGES.adjust=()=>{
   <div class="card" style="padding:0;overflow:hidden"><div class="tablewrap" style="border:none"><table class="data"><thead><tr>
     <th class="l">Team Leader</th><th class="l">Agent</th><th class="l">Campaign</th><th>Cancellations</th><th>Referrals</th></tr></thead><tbody>
   ${rows.map(r=>`<tr><td class="l">${esc(r.a.tl)}</td>
-    <td class="l"><span class="agentcell">${avatarOf(r.a.name,r.a.code)}<span class="nm">${esc(r.a.name)}<small>${r.a.code}</small></span></span></td>
+    <td class="l"><span class="agentcell">${avatarOf(r.a.name,r.a.code)}<span class="nm">${esc(r.a.name)}${leftPill(r.a.code)}<small>${r.a.code}</small></span></span></td>
     <td class="l">${campChip(M.primaryCamp[r.a.code]||r.a.campaign)}</td>
     <td><input type="number" min="0" class="cell" value="${r.c}" onchange="setAdj('${r.a.code}','c',this.value)"></td>
     <td><input type="number" min="0" class="cell" value="${r.r}" onchange="setAdj('${r.a.code}','r',this.value)"></td></tr>`).join('')}
@@ -7356,7 +7486,7 @@ function drawerHTML(code){
     <div class="meta">
       <h2>${esc(a.name)} <span class="pill ${r.cls}">${r.level} risk</span>
         ${t.dir!=='flat'?`<span class="pill ${t.dir==='up'?'pgood':'pcrit'}">${t.dir==='up'?'▲ improving':'▼ declining'}</span>`:''}</h2>
-      <div class="sub">${code} · ${campChip(camp)} · ${esc(a.tenure)} · ${a.movedInPeriod?'worked this period under':'reports to'} <b>${esc(a.tl)}</b>${(a.tlNow&&a.tlNow!==a.tl)?' <span style="color:var(--muted)">(now '+esc(a.tlNow)+')</span>':''}${a.start?' · since '+a.start:''}${M.term[code]?' · <b style="color:var(--crit)">terminated '+M.term[code]+'</b>':''}</div>
+      <div class="sub">${code} · ${campChip(camp)} · ${esc(a.tenure)}${leftPill(a.code)} · ${a.movedInPeriod?'worked this period under':'reports to'} <b>${esc(a.tl)}</b>${(a.tlNow&&a.tlNow!==a.tl)?' <span style="color:var(--muted)">(now '+esc(a.tlNow)+')</span>':''}${a.start?' · since '+a.start:''}${M.term[code]?' · <b style="color:var(--crit)">terminated '+M.term[code]+'</b>':''}</div>
       ${orgHistLine(code)}
       <div class="badges">${badges.map(b=>`<span class="badge gold">${b[0]} ${b[1]}</span>`).join('')||'<span class="badge">No badges yet this period</span>'}</div>
     </div>
@@ -7990,6 +8120,11 @@ async function adoptRosterFromRecord(given){
        fingerprint is unchanged — the map can move without the list moving. */
     if(Array.isArray(j.leaders)){ const m={}; j.leaders.forEach(function(l){ const c=l&&cbCode(String(l.cb||'')); if(c) m[c]=l.name||''; });
       if(JSON.stringify(m)!==JSON.stringify(S.tlCbs||{})){ S.tlCbs=m; save(); } }
+    /* THE LEAVERS COME FROM THE RECORD (rule departures, 2026-09-15): who a later list stopped naming,
+       and on which date, as the archive says — never derived here. Adopted whenever the payload carries
+       them, fingerprint or no fingerprint; a change re-attributes their days on the next rebuild. */
+    let leaversMoved=false;
+    if(Array.isArray(j.leavers)){ leaversMoved=adoptLeavers(j.leavers); if(leaversMoved) save(); }
     /* ALREADY ON THIS LIST — but is the roster on screen actually the record's? A tab on an older
        build kept saving a stale 131-agent roster over the shared state while the record said 129
        (2026-09-15), and a matching fingerprint skipped everything below. Reconcile the code set on
@@ -7999,9 +8134,11 @@ async function adoptRosterFromRecord(given){
       const gone=(S.roster||[]).filter(a=>!codes.has(a.code));
       if(gone.length&&gone.length<(S.roster||[]).length&&codes.size>=25){
         S.roster=(S.roster||[]).filter(a=>codes.has(a.code));
+        noteDepartures(gone,j.as_of||dkey(new Date()));
         toast(gone.length+' agent(s) are not on the published Agent List — removed: '+gone.slice(0,6).map(a=>a.code+' '+(a.name||'')).join(', ')+(gone.length>6?' +'+(gone.length-6)+' more':''),10000);
         try{ save(); rebuild(); renderAll(); }catch(e){}
       }
+      else if(leaversMoved){ try{ rebuild(); renderAll(); }catch(e){} }
       return;
     }
     const rows=j.roster
@@ -8023,6 +8160,7 @@ async function adoptRosterFromRecord(given){
       const gone=(S.roster||[]).filter(a=>!codes.has(a.code));
       if(gone.length&&gone.length<(S.roster||[]).length){
         S.roster=(S.roster||[]).filter(a=>codes.has(a.code));
+        noteDepartures(gone,j.as_of||dkey(new Date()));
         toast(gone.length+' agent(s) are not on the published Agent List — removed: '+gone.slice(0,6).map(a=>a.code+' '+(a.name||'')).join(', ')+(gone.length>6?' +'+(gone.length-6)+' more':''),10000);
       } }
     S.rosterFp=j.fingerprint;                                         // set BEFORE the ingest's delayed publish fires
@@ -8427,6 +8565,9 @@ function agentDigestPayload(){
 
     rows.push({
       code:a.code, name:a.name||a.code, campaign:camp, tenure:tenure,
+      /* the date a later Agent List stopped naming them (rule departures, 2026-09-15) — '' for
+         everyone on the list; a team view can grey a leaver, their figures still count */
+      left:a.left||'',
       /* THE TEAM LEADER, published so Agent Analytics can scope a team leader to
          their own team in the WORKER. Team membership is the Agent List's 'Team
          Leader' column and nothing else — there is no team id in this system — so
@@ -8850,7 +8991,8 @@ function hydRetry(){
 function hydrate(){
   var t=sessionStorage.getItem("cbx_token"); if(!t) return;
   fetch("https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=vas-state",{headers:{"Authorization":"Bearer "+t}})
-   .then(function(r){ if(r.status===404) return {empty:true}; return r.ok ? r.text().then(function(x){return {txt:x}}) : {skip:true}; })
+   .then(function(r){ try{ window.__vasBase=(r.status===404)?'none':(r.ok?(r.headers.get('X-Cbx-Version')||null):window.__vasBase); }catch(e){}   // the version this tab is now based on (compare-and-set, 2026-09-15)
+     if(r.status===404) return {empty:true}; return r.ok ? r.text().then(function(x){return {txt:x}}) : {skip:true}; })
    .then(function(res){
      if(!res||res.skip){ hydRetry(); return; }  // auth/5xx — keep local, warn, retry; never push blind
      if(res.empty){

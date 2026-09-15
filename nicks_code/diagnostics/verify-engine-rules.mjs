@@ -45,6 +45,10 @@ ok('GWP rate per sale matches', inlined.gwpPerSale === SPEC.reference_data.gwp_r
 ok('VAT multiplier matches', inlined.vat === SPEC.reference_data.vat_multiplier.value);
 ok('Saturday shift rule matches (data only, from)', inlined.saturdayShiftsFrom === (SPEC.reference_data.saturday_shifts || {}).data_only_from,
   inlined.saturdayShiftsFrom + ' vs ' + JSON.stringify((SPEC.reference_data.saturday_shifts || {}).data_only_from));
+/* DEPARTURES (Nick, 2026-09-15): a leaver keeps their days until the list that dropped them. */
+{ const d = SPEC.reference_data.departures || {}, i = inlined.departures || {};
+  ok('departures rule matches (keep days until left, since)', i.keepDaysUntilLeft === d.keep_days_until_left && i.since === d.since,
+    JSON.stringify(i) + ' vs ' + JSON.stringify({ keep_days_until_left: d.keep_days_until_left, since: d.since })); }
 /* AVERAGE TALK IS MINUTES PER EMPLOYED SHIFT (Nick, 2026-09-08). The unit is a rule-book value with an inline
    mirror, and the display layer must read it: no average-talk column may format with fmtDur any more. */
 const tta = SPEC.reference_data.talk_time_average || {};

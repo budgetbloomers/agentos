@@ -145,7 +145,7 @@ jobs:
         id: nightly
         run: |
           set +e; fails=""
-          for s in verify-all-tabs verify-controls verify-store-freshness verify-publish-agent-list verify-agent-card verify-rule-constants verify-composite-score verify-password-lifecycle verify-composite-recompute verify-rake verify-no-duplicates verify-upload-formats verify-lead-book verify-wimpy; do
+          for s in verify-all-tabs verify-controls verify-store-freshness verify-publish-agent-list verify-agent-card verify-rule-constants verify-composite-score verify-password-lifecycle verify-composite-recompute verify-rake verify-no-duplicates verify-upload-formats verify-lead-book verify-wimpy verify-departures; do
             node nicks_code/diagnostics/$s.mjs > /tmp/$s.log 2>&1 || fails="$fails $s($(grep -oE '[0-9]+ failed' /tmp/$s.log | head -1 || true): $(grep -E 'FAIL|Error' /tmp/$s.log | head -2 | cut -c1-120 | tr '\n' ';'))"
           done
           node nicks_code/diagnostics/verify-live-save.mjs --live > /tmp/live.log 2>&1 || fails="$fails verify-live-save"

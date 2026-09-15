@@ -61,9 +61,19 @@ const rc = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?key=eq.kv:roster-curre
 if (rc.ok) {
   let rv = ((await rc.json())[0] || {}).value; if (typeof rv === 'string') { try { rv = JSON.parse(rv); } catch {} }
   if (rv && Array.isArray(rv.roster) && rv.roster.length) {
+    /* THE LEAVERS COME WITH THE RECORD (rule departures, 2026-09-15). /api/roster serves them from
+       agent_list_leavers(); this tool reads the same function so the digest credits a leaver's
+       days to them the way an open PULSE tab does — otherwise Agent Analytics would lag the rule
+       by "until someone opens PULSE", the exact gap this tool exists to close. */
+    try {
+      const lr = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/agent_list_leavers`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_days: 90 }) });
+      if (lr.ok) rv.leavers = (await lr.json()).map((r) => ({ code: r.code, name: r.name || '', sf: r.sf || '', callx: r.callx || '', tl: r.tl || '',
+        campaign: r.campaign || '', tenure: r.tenure || '', target: r.target, start: r.start_date || '', left: r.left_on }));
+    } catch {}
     const adopted = await page.evaluate((j) => {
       const S = window.__mtd.state();
-      if (!j.fingerprint || j.fingerprint === S.rosterFp) return { same: true, n: (S.roster || []).length };
+      const leaversMoved = Array.isArray(j.leavers) && typeof adoptLeavers === 'function' ? adoptLeavers(j.leavers) : false;
+      if (!j.fingerprint || j.fingerprint === S.rosterFp) { if (leaversMoved) window.__mtd.rebuild(); return { same: true, n: (S.roster || []).length, leavers: Object.keys(S.leavers || {}).length }; }
       const rows = j.roster.filter(a => a && String(a.code || '').trim() && String(a.name || '').trim())
         .map(a => ({ 'Employee Code': a.code, 'Agent Name': a.name, 'Sales Force': a.sf || a.name,
           'Team Leader': a.tl || '', 'Campaign': a.campaign || '', 'Tenure': a.tenure || '',
@@ -75,7 +85,7 @@ if (rc.ok) {
       S.rosterFp = j.fingerprint; window.__mtd.rebuild();
       return { before, n: S.roster.length, as_of: j.as_of || null };
     }, rv);
-    console.log('roster of record: ' + (adopted.same ? 'blob already on this list (' + adopted.n + ' agents)'
+    console.log('roster of record: ' + (adopted.same ? 'blob already on this list (' + adopted.n + ' agents' + (adopted.leavers != null ? ', ' + adopted.leavers + ' leavers keep their days' : '') + ')'
       : adopted.refused ? 'NOT adopted — ' + adopted.refused
       : 'adopted ' + adopted.n + ' agents (blob had ' + adopted.before + ')' + (adopted.as_of ? ' as of ' + adopted.as_of : '')));
   }
