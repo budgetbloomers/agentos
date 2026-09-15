@@ -46,7 +46,9 @@ const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
 const first = (s) => norm(String(s || '').trim().split(/\s+/)[0]);
 /* Known spelling differences between our Agent List and the hubs. Kept as data
    so adding one is not a code change. */
-const ALIAS = { dhamendra: 'dharmendra' };
+/* the hubs' own spellings — the Agent List says Dhamendra and Renolin, both hubs say
+   Dharmendra and Renolan (the dialler does too, see the Vici user groups) */
+const ALIAS = { dhamendra: 'dharmendra', renolin: 'renolan' };
 
 const leaders = await (await fetch(`${env.SUPABASE_URL}/rest/v1/app_users?select=id,username,full_name,team,hub_ids&role=eq.team_leader&order=full_name`, { headers: H })).json();
 if (!leaders.length) { console.error('No team_leader accounts — run tools/provision-agent-logins.mjs first.'); process.exit(2); }

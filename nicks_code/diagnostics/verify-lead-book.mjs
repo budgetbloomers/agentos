@@ -64,6 +64,18 @@ else {
   const live = await (async () => { const c2 = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false } }); await c2.connect();
     try { return (await c2.query('select lm_open_book_meta() m')).rows[0].m; } finally { await c2.end(); } })();
   ok('the fixture never reached the live cache (rolled back)', !live || live.snapshot_date !== '2099-01-01', JSON.stringify(live));
+  /* A QUEUE BY ANY OTHER NAME (migration-038, 2026-09-15). Salesforce moved the unallocated pool
+     into "Courtesy call- Panimax"; the exact-name rule called 404,014 of them agent-held, the book
+     grew to 46 MB and the reader timed out — the tab kept the old book and said nothing. Two guards:
+     the rule reads the shape, and the LIVE book stays a size the route can serve. */
+  const kinds = await (async () => { const c3 = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false } }); await c3.connect();
+    try { return (await c3.query(`select rake_owner_kind('Courtesy call- Panimax') a, rake_owner_kind('CUDDLE CALL - overflow') b, rake_owner_kind('Courtesy Call') c, rake_owner_kind('Ann Smith - EC3') d, rake_owner_kind('') e`)).rows[0]; } finally { await c3.end(); } })();
+  ok('a suffixed pseudo-queue ("Courtesy call- Panimax") is a queue, not an agent', kinds.a === 'queue' && kinds.b === 'queue' && kinds.c === 'queue', JSON.stringify(kinds));
+  ok('a person ("Name Surname - Team") is still an agent, and blank is null', kinds.d === 'agent' && kinds.e === null, JSON.stringify(kinds));
+  const LIVE_CEILING = 200000;
+  ok('the live book is a size the route can serve (agent-held rows under ' + LIVE_CEILING.toLocaleString() + ')',
+    !live || live.empty || +live.agent_rows < LIVE_CEILING, live && (live.agent_rows + ' agent-held rows — an owner is being misclassified; check the top case_owner values of the newest snapshot'));
+  ok('…and the queue pool is the larger side, as the export has always been shaped', !live || live.empty || +live.queue_rows > +live.agent_rows, live && ('agent ' + live.agent_rows + ' vs queue ' + live.queue_rows));
 }
 
 /* ------------------------------------------------------------------ page half */

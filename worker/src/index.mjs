@@ -1015,15 +1015,23 @@ export default {
         const tstamp = (tctx && tctx.targets && tctx.targets.stamp) || '';
         const cur = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-current')}&select=value,updated_at`).catch(() => null);
         const rec = cur && cur[0] && cur[0].value;
+        /* THE LEADERS' CB NUMBERS TRAVEL WITH THE ROSTER (2026-09-15). The Agent List names a
+           leader and never carries their code; team_leader_cbs (migration-018) does. ViciDial
+           logs a leader who dials under that code, so a page that only knows leaders by NAME
+           filed six of them under "dialler logins the Agent List does not know" — the one bucket
+           that tells a person to act. Served here so both apps can class a leader's login as a
+           leader, never as a missing agent. */
+        const leaders = (await DB.select('team_leader_cbs?select=leader_name,employee_code').catch(() => null) || [])
+          .filter((l) => l && l.employee_code).map((l) => ({ name: l.leader_name, cb: normCb(l.employee_code) }));
         if (rec && Array.isArray(rec.roster) && rec.roster.length && rec.source !== 'seed') {
           return json({ fingerprint: rec.fingerprint, n: rec.roster.length, as_of: rec.as_of || '',
             file: rec.file || '', source: rec.source || '', uploaded_by: rec.uploaded_by || '',
             uploaded_at: rec.uploaded_at || '', state_updated_at: (cur[0].updated_at || ''),
-            targets_stamp: tstamp, roster: applyTargets(rec.roster) });
+            targets_stamp: tstamp, roster: applyTargets(rec.roster), leaders });
         }
         const payload = await rosterSync(env, DB, { fresh: !!url.searchParams.get('fresh'), who: user && user.username });
         if (payload && payload.error) return json({ error: payload.error }, payload.status || 500);
-        if (payload && Array.isArray(payload.roster)) { payload.roster = applyTargets(payload.roster); payload.targets_stamp = tstamp; }
+        if (payload && Array.isArray(payload.roster)) { payload.roster = applyTargets(payload.roster); payload.targets_stamp = tstamp; payload.leaders = leaders; }
         return json(payload);
       }
 

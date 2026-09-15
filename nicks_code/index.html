@@ -3634,7 +3634,11 @@ function buildModel(range, periodKey){
           const sysPat=(MTD_RULES.viciCallReport.nonAgentPatterns||[]).map(x=>new RegExp(x,'i'));
           const sysList=(MTD_RULES.viciCallReport.nonAgentUsers||[]).map(s=>s.toUpperCase());
           const isSys=sysList.includes(String(k).toUpperCase().trim())||sysPat.some(rx=>rx.test(String(k).trim()));
-          const isTL=S.roster.some(a=>a.tl&&normName(a.tl)===nk);
+          /* …by NAME (the list's spelling, aliased) OR by CB (ViciDial logs a leader under their
+             code — 'CB102', 'CB194JTL' — which S.tlCbs knows from the Worker's roster payload).
+             Six leaders read as "missing from the Agent List" before the CB half existed. */
+          const kcb=cbCode(String(k).replace(/^(CB\d+)[A-Z]+$/i,'$1'));   // CB194JTL -> CB194; CB014 -> CB14
+          const isTL=S.roster.some(a=>a.tl&&normName(a.tl)===nk)||!!(kcb&&S.tlCbs&&S.tlCbs[kcb]!=null);
           u.kind=isSys?'system login':(isTL?'team leader':'missing from the Agent List');
         }
       }
@@ -7922,6 +7926,12 @@ async function adoptRosterFromRecord(given){
       if(!r.ok)return; j=await r.json();
     }catch(e){return}
     if(!j||!Array.isArray(j.roster)||!j.roster.length)return;
+    /* THE LEADERS' CB NUMBERS (2026-09-15): the list names a leader, the Worker serves their
+       code from team_leader_cbs, and the dialler notice uses it to class a leader dialling
+       under their CB as a leader rather than a missing agent. Kept even when the roster
+       fingerprint is unchanged — the map can move without the list moving. */
+    if(Array.isArray(j.leaders)){ const m={}; j.leaders.forEach(function(l){ const c=l&&cbCode(String(l.cb||'')); if(c) m[c]=l.name||''; });
+      if(JSON.stringify(m)!==JSON.stringify(S.tlCbs||{})){ S.tlCbs=m; save(); } }
     if(!j.fingerprint||j.fingerprint===S.rosterFp)return;             // already on this list
     const rows=j.roster
       .filter(a=>a&&String(a.code||'').trim()&&String(a.name||'').trim())
