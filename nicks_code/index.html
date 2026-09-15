@@ -6927,10 +6927,96 @@ async function largeUpload(file){
     x.onload=()=>res(x.status); x.onerror=()=>res(0); x.send(file); });
   if(status===413) return say('Storage refused the file: it is over the project upload limit (Supabase → Storage → Settings → Upload file size limit). Nothing was recorded.');
   if(status<200||status>=300) return say('Upload failed (HTTP '+status+'). Check the connection and try again — nothing was recorded.');
-  say('Uploaded. Handing over to the runner…');
+  say('Uploaded. Recording it…');
   const done=await fetch(base+'/api/upload/large/complete',{method:'POST',headers:hdr,body:JSON.stringify({id:st.id,size:file.size})}).then(r=>r.json()).catch(()=>({error:'Cannot reach the server.'}));
-  say(done&&done.ok?done.message:('Could not hand over: '+(done&&done.error||'unknown error')));
+  if(!(done&&done.ok)){ say('Could not record the upload: '+(done&&done.error||'unknown error')); largeStatus(); return; }
+  /* LOAD IT FROM HERE (migration-042, Nick 2026-09-15: "make sure it works" — no runner). This tab
+     parses the file it just sent and hands Postgres the rows in slices; the merge is the same SQL the
+     runner used. If this tab closes mid-way the file goes back on the queue for a runner. */
+  try{ await rakeInPage(file, st.id, say); }
+  catch(e){ say('Could not load '+file.name+' from this page — '+((e&&e.message)||e)+'. It is queued for the runner instead.');
+    fetch(base+'/api/rake/page?fn=abandon',{method:'POST',headers:hdr,body:JSON.stringify({p_file:st.id,p_error:String((e&&e.message)||e).slice(0,200)})}).catch(()=>{}); }
   largeStatus();
+}
+/* ---- THE IN-PAGE RAKE ----
+   The four large sources and their lake columns — the same contracts as tools/rake-lib.mjs and
+   rake_page_contracts (verify-rake asserts the three agree). Rows travel as arrays in lake order. */
+const RAKE_SOURCES={
+  SF_OPEN_CASES:{required:['Case Number','Date/Time Opened','Case Owner'],absent:['Date/Time Closed'],extra:['snapshot_date'],
+    cols:{case_id:'Case ID',case_number:'Case Number',subject:'Subject',opened_at:'Date/Time Opened',age_hours:'Age (Hours)',account_name:'Account Name',account_number:'Account Number',case_owner:'Case Owner',status:'Status',record_type:'Case Record Type'}},
+  SF_CLOSED_CASES:{required:['Case Number','Date/Time Closed'],
+    cols:{case_id:'Case ID',case_number:'Case Number',subject:'Subject',opened_at:'Date/Time Opened',closed_at:'Date/Time Closed',disposition:'Disposition',age_hours:'Age (Hours)',account_name:'Account Name',account_number:'Account Number',case_owner:'Case Owner',status:'Status',record_type:'Case Record Type'}},
+  BI_ACTIVE_CASES:{required:['Account Number','Owner','Charge Amount','Contract Create Date'],
+    cols:{account_no:'Account Number',contract_status:'Contract Status',account_name:'Account Name',contract_number:'Contract Number',owner:'Owner',contract_create_date:'Contract Create Date',charge_amount:'Charge Amount',charge_code:'Charge Code',product_bundle:'Product Bundle',merged_bundle:'Merged Product Bundle',consultant:'Consultant',sales_vertical:'Sales Vertical',case_number:'Case Number'}},
+  VICI_CALL_REPORT:{required:['call_date','user','length_in_sec'],
+    cols:{call_date:'call_date',agent_login:'user',lead_id:'lead_id',status:'status',full_name:'full_name',user_group:'user_group',campaign_id:'campaign_id',length_in_sec:'length_in_sec',status_name:'status_name'}},
+};
+const rakeNorm=h=>String(h||'').replace(/\s+/g,' ').trim().toLowerCase();
+function rakeDetect(headers){ const set=new Set(headers.map(rakeNorm));
+  for(const [src,c] of Object.entries(RAKE_SOURCES)) if(c.required.every(h=>set.has(rakeNorm(h)))&&!(c.absent||[]).some(h=>set.has(rakeNorm(h)))) return src; return null; }
+function rakeSnapshot(name){ const m=/(\d{2})(\d{2})(\d{2})(?!\d)/.exec(name); if(m&&+m[2]>=1&&+m[2]<=12&&+m[1]>=1&&+m[1]<=31) return `20${m[3]}-${m[2]}-${m[1]}`; return dkey(new Date()); }
+/* a streaming RFC-4180 reader: fields may be quoted and carry delimiters and newlines */
+function rakeDelimitedReader(delim,onRow){
+  let field='',row=[],q=false,wasQ=false;
+  return { push(text){ for(let i=0;i<text.length;i++){ const ch=text[i];
+      if(q){ if(ch==='"'){ if(text[i+1]==='"'){ field+='"'; i++; } else { q=false; wasQ=true; } } else field+=ch; continue; }
+      if(ch==='"'&&field===''&&!wasQ){ q=true; continue; }
+      if(ch===delim){ row.push(field); field=''; wasQ=false; continue; }
+      if(ch==='\n'||ch==='\r'){ if(ch==='\r'&&text[i+1]==='\n') i++; row.push(field); field=''; wasQ=false; if(row.length>1||row[0]!=='') onRow(row); row=[]; continue; }
+      field+=ch; }
+    }, end(){ if(field!==''||row.length){ row.push(field); if(row.length>1||row[0]!=='') onRow(row); } row=[]; field=''; } };
+}
+function rakeHtmlReader(onRow){
+  let carry=''; const rowRe=/<tr[^>]*>([\s\S]*?)<\/tr>/gi, cell=/<t([dh])[^>]*>([\s\S]*?)<\/t\1>/gi;
+  const ent=s=>s.replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'").replace(/&#(\d+);/g,(m,n)=>String.fromCharCode(+n));
+  return { push(text){ carry+=text; let m,last=0; rowRe.lastIndex=0;
+      while((m=rowRe.exec(carry))){ last=rowRe.lastIndex; const cells=[]; let c; cell.lastIndex=0; while((c=cell.exec(m[1]))) cells.push(ent(c[2].replace(/<[^>]+>/g,'')).trim()); onRow(cells); }
+      carry=carry.slice(last); if(carry.length>4*1048576) carry=carry.slice(-1048576); }, end(){} };
+}
+async function rakeInPage(file, id, say){
+  const tk=sessionStorage.getItem('cbx_token'); const base='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
+  const hdr={'Authorization':'Bearer '+tk,'Content-Type':'application/json','X-Cbx-Client':'v5'};
+  const step=async(fn,body)=>{ const r=await fetch(base+'/api/rake/page?fn='+fn,{method:'POST',headers:hdr,body:JSON.stringify(body)}); const j=await r.json().catch(()=>null);
+    if(!r.ok||!j||j.ok===false) throw new Error((j&&j.error)||('step '+fn+' failed ('+r.status+')')); return j; };
+  /* the first bytes decide the reader; XLSX is whole-file by nature and stays a runner job */
+  const head=new Uint8Array(await file.slice(0,4096).arrayBuffer()); const headTxt=new TextDecoder('latin1').decode(head);
+  if(head[0]===0x50&&head[1]===0x4b) throw new Error('an .xlsx workbook cannot be read as a stream here — export it as CSV, or a runner will load it');
+  const isHtml=/^\s*(<\?xml|<!doctype|<html|<head|<table)/i.test(headTxt);
+  const first=headTxt.split(/\r?\n/)[0]; const delim=(first.split('\t').length>first.split(',').length)?'\t':',';
+  const cs=((/charset=([\w-]+)/i.exec(headTxt)||[])[1]||'utf-8').toLowerCase();
+  const dec=new TextDecoder(cs==='iso-8859-1'||cs==='latin1'?'latin1':'utf-8');
+  /* the bytes' identity: the duplicate rule the runner applied; skipped past 300 MB rather than hold it all */
+  let sha=null; if(file.size<=300*1048576){ try{ const d=await crypto.subtle.digest('SHA-256',await file.arrayBuffer()); sha=[...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,'0')).join(''); }catch(e){ sha=null; } }
+  const snapshot=rakeSnapshot(file.name);
+  let src=null,contract=null,idx=null,lakeCols=null,seq=0,slice=[],pending=Promise.resolve(),failed=null,begun=false;
+  /* BACKPRESSURE: slices go up one after another on the `pending` chain, and the reader waits when
+     more than two are queued — 485,000 rows must never become 97 requests in flight at once. */
+  const SLICE=5000; let queued=0;
+  const flush=()=>{ if(!slice.length) return; const rows=slice.splice(0,SLICE), from=seq; seq+=rows.length; queued++;
+    pending=pending.then(()=>step('stage',{p_file:id,p_from:from,p_rows:rows})).then(()=>{ queued--; say('Loading '+file.name+' — '+fmtNum(from+rows.length)+' rows staged…'); }).catch(e=>{ queued--; failed=failed||e; }); };
+  const drain=async()=>{ while(slice.length>=SLICE&&!failed){ while(queued>=2&&!failed) await new Promise(r=>setTimeout(r,40)); flush(); } };
+  const onRow=(cells)=>{ if(failed) return;
+    if(!src){ src=rakeDetect(cells); if(!src) throw new Error('unrecognised header — not one of '+Object.keys(RAKE_SOURCES).join(', '));
+      contract=RAKE_SOURCES[src]; const hn=cells.map(rakeNorm); idx={}; for(const [col,h] of Object.entries(contract.cols)) idx[col]=hn.indexOf(rakeNorm(h));
+      lakeCols=[...Object.keys(contract.cols),...(contract.extra||[])];
+      pending=pending.then(()=>step('begin',{p_file:id,p_source:src,p_sha:sha,p_bytes:file.size})).then(j=>{ begun=true;
+        const want=JSON.stringify(j.cols||[]); if(want!==JSON.stringify(lakeCols)) throw new Error('column contract differs between the page and the database for '+src); }).catch(e=>{ failed=failed||e; });
+      return; }
+    const vals=Object.keys(contract.cols).map(c=>idx[c]>=0?(cells[idx[c]]??''):''); for(const e of contract.extra||[]) vals.push(e==='snapshot_date'?snapshot:'');
+    slice.push(vals); };
+  const reader=isHtml?rakeHtmlReader(onRow):rakeDelimitedReader(delim,onRow);
+  say('Reading '+file.name+'…');
+  const rs=file.stream().getReader(); let done=false;
+  while(!done){ const r=await rs.read(); done=r.done; if(r.value) reader.push(dec.decode(r.value,{stream:!done})); await drain(); if(failed) throw failed; }
+  reader.end(); while(slice.length){ while(queued>=2&&!failed) await new Promise(r=>setTimeout(r,40)); if(failed) break; flush(); } await pending; if(failed) throw failed;
+  if(!src) throw new Error('no header row found');
+  const rowsIn=seq; say('Merging '+fmtNum(rowsIn)+' rows into the lake…');
+  let merged=0,rejected=0; const MERGE=20000;
+  for(let from=0;from<rowsIn;from+=MERGE){ const j=await step('merge',{p_file:id,p_from:from,p_to:Math.min(from+MERGE,rowsIn)}); merged+=j.merged||0; rejected+=j.rejected||0;
+    say('Merging '+file.name+' — '+fmtNum(Math.min(from+MERGE,rowsIn))+' of '+fmtNum(rowsIn)+' rows…'); }
+  await step('finish',{p_file:id,p_rows_in:rowsIn});
+  say('Loaded '+file.name+' — '+fmtNum(merged)+' rows into the lake'+(rejected?' ('+fmtNum(rejected)+' rejected)':'')+'. The lead book refreshes within ten minutes.');
+  if(src==='SF_OPEN_CASES'&&typeof syncLeadBookFromLake==='function') setTimeout(()=>{ try{ syncLeadBookFromLake(true); }catch(e){} },2000);
 }
 async function largeStatus(){
   const el=$('#largeList'); if(!el) return;
@@ -6940,8 +7026,28 @@ async function largeStatus(){
   const fmtB=(b)=>b==null?'':(b/1048576).toFixed(1)+' MB'; const when=(t)=>t?new Date(t).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg',hour12:false}).slice(0,17):'';
   const badge=(s)=>({received:'pwarn',validated:'pwarn',transforming:'pwarn',loading:'pwarn',loaded:'pok',failed:'pbad'}[s]||'pmuted');
   el.innerHTML=r.files.length?`<div class="tablewrap" style="max-height:260px"><table class="data"><thead><tr><th class="l">File</th><th class="l">Source</th><th>Status</th><th>Size</th><th>Rows</th><th class="l">Received</th><th class="l">Note</th></tr></thead><tbody>`
-    +r.files.map(f=>`<tr><td class="l tx">${esc(f.file_name)}</td><td class="l">${esc(f.source||'—')}</td><td><span class="pill ${badge(f.status)}">${esc(f.status)}</span></td><td>${fmtB(f.bytes)}</td><td>${f.status==='loaded'?fmtNum(f.rows_loaded)+(f.rows_rejected?' <small>('+fmtNum(f.rows_rejected)+' rejected)</small>':''):(f.rows_in!=null?fmtNum(f.rows_in):'')}</td><td class="l">${when(f.received_at)}</td><td class="l tx">${esc(f.error||'')}</td></tr>`).join('')
+    +r.files.map(f=>{
+      /* a file in storage that is not loaded can be loaded from THIS tab (2026-09-15): the bytes stream
+         back from storage through the same in-page loader — an upload never waits for a runner */
+      const stale=f.status==='loading'&&(Date.now()-Date.parse(f.validated_at||f.received_at||0))>30*60000;
+      const loadable=(f.status==='received'||stale||(f.status==='failed'&&!/^duplicate of|^abandoned:|unrecognised/.test(f.error||'')));
+      const btn=loadable?` <button class="btn small" onclick="event.stopPropagation();largeRetry('${esc(f.id)}')">Load from here</button>`:'';
+      return `<tr><td class="l tx">${esc(f.file_name)}</td><td class="l">${esc(f.source||'—')}</td><td><span class="pill ${badge(f.status)}">${esc(stale?'stalled':f.status)}</span>${btn}</td><td>${fmtB(f.bytes)}</td><td>${f.status==='loaded'?fmtNum(f.rows_loaded)+(f.rows_rejected?' <small>('+fmtNum(f.rows_rejected)+' rejected)</small>':''):(f.rows_in!=null?fmtNum(f.rows_in):'')}</td><td class="l">${when(f.received_at)}</td><td class="l tx">${esc(f.error||'')}</td></tr>`; }).join('')
     +'</tbody></table></div>':'<div class="note">No large files yet.</div>';
+}
+async function largeRetry(id){
+  const say=(m)=>{ LARGE_MSG=m; const p=$('#largeProg'); if(p){ p.style.display='block'; p.textContent=m; } };
+  const tk=sessionStorage.getItem('cbx_token'); const base='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
+  const hdr={'Authorization':'Bearer '+tk,'Content-Type':'application/json','X-Cbx-Client':'v5'};
+  say('Fetching the stored file…');
+  const st=await fetch(base+'/api/upload/large/retry',{method:'POST',headers:hdr,body:JSON.stringify({id})}).then(r=>r.json()).catch(()=>({error:'Cannot reach the server.'}));
+  if(!st||!st.download_url) return say('Could not start: '+(st&&st.error||'unknown error'));
+  let blob; try{ const r=await fetch(st.download_url); if(!r.ok) throw new Error('storage '+r.status); blob=await r.blob(); }catch(e){ return say('Could not fetch the stored file — '+(e.message||e)); }
+  const file=new File([blob],st.name||'upload',{type:'text/plain'});
+  try{ await rakeInPage(file, id, say); }
+  catch(e){ say('Could not load '+file.name+' from this page — '+((e&&e.message)||e));
+    fetch(base+'/api/rake/page?fn=abandon',{method:'POST',headers:hdr,body:JSON.stringify({p_file:id,p_error:String((e&&e.message)||e).slice(0,200)})}).catch(()=>{}); }
+  largeStatus();
 }
 PAGES['_wire_data']=()=>{
   const lp=$('#largePick'), li=$('#largeInput');

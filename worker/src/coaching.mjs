@@ -235,6 +235,59 @@ export async function fetchCoaching(env) {
 const CACHE_MIN = 10;
 const STALE_HOURS = 26;          // a daily sync that missed one run is stale, not broken
 
+/* THE SNAPSHOT, TAKEN BY THE CRON IN WAVES (2026-09-15 — Nick: "i am not going to pay for github so
+   make sure it works"). The 84-request pull that the subrequest cap broke inline is split into three
+   waves of two collections (2 × 14 leaders + 1 = 29 requests, under the cap with room for the tick's
+   own reads); one wave per ten-minute tick, so a fresh snapshot lands every ~30 minutes once it is
+   older than REFRESH_HOURS. The parts sit in kv:coaching-waves until all three are in, then the
+   snapshot is written exactly as tools/sync-coaching-hub.mjs wrote it (Storage raw/kv/coaching +
+   the kv:coaching pointer). Two collections failing loses nothing else: each part is settled alone. */
+const REFRESH_HOURS = 2;
+const WAVES = [[0, 1], [2, 3], [4, 5]];
+export async function snapshotCoachingWave(env, DB, nowMs = Date.now()) {
+  const cur = await DB.select(`rules?key=eq.${encodeURIComponent('kv:coaching')}&select=value`).catch(() => null);
+  const fetchedAt = cur && cur[0] && cur[0].value && cur[0].value.fetchedAt;
+  const wr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:coaching-waves')}&select=value`).catch(() => null);
+  let w = (wr && wr[0] && wr[0].value) || null;
+  if (w && w.startedAt && nowMs - Date.parse(w.startedAt) > 3 * 3600000) w = null;          // a pull that never finished: start over
+  if (!w && fetchedAt && nowMs - Date.parse(fetchedAt) < REFRESH_HOURS * 3600000) return { skipped: 'fresh' };
+  const hub = String(env.COACHING_HUB_URL || DEFAULT_HUB).replace(/\/+$/, '');
+  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const leaders = w && w.leaders ? w.leaders : await convexQuery(hub, 'teamLeaders:list', {}, ctrl.signal);
+    if (!Array.isArray(leaders) || !leaders.length) throw new Error('coaching hub returned no team leaders');
+    const idx = w ? w.parts.length : 0;
+    const jobs = [];
+    for (const ci of WAVES[idx]) { const [type, label] = COLLECTIONS[ci];
+      for (const tl of leaders) jobs.push(convexQuery(hub, `${type}:list`, { teamLeaderId: tl._id }, ctrl.signal)
+        .then((rows) => ({ type, label, tl, rows: Array.isArray(rows) ? rows : [] })).catch((e) => ({ type, label, tl, rows: [], error: String(e.message || e) }))); }
+    const settled = await Promise.all(jobs);
+    const sessions = [], errors = [];
+    for (const s of settled) {
+      if (s.error) { errors.push(`${s.type}/${s.tl.name}: ${s.error}`); continue; }
+      for (const rec of s.rows) { const n = normalise(s.type, s.label, rec, s.tl.name); if (n) { n.hubTeamLeaderId = s.tl._id; sessions.push(n); } }
+    }
+    const next = { startedAt: (w && w.startedAt) || new Date(nowMs).toISOString(), leaders, parts: [...((w && w.parts) || []), { sessions, errors }] };
+    if (next.parts.length < WAVES.length) {
+      await DB.insert('rules', [{ key: 'kv:coaching-waves', value: next, updated_by: 'coaching-cron', updated_at: new Date(nowMs).toISOString() }], true);
+      return { wave: next.parts.length, of: WAVES.length, sessions: sessions.length };
+    }
+    const all = next.parts.flatMap((p) => p.sessions), errs = next.parts.flatMap((p) => p.errors);
+    if (!all.length && errs.length) throw new Error(errs[0]);
+    all.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    const snap = { fetchedAt: new Date(nowMs).toISOString(), hub, leaders: leaders.map((l) => ({ id: l._id, name: l.name })), sessions: all, errors: errs, by: 'coaching-cron' };
+    const payload = JSON.stringify(snap);
+    const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/coaching`, { method: 'POST',
+      headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json', 'x-upsert': 'true' }, body: payload });
+    if (!put.ok) throw new Error('storage write failed: ' + put.status);
+    await DB.insert('rules', [{ key: 'kv:coaching', value: { store: 'raw/kv/coaching', bytes: payload.length, sessions: all.length, fetchedAt: snap.fetchedAt },
+      updated_by: 'coaching-cron', updated_at: snap.fetchedAt }], true);
+    await DB.del('rules?key=eq.' + encodeURIComponent('kv:coaching-waves')).catch(() => {});
+    globalThis.__coachCache = null;
+    return { written: true, sessions: all.length, errors: errs.length };
+  } finally { clearTimeout(timer); }
+}
+
 export async function getCoaching(env, DB, { force = false } = {}) {
   const c = globalThis.__coachCache;
   if (!force && c && Date.now() - c.t < CACHE_MIN * 60000) return c.d;

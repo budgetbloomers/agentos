@@ -7,7 +7,7 @@
 import { db } from './db.mjs';
 import { login, logout, session, hashPassword, changePassword, signinByCb } from './auth.mjs';
 import { retrieveKB } from './kb.mjs';
-import { getCoaching, rollUp, sessionsForAgent, withinWindow } from './coaching.mjs';
+import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWave } from './coaching.mjs';
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, listDigestMonths, overview, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn } from './help.mjs';
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
@@ -417,6 +417,9 @@ export default {
       /* THE DRIVER BEHIND runner-silent (2026-09-08): when GitHub drops the 15-minute cron, ask for it. */
       try { await kickRunner(env, DB); }
       catch (e) { console.warn('[cron] runner kick failed: ' + (e && e.message || e)); }
+      /* THE COACHING SNAPSHOT, WITHOUT A RUNNER (2026-09-15): one wave per tick, written when all three are in. */
+      try { const cw = await snapshotCoachingWave(env, DB); if (cw && !cw.skipped) console.info('[cron] coaching snapshot: ' + JSON.stringify(cw)); }
+      catch (e) { console.warn('[cron] coaching snapshot failed: ' + (e && e.message || e)); }
       try {
         const snaps = await dailySnapshots(env, DB);
         if (snaps.length) console.info('[cron] state snapshots: ' + snaps.join('; '));
@@ -1258,9 +1261,46 @@ export default {
         const msg = await DB.rpc('rake_enqueue', { p_file_id: id }).catch((e) => ({ error: String(e && e.message || e) }));
         return json({ ok: true, id, queued: msg && !msg.error, message: 'Received. The runner picks it up within fifteen minutes; progress shows below and in Settings → Scheduled jobs.' });
       }
+      /* THE IN-PAGE RAKE (migration-042, 2026-09-15 — Nick: "i am not going to pay for github so make
+         sure it works"). The uploading browser parses the large file and loads it through five SQL
+         functions; this route is a pass-through — the request body IS the function's parameters, and
+         it is streamed to PostgREST untouched, so a 10 MB slice of rows costs this Worker no CPU. */
+      if (path === '/api/rake/page' && req.method === 'POST') {
+        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        const fn = String(url.searchParams.get('fn') || '');
+        if (!/^(begin|stage|merge|finish|abandon)$/.test(fn)) return json({ error: 'unknown step' }, 400);
+        const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/rake_page_${fn}`, {
+          method: 'POST', body: req.body,
+          headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json' },
+        });
+        const t = await r.text();
+        if (!r.ok) return json({ error: 'load step ' + fn + ' failed: ' + r.status + ' ' + t.slice(0, 200) }, 502);
+        return new Response(t, { status: 200, headers: { 'Content-Type': 'application/json' } });   // CORS is applied to every response on the way out
+      }
+      /* LOAD A STORED FILE FROM ANY TAB (2026-09-15). A tab that closes mid-load, or an upload made
+         while the page could not load, leaves the bytes in storage and the record waiting. Any
+         management tab can now pull the object through a short-lived signed URL and run the same
+         in-page loader — nothing waits for a runner. */
+      if (path === '/api/upload/large/retry' && req.method === 'POST') {
+        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        const b = await req.json().catch(() => ({}));
+        const id = String(b.id || ''); if (!/^[0-9a-f-]{36}$/.test(id)) return json({ error: 'id required' }, 400);
+        const rows = await DB.select(`upload_files?id=eq.${id}&select=id,file_name,storage_bucket,storage_path,status,bytes,validated_at,received_at`);
+        const f = rows && rows[0]; if (!f) return json({ error: 'unknown upload' }, 404);
+        if (f.status === 'loaded') return json({ error: 'already loaded' }, 409);
+        const busySince = Date.parse(f.validated_at || f.received_at || 0);
+        if (f.status === 'loading' && Date.now() - busySince < 30 * 60000) return json({ error: 'a tab is still loading this file — wait a few minutes' }, 409);
+        /* a stale 'loading' claim is released so begin can claim it again */
+        if (f.status === 'loading') await DB.rpc('rake_page_abandon', { p_file: id, p_error: 'reloaded from another tab' }).catch(() => {});
+        const sign = await fetch(`${env.SUPABASE_URL}/storage/v1/object/sign/${f.storage_bucket}/${f.storage_path.split('/').map(encodeURIComponent).join('/')}`, {
+          method: 'POST', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresIn: 3600 }) });
+        if (!sign.ok) return json({ error: 'could not sign a download: ' + sign.status }, 502);
+        const sj = await sign.json();
+        return json({ id, name: f.file_name, bytes: f.bytes, download_url: `${env.SUPABASE_URL}/storage/v1${sj.signedURL || sj.signedUrl || ''}` });
+      }
       if (path === '/api/upload/large/status' && req.method === 'GET') {
         if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
-        const rows = await DB.select(`upload_files?select=id,file_name,source,status,bytes,rows_in,rows_loaded,rows_rejected,error,received_at,loaded_at,uploaded_by&order=received_at.desc&limit=25`).catch(() => []);
+        const rows = await DB.select(`upload_files?select=id,file_name,source,status,bytes,rows_in,rows_loaded,rows_rejected,error,received_at,validated_at,loaded_at,uploaded_by&order=received_at.desc&limit=25`).catch(() => []);
         const health = await DB.rpc('rake_health', {}).catch(() => null);
         return json({ files: rows || [], health });
       }

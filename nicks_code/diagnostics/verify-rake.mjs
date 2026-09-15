@@ -138,7 +138,37 @@ try {
   ok('dedupe_lake: the canonical CB row survives, the spelt variant goes', +(await one(`select count(*) n from agent_list where as_of = (select max(as_of) from agent_list) and norm_cb(employee_code) = 'CB900077'`)).n === 1 && +(await one(`select count(*) n from agent_list where employee_code = 'CB-900077'`)).n === 0);
   ok('dedupe_lake: both runs are logged', +(await one(`select count(*) n from dedupe_log where actor like 'verify-rake%'`)).n === 2);
   const h = await one(`select rake_health() h`);
-  ok('rake_health() has the shape the Worker reads', ['received_stuck', 'in_flight', 'failed_24h', 'failed_names', 'queue_depth', 'dlq_depth', 'last_run'].every((key) => key in h.h), JSON.stringify(h.h).slice(0, 160));
+  /* THE IN-PAGE RAKE (migration-042): three copies of the contracts — rake-lib, PULSE's RAKE_SOURCES and
+     rake_page_contracts — must agree, or a browser load lands columns in the wrong slots. */
+  { const html = fs.readFileSync(path.join(ROOT, 'nicks_code', 'index.html'), 'utf8');
+    const i0 = html.indexOf('const RAKE_SOURCES='); const i1 = html.indexOf('\n};', i0);
+    const page = i0 > 0 ? new Function('return ' + html.slice(i0 + 'const RAKE_SOURCES='.length, i1 + 2))() : null;
+    const dbc = (await c.query('select source, stage, merge_fn, lake_cols from rake_page_contracts')).rows;
+    for (const k of Object.keys(lib.SOURCES)) {
+      const a = lib.SOURCES[k], b = page && page[k], d = dbc.find((r) => r.source === k);
+      const shape = (x) => JSON.stringify({ r: x.required, ab: x.absent || null, e: x.extra || null, c: x.cols });
+      ok('in-page Rake: PULSE contract for ' + k + ' equals rake-lib', !!b && shape(a) === shape(b));
+      ok('in-page Rake: rake_page_contracts for ' + k + ' names the same stage, merge and column order',
+        !!d && d.stage === a.stage && d.merge_fn === a.merge && JSON.stringify(d.lake_cols) === JSON.stringify([...Object.keys(a.cols), ...(a.extra || [])]));
+    }
+    /* and the five functions exist */
+    for (const fn of ['rake_page_begin', 'rake_page_stage', 'rake_page_merge', 'rake_page_finish', 'rake_page_abandon'])
+      ok('in-page Rake: ' + fn + '() exists', +(await one(`select count(*) n from pg_proc where proname = '${fn}'`)).n >= 1);
+    /* a tiny end-to-end inside the transaction: begin → stage → merge → finish for SF_OPEN_CASES */
+    const fid = (await one(`insert into upload_files (file_name, bytes, storage_path, uploaded_by, status) values ('verify-rake page 010926.csv', 10, 'verify/page', 'verify-rake', 'received') returning id`)).id;
+    const b = await one(`select rake_page_begin($1::uuid, 'SF_OPEN_CASES', null, 10) j`, [fid]);
+    ok('in-page Rake: begin claims the file', b.j && b.j.ok === true && Array.isArray(b.j.cols) && b.j.cols.length === 11, JSON.stringify(b.j));
+    const rows = [['1','00900001','s','2026-09-01 08:00','1','Acc','A1','Nobody Real','New','Lead','2026-09-01'], ['2','00900002','s','2026-09-01 09:00','2','Acc','A2','Nobody Real','New','Lead','2026-09-01']];
+    const s = await one(`select rake_page_stage($1::uuid, 0, $2::jsonb) j`, [fid, JSON.stringify(rows)]);
+    ok('in-page Rake: stage inserts the slice', s.j && s.j.ok === true && s.j.staged === 2, JSON.stringify(s.j));
+    const m = await one(`select rake_page_merge($1::uuid, 0, 2) j`, [fid]);
+    ok('in-page Rake: merge lands both rows', m.j && m.j.ok === true && m.j.merged === 2 && m.j.rejected === 0, JSON.stringify(m.j));
+    const f = await one(`select rake_page_finish($1::uuid, 2) j`, [fid]);
+    const st = await one(`select status, rows_in, rows_loaded from upload_files where id = $1`, [fid]);
+    ok('in-page Rake: finish marks the file loaded with its counts', f.j && f.j.ok === true && st.status === 'loaded' && +st.rows_in === 2 && +st.rows_loaded === 2, JSON.stringify(st));
+    ok('in-page Rake: the rows are in sf_open_cases', +(await one(`select count(*) n from sf_open_cases where batch_id = 'rake:' || $1`, [fid])).n === 2);
+  }
+  ok('rake_health() has the shape the Worker reads',['received_stuck', 'in_flight', 'failed_24h', 'failed_names', 'queue_depth', 'dlq_depth', 'last_run'].every((key) => key in h.h), JSON.stringify(h.h).slice(0, 160));
 } catch (e) { ok('database half ran without an exception', false, e.message); }
 finally { await c.query('ROLLBACK'); await c.end(); fs.rmSync(tmp, { recursive: true, force: true }); }
 
