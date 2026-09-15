@@ -644,7 +644,13 @@ const MTD_RULES = {
      they left — the date of the first list that did not name them, as the archive tells it
      (agent_list_leavers, migration-041) — their shifts stop on that date, and every report shows
      them with a "left" marker. Nothing about movers changes. */
-  departures: { keepDaysUntilLeft: true, since: '2026-09-15' },
+  /* REVERSED THE SAME AFTERNOON (Nick, 2026-09-15: "redo the leavers must be removed from the
+     reports, only focus on the new agent list"). The current Agent List is the whole roster of
+     every report; anyone it does not name is off every table, total and card, whatever they did
+     earlier in the month. The machinery that knows WHO left and WHEN (S.leavers, /api/roster
+     leavers[], agent_list_leavers) stays — the Upload Station says how many left since the list —
+     but with keepDaysUntilLeft false the engine never indexes, employs or credits them. */
+  departures: { keepDaysUntilLeft: false, since: '2026-09-15', reversed: '2026-09-15' },
   excludeAgents: { CB67:'Theva Pragasen — Sick Leave all period', CB205:'Darrien Govender — Suspended all period', CB265:'Amanda Mani — no attendance record, likely not started' },
 
   /* §3 — superseded QA codes, later code canonical. APPLY TO QA ROWS ONLY: CB207 is also
@@ -1740,6 +1746,7 @@ function adoptLeavers(list){
   return false;
 }
 function leftPill(code){
+  if(!leaversCount()) return '';                    // rule off: a leaver is not in any report, so there is nothing to mark
   const a=S.leavers&&S.leavers[code]; if(!a||!a.left) return '';
   if((S.roster||[]).some(r=>r.code===code)) return '';
   return ' <span class="pill pmuted" title="Not on the Agent List since '+esc(a.left)+' — their days up to then still count in every report (rule departures, 2026-09-15)">left '+esc(String(a.left).slice(5))+'</span>';
@@ -3250,8 +3257,10 @@ function buildIndex(){
      still owns the sales, calls and shifts they made before they left; with them out of the index
      every one of those facts fell to "unmatched" the moment the list published. Indexed SOFTLY —
      a live agent's code, name or dialler label is never overridden by a leaver's. */
-  for(const c in (S.leavers||{})){ const a=S.leavers[c]; if(a&&a.code) index(a,true); }
+  if(leaversCount()) for(const c in (S.leavers||{})){ const a=S.leavers[c]; if(a&&a.code) index(a,true); }
 }
+/* the departures rule, in one place: true only while a leaver's days are to be kept */
+function leaversCount(){ return !!(MTD_RULES.departures&&MTD_RULES.departures.keepDaysUntilLeft); }
 /* MEMOISED (perf audit, 2026-08-27). The fallback chain below runs several string
    normalisations and, for owner-name keys that miss every index, an O(roster) token
    scan — and Lead Management alone calls this ~40,000 times per render over the
@@ -3481,7 +3490,7 @@ function validateMTD(m){
   const out=[], add=(id,sev,ok,msg)=>out.push({id,sev,ok,msg});
   const F=m.facts, R=m.range;
   const rosterCodes=new Set(S.roster.map(a=>a.code));
-  for(const c in (S.leavers||{})) rosterCodes.add(c);                     // a leaver's money is still the floor's money
+  if(leaversCount()) for(const c in (S.leavers||{})) rosterCodes.add(c);   // only while the departures rule keeps a leaver's days
   const money=F.filter(f=>f.campaign!=='VT');   // VT carries dialler-counted sales and no GWP
 
   /* V01 — one row per agent per day. A duplicate double-counts everything on the row.
@@ -3504,7 +3513,7 @@ function validateMTD(m){
      including that money on the recompute side would report a permanent R4 278 discrepancy
      that is not one. Unmapped owners are outside both sides and are V14's job, not this. */
   { const campOfCode={}; S.roster.forEach(a=>campOfCode[a.code]=a.campaign);
-    for(const c in (S.leavers||{})) if(!campOfCode[c]) campOfCode[c]=S.leavers[c].campaign;
+    if(leaversCount()) for(const c in (S.leavers||{})) if(!campOfCode[c]) campOfCode[c]=S.leavers[c].campaign;
     let n=0,g=0;
     for(const d in S.sales){ if(d<R.from||d>R.to) continue;
       for(const k in S.sales[d]){ const c=resolveKey(k); if(!c||!rosterCodes.has(c)) continue;
@@ -3816,7 +3825,7 @@ function buildModel(range, periodKey){
   /* LEAVERS (rule departures, 2026-09-15): on the floor for every day before `left`, and on any
      day they still have a fact — a sale or a call dated after the list dropped them is a fact,
      not a rounding error. Off the roster, so never doubled with a live row. */
-  const leaverRows=Object.values(S.leavers||{}).filter(a=>a&&a.code&&/^\d{4}-\d{2}-\d{2}$/.test(String(a.left||''))&&!metaOf[a.code]);
+  const leaverRows=leaversCount()?Object.values(S.leavers||{}).filter(a=>a&&a.code&&/^\d{4}-\d{2}-\d{2}$/.test(String(a.left||''))&&!metaOf[a.code]):[];   // [] since Nick reversed the rule the same day: the list is the whole roster
   for(const a of leaverRows) metaOf[a.code]=a;
   /* hoisted above the facts loop — the loop reads it, and the fuller referral block below
      (refsFromFile / refOf) runs after the loop for the aggregate paths */
@@ -6772,7 +6781,7 @@ PAGES.data=()=>{
        place further up the list, and "last in the array" would then name the wrong file. */
     const newest=fs.reduce((a,b)=>String(b.at||'')>String(a.at||'')?b:a,fs[0]);
     return `<span class="pill pgood">${fs.length} file${fs.length>1?'s':''}</span>
-      <span>${dates.length?dates[0].slice(5)+' → '+dates[dates.length-1].slice(5)+' · '+dates.length+' day'+(dates.length>1?'s':''):esc(last.name.slice(0,26))}</span>`
+      <span title="The days these files cover — not how old they are; the line below says when the newest landed">${dates.length?'covers '+dates[0].slice(5)+' → '+dates[dates.length-1].slice(5)+' ('+dates.length+' day'+(dates.length>1?'s':'')+' of data)':esc(last.name.slice(0,26))}</span>`
       +(newest&&newest.at?`<span class="smuted" title="${esc(newest.name)} — ${esc(String(newest.rows||0))} rows${(newest.dates||[]).length?', covering '+(newest.dates||[]).length+' day(s) of calls':''}">last upload ${upStamp(newest.at)}</span>`:'');
   };
   /* EXPECTED BY (never-stale, 2026-09-15). Each source's slot says the day it should cover right
@@ -6800,7 +6809,7 @@ PAGES.data=()=>{
     {t:'roster',icon:I.grid,color:'var(--violet)',name:'Agent List',desc:'Matrix agent list — team leaders, campaigns, tenure, daily targets, start dates. Replaces the current roster, and the assignments apply to the WHOLE current month the moment it lands.',
       stat:(()=>{const fe=S.rosterEffect;
         const lv=Object.values(S.leavers||{}).filter(a=>a&&a.left&&a.left>=dkey(new Date()).slice(0,7)+'-01').length;
-        return `<span class="pill pgood">${S.roster.length} agents</span>`+(lv?`<span class="pill pmuted" title="Not on the latest list; their days up to the list that dropped them still count in every report (rule departures)">${lv} left this month · days kept</span>`:'')
+        return `<span class="pill pgood">${S.roster.length} agents</span>`+(lv?`<span class="pill pmuted" title="Not on the latest Agent List — off every report (Nick, 15 Sep: only the current list counts)">${lv} left this month · off the reports</span>`:'')
           +(fe?`<span>as of ${esc(String(fe.asOf||''))} · applied to whole of ${esc(String(fe.asOf||'').slice(0,7))}</span>
             <span class="smuted" title="${esc(String(fe.file||''))}">${fmtNum(fe.moved)} moved · ${fmtNum(fe.fresh)} new · ${fmtNum(fe.left)} left · last upload ${esc(String(fe.at||''))}</span>`:'');})()},
     {t:'inactive',icon:I.alert,color:'var(--rose)',name:'Cancellations (BI Inactive)',desc:'Power BI Inactive export — cancelled contracts, counted per agent by Contract Deactivate Date. This is where the MTD Cancellations and % of Cancellations columns come from. Upload daily; each upload replaces the days it covers, so overlapping pulls never double-count.',stat:statFor(['cancellations'])},

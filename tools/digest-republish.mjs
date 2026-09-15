@@ -85,7 +85,7 @@ if (rc.ok) {
       S.rosterFp = j.fingerprint; window.__mtd.rebuild();
       return { before, n: S.roster.length, as_of: j.as_of || null };
     }, rv);
-    console.log('roster of record: ' + (adopted.same ? 'blob already on this list (' + adopted.n + ' agents' + (adopted.leavers != null ? ', ' + adopted.leavers + ' leavers keep their days' : '') + ')'
+    console.log('roster of record: ' + (adopted.same ? 'blob already on this list (' + adopted.n + ' agents' + (adopted.leavers != null ? ', ' + adopted.leavers + ' leavers known — off the reports' : '') + ')'
       : adopted.refused ? 'NOT adopted — ' + adopted.refused
       : 'adopted ' + adopted.n + ' agents (blob had ' + adopted.before + ')' + (adopted.as_of ? ' as of ' + adopted.as_of : '')));
   }

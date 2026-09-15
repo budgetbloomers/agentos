@@ -14,7 +14,7 @@ Every number below is from today's live stores.
 
 ## 1 · What is broken today (in order of damage)
 
-### 1.1 A leaver's month vanishes from every VAS report (FIXED 15 Sep PM — Nick agreed; rule `departures`, migration-041, verify-departures 26/26)
+### 1.1 A leaver's month vanishes from every VAS report (BUILT then REVERSED 15 Sep PM — Nick: "the leavers must be removed from the reports, only focus on the new agent list". The current list is the whole roster; `keepDaysUntilLeft: false`; the who-left machinery stays for the Upload Station count. verify-departures 20/20 asserts leavers are OFF.)
 The 14 Sep list removed 17 agents. By the rule you set on 27 Aug ("the list wins its whole month") the
 roster no longer knows them, so their **September facts still in the store are credited to nobody**:
 
@@ -99,7 +99,7 @@ list. Every Upload Station slot shows its newest archived file.
 
 ## 4 · Order of work — status at 15 Sep, 16:40 SAST
 
-1. ~~Leavers keep their days (1.1)~~ **built** — Nick: "I agree with your plan".
+1. ~~Leavers keep their days (1.1)~~ built, then **reversed by Nick the same afternoon** — leavers are off the reports; only the current list counts. The Vici slot's "· 14 days" (days covered) read as staleness and now says "covers 08-25 → 09-14 (14 days of data)".
 2. ~~Compare-and-set for PULSE saves (1.2)~~ **built**.
 3. ~~One classifier (1.6)~~ **built** (publish answer adopted).
 4. ~~The "expected by" strip~~ **built** on every source slot, owner from `source_cadence`; the cheap proofs

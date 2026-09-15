@@ -165,11 +165,11 @@ const after = await page.evaluate(()=>{ const S=window.__mtd.state(); const M=wi
   return { roster:S.roster.map(a=>a.code), rows:(M.agents||[]).map(r=>r.code), leavers:S.leavers||{},
     marked:(M.agents||[]).filter(r=>r.left).map(r=>r.code) }; });
 ok('leavers removed from the roster', dropped.every(c=>!after.roster.includes(c)), dropped.filter(c=>after.roster.includes(c)).join(','));
-/* RULE DEPARTURES (2026-09-15): a leaver KEEPS their days up to the list that dropped them, so anyone
-   who had facts in the period stays in the report, marked left; before this they vanished whole. */
-const hadRows=dropped.filter(c=>beforeAgents.includes(c));
-ok('leavers KEEP their days in the MTD report (rule departures) — '+hadRows.join(','), hadRows.every(c=>after.rows.includes(c)), hadRows.filter(c=>!after.rows.includes(c)).join(','));
-ok('…marked left, on every row', hadRows.every(c=>after.marked.includes(c)), hadRows.filter(c=>!after.marked.includes(c)).join(','));
+/* THE LIST IS THE WHOLE ROSTER (Nick, 2026-09-15 PM: "the leavers must be removed from the reports, only
+   focus on the new agent list") — a dropped agent is off the report entirely; the engine still records
+   WHO left and WHEN (S.leavers) for the Upload Station's count. */
+ok('leavers removed from the MTD report', dropped.every(c=>!after.rows.includes(c)), dropped.filter(c=>after.rows.includes(c)).join(','));
+ok('…and nobody in the report is marked left', after.marked.length===0, after.marked.join(','));
 ok('…recorded as leavers with the list\'s date', dropped.every(c=>after.leavers[c]&&/^\d{4}-\d{2}-\d{2}$/.test(after.leavers[c].left)), JSON.stringify(dropped.map(c=>after.leavers[c]&&after.leavers[c].left)));
 ok('everyone else still in the report', after.rows.length>0, `rows=${after.rows.length}`);
 console.log(`report rows: ${beforeAgents.length} -> ${after.rows.length}`);
