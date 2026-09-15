@@ -94,12 +94,12 @@ const aJson = JSON.stringify(aRest);
 const leaked = digest.agents.filter(x => x.code !== target.code)
   .filter(x => aJson.includes('"' + x.code + '"') || aJson.includes('"' + x.name + '"'));
 ok('C5 no other agent is named anywhere in the payload outside Top performers', leaked.length === 0, leaked.slice(0, 3).map(x => x.code).join(','));
-{ const rows = [...((aTop && aTop.floor) || []), ...((aTop && aTop.team) || [])];
+{ const rows = (aTop && aTop.floor) || [];
   const keys = new Set(rows.flatMap(r => Object.keys(r)));
-  ok('C5b Top performers is bounded (≤10 floor, ≤5 team) and carries no codes',
-    !!aTop && (aTop.floor || []).length <= 10 && (aTop.team || []).length <= 5 && !keys.has('code')
-      && [...keys].every(k => ['pos', 'name', 'campaign', 'tl', 'tenure', 'sales', 'gwpEx', 'me'].includes(k)),
-    JSON.stringify({ floor: aTop && aTop.floor && aTop.floor.length, team: aTop && aTop.team && aTop.team.length, keys: [...keys] })); }
+  ok('C5b Top performers is the floor\'s top 10 only — no team list, no codes, no leader names',
+    !!aTop && rows.length <= 10 && !('team' in (aTop || {})) && !keys.has('code') && !keys.has('tl')
+      && [...keys].every(k => ['pos', 'name', 'campaign', 'tenure', 'sales', 'gwpEx', 'me'].includes(k)),
+    JSON.stringify({ floor: rows.length, team: aTop && 'team' in aTop, keys: [...keys] })); }
 ok('C6 peer context is anonymous (a group average, no names)',
   !aOv.body.peers || Object.keys(aOv.body.peers).every(k => ['n', 'gwpEx', 'sales', 'pctT'].includes(k)));
 const aOther = await agentDetail({}, DB, agentUser, digest, foreign.code);

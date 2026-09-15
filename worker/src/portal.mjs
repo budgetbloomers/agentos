@@ -255,17 +255,17 @@ const peersFor = (digest, row) =>
 /* THE TOP PERFORMERS (Nick, 2026-09-15: "the top performers … add that to the agent view in
    agent analytics"). This deliberately opens the one window the agent view kept shut — colleagues
    are NAMED here, with their sales and premium — because Nick asked for exactly that. Bounded:
-   the floor's top TOP_N and the top five of the agent's own team, by premium written (the same
-   basis as the rank boxes), from the digest's reported agents only. Nobody below the cut travels. */
+   the floor's top TOP_N by premium written (the same basis as the rank boxes), from the digest's
+   reported agents only. Nobody below the cut travels — and NO team list (Nick, the same day:
+   "only the top 10 performers, not in their team"); the leader's name does not travel either. */
 const TOP_N = 10;
 const topPerformers = (digest, cb) => {
   const rows = (digest.agents || []).filter((a) => a && a.code && ((a.gwpEx || 0) > 0 || (a.sales || 0) > 0))
     .sort((a, b) => (b.gwpEx || 0) - (a.gwpEx || 0) || (b.sales || 0) - (a.sales || 0));
-  const pick = (a, i) => ({ pos: i + 1, name: a.name || a.code, campaign: a.campaign || '', tl: a.tl || '', tenure: a.tenure || '',
+  const pick = (a, i) => ({ pos: i + 1, name: a.name || a.code, campaign: a.campaign || '', tenure: a.tenure || '',
     sales: a.sales || 0, gwpEx: a.gwpEx || 0, me: normCb(a.code) === cb });
   const mine = rows.find((a) => normCb(a.code) === cb) || null;
-  const team = mine && mine.tl ? rows.filter((a) => a.tl === mine.tl).slice(0, 5).map(pick) : [];
-  return { floor: rows.slice(0, TOP_N).map(pick), team, myPos: mine ? rows.indexOf(mine) + 1 : null, n: rows.length,
+  return { floor: rows.slice(0, TOP_N).map(pick), myPos: mine ? rows.indexOf(mine) + 1 : null, n: rows.length,
     basis: 'premium written (ex-VAT), month to date' };
 };
 

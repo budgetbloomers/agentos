@@ -4873,11 +4873,11 @@ function show(a){
       : VIEW==='nik' ? nikolaPage(a,c)
       /* A DRILL-DOWN SHOWS EVERYTHING THE NAME WAS LISTED FOR. Clicking a name in
          Team Results opened only the month, which is not why it was clicked. */
-      : D.__back ? nbaDetail()+agentKpis(a,c)+heroHTML(c)+breakdownHTML(c)+doneHTML()+trackHTML()+standHTML()+topHTML()
+      : D.__back ? nbaDetail()+agentKpis(a,c)+heroHTML(c)+breakdownHTML(c)+doneHTML()+trackHTML()+standHTML()
       /* ONE HOME PER FIGURE (Nick, 2026-09-03: "why are we repeating the agent's
          tracking on each page"). The rand projection lives on Projected Commission
          and nowhere else; Today keeps tracking-vs-target and a one-line pointer. */
-      : agentKpis(a,c)+todayHTML(c)+trackHTML()+topHTML()+commPointer(c))
+      : agentKpis(a,c)+todayHTML(c)+trackHTML()+commPointer(c))
     +'<div class="foot">'+(reachLabel()?'Figures to '+esc(reachLabel())+'<br>':'')+(isAgentUser()?'':'Numbers updated '+esc(stamp())+'<br>')
     +'<button id="notme">'+(D.__back?'Back to my team':'Sign out')+'</button></div>',
     VIEW,
@@ -6305,10 +6305,11 @@ function standHTML(){
     +'</div>';
 }
 
-/* ---- 4b. top performers (Nick, 2026-09-15: "the top performers … add that to the agent view") ----
-   The one place colleagues are named on this screen: the floor's top ten by premium written and
-   the top five in the agent's own team, with the agent's own row lit. The Worker decides who
-   travels (portal.mjs topPerformers); this only draws what it is handed. */
+/* ---- 4b. top performers (Nick, 2026-09-15: "the top performers … add that to the agent view";
+   same day: "on the commission calculator … only the top 10 performers, not in their team") ----
+   The one place colleagues are named on this screen: the FLOOR's top ten by premium written, with
+   the agent's own row lit if they are in it. No team list. The Worker decides who travels
+   (portal.mjs topPerformers); this only draws what it is handed. Rendered on Projected Commission. */
 function topHTML(){
   var T=D.top; if(!T||!(T.floor&&T.floor.length)) return '';
   var tbl=function(list){
@@ -6323,7 +6324,6 @@ function topHTML(){
     +'<p class="why">The floor\'s top '+num(T.floor.length)+' by '+esc(T.basis||'premium written')
     +(T.myPos?' — you are <b>#'+num(T.myPos)+' of '+num(T.n)+'</b>':'')+'.</p>'
     +tbl(T.floor)
-    +(T.team&&T.team.length?'<h3 style="margin:14px 0 6px">Top of your team</h3>'+tbl(T.team):'')
     +'</div>';
 }
 
@@ -6521,8 +6521,11 @@ function toolBody(c){
     +'<div class="tiny2">Bracket table for '+esc(PLAN_LAB[c.plan]||c.plan)+' — the official one from Agent OS. If it looks out of date, tell your team leader.</div>';
 }
 function comsPage(c){
-  if(!ME.plan) return comsTop()+heroHTML(c);   // heroHTML's "not set up yet" card says why, without guessing
-  return comsTop()+comsExplain(c)+comsHero(c)+comsFigures(c)+whatIfHTML(c)+comsTableCard(c);
+  /* TOP PERFORMERS LIVE HERE (Nick, 2026-09-15: "the top performers must be on the commission
+     calculator and they must only see the top 10 performers, not in their team") — the floor's
+     ten, under the earnings, where the "what would it take" question is already being asked. */
+  if(!ME.plan) return comsTop()+heroHTML(c)+topHTML();   // heroHTML's "not set up yet" card says why, without guessing
+  return comsTop()+comsExplain(c)+comsHero(c)+comsFigures(c)+whatIfHTML(c)+topHTML()+comsTableCard(c);
 }
 function refreshTool(c){
   if($('comsHero')) $('comsHero').innerHTML=comsHeroInner(c);

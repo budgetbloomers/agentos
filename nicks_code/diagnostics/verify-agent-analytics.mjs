@@ -405,9 +405,12 @@ const CODE = PAGE
     : bad('the page does not call /api/portal/overview');
   /* TOP PERFORMERS (Nick, 2026-09-15: "the top performers … add that to the agent view"): the one
      card that names colleagues — drawn from the Worker's `top` payload, never computed on the page. */
-  /function topHTML\(\)/.test(PAGE) && /topHTML\(\)\+commPointer/.test(PAGE)
-    ? ok('the agent home names the top performers from the Worker\'s top payload')
-    : bad('the Top performers card is missing from the agent home');
+  /function topHTML\(\)/.test(PAGE) && /whatIfHTML\(c\)\+topHTML\(\)/.test(PAGE) && !/trackHTML\(\)\+topHTML/.test(PAGE) && !/standHTML\(\)\+topHTML/.test(PAGE)
+    ? ok('the Top performers card is on Projected Commission only (Nick, 15 Sep)')
+    : bad('the Top performers card is not on Projected Commission, or is still on another page');
+  !/Top of your team/.test(PAGE)
+    ? ok('…and carries no team list')
+    : bad('topHTML still renders a team list');
   /D\.top\b/.test(PAGE) && !/rankAll|sort\(.*gwpEx/.test(PAGE.slice(PAGE.indexOf('function topHTML'), PAGE.indexOf('function topHTML') + 1800))
     ? ok('…and only draws what it is handed (no ranking computed in the browser)')
     : bad('topHTML ranks agents in the browser — the Worker decides who travels');
