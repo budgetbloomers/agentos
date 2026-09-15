@@ -177,7 +177,8 @@ export function evaluateFreshness(t) {
     const newest = steps.map(([, v]) => ms(v.ranAt)).reduce((a, b) => Math.max(a, b), 0);
     if (newest && SAST_WORKING(now) && now - newest > 45 * 60000) {
       alerts.push({ id: 'runner-silent', severity: 'critical',
-        message: 'The scheduled runner has not reported since ' + sast(newest) + ' — nothing is republishing or relaying.'
+        message: 'The scheduled runner has not reported since ' + sast(newest) + ' — nothing is republishing or relaying'
+          + (t.jobs.lastRunner ? ' (the last tick came from ' + t.jobs.lastRunner + '; the local fallback on Aarav\'s machine takes over within 15 minutes when it is on)' : '') + '.'
           + (t.kick && t.kick.at ? ' The Worker asked GitHub to run it at ' + sast(Date.parse(t.kick.at)).slice(11) + ' (HTTP ' + t.kick.http + ')'
             + (t.kick.last_run && t.kick.last_run.conclusion !== 'success'
               ? '. GitHub says of run #' + t.kick.last_run.number + ': "' + (t.kick.last_run.reason || t.kick.last_run.conclusion) + '"'
