@@ -9065,7 +9065,9 @@ function cbxVasContext(){try{
    Ignored files register as 'ignored (…)' and must count for nothing. */
 var SRC=[
   ["bi","Power BI - Active Cases",function(t){return t.indexOf("bi")===0}],
-  ["calls","Call Records",function(t){return t.indexOf("calls")===0&&t.indexOf("calls (ViciDial)")!==0}],
+  /* Call Records (CallX) dropped from the bar (Nick, 2026-09-16: "remove call records from here and
+     give the correct number of data sources") — retired 1 Sep, every row refused since 15 Sep; a
+     permanent red "15d" chip and an 8/8 that could never be reached. ViciDial is the dialler. */
   ["vici","ViciDial",function(t){return t.indexOf("calls (ViciDial)")===0||t.indexOf("vici range")===0}],
   ["attendance","Attendance",function(t){return t.indexOf("attendance")===0}],
   ["evals","QA Evaluations",function(t){return t.indexOf("evals")===0}],
