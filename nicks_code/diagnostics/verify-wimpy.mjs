@@ -377,6 +377,9 @@ head('M · THE APP: SIGN IN WITH A CB NUMBER, ORDER, SEND');
     /* the header counts what the menu actually carries (Nick, 2026-09-14: "the toasteds still say 3 when there is 2") */
     const sub = await pg.evaluate(() => (document.querySelector('.wp-title .sub') || {}).innerText || '');
     ok(/3 breakfasts · 3 burgers · 2 toasteds/.test(sub), 'the header says 3 breakfasts · 3 burgers · 2 toasteds — counted from the menu, not typed', sub);
+    /* and the category tab badges (Nick, 2026-09-16: "under toasteds it says 3 instead of 2") */
+    const badges = await pg.evaluate(() => [...document.querySelectorAll('.wp-cat')].map((b) => b.innerText.replace(/\s+/g, ' ').trim()));
+    ok(badges.join(' | ') === 'Breakfast 3 | Burgers 3 | Toasteds 2', 'the tab badges count the menu too: Breakfast 3 · Burgers 3 · Toasteds 2', badges.join(' | '));
     await pg.click('[data-wadd="mzansi_brekkie"]');
     await pg.waitForSelector('#wpReview', { timeout: 10000 });
     ok(/1 × Mzansi Brekkie/.test(await pg.evaluate(() => document.querySelector('.wp-cart').innerText)),

@@ -315,8 +315,11 @@ function wMenuPage(){
         var w=String(c.label||c.id).toLowerCase(); if(n!==1&&!/s$/.test(w)) w+='s';   // breakfast → breakfasts
         return n+' '+esc(w);
       }).join(' · ')+' · today’s Big One — made fresh, served as it comes</span></div>';
+  /* THE TAB BADGE COUNTS THE MENU TOO (Nick, 2026-09-16: "under toasteds it says 3 instead of 2") —
+     the header was fixed on the 14th; this badge was still the typed "3" for every tab. */
   var cats='<div class="wp-cats">'+(WMENU.categories||[]).map(function(c){
-    return '<button type="button" class="wp-cat'+(c.id===WCAT?' on':'')+'" data-wcat="'+esc(c.id)+'">'+esc(c.label)+' <span class="ct">3</span></button>';
+    var n=(WMENU.items||[]).filter(function(i){return i.category===c.id&&!(WMENU.bigOne&&i.id===WMENU.bigOne.id);}).length;
+    return '<button type="button" class="wp-cat'+(c.id===WCAT?' on':'')+'" data-wcat="'+esc(c.id)+'">'+esc(c.label)+' <span class="ct">'+n+'</span></button>';
   }).join('')+'</div>';
   var grid='<div class="wp-grid">'+(WMENU.items||[]).filter(function(i){return i.category===WCAT;}).map(function(i){
     var priced=i.basePrice!=null;
