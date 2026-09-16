@@ -15,7 +15,7 @@ compatibility_date = "2026-07-01"
 # there for days. The scheduled handler re-syncs the roster into every store every ten
 # minutes, with nothing open anywhere. Fingerprint-gated: no change, no writes.
 [triggers]
-crons = ["*/10 * * * *"]
+crons = ["*/10 * * * *", "3,23,43 * * * *"]   # the tick; and the coaching-snapshot wave (index.mjs COACHING_CRON) on its own budget
 
 [ai]
 binding = "AI"                    # Workers AI — Hermes 2 Pro (Phase 3)

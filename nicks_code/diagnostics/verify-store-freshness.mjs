@@ -135,13 +135,17 @@ head('A · THE SENTINEL, AGAINST FIXTURES');
   /* never-stale plan, Phases 1 & 2 (2026-09-07): the runner and the sources */
   const base = { manifestAt: '2026-09-07T08:00:00Z', vasAt: '2026-09-07T08:05:00Z', opsAt: '2026-09-07T08:06:00Z', opsFactsAt: '2026-09-07T08:06:00Z',
     staffLoginRecent: true, opened: {}, digestMonth: '2026-09', curMonth: '2026-09', digestAt: '2026-09-07T08:10:00Z', now: at('2026-09-07T09:00:00Z') };
-  ok(evaluateFreshness({ ...base, jobs: null }).some((x) => x.id === 'runner-never-ran'), 'no jobs-status row: the runner has never run (warning)');
+  /* NO RUNNER IS EXPECTED SINCE 2026-09-16 (GitHub Actions off — Nick will not pay): the two runner alerts are raised only
+     when the Worker is told a runner exists (runnerExpected, from GITHUB_RUNNER=on). Without it, silence is not an alert. */
+  ok(!evaluateFreshness({ ...base, jobs: null }).some((x) => x.id === 'runner-never-ran'), 'no jobs-status row and no runner expected: quiet');
+  ok(evaluateFreshness({ ...base, jobs: null, runnerExpected: true }).some((x) => x.id === 'runner-never-ran'), 'no jobs-status row with a runner expected: runner-never-ran (warning)');
   ok(!evaluateFreshness({ ...base, jobs: undefined }).some((x) => /runner/.test(x.id)), 'unreadable jobs-status: no opinion');
   const fresh = { steps: { 'agent-digest': { ranAt: '2026-09-07T08:50:00Z', ok: true } } };
   ok(!evaluateFreshness({ ...base, jobs: fresh }).some((x) => /runner/.test(x.id)), 'a step 10 min ago: quiet');
   const stale = { steps: { 'agent-digest': { ranAt: '2026-09-07T07:00:00Z', ok: true } } };
-  ok(evaluateFreshness({ ...base, jobs: stale }).some((x) => x.id === 'runner-silent'), 'no step for 2 h at 11:00 SAST on a Monday: runner-silent');
-  ok(!evaluateFreshness({ ...base, jobs: stale, now: at('2026-09-06T09:00:00Z') }).some((x) => x.id === 'runner-silent'), 'the same silence on a Sunday: quiet');
+  ok(!evaluateFreshness({ ...base, jobs: stale }).some((x) => x.id === 'runner-silent'), 'no step for 2 h on a Monday, no runner expected: quiet');
+  ok(evaluateFreshness({ ...base, jobs: stale, runnerExpected: true }).some((x) => x.id === 'runner-silent'), 'the same with a runner expected: runner-silent');
+  ok(!evaluateFreshness({ ...base, jobs: stale, runnerExpected: true, now: at('2026-09-06T09:00:00Z') }).some((x) => x.id === 'runner-silent'), 'the same silence on a Sunday: quiet');
   const red = { steps: { 'verify-nightly': { ranAt: '2026-09-06T20:10:00Z', ok: false, note: 'verify-all-tabs 49/50' } } };
   ok(evaluateFreshness({ ...base, jobs: red }).some((x) => x.id === 'verification-failed' && /49\/50/.test(x.message)), 'a red nightly verify is named');
   /* sources: Monday 11:00 SAST → expected through Saturday 5 Sep */

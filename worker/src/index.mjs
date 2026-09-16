@@ -77,6 +77,7 @@ const json = (data, status = 200, headers = {}) =>
    seconds; two minutes is a dead Worker, not a slow one. */
 const KV_WRITING_TTL_MS = 120000;
 const REVIEW_REMOVALS = 5;
+const COACHING_CRON = "3,23,43 * * * *";                 // the coaching-wave trigger (wrangler.toml crons) — its own invocation, its own subrequest budget
 /* who sees the health banner (Nick, 2026-09-15) — `nick` is Nicholas's second admin login */
 const HEALTH_RECIPIENTS = new Set(['aarav', 'nicholas', 'nick', 'barry']);                              // a publish removing this many agents gets a review note (never a refusal)
 
@@ -305,6 +306,18 @@ export default {
      others. Fingerprint-gated: when nothing changed it is one small select and no writes. */
   async scheduled(event, env, ctx) {
     const DB = db(env);
+    /* THE COACHING WAVE HAS ITS OWN TRIGGER (2026-09-16). Inside the ten-minute tick it failed every
+       time: the roster sync and the health checks had already spent most of the Free plan's 50
+       subrequests, and the wave's 29 Convex calls tipped it over — silently, because the tick
+       caught the error and `wrangler tail` redacts the message. Run by hand it works (three waves,
+       1,022 sessions). A second cron expression gets a second invocation with its own budget. */
+    if (event.cron === COACHING_CRON) {
+      ctx.waitUntil((async () => {
+        try { const cw = await snapshotCoachingWave(env, DB); console.info('[cron:coaching] ' + JSON.stringify(cw)); }
+        catch (e) { console.warn('[cron:coaching] failed: ' + (e && e.message || e)); }
+      })());
+      return;
+    }
     ctx.waitUntil((async () => {
       try {
         const p = await rosterSync(env, DB, { fresh: true, who: 'cron' });
@@ -422,9 +435,7 @@ export default {
         try { await kickRunner(env, DB); }
         catch (e) { console.warn('[cron] runner kick failed: ' + (e && e.message || e)); }
       }
-      /* THE COACHING SNAPSHOT, WITHOUT A RUNNER (2026-09-15): one wave per tick, written when all three are in. */
-      try { const cw = await snapshotCoachingWave(env, DB); if (cw && !cw.skipped) console.info('[cron] coaching snapshot: ' + JSON.stringify(cw)); }
-      catch (e) { console.warn('[cron] coaching snapshot failed: ' + (e && e.message || e)); }
+      /* the coaching snapshot runs on its own cron trigger (COACHING_CRON above) — see scheduled() */
       try {
         const snaps = await dailySnapshots(env, DB);
         if (snaps.length) console.info('[cron] state snapshots: ' + snaps.join('; '));
@@ -635,6 +646,12 @@ export default {
       }
 
       /* ---------- Agent Analytics portal ---------- */
+      /* RUN ONE COACHING WAVE BY HAND AND SAY WHAT HAPPENED (2026-09-16) — the cron's warnings are
+         redacted in `wrangler tail`, so a failing wave was invisible. Admin only. */
+      if (path === '/api/coaching/wave' && user && user.role === 'admin') {
+        try { const r = await snapshotCoachingWave(env, DB); return json({ ok: true, result: r }); }
+        catch (e) { return json({ ok: false, error: String(e && e.message || e), stack: String(e && e.stack || '').split('\n').slice(0, 4) }, 200); }
+      }
       if (path === '/api/portal/me' && req.method === 'GET') {
         return json({ user: { username: user.username, name: user.full_name || user.username,
           role: user.role, cb: normCb(user.cb), team: user.team || '' } });
