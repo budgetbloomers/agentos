@@ -168,14 +168,21 @@ export function evaluateFreshness(t) {
      Never written = it has never run — say what unblocks it. Silent for 45 min in working hours
      = the scheduler itself has stopped. A verify step that failed in the last day = the nightly
      proof is red. `jobs` undefined = unreadable = no opinion; null = the row does not exist. */
-  if (t.jobs === null) {
+  /* THERE IS NO SCHEDULED RUNNER TO BE SILENT (2026-09-16). GitHub Actions is off (billing; Nick will
+     not pay) and the pipeline runs without one: in-page Rake, Worker-cron coaching, PULSE's own digest
+     push, Ops relaying on open, the laptop tick when it is on. A "runner silent" banner would now be
+     red every working day and say nothing anyone can act on. What still matters is said elsewhere:
+     source-stale (the data itself is behind) and verification-failed (a proof went red). The two
+     runner alerts return only when GITHUB_RUNNER=on is set on the Worker. */
+  const runnerExpected = t.runnerExpected === true;
+  if (runnerExpected && t.jobs === null) {
     alerts.push({ id: 'runner-never-ran', severity: 'warning',
       message: 'The scheduled runner has never reported. Digests, the Ops relay, the lake and coaching refresh only while somebody has a tab open or runs a tool. Add the three Supabase secrets on GitHub (specs/never-stale-data-plan.md, Phase 1) and it takes over.',
       since: 'plan' });
   } else if (t.jobs && t.jobs.steps) {
     const steps = Object.entries(t.jobs.steps);
     const newest = steps.map(([, v]) => ms(v.ranAt)).reduce((a, b) => Math.max(a, b), 0);
-    if (newest && SAST_WORKING(now) && now - newest > 45 * 60000) {
+    if (runnerExpected && newest && SAST_WORKING(now) && now - newest > 45 * 60000) {
       alerts.push({ id: 'runner-silent', severity: 'critical',
         message: 'The scheduled runner has not reported since ' + sast(newest) + ' — nothing is republishing or relaying'
           + (t.jobs.lastRunner ? ' (the last tick came from ' + t.jobs.lastRunner + '; the local fallback on Aarav\'s machine takes over within 15 minutes when it is on)' : '') + '.'
@@ -294,7 +301,7 @@ export function evaluateFreshness(t) {
  * The value is stored as a legacy small row ({data}) so GET /api/kv serves it
  * to the apps' pollers directly with no Storage round-trip.
  */
-export async function runHealthChecks(DB) {
+export async function runHealthChecks(DB, opts = {}) {
   const rows = await DB.select(
     `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened')})&select=key,updated_at,value`);
   const at = {}; let opened = null;
@@ -361,7 +368,7 @@ export async function runHealthChecks(DB) {
   } catch (e) { roster = null; }
   const alerts = evaluateFreshness({
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster, db: dbh,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster, db: dbh, runnerExpected: !!opts.runnerExpected,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);

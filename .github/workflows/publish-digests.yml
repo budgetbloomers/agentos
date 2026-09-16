@@ -15,14 +15,13 @@ name: publish digests
 # Plus HL_API_KEY / HL_LOCATION_ID for the referrals pull. All five were set on 2026-09-07; the first
 # run (#1) republished the digests, relayed the archive into Ops, refreshed coaching and loaded the lake.
 
+# GITHUB ACTIONS IS OFF (Nick, 2026-09-16: "I dont want to be on any paid plans" — the account's
+# billing block refused every run from 15 Sep, and every refused run sent Nick an email). No
+# schedule, no Worker kick: the pipeline runs without a runner — the Data Rake in the uploading
+# page (migration-042), the coaching snapshot in the Worker cron, the digests from the open
+# PULSE tab, Ops relaying on open, and tools/tick-local.mjs from Aarav's machine when it is on.
+# workflow_dispatch stays so a person can still run this by hand if the account is ever unblocked.
 on:
-  schedule:
-    - cron: '7,22,37,52 4-18 * * 1-6'   # digests + Ops relay, 06:00–20:00 SAST, Mon–Sat — off the quarter-hours GitHub drops
-    - cron: '13 */2 * * *'          # coaching snapshot, every two hours
-    - cron: '41 19 * * *'           # daily: lake load (21:41 SAST)
-    - cron: '41 4 * * *'            # daily: referrals (06:41 SAST)
-    - cron: '9 20 * * 1-5'          # nightly verification (22:09 SAST)
-    - cron: '9 5 * * 1'             # Monday 07:09 SAST: weekly reach report
   workflow_dispatch:
     inputs:
       steps:

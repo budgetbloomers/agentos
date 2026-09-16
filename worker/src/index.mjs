@@ -412,11 +412,16 @@ export default {
              incident never had (its data survived only because the raw-file relay
              happens to archive uploads);
            · hygiene: orphaned zz-* probe keys and write-log rows past 90 days. */
-      try { await runHealthChecks(DB); }
+      try { await runHealthChecks(DB, { runnerExpected: env.GITHUB_RUNNER === 'on' }); }
       catch (e) { console.warn('[cron] health checks failed: ' + (e && e.message || e)); }
-      /* THE DRIVER BEHIND runner-silent (2026-09-08): when GitHub drops the 15-minute cron, ask for it. */
-      try { await kickRunner(env, DB); }
-      catch (e) { console.warn('[cron] runner kick failed: ' + (e && e.message || e)); }
+      /* THE GITHUB KICK IS OFF (Nick, 2026-09-16: "my email keeps getting github emails saying failed …
+         I dont want to be on any paid plans"). Every ask produced a billing-refused run and an email
+         to Nick — nine on the morning of the 16th alone. kickRunner stays in runner.mjs for the day
+         the account is unblocked; until then nothing here asks GitHub for anything. */
+      if (env.GITHUB_RUNNER === 'on') {
+        try { await kickRunner(env, DB); }
+        catch (e) { console.warn('[cron] runner kick failed: ' + (e && e.message || e)); }
+      }
       /* THE COACHING SNAPSHOT, WITHOUT A RUNNER (2026-09-15): one wave per tick, written when all three are in. */
       try { const cw = await snapshotCoachingWave(env, DB); if (cw && !cw.skipped) console.info('[cron] coaching snapshot: ' + JSON.stringify(cw)); }
       catch (e) { console.warn('[cron] coaching snapshot failed: ' + (e && e.message || e)); }

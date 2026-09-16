@@ -7,10 +7,9 @@ name: verify
 #
 # Secrets (Settings → Secrets → Actions): SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_DB_URL.
 
+# NOT ON PUSH ANY MORE (2026-09-16): the account's Actions are billing-blocked and every push
+# produced a refused run and an email to Nick. By hand only; the suites run locally before a deploy.
 on:
-  push:
-    branches: ['**']
-  pull_request:
   workflow_dispatch:
 
 jobs:
