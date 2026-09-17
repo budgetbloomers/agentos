@@ -50,6 +50,26 @@ Guard: `node nicks_code/diagnostics/verify-exec-report.mjs` (107 checks). Run it
 the rule book, the builder or the week's data — it fails if the emitted page and the computed
 scores ever disagree.
 
+## Sharing it as a PDF
+
+```bash
+node tools/build-exec-report.mjs reports/exec-weekly/2026-W37
+chromium --headless --no-pdf-header-footer --virtual-time-budget=6000 \
+  --print-to-pdf=reports/exec-weekly/2026-W37/Chatterbox-Exec-Weekly-2026-W37.pdf \
+  "file://$PWD/reports/exec-weekly/2026-W37/index.html"
+```
+
+(On the runner the browser is at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`; add
+`--no-sandbox --disable-gpu` there.) A4, ~16 pages, colours preserved — a RAG report printed in
+greyscale is just a table, so every fill carries `print-color-adjust:exact`. Cards, breakout tables
+and red-issue rows never split across a page break.
+
+**The print layout is a first-class target, not a fallback**, because this page is forwarded and
+printed far more often than it is browsed. It is also the one thing the palette validator cannot
+check — it checks colour, not geometry. To look at the paper layout without printing, strip the
+`@media print{…}` wrapper into a copy and render it at 718px (A4's text column at 96dpi); that is
+how the KPI grid was caught running off the right edge at five columns, and why it is four.
+
 ## Starting a new week
 
 ```bash

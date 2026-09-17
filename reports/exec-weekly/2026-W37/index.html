@@ -173,13 +173,37 @@ tr.sim:hover td{background:#F9F7EF}
 .src-chip.down{border-color:#F0C9C9;background:#FEF6F6}
 .foot{font-size:11.5px;color:var(--muted);margin-top:18px;line-height:1.6;max-width:94ch}
 .foot b{color:var(--body)}
+/* PRINT — this page is forwarded and printed more often than it is browsed, so
+   the paper layout is a first-class target, not a fallback. Every fill keeps its
+   colour (a RAG report in greyscale is a table), nothing splits across a page
+   break mid-card, and the masthead leads page one on its own. */
+@page{size:A4;margin:12mm 10mm}
 @media print{
-  .meter i,.mag i,.seg i{print-color-adjust:exact;-webkit-print-color-adjust:exact}
-  body{background:#fff;font-size:11px}
+  *{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  body{background:#fff;font-size:10.5px}
   .wrap{max-width:none;padding:0}
-  .card,.kpi{box-shadow:none;break-inside:avoid}
-  .kpi:hover{transform:none}
+  .card,.kpi,.strip-card{box-shadow:none;break-inside:avoid;page-break-inside:avoid}
+  .kpi:hover,.kpi{transform:none}
+  .mast{break-after:avoid}
+  .bo,.reds table tr,.ft tr{break-inside:avoid;page-break-inside:avoid}
+  .card h2,.sec-head{break-after:avoid}
+  /* A4's text column is ~190 mm. Five KPI cards do not fit: one fr will not shrink
+     below a card's min-content, and the 27px value plus its delta pill pushed the
+     fifth card off the page. Four columns, minmax(0,·) so they may shrink, and the
+     display figures step down for paper. (Proved by forcing the print rules on
+     screen at 718px and looking at it — the validator checks colour, not layout.) */
+  .kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+  .kpi-val{font-size:20px;letter-spacing:-.6px}
+  .kpi-w{font-size:8.5px;letter-spacing:.05em}
+  .kpi-name{font-size:11px;min-height:26px}
+  .delta{font-size:9px;padding:1px 5px}
+  .strip{height:46px}
+  .strip-l span{font-size:7.5px}
+  .seg em{font-size:8.5px}
+  .src{max-width:46ch}
+  .foot{break-inside:avoid}
   a{color:inherit;text-decoration:none}
+  thead{display:table-header-group}
 }
 @media(max-width:720px){
   .mast-right{margin-left:0;text-align:left}

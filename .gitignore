@@ -48,3 +48,6 @@ site/agent-preview/index.html
 # copy, so the tool writes a dated .bak beside it before every write; that is the
 # backup, not this repo. Never `git add -f` it.
 specs/team_leader_cbs.json
+
+# generated PDFs — regenerate with the command in reports/exec-weekly/README.md
+reports/exec-weekly/**/*.pdf
