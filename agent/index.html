@@ -4935,8 +4935,8 @@ function agentKpis(a,c){
     +acTile('TARGET ACHIEVED', a.pctT==null?'—':pct(a.pctT,0),
         num(a.spd,2)+' sales a day'+(perDayTarget?' · target '+num(perDayTarget,1)+'/day':''),
         tileState(a.pctT,1,0.75))
-    +acTile('PREMIUM WRITTEN', R(a.gwpEx), 'What your commission is worked out on', a.gwpEx>0?'pass':'none')
-    +acTile('AVERAGE SALE', a.aveG==null?'—':R(a.aveG), 'What a typical sale of yours is worth',
+    +acTile('PREMIUM WRITTEN (EX VAT)', R(a.gwpEx), 'What your commission is worked out on — ex VAT', a.gwpEx>0?'pass':'none')
+    +acTile('AVERAGE SALE (EX VAT)', a.aveG==null?'—':R(a.aveG), 'What a typical sale of yours is worth, ex VAT',
         tileState(a.aveG,gwpFloorEx(),0.9*gwpFloorEx()))
     +acTile('QA SCORE', a.qa==null?'—':pct(a.qa,0), 'Your average call quality this month',
         tileState(a.qa,0.9,0.8))
@@ -5756,8 +5756,8 @@ function breakdownHTML(c){
       p>=1?'good':(p>=.75?'warn':'push'));
   } else add('Sales',num(ME.sales),'Deals on the board this month','ok');
 
-  add('Premium written',R(ME.gwpEx),'This is what commission is worked out on','ok');
-  if(ME.aveG!=null) add('Average sale',R(ME.aveG),'What a typical sale of yours is worth','ok');
+  add('Premium written (ex VAT)',R(ME.gwpEx),'This is what commission is worked out on — ex VAT','ok');
+  if(ME.aveG!=null) add('Average sale (ex VAT)',R(ME.aveG),'What a typical sale of yours is worth, ex VAT','ok');
   if(ME.spd!=null) add('Sales a day',num(ME.spd,2),'On the days you work','ok');
   add('Days worked',num(WORKED(),WORKED()%1?1:0),'Of '+num(DAYS())+' working days in '+monthLabel()+' — days whose files have landed','ok');
 
