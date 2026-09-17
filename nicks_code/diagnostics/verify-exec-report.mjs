@@ -297,6 +297,50 @@ if (fs.existsSync(REQ)) {
       .every(f => req.includes(`\`${RULES.sections.flatMap(s => s.factors).find(x => x.k === f.k).feed.fields[0]}\``)));
 }
 
+/* -------------------------------------------- 7. the sourcing contract ------ */
+console.log('\n== every gap has somewhere to get its data from ==');
+const REQ_SPEC = JSON.parse(fs.readFileSync(j(REPO, 'specs', 'exec_data_requests.json'), 'utf8'));
+const reqs = REQ_SPEC.requests;
+
+ok('every request names an id, a title, an owner, a kind, a cadence, why it exists and what it unlocks',
+  reqs.every(r => r.id && r.title && r.owner && r.kind && r.cadence && r.why && r.unlocks?.length),
+  reqs.filter(r => !(r.id && r.title && r.owner && r.kind && r.cadence && r.why && r.unlocks?.length)).map(r => r.id).join(','));
+ok('every request carries a header contract — columns, or sheets of columns',
+  reqs.every(r => r.columns?.length || (r.sheets && Object.values(r.sheets).every(c => c.length))),
+  reqs.filter(r => !(r.columns?.length || r.sheets)).map(r => r.id).join(','));
+ok('every column states a name, a type and whether it is required',
+  reqs.every(r => [...(r.columns || []), ...Object.values(r.sheets || {}).flat()]
+    .every(c => c.name && c.type && typeof c.required === 'boolean')));
+ok('every request id is unique', new Set(reqs.map(r => r.id)).size === reqs.length);
+ok('every `unlocks` entry names a factor the rule book actually has',
+  reqs.every(r => r.unlocks.every(u => {
+    const [sk, fk] = u.split('.');
+    return RULES.sections.find(s => s.k === sk)?.factors.some(f => f.k === fk);
+  })),
+  reqs.flatMap(r => r.unlocks.filter(u => {
+    const [sk, fk] = u.split('.');
+    return !RULES.sections.find(s => s.k === sk)?.factors.some(f => f.k === fk);
+  })).join(','));
+
+/* THE ONE THAT MATTERS HERE. A gap with no request is a gap nobody has been
+   asked to close, and it would sit in the report for ever wearing a placeholder. */
+const gaps = cov.flatMap(c => c.factors.filter(f => f.have !== 'Fully').map(f => ({ s: c.section, f })));
+ok('every factor we do not fully have is covered by a named request',
+  gaps.every(g => g.f.asks.length),
+  gaps.filter(g => !g.f.asks.length).map(g => `${g.s}.${g.f.k}`).join(', '));
+ok('the three-state answer covers every factor',
+  cov.flatMap(c => c.factors).every(f => ['Fully', 'Partially', 'Not at all'].includes(f.have)));
+
+if (fs.existsSync(REQ)) {
+  const req = fs.readFileSync(REQ, 'utf8');
+  const wanted = new Set(gaps.flatMap(g => g.f.asks));
+  ok('the requirements document carries the format for every request a gap points at',
+    [...wanted].every(id => req.includes(`### `) && req.includes(id)),
+    [...wanted].filter(id => !req.includes(id)).join(','));
+  ok('the document states the file conventions the team must follow',
+    ['ISO, YYYY-MM-DD', 'CB number', 'Exactly one header row'].every(z => req.includes(z)));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 failures.forEach(f => console.log('  · ' + f));
 process.exit(fail ? 1 : 0);

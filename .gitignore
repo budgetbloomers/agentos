@@ -51,3 +51,4 @@ specs/team_leader_cbs.json
 
 # generated PDFs — regenerate with the command in reports/exec-weekly/README.md
 reports/exec-weekly/**/*.pdf
+reports/exec-weekly/DATA-REQUIREMENTS.html

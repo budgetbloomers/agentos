@@ -9,14 +9,15 @@ This is **not** `/weekly-report`. That one is the Monday Team Leader NBA brief: 
 per agent, tenure-relative, for the floor. This one is the business, for the board table. They
 share the money model and the roster; they share nothing else.
 
-## Five files, five jobs
+## Six files, six jobs
 
 | File | Owns |
 |---|---|
 | `specs/exec_scorecard_rules.json` | **The rule book.** Sections, their weight in the business score, the contributing factors and their weights inside a section, the scale each factor is scored on, the bands, the owners — and the `viz` block, which owns every colour on the page. Every change carries a dated `_changes[]` entry. |
 | `tools/build-exec-report.mjs` | **The arithmetic.** Reads the rule book and a week's readings, computes every score, writes the report. Nobody types a score. |
 | `tools/exec-pull.mjs` | **The wire to the engines.** Fills the Performance section from the digest the Ops engine already publishes. |
-| `tools/exec-coverage.mjs` | **The test.** Probes this repo for every factor's source and writes `DATA-REQUIREMENTS.md`. |
+| `tools/exec-coverage.mjs` | **The test.** Probes this repo for every factor's source, answers fully / partially / not at all, and writes the requirements pack. |
+| `specs/exec_data_requests.json` | **The sourcing contract.** 25 requests — the header contract for everything the business does not produce yet. |
 | `<week>/data.json` | **The week's readings.** One value per factor, each with the basis it was obtained on and the source line that will be printed under it. |
 
 ## Running it
@@ -118,8 +119,22 @@ because somebody typed that it was. Five states:
 | **MANUAL** | A human-maintained register is the only possible source. Real, and it ages — print the date it was last touched. |
 | **FEED** | Nothing in the business produces it. The fields in the requirements document are the ask. |
 
-`DATA-REQUIREMENTS.md` is the generated output — never hand-edit it, and re-run `--write` after any
-rule-book change. The guard fails if it drifts from the probe.
+`--write` emits three generated files — never hand-edit any of them, and re-run after any rule-book
+change:
+
+- `DATA-REQUIREMENTS.md` — part one, what each section needs and whether we have it (fully /
+  partially / not at all); part two, the format for everything we do not.
+- `DATA-REQUIREMENTS.html` — the same pack, branded, for sending and printing.
+- A PDF, via the same chromium command as the report.
+
+The three-state answer collapses the five probe states for someone deciding what to go and collect:
+**Fully** = live or wiring (ours to do, nobody outside this repo is asked for anything) · **Partially**
+= partial or manual · **Not at all** = feed. Today: 21 factors fully, 12 partially, 25 not at all.
+
+`specs/exec_data_requests.json` holds the 25 requests, each with the exact header contract — shaped
+like the dashboard's own `SOURCES` entries, so a delivered file becomes an upload slot with no
+translation. **The guard fails if any factor we do not fully have is left without a request**, which
+is what stops a gap sitting in the report for ever wearing a placeholder.
 
 ## The four rules this report will not bend
 
