@@ -3801,7 +3801,10 @@ function buildModel(range, periodKey){
              Six leaders read as "missing from the Agent List" before the CB half existed. */
           const kcb=cbCode(String(k).replace(/^(CB\d+)[A-Z]+$/i,'$1'));   // CB194JTL -> CB194; CB014 -> CB14
           const isTL=S.roster.some(a=>a.tl&&normName(a.tl)===nk)||!!(kcb&&S.tlCbs&&S.tlCbs[kcb]!=null);
-          u.kind=isSys?'system login':(isTL?'team leader':'missing from the Agent List');
+          /* a login that belongs to someone who LEFT the list this month is not a missing agent (Nick, 15 Sep:
+             leavers are off the reports by rule) — named as such, never as something to fix */
+          const isLeaver=!!(kcb&&S.leavers&&S.leavers[kcb]&&S.leavers[kcb].left);
+          u.kind=isSys?'system login':(isTL?'team leader':(isLeaver?'left the list':'missing from the Agent List'));
         }
       }
     }
@@ -6002,9 +6005,12 @@ function diallerWarning(){
      are correct exclusions; what is left is a data fix worth doing. */
   if(M.unmatched){
     const rows=Object.entries(M.unmatched).filter(([,u])=>u.src==='calls'&&(u.talk||0)>0&&u.kind!=='system login');
-    const missing=rows.filter(([,u])=>u.kind!=='team leader').sort((a,b)=>b[1].talk-a[1].talk);
-    const tls=rows.filter(([,u])=>u.kind==='team leader');
+    const missing=rows.filter(([,u])=>u.kind==='missing from the Agent List').sort((a,b)=>b[1].talk-a[1].talk);
     const hrs=a=>fmtDur(a.reduce((t,[,u])=>t+u.talk,0));
+    const left=rows.filter(([,u])=>u.kind==='left the list').sort((a,b)=>b[1].talk-a[1].talk);
+    if(left.length) out.push('<b>'+hrs(left)+' of talk belongs to '+left.length+' agent(s) who left the Agent List this month</b> — off every report by rule (Nick, 15 Sep), so it is counted for nobody: '
+      +left.slice(0,6).map(([k,u])=>esc(k)+' ('+fmtDur(u.talk)+')').join(', ')+(left.length>6?' +'+(left.length-6)+' more':'')+'. Nothing to fix.');
+    const tls=rows.filter(([,u])=>u.kind==='team leader');
     if(missing.length) out.push('<b>'+hrs(missing)+' of talk belongs to '+missing.length+
       ' dialler login(s) the Agent List does not know</b>, so it is in nobody’s record'
       + ' average that divides by shifts is understated: '
@@ -6039,8 +6045,8 @@ function diallerWarning(){
   }
   if(!out.length) return '';
   return '<div class="card mt" style="border-left:3px solid var(--amber)">'
-    +'<div class="cardhead"><div><h3>Talk time is incomplete for this period</h3>'
-    +'<div class="sub">the figures below are correct for the data loaded — the data is missing days</div>'
+    +'<div class="cardhead"><div><h3>'+((M.noDialler&&M.noDialler.length)?'Talk time is incomplete for this period':'Talk time notes for this period')+'</h3>'
+    +'<div class="sub">'+((M.noDialler&&M.noDialler.length)?'the figures below are correct for the data loaded — the data is missing days':'every dialling day is loaded; these notes say whose talk is counted where')+'</div>'
     +'</div></div>'
     +out.map(t=>'<p class="note" style="max-width:none">'+t+'</p>').join('')
     +'</div>';
