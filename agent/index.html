@@ -1770,9 +1770,11 @@ function byDeadline(h){ return h==null?'—':(h<=24?'Within 24 hours':h<=48?'Wit
    Ordered by the ladder, because that IS the order: it is checked top to bottom
    and the first rule that fires is the single next best action. */
 function pageMyTeam(){
-  var list=nbaAgents().slice().sort(function(a,b){
+  var everyone=nbaAgents().slice().sort(function(a,b){
     return (a.nba.lvl-b.nba.lvl) || ((a.composite.adj||0)-(b.composite.adj||0));
   });
+  var closed=everyone.filter(actDone);
+  var list=everyone.filter(function(a){return !actDone(a);});   // Done → off this page (Nick, 2026-09-17)
   var need=list.filter(function(a){return a.nba.lvl<=2;});
   var t=D.totals||{};
   var camps=[...new Set((D.agents||[]).map(function(a){return a.campaign;}).filter(Boolean))];
@@ -1800,6 +1802,7 @@ function pageMyTeam(){
       +'<div class="kpi-sub">Compliance, attendance or critical QA</div></div>'
     +'</div>';
 
+  if(!list.length&&closed.length) return head+cards+'<div class="card"><h3>Nothing open</h3><p class="why">Every action from this week&rsquo;s review is closed off — '+esc(closed.map(function(a){return firstName(a.name);}).join(', '))+'. They stay on the record in HighLevel; the list fills again with next week&rsquo;s review.</p></div>';
   if(!list.length) return head+cards+nbaMissingCard();
 
   /* THE SAME GUARD TEAM RESULTS HAS, ON THE SCREEN A TEAM LEADER ACTUALLY LANDS ON.
@@ -1863,6 +1866,7 @@ function pageMyTeam(){
     return '<div class="qrow"><span>'+esc(lvlOf(x.l).n.charAt(0)+lvlOf(x.l).n.slice(1).toLowerCase())+'</span>'
       +'<b class="num">'+num(x.n)+'</b><span class="qsub">'+(x.l===1?'act today':x.l===2?'this week':x.l===3?'coach':'recognise')+'</span></div>';
   }).join('')
+  +(closed.length?'<div class="qrow"><span>Closed this week — off this list, on the record in HighLevel</span><b class="num">'+num(closed.length)+'</b><span class="qsub">'+esc(closed.map(function(a){return firstName(a.name);}).slice(0,6).join(', '))+(closed.length>6?' +'+(closed.length-6):'')+'</span></div>':'')
   +'<div class="qrow"><span>Elite blocked by compliance</span><b class="num">'
     +num(list.filter(function(a){return a.r2a.elite==='Blocked';}).length)+'</b><span class="qsub">R2A tier set</span></div>'
   +'<div class="qrow"><span>Coaching recorded this window</span><b class="num">'
@@ -5996,6 +6000,15 @@ function actReview(){
   t.setUTCDate(t.getUTCDate()-((dow+6)%7));
   return t.toISOString().slice(0,10);
 }
+/* DONE MEANS OFF THE LIST (Nick, 2026-09-17: "when users clicks done it is removed from the dashboard, but
+   in the pipeline in highlevel"). The record moves to the Done stage of the Coaching Actions pipeline and
+   stays there; the ladder, the counts and the queue stop showing the agent for this week's review. A new
+   review (next Monday) or a new rule firing for them brings them back. Unknown while statuses load. */
+function actDone(a){
+  if(!a||!a.nba||!ACTS||ACTS.error) return false;
+  var st=(ACTS.actions||{})[a.cb+"|"+a.nba.code+"|"+actReview()];
+  return !!(st&&st.closed);
+}
 function actPills(a){
   if(!a||!a.nba) return '';
   if(!ACTS) return '<div class="tiny2" style="margin-top:8px">Fetching statuses…</div>';
@@ -6019,7 +6032,7 @@ function wireActs(){
       api('/api/portal/help/action',{cb:b.getAttribute('data-acb'),code:b.getAttribute('data-acode'),
         review:actReview(),stageId:b.getAttribute('data-asid')}).then(function(r){
         if(r.ok){ ACTS.actions=ACTS.actions||{}; ACTS.actions[key]=r.json;
-          toast(r.json.closed?'Closed off — it stays on the record.':'Marked '+(r.json.stage||'')+'.'); render(); }
+          toast(r.json.closed?'Closed off — removed from your list; it stays on the record in HighLevel.':'Marked '+(r.json.stage||'')+'.'); render(); }
         else { b.disabled=false; toast((r.json&&r.json.error)||'Could not update — try again.'); }
       });
     };

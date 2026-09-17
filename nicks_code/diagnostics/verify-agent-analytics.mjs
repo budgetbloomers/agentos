@@ -411,6 +411,10 @@ const CODE = PAGE
   !/Top of your team/.test(PAGE)
     ? ok('…and carries no team list')
     : bad('topHTML still renders a team list');
+  /* DONE = OFF THE LIST (Nick, 2026-09-17): a closed Coaching Actions record removes the agent from My Team's ladder and counts; the HighLevel record stays. */
+  PAGE.includes('function actDone(a)') && PAGE.includes('var list=everyone.filter(function(a){return !actDone(a);});')
+    ? ok('My Team drops an agent whose coaching action is Done (the HighLevel record stays)')
+    : bad('a Done coaching action does not remove the agent from My Team');
   /D\.top\b/.test(PAGE) && !/rankAll|sort\(.*gwpEx/.test(PAGE.slice(PAGE.indexOf('function topHTML'), PAGE.indexOf('function topHTML') + 1800))
     ? ok('…and only draws what it is handed (no ranking computed in the browser)')
     : bad('topHTML ranks agents in the browser — the Worker decides who travels');
