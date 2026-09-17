@@ -47,11 +47,6 @@ const DIR = argv.find(a => !a.startsWith('--'));
 const flag = n => { const i = argv.indexOf(n); return i < 0 ? null : (argv[i + 1] || ''); };
 const DRY = argv.includes('--dry');
 
-if (!DIR) {
-  console.error('usage: node tools/exec-pull.mjs <report-folder> [--digest <file>] [--dry]');
-  process.exit(1);
-}
-
 /* ------------------------------------------------------------ the digest ---- */
 
 async function loadDigest() {
@@ -207,6 +202,17 @@ export function breakoutsFrom(digest, rules) {
 
 /* ------------------------------------------------------------------- run ---- */
 
+/* Only when run as a command. The coverage tool imports performanceFrom to prove
+   which factors the report can actually read, and importing must not go looking
+   for credentials. */
+const invoked = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
+if (!invoked) { /* imported as a library */ } else { await main(); }
+
+async function main() {
+if (!DIR) {
+  console.error('usage: node tools/exec-pull.mjs <report-folder> [--digest <file>] [--dry]');
+  process.exit(1);
+}
 const digest = await loadDigest();
 const rules = JSON.parse(readFileSync(join(ROOT, 'specs/exec_scorecard_rules.json'), 'utf8'));
 const readings = performanceFrom(digest);
@@ -241,3 +247,4 @@ data._pulled = { at: new Date().toISOString(), digestPeriod: digest.period, agen
 writeFileSync(dataPath, JSON.stringify(data, null, 2) + '\n');
 console.log(`\n  wrote ${Object.keys(readings).length} actual readings into ${dataPath}`);
 console.log('  now run: node tools/build-exec-report.mjs ' + DIR + '\n');
+}

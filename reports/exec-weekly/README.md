@@ -9,13 +9,14 @@ This is **not** `/weekly-report`. That one is the Monday Team Leader NBA brief: 
 per agent, tenure-relative, for the floor. This one is the business, for the board table. They
 share the money model and the roster; they share nothing else.
 
-## Four files, four jobs
+## Five files, five jobs
 
 | File | Owns |
 |---|---|
 | `specs/exec_scorecard_rules.json` | **The rule book.** Sections, their weight in the business score, the contributing factors and their weights inside a section, the scale each factor is scored on, the bands, the owners — and the `viz` block, which owns every colour on the page. Every change carries a dated `_changes[]` entry. |
 | `tools/build-exec-report.mjs` | **The arithmetic.** Reads the rule book and a week's readings, computes every score, writes the report. Nobody types a score. |
 | `tools/exec-pull.mjs` | **The wire to the engines.** Fills the Performance section from the digest the Ops engine already publishes. |
+| `tools/exec-coverage.mjs` | **The test.** Probes this repo for every factor's source and writes `DATA-REQUIREMENTS.md`. |
 | `<week>/data.json` | **The week's readings.** One value per factor, each with the basis it was obtained on and the source line that will be printed under it. |
 
 ## Running it
@@ -75,6 +76,30 @@ each section's `commentary`. Re-run the builder and the guard.
   so the rule book carries their light-surface steps. Re-run the validator if you change one.
 - No status colour carries meaning alone: every bar is labelled with its band, every mark has a
   hover title, and every value is in the cell beside its mark.
+
+## What data this needs — and how to re-check it
+
+```bash
+node tools/exec-coverage.mjs              # the table
+node tools/exec-coverage.mjs --section lrc  # one section
+node tools/exec-coverage.mjs --write      # regenerates DATA-REQUIREMENTS.md
+```
+
+Every factor in the rule book carries a `feed` block — the system, the store, the exact fields,
+the grain, the cadence, the owner — and a **probe** the tool runs against this repository. The
+probe decides the state; the rule book never declares one, so a factor cannot be called reachable
+because somebody typed that it was. Five states:
+
+| State | Meaning |
+|---|---|
+| **LIVE** | The report reads it today. Proved by running `exec-pull`'s own aggregation, not asserted. |
+| **WIRING** | The number exists in the suite — a lake table, an Ops KPI, a published digest field — and nothing carries it into the report yet. No new data contract. |
+| **PARTIAL** | The value exists; what it is measured *against* does not. Revenue is exact to the rand and *revenue vs budget* is unscoreable. `feed.needs` names the missing half. |
+| **MANUAL** | A human-maintained register is the only possible source. Real, and it ages — print the date it was last touched. |
+| **FEED** | Nothing in the business produces it. The fields in the requirements document are the ask. |
+
+`DATA-REQUIREMENTS.md` is the generated output — never hand-edit it, and re-run `--write` after any
+rule-book change. The guard fails if it drifts from the probe.
 
 ## The four rules this report will not bend
 

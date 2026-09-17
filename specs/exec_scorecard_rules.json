@@ -63,7 +63,19 @@
           "scale": "target",
           "unit": "zar",
           "source": "BI_ACTIVE_CASES — Σ Charge Amount per case ×(1+vatRate), dated on Contract Create Date",
-          "system": "AgentOS / PULSE MTD engine"
+          "system": "AgentOS / PULSE MTD engine",
+          "feed": {
+            "system": "AgentOS Ops engine",
+            "store": "kv:nba-digest",
+            "fields": [
+              "stats.gwp",
+              "stats.target"
+            ],
+            "grain": "agent · month to date",
+            "cadence": "15 min",
+            "owner": "Leon (P10)",
+            "probe": "digest:stats.gwp"
+          }
         },
         {
           "k": "salesVsTarget",
@@ -72,7 +84,19 @@
           "scale": "target",
           "unit": "int",
           "source": "BI_ACTIVE_CASES — distinct Case Number per agent-day, net of cancellation",
-          "system": "PULSE MTD engine"
+          "system": "PULSE MTD engine",
+          "feed": {
+            "system": "AgentOS Ops engine",
+            "store": "kv:nba-digest",
+            "fields": [
+              "stats.sales",
+              "stats.target"
+            ],
+            "grain": "agent · month to date",
+            "cadence": "15 min",
+            "owner": "Leon (P10)",
+            "probe": "digest:stats.sales"
+          }
         },
         {
           "k": "spdVsTarget",
@@ -81,7 +105,20 @@
           "scale": "target",
           "unit": "num",
           "source": "Sales ÷ Actual Shifts (Saturdays excluded from shifts, rule saturdayShiftsFrom)",
-          "system": "PULSE MTD engine"
+          "system": "PULSE MTD engine",
+          "feed": {
+            "system": "AgentOS Ops engine",
+            "store": "kv:nba-digest",
+            "fields": [
+              "stats.sales",
+              "stats.present",
+              "stats.target"
+            ],
+            "grain": "agent · month to date",
+            "cadence": "15 min",
+            "owner": "Leon (P10)",
+            "probe": "digest:stats.present"
+          }
         },
         {
           "k": "conversion",
@@ -90,7 +127,19 @@
           "scale": "target",
           "unit": "pct",
           "source": "MTD sales ÷ unique leads, per tenure group (composite_rules tenureGroups)",
-          "system": "PULSE"
+          "system": "PULSE",
+          "feed": {
+            "system": "AgentOS Ops engine",
+            "store": "kv:nba-digest",
+            "fields": [
+              "stats.conv",
+              "thresholds.convTarget"
+            ],
+            "grain": "agent · month to date",
+            "cadence": "15 min",
+            "owner": "Ryan (P08)",
+            "probe": "digest:stats.conv"
+          }
         },
         {
           "k": "qaMean",
@@ -99,7 +148,20 @@
           "scale": "target",
           "unit": "pct",
           "source": "QA_EVALUATIONS filtered on Date of Call; 0% scores kept",
-          "system": "PULSE qa_rules"
+          "system": "PULSE qa_rules",
+          "feed": {
+            "system": "QA export via Ops engine",
+            "store": "kv:nba-digest",
+            "fields": [
+              "stats.qa",
+              "stats.qaN",
+              "thresholds.qaTarget"
+            ],
+            "grain": "agent · month to date",
+            "cadence": "15 min",
+            "owner": "Stephanie (P12)",
+            "probe": "digest:stats.qa"
+          }
         },
         {
           "k": "cancelRate",
@@ -108,7 +170,19 @@
           "scale": "targetDown",
           "unit": "pct",
           "source": "SF_INACTIVE ÷ gross sales, per account",
-          "system": "AgentOS"
+          "system": "AgentOS",
+          "feed": {
+            "system": "AgentOS Ops engine",
+            "store": "kv:nba-digest",
+            "fields": [
+              "stats.canc"
+            ],
+            "grain": "agent · month to date",
+            "cadence": "15 min",
+            "owner": "Leon (P10)",
+            "probe": "digest:stats.canc",
+            "note": "Published from 2026-09-17. Diagnostics only — never scored in the NBA engine."
+          }
         },
         {
           "k": "optIn",
@@ -117,7 +191,20 @@
           "scale": "target",
           "unit": "pct",
           "source": "ViciDial Insurance Opt-In dispositions ÷ sales — the quality of what was sold",
-          "system": "PULSE perfScore driver `opt` (computable today)"
+          "system": "PULSE perfScore driver `opt` (computable today)",
+          "feed": {
+            "system": "PULSE perfScore",
+            "store": "vas-state (PULSE), not the Ops digest",
+            "fields": [
+              "opt",
+              "optPct"
+            ],
+            "grain": "agent · month to date",
+            "cadence": "on upload",
+            "owner": "Leon (P10)",
+            "probe": "engine:optPct",
+            "note": "THE ONE PERFORMANCE GAP. The driver exists and is computed — in the wrong app for this report. Either PULSE publishes a digest of its own, or the Ops engine derives opt-in from the ViciDial Insurance Opt-In disposition it already parses."
+          }
         },
         {
           "k": "ratedOnTrack",
@@ -126,7 +213,18 @@
           "scale": "target",
           "unit": "pct",
           "source": "perfScore over the last 5 confirmed sessions (composite_rules drivers)",
-          "system": "PULSE composite engine"
+          "system": "PULSE composite engine",
+          "feed": {
+            "system": "AgentOS Ops engine",
+            "store": "kv:nba-digest",
+            "fields": [
+              "composite.adj"
+            ],
+            "grain": "agent · last 5 confirmed sessions",
+            "cadence": "15 min",
+            "owner": "Leon (P10)",
+            "probe": "digest:composite"
+          }
         }
       ],
       "breakouts": [
@@ -152,7 +250,26 @@
           "scale": "target",
           "unit": "int",
           "source": "Recruitment tracker (GHL). Baseline proxy available today: net joiners in agent_sync_logs",
-          "system": "GHL / AgentOS agent_sync_logs"
+          "system": "GHL / AgentOS agent_sync_logs",
+          "feed": {
+            "system": "GoHighLevel (LeadConnector API v2)",
+            "store": "/opportunities/ or tagged /contacts/ in the recruitment pipeline",
+            "fields": [
+              "opportunity.pipelineStageId",
+              "opportunity.createdAt",
+              "opportunity.status",
+              "contact.tags"
+            ],
+            "grain": "candidate · weekly",
+            "cadence": "daily",
+            "owner": "Abigail (P06)",
+            "probe": "api:HL_API_KEY",
+            "note": "The CREDENTIAL AND CLIENT ALREADY EXIST — tools/fetch-referrals.mjs authenticates against this exact location for referrals. What is missing is the recruitment PIPELINE MAP: which pipeline, which stage ids mean applied / pre-screened / interviewed / offered / started / floor-ready. That is a naming decision, not an integration.",
+            "needs": [
+              "The GHL recruitment pipeline/stage map",
+              "The weekly starter plan the actual is measured against"
+            ]
+          }
         },
         {
           "k": "pipelineCoverage",
@@ -161,7 +278,24 @@
           "scale": "target",
           "unit": "num",
           "source": "GHL applications ÷ open seats",
-          "system": "GHL (SYS-001, G2 red)"
+          "system": "GHL (SYS-001, G2 red)",
+          "feed": {
+            "system": "GoHighLevel",
+            "store": "open opportunities by stage ÷ open seats",
+            "fields": [
+              "opportunity.pipelineStageId",
+              "seatPlan.openSeats"
+            ],
+            "grain": "weekly",
+            "cadence": "daily",
+            "owner": "Abigail (P06)",
+            "probe": "api:HL_API_KEY",
+            "note": "Needs the pipeline map AND the seat plan, which does not exist anywhere (see workforce.seatFill).",
+            "needs": [
+              "The seat plan (the denominator) — see workforce.seatFill",
+              "The GHL recruitment pipeline/stage map"
+            ]
+          }
         },
         {
           "k": "showRate",
@@ -170,7 +304,22 @@
           "scale": "target",
           "unit": "pct",
           "source": "Attended ÷ booked",
-          "system": "GHL"
+          "system": "GHL",
+          "feed": {
+            "system": "GoHighLevel",
+            "store": "appointments",
+            "fields": [
+              "appointment.startTime",
+              "appointment.appointmentStatus"
+            ],
+            "grain": "candidate · weekly",
+            "cadence": "daily",
+            "owner": "Abigail (P06)",
+            "probe": "api:HL_API_KEY",
+            "needs": [
+              "The GHL recruitment pipeline/stage map — which calendar and which appointment statuses count"
+            ]
+          }
         },
         {
           "k": "timeToFill",
@@ -179,7 +328,23 @@
           "scale": "targetDown",
           "unit": "days",
           "source": "Requisition open → start date",
-          "system": "GHL"
+          "system": "GHL",
+          "feed": {
+            "system": "GoHighLevel + Agent List",
+            "store": "requisition open → first Agent List sighting",
+            "fields": [
+              "requisition.openedAt",
+              "agent_list.first_seen"
+            ],
+            "grain": "requisition",
+            "cadence": "weekly",
+            "owner": "Abigail (P06)",
+            "probe": "api:HL_API_KEY",
+            "note": "Requisitions are not modelled anywhere. The END of the measure (a first Agent List sighting) is already in the database.",
+            "needs": [
+              "A requisition object — nothing in any system records that a seat was opened"
+            ]
+          }
         },
         {
           "k": "retention30",
@@ -188,7 +353,21 @@
           "scale": "target",
           "unit": "pct",
           "source": "Cohort still on the Agent List 30 days after first sighting",
-          "system": "AgentOS agent_list history (computable today)"
+          "system": "AgentOS agent_list history (computable today)",
+          "feed": {
+            "system": "AgentOS agent list history",
+            "store": "agent_list + agent_sync_logs",
+            "fields": [
+              "agent_list.as_of",
+              "agent_list.cb",
+              "agent_sync_logs.removed_at"
+            ],
+            "grain": "cohort · monthly",
+            "cadence": "10 min",
+            "owner": "Claudell (P05)",
+            "probe": "sqlTable:agent_list",
+            "note": "COMPUTABLE TODAY with no new feed: a cohort is the set first seen in a month; retention is how many are still named 30 days later."
+          }
         }
       ]
     },
@@ -208,7 +387,20 @@
           "scale": "target",
           "unit": "pct",
           "source": "ATTENDANCE register, per employee-day; Saturdays are data, never a shift",
-          "system": "AgentOS / PULSE"
+          "system": "AgentOS / PULSE",
+          "feed": {
+            "system": "HR attendance register",
+            "store": "attendance (lake) + kv:nba-digest stats.att",
+            "fields": [
+              "attendance.date",
+              "attendance.cb",
+              "attendance.code"
+            ],
+            "grain": "agent · day",
+            "cadence": "on upload",
+            "owner": "Keshree (P13)",
+            "probe": "sqlTable:attendance"
+          }
         },
         {
           "k": "unplannedAbsence",
@@ -217,7 +409,19 @@
           "scale": "targetDown",
           "unit": "pct",
           "source": "ATTENDANCE register — absence outside leaveCodes (AL/SL/CA/CASAT); presentCodes P/T/L/HDAL/HDCA",
-          "system": "AgentOS / PULSE (computable today)"
+          "system": "AgentOS / PULSE (computable today)",
+          "feed": {
+            "system": "HR attendance register",
+            "store": "attendance (lake)",
+            "fields": [
+              "attendance.code"
+            ],
+            "grain": "agent · day",
+            "cadence": "on upload",
+            "owner": "Keshree (P13)",
+            "probe": "sqlTable:attendance",
+            "note": "The codes already carry it: anything absent that is not in leaveCodes (AL/SL/CA/CASAT) is unplanned."
+          }
         },
         {
           "k": "seatFill",
@@ -226,7 +430,23 @@
           "scale": "target",
           "unit": "pct",
           "source": "Active agents (Agent List) ÷ planned seats",
-          "system": "AgentOS active_agents + capacity plan"
+          "system": "AgentOS active_agents + capacity plan",
+          "feed": {
+            "system": "Capacity plan",
+            "store": "[INPUT REQUIRED] — no seat plan exists in any system",
+            "fields": [
+              "seats.physical",
+              "seats.support",
+              "seats.byShift",
+              "seats.bySite",
+              "plan.month"
+            ],
+            "grain": "site · month",
+            "cadence": "monthly",
+            "owner": "[INPUT REQUIRED — P18 vacant]",
+            "probe": "none",
+            "note": "The numerator (active agents) is live in active_agents. The DENOMINATOR does not exist: KB module 10 lists physical seats, support seats, shifts and sites as [INPUT REQUIRED], and warns forecast headcount can exceed 330 seats unseen."
+          }
         },
         {
           "k": "attrition",
@@ -235,7 +455,24 @@
           "scale": "targetDown",
           "unit": "pct",
           "source": "Leavers in agent_sync_logs ÷ opening headcount",
-          "system": "AgentOS agent_sync_logs (computable today)"
+          "system": "AgentOS agent_sync_logs (computable today)",
+          "feed": {
+            "system": "AgentOS list sync",
+            "store": "agent_sync_logs",
+            "fields": [
+              "agent_sync_logs.cb",
+              "agent_sync_logs.removed_at",
+              "REASON CODE (missing)"
+            ],
+            "grain": "agent · month",
+            "cadence": "on publish",
+            "owner": "Claudell (P05)",
+            "probe": "sqlTable:agent_sync_logs",
+            "note": "Removals are logged; the REASON is not. Without it a resignation, a dismissal and a campaign transfer are one number — which is why this week reads 11.6% as an upper bound. One enum column on the publish closes it.",
+            "needs": [
+              "A REASON CODE on every removal. Without it a resignation, a dismissal and a campaign transfer are one number"
+            ]
+          }
         },
         {
           "k": "disciplineLoad",
@@ -244,7 +481,20 @@
           "scale": "targetDown",
           "unit": "num",
           "source": "KPI agents_in_process — distinct CB with offense_number ≥ 1, status not closed",
-          "system": "AgentOS Discipline KPIs (QA_EVALUATIONS)"
+          "system": "AgentOS Discipline KPIs (QA_EVALUATIONS)",
+          "feed": {
+            "system": "QA export",
+            "store": "qa_evaluations via the Ops Discipline KPIs",
+            "fields": [
+              "qa_evaluations.offense_number",
+              "qa_evaluations.qa_status",
+              "qa_evaluations.sales_agent_code"
+            ],
+            "grain": "agent · rolling",
+            "cadence": "on upload",
+            "owner": "Stephanie (P12)",
+            "probe": "opsKpi:agents_in_process"
+          }
         },
         {
           "k": "shrinkage",
@@ -253,7 +503,21 @@
           "scale": "targetDown",
           "unit": "pct",
           "source": "HR register categories vs scheduled hours",
-          "system": "HR OS (SYS-008, G2 red)"
+          "system": "HR OS (SYS-008, G2 red)",
+          "feed": {
+            "system": "HR OS / WFM",
+            "store": "[INPUT REQUIRED] — scheduled hours are not held anywhere",
+            "fields": [
+              "schedule.plannedHours",
+              "actual.loggedHours",
+              "offline.reasonCode"
+            ],
+            "grain": "agent · day",
+            "cadence": "weekly",
+            "owner": "Keshree (P13)",
+            "probe": "none",
+            "note": "The register says who was present, never for how long they were SCHEDULED. Shrinkage needs a roster of planned hours, which is the same gap as capacity planning."
+          }
         }
       ]
     },
@@ -295,7 +559,19 @@
             }
           ],
           "source": "KPI open_criticals — escalation decision in $qaCritical, status not closed. Compliance behaviour on the call, from QA",
-          "system": "AgentOS Discipline KPIs (computable today)"
+          "system": "AgentOS Discipline KPIs (computable today)",
+          "feed": {
+            "system": "QA export",
+            "store": "qa_evaluations via KPI open_criticals",
+            "fields": [
+              "qa_evaluations.escalation_decision",
+              "qa_evaluations.qa_status"
+            ],
+            "grain": "evaluation · rolling",
+            "cadence": "on upload",
+            "owner": "Jared (P04)",
+            "probe": "opsKpi:open_criticals"
+          }
         },
         {
           "k": "r2aShare",
@@ -304,7 +580,20 @@
           "scale": "targetDown",
           "unit": "pct",
           "source": "R2A tier = higher of count band and rate band (composite_rules r2aTiers). Classifies and blocks Elite; since 2026-09-11 it deducts nothing from a score",
-          "system": "PULSE / AgentOS NBA engine (computable today)"
+          "system": "PULSE / AgentOS NBA engine (computable today)",
+          "feed": {
+            "system": "AgentOS NBA engine",
+            "store": "kv:nba-digest",
+            "fields": [
+              "r2a.tier",
+              "r2a.fails",
+              "r2a.cfr"
+            ],
+            "grain": "agent · month to date",
+            "cadence": "15 min",
+            "owner": "Jared (P04)",
+            "probe": "digest:r2a"
+          }
         },
         {
           "k": "popia",
@@ -327,7 +616,24 @@
             }
           ],
           "source": "Reported data incidents in the period. Masking defaults on across the suite and every app sits behind its own login",
-          "system": "Incident register — [INPUT REQUIRED]"
+          "system": "Incident register — [INPUT REQUIRED]",
+          "feed": {
+            "system": "Incident register",
+            "store": "[INPUT REQUIRED] — POPIA appears in the KB as a policy, never as a register",
+            "fields": [
+              "incident.id",
+              "incident.raisedAt",
+              "incident.category",
+              "incident.severity",
+              "incident.closedAt",
+              "incident.dataSubjectsAffected"
+            ],
+            "grain": "incident",
+            "cadence": "on event",
+            "owner": "Jared (P04)",
+            "probe": "none",
+            "note": "The suite has POPIA CONTROLS (masking on by default, per-app login, scoped sessions) and no POPIA RECORD. A controls posture is not an incident count; the report must not imply one from the other."
+          }
         },
         {
           "k": "riskRegister",
@@ -358,7 +664,25 @@
             }
           ],
           "source": "Risk register items rated high/critical whose mitigation date has passed",
-          "system": "Risk register — [INPUT REQUIRED]"
+          "system": "Risk register — [INPUT REQUIRED]",
+          "feed": {
+            "system": "Risk register",
+            "store": "[INPUT REQUIRED] — the only \"risk_register\" string in the repo is KB prose",
+            "fields": [
+              "risk.id",
+              "risk.title",
+              "risk.likelihood",
+              "risk.impact",
+              "risk.rating",
+              "risk.owner",
+              "risk.mitigationDue",
+              "risk.status"
+            ],
+            "grain": "risk",
+            "cadence": "weekly",
+            "owner": "Jared (P04)",
+            "probe": "none"
+          }
         },
         {
           "k": "systemsControlled",
@@ -367,7 +691,23 @@
           "scale": "target",
           "unit": "pct",
           "source": "Share of the 13 registered systems at G4. The canonical register (Operating System Governance v1.1, 2026-07-02) reads 10 red, 2 amber, 1 grey, ZERO at G4, 27 open actions",
-          "system": "System register (human-maintained; re-date it and this factor moves)"
+          "system": "System register (human-maintained; re-date it and this factor moves)",
+          "feed": {
+            "system": "System register (governance)",
+            "store": "Chatterbox Operating System Governance v1.1 — a document, not a system",
+            "fields": [
+              "system.id",
+              "system.gate (G0-G4)",
+              "system.owner",
+              "system.openActions",
+              "system.lastReviewed"
+            ],
+            "grain": "system",
+            "cadence": "monthly",
+            "owner": "Jared (P04)",
+            "probe": "manual",
+            "note": "THE ONE MEASURED NUMBER IN THIS SECTION, and it is a human-maintained register dated 2026-07-02: 13 systems, 0 at G4, 27 open actions. It ages: re-date it monthly or the report is quoting July in December."
+          }
         },
         {
           "k": "contractsCurrent",
@@ -376,7 +716,23 @@
           "scale": "target",
           "unit": "pct",
           "source": "Agreements in force with a signed, in-date contract on file",
-          "system": "Legal register — [INPUT REQUIRED]"
+          "system": "Legal register — [INPUT REQUIRED]",
+          "feed": {
+            "system": "Legal register",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "contract.party",
+              "contract.type",
+              "contract.signedAt",
+              "contract.expiresAt",
+              "contract.owner",
+              "contract.status"
+            ],
+            "grain": "contract",
+            "cadence": "monthly",
+            "owner": "Jared (P04)",
+            "probe": "none"
+          }
         },
         {
           "k": "auditActions",
@@ -385,7 +741,22 @@
           "scale": "target",
           "unit": "pct",
           "source": "Actions raised by an audit, a review or a council, closed by their due date",
-          "system": "Blue action register — [INPUT REQUIRED]"
+          "system": "Blue action register — [INPUT REQUIRED]",
+          "feed": {
+            "system": "Blue (actions of record)",
+            "store": "[INPUT REQUIRED] — no Blue export reaches AgentOS",
+            "fields": [
+              "action.id",
+              "action.source (audit/review/council)",
+              "action.owner",
+              "action.dueAt",
+              "action.closedAt"
+            ],
+            "grain": "action",
+            "cadence": "weekly",
+            "owner": "Ryan (P08)",
+            "probe": "none"
+          }
         },
         {
           "k": "legalMatters",
@@ -416,7 +787,24 @@
             }
           ],
           "source": "Live disputes, claims and matters with attorneys instructed — whatever their origin, including an employment matter that has become legal",
-          "system": "Legal register — [INPUT REQUIRED]"
+          "system": "Legal register — [INPUT REQUIRED]",
+          "feed": {
+            "system": "Legal register",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "matter.id",
+              "matter.type",
+              "matter.openedAt",
+              "matter.status",
+              "matter.exposureEstimate",
+              "matter.attorney"
+            ],
+            "grain": "matter",
+            "cadence": "weekly",
+            "owner": "Jared (P04)",
+            "probe": "none",
+            "note": "This is where an employment matter lands once it becomes legal. Workforce counts the discipline; LRC counts the matter."
+          }
         }
       ]
     },
@@ -436,7 +824,22 @@
           "scale": "target",
           "unit": "num",
           "source": "Nesting campaign sales ÷ actual shifts, against the M1 tenure target (M0 measured under M1 since 2026-09-10)",
-          "system": "PULSE MTD engine (computable today)"
+          "system": "PULSE MTD engine (computable today)",
+          "feed": {
+            "system": "AgentOS Ops engine",
+            "store": "kv:nba-digest, campaign = Nesting",
+            "fields": [
+              "campaign",
+              "stats.sales",
+              "stats.present",
+              "stats.target"
+            ],
+            "grain": "agent · month to date",
+            "cadence": "15 min",
+            "owner": "Jojo & Pamela (P15/P16)",
+            "probe": "digest:campaign",
+            "note": "Nesting is a reported campaign, so its production is already measured. Filter the same rows the Performance tab reads."
+          }
         },
         {
           "k": "graduationRate",
@@ -445,7 +848,22 @@
           "scale": "target",
           "unit": "pct",
           "source": "Cohort certified floor-ready ÷ cohort started",
-          "system": "LMS / AgentOS lifecycle gate"
+          "system": "LMS / AgentOS lifecycle gate",
+          "feed": {
+            "system": "LMS",
+            "store": "[INPUT REQUIRED] — no LMS feed, no cohort entity anywhere",
+            "fields": [
+              "cohort.id",
+              "cohort.startedAt",
+              "learner.cb",
+              "learner.outcome",
+              "learner.certifiedAt"
+            ],
+            "grain": "cohort",
+            "cadence": "per intake",
+            "owner": "Jojo & Pamela (P15/P16)",
+            "probe": "none"
+          }
         },
         {
           "k": "timeToFirstSale",
@@ -454,7 +872,21 @@
           "scale": "targetDown",
           "unit": "days",
           "source": "First BI case date − first Agent List sighting",
-          "system": "AgentOS (computable today)"
+          "system": "AgentOS (computable today)",
+          "feed": {
+            "system": "Agent List + BI money",
+            "store": "agent_list + bi_active_cases",
+            "fields": [
+              "agent_list.first_seen",
+              "bi_active_cases.owner",
+              "bi_active_cases.contract_create_date"
+            ],
+            "grain": "agent · cohort",
+            "cadence": "daily",
+            "owner": "Jojo & Pamela (P15/P16)",
+            "probe": "sqlTable:bi_active_cases",
+            "note": "COMPUTABLE TODAY with no new feed: first sighting on a list, first case in BI, difference in days."
+          }
         },
         {
           "k": "pipelineFill",
@@ -463,7 +895,23 @@
           "scale": "target",
           "unit": "pct",
           "source": "Nesting roster count ÷ intake plan",
-          "system": "AgentOS Agent List + intake plan"
+          "system": "AgentOS Agent List + intake plan",
+          "feed": {
+            "system": "Agent List + intake plan",
+            "store": "agent_list (numerator) + [INPUT REQUIRED] intake plan (denominator)",
+            "fields": [
+              "agent_list.campaign = Nesting",
+              "plan.intakeSeats"
+            ],
+            "grain": "month",
+            "cadence": "weekly",
+            "owner": "Abigail (P06)",
+            "probe": "sqlTable:agent_list",
+            "note": "Half-live: the nest roster is real; the intake plan it is measured against is not.",
+            "needs": [
+              "The intake plan (the denominator)"
+            ]
+          }
         },
         {
           "k": "certCompliance",
@@ -472,7 +920,23 @@
           "scale": "target",
           "unit": "pct",
           "source": "LMS completions ÷ required",
-          "system": "LMS (no go-live without a training pass — confirmed KB rule)"
+          "system": "LMS (no go-live without a training pass — confirmed KB rule)",
+          "feed": {
+            "system": "LMS",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "learner.cb",
+              "course.id",
+              "course.required",
+              "completion.completedAt",
+              "completion.expiresAt"
+            ],
+            "grain": "agent · course",
+            "cadence": "weekly",
+            "owner": "Jojo & Pamela (P15/P16)",
+            "probe": "none",
+            "note": "\"No go-live without a training pass\" is a confirmed rule with no evidence trail behind it."
+          }
         }
       ]
     },
@@ -491,7 +955,23 @@
           "scale": "target",
           "unit": "pct",
           "source": "ViciDial platform availability",
-          "system": "ViciDial (CallX retired 1 Sep 2026)"
+          "system": "ViciDial (CallX retired 1 Sep 2026)",
+          "feed": {
+            "system": "ViciDial platform",
+            "store": "[INPUT REQUIRED] — the call export proves calls happened, never that the dialler was up",
+            "fields": [
+              "uptime.window",
+              "uptime.downSeconds",
+              "incident.startedAt",
+              "incident.endedAt",
+              "shift.hours"
+            ],
+            "grain": "day",
+            "cadence": "daily",
+            "owner": "Rogen (P14)",
+            "probe": "none",
+            "note": "Inferring uptime from call volume would be a guess dressed as a measure: a quiet hour and a dead dialler look identical in an export of calls that happened."
+          }
         },
         {
           "k": "talkPerAgentDay",
@@ -500,7 +980,21 @@
           "scale": "target",
           "unit": "mins",
           "source": "EXPORT_CALL_REPORT — Σ length_in_sec grouped on `user`; includes ringing by rule (viciCallReport.talkFrom)",
-          "system": "PULSE (computable today)"
+          "system": "PULSE (computable today)",
+          "feed": {
+            "system": "ViciDial EXPORT_CALL_REPORT",
+            "store": "vici_calls (lake) + kv:nba-digest stats.talkDay",
+            "fields": [
+              "vici_calls.user",
+              "vici_calls.length_in_sec",
+              "vici_calls.call_date"
+            ],
+            "grain": "agent · day",
+            "cadence": "on upload",
+            "owner": "Rogen (P14)",
+            "probe": "digest:talkDay",
+            "note": "Includes ringing (~38%) by rule, switchable via viciCallReport.talkFrom."
+          }
         },
         {
           "k": "connectRate",
@@ -509,7 +1003,21 @@
           "scale": "target",
           "unit": "pct",
           "source": "Connected calls ÷ dials, per ViciDial dispositions",
-          "system": "PULSE (computable today)"
+          "system": "PULSE (computable today)",
+          "feed": {
+            "system": "ViciDial EXPORT_CALL_REPORT",
+            "store": "vici_calls (lake)",
+            "fields": [
+              "vici_calls.status",
+              "vici_calls.length_in_sec",
+              "vici_calls.user"
+            ],
+            "grain": "agent · day",
+            "cadence": "on upload",
+            "owner": "Rogen (P14)",
+            "probe": "sqlTable:vici_calls",
+            "note": "Computable today; not yet published in the digest, so exec-pull cannot see it."
+          }
         },
         {
           "k": "ticketSla",
@@ -518,7 +1026,24 @@
           "scale": "target",
           "unit": "pct",
           "source": "Service-desk ticket log",
-          "system": "[INPUT REQUIRED — no ticketing system named in the register]"
+          "system": "[INPUT REQUIRED — no ticketing system named in the register]",
+          "feed": {
+            "system": "Service desk",
+            "store": "[INPUT REQUIRED] — no ticketing system is named in the 13-system register",
+            "fields": [
+              "ticket.id",
+              "ticket.raisedAt",
+              "ticket.priority",
+              "ticket.assignee",
+              "ticket.resolvedAt",
+              "ticket.slaTarget"
+            ],
+            "grain": "ticket",
+            "cadence": "daily",
+            "owner": "Rishae (P11)",
+            "probe": "none",
+            "note": "A system must be CHOSEN before it can be fed. This is a decision, not an integration."
+          }
         },
         {
           "k": "openP1",
@@ -549,7 +1074,20 @@
               "min": 0,
               "score": 100
             }
-          ]
+          ],
+          "feed": {
+            "system": "AgentOS health cron",
+            "store": "kv:health-alerts + store_freshness",
+            "fields": [
+              "alert.id",
+              "alert.severity",
+              "alert.raisedAt"
+            ],
+            "grain": "alert · live",
+            "cadence": "10 min",
+            "owner": "Nicholas (P02)",
+            "probe": "engine:health-alerts"
+          }
         }
       ]
     },
@@ -569,7 +1107,26 @@
           "scale": "target",
           "unit": "zar",
           "source": "BI_ACTIVE_CASES money model vs the month's budget",
-          "system": "AgentOS (revenue actual) + budget [INPUT REQUIRED]"
+          "system": "AgentOS (revenue actual) + budget [INPUT REQUIRED]",
+          "feed": {
+            "system": "BI money model (actual) + budget (missing)",
+            "store": "bi_active_cases + [INPUT REQUIRED] budget",
+            "fields": [
+              "bi_active_cases.charge_amount",
+              "bi_active_cases.contract_create_date",
+              "budget.month",
+              "budget.revenue",
+              "budget.campaign"
+            ],
+            "grain": "month",
+            "cadence": "monthly",
+            "owner": "Mekaeel (P03)",
+            "probe": "sqlTable:bi_active_cases",
+            "note": "HALF-LIVE and the half that is missing is the denominator. Revenue is exact to the rand; there is no signed budget to divide it by, so the SCORE is simulated even though the value is not.",
+            "needs": [
+              "A signed monthly budget. Revenue is exact; there is nothing to divide it by"
+            ]
+          }
         },
         {
           "k": "costPerAgent",
@@ -578,7 +1135,23 @@
           "scale": "targetDown",
           "unit": "zar",
           "source": "Total cost ÷ active agents. KB model: R16,000 target at 330 seats; R25,000 at 110",
-          "system": "Xero / Payscale [INPUT REQUIRED]"
+          "system": "Xero / Payscale [INPUT REQUIRED]",
+          "feed": {
+            "system": "Xero / Payscale",
+            "store": "[INPUT REQUIRED] — no ledger or payroll feed exists",
+            "fields": [
+              "gl.period",
+              "gl.account",
+              "gl.costCentre",
+              "gl.amount",
+              "headcount.active"
+            ],
+            "grain": "month",
+            "cadence": "monthly",
+            "owner": "Mekaeel (P03)",
+            "probe": "none",
+            "note": "KB module 07 carries a MODEL (R16,000 at 330 seats, R25,000 at 110) and an unresolved conflict on agent basic salary (R5,000 vs R5,250). A model is not an actual."
+          }
         },
         {
           "k": "contributionMargin",
@@ -587,7 +1160,22 @@
           "scale": "target",
           "unit": "pct",
           "source": "(Revenue − direct seat cost) ÷ revenue",
-          "system": "Xero [INPUT REQUIRED]"
+          "system": "Xero [INPUT REQUIRED]",
+          "feed": {
+            "system": "Xero",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "gl.revenue",
+              "gl.directCost",
+              "gl.costCentre",
+              "period"
+            ],
+            "grain": "month · campaign",
+            "cadence": "monthly",
+            "owner": "Mekaeel (P03)",
+            "probe": "none",
+            "note": "Language rule: contribution, never EBITDA, until management accounts are tied out."
+          }
         },
         {
           "k": "payrollRatio",
@@ -596,7 +1184,21 @@
           "scale": "targetDown",
           "unit": "pct",
           "source": "Payroll run ÷ revenue",
-          "system": "Payscale [INPUT REQUIRED]"
+          "system": "Payscale [INPUT REQUIRED]",
+          "feed": {
+            "system": "Payscale",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "payrun.period",
+              "payrun.gross",
+              "payrun.employer_contributions",
+              "payrun.headcount"
+            ],
+            "grain": "month",
+            "cadence": "monthly",
+            "owner": "Romona (P17)",
+            "probe": "none"
+          }
         },
         {
           "k": "commissionAccuracy",
@@ -605,7 +1207,24 @@
           "scale": "target",
           "unit": "pct",
           "source": "Projected commission engine vs the paid run (specs/projected-commission-worked-example.md)",
-          "system": "AgentOS commission engine + SYS-003 (G1, unsigned rules — CFO sign-off outstanding)"
+          "system": "AgentOS commission engine + SYS-003 (G1, unsigned rules — CFO sign-off outstanding)",
+          "feed": {
+            "system": "AgentOS commission engine + the paid run",
+            "store": "commCalc() in agent/index.html vs [INPUT REQUIRED] the payroll run",
+            "fields": [
+              "commission.projected (live)",
+              "payrun.commissionPaid (missing)"
+            ],
+            "grain": "agent · month",
+            "cadence": "monthly",
+            "owner": "Romona (P17)",
+            "probe": "engine:commCalc",
+            "note": "HALF-LIVE: the projection is real and worked-example verified. What it must be compared against — what was actually paid — is not in any system. SYS-003 also still carries UNSIGNED RULES, so CFO sign-off precedes production use.",
+            "needs": [
+              "The PAID commission run from payroll. The projection is live; what was actually paid is in no system",
+              "CFO sign-off on SYS-003 rules, which are still unsigned"
+            ]
+          }
         }
       ]
     },
@@ -624,7 +1243,21 @@
           "scale": "target",
           "unit": "pct",
           "source": "Facilities walk-round",
-          "system": "[INPUT REQUIRED]"
+          "system": "[INPUT REQUIRED]",
+          "feed": {
+            "system": "Facilities walk-round",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "date",
+              "seats.total",
+              "seats.usable",
+              "fault.type"
+            ],
+            "grain": "site · day",
+            "cadence": "daily",
+            "owner": "[INPUT REQUIRED — P18 vacant]",
+            "probe": "none"
+          }
         },
         {
           "k": "powerUptime",
@@ -633,7 +1266,23 @@
           "scale": "target",
           "unit": "pct",
           "source": "Load-shedding schedule + generator log",
-          "system": "[INPUT REQUIRED]"
+          "system": "[INPUT REQUIRED]",
+          "feed": {
+            "system": "Load-shedding schedule + generator log",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "date",
+              "outage.startedAt",
+              "outage.endedAt",
+              "cover.source (mains/UPS/genset)",
+              "shift.hours"
+            ],
+            "grain": "site · day",
+            "cadence": "daily",
+            "owner": "[INPUT REQUIRED]",
+            "probe": "none",
+            "note": "In Durban this is a real production input, not a facilities nicety: an uncovered stage is dialling time the floor cannot get back."
+          }
         },
         {
           "k": "connectivity",
@@ -642,7 +1291,21 @@
           "scale": "target",
           "unit": "pct",
           "source": "ISP/line monitoring",
-          "system": "[INPUT REQUIRED]"
+          "system": "[INPUT REQUIRED]",
+          "feed": {
+            "system": "ISP / line monitoring",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "link.id",
+              "link.downStartedAt",
+              "link.downEndedAt",
+              "link.role (primary/failover)"
+            ],
+            "grain": "site · day",
+            "cadence": "daily",
+            "owner": "Rishae (P11)",
+            "probe": "none"
+          }
         },
         {
           "k": "hsIncidents",
@@ -669,7 +1332,22 @@
               "min": 0,
               "score": 100
             }
-          ]
+          ],
+          "feed": {
+            "system": "Incident register",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "incident.id",
+              "incident.date",
+              "incident.type",
+              "incident.severity",
+              "incident.closedAt"
+            ],
+            "grain": "incident",
+            "cadence": "on event",
+            "owner": "[INPUT REQUIRED]",
+            "probe": "none"
+          }
         },
         {
           "k": "maintenanceSla",
@@ -678,7 +1356,22 @@
           "scale": "target",
           "unit": "pct",
           "source": "Facilities job log",
-          "system": "[INPUT REQUIRED]"
+          "system": "[INPUT REQUIRED]",
+          "feed": {
+            "system": "Facilities job log",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "job.id",
+              "job.raisedAt",
+              "job.priority",
+              "job.closedAt",
+              "job.slaTarget"
+            ],
+            "grain": "job",
+            "cadence": "weekly",
+            "owner": "[INPUT REQUIRED]",
+            "probe": "none"
+          }
         }
       ]
     },
@@ -698,7 +1391,24 @@
           "scale": "target",
           "unit": "pct",
           "source": "Blue ticket log",
-          "system": "Blue [INPUT REQUIRED — no export yet]"
+          "system": "Blue [INPUT REQUIRED — no export yet]",
+          "feed": {
+            "system": "Blue",
+            "store": "[INPUT REQUIRED] — Blue is the system of record for actions and has no export into AgentOS",
+            "fields": [
+              "ticket.id",
+              "ticket.board",
+              "ticket.raisedAt",
+              "ticket.owner",
+              "ticket.dueAt",
+              "ticket.closedAt",
+              "ticket.slaTarget"
+            ],
+            "grain": "ticket",
+            "cadence": "daily",
+            "owner": "Ryan (P08)",
+            "probe": "none"
+          }
         },
         {
           "k": "backlog",
@@ -707,7 +1417,19 @@
           "scale": "targetDown",
           "unit": "int",
           "source": "Blue open tickets",
-          "system": "Blue"
+          "system": "Blue",
+          "feed": {
+            "system": "Blue",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "ticket.status",
+              "ticket.board"
+            ],
+            "grain": "daily",
+            "cadence": "daily",
+            "owner": "Ryan (P08)",
+            "probe": "none"
+          }
         },
         {
           "k": "ageing",
@@ -716,7 +1438,19 @@
           "scale": "targetDown",
           "unit": "int",
           "source": "Blue ageing",
-          "system": "Blue"
+          "system": "Blue",
+          "feed": {
+            "system": "Blue",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "ticket.raisedAt",
+              "ticket.status"
+            ],
+            "grain": "daily",
+            "cadence": "daily",
+            "owner": "Ryan (P08)",
+            "probe": "none"
+          }
         },
         {
           "k": "blockageSla",
@@ -725,7 +1459,22 @@
           "scale": "target",
           "unit": "pct",
           "source": "Campaign Manager P1–P4 blockage clocks (CM_SLA_DEFAULTS) — the one SLA register that exists today",
-          "system": "Worker campaign.mjs (computable today)"
+          "system": "Worker campaign.mjs (computable today)",
+          "feed": {
+            "system": "Campaign Manager",
+            "store": "worker/src/campaign.mjs — CM_SLA_DEFAULTS P1–P4 clocks",
+            "fields": [
+              "blockage.priority",
+              "blockage.raisedAt",
+              "blockage.clearedAt",
+              "blockage.routes_to"
+            ],
+            "grain": "blockage",
+            "cadence": "live",
+            "owner": "Leon (P10)",
+            "probe": "engine:CM_SLA_DEFAULTS",
+            "note": "The only SLA register that exists in the suite today. Computable now; not yet published anywhere this report can read."
+          }
         },
         {
           "k": "dataFreshness",
@@ -734,7 +1483,21 @@
           "scale": "pct",
           "unit": "pct",
           "source": "store_freshness + kv:health-alerts; 11 sources on the Data Trust bar",
-          "system": "AgentOS health cron (computable today)"
+          "system": "AgentOS health cron (computable today)",
+          "feed": {
+            "system": "AgentOS health cron",
+            "store": "store_freshness + kv:health-alerts + source_cadence",
+            "fields": [
+              "source",
+              "expected_reach",
+              "last_seen",
+              "state"
+            ],
+            "grain": "source · live",
+            "cadence": "10 min",
+            "owner": "Nicholas (P02)",
+            "probe": "sqlTable:source_cadence"
+          }
         },
         {
           "k": "reportOnTime",
@@ -743,7 +1506,21 @@
           "scale": "target",
           "unit": "pct",
           "source": "Reporting calendar vs delivery",
-          "system": "AgentOS reports/ + Blue"
+          "system": "AgentOS reports/ + Blue",
+          "feed": {
+            "system": "Reporting calendar",
+            "store": "[INPUT REQUIRED] — no calendar object exists",
+            "fields": [
+              "report.id",
+              "report.dueAt",
+              "report.deliveredAt",
+              "report.owner"
+            ],
+            "grain": "report",
+            "cadence": "weekly",
+            "owner": "Ryan (P08)",
+            "probe": "none"
+          }
         }
       ]
     },
@@ -763,7 +1540,24 @@
           "scale": "target",
           "unit": "pct",
           "source": "Content calendar vs published",
-          "system": "Blue / marketing calendar [INPUT REQUIRED]"
+          "system": "Blue / marketing calendar [INPUT REQUIRED]",
+          "feed": {
+            "system": "Content calendar",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "content.id",
+              "content.pillar",
+              "content.briefedAt",
+              "content.dueAt",
+              "content.publishedAt",
+              "content.channel"
+            ],
+            "grain": "item",
+            "cadence": "weekly",
+            "owner": "Keshav (P07)",
+            "probe": "none",
+            "note": "Module 09 rule: the measure is demand, not artwork volume — so the calendar must carry the pillar and the channel, not just a publish date."
+          }
         },
         {
           "k": "leadsDelivered",
@@ -772,7 +1566,27 @@
           "scale": "target",
           "unit": "int",
           "source": "Lead batches loaded, per the 14-field lead asset model",
-          "system": "GHL / lead suppliers"
+          "system": "GHL / lead suppliers",
+          "feed": {
+            "system": "Lead suppliers → the lake",
+            "store": "sf_open_cases / lm_open_book_cache (delivered) + [INPUT REQUIRED] the plan",
+            "fields": [
+              "lead.batch_id",
+              "lead.source",
+              "lead.supplier",
+              "lead.consent",
+              "lead.loadedAt",
+              "plan.leadsPerWeek"
+            ],
+            "grain": "batch · week",
+            "cadence": "on upload",
+            "owner": "Ryan (P08)",
+            "probe": "sqlTable:lm_open_book_cache",
+            "note": "Leads ARRIVE measurably. What they were supposed to be is a plan nobody holds.",
+            "needs": [
+              "The lead plan — how many leads each week was supposed to bring"
+            ]
+          }
         },
         {
           "k": "leadToSale",
@@ -781,7 +1595,27 @@
           "scale": "target",
           "unit": "pct",
           "source": "BI sales ÷ leads allocated, attributed by source",
-          "system": "AgentOS Lead Management + BI (partially computable — source attribution missing)"
+          "system": "AgentOS Lead Management + BI (partially computable — source attribution missing)",
+          "feed": {
+            "system": "Lead book + BI money",
+            "store": "lm_open_book_cache + bi_active_cases",
+            "fields": [
+              "lead.id",
+              "lead.source",
+              "lead.supplier",
+              "case.number",
+              "case.owner",
+              "ATTRIBUTION KEY (missing)"
+            ],
+            "grain": "source · month",
+            "cadence": "daily",
+            "owner": "Ryan (P08)",
+            "probe": "sqlTable:lm_open_book_cache",
+            "note": "THE ATTRIBUTION GAP. Conversion is computable in total; it is NOT attributable to a SOURCE, because no key survives from the lead batch through to the booked case. Nobody can say which supplier is carrying the floor and which is being paid for nothing. One column — the batch/source id carried onto the case — closes it.",
+            "needs": [
+              "AN ATTRIBUTION KEY carried from the lead batch through to the booked case. Conversion is computable in total, never by source"
+            ]
+          }
         },
         {
           "k": "candidateApps",
@@ -790,7 +1624,24 @@
           "scale": "target",
           "unit": "int",
           "source": "GHL applications attributed to campaign",
-          "system": "GHL"
+          "system": "GHL",
+          "feed": {
+            "system": "GoHighLevel",
+            "store": "tagged contacts by marketing campaign",
+            "fields": [
+              "contact.source",
+              "contact.tags",
+              "contact.dateAdded",
+              "campaign.utm"
+            ],
+            "grain": "campaign · week",
+            "cadence": "daily",
+            "owner": "Keshav (P07)",
+            "probe": "api:HL_API_KEY",
+            "needs": [
+              "The GHL campaign/UTM tagging convention"
+            ]
+          }
         },
         {
           "k": "costPerLead",
@@ -799,7 +1650,21 @@
           "scale": "targetDown",
           "unit": "zar",
           "source": "Spend ÷ qualified leads",
-          "system": "[INPUT REQUIRED]"
+          "system": "[INPUT REQUIRED]",
+          "feed": {
+            "system": "Ad platforms / supplier invoices",
+            "store": "[INPUT REQUIRED]",
+            "fields": [
+              "spend.channel",
+              "spend.period",
+              "spend.amount",
+              "leads.qualified"
+            ],
+            "grain": "channel · month",
+            "cadence": "monthly",
+            "owner": "Keshav (P07)",
+            "probe": "none"
+          }
         }
       ]
     }
@@ -863,6 +1728,14 @@
       "from": "tables and pills only",
       "to": "validated chart palette + meters, factor bars and campaign bars",
       "why": "\"make each of the views more graphical and colour coordinated\". Palette validated with the dataviz validator, not by eye: the VAS dark-theme campaign hues fail every contrast check on a white page."
+    },
+    {
+      "date": "2026-09-17",
+      "by": "Nick",
+      "key": "sections[].factors[].feed",
+      "from": "a source sentence per factor",
+      "to": "a feed contract per factor: system, store, exact fields, grain, cadence, owner and a runnable probe",
+      "why": "\"test per all sections and give a detailed list of all the data which is required to build this dashboard\" — a prose list goes stale the day it is written; a probe is re-run."
     }
   ],
   "_bandScaleNote": "A count whose target is ZERO cannot be scored as value ÷ target — one incident would read 0 and two would read 0, and the report could not tell a wobble from a crisis. Those factors carry step BANDS in this file instead, first match wins, listed high to low: the rule book says what one critical fail is worth and what eight are worth, and the generator only looks it up.",
@@ -893,5 +1766,7 @@
     },
     "_statusNote": "Status fills are the darker text-safe steps (all ≥3:1 on white) and the track is the lighter step of the same ramp, so the state reads across the whole bar. A status colour never carries meaning alone on this page — every bar is labelled with its band.",
     "scaleMax": 110
-  }
+  },
+  "_feedNote": "Every factor names the FEED behind it — the system, the store, the exact fields, the grain, the cadence and the owner — plus a PROBE the coverage tool runs against this repo. The probe decides the state; the rule book never declares one. `node tools/exec-coverage.mjs` is the test, and reports/exec-weekly/DATA-REQUIREMENTS.md is its output.",
+  "_stateNote": "The coverage tool derives FIVE states, and `partial` is the one that matters most: a probe can find the value and still not find what the value is MEASURED AGAINST. Revenue is exact to the rand and 'revenue vs budget' is unscoreable, because no budget exists. Counting those as 'exists, not wired' would have flattered the plan by about a sixth of the business score."
 }

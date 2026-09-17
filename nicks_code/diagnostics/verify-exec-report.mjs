@@ -30,6 +30,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { scoreFactor, scoreSection, scoreBusiness, bandOf, build } from '../../tools/build-exec-report.mjs';
 
 const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');
@@ -245,6 +246,56 @@ ok('the report states its as-at date and where every source ends',
 ok('the report names the rule book and the data file it was built from',
   html.includes(RULES.version) && html.includes('data.json'));
 ok('no reading in data.json names a factor the rule book does not', true, 'build() throws otherwise');
+
+/* --------------------------------------------------- 6. the feed contracts -- */
+console.log('\n== every factor names the data behind it, and the probe agrees ==');
+const KINDS = new Set(['digest', 'opsKpi', 'engine', 'sqlTable', 'api', 'manual', 'none']);
+const allFactors = RULES.sections.flatMap(s => s.factors.map(f => ({ s: s.k, f })));
+
+ok('every factor carries a feed contract',
+  allFactors.every(x => x.f.feed), allFactors.filter(x => !x.f.feed).map(x => `${x.s}.${x.f.k}`).join(','));
+ok('every feed names a system, a store, its fields, a grain, a cadence and an owner',
+  allFactors.every(x => x.f.feed.system && x.f.feed.store && Array.isArray(x.f.feed.fields)
+    && x.f.feed.fields.length && x.f.feed.grain && x.f.feed.cadence && x.f.feed.owner),
+  allFactors.filter(x => !(x.f.feed?.fields?.length && x.f.feed?.grain && x.f.feed?.cadence && x.f.feed?.owner))
+    .map(x => `${x.s}.${x.f.k}`).join(','));
+ok('every probe names a kind the coverage tool implements',
+  allFactors.every(x => KINDS.has(String(x.f.feed.probe).split(':')[0])),
+  allFactors.filter(x => !KINDS.has(String(x.f.feed.probe).split(':')[0])).map(x => x.f.feed.probe).join(','));
+ok('a factor with no source declares probe "none" and names what it would need',
+  allFactors.filter(x => x.f.feed.probe === 'none').every(x => /INPUT REQUIRED/.test(x.f.feed.store) || x.f.feed.note),
+  allFactors.filter(x => x.f.feed.probe === 'none' && !/INPUT REQUIRED/.test(x.f.feed.store) && !x.f.feed.note)
+    .map(x => `${x.s}.${x.f.k}`).join(','));
+
+/* The coverage claim is re-derived here, from the probe, so a stale requirements
+   document cannot quietly contradict the rule book. */
+const cov = JSON.parse(execFileSync('node', [j(REPO, 'tools', 'exec-coverage.mjs'), '--json'], { encoding: 'utf8' }));
+ok('the coverage tool reports every section and every factor',
+  cov.length === RULES.sections.length
+  && cov.every(c => c.factors.length === RULES.sections.find(s => s.k === c.section).factors.length));
+ok('a "needs" entry only sits on a factor whose probe actually found something — otherwise it is simply a missing feed',
+  allFactors.filter(x => x.f.feed.needs?.length).every(x =>
+    cov.find(c => c.section === x.s).factors.find(f => f.k === x.f.k).hit),
+  'a half-live factor must have a live half');
+ok('the Performance section is fully reachable — nothing on that tab needs a new data contract',
+  cov.find(c => c.section === 'performance').byState.feed === 0
+  && cov.find(c => c.section === 'performance').byState.partial === 0,
+  JSON.stringify(cov.find(c => c.section === 'performance').byState));
+
+const REQ = j(REPO, 'reports', 'exec-weekly', 'DATA-REQUIREMENTS.md');
+ok('the requirements document exists', fs.existsSync(REQ));
+if (fs.existsSync(REQ)) {
+  const req = fs.readFileSync(REQ, 'utf8');
+  ok('the requirements document is current — every section row matches the probe',
+    cov.every(c => {
+      const s = RULES.sections.find(x => x.k === c.section);
+      return req.includes(`| ${s.label} | ${s.weight}% | ${c.byState.live}% | ${c.byState.wiring}% | ${c.byState.partial}% | ${c.byState.manual}% | ${c.byState.feed}% |`);
+    }),
+    'run: node tools/exec-coverage.mjs --write');
+  ok('every factor that needs a new feed names the exact fields it would need',
+    cov.flatMap(c => c.factors.filter(f => f.state === 'feed'))
+      .every(f => req.includes(`\`${RULES.sections.flatMap(s => s.factors).find(x => x.k === f.k).feed.fields[0]}\``)));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 failures.forEach(f => console.log('  · ' + f));
