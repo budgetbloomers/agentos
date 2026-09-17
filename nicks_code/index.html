@@ -7050,6 +7050,18 @@ async function largeStatus(){
   const r=await fetch(base+'/api/upload/large/status',{headers:{'Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'}}).then(r=>r.ok?r.json():null).catch(()=>null);
   if(!r) return el.innerHTML='<div class="note">Large-upload status is unavailable right now.</div>';
   const fmtB=(b)=>b==null?'':(b/1048576).toFixed(1)+' MB'; const when=(t)=>t?new Date(t).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg',hour12:false}).slice(0,17):'';
+  /* A STALLED LOAD RELOADS ITSELF (2026-09-17 audit: Ashton's 16 Sep open cases sat at 50,000 of
+     484,000 rows for 23 hours because the tab went away and nobody pressed the button). Any open
+     management tab that sees a file stopped for over 30 minutes — or received and never started —
+     runs "Load from here" on it, once per file per session, one at a time. */
+  try{
+    window.__largeAuto=window.__largeAuto||{};
+    if(!window.__largeBusy){
+      const stale=(r.files||[]).find(f=>!window.__largeAuto[f.id]&&((f.status==='loading'&&(Date.now()-Date.parse(f.validated_at||f.received_at||0))>30*60000)||(f.status==='received'&&(Date.now()-Date.parse(f.received_at||0))>20*60000)));
+      if(stale){ window.__largeAuto[stale.id]=1; window.__largeBusy=1; toast('"'+stale.file_name+'" stopped loading '+Math.round((Date.now()-Date.parse(stale.validated_at||stale.received_at))/60000)+' minutes ago — loading it from this tab now.',9000);
+        setTimeout(()=>{ largeRetry(stale.id).catch(()=>{}).then(()=>{ window.__largeBusy=0; }); },1500); }
+    }
+  }catch(e){}
   const badge=(s)=>({received:'pwarn',validated:'pwarn',transforming:'pwarn',loading:'pwarn',loaded:'pok',failed:'pbad'}[s]||'pmuted');
   el.innerHTML=r.files.length?`<div class="tablewrap" style="max-height:260px"><table class="data"><thead><tr><th class="l">File</th><th class="l">Source</th><th>Status</th><th>Size</th><th>Rows</th><th class="l">Received</th><th class="l">Note</th></tr></thead><tbody>`
     +r.files.map(f=>{

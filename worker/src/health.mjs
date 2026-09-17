@@ -260,9 +260,10 @@ export function evaluateFreshness(t) {
   if (t.rake) {
     const k = t.rake; const bits = [];
     if (k.received_stuck > 0) bits.push(k.received_stuck + ' file' + (k.received_stuck === 1 ? '' : 's') + ' received over an hour ago and not picked up');
+    if (k.loading_stalled > 0) bits.push(k.loading_stalled + ' load' + (k.loading_stalled === 1 ? '' : 's') + ' stopped halfway over 30 minutes ago (' + (k.stalled_names || []).slice(0, 3).join(', ') + ') — open the Upload Station in VAS and it reloads itself, or press "Load from here"');
     if (k.failed_24h > 0) bits.push(k.failed_24h + ' failed in the last day (' + (k.failed_names || []).slice(0, 3).join(', ') + ')');
     if (k.dlq_depth > 0) bits.push(k.dlq_depth + ' in the dead-letter queue');
-    if (bits.length) alerts.push({ id: 'rake-stuck', severity: k.received_stuck > 0 || k.dlq_depth > 0 ? 'critical' : 'warning',
+    if (bits.length) alerts.push({ id: 'rake-stuck', severity: k.received_stuck > 0 || k.loading_stalled > 0 || k.dlq_depth > 0 ? 'critical' : 'warning',
       message: 'Large-file uploads need attention: ' + bits.join('; ') + '. Upload Station → Large files shows each one with its reason.', since: 'rake' });
   }
   /* A PUBLISH THAT REMOVED MANY PEOPLE OR A CAMPAIGN — published, and questioned for three days.

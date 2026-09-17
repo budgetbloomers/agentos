@@ -311,7 +311,14 @@ export default {
        subrequests, and the wave's 29 Convex calls tipped it over — silently, because the tick
        caught the error and `wrangler tail` redacts the message. Run by hand it works (three waves,
        1,022 sessions). A second cron expression gets a second invocation with its own budget. */
-    if (event.cron === COACHING_CRON) {
+    /* WHICH TRIGGER IS THIS? The tick is the only "every ten minutes" expression; anything else that
+       fires this handler is the coaching wave — compared loosely (2026-09-17: the snapshot sat 31 h old
+       while the wave ran by hand, so the strict string compare was not matching what Cloudflare hands
+       over). Every scheduled event is also stamped to kv:cron-log so the next such question is a read. */
+    const cronStr = String(event.cron || '').replace(/\s+/g, ' ').trim();
+    const isTick = cronStr === '*/10 * * * *' || cronStr === '';
+    ctx.waitUntil(DB.insert('rules', [{ key: 'kv:cron-log', value: { last: cronStr, at: new Date().toISOString(), tick: isTick }, updated_by: 'cron', updated_at: new Date().toISOString() }], true).catch(() => {}));
+    if (!isTick) {
       ctx.waitUntil((async () => {
         try { const cw = await snapshotCoachingWave(env, DB); console.info('[cron:coaching] ' + JSON.stringify(cw)); }
         catch (e) { console.warn('[cron:coaching] failed: ' + (e && e.message || e)); }

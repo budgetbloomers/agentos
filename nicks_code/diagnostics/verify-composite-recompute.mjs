@@ -65,7 +65,8 @@ for (const a of rated) {
     targetAch: { v: t > 0 ? s / t * 100 : null, t: R.targets.targetAch },
     qa:        { v: P.qa ? P.qa.value : null, t: R.targets.qa },                      // published value; no per-day QA in the digest
     gwpTotal:  { v: win.length ? x : null, t: win.length ? t * floorEx : null },
-    conv:      { v: a.leads ? (+a.sales || 0) / a.leads * 100 : null, t: grp ? grp.convTarget : null },
+    /* more sales than leads on record is not a conversion — unmeasured (rule conv, 2026-09-15) */
+    conv:      { v: (a.leads && (+a.sales || 0) <= a.leads) ? (+a.sales || 0) / a.leads * 100 : null, t: grp ? grp.convTarget : null },
     talk:      { v: actW > 0 ? (tk / 60) / actW : null, t: R.targets.talk },
     attendance:{ v: sum(sched, 'emp') > 0 ? sum(sched, 'act') / sum(sched, 'emp') * 100 : null, t: R.targets.attendance },
   };
