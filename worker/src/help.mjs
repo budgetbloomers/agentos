@@ -354,10 +354,25 @@ export async function actionSet(env, DB, user, digest, body) {
       pipelineStageId: stage.id, status: last ? 'won' : 'open' }) });
   } else {
     const contactId = await contactFor(env, DB, cb, name);
-    const made = await hl(env, '/opportunities/', { method: 'POST', body: JSON.stringify({
-      locationId: env.HL_HELP_LOCATION_ID, pipelineId: p.id, pipelineStageId: stage.id,
-      name: wantName, status: last ? 'won' : 'open', contactId }) });
-    id = (made.opportunity && made.opportunity.id) || '';
+    /* ONE OPPORTUNITY PER AGENT IN THIS PIPELINE (2026-09-17: "HighLevel /opportunities/ → 400
+       OPPORTUNITY_NO_DUPLICATE — Can not create duplicate opportunity for the contact"). The location
+       refuses a second opportunity for a contact in the same pipeline, so an agent who already had a
+       record from an earlier week or rule could never get this week's. The contact's existing record
+       is REUSED — renamed to this rule and review week and moved to the stage; HighLevel keeps the
+       stage history on the record, so nothing is lost. The create is only for a first-ever agent. */
+    const mine = (j.opportunities || []).filter((o) => String(o.contactId || '') === String(contactId));
+    const reuse = mine.find((o) => o.status !== 'won' && o.status !== 'lost')
+      || mine.slice().sort((x, y) => String(y.updatedAt || '').localeCompare(String(x.updatedAt || '')))[0] || null;
+    if (reuse) {
+      id = reuse.id;
+      await hl(env, '/opportunities/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify({
+        name: wantName, pipelineStageId: stage.id, status: last ? 'won' : 'open' }) });
+    } else {
+      const made = await hl(env, '/opportunities/', { method: 'POST', body: JSON.stringify({
+        locationId: env.HL_HELP_LOCATION_ID, pipelineId: p.id, pipelineStageId: stage.id,
+        name: wantName, status: last ? 'won' : 'open', contactId }) });
+      id = (made.opportunity && made.opportunity.id) || '';
+    }
   }
   const si = p.stages.findIndex((s) => s.id === stage.id);
   return { status: 200, body: { ok: true, id, stageId: stage.id, stageIdx: si, stage: stage.name, closed: last } };
