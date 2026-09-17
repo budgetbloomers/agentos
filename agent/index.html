@@ -5739,7 +5739,9 @@ function linksPage(){
     }).join('')+'</div></div>';
 }
 function progressPage(c){
-  var out=pgHead()+pgRating()+pgMyHelp()+pgNBA()+pgChecks()+pgRun()+pgSessions()+pgCoaching();
+  /* "The two checks on every sale" is OFF the agent's page (Nick, 2026-09-17: "remove this please") — the value
+     and volume verdicts still travel on me.checks and the team leader's drill-down still shows them. */
+  var out=pgHead()+pgRating()+pgMyHelp()+pgNBA()+pgRun()+pgSessions()+pgCoaching();
   if(out===pgHead()) out+='<div class="card"><p class="why">Your figures for this period have not been published yet — check back after the next upload.</p></div>';
   return out;
 }

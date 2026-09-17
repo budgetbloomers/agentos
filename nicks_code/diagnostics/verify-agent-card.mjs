@@ -70,9 +70,11 @@ try {
     }
     const chk = me.checks;
     const c1 = view.whys.find((w) => /^Check 1/.test(w)) || '', c2 = view.whys.find((w) => /^Check 2/.test(w)) || '';
+    /* THE TWO-CHECKS CARD IS OFF THE AGENT PAGE (Nick, 2026-09-17: "remove this please"); the verdicts still
+       travel on me.checks — asserted here as data, and as absent from the page. */
+    ok(a.code + ': the two-checks card is not on My Progress', !c1 && !c2, (c1 || c2).slice(0, 80));
     if (chk && chk.value.pass != null) {
-      ok(a.code + ': check 1 verdict = Worker', /— pass$/.test(c1) === (chk.value.pass === true), c1.slice(0, 100));
-      ok(a.code + ': check 2 verdict = Worker', /— pass$/.test(c2) === (chk.volume.pass === true), c2.slice(0, 100));
+      ok(a.code + ': the Worker still decides both checks', typeof chk.value.pass === 'boolean' && typeof chk.volume.pass === 'boolean');
       /* NOT compared: the rating row is the last five worked sessions, the checks are the whole month — two windows, both true; the page labels them. */
     }
     /* Against the payload the PAGE received, not this script's own fetch: the Worker caches the digest
