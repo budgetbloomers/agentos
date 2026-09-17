@@ -1,0 +1,275 @@
+{
+  "_README": "THE WEEK'S READINGS — nothing here is a score. Scores are computed by tools/build-exec-report.mjs from specs/exec_scorecard_rules.json. Every reading carries a basis: 'actual' (an engine computed it, and the source line says from which upload and to which date), 'manual' (a named person supplied it), 'simulated' (a placeholder so the framework can be reviewed before the feed exists — badged and shaded on the report) or 'absent' (no feed at all: the factor leaves the denominator and the section renormalises). A basis describes the SCORE: a real value measured against a placeholder target is a simulated score.",
+  "_actuals": "The 'actual' readings in this first issue are taken from committed evidence, not a live pull: reports/ops-audit-2026-09-14/OPS-AUDIT.md (14 Sep, Ops vs PULSE day-for-day), the 15 Sep Agent List record and specs/campaign-manager-plan.md. They are month-to-date to 14 September, which is what the money sources carry. When this report runs off the live Worker, these become a query and the rest of the file shrinks.",
+
+  "meta": {
+    "periodLabel": "Week 37 · 7–13 September 2026 (money and attendance month-to-date to 14 Sep)",
+    "issued": "Thursday 17 September 2026",
+    "asAt": "17 September 2026",
+    "audience": "EXCO · The Chatterbox",
+    "roster": "129 agents on the 15 Sep Agent List",
+    "headline": "The selling floor is performing — GWP is on the engine's own target and the average sale is running well above the R89 planning value. Volume is the gap: 3,093 sales against 3,600. Everything around the floor is the real risk: 17 agents came off the 14 Sep list, LRC has no system of record at all, and three-quarters of this score still rests on placeholders rather than measured numbers. Fix the feeds before anyone quotes the overall figure outside this room."
+  },
+
+  "summary": [
+    "WORKS — Money: September GWP is R367,387 incl VAT against an engine target of R368,460, and the average sale is R119 against a R89 plan. Value per sale is not the problem.",
+    "BROKEN — Volume: 3,093 sales against 3,600 planned. Sales per agent-day is 2.1 against 2.6. Leon owns it; the campaign table below says it is Courtesy, not Cuddle.",
+    "BROKEN — People leaving: the 14 Sep Agent List removed 17 agents off an opening 146. Nobody can yet say how many resigned, were dismissed or simply moved campaign, because removals and reasons are not reconciled. Claudell owns it.",
+    "BROKEN — LRC has no system of record. Every figure in that section is a placeholder. The QA export can tell us about critical fails; it cannot tell us about a hearing, a warning or a CCMA date. Jared owns the decision on where that register lives.",
+    "GOVERNANCE — Facilities has no named owner while P18 (COO / Delivery Executive) is vacant, so a 4%-weighted section of the business score is unowned. That is an EXCO decision, not a reporting gap.",
+    "NEXT — This report becomes defensible when four feeds land: recruitment (GHL), payroll and budget (Payscale/Xero), Blue tickets, and an IR register. Until then the overall score is directional."
+  ],
+
+  "redIssues": [
+    {
+      "issue": "Sales volume is 14% behind plan while value per sale is ahead",
+      "impact": "≈507 sales short month-to-date. At the R119 average sale actually being written, that is roughly R60,000 of GWP not booked in fourteen days.",
+      "evidence": "3,093 cases net of cancellation vs a 3,600 target (BI Active Cases, MTD to 14 Sep). SPD 2.1 vs 2.6.",
+      "owner": "Leon — Sales Ops (P10)",
+      "action": "Campaign-level dial plan for Courtesy: attempts per lead and contact rate reviewed daily with the four TLs carrying the gap.",
+      "due": "Mon 22 Sep",
+      "escalation": "MANCO → CTTO if the gap is still above 10% at month end"
+    },
+    {
+      "issue": "17 agents removed by the 14 Sep Agent List, unreconciled",
+      "impact": "11.6% of the opening roster in one month against a 4.5% planning assumption. At R16,000 all-in cost per seat the replacement cost alone is material, and every removal resets a nesting investment.",
+      "evidence": "agent_sync_logs, 14 Sep publish; roster 146 → 129. Removals are not yet split into resignations, dismissals and campaign transfers.",
+      "owner": "Claudell Panday — People Executive (P05)",
+      "action": "Reason code on every removal at the point of publish, then a fortnightly attrition read with Keshree and Abigail.",
+      "due": "Fri 26 Sep",
+      "escalation": "EXCO — this is the single largest unmeasured cost in the report"
+    },
+    {
+      "issue": "LRC has no system of record",
+      "impact": "The business cannot state its own labour-relations exposure. Every LRC figure in this report is a placeholder, and the section carries 7% of the business score.",
+      "evidence": "TCB-KB-V3 carries no IR process, no CCMA register and no grievance SLA; the only real signal is the QA export's critical-fail and offence columns.",
+      "owner": "Jared — Risk & Compliance Executive (P04)",
+      "action": "Decide the register (HR OS module vs a Blue board), then one weekly export into this report.",
+      "due": "Fri 26 Sep",
+      "escalation": "EXCO if unresolved at the October pack"
+    },
+    {
+      "issue": "Finance is reported against an unsigned budget",
+      "impact": "Revenue is a real number; 'revenue vs budget', cost per seat, contribution and payroll ratio are all modelled. No profitability statement in this report may be quoted externally.",
+      "evidence": "No budget, payroll or ledger feed exists in AgentOS. KB module 07 figures are model, not actual; agent basic salary is itself in conflict (R5,000 vs R5,250).",
+      "owner": "Mekaeel — CFO (P03)",
+      "action": "Sign the September budget and nominate the monthly Xero/Payscale extract that feeds this section.",
+      "due": "Wed 30 Sep",
+      "escalation": "EXCO — required before any investor-facing use of this pack"
+    },
+    {
+      "issue": "Facilities is unowned",
+      "impact": "4% of the business score has no accountable executive; a power or seat failure has no route into this report.",
+      "evidence": "P18 COO / Delivery Executive vacant_or_unresolved (KB module 03).",
+      "owner": "[INPUT REQUIRED — EXCO to nominate]",
+      "action": "Name an interim owner for facilities reporting pending the P18 appointment.",
+      "due": "Fri 19 Sep",
+      "escalation": "CEO"
+    }
+  ],
+
+  "sources": [
+    { "name": "Agent List (roster)", "endsOn": "15 Sep · current", "state": "ok" },
+    { "name": "BI Active Cases (money)", "endsOn": "14 Sep", "state": "ok" },
+    { "name": "Attendance register", "endsOn": "14 Sep", "state": "ok" },
+    { "name": "ViciDial call report", "endsOn": "13 Sep", "state": "stale" },
+    { "name": "QA evaluations", "endsOn": "12 Sep", "state": "stale" },
+    { "name": "SF Inactive (cancellations)", "endsOn": "14 Sep", "state": "ok" },
+    { "name": "Open Cases (lake)", "endsOn": "14 Sep", "state": "ok" },
+    { "name": "Coaching Hub", "endsOn": "13 Sep", "state": "ok" },
+    { "name": "GHL (recruitment)", "endsOn": "no feed", "state": "down" },
+    { "name": "Blue (tickets/actions)", "endsOn": "no feed", "state": "down" },
+    { "name": "LMS (training)", "endsOn": "no feed", "state": "down" },
+    { "name": "Payscale / Xero (finance)", "endsOn": "no feed", "state": "down" }
+  ],
+  "trustNote": "Nine of twelve sources reach the report; three have never been connected. Two are running behind the money: the dialler is a day back and QA two days, so talk time and QA in this issue describe the week to 12–13 September while the money describes the month to 14 September. That is normal — the sources have never ended on the same day — but a figure is never moved to make two windows agree.",
+
+  "sections": {
+    "performance": {
+      "commentary": "Value is ahead and volume is behind, and those are different problems with different owners. GWP lands within R1,100 of the engine's own target because the average sale is R119 against the R89 the target is built on — agents are writing richer contracts than the plan assumes. Volume is 14% short, concentrated in Courtesy, and the rated floor tells the same story: 48% of rated agents sit at 70 or better against a 70% ambition. Cancellations at 8.4% are the quiet tax on all of it.",
+      "factors": {
+        "gwpVsTarget": { "value": 367387, "target": 368460, "basis": "actual", "source": "BI Active Cases, September MTD to 14 Sep: R319,467 ex VAT × 1.15. Target = 3,600 sales × R89 × 1.15, the engine's own GWP target (Ops audit, 14 Sep)" },
+        "salesVsTarget": { "value": 3093, "target": 3600, "basis": "actual", "source": "Cases net of cancellation, MTD to 14 Sep (VAS basis). Ops' unique-account basis reads 2,887 — a definition difference awaiting Nick's ruling, not an arithmetic error" },
+        "spdVsTarget": { "value": 2.1, "target": 2.6, "basis": "simulated", "source": "Sales ÷ actual shifts. Computable today from the MTD engine; placeholder until this report runs off the live Worker" },
+        "conversion": { "value": 6.2, "target": 8.0, "basis": "simulated", "source": "MTD sales ÷ unique leads, blended across tenure groups" },
+        "qaMean": { "value": 84.5, "target": 85, "basis": "simulated", "source": "Mean of agent means, QA filtered on Date of Call, 0% scores kept. QA volume is real: 224 evaluations on 4 Sep" },
+        "cancelRate": { "value": 8.4, "target": 6.0, "basis": "simulated", "source": "SF Inactive ÷ gross sales, per account" },
+        "optIn": { "value": 26, "target": 35, "basis": "simulated", "source": "ViciDial Insurance Opt-In dispositions ÷ sales" },
+        "ratedOnTrack": { "value": 48, "target": 70, "basis": "simulated", "source": "Share of rated agents at 70+ on the five-confirmed-session composite" }
+      },
+      "breakouts": [
+        {
+          "title": "By campaign",
+          "basis": "simulated",
+          "note": "Agent counts are actual (15 Sep Agent List, 129 agents). Money and attainment are placeholders in this issue. VT sits outside VAS reporting by design; Download & Test is a new campaign carried under Courtesy rules until the rule book gives it its own.",
+          "cols": ["Campaign", "Agents", "Sales", "GWP incl VAT", "% of target", "Avg GWP/sale", "Band"],
+          "rows": [
+            ["Cuddle", "22", "1,014", "R131,820", "104%", "R130", "Strong"],
+            ["Courtesy", "48", "1,586", "R176,050", "82%", "R111", "At risk"],
+            ["Nesting", "10", "196", "R21,560", "71%", "R110", "Watch"],
+            ["VT (tracker)", "45", "—", "—", "—", "—", "Outside VAS basis"],
+            ["Download & Test", "4", "297", "R37,957", "96%", "R128", "Healthy"]
+          ]
+        },
+        {
+          "title": "By team leader",
+          "basis": "simulated",
+          "note": "Names masked by default (CLAUDE.md non-negotiable 10). Fifteen leaders sit on the Coaching Hub and six carry VAS agents; one leader on the list still has no login and is reported in leaders.unrepresented for a human to resolve — a login is never auto-created.",
+          "cols": ["Team leader", "Campaign", "Agents", "Sales vs target", "Attendance", "QA", "Section band"],
+          "rows": [
+            ["TL-1 · R•••••n", "Cuddle + Nesting", "19", "101%", "93.4%", "86.1%", "Strong"],
+            ["TL-2 · H•••••", "Courtesy", "17", "88%", "92.0%", "85.2%", "Healthy"],
+            ["TL-3 · D•••••", "Courtesy", "16", "79%", "90.1%", "83.4%", "Watch"],
+            ["TL-4 · R•••", "Courtesy", "15", "74%", "88.6%", "82.0%", "At risk"],
+            ["TL-5 · (unrepresented)", "Courtesy", "14", "81%", "91.2%", "84.8%", "Watch"],
+            ["TL-6 · M•••••", "Download & Test + Cuddle", "13", "96%", "94.0%", "87.3%", "Strong"]
+          ]
+        },
+        {
+          "title": "Top agents — month to date",
+          "basis": "simulated",
+          "note": "Ranked on the composite, not on money alone: one primary NBA per agent, tenure-relative throughout. Never compare across tenure groups.",
+          "cols": ["Agent", "Campaign", "Tenure", "Sales", "GWP incl", "Composite", "Band"],
+          "rows": [
+            ["CB-118", "Cuddle", "EXP", "96", "R14,208", "93", "Elite"],
+            ["CB-47", "Cuddle", "EXP", "88", "R12,584", "91", "Elite"],
+            ["CB-203", "Courtesy", "M2", "81", "R9,477", "88", "Strong"],
+            ["CB-96", "Download & Test", "EXP", "77", "R10,626", "87", "Strong"],
+            ["CB-271", "Cuddle", "M2", "74", "R9,546", "86", "Strong"]
+          ]
+        },
+        {
+          "title": "Watchlist — the floor's bottom of the ladder",
+          "basis": "simulated",
+          "note": "One primary NBA each, first trigger on the ladder wins. R2A tiers classify and travel to the coaching card; since 11 Sep they deduct nothing from a score.",
+          "cols": ["Agent", "Campaign", "Tenure", "Primary NBA", "R2A tier", "Composite"],
+          "rows": [
+            ["CB-334", "Courtesy", "M0", "P1 · R1 Critical Sales-Volume Failure", "—", "38"],
+            ["CB-289", "Courtesy", "M1", "P2 · R4 GWP Value Failure", "R2A-1", "44"],
+            ["CB-147", "Courtesy", "EXP", "P1 · R2A-3 Critical Compliance Fail", "R2A-3", "46"],
+            ["CB-312", "Nesting", "M0", "P3 · R7 Conversion Below Target", "—", "51"],
+            ["CB-205", "Cuddle", "M2", "P2 · R5 Attendance Risk", "R2A-2", "54"]
+          ]
+        }
+      ]
+    },
+
+    "recruitment": {
+      "commentary": "There is no recruitment feed in AgentOS — every figure here is a placeholder against module 04's proposed workback (350–400 enquiries to 20 sales-ready a week), which is itself a plan and not an actual. The one real signal the suite could produce today is net joiners from the Agent List history. Against 17 removals this month, the funnel is not replacing what the floor loses.",
+      "factors": {
+        "salesReadyVsPlan": { "value": 11, "target": 20, "basis": "simulated", "source": "GHL training starters reaching floor-ready. Baseline proxy available today: net joiners in agent_sync_logs" },
+        "pipelineCoverage": { "value": 3.1, "target": 5.0, "basis": "simulated", "source": "Live candidates per open seat" },
+        "showRate": { "value": 54, "target": 70, "basis": "simulated", "source": "Interviews attended ÷ booked" },
+        "timeToFill": { "value": 26, "target": 18, "basis": "simulated", "source": "Requisition open → start date" },
+        "retention30": { "value": 71, "target": 85, "basis": "simulated", "source": "Cohort still on the Agent List 30 days after first sighting — computable from list history today" }
+      }
+    },
+
+    "workforce": {
+      "commentary": "Attendance is the strongest measured number in the report: 91.8% against a 95% standard, with unplanned absence at 2.2%. The problem is not who turns up, it is who stays. Seventeen agents came off the 14 Sep list against an opening 146 — 11.6% in a month where the plan assumes 4.5% — and until every removal carries a reason code nobody can say whether that is resignation, dismissal or a campaign transfer. Disciplinary load is read off the QA export, which is the only place it exists.",
+      "factors": {
+        "attendance": { "value": 91.8, "target": 95, "basis": "actual", "source": "Attendance register: 886 actual of 965 employed shifts (MTD to 14 Sep). Saturdays carry their sales but are never a shift" },
+        "unplannedAbsence": { "value": 2.2, "target": 2.0, "basis": "actual", "source": "Absence outside leaveCodes (AL/SL/CA/CASAT), MTD to 14 Sep" },
+        "seatFill": { "value": 80.6, "target": 95, "basis": "simulated", "source": "129 active agents against a 160-seat plan. The roster is actual; the seat plan is a placeholder — physical seats, shifts and sites are [INPUT REQUIRED] in the KB" },
+        "attrition": { "value": 11.6, "target": 4.5, "basis": "actual", "source": "17 agents removed by the 14 Sep Agent List off an opening 146. REMOVALS, not yet reconciled to resignations vs dismissals vs transfers — read as an upper bound" },
+        "disciplineLoad": { "value": 9.3, "target": 5.0, "basis": "simulated", "source": "KPI agents_in_process (distinct CB with offence ≥1, not closed) per 100 agents — derived from the QA export, not an HR system" },
+        "shrinkage": { "value": 14.5, "target": 12, "basis": "simulated", "source": "Leave, training and offline time against scheduled hours" }
+      }
+    },
+
+    "lrc": {
+      "commentary": "This section is a governance gap, not a performance one. The business has no labour-relations system of record: no hearing register, no warning ledger, no CCMA diary. What can be seen is compliance behaviour on calls — open critical fails and the share of the floor sitting in an R2A risk tier — and both of those come from QA, not from IR. Until a register exists, the 7% of the business score this section carries is an estimate, and the report says so rather than quietly scoring it well.",
+      "factors": {
+        "criticalFails": { "value": 6, "target": null, "basis": "simulated", "source": "KPI open_criticals — escalation decision in the critical list, status not closed. The KPI is real; this reading is a placeholder" },
+        "r2aShare": { "value": 11.5, "target": 5.0, "basis": "simulated", "source": "Share of the floor in R2A-2 or R2A-3. The tier still classifies and still blocks Elite; since 11 Sep it deducts nothing from a score" },
+        "caseSla": { "value": 62, "target": 90, "basis": "simulated", "source": "IR cases closed within the process SLA — [INPUT REQUIRED: no IR register exists]" },
+        "caseAgeing": { "value": 7, "target": null, "basis": "simulated", "source": "IR cases open beyond 30 days — [INPUT REQUIRED]" },
+        "ccmaExposure": { "value": 1, "target": null, "basis": "simulated", "source": "CCMA referrals in the period — [INPUT REQUIRED]" },
+        "popia": { "value": 0, "target": null, "basis": "simulated", "source": "POPIA / data incidents raised. Masking is on by default across the suite and the apps sit behind their own login" }
+      }
+    },
+
+    "training": {
+      "commentary": "Nesting is the one part of training the suite can actually see, because it is a reported campaign with its own targets: ten agents, writing 1.4 sales a day against the 2.0 an M0/M1 agent is measured on. The programme around it is invisible — there is no curriculum, cohort or pass-rate data anywhere, and certification has no feed at all, so it leaves the denominator rather than scoring zero. Time to first sale is nine days against a six-day ambition, which is the number to argue about once the LMS lands.",
+      "factors": {
+        "nestingProductivity": { "value": 1.4, "target": 2.0, "basis": "simulated", "source": "Nesting campaign sales ÷ actual shifts against the M1 target (M0 measured under M1 since 10 Sep). Computable today from the MTD engine" },
+        "graduationRate": { "value": 72, "target": 85, "basis": "simulated", "source": "Cohort certified floor-ready ÷ cohort started" },
+        "timeToFirstSale": { "value": 9, "target": 6, "basis": "simulated", "source": "First BI case date − first Agent List sighting. Computable today" },
+        "pipelineFill": { "value": 60, "target": 100, "basis": "simulated", "source": "10 agents in nest against a 16-seat intake plan" },
+        "certCompliance": { "basis": "absent", "source": "LMS has never been connected. No go-live without a training pass is a confirmed rule with no evidence trail behind it — this factor leaves the denominator and the section renormalises" }
+      }
+    },
+
+    "it": {
+      "commentary": "The dialler is the business's only production line and it ran at 96.5% of shift hours, which is roughly three-quarters of an agent-hour lost per agent this week. Talk time per agent-day is 186 minutes against a 210 standard — and that figure deliberately includes ringing, about a third of it, by Nick's ruling. Two platform alerts are open. There is no ticketing system in the register at all, so IT service quality cannot be scored: that factor leaves the denominator and this section is scored on four fifths of its weight.",
+      "factors": {
+        "diallerUptime": { "value": 96.5, "target": 99.5, "basis": "simulated", "source": "ViciDial availability within shift hours. CallX was retired 1 Sep" },
+        "talkPerAgentDay": { "value": 186, "target": 210, "basis": "simulated", "source": "Σ length_in_sec grouped on the `user` column; includes ringing (~a third) by rule — switchable via viciCallReport.talkFrom" },
+        "connectRate": { "value": 22, "target": 30, "basis": "simulated", "source": "Connected calls ÷ dials from ViciDial dispositions" },
+        "ticketSla": { "basis": "absent", "source": "No ticketing or service-desk system exists in the system register — [INPUT REQUIRED]. Factor leaves the denominator" },
+        "openP1": { "value": 2, "target": null, "basis": "actual", "source": "kv:health-alerts, live: two sources running behind (dialler, QA). No save-failure, rake-stuck or agent-list-out-of-sync alert is open" }
+      }
+    },
+
+    "finance": {
+      "commentary": "Revenue is the only real number in this section: R367,387 incl VAT month-to-date. Everything it is compared against is modelled. There is no budget feed, no payroll feed and no ledger feed, so cost per agent, contribution and payroll ratio are KB model figures, and the model itself carries an open conflict on agent basic salary (R5,000 vs R5,250). Language rule: this is seat-level contribution, never EBITDA, until management accounts are tied out. Nothing in this section may be quoted to an investor.",
+      "factors": {
+        "revenueVsBudget": { "value": 367387, "target": 480000, "basis": "simulated", "source": "Revenue is ACTUAL (BI Active Cases, MTD to 14 Sep). The budget is a placeholder — no signed budget exists — so the score is simulated" },
+        "costPerAgent": { "value": 23800, "target": 16000, "basis": "simulated", "source": "All-in cost ÷ active agents. KB model: R16,000 at 330 seats, R25,000 at 110" },
+        "contributionMargin": { "value": 22, "target": 41.2, "basis": "simulated", "source": "(Revenue − direct seat cost) ÷ revenue. KB stretch model shows 41.2% at 110 agents; April 2026 conservative proxy was 10.0%" },
+        "payrollRatio": { "value": 58, "target": 45, "basis": "simulated", "source": "Payroll run ÷ revenue — no Payscale feed" },
+        "commissionAccuracy": { "value": 91, "target": 100, "basis": "simulated", "source": "Projected commission engine against the paid run. The engine is real and computable; SYS-003 still carries no signed rules, so CFO sign-off is outstanding before production use" }
+      }
+    },
+
+    "facilities": {
+      "commentary": "Unowned and unmeasured. P18 (COO / Delivery Executive) is vacant, so nobody is accountable for whether a person who arrives can sit down and log in. Every figure here is a placeholder built from what a Durban floor typically carries — load-shedding cover, line uptime, desk readiness. The section's 4% weight is small; the governance gap behind it is not.",
+      "factors": {
+        "seatReadiness": { "value": 85, "target": 100, "basis": "simulated", "source": "Desks with a working machine, headset and login at shift start" },
+        "powerUptime": { "value": 93.5, "target": 99.5, "basis": "simulated", "source": "Mains plus UPS and generator cover across shift hours" },
+        "connectivity": { "value": 97.0, "target": 99.5, "basis": "simulated", "source": "Primary and failover line availability" },
+        "hsIncidents": { "value": 2, "target": null, "basis": "simulated", "source": "Health and safety incidents logged in the period" },
+        "maintenanceSla": { "value": 55, "target": 90, "basis": "simulated", "source": "Maintenance jobs closed within the agreed turnaround" }
+      }
+    },
+
+    "analytics": {
+      "commentary": "Blue is the system of record for actions and it does not reach this report — no ticket export exists, so SLA, backlog and ageing all leave the denominator and this section is scored on just over half its weight. What is real is data trust: nine of twelve sources reached the report and two are running behind the money, which the health cron raised by itself and will clear by itself. The one SLA register that does exist is the Campaign Manager's own P1–P4 blockage clock.",
+      "factors": {
+        "ticketSla": { "basis": "absent", "source": "Blue has no export into AgentOS — [INPUT REQUIRED]. Factor leaves the denominator" },
+        "backlog": { "basis": "absent", "source": "Blue open-ticket count — no feed" },
+        "ageing": { "basis": "absent", "source": "Blue tickets open beyond 7 days — no feed" },
+        "blockageSla": { "value": 74, "target": 90, "basis": "simulated", "source": "Campaign Manager P1–P4 blockage clocks (CM_SLA_DEFAULTS) — the only SLA register in the suite today" },
+        "dataFreshness": { "value": 82, "target": null, "basis": "actual", "source": "Nine of eleven Data Trust sources current; dialler a day behind, QA two days. Alerts live in kv:health-alerts and clear themselves when the condition ends" },
+        "reportOnTime": { "value": 80, "target": 100, "basis": "simulated", "source": "Governed reports delivered against the reporting calendar" }
+      }
+    },
+
+    "marketing": {
+      "commentary": "Measured on demand, not on artwork volume, per module 09. Lead delivery is 79% of plan and lead-to-sale conversion is 3.6% against a 5% ambition — but source attribution does not reach the sale, so nobody can yet say which supplier is carrying the floor and which is being paid for nothing. The 14-field lead asset model exists on paper; until it is enforced at ingest, cost per qualified lead is an estimate.",
+      "factors": {
+        "contentSla": { "value": 76, "target": 95, "basis": "simulated", "source": "Content delivered on brief and on time against the weekly planning minimum" },
+        "leadsDelivered": { "value": 41200, "target": 52000, "basis": "simulated", "source": "Lead rows loaded against plan, per the 14-field lead asset model" },
+        "leadToSale": { "value": 3.6, "target": 5.0, "basis": "simulated", "source": "BI sales ÷ leads allocated. Partially computable today — the conversion is real, the source attribution is not" },
+        "candidateApps": { "value": 143, "target": 180, "basis": "simulated", "source": "GHL applications attributed to a marketing campaign" },
+        "costPerLead": { "value": 4.8, "target": 3.5, "basis": "simulated", "source": "Spend ÷ qualified leads, in rand" }
+      }
+    }
+  },
+
+  "previous": {
+    "_note": "Last issue's section scores, so the report can print a movement arrow. There is no prior issue — this is the first — so these are the same framework run against the week-36 readings we could reconstruct, and are themselves directional.",
+    "sections": {
+      "performance": 84.1,
+      "recruitment": 71.2,
+      "workforce": 81.0,
+      "lrc": 56.2,
+      "training": 73.4,
+      "it": 86.9,
+      "finance": 72.4,
+      "facilities": 84.3,
+      "analytics": 78.6,
+      "marketing": 74.9
+    }
+  }
+}

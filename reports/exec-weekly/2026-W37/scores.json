@@ -1,0 +1,388 @@
+{
+  "generated": "2026-09-17",
+  "rules": "exec-scorecard-1.0",
+  "period": "Week 37 · 7–13 September 2026 (money and attendance month-to-date to 14 Sep)",
+  "business": {
+    "score": 77.4,
+    "band": {
+      "label": "Healthy",
+      "min": 75,
+      "rag": "green"
+    },
+    "weightScored": 100,
+    "weightDeclared": 100,
+    "evidence": 23.2
+  },
+  "sections": {
+    "performance": {
+      "score": 87.1,
+      "band": "Strong",
+      "weight": 25,
+      "coverage": 100,
+      "measured": 50,
+      "factors": {
+        "gwpVsTarget": {
+          "score": 99.7,
+          "basis": "actual",
+          "effW": 30
+        },
+        "salesVsTarget": {
+          "score": 85.9,
+          "basis": "actual",
+          "effW": 20
+        },
+        "spdVsTarget": {
+          "score": 80.8,
+          "basis": "simulated",
+          "effW": 12
+        },
+        "conversion": {
+          "score": 77.5,
+          "basis": "simulated",
+          "effW": 8
+        },
+        "qaMean": {
+          "score": 99.4,
+          "basis": "simulated",
+          "effW": 10
+        },
+        "cancelRate": {
+          "score": 71.4,
+          "basis": "simulated",
+          "effW": 5
+        },
+        "optIn": {
+          "score": 74.3,
+          "basis": "simulated",
+          "effW": 5
+        },
+        "ratedOnTrack": {
+          "score": 68.6,
+          "basis": "simulated",
+          "effW": 10
+        }
+      }
+    },
+    "recruitment": {
+      "score": 68.6,
+      "band": "Watch",
+      "weight": 8,
+      "coverage": 100,
+      "measured": 0,
+      "factors": {
+        "salesReadyVsPlan": {
+          "score": 55,
+          "basis": "simulated",
+          "effW": 30
+        },
+        "pipelineCoverage": {
+          "score": 62,
+          "basis": "simulated",
+          "effW": 15
+        },
+        "showRate": {
+          "score": 77.1,
+          "basis": "simulated",
+          "effW": 15
+        },
+        "timeToFill": {
+          "score": 69.2,
+          "basis": "simulated",
+          "effW": 15
+        },
+        "retention30": {
+          "score": 83.5,
+          "basis": "simulated",
+          "effW": 25
+        }
+      }
+    },
+    "workforce": {
+      "score": 76.2,
+      "band": "Healthy",
+      "weight": 12,
+      "coverage": 100,
+      "measured": 60,
+      "factors": {
+        "attendance": {
+          "score": 96.6,
+          "basis": "actual",
+          "effW": 25
+        },
+        "unplannedAbsence": {
+          "score": 90.9,
+          "basis": "actual",
+          "effW": 15
+        },
+        "seatFill": {
+          "score": 84.8,
+          "basis": "simulated",
+          "effW": 20
+        },
+        "attrition": {
+          "score": 38.8,
+          "basis": "actual",
+          "effW": 20
+        },
+        "disciplineLoad": {
+          "score": 53.8,
+          "basis": "simulated",
+          "effW": 10
+        },
+        "shrinkage": {
+          "score": 82.8,
+          "basis": "simulated",
+          "effW": 10
+        }
+      }
+    },
+    "lrc": {
+      "score": 56.2,
+      "band": "At risk",
+      "weight": 7,
+      "coverage": 100,
+      "measured": 0,
+      "factors": {
+        "criticalFails": {
+          "score": 40,
+          "basis": "simulated",
+          "effW": 25
+        },
+        "r2aShare": {
+          "score": 43.5,
+          "basis": "simulated",
+          "effW": 20
+        },
+        "caseSla": {
+          "score": 68.9,
+          "basis": "simulated",
+          "effW": 20
+        },
+        "caseAgeing": {
+          "score": 45,
+          "basis": "simulated",
+          "effW": 15
+        },
+        "ccmaExposure": {
+          "score": 70,
+          "basis": "simulated",
+          "effW": 10
+        },
+        "popia": {
+          "score": 100,
+          "basis": "simulated",
+          "effW": 10
+        }
+      }
+    },
+    "training": {
+      "score": 71.8,
+      "band": "Watch",
+      "weight": 8,
+      "coverage": 85,
+      "measured": 0,
+      "factors": {
+        "nestingProductivity": {
+          "score": 70,
+          "basis": "simulated",
+          "effW": 29.4
+        },
+        "graduationRate": {
+          "score": 84.7,
+          "basis": "simulated",
+          "effW": 29.4
+        },
+        "timeToFirstSale": {
+          "score": 66.7,
+          "basis": "simulated",
+          "effW": 23.5
+        },
+        "pipelineFill": {
+          "score": 60,
+          "basis": "simulated",
+          "effW": 17.6
+        },
+        "certCompliance": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        }
+      }
+    },
+    "it": {
+      "score": 83.7,
+      "band": "Healthy",
+      "weight": 10,
+      "coverage": 80,
+      "measured": 20,
+      "factors": {
+        "diallerUptime": {
+          "score": 97,
+          "basis": "simulated",
+          "effW": 31.3
+        },
+        "talkPerAgentDay": {
+          "score": 88.6,
+          "basis": "simulated",
+          "effW": 25
+        },
+        "connectRate": {
+          "score": 73.3,
+          "basis": "simulated",
+          "effW": 18.8
+        },
+        "ticketSla": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "openP1": {
+          "score": 70,
+          "basis": "actual",
+          "effW": 25
+        }
+      }
+    },
+    "finance": {
+      "score": 72.4,
+      "band": "Watch",
+      "weight": 15,
+      "coverage": 100,
+      "measured": 0,
+      "factors": {
+        "revenueVsBudget": {
+          "score": 76.5,
+          "basis": "simulated",
+          "effW": 30
+        },
+        "costPerAgent": {
+          "score": 67.2,
+          "basis": "simulated",
+          "effW": 20
+        },
+        "contributionMargin": {
+          "score": 53.4,
+          "basis": "simulated",
+          "effW": 20
+        },
+        "payrollRatio": {
+          "score": 77.6,
+          "basis": "simulated",
+          "effW": 15
+        },
+        "commissionAccuracy": {
+          "score": 91,
+          "basis": "simulated",
+          "effW": 15
+        }
+      }
+    },
+    "facilities": {
+      "score": 84.3,
+      "band": "Healthy",
+      "weight": 4,
+      "coverage": 100,
+      "measured": 0,
+      "factors": {
+        "seatReadiness": {
+          "score": 85,
+          "basis": "simulated",
+          "effW": 30
+        },
+        "powerUptime": {
+          "score": 94,
+          "basis": "simulated",
+          "effW": 30
+        },
+        "connectivity": {
+          "score": 97.5,
+          "basis": "simulated",
+          "effW": 20
+        },
+        "hsIncidents": {
+          "score": 50,
+          "basis": "simulated",
+          "effW": 10
+        },
+        "maintenanceSla": {
+          "score": 61.1,
+          "basis": "simulated",
+          "effW": 10
+        }
+      }
+    },
+    "analytics": {
+      "score": 81.5,
+      "band": "Healthy",
+      "weight": 6,
+      "coverage": 55,
+      "measured": 25,
+      "factors": {
+        "ticketSla": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "backlog": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "ageing": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "blockageSla": {
+          "score": 82.2,
+          "basis": "simulated",
+          "effW": 27.3
+        },
+        "dataFreshness": {
+          "score": 82,
+          "basis": "actual",
+          "effW": 45.5
+        },
+        "reportOnTime": {
+          "score": 80,
+          "basis": "simulated",
+          "effW": 27.3
+        }
+      }
+    },
+    "marketing": {
+      "score": 76.6,
+      "band": "Healthy",
+      "weight": 5,
+      "coverage": 100,
+      "measured": 0,
+      "factors": {
+        "contentSla": {
+          "score": 80,
+          "basis": "simulated",
+          "effW": 20
+        },
+        "leadsDelivered": {
+          "score": 79.2,
+          "basis": "simulated",
+          "effW": 25
+        },
+        "leadToSale": {
+          "score": 72,
+          "basis": "simulated",
+          "effW": 25
+        },
+        "candidateApps": {
+          "score": 79.4,
+          "basis": "simulated",
+          "effW": 15
+        },
+        "costPerLead": {
+          "score": 72.9,
+          "basis": "simulated",
+          "effW": 15
+        }
+      }
+    }
+  }
+}

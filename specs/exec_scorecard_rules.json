@@ -1,0 +1,822 @@
+{
+  "_source": "The Chatterbox — Executive Weekly Health Report. Structure requested by Nick 2026-09-17; section list is his. Owners, cadence and the scorecard it aligns to (D01 CEO Enterprise Scorecard) come from TCB-KB-V3 modules 03/04/06.",
+  "_generated": "2026-09-17",
+  "version": "exec-scorecard-1.0",
+  "_doctrine": {
+    "deterministic": "This file is a RULE BOOK, not a report. Every score in the report is computed by tools/build-exec-report.mjs from this file plus a week's data.json. No score is ever typed by hand or reasoned out by a model — same rule as the NBA engine (CLAUDE.md non-negotiable 1).",
+    "absenceIsNotANought": "A factor with no reading does not score 0. It leaves the denominator and the remaining factors in its section renormalise to 100, and the report says how much of the section was actually measured (`coverage`). The same doctrine as acComposite / perfScore (CLAUDE.md non-negotiable 6). A factor that IS measured and is genuinely bad still scores low — an absence and a failure must never look the same.",
+    "basisIsPublished": "Every value carries a basis: 'actual' (computed by AgentOS/PULSE from an uploaded source), 'manual' (a human-supplied number with a named owner), 'simulated' (a placeholder so the framework can be reviewed before the source exists) or 'absent'. Simulated values are badged on the face of the report and are EXCLUDED from the overall business score unless `countSimulated` is true. An executive must never be unable to tell a measured number from a placeholder (KB response contract, CLAUDE.md non-negotiable 8).",
+    "pointInTime": "The report is a point-in-time view. It states its as-at date and the end date of every source feeding it, because the sources never end together (money, attendance, dialler and QA all cut on different days — specs/VAS-MTD-reconciliation.md).",
+    "oneNumberOneVerdict": "A factor's score, band and RAG colour are derived once, here, and the page paints them. The HTML never re-derives a threshold (CLAUDE.md non-negotiable 12).",
+    "basisFollowsTheScore": "A basis describes the SCORE, not just the value. A real reading measured against a placeholder target produces a placeholder score, so it is badged 'simulated' and the source line names the real figure inside it. September revenue is an actual number; 'revenue vs budget' is simulated until the CFO signs a budget."
+  },
+  "bands": [
+    {
+      "label": "Strong",
+      "min": 85,
+      "rag": "green"
+    },
+    {
+      "label": "Healthy",
+      "min": 75,
+      "rag": "green"
+    },
+    {
+      "label": "Watch",
+      "min": 65,
+      "rag": "amber"
+    },
+    {
+      "label": "At risk",
+      "min": 55,
+      "rag": "amber"
+    },
+    {
+      "label": "Critical",
+      "min": 0,
+      "rag": "red"
+    }
+  ],
+  "_bandsNote": "Deliberately NOT the agent bands in specs/composite_rules.json (Elite 90 / Strong 80 / On track 70 / Building 60 / Needs support). Those grade a person against a tenure target; these grade a department against plan, and the wording an executive acts on is different. Both sets are live-editable and neither may be copied into the other.",
+  "coverageFloor": 0.5,
+  "_coverageFloorNote": "A section measured on less than half its weight is reported with its score AND a 'thin evidence' flag; below this the score is shown greyed and the section contributes to the overall at its measured coverage only. This is what stops a department scoring 92 on one factor out of six.",
+  "countSimulated": true,
+  "_countSimulatedNote": "TRUE for this first framework build only, so every section produces a number and the shape can be reviewed. Set FALSE once real feeds land and the overall score must be defensible — the generator then scores only 'actual' and 'manual' readings and reports the rest as coverage gaps.",
+  "scales": {
+    "_note": "How a raw reading becomes 0-100. Every factor names one. 'target' = value ÷ target, capped; 'targetDown' = target ÷ value, capped (lower is better); 'band' = step bands, first match wins, listed high to low; 'pct' = the value already IS a 0-100 score.",
+    "cap": 110,
+    "_capNote": "Over-achievement is capped at 110 before weighting, so one runaway factor cannot mask a failing one. Capped at 110 rather than 100 so genuine over-delivery still shows."
+  },
+  "sections": [
+    {
+      "k": "performance",
+      "label": "Performance",
+      "weight": 25,
+      "owner": "Leon — Sales Ops (P10)",
+      "exec": "Nicholas Pillay — CTTO (P02)",
+      "question": "Is the floor selling what the plan says it must, and is it spread across campaigns, teams and people or carried by a few?",
+      "factors": [
+        {
+          "k": "gwpVsTarget",
+          "label": "GWP vs target (MTD, incl VAT)",
+          "w": 30,
+          "scale": "target",
+          "unit": "zar",
+          "source": "BI_ACTIVE_CASES — Σ Charge Amount per case ×(1+vatRate), dated on Contract Create Date",
+          "system": "AgentOS / PULSE MTD engine"
+        },
+        {
+          "k": "salesVsTarget",
+          "label": "Sales vs target",
+          "w": 20,
+          "scale": "target",
+          "unit": "int",
+          "source": "BI_ACTIVE_CASES — distinct Case Number per agent-day, net of cancellation",
+          "system": "PULSE MTD engine"
+        },
+        {
+          "k": "spdVsTarget",
+          "label": "Sales per day vs tenure target",
+          "w": 12,
+          "scale": "target",
+          "unit": "num",
+          "source": "Sales ÷ Actual Shifts (Saturdays excluded from shifts, rule saturdayShiftsFrom)",
+          "system": "PULSE MTD engine"
+        },
+        {
+          "k": "conversion",
+          "label": "Conversion vs tenure target",
+          "w": 8,
+          "scale": "target",
+          "unit": "pct",
+          "source": "MTD sales ÷ unique leads, per tenure group (composite_rules tenureGroups)",
+          "system": "PULSE"
+        },
+        {
+          "k": "qaMean",
+          "label": "QA score (mean of agent means)",
+          "w": 10,
+          "scale": "target",
+          "unit": "pct",
+          "source": "QA_EVALUATIONS filtered on Date of Call; 0% scores kept",
+          "system": "PULSE qa_rules"
+        },
+        {
+          "k": "cancelRate",
+          "label": "Cancellation rate",
+          "w": 5,
+          "scale": "targetDown",
+          "unit": "pct",
+          "source": "SF_INACTIVE ÷ gross sales, per account",
+          "system": "AgentOS"
+        },
+        {
+          "k": "optIn",
+          "label": "Insurance opt-in rate",
+          "w": 5,
+          "scale": "target",
+          "unit": "pct",
+          "source": "ViciDial Insurance Opt-In dispositions ÷ sales — the quality of what was sold",
+          "system": "PULSE perfScore driver `opt` (computable today)"
+        },
+        {
+          "k": "ratedOnTrack",
+          "label": "Agents rated 70+ (share of floor)",
+          "w": 10,
+          "scale": "target",
+          "unit": "pct",
+          "source": "perfScore over the last 5 confirmed sessions (composite_rules drivers)",
+          "system": "PULSE composite engine"
+        }
+      ],
+      "breakouts": [
+        "campaign",
+        "teamLeader",
+        "topAgents",
+        "watchlist"
+      ]
+    },
+    {
+      "k": "recruitment",
+      "label": "Recruitment",
+      "weight": 8,
+      "owner": "Abigail — Recruitment & Workforce Ops Lead (P06)",
+      "exec": "Claudell Panday — People Executive (P05)",
+      "question": "Are we putting enough sales-ready people on the floor, fast enough and cheaply enough, and do they stay?",
+      "_kbNote": "Funnel stages and the 350-400 → 20 sales-ready/week workback are module 04 PROPOSED planning figures, not actuals. Targets below carry that basis until Abigail signs a live funnel.",
+      "factors": [
+        {
+          "k": "salesReadyVsPlan",
+          "label": "Sales-ready starters vs plan",
+          "w": 30,
+          "scale": "target",
+          "unit": "int",
+          "source": "Recruitment tracker (GHL). Baseline proxy available today: net joiners in agent_sync_logs",
+          "system": "GHL / AgentOS agent_sync_logs"
+        },
+        {
+          "k": "pipelineCoverage",
+          "label": "Pipeline coverage (candidates per open seat)",
+          "w": 15,
+          "scale": "target",
+          "unit": "num",
+          "source": "GHL applications ÷ open seats",
+          "system": "GHL (SYS-001, G2 red)"
+        },
+        {
+          "k": "showRate",
+          "label": "Interview show rate",
+          "w": 15,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Attended ÷ booked",
+          "system": "GHL"
+        },
+        {
+          "k": "timeToFill",
+          "label": "Time to fill (days)",
+          "w": 15,
+          "scale": "targetDown",
+          "unit": "days",
+          "source": "Requisition open → start date",
+          "system": "GHL"
+        },
+        {
+          "k": "retention30",
+          "label": "30-day retention of new intakes",
+          "w": 25,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Cohort still on the Agent List 30 days after first sighting",
+          "system": "AgentOS agent_list history (computable today)"
+        }
+      ]
+    },
+    {
+      "k": "workforce",
+      "label": "Workforce",
+      "weight": 12,
+      "owner": "Keshree — HR Ops (P13)",
+      "exec": "Claudell Panday — People Executive (P05)",
+      "question": "Are the seats we pay for occupied, productive and staying occupied?",
+      "_boundary": "Discipline here is VOLUME — how much of it there is on the floor. The handling of each case (ageing, SLA, outcome, CCMA exposure) is the LRC section. The same case is never scored twice.",
+      "factors": [
+        {
+          "k": "attendance",
+          "label": "Attendance (Actual ÷ Employed shifts)",
+          "w": 25,
+          "scale": "target",
+          "unit": "pct",
+          "source": "ATTENDANCE register, per employee-day; Saturdays are data, never a shift",
+          "system": "AgentOS / PULSE"
+        },
+        {
+          "k": "unplannedAbsence",
+          "label": "Unplanned absence rate",
+          "w": 15,
+          "scale": "targetDown",
+          "unit": "pct",
+          "source": "ATTENDANCE register — absence outside leaveCodes (AL/SL/CA/CASAT); presentCodes P/T/L/HDAL/HDCA",
+          "system": "AgentOS / PULSE (computable today)"
+        },
+        {
+          "k": "seatFill",
+          "label": "Productive seats filled vs capacity plan",
+          "w": 20,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Active agents (Agent List) ÷ planned seats",
+          "system": "AgentOS active_agents + capacity plan"
+        },
+        {
+          "k": "attrition",
+          "label": "Attrition (monthly)",
+          "w": 20,
+          "scale": "targetDown",
+          "unit": "pct",
+          "source": "Leavers in agent_sync_logs ÷ opening headcount",
+          "system": "AgentOS agent_sync_logs (computable today)"
+        },
+        {
+          "k": "disciplineLoad",
+          "label": "Agents in disciplinary process (per 100 agents)",
+          "w": 10,
+          "scale": "targetDown",
+          "unit": "num",
+          "source": "KPI agents_in_process — distinct CB with offense_number ≥ 1, status not closed",
+          "system": "AgentOS Discipline KPIs (QA_EVALUATIONS)"
+        },
+        {
+          "k": "shrinkage",
+          "label": "Shrinkage (leave, training, offline)",
+          "w": 10,
+          "scale": "targetDown",
+          "unit": "pct",
+          "source": "HR register categories vs scheduled hours",
+          "system": "HR OS (SYS-008, G2 red)"
+        }
+      ]
+    },
+    {
+      "k": "lrc",
+      "label": "LRC — Labour Relations & Compliance",
+      "weight": 7,
+      "owner": "Jared — Risk & Compliance Executive (P04)",
+      "exec": "Jared — Risk & Compliance Executive (P04)",
+      "question": "Is every case being run properly and on time, and what is our exposure?",
+      "_kbNote": "TCB-KB-V3 carries NO labour-relations content — no IR process, no CCMA register, no grievance SLA. Every target here is a placeholder until Jared signs one. The two QA-derived factors are real today.",
+      "factors": [
+        {
+          "k": "criticalFails",
+          "label": "Open critical compliance fails",
+          "w": 25,
+          "scale": "band",
+          "unit": "int",
+          "source": "KPI open_criticals — escalation_decision in $qaCritical, status not closed",
+          "system": "AgentOS Discipline KPIs",
+          "bands": [
+            {
+              "min": 8,
+              "score": 15
+            },
+            {
+              "min": 5,
+              "score": 40
+            },
+            {
+              "min": 3,
+              "score": 60
+            },
+            {
+              "min": 1,
+              "score": 80
+            },
+            {
+              "min": 0,
+              "score": 100
+            }
+          ]
+        },
+        {
+          "k": "r2aShare",
+          "label": "Floor in R2A tier 2 or 3 (compliance risk)",
+          "w": 20,
+          "scale": "targetDown",
+          "unit": "pct",
+          "source": "R2A tier = higher of count band and rate band (composite_rules r2aTiers). Classifies only — penalty is 0 by rule since 2026-09-11",
+          "system": "PULSE / AgentOS NBA engine"
+        },
+        {
+          "k": "caseSla",
+          "label": "IR cases closed within SLA",
+          "w": 20,
+          "scale": "target",
+          "unit": "pct",
+          "source": "IR case register",
+          "system": "[INPUT REQUIRED — no IR register exists]"
+        },
+        {
+          "k": "caseAgeing",
+          "label": "IR cases open over 30 days",
+          "w": 15,
+          "scale": "band",
+          "unit": "int",
+          "source": "IR case register ageing",
+          "system": "[INPUT REQUIRED]",
+          "bands": [
+            {
+              "min": 10,
+              "score": 20
+            },
+            {
+              "min": 6,
+              "score": 45
+            },
+            {
+              "min": 3,
+              "score": 65
+            },
+            {
+              "min": 1,
+              "score": 85
+            },
+            {
+              "min": 0,
+              "score": 100
+            }
+          ]
+        },
+        {
+          "k": "ccmaExposure",
+          "label": "CCMA referrals in period",
+          "w": 10,
+          "scale": "band",
+          "unit": "int",
+          "source": "CCMA register",
+          "system": "[INPUT REQUIRED]",
+          "bands": [
+            {
+              "min": 3,
+              "score": 20
+            },
+            {
+              "min": 2,
+              "score": 45
+            },
+            {
+              "min": 1,
+              "score": 70
+            },
+            {
+              "min": 0,
+              "score": 100
+            }
+          ]
+        },
+        {
+          "k": "popia",
+          "label": "POPIA / data incidents",
+          "w": 10,
+          "scale": "band",
+          "unit": "int",
+          "source": "Incident register",
+          "system": "[INPUT REQUIRED]",
+          "bands": [
+            {
+              "min": 2,
+              "score": 0
+            },
+            {
+              "min": 1,
+              "score": 50
+            },
+            {
+              "min": 0,
+              "score": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "k": "training",
+      "label": "Training — Nesting & Pipeline",
+      "weight": 8,
+      "owner": "Jojo & Pamela — Training Ops (P15/P16)",
+      "exec": "Claudell Panday — People Executive (P05)",
+      "question": "Are the people we put through nesting reaching the floor competent, and how fast?",
+      "_kbNote": "Nesting IS a reported campaign in the MTD rule book, so nesting production is measured today. The PROGRAMME — duration, pass mark, graduation criteria, certification standard — is [INPUT REQUIRED]; the KB has no academy entity, only a 'Nesting Coach' vacancy trigger.",
+      "factors": [
+        {
+          "k": "nestingProductivity",
+          "label": "Nesting SPD vs M1 target",
+          "w": 25,
+          "scale": "target",
+          "unit": "num",
+          "source": "Nesting campaign sales ÷ actual shifts, against the M1 tenure target (M0 measured under M1 since 2026-09-10)",
+          "system": "PULSE MTD engine (computable today)"
+        },
+        {
+          "k": "graduationRate",
+          "label": "Nesting graduation rate",
+          "w": 25,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Cohort certified floor-ready ÷ cohort started",
+          "system": "LMS / AgentOS lifecycle gate"
+        },
+        {
+          "k": "timeToFirstSale",
+          "label": "Time to first sale (days)",
+          "w": 20,
+          "scale": "targetDown",
+          "unit": "days",
+          "source": "First BI case date − first Agent List sighting",
+          "system": "AgentOS (computable today)"
+        },
+        {
+          "k": "pipelineFill",
+          "label": "Learners in nest vs required intake",
+          "w": 15,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Nesting roster count ÷ intake plan",
+          "system": "AgentOS Agent List + intake plan"
+        },
+        {
+          "k": "certCompliance",
+          "label": "Certification & refresher completion",
+          "w": 15,
+          "scale": "target",
+          "unit": "pct",
+          "source": "LMS completions ÷ required",
+          "system": "LMS (no go-live without a training pass — confirmed KB rule)"
+        }
+      ]
+    },
+    {
+      "k": "it",
+      "label": "IT — Dialler & Service",
+      "weight": 10,
+      "owner": "Rishae — Tech Ops (P11) · Rogen — Dialler Ops (P14)",
+      "exec": "Nicholas Pillay — CTTO (P02)",
+      "question": "Did the floor have a working dialler and working systems every hour it was paid to sell?",
+      "factors": [
+        {
+          "k": "diallerUptime",
+          "label": "Dialler uptime in shift hours",
+          "w": 25,
+          "scale": "target",
+          "unit": "pct",
+          "source": "ViciDial platform availability",
+          "system": "ViciDial (CallX retired 1 Sep 2026)"
+        },
+        {
+          "k": "talkPerAgentDay",
+          "label": "Talk time per agent-day vs standard",
+          "w": 20,
+          "scale": "target",
+          "unit": "mins",
+          "source": "EXPORT_CALL_REPORT — Σ length_in_sec grouped on `user`; includes ringing by rule (viciCallReport.talkFrom)",
+          "system": "PULSE (computable today)"
+        },
+        {
+          "k": "connectRate",
+          "label": "Connect rate",
+          "w": 15,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Connected calls ÷ dials, per ViciDial dispositions",
+          "system": "PULSE (computable today)"
+        },
+        {
+          "k": "ticketSla",
+          "label": "IT tickets resolved within SLA",
+          "w": 20,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Service-desk ticket log",
+          "system": "[INPUT REQUIRED — no ticketing system named in the register]"
+        },
+        {
+          "k": "openP1",
+          "label": "Open P1 incidents / platform alerts",
+          "w": 20,
+          "scale": "band",
+          "unit": "int",
+          "source": "kv:health-alerts — source-stale, rake-stuck, runner-silent, verification-failed, agent-list-out-of-sync",
+          "system": "AgentOS health cron (computable today)",
+          "bands": [
+            {
+              "min": 5,
+              "score": 25
+            },
+            {
+              "min": 3,
+              "score": 50
+            },
+            {
+              "min": 2,
+              "score": 70
+            },
+            {
+              "min": 1,
+              "score": 85
+            },
+            {
+              "min": 0,
+              "score": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "k": "finance",
+      "label": "Finance",
+      "weight": 15,
+      "owner": "Mekaeel — CFO (P03) · Romona — Finance Admin & Commission (P17)",
+      "exec": "Mekaeel — CFO (P03)",
+      "question": "Is the revenue landing, is the cost per seat where the model says, and is cash safe?",
+      "_languageRule": "Seat-level or modelled CONTRIBUTION only. The word EBITDA is prohibited on this report until management accounts are tied out (KB canonical rule, CLAUDE.md non-negotiable 8).",
+      "factors": [
+        {
+          "k": "revenueVsBudget",
+          "label": "Revenue (GWP incl VAT) vs budget",
+          "w": 30,
+          "scale": "target",
+          "unit": "zar",
+          "source": "BI_ACTIVE_CASES money model vs the month's budget",
+          "system": "AgentOS (revenue actual) + budget [INPUT REQUIRED]"
+        },
+        {
+          "k": "costPerAgent",
+          "label": "All-in cost per active agent vs model",
+          "w": 20,
+          "scale": "targetDown",
+          "unit": "zar",
+          "source": "Total cost ÷ active agents. KB model: R16,000 target at 330 seats; R25,000 at 110",
+          "system": "Xero / Payscale [INPUT REQUIRED]"
+        },
+        {
+          "k": "contributionMargin",
+          "label": "Seat contribution margin",
+          "w": 20,
+          "scale": "target",
+          "unit": "pct",
+          "source": "(Revenue − direct seat cost) ÷ revenue",
+          "system": "Xero [INPUT REQUIRED]"
+        },
+        {
+          "k": "payrollRatio",
+          "label": "Payroll as a share of revenue",
+          "w": 15,
+          "scale": "targetDown",
+          "unit": "pct",
+          "source": "Payroll run ÷ revenue",
+          "system": "Payscale [INPUT REQUIRED]"
+        },
+        {
+          "k": "commissionAccuracy",
+          "label": "Commission accrual vs plan",
+          "w": 15,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Projected commission engine vs the paid run (specs/projected-commission-worked-example.md)",
+          "system": "AgentOS commission engine + SYS-003 (G1, unsigned rules — CFO sign-off outstanding)"
+        }
+      ]
+    },
+    {
+      "k": "facilities",
+      "label": "Facilities",
+      "weight": 4,
+      "owner": "[INPUT REQUIRED — facilities owner unresolved; P18 COO/Delivery Exec vacant]",
+      "exec": "[INPUT REQUIRED]",
+      "question": "Could every person who arrived actually sit down, log in and work?",
+      "factors": [
+        {
+          "k": "seatReadiness",
+          "label": "Desks ready and usable",
+          "w": 30,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Facilities walk-round",
+          "system": "[INPUT REQUIRED]"
+        },
+        {
+          "k": "powerUptime",
+          "label": "Power availability in shift hours (incl. UPS/generator)",
+          "w": 30,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Load-shedding schedule + generator log",
+          "system": "[INPUT REQUIRED]"
+        },
+        {
+          "k": "connectivity",
+          "label": "Connectivity uptime",
+          "w": 20,
+          "scale": "target",
+          "unit": "pct",
+          "source": "ISP/line monitoring",
+          "system": "[INPUT REQUIRED]"
+        },
+        {
+          "k": "hsIncidents",
+          "label": "Health & safety incidents",
+          "w": 10,
+          "scale": "band",
+          "unit": "int",
+          "source": "Incident register",
+          "system": "[INPUT REQUIRED]",
+          "bands": [
+            {
+              "min": 3,
+              "score": 20
+            },
+            {
+              "min": 2,
+              "score": 50
+            },
+            {
+              "min": 1,
+              "score": 75
+            },
+            {
+              "min": 0,
+              "score": 100
+            }
+          ]
+        },
+        {
+          "k": "maintenanceSla",
+          "label": "Maintenance jobs closed within SLA",
+          "w": 10,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Facilities job log",
+          "system": "[INPUT REQUIRED]"
+        }
+      ]
+    },
+    {
+      "k": "analytics",
+      "label": "Business Analytics — Blue & SLA",
+      "weight": 6,
+      "owner": "Ryan — Data & Lead Intelligence (P08)",
+      "exec": "Nicholas Pillay — CTTO (P02)",
+      "question": "Are the actions the business agreed to actually being closed, and is the data under every number in this report trustworthy?",
+      "_kbNote": "Blue is the projects/tasks/actions system of record (module 05). 'A red number without a Decision/Action object is not governed' (module 08) — this section is where that discipline is measured.",
+      "factors": [
+        {
+          "k": "ticketSla",
+          "label": "Blue tickets closed within SLA",
+          "w": 20,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Blue ticket log",
+          "system": "Blue [INPUT REQUIRED — no export yet]"
+        },
+        {
+          "k": "backlog",
+          "label": "Open ticket backlog",
+          "w": 15,
+          "scale": "targetDown",
+          "unit": "int",
+          "source": "Blue open tickets",
+          "system": "Blue"
+        },
+        {
+          "k": "ageing",
+          "label": "Tickets open over 7 days",
+          "w": 10,
+          "scale": "targetDown",
+          "unit": "int",
+          "source": "Blue ageing",
+          "system": "Blue"
+        },
+        {
+          "k": "blockageSla",
+          "label": "Campaign blockages closed within SLA",
+          "w": 15,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Campaign Manager P1–P4 blockage clocks (CM_SLA_DEFAULTS) — the one SLA register that exists today",
+          "system": "Worker campaign.mjs (computable today)"
+        },
+        {
+          "k": "dataFreshness",
+          "label": "Source freshness (sources current, no stale feed)",
+          "w": 25,
+          "scale": "pct",
+          "unit": "pct",
+          "source": "store_freshness + kv:health-alerts; 11 sources on the Data Trust bar",
+          "system": "AgentOS health cron (computable today)"
+        },
+        {
+          "k": "reportOnTime",
+          "label": "Governed reports delivered on time",
+          "w": 15,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Reporting calendar vs delivery",
+          "system": "AgentOS reports/ + Blue"
+        }
+      ]
+    },
+    {
+      "k": "marketing",
+      "label": "Marketing",
+      "weight": 5,
+      "owner": "Keshav — Marketing Ops (P07)",
+      "exec": "Claudell Panday — People Executive (P05)",
+      "question": "Is marketing producing measurable demand — leads and candidates — not artwork volume?",
+      "_kbNote": "Module 09 rule: output is measurable demand, not artwork volume. The weekly content minimum (2 recruitment, 2 culture, 1 client acquisition, 1 leadership, 1 performance proof, 1 short video, 1 dashboard proof) is a PLANNING minimum, not a confirmed live cadence.",
+      "factors": [
+        {
+          "k": "contentSla",
+          "label": "Content delivered on brief and on time",
+          "w": 20,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Content calendar vs published",
+          "system": "Blue / marketing calendar [INPUT REQUIRED]"
+        },
+        {
+          "k": "leadsDelivered",
+          "label": "Leads delivered vs plan",
+          "w": 25,
+          "scale": "target",
+          "unit": "int",
+          "source": "Lead batches loaded, per the 14-field lead asset model",
+          "system": "GHL / lead suppliers"
+        },
+        {
+          "k": "leadToSale",
+          "label": "Lead-to-sale conversion by source",
+          "w": 25,
+          "scale": "target",
+          "unit": "pct",
+          "source": "BI sales ÷ leads allocated, attributed by source",
+          "system": "AgentOS Lead Management + BI (partially computable — source attribution missing)"
+        },
+        {
+          "k": "candidateApps",
+          "label": "Recruitment applications generated",
+          "w": 15,
+          "scale": "target",
+          "unit": "int",
+          "source": "GHL applications attributed to campaign",
+          "system": "GHL"
+        },
+        {
+          "k": "costPerLead",
+          "label": "Cost per qualified lead",
+          "w": 15,
+          "scale": "targetDown",
+          "unit": "zar",
+          "source": "Spend ÷ qualified leads",
+          "system": "[INPUT REQUIRED]"
+        }
+      ]
+    }
+  ],
+  "redIssueFormat": [
+    "issue",
+    "impact",
+    "evidence",
+    "owner",
+    "action",
+    "due",
+    "escalation"
+  ],
+  "_redIssueNote": "Mandatory format from KB module 08. A section scoring below the 'Watch' band must produce at least one red-issue row, or the report is not governed.",
+  "_changes": [
+    {
+      "date": "2026-09-17",
+      "by": "Nick",
+      "key": "created",
+      "from": null,
+      "to": "exec-scorecard-1.0",
+      "why": "\"need to build a weekly report to be sent to the executives on the overall health of the business\" — ten sections, each scored out of 100 from its contributing factors, with an overall business score weighted by each department's portion. Framework first; real feeds replace simulated readings section by section."
+    },
+    {
+      "date": "2026-09-17",
+      "by": "Nick / framework",
+      "key": "countSimulated",
+      "from": null,
+      "to": true,
+      "why": "First build must produce a complete shape to review. Flip to false the moment the overall score is quoted to anyone outside EXCO."
+    },
+    {
+      "date": "2026-09-17",
+      "by": "framework",
+      "key": "scale:band",
+      "from": "targetDown on zero-target counts",
+      "to": "step bands on criticalFails, caseAgeing, ccmaExposure, popia, openP1, hsIncidents",
+      "why": "target ÷ value collapses to 0 for every value when the target is 0 — one open critical fail and eight scored the same."
+    }
+  ],
+  "_bandScaleNote": "A count whose target is ZERO cannot be scored as value ÷ target — one incident would read 0 and two would read 0, and the report could not tell a wobble from a crisis. Those factors carry step BANDS in this file instead, first match wins, listed high to low: the rule book says what one critical fail is worth and what eight are worth, and the generator only looks it up."
+}
