@@ -5640,9 +5640,14 @@ setTimeout(function(){
           status:(value&&volume)?'Both Pass':((!value&&!volume)?'Both Issues':(value?'Volume Issue':'Value Issue')),
           gwpSale:st.gwpSale==null?null:Math.round(st.gwpSale*100)/100,
           ta:st.ta==null?null:Math.round(st.ta*10)/10},
+        /* canc/cancPct travel from 2026-09-17 so the executive weekly report can read a
+           cancellation rate from the same engine every other figure comes from, instead of
+           a second pipeline growing its own. They are DIAGNOSTICS, never scored (non-negotiable 4)
+           — nothing here reads them, and adding them moves no composite, no ladder, no tier. */
         stats:{sales:st.sales,gwp:Math.round(st.gwp),ta:st.ta,gwpSale:st.gwpSale,qa:st.qaS,
                qaN:st.qaN,conv:st.conv,talkDay:st.talkDay,att:st.att,present:st.p,
-               scheduled:st.sched,target:i.target==null?null:i.target},
+               scheduled:st.sched,target:i.target==null?null:i.target,
+               canc:st.canc,cancPct:st.cancPct==null?null:Math.round(st.cancPct*10)/10},
         /* acWeakestDriver returns {driver,label,points} — this read drv.key, which is
            undefined, so every published row carried key:undefined and the team leader's
            "where your time buys the most" table looked the agent's figure up by it and

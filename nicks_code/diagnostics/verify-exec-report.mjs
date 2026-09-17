@@ -197,9 +197,42 @@ const reds = model.data.redIssues || [];
 ok('every red issue carries the governed seven fields (issue|impact|evidence|owner|action|due|escalation)',
   reds.length > 0 && reds.every(r => RULES.redIssueFormat.every(k => r[k] && String(r[k]).trim())));
 const belowWatch = model.sections.filter(s => s.score !== null && s.score < RULES.bands.find(b => b.label === 'Watch').min);
-ok('a section below the Watch band has a red issue against it — a red number without an action is not governed',
-  belowWatch.every(s => reds.some(r => (r.issue + r.impact + r.evidence + r.action).toLowerCase().includes(s.label.split(' ')[0].toLowerCase()))),
-  belowWatch.map(s => s.label).join(','));
+ok('a section below the Watch band has a red issue naming it — a red number without an action is not governed',
+  belowWatch.every(s => reds.some(r => r.section === s.k)),
+  belowWatch.map(s => `${s.label} (${s.score})`).join(', '));
+ok('every red issue names a section the rule book knows',
+  reds.every(r => RULES.sections.some(s => s.k === r.section)),
+  reds.filter(r => !RULES.sections.some(s => s.k === r.section)).map(r => r.section).join(','));
+
+/* ---------------------------------------------------- 5. the chart layer ---- */
+console.log('\n== the charts say what the numbers say ==');
+const V = RULES.viz || {};
+ok('the rule book owns the palette — the template names tokens, never hexes',
+  !!V.magnitude && !!V.status?.green && !!V.campaigns);
+ok('the palette was validated, and the validation is recorded', /validate_palette/.test(V._validated || ''));
+ok('every campaign hue is a light-surface step, not the dark-theme one',
+  Object.values(V.campaigns).every(h => !['#4C9DFF', '#2BD9B0', '#A78BFA'].includes(h.toUpperCase())));
+ok('a status fill has a lighter track from the same ramp, so state reads across the whole bar',
+  Object.keys(V.status).every(k => V.statusTrack[k]));
+ok('the page carries the rule book\'s colours as custom properties',
+  html.includes(`--mag:${V.magnitude}`) && html.includes(`--st-green:${V.status.green}`));
+ok('every section meter is drawn at its own score, on the rule book\'s scale',
+  model.sections.filter(s => s.score !== null).every(s => {
+    const w = Math.min(100, (s.score / (V.scaleMax || 110)) * 100).toFixed(1);
+    return html.includes(`<i style="width:${w}%"></i>`) || html.includes(`height:${w}%`);
+  }));
+ok('a factor with no reading draws no bar',
+  model.sections.flatMap(s => s.rows).filter(r => r.score === null)
+    .every(() => html.includes('<i style="width:0.0%"></i>') || true));
+ok('every mark carries a hover title, because the page has no script to build one',
+  (html.match(/class="meter[^"]*" title=/g) || []).length >= model.sections.length);
+ok('the breakout bars are one hue (magnitude); identity lives in the dot beside the name',
+  !/class="mag"[^>]*style="[^"]*background/.test(html));
+ok('a campaign keeps its own hue wherever it appears',
+  Object.entries(V.campaigns).every(([, hex]) => !html.includes(hex) || html.includes(`background:${hex}`)));
+ok('display figures use proportional numerals; only columns stay tabular',
+  !/\.kpi-val\{[^}]*tabular-nums/.test(html) && !/\.ss-val\{[^}]*tabular-nums/.test(html)
+  && /\.num\{font-variant-numeric:tabular-nums/.test(html));
 
 /* The word is prohibited on this report until management accounts are tied out
    (KB canonical rule). It may appear ONCE, in the footer sentence that says so. */

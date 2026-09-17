@@ -30,6 +30,44 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:var(--bg);co
 .wrap{max-width:1180px;margin:0 auto;padding:22px 22px 60px}
 a{color:var(--blue)}
 
+/* ---------- chart marks ----------
+   Thin marks, a 4px rounded data-end anchored square to the baseline, a hairline
+   target tick, recessive tracks. Status fills are the text-safe steps (>=3:1 on
+   white); each track is the lighter step of the SAME ramp, so the state reads
+   across the whole bar and not only where it is filled. */
+.meter{position:relative;display:block;height:8px;border-radius:5px;background:var(--st-grey-t);overflow:hidden;margin:9px 0 7px}
+.meter.sm{height:6px;margin:0}
+.meter i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0;background:var(--st-grey);transition:none}
+.meter.green{background:var(--st-green-t)} .meter.green i{background:var(--st-green)}
+.meter.amber{background:var(--st-amber-t)} .meter.amber i{background:var(--st-amber)}
+.meter.red{background:var(--st-red-t)}     .meter.red i{background:var(--st-red)}
+/* the target tick: 100 is the limit the fill is read against, not the bar's end */
+.meter b{position:absolute;top:-1px;bottom:-1px;width:1px;background:rgba(15,30,54,.34)}
+.mag{position:relative;display:block;height:8px;min-width:90px;border-radius:5px;background:var(--mag-t);overflow:hidden}
+.mag i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0;background:var(--mag)}
+.mag b{position:absolute;top:-1px;bottom:-1px;width:1px;background:rgba(15,30,54,.3)}
+.idot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:middle;flex:none}
+td.mt{width:118px;padding-right:14px;vertical-align:top}
+td.mt .meter{margin:5px 0 0}
+td.bar-c .mag{margin:5px 0 0}
+th.mt-h{width:118px}
+td.sc{width:46px}
+td.bar-c{width:120px;vertical-align:top}
+th.bar-h{width:120px}
+
+/* ---------- the section strip ---------- */
+.strip-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px 16px 11px;margin-bottom:12px}
+.strip-h{font-size:12px;font-weight:800;color:var(--body);display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;margin-bottom:9px}
+.strip-h span{font-weight:500;color:var(--muted);font-size:11.5px}
+.strip{display:flex;gap:2px;height:58px;align-items:flex-end}
+.seg{position:relative;display:block;height:100%;border-radius:4px;background:var(--st-grey-t);overflow:hidden}
+.seg.green{background:var(--st-green-t)}.seg.amber{background:var(--st-amber-t)}.seg.red{background:var(--st-red-t)}
+.seg i{position:absolute;left:0;right:0;bottom:0;background:var(--st-grey);border-radius:4px 4px 0 0}
+.seg.green i{background:var(--st-green)}.seg.amber i{background:var(--st-amber)}.seg.red i{background:var(--st-red)}
+.seg em{position:absolute;left:0;right:0;top:4px;text-align:center;font-style:normal;font-size:9.5px;font-weight:800;color:var(--ink);opacity:.5}
+.strip-l{display:flex;gap:2px;margin-top:5px}
+.strip-l span{font-size:9px;color:var(--muted);text-align:center;line-height:1.25;overflow:hidden;letter-spacing:-.01em}
+
 /* ---------- masthead ---------- */
 .mast{background:var(--navy);border-radius:var(--radius);padding:22px 24px;color:#fff;position:relative;overflow:hidden;margin-bottom:14px}
 .mast::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(680px 320px at 92% -40%,rgba(56,189,248,.22),transparent 62%)}
@@ -46,6 +84,8 @@ a{color:var(--blue)}
 .big-band.amber{background:rgba(251,191,36,.16);color:#FCD34D}
 .big-band.red{background:rgba(251,113,133,.16);color:#FDA4AF}
 .big-band.grey{background:rgba(148,182,255,.14);color:#C6D3E8}
+.mast-meter{margin-top:9px;width:190px;margin-left:auto}
+.mast-meter .meter{background:rgba(255,255,255,.16)}
 .mast-note{position:relative;margin-top:14px;font-size:12.5px;color:#C7D6EE;max-width:74ch;line-height:1.55}
 .mast-note b{color:#fff}
 .mast-bar{position:relative;display:flex;gap:16px;flex-wrap:wrap;margin-top:13px;padding-top:12px;border-top:1px solid rgba(255,255,255,.13);font-size:11.5px;color:#9FB6DA}
@@ -58,9 +98,9 @@ a{color:var(--blue)}
 .kpi-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .kpi-w{font-size:10px;font-weight:800;letter-spacing:.09em;color:var(--muted);text-transform:uppercase}
 .kpi-name{font-size:12px;font-weight:700;color:var(--body);line-height:1.25;min-height:30px}
-.kpi-val{font-size:27px;font-weight:800;letter-spacing:-.9px;font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:3px}
+.kpi-val{font-size:27px;font-weight:800;letter-spacing:-.9px;display:flex;align-items:baseline;gap:5px}
 .kpi-val .unit{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0}
-.kpi-sub{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-top:2px}
+.kpi-sub{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px}
 .delta{font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:12px}
 .delta.up{background:var(--green-soft);color:var(--green)}
 .delta.down{background:var(--red-soft);color:var(--red)}
@@ -77,7 +117,7 @@ a{color:var(--blue)}
 .sec-head{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:11px;margin-bottom:11px}
 .q{font-size:12.5px;color:var(--muted);margin-top:3px;max-width:78ch}
 .sec-score{margin-left:auto;text-align:right;flex:none}
-.ss-val{font-size:30px;font-weight:900;letter-spacing:-1.2px;font-variant-numeric:tabular-nums;line-height:1}
+.ss-val{font-size:30px;font-weight:900;letter-spacing:-1.2px;line-height:1}
 .ss-val span{font-size:13px;font-weight:700;color:var(--muted);letter-spacing:0}
 .ss-b{font-size:11px;font-weight:800;padding:2px 9px;border-radius:999px;display:inline-block;margin-top:5px}
 .ss-b.green{background:var(--green-soft);color:var(--green)}
@@ -111,7 +151,8 @@ tr.sim:hover td{background:#F9F7EF}
 .pill.absent{background:var(--grey-soft);color:var(--grey)}
 .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none;margin-right:7px}
 .dot.green{background:#34D399}.dot.amber{background:#FBBF24}.dot.red{background:#FB7185}.dot.grey{background:#C3CCDC}
-.bl{font-size:11.5px;font-weight:700;color:var(--body)}
+.bl{font-size:11.5px;font-weight:800;color:var(--body)}
+.bl.green{color:var(--green)}.bl.amber{color:var(--amber)}.bl.red{color:var(--red)}.bl.grey{color:var(--muted)}
 .bo{margin-top:13px;border:1px solid var(--line);border-radius:11px;overflow:hidden}
 .bo-h{background:#F7F9FD;padding:8px 11px;font-size:11.5px;font-weight:800;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
 .bo-n{padding:7px 11px 0;font-size:11px;color:var(--muted)}
@@ -122,16 +163,18 @@ tr.sim:hover td{background:#F9F7EF}
 /* ---------- red issues ---------- */
 .reds{border-left:3px solid var(--red)}
 .reds h2{color:var(--red)}
+.rsec{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--red);margin-top:4px}
 /* ---------- data trust ---------- */
 .src-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .src-chip{border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:11px;display:flex;flex-direction:column;gap:1px;background:#FAFCFF}
-.src-chip b{font-weight:700;font-size:11.5px}
+.src-chip b{font-weight:700;font-size:11.5px;display:flex;align-items:center}
 .src-chip span{color:var(--muted);font-size:10.5px}
 .src-chip.stale{border-color:#F3D9A6;background:#FEFBF4}
 .src-chip.down{border-color:#F0C9C9;background:#FEF6F6}
 .foot{font-size:11.5px;color:var(--muted);margin-top:18px;line-height:1.6;max-width:94ch}
 .foot b{color:var(--body)}
 @media print{
+  .meter i,.mag i,.seg i{print-color-adjust:exact;-webkit-print-color-adjust:exact}
   body{background:#fff;font-size:11px}
   .wrap{max-width:none;padding:0}
   .card,.kpi{box-shadow:none;break-inside:avoid}
@@ -145,7 +188,7 @@ tr.sim:hover td{background:#F9F7EF}
 }
 </style>
 </head>
-<body>
+<body style="--mag:#2563EB;--mag-t:#E8EFFB;--st-green:#158A4C;--st-amber:#B45309;--st-red:#C42D2D;--st-grey:#8FA0B8;--st-green-t:#E6F6ED;--st-amber-t:#FCF0DD;--st-red-t:#FBE9E9;--st-grey-t:#EEF2F8">
 <div class="wrap">
 
   <header class="mast">
@@ -156,13 +199,15 @@ tr.sim:hover td{background:#F9F7EF}
         <div class="mast-sub">Week 37 · 7–13 September 2026 (money and attendance month-to-date to 14 Sep) · issued Thursday 17 September 2026 · EXCO · The Chatterbox</div>
       </div>
       <div class="mast-right">
-        <div class="big-score">77.4<span>/100</span></div>
+        <div class="big-score">77.5<span>/100</span></div>
         <div class="big-band green">Healthy</div>
+        <div class="mast-meter"><span class="meter green" title="77.5 / 100">
+    <i style="width:70.5%"></i><b style="left:90.9%"></b></span></div>
       </div>
     </div>
-    <div class="mast-note">The selling floor is performing — GWP is on the engine&#39;s own target and the average sale is running well above the R89 planning value. Volume is the gap: 3,093 sales against 3,600. Everything around the floor is the real risk: 17 agents came off the 14 Sep list, LRC has no system of record at all, and three-quarters of this score still rests on placeholders rather than measured numbers. Fix the feeds before anyone quotes the overall figure outside this room.</div>
+    <div class="mast-note">The selling floor is performing — GWP is on the engine&#39;s own target and the average sale is running well above the R89 planning value. Volume is the gap: 3,093 sales against 3,600. Everything around the floor is the real risk: 17 agents came off the 14 Sep list unreconciled, not one registered system is live and controlled, and three-quarters of this score still rests on placeholders rather than measured numbers. Fix the feeds before anyone quotes the overall figure outside this room.</div>
     <div class="mast-bar">
-      <span><b>23.2%</b> of the business score rests on a measured number</span>
+      <span><b>23.9%</b> of the business score rests on a measured number</span>
       <span><b>10 of 10</b> sections carried a score</span>
       <span><b>129 agents on the 15 Sep Agent List</b></span>
       <span>Rule book <b>exec-scorecard-1.0</b></span>
@@ -170,94 +215,140 @@ tr.sim:hover td{background:#F9F7EF}
     </div>
   </header>
 
+  <section class="strip-card">
+    <div class="strip-h">Where the business score comes from<span>each block is a section, as wide as its share of the score</span></div>
+    <div class="strip"><span class="seg green" style="flex:25"
+        title="Performance — 25% of the score, 87.1/100 (Strong)">
+        <i style="height:79.2%"></i>
+        <em>25%</em></span><span class="seg amber" style="flex:8"
+        title="Recruitment — 8% of the score, 68.6/100 (Watch)">
+        <i style="height:62.4%"></i>
+        <em>8%</em></span><span class="seg green" style="flex:12"
+        title="Workforce — 12% of the score, 76.2/100 (Healthy)">
+        <i style="height:69.3%"></i>
+        <em>12%</em></span><span class="seg amber" style="flex:7"
+        title="LRC — Legal, Risk &amp; Compliance — 7% of the score, 57.6/100 (At risk)">
+        <i style="height:52.4%"></i>
+        <em>7%</em></span><span class="seg amber" style="flex:8"
+        title="Training — Nesting &amp; Pipeline — 8% of the score, 71.8/100 (Watch)">
+        <i style="height:65.3%"></i>
+        <em>8%</em></span><span class="seg green" style="flex:10"
+        title="IT — Dialler &amp; Service — 10% of the score, 83.7/100 (Healthy)">
+        <i style="height:76.1%"></i>
+        <em>10%</em></span><span class="seg amber" style="flex:15"
+        title="Finance — 15% of the score, 72.4/100 (Watch)">
+        <i style="height:65.8%"></i>
+        <em>15%</em></span><span class="seg green" style="flex:4"
+        title="Facilities — 4% of the score, 84.3/100 (Healthy)">
+        <i style="height:76.6%"></i>
+        <em>4%</em></span><span class="seg green" style="flex:6"
+        title="Business Analytics — 6% of the score, 81.5/100 (Healthy)">
+        <i style="height:74.1%"></i>
+        <em>6%</em></span><span class="seg green" style="flex:5"
+        title="Marketing — 5% of the score, 76.6/100 (Healthy)">
+        <i style="height:69.6%"></i>
+        <em>5%</em></span></div>
+    <div class="strip-l"><span style="flex:25">Performance</span><span style="flex:8">Recruitment</span><span style="flex:12">Workforce</span><span style="flex:7">LRC</span><span style="flex:8">Training</span><span style="flex:10">IT</span><span style="flex:15">Finance</span><span style="flex:4">Facilities</span><span style="flex:6">Business Analytics</span><span style="flex:5">Marketing</span></div>
+  </section>
+
   <div class="kpi-grid"><a class="kpi" href="#sec-performance">
-      <div class="kpi-top"><span class="kpi-w">25%</span><span class="dot green"></span></div>
+      <div class="kpi-top"><span class="kpi-w">25% of business</span><span class="dot green"></span></div>
       <div class="kpi-name">Performance</div>
-      <div class="kpi-val">87.1<span class="unit">/100</span></div>
-      <div class="kpi-sub">Strong
-        <span class="delta up">▲ 3</span>
-      </div>
+      <div class="kpi-val">87.1<span class="unit">/100</span>
+        <span class="delta up">▲ 3</span></div>
+      <span class="meter green" title="87.1 / 100">
+    <i style="width:79.2%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl green">Strong</span></div>
       <div class="kpi-cov"><span style="width:100%"></span><i style="width:50%"></i></div>
       <div class="kpi-cov-l">50% measured · 100% scored</div>
     </a><a class="kpi" href="#sec-recruitment">
-      <div class="kpi-top"><span class="kpi-w">8%</span><span class="dot amber"></span></div>
+      <div class="kpi-top"><span class="kpi-w">8% of business</span><span class="dot amber"></span></div>
       <div class="kpi-name">Recruitment</div>
-      <div class="kpi-val">68.6<span class="unit">/100</span></div>
-      <div class="kpi-sub">Watch
-        <span class="delta down">▼ 2.6</span>
-      </div>
+      <div class="kpi-val">68.6<span class="unit">/100</span>
+        <span class="delta down">▼ 2.6</span></div>
+      <span class="meter amber" title="68.6 / 100">
+    <i style="width:62.4%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl amber">Watch</span></div>
       <div class="kpi-cov"><span style="width:100%"></span><i style="width:0%"></i></div>
       <div class="kpi-cov-l">0% measured · 100% scored</div>
     </a><a class="kpi" href="#sec-workforce">
-      <div class="kpi-top"><span class="kpi-w">12%</span><span class="dot green"></span></div>
+      <div class="kpi-top"><span class="kpi-w">12% of business</span><span class="dot green"></span></div>
       <div class="kpi-name">Workforce</div>
-      <div class="kpi-val">76.2<span class="unit">/100</span></div>
-      <div class="kpi-sub">Healthy
-        <span class="delta down">▼ 4.8</span>
-      </div>
+      <div class="kpi-val">76.2<span class="unit">/100</span>
+        <span class="delta down">▼ 4.8</span></div>
+      <span class="meter green" title="76.2 / 100">
+    <i style="width:69.3%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl green">Healthy</span></div>
       <div class="kpi-cov"><span style="width:100%"></span><i style="width:60%"></i></div>
       <div class="kpi-cov-l">60% measured · 100% scored</div>
     </a><a class="kpi" href="#sec-lrc">
-      <div class="kpi-top"><span class="kpi-w">7%</span><span class="dot amber"></span></div>
-      <div class="kpi-name">LRC — Labour Relations &amp; Compliance</div>
-      <div class="kpi-val">56.2<span class="unit">/100</span></div>
-      <div class="kpi-sub">At risk
-        <span class="delta flat">▬ 0</span>
-      </div>
-      <div class="kpi-cov"><span style="width:100%"></span><i style="width:0%"></i></div>
-      <div class="kpi-cov-l">0% measured · 100% scored</div>
+      <div class="kpi-top"><span class="kpi-w">7% of business</span><span class="dot amber"></span></div>
+      <div class="kpi-name">LRC — Legal, Risk &amp; Compliance</div>
+      <div class="kpi-val">57.6<span class="unit">/100</span>
+        <span class="delta up">▲ 1.4</span></div>
+      <span class="meter amber" title="57.6 / 100">
+    <i style="width:52.4%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl amber">At risk</span></div>
+      <div class="kpi-cov"><span style="width:100%"></span><i style="width:10%"></i></div>
+      <div class="kpi-cov-l">10% measured · 100% scored</div>
     </a><a class="kpi" href="#sec-training">
-      <div class="kpi-top"><span class="kpi-w">8%</span><span class="dot amber"></span></div>
+      <div class="kpi-top"><span class="kpi-w">8% of business</span><span class="dot amber"></span></div>
       <div class="kpi-name">Training — Nesting &amp; Pipeline</div>
-      <div class="kpi-val">71.8<span class="unit">/100</span></div>
-      <div class="kpi-sub">Watch
-        <span class="delta down">▼ 1.6</span>
-      </div>
+      <div class="kpi-val">71.8<span class="unit">/100</span>
+        <span class="delta down">▼ 1.6</span></div>
+      <span class="meter amber" title="71.8 / 100">
+    <i style="width:65.3%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl amber">Watch</span></div>
       <div class="kpi-cov"><span style="width:85%"></span><i style="width:0%"></i></div>
       <div class="kpi-cov-l">0% measured · 85% scored</div>
     </a><a class="kpi" href="#sec-it">
-      <div class="kpi-top"><span class="kpi-w">10%</span><span class="dot green"></span></div>
+      <div class="kpi-top"><span class="kpi-w">10% of business</span><span class="dot green"></span></div>
       <div class="kpi-name">IT — Dialler &amp; Service</div>
-      <div class="kpi-val">83.7<span class="unit">/100</span></div>
-      <div class="kpi-sub">Healthy
-        <span class="delta down">▼ 3.2</span>
-      </div>
+      <div class="kpi-val">83.7<span class="unit">/100</span>
+        <span class="delta down">▼ 3.2</span></div>
+      <span class="meter green" title="83.7 / 100">
+    <i style="width:76.1%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl green">Healthy</span></div>
       <div class="kpi-cov"><span style="width:80%"></span><i style="width:20%"></i></div>
       <div class="kpi-cov-l">20% measured · 80% scored</div>
     </a><a class="kpi" href="#sec-finance">
-      <div class="kpi-top"><span class="kpi-w">15%</span><span class="dot amber"></span></div>
+      <div class="kpi-top"><span class="kpi-w">15% of business</span><span class="dot amber"></span></div>
       <div class="kpi-name">Finance</div>
-      <div class="kpi-val">72.4<span class="unit">/100</span></div>
-      <div class="kpi-sub">Watch
-        <span class="delta flat">▬ 0</span>
-      </div>
+      <div class="kpi-val">72.4<span class="unit">/100</span>
+        <span class="delta flat">▬ 0</span></div>
+      <span class="meter amber" title="72.4 / 100">
+    <i style="width:65.8%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl amber">Watch</span></div>
       <div class="kpi-cov"><span style="width:100%"></span><i style="width:0%"></i></div>
       <div class="kpi-cov-l">0% measured · 100% scored</div>
     </a><a class="kpi" href="#sec-facilities">
-      <div class="kpi-top"><span class="kpi-w">4%</span><span class="dot green"></span></div>
+      <div class="kpi-top"><span class="kpi-w">4% of business</span><span class="dot green"></span></div>
       <div class="kpi-name">Facilities</div>
-      <div class="kpi-val">84.3<span class="unit">/100</span></div>
-      <div class="kpi-sub">Healthy
-        <span class="delta flat">▬ 0</span>
-      </div>
+      <div class="kpi-val">84.3<span class="unit">/100</span>
+        <span class="delta flat">▬ 0</span></div>
+      <span class="meter green" title="84.3 / 100">
+    <i style="width:76.6%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl green">Healthy</span></div>
       <div class="kpi-cov"><span style="width:100%"></span><i style="width:0%"></i></div>
       <div class="kpi-cov-l">0% measured · 100% scored</div>
     </a><a class="kpi" href="#sec-analytics">
-      <div class="kpi-top"><span class="kpi-w">6%</span><span class="dot green"></span></div>
-      <div class="kpi-name">Business Analytics — Blue &amp; SLA</div>
-      <div class="kpi-val">81.5<span class="unit">/100</span></div>
-      <div class="kpi-sub">Healthy
-        <span class="delta up">▲ 2.9</span>
-      </div>
+      <div class="kpi-top"><span class="kpi-w">6% of business</span><span class="dot green"></span></div>
+      <div class="kpi-name">Business Analytics</div>
+      <div class="kpi-val">81.5<span class="unit">/100</span>
+        <span class="delta up">▲ 2.9</span></div>
+      <span class="meter green" title="81.5 / 100">
+    <i style="width:74.1%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl green">Healthy</span></div>
       <div class="kpi-cov"><span style="width:55%"></span><i style="width:25%"></i></div>
       <div class="kpi-cov-l">25% measured · 55% scored</div>
     </a><a class="kpi" href="#sec-marketing">
-      <div class="kpi-top"><span class="kpi-w">5%</span><span class="dot green"></span></div>
+      <div class="kpi-top"><span class="kpi-w">5% of business</span><span class="dot green"></span></div>
       <div class="kpi-name">Marketing</div>
-      <div class="kpi-val">76.6<span class="unit">/100</span></div>
-      <div class="kpi-sub">Healthy
-        <span class="delta up">▲ 1.7</span>
-      </div>
+      <div class="kpi-val">76.6<span class="unit">/100</span>
+        <span class="delta up">▲ 1.7</span></div>
+      <span class="meter green" title="76.6 / 100">
+    <i style="width:69.6%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl green">Healthy</span></div>
       <div class="kpi-cov"><span style="width:100%"></span><i style="width:0%"></i></div>
       <div class="kpi-cov-l">0% measured · 100% scored</div>
     </a></div>
@@ -266,7 +357,7 @@ tr.sim:hover td{background:#F9F7EF}
     <h2>What an executive needs to do about it</h2>
     <div class="q">The 60-second test: what works, what is broken, who owns it, what action is live, where it escalates.</div>
     <ul style="margin:11px 0 0 18px;font-size:13px;line-height:1.7">
-      <li>WORKS — Money: September GWP is R367,387 incl VAT against an engine target of R368,460, and the average sale is R119 against a R89 plan. Value per sale is not the problem.</li><li>BROKEN — Volume: 3,093 sales against 3,600 planned. Sales per agent-day is 2.1 against 2.6. Leon owns it; the campaign table below says it is Courtesy, not Cuddle.</li><li>BROKEN — People leaving: the 14 Sep Agent List removed 17 agents off an opening 146. Nobody can yet say how many resigned, were dismissed or simply moved campaign, because removals and reasons are not reconciled. Claudell owns it.</li><li>BROKEN — LRC has no system of record. Every figure in that section is a placeholder. The QA export can tell us about critical fails; it cannot tell us about a hearing, a warning or a CCMA date. Jared owns the decision on where that register lives.</li><li>GOVERNANCE — Facilities has no named owner while P18 (COO / Delivery Executive) is vacant, so a 4%-weighted section of the business score is unowned. That is an EXCO decision, not a reporting gap.</li><li>NEXT — This report becomes defensible when four feeds land: recruitment (GHL), payroll and budget (Payscale/Xero), Blue tickets, and an IR register. Until then the overall score is directional.</li>
+      <li>WORKS — Money: September GWP is R367,387 incl VAT against an engine target of R368,460, and the average sale is R119 against a R89 plan. Value per sale is not the problem.</li><li>BROKEN — Volume: 3,093 sales against 3,600 planned. Sales per agent-day is 2.1 against 2.6. Leon owns it; the campaign table below says it is Courtesy, not Cuddle.</li><li>BROKEN — People leaving: the 14 Sep Agent List removed 17 agents off an opening 146. Nobody can yet say how many resigned, were dismissed or simply moved campaign, because removals and reasons are not reconciled. Claudell owns it.</li><li>BROKEN — Control: not one of the thirteen registered systems is live and controlled (0 at G4, 27 open actions, as at 2 July), and the commission calculator still runs on unsigned rules. Jared owns the register; Mekaeel owns the signature.</li><li>GOVERNANCE — Facilities has no named owner while P18 (COO / Delivery Executive) is vacant, so a 4%-weighted section of the business score is unowned. That is an EXCO decision, not a reporting gap.</li><li>NEXT — This report becomes defensible when four feeds land: recruitment (GHL), payroll and budget (Payscale/Xero), Blue actions, and the legal and risk registers. Performance is the exception — every factor on that tab is already computed by the engines and needs wiring, not a new contract.</li>
     </ul>
   </section>
 
@@ -276,19 +367,24 @@ tr.sim:hover td{background:#F9F7EF}
     <table style="margin-top:9px"><thead><tr>
       <th>Issue</th><th>Impact</th><th>Evidence</th><th>Owner</th><th>Action</th><th class="num">Due</th><th>Escalation</th>
     </tr></thead><tbody><tr>
-      <td><b>Sales volume is 14% behind plan while value per sale is ahead</b></td><td>≈507 sales short month-to-date. At the R119 average sale actually being written, that is roughly R60,000 of GWP not booked in fourteen days.</td><td class="ev">3,093 cases net of cancellation vs a 3,600 target (BI Active Cases, MTD to 14 Sep). SPD 2.1 vs 2.6.</td>
+      <td><b>Sales volume is 14% behind plan while value per sale is ahead</b><div class="rsec">Performance</div></td>
+      <td>≈507 sales short month-to-date. At the R119 average sale actually being written, that is roughly R60,000 of GWP not booked in fourteen days.</td><td class="ev">3,093 cases net of cancellation vs a 3,600 target (BI Active Cases, MTD to 14 Sep). SPD 2.1 vs 2.6.</td>
       <td>Leon — Sales Ops (P10)</td><td>Campaign-level dial plan for Courtesy: attempts per lead and contact rate reviewed daily with the four TLs carrying the gap.</td><td class="num">Mon 22 Sep</td><td>MANCO → CTTO if the gap is still above 10% at month end</td>
     </tr><tr>
-      <td><b>17 agents removed by the 14 Sep Agent List, unreconciled</b></td><td>11.6% of the opening roster in one month against a 4.5% planning assumption. At R16,000 all-in cost per seat the replacement cost alone is material, and every removal resets a nesting investment.</td><td class="ev">agent_sync_logs, 14 Sep publish; roster 146 → 129. Removals are not yet split into resignations, dismissals and campaign transfers.</td>
+      <td><b>17 agents removed by the 14 Sep Agent List, unreconciled</b><div class="rsec">Workforce</div></td>
+      <td>11.6% of the opening roster in one month against a 4.5% planning assumption. At R16,000 all-in cost per seat the replacement cost alone is material, and every removal resets a nesting investment.</td><td class="ev">agent_sync_logs, 14 Sep publish; roster 146 → 129. Removals are not yet split into resignations, dismissals and campaign transfers.</td>
       <td>Claudell Panday — People Executive (P05)</td><td>Reason code on every removal at the point of publish, then a fortnightly attrition read with Keshree and Abigail.</td><td class="num">Fri 26 Sep</td><td>EXCO — this is the single largest unmeasured cost in the report</td>
     </tr><tr>
-      <td><b>LRC has no system of record</b></td><td>The business cannot state its own labour-relations exposure. Every LRC figure in this report is a placeholder, and the section carries 7% of the business score.</td><td class="ev">TCB-KB-V3 carries no IR process, no CCMA register and no grievance SLA; the only real signal is the QA export&#39;s critical-fail and offence columns.</td>
-      <td>Jared — Risk &amp; Compliance Executive (P04)</td><td>Decide the register (HR OS module vs a Blue board), then one weekly export into this report.</td><td class="num">Fri 26 Sep</td><td>EXCO if unresolved at the October pack</td>
+      <td><b>Not one registered system is live and controlled</b><div class="rsec">LRC — Legal, Risk &amp; Compliance</div></td>
+      <td>Zero of thirteen systems sit at G4 with 27 open actions against them. The commission calculator runs on rules no one has signed, and the legal and risk registers this section is supposed to read do not exist — so the business cannot state its own exposure.</td><td class="ev">Canonical system register (Operating System Governance v1.1, 2026-07-02): 10 red, 2 amber, 1 grey, 0 at G4. SYS-003 Commission Calculator G1, unsigned rules. No legal register, no risk register feed.</td>
+      <td>Jared — Risk &amp; Compliance Executive (P04)</td><td>Re-date the register this month, then name where the legal and risk registers live and get one weekly export into this report.</td><td class="num">Fri 26 Sep</td><td>EXCO if unresolved at the October pack</td>
     </tr><tr>
-      <td><b>Finance is reported against an unsigned budget</b></td><td>Revenue is a real number; &#39;revenue vs budget&#39;, cost per seat, contribution and payroll ratio are all modelled. No profitability statement in this report may be quoted externally.</td><td class="ev">No budget, payroll or ledger feed exists in AgentOS. KB module 07 figures are model, not actual; agent basic salary is itself in conflict (R5,000 vs R5,250).</td>
+      <td><b>Finance is reported against an unsigned budget</b><div class="rsec">Finance</div></td>
+      <td>Revenue is a real number; &#39;revenue vs budget&#39;, cost per seat, contribution and payroll ratio are all modelled. No profitability statement in this report may be quoted externally.</td><td class="ev">No budget, payroll or ledger feed exists in AgentOS. KB module 07 figures are model, not actual; agent basic salary is itself in conflict (R5,000 vs R5,250).</td>
       <td>Mekaeel — CFO (P03)</td><td>Sign the September budget and nominate the monthly Xero/Payscale extract that feeds this section.</td><td class="num">Wed 30 Sep</td><td>EXCO — required before any investor-facing use of this pack</td>
     </tr><tr>
-      <td><b>Facilities is unowned</b></td><td>4% of the business score has no accountable executive; a power or seat failure has no route into this report.</td><td class="ev">P18 COO / Delivery Executive vacant_or_unresolved (KB module 03).</td>
+      <td><b>Facilities is unowned</b><div class="rsec">Facilities</div></td>
+      <td>4% of the business score has no accountable executive; a power or seat failure has no route into this report.</td><td class="ev">P18 COO / Delivery Executive vacant_or_unresolved (KB module 03).</td>
       <td>[INPUT REQUIRED — EXCO to nominate]</td><td>Name an interim owner for facilities reporting pending the P18 appointment.</td><td class="num">Fri 19 Sep</td><td>CEO</td>
     </tr></tbody></table>
   </section>
@@ -313,93 +409,146 @@ tr.sim:hover td{background:#F9F7EF}
       </div>
       <p class="comm">Value is ahead and volume is behind, and those are different problems with different owners. GWP lands within R1,100 of the engine&#39;s own target because the average sale is R119 against the R89 the target is built on — agents are writing richer contracts than the plan assumes. Volume is 14% short, concentrated in Courtesy, and the rated floor tells the same story: 48% of rated agents sit at 70 or better against a 70% ambition. Cancellations at 8.4% are the quiet tax on all of it.</p>
       <table class="ft">
-        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody><tr class="">
       <td class="fx"><b>GWP vs target (MTD, incl VAT)</b><div class="src">BI Active Cases, September MTD to 14 Sep: R319,467 ex VAT × 1.15. Target = 3,600 sales × R89 × 1.15, the engine&#39;s own GWP target (Ops audit, 14 Sep)</div></td>
       <td class="num">R367,387</td>
       <td class="num muted">R368,460</td>
-      <td class="num"><b>99.7</b></td>
+      <td class="mt"><span class="meter green" title="99.7 / 100">
+    <i style="width:90.6%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>99.7</b></td>
       <td class="num muted">30</td>
       <td><span class="pill actual">Actual</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Strong</span></td>
     </tr><tr class="">
       <td class="fx"><b>Sales vs target</b><div class="src">Cases net of cancellation, MTD to 14 Sep (VAS basis). Ops&#39; unique-account basis reads 2,887 — a definition difference awaiting Nick&#39;s ruling, not an arithmetic error</div></td>
       <td class="num">3,093</td>
       <td class="num muted">3,600</td>
-      <td class="num"><b>85.9</b></td>
+      <td class="mt"><span class="meter green" title="85.9 / 100">
+    <i style="width:78.1%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>85.9</b></td>
       <td class="num muted">20</td>
       <td><span class="pill actual">Actual</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Strong</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Sales per day vs tenure target</b><div class="src">Sales ÷ actual shifts. Computable today from the MTD engine; placeholder until this report runs off the live Worker</div></td>
       <td class="num">2.1</td>
       <td class="num muted">2.6</td>
-      <td class="num"><b>80.8</b></td>
+      <td class="mt"><span class="meter green" title="80.8 / 100">
+    <i style="width:73.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>80.8</b></td>
       <td class="num muted">12</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Conversion vs tenure target</b><div class="src">MTD sales ÷ unique leads, blended across tenure groups</div></td>
       <td class="num">6.2%</td>
       <td class="num muted">8%</td>
-      <td class="num"><b>77.5</b></td>
+      <td class="mt"><span class="meter green" title="77.5 / 100">
+    <i style="width:70.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>77.5</b></td>
       <td class="num muted">8</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>QA score (mean of agent means)</b><div class="src">Mean of agent means, QA filtered on Date of Call, 0% scores kept. QA volume is real: 224 evaluations on 4 Sep</div></td>
       <td class="num">84.5%</td>
       <td class="num muted">85%</td>
-      <td class="num"><b>99.4</b></td>
+      <td class="mt"><span class="meter green" title="99.4 / 100">
+    <i style="width:90.4%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>99.4</b></td>
       <td class="num muted">10</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Strong</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Cancellation rate</b><div class="src">SF Inactive ÷ gross sales, per account</div></td>
       <td class="num">8.4%</td>
       <td class="num muted">6%</td>
-      <td class="num"><b>71.4</b></td>
+      <td class="mt"><span class="meter amber" title="71.4 / 100">
+    <i style="width:64.9%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>71.4</b></td>
       <td class="num muted">5</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Insurance opt-in rate</b><div class="src">ViciDial Insurance Opt-In dispositions ÷ sales</div></td>
       <td class="num">26%</td>
       <td class="num muted">35%</td>
-      <td class="num"><b>74.3</b></td>
+      <td class="mt"><span class="meter amber" title="74.3 / 100">
+    <i style="width:67.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>74.3</b></td>
       <td class="num muted">5</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Agents rated 70+ (share of floor)</b><div class="src">Share of rated agents at 70+ on the five-confirmed-session composite</div></td>
       <td class="num">48%</td>
       <td class="num muted">70%</td>
-      <td class="num"><b>68.6</b></td>
+      <td class="mt"><span class="meter amber" title="68.6 / 100">
+    <i style="width:62.4%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>68.6</b></td>
       <td class="num muted">10</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr></tbody>
       </table>
       <div class="bo">
     <div class="bo-h">By campaign <span class="pill simulated">Simulated</span></div>
     <div class="bo-n">Agent counts are actual (15 Sep Agent List, 129 agents). Money and attainment are placeholders in this issue. VT sits outside VAS reporting by design; Download &amp; Test is a new campaign carried under Courtesy rules until the rule book gives it its own.</div>
-    <table class="bt"><thead><tr><th class="">Campaign</th><th class="num">Agents</th><th class="num">Sales</th><th class="num">GWP incl VAT</th><th class="num">% of target</th><th class="num">Avg GWP/sale</th><th class="num">Band</th></tr></thead>
-    <tbody><tr><td class="">Cuddle</td><td class="num">22</td><td class="num">1,014</td><td class="num">R131,820</td><td class="num">104%</td><td class="num">R130</td><td class="num">Strong</td></tr><tr><td class="">Courtesy</td><td class="num">48</td><td class="num">1,586</td><td class="num">R176,050</td><td class="num">82%</td><td class="num">R111</td><td class="num">At risk</td></tr><tr><td class="">Nesting</td><td class="num">10</td><td class="num">196</td><td class="num">R21,560</td><td class="num">71%</td><td class="num">R110</td><td class="num">Watch</td></tr><tr><td class="">VT (tracker)</td><td class="num">45</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">Outside VAS basis</td></tr><tr><td class="">Download &amp; Test</td><td class="num">4</td><td class="num">297</td><td class="num">R37,957</td><td class="num">96%</td><td class="num">R128</td><td class="num">Healthy</td></tr></tbody></table>
+    <table class="bt"><thead><tr>
+      <th class="">Campaign</th><th class="num">Agents</th><th class="num">Sales</th><th class="num">GWP incl VAT</th><th class="num">% of target</th><th class="num">Avg GWP/sale</th><th class="num">Band</th>
+      <th class="bar-h">% of target</th>
+    </tr></thead>
+    <tbody><tr><td><span class="idot" style="background:#2563EB" title="Cuddle"></span>Cuddle</td><td class="num">22</td><td class="num">1,014</td><td class="num">R131,820</td><td class="num">104%</td><td class="num">R130</td><td class="num">Strong</td>
+      <td class="bar-c"><span class="mag" title="104% of target"><i style="width:86.7%"></i><b style="left:83.3%"></b></span></td></tr><tr><td><span class="idot" style="background:#0E8C74" title="Courtesy"></span>Courtesy</td><td class="num">48</td><td class="num">1,586</td><td class="num">R176,050</td><td class="num">82%</td><td class="num">R111</td><td class="num">At risk</td>
+      <td class="bar-c"><span class="mag" title="82% of target"><i style="width:68.3%"></i><b style="left:83.3%"></b></span></td></tr><tr><td><span class="idot" style="background:#C2410C" title="Nesting"></span>Nesting</td><td class="num">10</td><td class="num">196</td><td class="num">R21,560</td><td class="num">71%</td><td class="num">R110</td><td class="num">Watch</td>
+      <td class="bar-c"><span class="mag" title="71% of target"><i style="width:59.2%"></i><b style="left:83.3%"></b></span></td></tr><tr><td><span class="idot" style="background:#7C4DE0" title="VT (tracker)"></span>VT (tracker)</td><td class="num">45</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">Outside VAS basis</td>
+      <td class="bar-c"></td></tr><tr><td><span class="idot" style="background:#BE1D74" title="Download &amp; Test"></span>Download &amp; Test</td><td class="num">4</td><td class="num">297</td><td class="num">R37,957</td><td class="num">96%</td><td class="num">R128</td><td class="num">Healthy</td>
+      <td class="bar-c"><span class="mag" title="96% of target"><i style="width:80.0%"></i><b style="left:83.3%"></b></span></td></tr>
+    </tbody></table>
   </div><div class="bo">
     <div class="bo-h">By team leader <span class="pill simulated">Simulated</span></div>
     <div class="bo-n">Names masked by default (CLAUDE.md non-negotiable 10). Fifteen leaders sit on the Coaching Hub and six carry VAS agents; one leader on the list still has no login and is reported in leaders.unrepresented for a human to resolve — a login is never auto-created.</div>
-    <table class="bt"><thead><tr><th class="">Team leader</th><th class="num">Campaign</th><th class="num">Agents</th><th class="num">Sales vs target</th><th class="num">Attendance</th><th class="num">QA</th><th class="num">Section band</th></tr></thead>
-    <tbody><tr><td class="">TL-1 · R•••••n</td><td class="num">Cuddle + Nesting</td><td class="num">19</td><td class="num">101%</td><td class="num">93.4%</td><td class="num">86.1%</td><td class="num">Strong</td></tr><tr><td class="">TL-2 · H•••••</td><td class="num">Courtesy</td><td class="num">17</td><td class="num">88%</td><td class="num">92.0%</td><td class="num">85.2%</td><td class="num">Healthy</td></tr><tr><td class="">TL-3 · D•••••</td><td class="num">Courtesy</td><td class="num">16</td><td class="num">79%</td><td class="num">90.1%</td><td class="num">83.4%</td><td class="num">Watch</td></tr><tr><td class="">TL-4 · R•••</td><td class="num">Courtesy</td><td class="num">15</td><td class="num">74%</td><td class="num">88.6%</td><td class="num">82.0%</td><td class="num">At risk</td></tr><tr><td class="">TL-5 · (unrepresented)</td><td class="num">Courtesy</td><td class="num">14</td><td class="num">81%</td><td class="num">91.2%</td><td class="num">84.8%</td><td class="num">Watch</td></tr><tr><td class="">TL-6 · M•••••</td><td class="num">Download &amp; Test + Cuddle</td><td class="num">13</td><td class="num">96%</td><td class="num">94.0%</td><td class="num">87.3%</td><td class="num">Strong</td></tr></tbody></table>
+    <table class="bt"><thead><tr>
+      <th class="">Team leader</th><th class="num">Campaign</th><th class="num">Agents</th><th class="num">Sales vs target</th><th class="num">Attendance</th><th class="num">QA</th><th class="num">Section band</th>
+      <th class="bar-h">Sales vs target</th>
+    </tr></thead>
+    <tbody><tr><td>TL-1 · R•••••n</td><td class="num">Cuddle + Nesting</td><td class="num">19</td><td class="num">101%</td><td class="num">93.4%</td><td class="num">86.1%</td><td class="num">Strong</td>
+      <td class="bar-c"><span class="mag" title="101% of target"><i style="width:84.2%"></i><b style="left:83.3%"></b></span></td></tr><tr><td>TL-2 · H•••••</td><td class="num">Courtesy</td><td class="num">17</td><td class="num">88%</td><td class="num">92.0%</td><td class="num">85.2%</td><td class="num">Healthy</td>
+      <td class="bar-c"><span class="mag" title="88% of target"><i style="width:73.3%"></i><b style="left:83.3%"></b></span></td></tr><tr><td>TL-3 · D•••••</td><td class="num">Courtesy</td><td class="num">16</td><td class="num">79%</td><td class="num">90.1%</td><td class="num">83.4%</td><td class="num">Watch</td>
+      <td class="bar-c"><span class="mag" title="79% of target"><i style="width:65.8%"></i><b style="left:83.3%"></b></span></td></tr><tr><td>TL-4 · R•••</td><td class="num">Courtesy</td><td class="num">15</td><td class="num">74%</td><td class="num">88.6%</td><td class="num">82.0%</td><td class="num">At risk</td>
+      <td class="bar-c"><span class="mag" title="74% of target"><i style="width:61.7%"></i><b style="left:83.3%"></b></span></td></tr><tr><td>TL-5 · (unrepresented)</td><td class="num">Courtesy</td><td class="num">14</td><td class="num">81%</td><td class="num">91.2%</td><td class="num">84.8%</td><td class="num">Watch</td>
+      <td class="bar-c"><span class="mag" title="81% of target"><i style="width:67.5%"></i><b style="left:83.3%"></b></span></td></tr><tr><td>TL-6 · M•••••</td><td class="num">Download &amp; Test + Cuddle</td><td class="num">13</td><td class="num">96%</td><td class="num">94.0%</td><td class="num">87.3%</td><td class="num">Strong</td>
+      <td class="bar-c"><span class="mag" title="96% of target"><i style="width:80.0%"></i><b style="left:83.3%"></b></span></td></tr>
+    </tbody></table>
   </div><div class="bo">
     <div class="bo-h">Top agents — month to date <span class="pill simulated">Simulated</span></div>
     <div class="bo-n">Ranked on the composite, not on money alone: one primary NBA per agent, tenure-relative throughout. Never compare across tenure groups.</div>
-    <table class="bt"><thead><tr><th class="">Agent</th><th class="num">Campaign</th><th class="num">Tenure</th><th class="num">Sales</th><th class="num">GWP incl</th><th class="num">Composite</th><th class="num">Band</th></tr></thead>
-    <tbody><tr><td class="">CB-118</td><td class="num">Cuddle</td><td class="num">EXP</td><td class="num">96</td><td class="num">R14,208</td><td class="num">93</td><td class="num">Elite</td></tr><tr><td class="">CB-47</td><td class="num">Cuddle</td><td class="num">EXP</td><td class="num">88</td><td class="num">R12,584</td><td class="num">91</td><td class="num">Elite</td></tr><tr><td class="">CB-203</td><td class="num">Courtesy</td><td class="num">M2</td><td class="num">81</td><td class="num">R9,477</td><td class="num">88</td><td class="num">Strong</td></tr><tr><td class="">CB-96</td><td class="num">Download &amp; Test</td><td class="num">EXP</td><td class="num">77</td><td class="num">R10,626</td><td class="num">87</td><td class="num">Strong</td></tr><tr><td class="">CB-271</td><td class="num">Cuddle</td><td class="num">M2</td><td class="num">74</td><td class="num">R9,546</td><td class="num">86</td><td class="num">Strong</td></tr></tbody></table>
+    <table class="bt"><thead><tr>
+      <th class="">Agent</th><th class="num">Campaign</th><th class="num">Tenure</th><th class="num">Sales</th><th class="num">GWP incl</th><th class="num">Composite</th><th class="num">Band</th>
+      <th class="bar-h">Composite</th>
+    </tr></thead>
+    <tbody><tr><td>CB-118</td><td class="num">Cuddle</td><td class="num">EXP</td><td class="num">96</td><td class="num">R14,208</td><td class="num">93</td><td class="num">Elite</td>
+      <td class="bar-c"><span class="mag" title="93% of target"><i style="width:93.0%"></i><b style="left:100.0%"></b></span></td></tr><tr><td>CB-47</td><td class="num">Cuddle</td><td class="num">EXP</td><td class="num">88</td><td class="num">R12,584</td><td class="num">91</td><td class="num">Elite</td>
+      <td class="bar-c"><span class="mag" title="91% of target"><i style="width:91.0%"></i><b style="left:100.0%"></b></span></td></tr><tr><td>CB-203</td><td class="num">Courtesy</td><td class="num">M2</td><td class="num">81</td><td class="num">R9,477</td><td class="num">88</td><td class="num">Strong</td>
+      <td class="bar-c"><span class="mag" title="88% of target"><i style="width:88.0%"></i><b style="left:100.0%"></b></span></td></tr><tr><td>CB-96</td><td class="num">Download &amp; Test</td><td class="num">EXP</td><td class="num">77</td><td class="num">R10,626</td><td class="num">87</td><td class="num">Strong</td>
+      <td class="bar-c"><span class="mag" title="87% of target"><i style="width:87.0%"></i><b style="left:100.0%"></b></span></td></tr><tr><td>CB-271</td><td class="num">Cuddle</td><td class="num">M2</td><td class="num">74</td><td class="num">R9,546</td><td class="num">86</td><td class="num">Strong</td>
+      <td class="bar-c"><span class="mag" title="86% of target"><i style="width:86.0%"></i><b style="left:100.0%"></b></span></td></tr>
+    </tbody></table>
   </div><div class="bo">
     <div class="bo-h">Watchlist — the floor&#39;s bottom of the ladder <span class="pill simulated">Simulated</span></div>
     <div class="bo-n">One primary NBA each, first trigger on the ladder wins. R2A tiers classify and travel to the coaching card; since 11 Sep they deduct nothing from a score.</div>
-    <table class="bt"><thead><tr><th class="">Agent</th><th class="num">Campaign</th><th class="num">Tenure</th><th class="num">Primary NBA</th><th class="num">R2A tier</th><th class="num">Composite</th></tr></thead>
-    <tbody><tr><td class="">CB-334</td><td class="num">Courtesy</td><td class="num">M0</td><td class="num">P1 · R1 Critical Sales-Volume Failure</td><td class="num">—</td><td class="num">38</td></tr><tr><td class="">CB-289</td><td class="num">Courtesy</td><td class="num">M1</td><td class="num">P2 · R4 GWP Value Failure</td><td class="num">R2A-1</td><td class="num">44</td></tr><tr><td class="">CB-147</td><td class="num">Courtesy</td><td class="num">EXP</td><td class="num">P1 · R2A-3 Critical Compliance Fail</td><td class="num">R2A-3</td><td class="num">46</td></tr><tr><td class="">CB-312</td><td class="num">Nesting</td><td class="num">M0</td><td class="num">P3 · R7 Conversion Below Target</td><td class="num">—</td><td class="num">51</td></tr><tr><td class="">CB-205</td><td class="num">Cuddle</td><td class="num">M2</td><td class="num">P2 · R5 Attendance Risk</td><td class="num">R2A-2</td><td class="num">54</td></tr></tbody></table>
+    <table class="bt"><thead><tr>
+      <th class="">Agent</th><th class="num">Campaign</th><th class="num">Tenure</th><th class="num">Primary NBA</th><th class="num">R2A tier</th><th class="num">Composite</th>
+      <th class="bar-h">Composite</th>
+    </tr></thead>
+    <tbody><tr><td>CB-334</td><td class="num">Courtesy</td><td class="num">M0</td><td class="num">P1 · R1 Critical Sales-Volume Failure</td><td class="num">—</td><td class="num">38</td>
+      <td class="bar-c"><span class="mag" title="38% of target"><i style="width:38.0%"></i><b style="left:100.0%"></b></span></td></tr><tr><td>CB-289</td><td class="num">Courtesy</td><td class="num">M1</td><td class="num">P2 · R4 GWP Value Failure</td><td class="num">R2A-1</td><td class="num">44</td>
+      <td class="bar-c"><span class="mag" title="44% of target"><i style="width:44.0%"></i><b style="left:100.0%"></b></span></td></tr><tr><td>CB-147</td><td class="num">Courtesy</td><td class="num">EXP</td><td class="num">P1 · R2A-3 Critical Compliance Fail</td><td class="num">R2A-3</td><td class="num">46</td>
+      <td class="bar-c"><span class="mag" title="46% of target"><i style="width:46.0%"></i><b style="left:100.0%"></b></span></td></tr><tr><td>CB-312</td><td class="num">Nesting</td><td class="num">M0</td><td class="num">P3 · R7 Conversion Below Target</td><td class="num">—</td><td class="num">51</td>
+      <td class="bar-c"><span class="mag" title="51% of target"><i style="width:51.0%"></i><b style="left:100.0%"></b></span></td></tr><tr><td>CB-205</td><td class="num">Cuddle</td><td class="num">M2</td><td class="num">P2 · R5 Attendance Risk</td><td class="num">R2A-2</td><td class="num">54</td>
+      <td class="bar-c"><span class="mag" title="54% of target"><i style="width:54.0%"></i><b style="left:100.0%"></b></span></td></tr>
+    </tbody></table>
   </div>
     </section>
     <section class="card" id="sec-recruitment">
@@ -421,47 +570,57 @@ tr.sim:hover td{background:#F9F7EF}
       </div>
       <p class="comm">There is no recruitment feed in AgentOS — every figure here is a placeholder against module 04&#39;s proposed workback (350–400 enquiries to 20 sales-ready a week), which is itself a plan and not an actual. The one real signal the suite could produce today is net joiners from the Agent List history. Against 17 removals this month, the funnel is not replacing what the floor loses.</p>
       <table class="ft">
-        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody><tr class="sim">
       <td class="fx"><b>Sales-ready starters vs plan</b><div class="src">GHL training starters reaching floor-ready. Baseline proxy available today: net joiners in agent_sync_logs</div></td>
       <td class="num">11</td>
       <td class="num muted">20</td>
-      <td class="num"><b>55</b></td>
+      <td class="mt"><span class="meter amber" title="55 / 100">
+    <i style="width:50.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>55</b></td>
       <td class="num muted">30</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">At risk</span></td>
+      <td><span class="bl amber">At risk</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Pipeline coverage (candidates per open seat)</b><div class="src">Live candidates per open seat</div></td>
       <td class="num">3.1</td>
       <td class="num muted">5</td>
-      <td class="num"><b>62</b></td>
+      <td class="mt"><span class="meter amber" title="62 / 100">
+    <i style="width:56.4%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>62</b></td>
       <td class="num muted">15</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">At risk</span></td>
+      <td><span class="bl amber">At risk</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Interview show rate</b><div class="src">Interviews attended ÷ booked</div></td>
       <td class="num">54%</td>
       <td class="num muted">70%</td>
-      <td class="num"><b>77.1</b></td>
+      <td class="mt"><span class="meter green" title="77.1 / 100">
+    <i style="width:70.1%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>77.1</b></td>
       <td class="num muted">15</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Time to fill (days)</b><div class="src">Requisition open → start date</div></td>
       <td class="num">26 d</td>
       <td class="num muted">18 d</td>
-      <td class="num"><b>69.2</b></td>
+      <td class="mt"><span class="meter amber" title="69.2 / 100">
+    <i style="width:62.9%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>69.2</b></td>
       <td class="num muted">15</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>30-day retention of new intakes</b><div class="src">Cohort still on the Agent List 30 days after first sighting — computable from list history today</div></td>
       <td class="num">71%</td>
       <td class="num muted">85%</td>
-      <td class="num"><b>83.5</b></td>
+      <td class="mt"><span class="meter green" title="83.5 / 100">
+    <i style="width:75.9%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>83.5</b></td>
       <td class="num muted">25</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr></tbody>
       </table>
       
@@ -485,55 +644,67 @@ tr.sim:hover td{background:#F9F7EF}
       </div>
       <p class="comm">Attendance is the strongest measured number in the report: 91.8% against a 95% standard, with unplanned absence at 2.2%. The problem is not who turns up, it is who stays. Seventeen agents came off the 14 Sep list against an opening 146 — 11.6% in a month where the plan assumes 4.5% — and until every removal carries a reason code nobody can say whether that is resignation, dismissal or a campaign transfer. Disciplinary load is read off the QA export, which is the only place it exists.</p>
       <table class="ft">
-        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody><tr class="">
       <td class="fx"><b>Attendance (Actual ÷ Employed shifts)</b><div class="src">Attendance register: 886 actual of 965 employed shifts (MTD to 14 Sep). Saturdays carry their sales but are never a shift</div></td>
       <td class="num">91.8%</td>
       <td class="num muted">95%</td>
-      <td class="num"><b>96.6</b></td>
+      <td class="mt"><span class="meter green" title="96.6 / 100">
+    <i style="width:87.8%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>96.6</b></td>
       <td class="num muted">25</td>
       <td><span class="pill actual">Actual</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Strong</span></td>
     </tr><tr class="">
       <td class="fx"><b>Unplanned absence rate</b><div class="src">Absence outside leaveCodes (AL/SL/CA/CASAT), MTD to 14 Sep</div></td>
       <td class="num">2.2%</td>
       <td class="num muted">2%</td>
-      <td class="num"><b>90.9</b></td>
+      <td class="mt"><span class="meter green" title="90.9 / 100">
+    <i style="width:82.6%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>90.9</b></td>
       <td class="num muted">15</td>
       <td><span class="pill actual">Actual</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Strong</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Productive seats filled vs capacity plan</b><div class="src">129 active agents against a 160-seat plan. The roster is actual; the seat plan is a placeholder — physical seats, shifts and sites are [INPUT REQUIRED] in the KB</div></td>
       <td class="num">80.6%</td>
       <td class="num muted">95%</td>
-      <td class="num"><b>84.8</b></td>
+      <td class="mt"><span class="meter green" title="84.8 / 100">
+    <i style="width:77.1%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>84.8</b></td>
       <td class="num muted">20</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="">
       <td class="fx"><b>Attrition (monthly)</b><div class="src">17 agents removed by the 14 Sep Agent List off an opening 146. REMOVALS, not yet reconciled to resignations vs dismissals vs transfers — read as an upper bound</div></td>
       <td class="num">11.6%</td>
       <td class="num muted">4.5%</td>
-      <td class="num"><b>38.8</b></td>
+      <td class="mt"><span class="meter red" title="38.8 / 100">
+    <i style="width:35.3%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>38.8</b></td>
       <td class="num muted">20</td>
       <td><span class="pill actual">Actual</span></td>
-      <td><span class="dot red"></span><span class="bl">Critical</span></td>
+      <td><span class="bl red">Critical</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Agents in disciplinary process (per 100 agents)</b><div class="src">KPI agents_in_process (distinct CB with offence ≥1, not closed) per 100 agents — derived from the QA export, not an HR system</div></td>
       <td class="num">9.3</td>
       <td class="num muted">5</td>
-      <td class="num"><b>53.8</b></td>
+      <td class="mt"><span class="meter red" title="53.8 / 100">
+    <i style="width:48.9%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>53.8</b></td>
       <td class="num muted">10</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot red"></span><span class="bl">Critical</span></td>
+      <td><span class="bl red">Critical</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Shrinkage (leave, training, offline)</b><div class="src">Leave, training and offline time against scheduled hours</div></td>
       <td class="num">14.5%</td>
       <td class="num muted">12%</td>
-      <td class="num"><b>82.8</b></td>
+      <td class="mt"><span class="meter green" title="82.8 / 100">
+    <i style="width:75.3%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>82.8</b></td>
       <td class="num muted">10</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr></tbody>
       </table>
       
@@ -541,11 +712,11 @@ tr.sim:hover td{background:#F9F7EF}
     <section class="card" id="sec-lrc">
       <div class="sec-head">
         <div>
-          <h2><span class="dot amber"></span>LRC — Labour Relations &amp; Compliance</h2>
-          <div class="q">Is every case being run properly and on time, and what is our exposure?</div>
+          <h2><span class="dot amber"></span>LRC — Legal, Risk &amp; Compliance</h2>
+          <div class="q">Is the business legally covered, are its risks owned and closing, and is the floor behaving compliantly on the call?</div>
         </div>
         <div class="sec-score">
-          <div class="ss-val">56.2<span>/100</span></div>
+          <div class="ss-val">57.6<span>/100</span></div>
           <div class="ss-b amber">At risk</div>
           <div class="ss-w">7% of the business score</div>
         </div>
@@ -553,59 +724,91 @@ tr.sim:hover td{background:#F9F7EF}
       <div class="meta-row">
         <span><b>Owner</b> Jared — Risk &amp; Compliance Executive (P04)</span>
         <span><b>Exec</b> Jared — Risk &amp; Compliance Executive (P04)</span>
-        <span><b>Evidence</b> 0% of this section is a measured number</span>
+        <span><b>Evidence</b> 10% of this section is a measured number</span>
       </div>
-      <p class="comm">This section is a governance gap, not a performance one. The business has no labour-relations system of record: no hearing register, no warning ledger, no CCMA diary. What can be seen is compliance behaviour on calls — open critical fails and the share of the floor sitting in an R2A risk tier — and both of those come from QA, not from IR. Until a register exists, the 7% of the business score this section carries is an estimate, and the report says so rather than quietly scoring it well.</p>
+      <p class="comm">Legal, Risk and Compliance, not labour relations — employee discipline is counted in Workforce and only arrives here if it becomes a legal matter. Two things are measured and both come off QA: six critical compliance fails are open, and 11.5% of the floor sits in an R2A risk tier against a 5% tolerance. The third measured number is the worst in the report and is not about the floor at all: of the thirteen registered systems, ZERO are at G4 — live and controlled — with 27 open actions against them, and the commission calculator still runs on unsigned rules. The legal and risk registers themselves have no feed, so contracts, disputes and overdue risks are estimates.</p>
       <table class="ft">
-        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody><tr class="sim">
-      <td class="fx"><b>Open critical compliance fails</b><div class="src">KPI open_criticals — escalation decision in the critical list, status not closed. The KPI is real; this reading is a placeholder</div></td>
+      <td class="fx"><b>Open critical compliance fails</b><div class="src">KPI open_criticals — escalation decision in the critical list, status not closed. The KPI is real and computable; this reading is a placeholder until the pull runs</div></td>
       <td class="num">6</td>
       <td class="num muted">—</td>
-      <td class="num"><b>40</b></td>
-      <td class="num muted">25</td>
-      <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot red"></span><span class="bl">Critical</span></td>
-    </tr><tr class="sim">
-      <td class="fx"><b>Floor in R2A tier 2 or 3 (compliance risk)</b><div class="src">Share of the floor in R2A-2 or R2A-3. The tier still classifies and still blocks Elite; since 11 Sep it deducts nothing from a score</div></td>
-      <td class="num">11.5%</td>
-      <td class="num muted">5%</td>
-      <td class="num"><b>43.5</b></td>
-      <td class="num muted">20</td>
-      <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot red"></span><span class="bl">Critical</span></td>
-    </tr><tr class="sim">
-      <td class="fx"><b>IR cases closed within SLA</b><div class="src">IR cases closed within the process SLA — [INPUT REQUIRED: no IR register exists]</div></td>
-      <td class="num">62%</td>
-      <td class="num muted">90%</td>
-      <td class="num"><b>68.9</b></td>
-      <td class="num muted">20</td>
-      <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
-    </tr><tr class="sim">
-      <td class="fx"><b>IR cases open over 30 days</b><div class="src">IR cases open beyond 30 days — [INPUT REQUIRED]</div></td>
-      <td class="num">7</td>
-      <td class="num muted">—</td>
-      <td class="num"><b>45</b></td>
+      <td class="mt"><span class="meter red" title="40 / 100">
+    <i style="width:36.4%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>40</b></td>
       <td class="num muted">15</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot red"></span><span class="bl">Critical</span></td>
+      <td><span class="bl red">Critical</span></td>
     </tr><tr class="sim">
-      <td class="fx"><b>CCMA referrals in period</b><div class="src">CCMA referrals in the period — [INPUT REQUIRED]</div></td>
-      <td class="num">1</td>
-      <td class="num muted">—</td>
-      <td class="num"><b>70</b></td>
-      <td class="num muted">10</td>
+      <td class="fx"><b>Floor in R2A tier 2 or 3 (compliance risk)</b><div class="src">Share of the floor in R2A-2 or R2A-3. Travels in the NBA digest today (r2a.tier per agent) — actual the moment exec-pull runs</div></td>
+      <td class="num">11.5%</td>
+      <td class="num muted">5%</td>
+      <td class="mt"><span class="meter red" title="43.5 / 100">
+    <i style="width:39.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>43.5</b></td>
+      <td class="num muted">15</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl red">Critical</span></td>
     </tr><tr class="sim">
-      <td class="fx"><b>POPIA / data incidents</b><div class="src">POPIA / data incidents raised. Masking is on by default across the suite and the apps sit behind their own login</div></td>
+      <td class="fx"><b>POPIA &amp; data incidents</b><div class="src">Reported data incidents. Masking is on by default across the suite and every app sits behind its own login; there is no incident register to read</div></td>
       <td class="num">0</td>
       <td class="num muted">—</td>
-      <td class="num"><b>100</b></td>
+      <td class="mt"><span class="meter green" title="100 / 100">
+    <i style="width:90.9%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>100</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill simulated">Simulated</span></td>
+      <td><span class="bl green">Strong</span></td>
+    </tr><tr class="sim">
+      <td class="fx"><b>High or critical risks open past their due date</b><div class="src">High or critical risks past their mitigation date — [INPUT REQUIRED: no risk register feed]</div></td>
+      <td class="num">4</td>
+      <td class="num muted">—</td>
+      <td class="mt"><span class="meter amber" title="65 / 100">
+    <i style="width:59.1%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>65</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill simulated">Simulated</span></td>
+      <td><span class="bl amber">Watch</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Registered systems live and controlled (G4)</b><div class="src">Canonical system register (Chatterbox Operating System Governance v1.1, 2026-07-02): 13 systems — 10 red, 2 amber, 1 grey, ZERO at G4, 27 open actions. A measured nought, not a missing feed. Re-dated by Jared, it moves</div></td>
+      <td class="num">0%</td>
+      <td class="num muted">100%</td>
+      <td class="mt"><span class="meter red" title="0 / 100">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>0</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill manual">Manual</span></td>
+      <td><span class="bl red">Critical</span></td>
+    </tr><tr class="sim">
+      <td class="fx"><b>Client &amp; supplier contracts current and signed</b><div class="src">Client and supplier agreements with a signed, in-date contract on file — [INPUT REQUIRED]</div></td>
+      <td class="num">78%</td>
+      <td class="num muted">100%</td>
+      <td class="mt"><span class="meter green" title="78 / 100">
+    <i style="width:70.9%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>78</b></td>
       <td class="num muted">10</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Healthy</span></td>
+    </tr><tr class="sim">
+      <td class="fx"><b>Governance &amp; audit actions closed on time</b><div class="src">Audit, review and council actions closed by their due date. Blue is the register of record and does not reach this report</div></td>
+      <td class="num">55%</td>
+      <td class="num muted">100%</td>
+      <td class="mt"><span class="meter amber" title="55 / 100">
+    <i style="width:50.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>55</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill simulated">Simulated</span></td>
+      <td><span class="bl amber">At risk</span></td>
+    </tr><tr class="sim">
+      <td class="fx"><b>Open legal matters and disputes</b><div class="src">Live disputes, claims and matters with attorneys instructed — [INPUT REQUIRED]</div></td>
+      <td class="num">2</td>
+      <td class="num muted">—</td>
+      <td class="mt"><span class="meter amber" title="70 / 100">
+    <i style="width:63.6%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>70</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill simulated">Simulated</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr></tbody>
       </table>
       
@@ -629,47 +832,57 @@ tr.sim:hover td{background:#F9F7EF}
       </div>
       <p class="comm">Nesting is the one part of training the suite can actually see, because it is a reported campaign with its own targets: ten agents, writing 1.4 sales a day against the 2.0 an M0/M1 agent is measured on. The programme around it is invisible — there is no curriculum, cohort or pass-rate data anywhere, and certification has no feed at all, so it leaves the denominator rather than scoring zero. Time to first sale is nine days against a six-day ambition, which is the number to argue about once the LMS lands.</p>
       <table class="ft">
-        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody><tr class="sim">
       <td class="fx"><b>Nesting SPD vs M1 target</b><div class="src">Nesting campaign sales ÷ actual shifts against the M1 target (M0 measured under M1 since 10 Sep). Computable today from the MTD engine</div></td>
       <td class="num">1.4</td>
       <td class="num muted">2</td>
-      <td class="num"><b>70</b></td>
-      <td class="num muted">25 <span class="eff">→29.4</span></td>
+      <td class="mt"><span class="meter amber" title="70 / 100">
+    <i style="width:63.6%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>70</b></td>
+      <td class="num muted">25<span class="eff">→29.4</span></td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Nesting graduation rate</b><div class="src">Cohort certified floor-ready ÷ cohort started</div></td>
       <td class="num">72%</td>
       <td class="num muted">85%</td>
-      <td class="num"><b>84.7</b></td>
-      <td class="num muted">25 <span class="eff">→29.4</span></td>
+      <td class="mt"><span class="meter green" title="84.7 / 100">
+    <i style="width:77.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>84.7</b></td>
+      <td class="num muted">25<span class="eff">→29.4</span></td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Time to first sale (days)</b><div class="src">First BI case date − first Agent List sighting. Computable today</div></td>
       <td class="num">9 d</td>
       <td class="num muted">6 d</td>
-      <td class="num"><b>66.7</b></td>
-      <td class="num muted">20 <span class="eff">→23.5</span></td>
+      <td class="mt"><span class="meter amber" title="66.7 / 100">
+    <i style="width:60.6%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>66.7</b></td>
+      <td class="num muted">20<span class="eff">→23.5</span></td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Learners in nest vs required intake</b><div class="src">10 agents in nest against a 16-seat intake plan</div></td>
       <td class="num">60%</td>
       <td class="num muted">100%</td>
-      <td class="num"><b>60</b></td>
-      <td class="num muted">15 <span class="eff">→17.6</span></td>
+      <td class="mt"><span class="meter amber" title="60 / 100">
+    <i style="width:54.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>60</b></td>
+      <td class="num muted">15<span class="eff">→17.6</span></td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">At risk</span></td>
+      <td><span class="bl amber">At risk</span></td>
     </tr><tr class="">
       <td class="fx"><b>Certification &amp; refresher completion</b><div class="src">LMS has never been connected. No go-live without a training pass is a confirmed rule with no evidence trail behind it — this factor leaves the denominator and the section renormalises</div></td>
       <td class="num">—</td>
       <td class="num muted">—</td>
-      <td class="num"><b>—</b></td>
+      <td class="mt"><span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>—</b></td>
       <td class="num muted">15</td>
       <td><span class="pill absent">No feed</span></td>
-      <td><span class="dot grey"></span><span class="bl">Not measured</span></td>
+      <td><span class="bl grey">Not measured</span></td>
     </tr></tbody>
       </table>
       
@@ -693,47 +906,57 @@ tr.sim:hover td{background:#F9F7EF}
       </div>
       <p class="comm">The dialler is the business&#39;s only production line and it ran at 96.5% of shift hours, which is roughly three-quarters of an agent-hour lost per agent this week. Talk time per agent-day is 186 minutes against a 210 standard — and that figure deliberately includes ringing, about a third of it, by Nick&#39;s ruling. Two platform alerts are open. There is no ticketing system in the register at all, so IT service quality cannot be scored: that factor leaves the denominator and this section is scored on four fifths of its weight.</p>
       <table class="ft">
-        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody><tr class="sim">
       <td class="fx"><b>Dialler uptime in shift hours</b><div class="src">ViciDial availability within shift hours. CallX was retired 1 Sep</div></td>
       <td class="num">96.5%</td>
       <td class="num muted">99.5%</td>
-      <td class="num"><b>97</b></td>
-      <td class="num muted">25 <span class="eff">→31.3</span></td>
+      <td class="mt"><span class="meter green" title="97 / 100">
+    <i style="width:88.2%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>97</b></td>
+      <td class="num muted">25<span class="eff">→31.3</span></td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Strong</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Talk time per agent-day vs standard</b><div class="src">Σ length_in_sec grouped on the `user` column; includes ringing (~a third) by rule — switchable via viciCallReport.talkFrom</div></td>
       <td class="num">186 min</td>
       <td class="num muted">210 min</td>
-      <td class="num"><b>88.6</b></td>
-      <td class="num muted">20 <span class="eff">→25</span></td>
+      <td class="mt"><span class="meter green" title="88.6 / 100">
+    <i style="width:80.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>88.6</b></td>
+      <td class="num muted">20<span class="eff">→25</span></td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Strong</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Connect rate</b><div class="src">Connected calls ÷ dials from ViciDial dispositions</div></td>
       <td class="num">22%</td>
       <td class="num muted">30%</td>
-      <td class="num"><b>73.3</b></td>
-      <td class="num muted">15 <span class="eff">→18.8</span></td>
+      <td class="mt"><span class="meter amber" title="73.3 / 100">
+    <i style="width:66.6%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>73.3</b></td>
+      <td class="num muted">15<span class="eff">→18.8</span></td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr><tr class="">
       <td class="fx"><b>IT tickets resolved within SLA</b><div class="src">No ticketing or service-desk system exists in the system register — [INPUT REQUIRED]. Factor leaves the denominator</div></td>
       <td class="num">—</td>
       <td class="num muted">—</td>
-      <td class="num"><b>—</b></td>
+      <td class="mt"><span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>—</b></td>
       <td class="num muted">20</td>
       <td><span class="pill absent">No feed</span></td>
-      <td><span class="dot grey"></span><span class="bl">Not measured</span></td>
+      <td><span class="bl grey">Not measured</span></td>
     </tr><tr class="">
       <td class="fx"><b>Open P1 incidents / platform alerts</b><div class="src">kv:health-alerts, live: two sources running behind (dialler, QA). No save-failure, rake-stuck or agent-list-out-of-sync alert is open</div></td>
       <td class="num">2</td>
       <td class="num muted">—</td>
-      <td class="num"><b>70</b></td>
-      <td class="num muted">20 <span class="eff">→25</span></td>
+      <td class="mt"><span class="meter amber" title="70 / 100">
+    <i style="width:63.6%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>70</b></td>
+      <td class="num muted">20<span class="eff">→25</span></td>
       <td><span class="pill actual">Actual</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr></tbody>
       </table>
       
@@ -757,47 +980,57 @@ tr.sim:hover td{background:#F9F7EF}
       </div>
       <p class="comm">Revenue is the only real number in this section: R367,387 incl VAT month-to-date. Everything it is compared against is modelled. There is no budget feed, no payroll feed and no ledger feed, so cost per agent, contribution and payroll ratio are KB model figures, and the model itself carries an open conflict on agent basic salary (R5,000 vs R5,250). Language rule: this is seat-level contribution, never EBITDA, until management accounts are tied out. Nothing in this section may be quoted to an investor.</p>
       <table class="ft">
-        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody><tr class="sim">
       <td class="fx"><b>Revenue (GWP incl VAT) vs budget</b><div class="src">Revenue is ACTUAL (BI Active Cases, MTD to 14 Sep). The budget is a placeholder — no signed budget exists — so the score is simulated</div></td>
       <td class="num">R367,387</td>
       <td class="num muted">R480,000</td>
-      <td class="num"><b>76.5</b></td>
+      <td class="mt"><span class="meter green" title="76.5 / 100">
+    <i style="width:69.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>76.5</b></td>
       <td class="num muted">30</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>All-in cost per active agent vs model</b><div class="src">All-in cost ÷ active agents. KB model: R16,000 at 330 seats, R25,000 at 110</div></td>
       <td class="num">R23,800</td>
       <td class="num muted">R16,000</td>
-      <td class="num"><b>67.2</b></td>
+      <td class="mt"><span class="meter amber" title="67.2 / 100">
+    <i style="width:61.1%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>67.2</b></td>
       <td class="num muted">20</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Seat contribution margin</b><div class="src">(Revenue − direct seat cost) ÷ revenue. KB stretch model shows 41.2% at 110 agents; April 2026 conservative proxy was 10.0%</div></td>
       <td class="num">22%</td>
       <td class="num muted">41.2%</td>
-      <td class="num"><b>53.4</b></td>
+      <td class="mt"><span class="meter red" title="53.4 / 100">
+    <i style="width:48.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>53.4</b></td>
       <td class="num muted">20</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot red"></span><span class="bl">Critical</span></td>
+      <td><span class="bl red">Critical</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Payroll as a share of revenue</b><div class="src">Payroll run ÷ revenue — no Payscale feed</div></td>
       <td class="num">58%</td>
       <td class="num muted">45%</td>
-      <td class="num"><b>77.6</b></td>
+      <td class="mt"><span class="meter green" title="77.6 / 100">
+    <i style="width:70.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>77.6</b></td>
       <td class="num muted">15</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Commission accrual vs plan</b><div class="src">Projected commission engine against the paid run. The engine is real and computable; SYS-003 still carries no signed rules, so CFO sign-off is outstanding before production use</div></td>
       <td class="num">91%</td>
       <td class="num muted">100%</td>
-      <td class="num"><b>91</b></td>
+      <td class="mt"><span class="meter green" title="91 / 100">
+    <i style="width:82.7%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>91</b></td>
       <td class="num muted">15</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Strong</span></td>
     </tr></tbody>
       </table>
       
@@ -821,47 +1054,57 @@ tr.sim:hover td{background:#F9F7EF}
       </div>
       <p class="comm">Unowned and unmeasured. P18 (COO / Delivery Executive) is vacant, so nobody is accountable for whether a person who arrives can sit down and log in. Every figure here is a placeholder built from what a Durban floor typically carries — load-shedding cover, line uptime, desk readiness. The section&#39;s 4% weight is small; the governance gap behind it is not.</p>
       <table class="ft">
-        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody><tr class="sim">
       <td class="fx"><b>Desks ready and usable</b><div class="src">Desks with a working machine, headset and login at shift start</div></td>
       <td class="num">85%</td>
       <td class="num muted">100%</td>
-      <td class="num"><b>85</b></td>
+      <td class="mt"><span class="meter green" title="85 / 100">
+    <i style="width:77.3%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>85</b></td>
       <td class="num muted">30</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Strong</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Power availability in shift hours (incl. UPS/generator)</b><div class="src">Mains plus UPS and generator cover across shift hours</div></td>
       <td class="num">93.5%</td>
       <td class="num muted">99.5%</td>
-      <td class="num"><b>94</b></td>
+      <td class="mt"><span class="meter green" title="94 / 100">
+    <i style="width:85.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>94</b></td>
       <td class="num muted">30</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Strong</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Connectivity uptime</b><div class="src">Primary and failover line availability</div></td>
       <td class="num">97%</td>
       <td class="num muted">99.5%</td>
-      <td class="num"><b>97.5</b></td>
+      <td class="mt"><span class="meter green" title="97.5 / 100">
+    <i style="width:88.6%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>97.5</b></td>
       <td class="num muted">20</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Strong</span></td>
+      <td><span class="bl green">Strong</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Health &amp; safety incidents</b><div class="src">Health and safety incidents logged in the period</div></td>
       <td class="num">2</td>
       <td class="num muted">—</td>
-      <td class="num"><b>50</b></td>
+      <td class="mt"><span class="meter red" title="50 / 100">
+    <i style="width:45.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>50</b></td>
       <td class="num muted">10</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot red"></span><span class="bl">Critical</span></td>
+      <td><span class="bl red">Critical</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Maintenance jobs closed within SLA</b><div class="src">Maintenance jobs closed within the agreed turnaround</div></td>
       <td class="num">55%</td>
       <td class="num muted">90%</td>
-      <td class="num"><b>61.1</b></td>
+      <td class="mt"><span class="meter amber" title="61.1 / 100">
+    <i style="width:55.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>61.1</b></td>
       <td class="num muted">10</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">At risk</span></td>
+      <td><span class="bl amber">At risk</span></td>
     </tr></tbody>
       </table>
       
@@ -869,7 +1112,7 @@ tr.sim:hover td{background:#F9F7EF}
     <section class="card" id="sec-analytics">
       <div class="sec-head">
         <div>
-          <h2><span class="dot green"></span>Business Analytics — Blue &amp; SLA</h2>
+          <h2><span class="dot green"></span>Business Analytics</h2>
           <div class="q">Are the actions the business agreed to actually being closed, and is the data under every number in this report trustworthy?</div>
         </div>
         <div class="sec-score">
@@ -885,55 +1128,67 @@ tr.sim:hover td{background:#F9F7EF}
       </div>
       <p class="comm">Blue is the system of record for actions and it does not reach this report — no ticket export exists, so SLA, backlog and ageing all leave the denominator and this section is scored on just over half its weight. What is real is data trust: nine of twelve sources reached the report and two are running behind the money, which the health cron raised by itself and will clear by itself. The one SLA register that does exist is the Campaign Manager&#39;s own P1–P4 blockage clock.</p>
       <table class="ft">
-        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody><tr class="">
       <td class="fx"><b>Blue tickets closed within SLA</b><div class="src">Blue has no export into AgentOS — [INPUT REQUIRED]. Factor leaves the denominator</div></td>
       <td class="num">—</td>
       <td class="num muted">—</td>
-      <td class="num"><b>—</b></td>
+      <td class="mt"><span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>—</b></td>
       <td class="num muted">20</td>
       <td><span class="pill absent">No feed</span></td>
-      <td><span class="dot grey"></span><span class="bl">Not measured</span></td>
+      <td><span class="bl grey">Not measured</span></td>
     </tr><tr class="">
       <td class="fx"><b>Open ticket backlog</b><div class="src">Blue open-ticket count — no feed</div></td>
       <td class="num">—</td>
       <td class="num muted">—</td>
-      <td class="num"><b>—</b></td>
+      <td class="mt"><span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>—</b></td>
       <td class="num muted">15</td>
       <td><span class="pill absent">No feed</span></td>
-      <td><span class="dot grey"></span><span class="bl">Not measured</span></td>
+      <td><span class="bl grey">Not measured</span></td>
     </tr><tr class="">
       <td class="fx"><b>Tickets open over 7 days</b><div class="src">Blue tickets open beyond 7 days — no feed</div></td>
       <td class="num">—</td>
       <td class="num muted">—</td>
-      <td class="num"><b>—</b></td>
+      <td class="mt"><span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>—</b></td>
       <td class="num muted">10</td>
       <td><span class="pill absent">No feed</span></td>
-      <td><span class="dot grey"></span><span class="bl">Not measured</span></td>
+      <td><span class="bl grey">Not measured</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Campaign blockages closed within SLA</b><div class="src">Campaign Manager P1–P4 blockage clocks (CM_SLA_DEFAULTS) — the only SLA register in the suite today</div></td>
       <td class="num">74%</td>
       <td class="num muted">90%</td>
-      <td class="num"><b>82.2</b></td>
-      <td class="num muted">15 <span class="eff">→27.3</span></td>
+      <td class="mt"><span class="meter green" title="82.2 / 100">
+    <i style="width:74.7%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>82.2</b></td>
+      <td class="num muted">15<span class="eff">→27.3</span></td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="">
       <td class="fx"><b>Source freshness (sources current, no stale feed)</b><div class="src">Nine of eleven Data Trust sources current; dialler a day behind, QA two days. Alerts live in kv:health-alerts and clear themselves when the condition ends</div></td>
       <td class="num">82%</td>
       <td class="num muted">—</td>
-      <td class="num"><b>82</b></td>
-      <td class="num muted">25 <span class="eff">→45.5</span></td>
+      <td class="mt"><span class="meter green" title="82 / 100">
+    <i style="width:74.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>82</b></td>
+      <td class="num muted">25<span class="eff">→45.5</span></td>
       <td><span class="pill actual">Actual</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Governed reports delivered on time</b><div class="src">Governed reports delivered against the reporting calendar</div></td>
       <td class="num">80%</td>
       <td class="num muted">100%</td>
-      <td class="num"><b>80</b></td>
-      <td class="num muted">15 <span class="eff">→27.3</span></td>
+      <td class="mt"><span class="meter green" title="80 / 100">
+    <i style="width:72.7%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>80</b></td>
+      <td class="num muted">15<span class="eff">→27.3</span></td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr></tbody>
       </table>
       
@@ -957,47 +1212,57 @@ tr.sim:hover td{background:#F9F7EF}
       </div>
       <p class="comm">Measured on demand, not on artwork volume, per module 09. Lead delivery is 79% of plan and lead-to-sale conversion is 3.6% against a 5% ambition — but source attribution does not reach the sale, so nobody can yet say which supplier is carrying the floor and which is being paid for nothing. The 14-field lead asset model exists on paper; until it is enforced at ingest, cost per qualified lead is an estimate.</p>
       <table class="ft">
-        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody><tr class="sim">
       <td class="fx"><b>Content delivered on brief and on time</b><div class="src">Content delivered on brief and on time against the weekly planning minimum</div></td>
       <td class="num">76%</td>
       <td class="num muted">95%</td>
-      <td class="num"><b>80</b></td>
+      <td class="mt"><span class="meter green" title="80 / 100">
+    <i style="width:72.7%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>80</b></td>
       <td class="num muted">20</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Leads delivered vs plan</b><div class="src">Lead rows loaded against plan, per the 14-field lead asset model</div></td>
       <td class="num">41,200</td>
       <td class="num muted">52,000</td>
-      <td class="num"><b>79.2</b></td>
+      <td class="mt"><span class="meter green" title="79.2 / 100">
+    <i style="width:72.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>79.2</b></td>
       <td class="num muted">25</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Lead-to-sale conversion by source</b><div class="src">BI sales ÷ leads allocated. Partially computable today — the conversion is real, the source attribution is not</div></td>
       <td class="num">3.6%</td>
       <td class="num muted">5%</td>
-      <td class="num"><b>72</b></td>
+      <td class="mt"><span class="meter amber" title="72 / 100">
+    <i style="width:65.5%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>72</b></td>
       <td class="num muted">25</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Recruitment applications generated</b><div class="src">GHL applications attributed to a marketing campaign</div></td>
       <td class="num">143</td>
       <td class="num muted">180</td>
-      <td class="num"><b>79.4</b></td>
+      <td class="mt"><span class="meter green" title="79.4 / 100">
+    <i style="width:72.2%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>79.4</b></td>
       <td class="num muted">15</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot green"></span><span class="bl">Healthy</span></td>
+      <td><span class="bl green">Healthy</span></td>
     </tr><tr class="sim">
       <td class="fx"><b>Cost per qualified lead</b><div class="src">Spend ÷ qualified leads, in rand</div></td>
       <td class="num">R5</td>
       <td class="num muted">R4</td>
-      <td class="num"><b>72.9</b></td>
+      <td class="mt"><span class="meter amber" title="72.9 / 100">
+    <i style="width:66.3%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>72.9</b></td>
       <td class="num muted">15</td>
       <td><span class="pill simulated">Simulated</span></td>
-      <td><span class="dot amber"></span><span class="bl">Watch</span></td>
+      <td><span class="bl amber">Watch</span></td>
     </tr></tbody>
       </table>
       
@@ -1007,18 +1272,18 @@ tr.sim:hover td{background:#F9F7EF}
     <h2>Data trust</h2>
     <div class="q">The sources never end on the same day. This is where each one stops, as at 17 September 2026.</div>
     <div class="src-row"><div class="src-chip ok">
-      <b>Agent List (roster)</b><span>15 Sep · current</span></div><div class="src-chip ok">
-      <b>BI Active Cases (money)</b><span>14 Sep</span></div><div class="src-chip ok">
-      <b>Attendance register</b><span>14 Sep</span></div><div class="src-chip stale">
-      <b>ViciDial call report</b><span>13 Sep</span></div><div class="src-chip stale">
-      <b>QA evaluations</b><span>12 Sep</span></div><div class="src-chip ok">
-      <b>SF Inactive (cancellations)</b><span>14 Sep</span></div><div class="src-chip ok">
-      <b>Open Cases (lake)</b><span>14 Sep</span></div><div class="src-chip ok">
-      <b>Coaching Hub</b><span>13 Sep</span></div><div class="src-chip down">
-      <b>GHL (recruitment)</b><span>no feed</span></div><div class="src-chip down">
-      <b>Blue (tickets/actions)</b><span>no feed</span></div><div class="src-chip down">
-      <b>LMS (training)</b><span>no feed</span></div><div class="src-chip down">
-      <b>Payscale / Xero (finance)</b><span>no feed</span></div></div>
+      <b><span class="dot green"></span>Agent List (roster)</b><span>15 Sep · current</span></div><div class="src-chip ok">
+      <b><span class="dot green"></span>BI Active Cases (money)</b><span>14 Sep</span></div><div class="src-chip ok">
+      <b><span class="dot green"></span>Attendance register</b><span>14 Sep</span></div><div class="src-chip stale">
+      <b><span class="dot amber"></span>ViciDial call report</b><span>13 Sep</span></div><div class="src-chip stale">
+      <b><span class="dot amber"></span>QA evaluations</b><span>12 Sep</span></div><div class="src-chip ok">
+      <b><span class="dot green"></span>SF Inactive (cancellations)</b><span>14 Sep</span></div><div class="src-chip ok">
+      <b><span class="dot green"></span>Open Cases (lake)</b><span>14 Sep</span></div><div class="src-chip ok">
+      <b><span class="dot green"></span>Coaching Hub</b><span>13 Sep</span></div><div class="src-chip down">
+      <b><span class="dot red"></span>GHL (recruitment)</b><span>no feed</span></div><div class="src-chip down">
+      <b><span class="dot red"></span>Blue (tickets/actions)</b><span>no feed</span></div><div class="src-chip down">
+      <b><span class="dot red"></span>LMS (training)</b><span>no feed</span></div><div class="src-chip down">
+      <b><span class="dot red"></span>Payscale / Xero (finance)</b><span>no feed</span></div></div>
     <p class="comm" style="margin-top:11px">Nine of twelve sources reach the report; three have never been connected. Two are running behind the money: the dialler is a day back and QA two days, so talk time and QA in this issue describe the week to 12–13 September while the money describes the month to 14 September. That is normal — the sources have never ended on the same day — but a figure is never moved to make two windows agree.</p>
   </section>
 

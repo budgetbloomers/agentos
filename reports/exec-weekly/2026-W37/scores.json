@@ -3,7 +3,7 @@
   "rules": "exec-scorecard-1.0",
   "period": "Week 37 · 7–13 September 2026 (money and attendance month-to-date to 14 Sep)",
   "business": {
-    "score": 77.4,
+    "score": 77.5,
     "band": {
       "label": "Healthy",
       "min": 75,
@@ -11,7 +11,7 @@
     },
     "weightScored": 100,
     "weightDeclared": 100,
-    "evidence": 23.2
+    "evidence": 23.9
   },
   "sections": {
     "performance": {
@@ -137,39 +137,49 @@
       }
     },
     "lrc": {
-      "score": 56.2,
+      "score": 57.6,
       "band": "At risk",
       "weight": 7,
       "coverage": 100,
-      "measured": 0,
+      "measured": 10,
       "factors": {
         "criticalFails": {
           "score": 40,
           "basis": "simulated",
-          "effW": 25
+          "effW": 15
         },
         "r2aShare": {
           "score": 43.5,
           "basis": "simulated",
-          "effW": 20
-        },
-        "caseSla": {
-          "score": 68.9,
-          "basis": "simulated",
-          "effW": 20
-        },
-        "caseAgeing": {
-          "score": 45,
-          "basis": "simulated",
           "effW": 15
-        },
-        "ccmaExposure": {
-          "score": 70,
-          "basis": "simulated",
-          "effW": 10
         },
         "popia": {
           "score": 100,
+          "basis": "simulated",
+          "effW": 15
+        },
+        "riskRegister": {
+          "score": 65,
+          "basis": "simulated",
+          "effW": 15
+        },
+        "systemsControlled": {
+          "score": 0,
+          "basis": "manual",
+          "effW": 10
+        },
+        "contractsCurrent": {
+          "score": 78,
+          "basis": "simulated",
+          "effW": 10
+        },
+        "auditActions": {
+          "score": 55,
+          "basis": "simulated",
+          "effW": 10
+        },
+        "legalMatters": {
+          "score": 70,
           "basis": "simulated",
           "effW": 10
         }

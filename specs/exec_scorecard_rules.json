@@ -259,21 +259,19 @@
     },
     {
       "k": "lrc",
-      "label": "LRC — Labour Relations & Compliance",
+      "label": "LRC — Legal, Risk & Compliance",
       "weight": 7,
       "owner": "Jared — Risk & Compliance Executive (P04)",
       "exec": "Jared — Risk & Compliance Executive (P04)",
-      "question": "Is every case being run properly and on time, and what is our exposure?",
-      "_kbNote": "TCB-KB-V3 carries NO labour-relations content — no IR process, no CCMA register, no grievance SLA. Every target here is a placeholder until Jared signs one. The two QA-derived factors are real today.",
+      "question": "Is the business legally covered, are its risks owned and closing, and is the floor behaving compliantly on the call?",
+      "_kbNote": "LRC is LEGAL, RISK AND COMPLIANCE (Nick, 2026-09-17) — not labour relations. Employee discipline lives in Workforce, where the volume is counted; a dismissal that becomes a legal matter arrives here as one. Two factors are real today off the QA export (critical fails, R2A tier share) and one off the governance register (systems at G4). The legal and risk registers themselves have no feed.",
       "factors": [
         {
           "k": "criticalFails",
           "label": "Open critical compliance fails",
-          "w": 25,
+          "w": 15,
           "scale": "band",
           "unit": "int",
-          "source": "KPI open_criticals — escalation_decision in $qaCritical, status not closed",
-          "system": "AgentOS Discipline KPIs",
           "bands": [
             {
               "min": 8,
@@ -295,34 +293,48 @@
               "min": 0,
               "score": 100
             }
-          ]
+          ],
+          "source": "KPI open_criticals — escalation decision in $qaCritical, status not closed. Compliance behaviour on the call, from QA",
+          "system": "AgentOS Discipline KPIs (computable today)"
         },
         {
           "k": "r2aShare",
           "label": "Floor in R2A tier 2 or 3 (compliance risk)",
-          "w": 20,
+          "w": 15,
           "scale": "targetDown",
           "unit": "pct",
-          "source": "R2A tier = higher of count band and rate band (composite_rules r2aTiers). Classifies only — penalty is 0 by rule since 2026-09-11",
-          "system": "PULSE / AgentOS NBA engine"
+          "source": "R2A tier = higher of count band and rate band (composite_rules r2aTiers). Classifies and blocks Elite; since 2026-09-11 it deducts nothing from a score",
+          "system": "PULSE / AgentOS NBA engine (computable today)"
         },
         {
-          "k": "caseSla",
-          "label": "IR cases closed within SLA",
-          "w": 20,
-          "scale": "target",
-          "unit": "pct",
-          "source": "IR case register",
-          "system": "[INPUT REQUIRED — no IR register exists]"
-        },
-        {
-          "k": "caseAgeing",
-          "label": "IR cases open over 30 days",
+          "k": "popia",
+          "label": "POPIA & data incidents",
           "w": 15,
           "scale": "band",
           "unit": "int",
-          "source": "IR case register ageing",
-          "system": "[INPUT REQUIRED]",
+          "bands": [
+            {
+              "min": 2,
+              "score": 0
+            },
+            {
+              "min": 1,
+              "score": 50
+            },
+            {
+              "min": 0,
+              "score": 100
+            }
+          ],
+          "source": "Reported data incidents in the period. Masking defaults on across the suite and every app sits behind its own login",
+          "system": "Incident register — [INPUT REQUIRED]"
+        },
+        {
+          "k": "riskRegister",
+          "label": "High or critical risks open past their due date",
+          "w": 15,
+          "scale": "band",
+          "unit": "int",
           "bands": [
             {
               "min": 10,
@@ -344,57 +356,67 @@
               "min": 0,
               "score": 100
             }
-          ]
+          ],
+          "source": "Risk register items rated high/critical whose mitigation date has passed",
+          "system": "Risk register — [INPUT REQUIRED]"
         },
         {
-          "k": "ccmaExposure",
-          "label": "CCMA referrals in period",
+          "k": "systemsControlled",
+          "label": "Registered systems live and controlled (G4)",
+          "w": 10,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Share of the 13 registered systems at G4. The canonical register (Operating System Governance v1.1, 2026-07-02) reads 10 red, 2 amber, 1 grey, ZERO at G4, 27 open actions",
+          "system": "System register (human-maintained; re-date it and this factor moves)"
+        },
+        {
+          "k": "contractsCurrent",
+          "label": "Client & supplier contracts current and signed",
+          "w": 10,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Agreements in force with a signed, in-date contract on file",
+          "system": "Legal register — [INPUT REQUIRED]"
+        },
+        {
+          "k": "auditActions",
+          "label": "Governance & audit actions closed on time",
+          "w": 10,
+          "scale": "target",
+          "unit": "pct",
+          "source": "Actions raised by an audit, a review or a council, closed by their due date",
+          "system": "Blue action register — [INPUT REQUIRED]"
+        },
+        {
+          "k": "legalMatters",
+          "label": "Open legal matters and disputes",
           "w": 10,
           "scale": "band",
           "unit": "int",
-          "source": "CCMA register",
-          "system": "[INPUT REQUIRED]",
           "bands": [
+            {
+              "min": 5,
+              "score": 25
+            },
             {
               "min": 3,
-              "score": 20
-            },
-            {
-              "min": 2,
-              "score": 45
-            },
-            {
-              "min": 1,
-              "score": 70
-            },
-            {
-              "min": 0,
-              "score": 100
-            }
-          ]
-        },
-        {
-          "k": "popia",
-          "label": "POPIA / data incidents",
-          "w": 10,
-          "scale": "band",
-          "unit": "int",
-          "source": "Incident register",
-          "system": "[INPUT REQUIRED]",
-          "bands": [
-            {
-              "min": 2,
-              "score": 0
-            },
-            {
-              "min": 1,
               "score": 50
             },
             {
+              "min": 2,
+              "score": 70
+            },
+            {
+              "min": 1,
+              "score": 85
+            },
+            {
               "min": 0,
               "score": 100
             }
-          ]
+          ],
+          "source": "Live disputes, claims and matters with attorneys instructed — whatever their origin, including an employment matter that has become legal",
+          "system": "Legal register — [INPUT REQUIRED]"
         }
       ]
     },
@@ -662,7 +684,7 @@
     },
     {
       "k": "analytics",
-      "label": "Business Analytics — Blue & SLA",
+      "label": "Business Analytics",
       "weight": 6,
       "owner": "Ryan — Data & Lead Intelligence (P08)",
       "exec": "Nicholas Pillay — CTTO (P02)",
@@ -783,6 +805,7 @@
     }
   ],
   "redIssueFormat": [
+    "section",
     "issue",
     "impact",
     "evidence",
@@ -791,7 +814,7 @@
     "due",
     "escalation"
   ],
-  "_redIssueNote": "Mandatory format from KB module 08. A section scoring below the 'Watch' band must produce at least one red-issue row, or the report is not governed.",
+  "_redIssueNote": "Mandatory format from KB module 08, with the section it belongs to in front so the guard can prove the link rather than matching on words. A section below the 'Watch' band must produce at least one red-issue row naming it, or the report is not governed.",
   "_changes": [
     {
       "date": "2026-09-17",
@@ -816,7 +839,59 @@
       "from": "targetDown on zero-target counts",
       "to": "step bands on criticalFails, caseAgeing, ccmaExposure, popia, openP1, hsIncidents",
       "why": "target ÷ value collapses to 0 for every value when the target is 0 — one open critical fail and eight scored the same."
+    },
+    {
+      "date": "2026-09-17",
+      "by": "Nick",
+      "key": "sections.lrc",
+      "from": "LRC read as Labour Relations & Compliance",
+      "to": "LRC is Legal, Risk & Compliance — factors rebuilt around legal matters, the risk register, governance/audit actions and system control, keeping the two real QA-derived compliance signals",
+      "why": "\"LRC is Legal, Risk and Compliance\". The labour-relations reading put IR cases and CCMA in a section that was never about them; employee discipline stays in Workforce."
+    },
+    {
+      "date": "2026-09-17",
+      "by": "Nick",
+      "key": "sections.analytics.label",
+      "from": "Business Analytics — Blue & SLA",
+      "to": "Business Analytics",
+      "why": "\"Change the Business Analytics section to just Business Analytics\" — the tooling it happens to read from does not belong in the section's name."
+    },
+    {
+      "date": "2026-09-17",
+      "by": "Nick",
+      "key": "viz",
+      "from": "tables and pills only",
+      "to": "validated chart palette + meters, factor bars and campaign bars",
+      "why": "\"make each of the views more graphical and colour coordinated\". Palette validated with the dataviz validator, not by eye: the VAS dark-theme campaign hues fail every contrast check on a white page."
     }
   ],
-  "_bandScaleNote": "A count whose target is ZERO cannot be scored as value ÷ target — one incident would read 0 and two would read 0, and the report could not tell a wobble from a crisis. Those factors carry step BANDS in this file instead, first match wins, listed high to low: the rule book says what one critical fail is worth and what eight are worth, and the generator only looks it up."
+  "_bandScaleNote": "A count whose target is ZERO cannot be scored as value ÷ target — one incident would read 0 and two would read 0, and the report could not tell a wobble from a crisis. Those factors carry step BANDS in this file instead, first match wins, listed high to low: the rule book says what one critical fail is worth and what eight are worth, and the generator only looks it up.",
+  "viz": {
+    "_note": "Presentation parameters for the report, validated rather than eyeballed. Campaign hues are an IDENTITY channel (a dot beside the name); the bars themselves are one hue, because their job is magnitude — colouring a bar by its own length double-encodes it. Status colours mean state and are never used for a series.",
+    "_validated": "node scripts/validate_palette.js \"#2563EB,#0E8C74,#C2410C,#7C4DE0,#BE1D74\" --mode light --surface \"#FFFFFF\" — 5/5 checks pass (lightness band, chroma floor, CVD separation, normal-vision floor, contrast). The VAS dark-theme campaign hues (#4C9DFF/#2BD9B0/#A78BFA) FAIL on a white surface: too light, and every slot under 3:1. These are their light-surface steps, same hue families.",
+    "campaigns": {
+      "Cuddle": "#2563EB",
+      "Courtesy": "#0E8C74",
+      "Nesting": "#C2410C",
+      "VT": "#7C4DE0",
+      "Download & Test": "#BE1D74"
+    },
+    "campaignFallback": "#71809B",
+    "magnitude": "#2563EB",
+    "magnitudeTrack": "#E8EFFB",
+    "status": {
+      "green": "#158A4C",
+      "amber": "#B45309",
+      "red": "#C42D2D",
+      "grey": "#8FA0B8"
+    },
+    "statusTrack": {
+      "green": "#E6F6ED",
+      "amber": "#FCF0DD",
+      "red": "#FBE9E9",
+      "grey": "#EEF2F8"
+    },
+    "_statusNote": "Status fills are the darker text-safe steps (all ≥3:1 on white) and the track is the lighter step of the same ramp, so the state reads across the whole bar. A status colour never carries meaning alone on this page — every bar is labelled with its band.",
+    "scaleMax": 110
+  }
 }

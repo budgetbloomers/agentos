@@ -196,6 +196,48 @@ const BASIS_LABEL = {
 const arrow = d => (d === null || d === undefined ? '' : d > 0.05 ? '▲' : d < -0.05 ? '▼' : '▬');
 const deltaCls = d => (d === null || d === undefined ? 'flat' : d > 0.05 ? 'up' : d < -0.05 ? 'down' : 'flat');
 
+/* ------------------------------------------------------------------- charts --
+   Four marks, and the rule book supplies every colour (viz block, validated with
+   the dataviz validator rather than by eye).
+
+   METER — a section or factor score against 100. The prescribed form for "a
+   single ratio against a limit": the fill carries the severity, the track is a
+   lighter step of the SAME ramp so the state reads across the whole bar, and a
+   hairline tick sits at 100 so over- and under-target are read against the
+   target, not against the end of the bar.
+
+   MAGNITUDE BAR — a breakout row's % of target. ONE hue for every bar, because
+   the job is magnitude: colouring a bar by its own length double-encodes what
+   the length already says, and burns the only free channel.
+
+   IDENTITY DOT — the campaign's own hue beside its name. Colour follows the
+   entity, never its rank, so a campaign keeps its hue wherever it appears.
+
+   No script on this page, so hover is the native `title` tooltip. Every mark
+   carries one, and every value is also in the table cell beside it — the mark is
+   never the only place a number exists. */
+let VIZ = {};
+
+function meter(score, rag, opts = {}) {
+  const max = VIZ.scaleMax || 110;
+  const w = score === null ? 0 : Math.max(0, Math.min(100, (score / max) * 100));
+  const tick = (100 / max) * 100;
+  return `<span class="meter ${rag}${opts.sm ? ' sm' : ''}" title="${score === null ? 'not measured' : score + ' / 100'}">
+    <i style="width:${w.toFixed(1)}%"></i><b style="left:${tick.toFixed(1)}%"></b></span>`;
+}
+
+function magBar(pct, opts = {}) {
+  if (pct === null || pct === undefined) return '';
+  const max = opts.max || 120;
+  const w = Math.max(0, Math.min(100, (pct / max) * 100));
+  const tick = (100 / max) * 100;
+  return `<span class="mag" title="${pct}% of target"><i style="width:${w.toFixed(1)}%"></i><b style="left:${tick.toFixed(1)}%"></b></span>`;
+}
+
+function dot(hue, label) {
+  return hue ? `<span class="idot" style="background:${hue}" title="${esc(label)}"></span>` : '';
+}
+
 /* The suite's logo lives once, in agent/index.html. Read it at build time rather
    than keeping a second copy of a 31 KB asset in the repo (ponytail rule). */
 function logoDataUri() {
@@ -217,21 +259,33 @@ function factorRows(sec) {
       <td class="fx"><b>${esc(f.label)}</b><div class="src">${esc(rd.source || f.source || '')}</div></td>
       <td class="num">${fmt(rd.value, f.unit)}</td>
       <td class="num muted">${rd.target === undefined || rd.target === null ? '—' : fmt(rd.target, f.unit)}</td>
-      <td class="num"><b>${score === null ? '—' : score}</b></td>
-      <td class="num muted">${f.w}${r.counts && r.effW !== f.w ? ` <span class="eff">→${r.effW}</span>` : ''}</td>
+      <td class="mt">${meter(score, b.rag)}</td>
+      <td class="num sc"><b>${score === null ? '—' : score}</b></td>
+      <td class="num muted">${f.w}${r.counts && r.effW !== f.w ? `<span class="eff">→${r.effW}</span>` : ''}</td>
       <td><span class="pill ${basis}">${BASIS_LABEL[basis] || basis}</span></td>
-      <td>${ragDot(b.rag)}<span class="bl">${esc(b.label)}</span></td>
+      <td><span class="bl ${b.rag}">${esc(b.label)}</span></td>
     </tr>`;
   }).join('');
 }
 
 function breakoutTable(bo) {
   if (!bo || !bo.rows?.length) return '';
+  const bars = bo.bars || [];
+  const hues = bo.hues || [];
+  const barMax = bo.barMax || (bars.length ? Math.max(120, ...bars.filter(Number.isFinite)) : 120);
+  const withBar = bars.some(v => v !== null && v !== undefined);
   return `<div class="bo">
     <div class="bo-h">${esc(bo.title)}${bo.basis ? ` <span class="pill ${bo.basis}">${BASIS_LABEL[bo.basis] || bo.basis}</span>` : ''}</div>
     ${bo.note ? `<div class="bo-n">${esc(bo.note)}</div>` : ''}
-    <table class="bt"><thead><tr>${bo.cols.map((c, i) => `<th class="${i ? 'num' : ''}">${esc(c)}</th>`).join('')}</tr></thead>
-    <tbody>${bo.rows.map(r => `<tr>${r.map((c, i) => `<td class="${i ? 'num' : ''}">${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>
+    <table class="bt"><thead><tr>
+      ${bo.cols.map((c, i) => `<th class="${i ? 'num' : ''}">${esc(c)}</th>`).join('')}
+      ${withBar ? `<th class="bar-h">${esc(bo.barLabel || '')}</th>` : ''}
+    </tr></thead>
+    <tbody>${bo.rows.map((r, ri) => `<tr>${r.map((c, i) => i === 0
+      ? `<td>${dot(hues[ri], r[0])}${esc(c)}</td>`
+      : `<td class="num">${esc(c)}</td>`).join('')}
+      ${withBar ? `<td class="bar-c">${magBar(bars[ri], { max: barMax })}</td>` : ''}</tr>`).join('')}
+    </tbody></table>
   </div>`;
 }
 
@@ -240,17 +294,25 @@ let BANDS = [];
 function renderHTML(model) {
   const { meta, business, sections, data, rules } = model;
   const logo = logoDataUri();
+  VIZ = rules.viz || {};
+  const V = VIZ;
+  /* One place decides a colour: the rule book. The template only names the token. */
+  const vizVars = [
+    `--mag:${V.magnitude || '#2563EB'}`, `--mag-t:${V.magnitudeTrack || '#E8EFFB'}`,
+    ...Object.entries(V.status || {}).map(([k, v]) => `--st-${k}:${v}`),
+    ...Object.entries(V.statusTrack || {}).map(([k, v]) => `--st-${k}-t:${v}`)
+  ].join(';');
 
   const kpiCards = sections.map(s => {
     const d = data.previous?.sections?.[s.k];
     const delta = d === undefined || s.score === null ? null : round1(s.score - d);
     return `<a class="kpi" href="#sec-${s.k}">
-      <div class="kpi-top"><span class="kpi-w">${s.weight}%</span>${ragDot(s.band.rag)}</div>
+      <div class="kpi-top"><span class="kpi-w">${s.weight}% of business</span>${ragDot(s.band.rag)}</div>
       <div class="kpi-name">${esc(s.label)}</div>
-      <div class="kpi-val">${s.score === null ? '—' : s.score}<span class="unit">/100</span></div>
-      <div class="kpi-sub">${esc(s.band.label)}
-        ${delta === null ? '' : `<span class="delta ${deltaCls(delta)}">${arrow(delta)} ${Math.abs(delta)}</span>`}
-      </div>
+      <div class="kpi-val">${s.score === null ? '—' : s.score}<span class="unit">/100</span>
+        ${delta === null ? '' : `<span class="delta ${deltaCls(delta)}">${arrow(delta)} ${Math.abs(delta)}</span>`}</div>
+      ${meter(s.score, s.band.rag)}
+      <div class="kpi-sub"><span class="bl ${s.band.rag}">${esc(s.band.label)}</span></div>
       <div class="kpi-cov"><span style="width:${s.coverage}%"></span><i style="width:${s.realCoverage}%"></i></div>
       <div class="kpi-cov-l">${s.realCoverage}% measured · ${s.coverage}% scored</div>
     </a>`;
@@ -276,19 +338,22 @@ function renderHTML(model) {
       </div>
       ${data.sections[s.k]?.commentary ? `<p class="comm">${esc(data.sections[s.k].commentary)}</p>` : ''}
       <table class="ft">
-        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody>${factorRows(s)}</tbody>
       </table>
       ${(data.sections[s.k]?.breakouts || []).map(breakoutTable).join('')}
     </section>`).join('');
 
+  const secLabel = Object.fromEntries(sections.map(s => [s.k, s.label]));
   const reds = (data.redIssues || []).map(r => `<tr>
-      <td><b>${esc(r.issue)}</b></td><td>${esc(r.impact)}</td><td class="ev">${esc(r.evidence)}</td>
+      <td><b>${esc(r.issue)}</b>${r.section ? `<div class="rsec">${esc(secLabel[r.section] || r.section)}</div>` : ''}</td>
+      <td>${esc(r.impact)}</td><td class="ev">${esc(r.evidence)}</td>
       <td>${esc(r.owner)}</td><td>${esc(r.action)}</td><td class="num">${esc(r.due)}</td><td>${esc(r.escalation)}</td>
     </tr>`).join('');
 
+  const SRC_RAG = { ok: 'green', stale: 'amber', down: 'red' };
   const sources = (data.sources || []).map(s => `<div class="src-chip ${s.state || 'ok'}">
-      <b>${esc(s.name)}</b><span>${esc(s.endsOn || '—')}</span></div>`).join('');
+      <b>${ragDot(SRC_RAG[s.state] || 'grey')}${esc(s.name)}</b><span>${esc(s.endsOn || '—')}</span></div>`).join('');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -322,6 +387,44 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:var(--bg);co
 .wrap{max-width:1180px;margin:0 auto;padding:22px 22px 60px}
 a{color:var(--blue)}
 
+/* ---------- chart marks ----------
+   Thin marks, a 4px rounded data-end anchored square to the baseline, a hairline
+   target tick, recessive tracks. Status fills are the text-safe steps (>=3:1 on
+   white); each track is the lighter step of the SAME ramp, so the state reads
+   across the whole bar and not only where it is filled. */
+.meter{position:relative;display:block;height:8px;border-radius:5px;background:var(--st-grey-t);overflow:hidden;margin:9px 0 7px}
+.meter.sm{height:6px;margin:0}
+.meter i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0;background:var(--st-grey);transition:none}
+.meter.green{background:var(--st-green-t)} .meter.green i{background:var(--st-green)}
+.meter.amber{background:var(--st-amber-t)} .meter.amber i{background:var(--st-amber)}
+.meter.red{background:var(--st-red-t)}     .meter.red i{background:var(--st-red)}
+/* the target tick: 100 is the limit the fill is read against, not the bar's end */
+.meter b{position:absolute;top:-1px;bottom:-1px;width:1px;background:rgba(15,30,54,.34)}
+.mag{position:relative;display:block;height:8px;min-width:90px;border-radius:5px;background:var(--mag-t);overflow:hidden}
+.mag i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0;background:var(--mag)}
+.mag b{position:absolute;top:-1px;bottom:-1px;width:1px;background:rgba(15,30,54,.3)}
+.idot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:middle;flex:none}
+td.mt{width:118px;padding-right:14px;vertical-align:top}
+td.mt .meter{margin:5px 0 0}
+td.bar-c .mag{margin:5px 0 0}
+th.mt-h{width:118px}
+td.sc{width:46px}
+td.bar-c{width:120px;vertical-align:top}
+th.bar-h{width:120px}
+
+/* ---------- the section strip ---------- */
+.strip-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px 16px 11px;margin-bottom:12px}
+.strip-h{font-size:12px;font-weight:800;color:var(--body);display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;margin-bottom:9px}
+.strip-h span{font-weight:500;color:var(--muted);font-size:11.5px}
+.strip{display:flex;gap:2px;height:58px;align-items:flex-end}
+.seg{position:relative;display:block;height:100%;border-radius:4px;background:var(--st-grey-t);overflow:hidden}
+.seg.green{background:var(--st-green-t)}.seg.amber{background:var(--st-amber-t)}.seg.red{background:var(--st-red-t)}
+.seg i{position:absolute;left:0;right:0;bottom:0;background:var(--st-grey);border-radius:4px 4px 0 0}
+.seg.green i{background:var(--st-green)}.seg.amber i{background:var(--st-amber)}.seg.red i{background:var(--st-red)}
+.seg em{position:absolute;left:0;right:0;top:4px;text-align:center;font-style:normal;font-size:9.5px;font-weight:800;color:var(--ink);opacity:.5}
+.strip-l{display:flex;gap:2px;margin-top:5px}
+.strip-l span{font-size:9px;color:var(--muted);text-align:center;line-height:1.25;overflow:hidden;letter-spacing:-.01em}
+
 /* ---------- masthead ---------- */
 .mast{background:var(--navy);border-radius:var(--radius);padding:22px 24px;color:#fff;position:relative;overflow:hidden;margin-bottom:14px}
 .mast::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(680px 320px at 92% -40%,rgba(56,189,248,.22),transparent 62%)}
@@ -338,6 +441,8 @@ a{color:var(--blue)}
 .big-band.amber{background:rgba(251,191,36,.16);color:#FCD34D}
 .big-band.red{background:rgba(251,113,133,.16);color:#FDA4AF}
 .big-band.grey{background:rgba(148,182,255,.14);color:#C6D3E8}
+.mast-meter{margin-top:9px;width:190px;margin-left:auto}
+.mast-meter .meter{background:rgba(255,255,255,.16)}
 .mast-note{position:relative;margin-top:14px;font-size:12.5px;color:#C7D6EE;max-width:74ch;line-height:1.55}
 .mast-note b{color:#fff}
 .mast-bar{position:relative;display:flex;gap:16px;flex-wrap:wrap;margin-top:13px;padding-top:12px;border-top:1px solid rgba(255,255,255,.13);font-size:11.5px;color:#9FB6DA}
@@ -350,9 +455,9 @@ a{color:var(--blue)}
 .kpi-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .kpi-w{font-size:10px;font-weight:800;letter-spacing:.09em;color:var(--muted);text-transform:uppercase}
 .kpi-name{font-size:12px;font-weight:700;color:var(--body);line-height:1.25;min-height:30px}
-.kpi-val{font-size:27px;font-weight:800;letter-spacing:-.9px;font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:3px}
+.kpi-val{font-size:27px;font-weight:800;letter-spacing:-.9px;display:flex;align-items:baseline;gap:5px}
 .kpi-val .unit{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0}
-.kpi-sub{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-top:2px}
+.kpi-sub{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px}
 .delta{font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:12px}
 .delta.up{background:var(--green-soft);color:var(--green)}
 .delta.down{background:var(--red-soft);color:var(--red)}
@@ -369,7 +474,7 @@ a{color:var(--blue)}
 .sec-head{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:11px;margin-bottom:11px}
 .q{font-size:12.5px;color:var(--muted);margin-top:3px;max-width:78ch}
 .sec-score{margin-left:auto;text-align:right;flex:none}
-.ss-val{font-size:30px;font-weight:900;letter-spacing:-1.2px;font-variant-numeric:tabular-nums;line-height:1}
+.ss-val{font-size:30px;font-weight:900;letter-spacing:-1.2px;line-height:1}
 .ss-val span{font-size:13px;font-weight:700;color:var(--muted);letter-spacing:0}
 .ss-b{font-size:11px;font-weight:800;padding:2px 9px;border-radius:999px;display:inline-block;margin-top:5px}
 .ss-b.green{background:var(--green-soft);color:var(--green)}
@@ -403,7 +508,8 @@ tr.sim:hover td{background:#F9F7EF}
 .pill.absent{background:var(--grey-soft);color:var(--grey)}
 .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none;margin-right:7px}
 .dot.green{background:#34D399}.dot.amber{background:#FBBF24}.dot.red{background:#FB7185}.dot.grey{background:#C3CCDC}
-.bl{font-size:11.5px;font-weight:700;color:var(--body)}
+.bl{font-size:11.5px;font-weight:800;color:var(--body)}
+.bl.green{color:var(--green)}.bl.amber{color:var(--amber)}.bl.red{color:var(--red)}.bl.grey{color:var(--muted)}
 .bo{margin-top:13px;border:1px solid var(--line);border-radius:11px;overflow:hidden}
 .bo-h{background:#F7F9FD;padding:8px 11px;font-size:11.5px;font-weight:800;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
 .bo-n{padding:7px 11px 0;font-size:11px;color:var(--muted)}
@@ -414,16 +520,18 @@ tr.sim:hover td{background:#F9F7EF}
 /* ---------- red issues ---------- */
 .reds{border-left:3px solid var(--red)}
 .reds h2{color:var(--red)}
+.rsec{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--red);margin-top:4px}
 /* ---------- data trust ---------- */
 .src-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .src-chip{border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:11px;display:flex;flex-direction:column;gap:1px;background:#FAFCFF}
-.src-chip b{font-weight:700;font-size:11.5px}
+.src-chip b{font-weight:700;font-size:11.5px;display:flex;align-items:center}
 .src-chip span{color:var(--muted);font-size:10.5px}
 .src-chip.stale{border-color:#F3D9A6;background:#FEFBF4}
 .src-chip.down{border-color:#F0C9C9;background:#FEF6F6}
 .foot{font-size:11.5px;color:var(--muted);margin-top:18px;line-height:1.6;max-width:94ch}
 .foot b{color:var(--body)}
 @media print{
+  .meter i,.mag i,.seg i{print-color-adjust:exact;-webkit-print-color-adjust:exact}
   body{background:#fff;font-size:11px}
   .wrap{max-width:none;padding:0}
   .card,.kpi{box-shadow:none;break-inside:avoid}
@@ -437,7 +545,7 @@ tr.sim:hover td{background:#F9F7EF}
 }
 </style>
 </head>
-<body>
+<body style="${vizVars}">
 <div class="wrap">
 
   <header class="mast">
@@ -450,6 +558,7 @@ tr.sim:hover td{background:#F9F7EF}
       <div class="mast-right">
         <div class="big-score">${business.score === null ? '—' : business.score}<span>/100</span></div>
         <div class="big-band ${business.band.rag}">${esc(business.band.label)}</div>
+        <div class="mast-meter">${meter(business.score, business.band.rag)}</div>
       </div>
     </div>
     <div class="mast-note">${esc(meta.headline)}</div>
@@ -461,6 +570,15 @@ tr.sim:hover td{background:#F9F7EF}
       <span>Confidential · internal</span>
     </div>
   </header>
+
+  <section class="strip-card">
+    <div class="strip-h">Where the business score comes from<span>each block is a section, as wide as its share of the score</span></div>
+    <div class="strip">${sections.map(s => `<span class="seg ${s.band.rag}" style="flex:${s.weight}"
+        title="${esc(s.label)} — ${s.weight}% of the score, ${s.score === null ? 'not measured' : s.score + '/100'} (${esc(s.band.label)})">
+        <i style="height:${s.score === null ? 0 : Math.min(100, (s.score / (rules.viz?.scaleMax || 110)) * 100).toFixed(1)}%"></i>
+        <em>${s.weight}%</em></span>`).join('')}</div>
+    <div class="strip-l">${sections.map(s => `<span style="flex:${s.weight}">${esc(s.label.split(' — ')[0])}</span>`).join('')}</div>
+  </section>
 
   <div class="kpi-grid">${kpiCards}</div>
 

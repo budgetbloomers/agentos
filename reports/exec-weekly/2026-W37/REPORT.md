@@ -2,23 +2,23 @@
 
 **Week 37 · 7–13 September 2026 (money and attendance month-to-date to 14 Sep)** · issued Thursday 17 September 2026 · EXCO · The Chatterbox
 
-## Overall business health: 77.4/100 — Healthy
+## Overall business health: 77.5/100 — Healthy
 
-The selling floor is performing — GWP is on the engine's own target and the average sale is running well above the R89 planning value. Volume is the gap: 3,093 sales against 3,600. Everything around the floor is the real risk: 17 agents came off the 14 Sep list, LRC has no system of record at all, and three-quarters of this score still rests on placeholders rather than measured numbers. Fix the feeds before anyone quotes the overall figure outside this room.
+The selling floor is performing — GWP is on the engine's own target and the average sale is running well above the R89 planning value. Volume is the gap: 3,093 sales against 3,600. Everything around the floor is the real risk: 17 agents came off the 14 Sep list unreconciled, not one registered system is live and controlled, and three-quarters of this score still rests on placeholders rather than measured numbers. Fix the feeds before anyone quotes the overall figure outside this room.
 
-23.2% of the business score rests on a measured number; 100 of 100 points of section weight were scored. 129 agents on the 15 Sep Agent List
+23.9% of the business score rests on a measured number; 100 of 100 points of section weight were scored. 129 agents on the 15 Sep Agent List
 
 | Section | Weight | Score | Band | Measured | Owner |
 |---|---:|---:|---|---:|---|
 | Performance | 25% | 87.1 | Strong | 50% | Leon — Sales Ops (P10) |
 | Recruitment | 8% | 68.6 | Watch | 0% | Abigail — Recruitment & Workforce Ops Lead (P06) |
 | Workforce | 12% | 76.2 | Healthy | 60% | Keshree — HR Ops (P13) |
-| LRC — Labour Relations & Compliance | 7% | 56.2 | At risk | 0% | Jared — Risk & Compliance Executive (P04) |
+| LRC — Legal, Risk & Compliance | 7% | 57.6 | At risk | 10% | Jared — Risk & Compliance Executive (P04) |
 | Training — Nesting & Pipeline | 8% | 71.8 | Watch | 0% | Jojo & Pamela — Training Ops (P15/P16) |
 | IT — Dialler & Service | 10% | 83.7 | Healthy | 20% | Rishae — Tech Ops (P11) · Rogen — Dialler Ops (P14) |
 | Finance | 15% | 72.4 | Watch | 0% | Mekaeel — CFO (P03) · Romona — Finance Admin & Commission (P17) |
 | Facilities | 4% | 84.3 | Healthy | 0% | [INPUT REQUIRED — facilities owner unresolved; P18 COO/Delivery Exec vacant] |
-| Business Analytics — Blue & SLA | 6% | 81.5 | Healthy | 25% | Ryan — Data & Lead Intelligence (P08) |
+| Business Analytics | 6% | 81.5 | Healthy | 25% | Ryan — Data & Lead Intelligence (P08) |
 | Marketing | 5% | 76.6 | Healthy | 0% | Keshav — Marketing Ops (P07) |
 
 ## What an executive needs to do about it
@@ -26,9 +26,9 @@ The selling floor is performing — GWP is on the engine's own target and the av
 - WORKS — Money: September GWP is R367,387 incl VAT against an engine target of R368,460, and the average sale is R119 against a R89 plan. Value per sale is not the problem.
 - BROKEN — Volume: 3,093 sales against 3,600 planned. Sales per agent-day is 2.1 against 2.6. Leon owns it; the campaign table below says it is Courtesy, not Cuddle.
 - BROKEN — People leaving: the 14 Sep Agent List removed 17 agents off an opening 146. Nobody can yet say how many resigned, were dismissed or simply moved campaign, because removals and reasons are not reconciled. Claudell owns it.
-- BROKEN — LRC has no system of record. Every figure in that section is a placeholder. The QA export can tell us about critical fails; it cannot tell us about a hearing, a warning or a CCMA date. Jared owns the decision on where that register lives.
+- BROKEN — Control: not one of the thirteen registered systems is live and controlled (0 at G4, 27 open actions, as at 2 July), and the commission calculator still runs on unsigned rules. Jared owns the register; Mekaeel owns the signature.
 - GOVERNANCE — Facilities has no named owner while P18 (COO / Delivery Executive) is vacant, so a 4%-weighted section of the business score is unowned. That is an EXCO decision, not a reporting gap.
-- NEXT — This report becomes defensible when four feeds land: recruitment (GHL), payroll and budget (Payscale/Xero), Blue tickets, and an IR register. Until then the overall score is directional.
+- NEXT — This report becomes defensible when four feeds land: recruitment (GHL), payroll and budget (Payscale/Xero), Blue actions, and the legal and risk registers. Performance is the exception — every factor on that tab is already computed by the engines and needs wiring, not a new contract.
 
 ## Red issues
 
@@ -36,7 +36,7 @@ The selling floor is performing — GWP is on the engine's own target and the av
 |---|---|---|---|---|---|---|
 | Sales volume is 14% behind plan while value per sale is ahead | ≈507 sales short month-to-date. At the R119 average sale actually being written, that is roughly R60,000 of GWP not booked in fourteen days. | 3,093 cases net of cancellation vs a 3,600 target (BI Active Cases, MTD to 14 Sep). SPD 2.1 vs 2.6. | Leon — Sales Ops (P10) | Campaign-level dial plan for Courtesy: attempts per lead and contact rate reviewed daily with the four TLs carrying the gap. | Mon 22 Sep | MANCO → CTTO if the gap is still above 10% at month end |
 | 17 agents removed by the 14 Sep Agent List, unreconciled | 11.6% of the opening roster in one month against a 4.5% planning assumption. At R16,000 all-in cost per seat the replacement cost alone is material, and every removal resets a nesting investment. | agent_sync_logs, 14 Sep publish; roster 146 → 129. Removals are not yet split into resignations, dismissals and campaign transfers. | Claudell Panday — People Executive (P05) | Reason code on every removal at the point of publish, then a fortnightly attrition read with Keshree and Abigail. | Fri 26 Sep | EXCO — this is the single largest unmeasured cost in the report |
-| LRC has no system of record | The business cannot state its own labour-relations exposure. Every LRC figure in this report is a placeholder, and the section carries 7% of the business score. | TCB-KB-V3 carries no IR process, no CCMA register and no grievance SLA; the only real signal is the QA export's critical-fail and offence columns. | Jared — Risk & Compliance Executive (P04) | Decide the register (HR OS module vs a Blue board), then one weekly export into this report. | Fri 26 Sep | EXCO if unresolved at the October pack |
+| Not one registered system is live and controlled | Zero of thirteen systems sit at G4 with 27 open actions against them. The commission calculator runs on rules no one has signed, and the legal and risk registers this section is supposed to read do not exist — so the business cannot state its own exposure. | Canonical system register (Operating System Governance v1.1, 2026-07-02): 10 red, 2 amber, 1 grey, 0 at G4. SYS-003 Commission Calculator G1, unsigned rules. No legal register, no risk register feed. | Jared — Risk & Compliance Executive (P04) | Re-date the register this month, then name where the legal and risk registers live and get one weekly export into this report. | Fri 26 Sep | EXCO if unresolved at the October pack |
 | Finance is reported against an unsigned budget | Revenue is a real number; 'revenue vs budget', cost per seat, contribution and payroll ratio are all modelled. No profitability statement in this report may be quoted externally. | No budget, payroll or ledger feed exists in AgentOS. KB module 07 figures are model, not actual; agent basic salary is itself in conflict (R5,000 vs R5,250). | Mekaeel — CFO (P03) | Sign the September budget and nominate the monthly Xero/Payscale extract that feeds this section. | Wed 30 Sep | EXCO — required before any investor-facing use of this pack |
 | Facilities is unowned | 4% of the business score has no accountable executive; a power or seat failure has no route into this report. | P18 COO / Delivery Executive vacant_or_unresolved (KB module 03). | [INPUT REQUIRED — EXCO to nominate] | Name an interim owner for facilities reporting pending the P18 appointment. | Fri 19 Sep | CEO |
 
@@ -133,22 +133,24 @@ Attendance is the strongest measured number in the report: 91.8% against a 95% s
 | Agents in disciplinary process (per 100 agents) | 9.3 | 5 | 53.8 | 10 | Simulated |
 | Shrinkage (leave, training, offline) | 14.5% | 12% | 82.8 | 10 | Simulated |
 
-## LRC — Labour Relations & Compliance — 56.2/100 (At risk, 7% of the business score)
+## LRC — Legal, Risk & Compliance — 57.6/100 (At risk, 7% of the business score)
 
-*Is every case being run properly and on time, and what is our exposure?*
+*Is the business legally covered, are its risks owned and closing, and is the floor behaving compliantly on the call?*
 
-Owner: Jared — Risk & Compliance Executive (P04) · Exec: Jared — Risk & Compliance Executive (P04) · Evidence: 0% measured
+Owner: Jared — Risk & Compliance Executive (P04) · Exec: Jared — Risk & Compliance Executive (P04) · Evidence: 10% measured
 
-This section is a governance gap, not a performance one. The business has no labour-relations system of record: no hearing register, no warning ledger, no CCMA diary. What can be seen is compliance behaviour on calls — open critical fails and the share of the floor sitting in an R2A risk tier — and both of those come from QA, not from IR. Until a register exists, the 7% of the business score this section carries is an estimate, and the report says so rather than quietly scoring it well.
+Legal, Risk and Compliance, not labour relations — employee discipline is counted in Workforce and only arrives here if it becomes a legal matter. Two things are measured and both come off QA: six critical compliance fails are open, and 11.5% of the floor sits in an R2A risk tier against a 5% tolerance. The third measured number is the worst in the report and is not about the floor at all: of the thirteen registered systems, ZERO are at G4 — live and controlled — with 27 open actions against them, and the commission calculator still runs on unsigned rules. The legal and risk registers themselves have no feed, so contracts, disputes and overdue risks are estimates.
 
 | Factor | Reading | Target | Score | Weight | Basis |
 |---|---:|---:|---:|---:|---|
-| Open critical compliance fails | 6 | — | 40 | 25 | Simulated |
-| Floor in R2A tier 2 or 3 (compliance risk) | 11.5% | 5% | 43.5 | 20 | Simulated |
-| IR cases closed within SLA | 62% | 90% | 68.9 | 20 | Simulated |
-| IR cases open over 30 days | 7 | — | 45 | 15 | Simulated |
-| CCMA referrals in period | 1 | — | 70 | 10 | Simulated |
-| POPIA / data incidents | 0 | — | 100 | 10 | Simulated |
+| Open critical compliance fails | 6 | — | 40 | 15 | Simulated |
+| Floor in R2A tier 2 or 3 (compliance risk) | 11.5% | 5% | 43.5 | 15 | Simulated |
+| POPIA & data incidents | 0 | — | 100 | 15 | Simulated |
+| High or critical risks open past their due date | 4 | — | 65 | 15 | Simulated |
+| Registered systems live and controlled (G4) | 0% | 100% | 0 | 10 | Manual |
+| Client & supplier contracts current and signed | 78% | 100% | 78 | 10 | Simulated |
+| Governance & audit actions closed on time | 55% | 100% | 55 | 10 | Simulated |
+| Open legal matters and disputes | 2 | — | 70 | 10 | Simulated |
 
 ## Training — Nesting & Pipeline — 71.8/100 (Watch, 8% of the business score)
 
@@ -214,7 +216,7 @@ Unowned and unmeasured. P18 (COO / Delivery Executive) is vacant, so nobody is a
 | Health & safety incidents | 2 | — | 50 | 10 | Simulated |
 | Maintenance jobs closed within SLA | 55% | 90% | 61.1 | 10 | Simulated |
 
-## Business Analytics — Blue & SLA — 81.5/100 (Healthy, 6% of the business score)
+## Business Analytics — 81.5/100 (Healthy, 6% of the business score)
 
 *Are the actions the business agreed to actually being closed, and is the data under every number in this report trustworthy?*
 
