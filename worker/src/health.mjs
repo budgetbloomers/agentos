@@ -141,17 +141,12 @@ export function evaluateFreshness(t) {
      dashboard sat five days behind the archive with nothing on screen to say so. The
      manifest is the record of what was uploaded; the newest Ops fact store is the record of
      what Ops took. Thirty minutes apart, with uploads newer, is the gap — named in hours. */
-  const opsFacts = ms(t.opsFactsAt);                       // unreadable = no opinion, never a false alarm
-  if (opsFacts && manifest && manifest - opsFacts > 30 * 60000) {
-    alerts.push({
-      id: 'ops-behind-uploads', severity: 'critical',
-      message: 'AgentOS Analytics has not ingested the latest uploads: files were archived at '
-        + sast(manifest) + ' but its newest fact store is from '
-        + (opsFacts ? sast(opsFacts) : 'never')
-        + ' (' + Math.round((manifest - opsFacts) / HOUR) + 'h behind). Open Ops and leave the tab for three minutes, or run tools/ops-relay.mjs.',
-      since: new Date(manifest).toISOString(),
-    });
-  }
+  /* RETIRED 2026-09-18 — Nick: "stop this red banner, I don't want to see this anymore". With
+     GitHub Actions off there is no runner to relay Ops between opens, so this was critical every
+     morning until somebody happened to open Ops — and Ops relays itself within three minutes of
+     being opened, so the banner asked the VAS reader to do something that happens by itself.
+     The gap is still measured (opsFactsAt travels in the blob) for anyone who wants to look;
+     it is no longer an alert. */
   /* THE DIGEST MUST FOLLOW THE STATE (same plan). PULSE saved — an upload landed or a rule
      changed — but the live agent digest did not republish within the half hour, so every
      agent, team leader and campaign manager is reading the state before the save. */

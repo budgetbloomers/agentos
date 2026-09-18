@@ -5767,8 +5767,12 @@ function __healthPoll(){
         var el=document.getElementById('cbxHealth');
         if(!alerts.length){ if(el) el.remove(); return; }
         if(!el){ el=document.createElement('div'); el.id='cbxHealth'; document.body.appendChild(el); }
-        el.setAttribute('style','position:fixed;bottom:0;left:0;right:0;z-index:2147483000;background:#7f1d1d;color:#fecaca;border-top:1px solid #ef4444;padding:9px 16px;text-align:center;font:600 12.5px system-ui,sans-serif');
-        el.textContent='\u26a0 '+alerts[0].message+(alerts.length>1?' (+'+(alerts.length-1)+' more)':'');
+        /* Red is for critical only (2026-09-18, Nick: "stop this red banner"). Critical alerts
+           sort first; a warning paints amber and reads as the reminder it is, not an outage. */
+        alerts=alerts.slice().sort(function(a,b){return (a.severity==='critical'?0:1)-(b.severity==='critical'?0:1)});
+        var crit=alerts[0].severity==='critical';
+        el.setAttribute('style','position:fixed;bottom:0;left:0;right:0;z-index:2147483000;background:'+(crit?'#7f1d1d':'#78350f')+';color:'+(crit?'#fecaca':'#fde68a')+';border-top:1px solid '+(crit?'#ef4444':'#f59e0b')+';padding:9px 16px;text-align:center;font:600 12.5px system-ui,sans-serif');
+        el.textContent=(crit?'\u26a0 ':'\u24d8 ')+alerts[0].message+(alerts.length>1?' (+'+(alerts.length-1)+' more)':'');
       }).catch(function(){});
   }catch(e){}
 }
