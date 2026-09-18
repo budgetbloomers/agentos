@@ -41,6 +41,11 @@ const say = (s) => { const line = new Date().toISOString() + ' ' + s; console.lo
 const sast = new Date(Date.now() + 2 * 3600000);
 const working = sast.getUTCDay() >= 1 && sast.getUTCDay() <= 5 && sast.getUTCHours() >= 6 && sast.getUTCHours() < 20;
 
+/* The body is a function so an early finish is a `return`, not an exit call: exiting straight
+   after an awaited fetch races undici's socket close and node dies with a libuv assertion
+   (0xC0000409) on Windows - Task Scheduler then logs a failed run for a tick that did nothing
+   wrong (2026-09-18, found while hiding the tick's console window). */
+async function main() {
 const cur = (await (await fetch(REST + 'rules?key=eq.kv:jobs-status&select=value', { headers: H })).json())[0];
 let doc = { steps: {} };
 try { const v = (cur && cur.value) || {}; doc = v.steps ? v : (v.data ? JSON.parse(v.data) : doc); } catch {}
@@ -49,11 +54,11 @@ const newest = TICK.map((k) => Date.parse((doc.steps[k] || {}).ranAt || 0) || 0)
 const silentMin = newest ? Math.round((Date.now() - newest) / 60000) : null;
 const due = FORCE || (working && (PRIMARY || silentMin == null || silentMin > SILENT_MIN));
 say('tick newest ' + (newest ? new Date(newest).toISOString() : 'never') + ' · silent ' + silentMin + ' min · working ' + working + ' · ' + (due ? 'RUN' : 'nothing to do'));
-if (CHECK || !due) process.exit(0);
+if (CHECK || !due) return;
 
 /* one at a time: a second Task Scheduler firing while a tick is still running must not overlap it */
 const LOCK = path.join(os.tmpdir(), 'cbx-tick-local.lock');
-try { const t = +fs.readFileSync(LOCK, 'utf8'); if (Date.now() - t < 25 * 60000) { say('another local tick is running (lock ' + Math.round((Date.now() - t) / 60000) + ' min old) — skipped'); process.exit(0); } } catch {}
+try { const t = +fs.readFileSync(LOCK, 'utf8'); if (Date.now() - t < 25 * 60000) { say('another local tick is running (lock ' + Math.round((Date.now() - t) / 60000) + ' min old) — skipped'); return; } } catch {}
 fs.writeFileSync(LOCK, String(Date.now()));
 
 const stamp = async (step, ok, note) => {
@@ -76,7 +81,7 @@ const run = (label, args) => {
 
 try {
   const build = run('prepare-site', ['tools/prepare-site.js']);
-  if (!build.ok) { say('cannot build site/ — the digests would run the wrong engine; stopping'); process.exit(1); }
+  if (!build.ok) { say('cannot build site/ — the digests would run the wrong engine; stopping'); process.exitCode = 1; return; }
   /* the same order as the workflow: the rake first so a file that just landed is in the lake */
   const rake = run('rake', ['tools/rake.mjs']); await stamp('rake', rake.ok, rake.tail);
   const dig = run('agent-digest', ['tools/digest-republish.mjs', '--apply']); await stamp('agent-digest', dig.ok, dig.tail);
@@ -84,3 +89,5 @@ try {
   const nba = run('nba-republish', ['tools/nba-republish.mjs', '--apply']); await stamp('nba-digest', nba.ok, nba.tail);
   say('local tick done');
 } finally { try { fs.unlinkSync(LOCK); } catch {} }
+}
+await main();
