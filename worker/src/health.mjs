@@ -268,7 +268,10 @@ export function evaluateFreshness(t) {
   }
   /* A PUBLISH THAT REMOVED MANY PEOPLE OR A CAMPAIGN — published, and questioned for three days.
      The list wins (Nick: "I will always be changing the list"); this only asks a person to look. */
-  if (t.roster && t.roster.review && t.roster.review.at && now - Date.parse(t.roster.review.at) < 72 * HOUR) {
+  /* OFF (Nick, 2026-09-18: "needs to stop now it is alarming"). A list that removes people is the list doing its job;
+     the removal note stays on the record (kv:roster-current.review) for anyone who asks, and the Upload Station
+     slot still shows the count. No banner. */
+  if (false && t.roster && t.roster.review && t.roster.review.at && now - Date.parse(t.roster.review.at) < 72 * HOUR) {
     const v = t.roster.review;
     const who = (v.removed || []).slice(0, 8).map((a) => (a.name || a.code) + (a.tl ? ' (' + a.tl + ')' : '')).join(', ') + ((v.removed_n || 0) > 8 ? ' +' + (v.removed_n - 8) + ' more' : '');
     alerts.push({ id: 'agent-list-review', severity: 'warning',
