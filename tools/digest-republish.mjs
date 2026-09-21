@@ -132,7 +132,7 @@ if (!argMonth && !HISTORY) {
     const body = await page.evaluate((k) => { const r = window.__mtd.reports && window.__mtd.reports(k); return r ? JSON.stringify(r) : ''; }, kind);
     if (!body) { console.log('report ' + kind + ': nothing to publish (no board/BI, or no case books in the state)'); continue; }
     const rj = JSON.parse(body);
-    if ((rj.period?.from || '').slice(0, 7) !== (JSON.parse(payload).period?.from || '').slice(0, 7)) { console.log('report ' + kind + ' is not the digest month — skipped'); continue; }
+    { const dp = JSON.parse(payload).period || {}; if ((rj.period?.from || '') !== (dp.from || '') || (rj.period?.to || '') !== (dp.to || '')) { console.log('report ' + kind + ' is not the digest window — skipped'); continue; } }
     reportJobs.push([kind, body]);
     console.log('report ' + kind + ' built — ' + Object.keys(rj.agents || {}).length + ' agents, ' + Object.keys(rj.teams || {}).length + ' teams, ' + Math.round(body.length / 1024) + ' KB');
   }

@@ -9327,7 +9327,7 @@ function agentReportsLeadsPayload(){
     [['variance',agentReportsVariancePayload],['leads',agentReportsLeadsPayload]].forEach(function(kv){
       var kind=kv[0], rp=null;
       try{ rp=kv[1](); }catch(e){ try{console.warn('report '+kind+' not built',e)}catch(_){} return; }
-      if(!rp||!rp.period||rp.period.from!==p.period.from) return;      // never a different month than the digest
+      if(!rp||!rp.period||rp.period.from!==p.period.from||rp.period.to!==p.period.to) return;   // never a different window than the digest (both ends)
       var cmp=JSON.stringify(rp.agents)+JSON.stringify(rp.teams)+rp.period.to;
       if(cmp===lastRep[kind]) return;
       lastRep[kind]=cmp;
