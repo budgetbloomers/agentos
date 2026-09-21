@@ -21,10 +21,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 
 const require_ = createRequire(import.meta.url);
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const HTML = path.join(REPO, ...(process.env.PULSE_HTML || 'nicks_code/index.html').split('/'));
 const XLSX = require_(path.join(REPO, 'site', 'xlsx.full.min.js'));
@@ -58,7 +60,7 @@ const HEAD = ['Employee Code', 'Agent Name', 'Team Leader', 'Campaign', 'Tenure'
 const mkList = (name, rows) => {
   const nb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(nb, XLSX.utils.aoa_to_sheet([HEAD, ...rows]), 'VAS');
-  const tmp = path.join(process.cwd(), 'simfix'); fs.mkdirSync(tmp, { recursive: true });
+  const tmp = path.join(HERE, 'scratch', 'simfix'); fs.mkdirSync(tmp, { recursive: true });
   const f = path.join(tmp, name);
   fs.writeFileSync(f, Buffer.from(XLSX.write(nb, { type: 'array', bookType: 'xlsx' })));
   return f;

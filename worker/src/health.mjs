@@ -33,6 +33,23 @@ const sast = (ms) => new Date(+ms + 2 * HOUR).toISOString().slice(0, 16).replace
 import { expectedReachFor } from './rules.mjs';
 export { expectedReachFor };                              // lives in rules.mjs since 2026-09-07 (one source); re-exported for the suites
 const SATURDAY_SOURCES = new Set(['sales', 'calls']);
+/* The Help Center's HighLevel location, read once: {ok, status, help, assist, error}. `help` and
+   `assist` say whether each pipeline exists (both self-provision on first use, so a missing one
+   is a warning, not an outage); a non-2xx or a timeout is the outage. */
+export async function probeHelpCenter(env) {
+  if (!env || !env.HL_HELP_API_KEY || !env.HL_HELP_LOCATION_ID) return { ok: false, status: 0, error: 'HL_HELP_API_KEY / HL_HELP_LOCATION_ID not set' };
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort('timeout'), 10000);
+  try {
+    const r = await fetch('https://services.leadconnectorhq.com/opportunities/pipelines?locationId=' + env.HL_HELP_LOCATION_ID,
+      { headers: { Authorization: 'Bearer ' + env.HL_HELP_API_KEY, Version: '2021-07-28' }, signal: ctl.signal });
+    const t = await r.text(); let j = null; try { j = JSON.parse(t); } catch (e) {}
+    if (!r.ok) return { ok: false, status: r.status, error: t.slice(0, 120) };
+    const names = ((j && j.pipelines) || []).map((p) => p.name);
+    return { ok: true, status: r.status, help: names.includes('Agent Help Center'), assist: names.includes('Campaign Assistance') };
+  } catch (e) {
+    return { ok: false, status: 0, error: ctl.signal.aborted ? 'no answer within 10s' : String(e && e.message || e).slice(0, 120) };
+  } finally { clearTimeout(timer); }
+}
 const SAST_WORKING = (nowMs) => { const s = new Date(nowMs + 2 * HOUR); const h = s.getUTCHours(), w = s.getUTCDay(); return w >= 1 && w <= 5 && h >= 6 && h < 20; };
 const REACH_LABEL = { sales: 'Sales (BI Active cases)', calls: 'Calls (ViciDial)', attendance: 'Attendance register', qa: 'QA evaluations' };
 export const ALERTS_KEY = 'kv:health-alerts';
@@ -147,6 +164,35 @@ export function evaluateFreshness(t) {
      being opened, so the banner asked the VAS reader to do something that happens by itself.
      The gap is still measured (opsFactsAt travels in the blob) for anyone who wants to look;
      it is no longer an alert. */
+  /* THE RELAY SAYS IT RAN, NO STORE MOVED (2026-09-21). Not the retired banner: that fired whenever
+     nobody had opened Ops. This fires only when the relay itself REPORTED a run after the newest
+     upload and still no Ops fact store has been saved since two hours before that upload — the
+     20–21 Sep signature (browser closed mid-loop on wire silence, audit "passed", seven files never
+     decided, four stores three days stale, Courtesy's 17 Sep attendance one row). A warning, not a
+     banner: the tick retries every 15 minutes and the fix is in the tool, not on the floor. */
+  /* THE HELP CENTER ANSWERS (Nick, 2026-09-21). The probe above fails → every "Ask my team
+     leader" and every "Ask the campaign manager" is a 502 right now; a missing pipeline only
+     means the next request will re-create it. */
+  if (t.helpCenter && !t.helpCenter.ok) {
+    alerts.push({ id: 'help-center-unreachable', severity: 'critical',
+      message: 'HighLevel is refusing the Help Center (' + (t.helpCenter.status ? 'HTTP ' + t.helpCenter.status + ': ' : '') + String(t.helpCenter.error || '').slice(0, 100)
+        + ') — agents asking their team leader and team leaders asking the campaign manager get an error until this clears. Check the HL_HELP_API_KEY secret and the location in HighLevel.',
+      since: new Date(now).toISOString() });
+  } else if (t.helpCenter && t.helpCenter.ok && (!t.helpCenter.help || !t.helpCenter.assist)) {
+    alerts.push({ id: 'help-center-pipeline-missing', severity: 'warning',
+      message: 'The HighLevel location is missing the ' + [!t.helpCenter.help && '"Agent Help Center"', !t.helpCenter.assist && '"Campaign Assistance"'].filter(Boolean).join(' and ')
+        + ' pipeline — the next request re-creates it, but any open requests it held are gone from the dashboards.',
+      since: new Date(now).toISOString() });
+  }
+  { const relay = t.jobs && t.jobs.steps && t.jobs.steps['ops-relay'];
+    const relayAt = ms(relay && relay.ranAt), facts = ms(t.opsFactsAt);
+    if (manifest && relayAt > manifest && facts && manifest - facts > 2 * HOUR && now - manifest > 2 * HOUR) {
+      alerts.push({ id: 'ops-relay-no-store-moved', severity: 'warning',
+        message: 'The Ops relay reported a run at ' + sast(relayAt) + ' but no Ops fact store has been saved since '
+          + sast(facts) + ', while files were uploaded up to ' + sast(manifest)
+          + ' — Ops is showing older figures than VAS. Run node tools/ops-relay.mjs --wait 540 and read its DEADLINE/FAILED lines.',
+        since: new Date(manifest).toISOString() });
+    } }
   /* THE DIGEST MUST FOLLOW THE STATE (same plan). PULSE saved — an upload landed or a rule
      changed — but the live agent digest did not republish within the half hour, so every
      agent, team leader and campaign manager is reading the state before the save. */
@@ -365,7 +411,15 @@ export async function runHealthChecks(DB, opts = {}) {
     const refused = byKey['kv:roster-refused'] ? (typeof byKey['kv:roster-refused'].data === 'string' ? JSON.parse(byKey['kv:roster-refused'].data) : byKey['kv:roster-refused']) : null;
     roster = { newestListAt: newest, recordUploadedAt: rec.uploaded_at || null, refused, review: rec.review || null };
   } catch (e) { roster = null; }
+  /* ASKING FOR HELP MUST WORK (Nick, 2026-09-21: "always make sure if I ask the team leader for
+     help or ask campaign manager it works"). Both legs live in one HighLevel location: the agent's
+     "Agent Help Center" pipeline (help.mjs) and the team leader's "Campaign Assistance" pipeline
+     (assist.mjs). Probe the location every sentinel run with the same key the requests use —
+     a revoked key, a deleted location or a dead endpoint is then a banner before it is an
+     agent's 502. Read-only: one GET, nothing minted. */
+  const helpCenter = await probeHelpCenter(env);
   const alerts = evaluateFreshness({
+    helpCenter,
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
     staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster, db: dbh, runnerExpected: !!opts.runnerExpected,
   });

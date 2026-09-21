@@ -48,3 +48,8 @@ site/agent-preview/index.html
 # copy, so the tool writes a dated .bak beside it before every write; that is the
 # backup, not this repo. Never `git add -f` it.
 specs/team_leader_cbs.json
+
+# Local run scratch: the tick runner log and one-off working files (reports/tmp) are
+# regenerated locally and hold company data; never in the repo.
+reports/tmp/
+reports/*.log

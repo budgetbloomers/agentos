@@ -25,7 +25,9 @@ const server = http.createServer((req, res) => {
 await new Promise(r => server.listen(8123, '127.0.0.1', r));
 const APP = 'http://127.0.0.1:8123/index.html';
 const UP = String.raw`c:\Users\aarav\OneDrive\Desktop\Chatterbox Agent OS\agentos\uploads\2026-08-02`;
-const SCRATCH = process.cwd();
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const SCRATCH = path.join(HERE, 'scratch');
+fs.mkdirSync(SCRATCH, { recursive: true });
 /* Resolve beside THIS file, not against the shell's cwd. Read relatively it only ran from
    inside diagnostics/ and died with ENOENT from anywhere else, which reads as a broken suite. */
 const E = JSON.parse(fs.readFileSync(fileURLToPath(new URL('pulse-expected.json', import.meta.url)), 'utf8'));

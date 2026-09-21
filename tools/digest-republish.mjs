@@ -69,7 +69,8 @@ if (rc.ok) {
       const lr = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/agent_list_leavers`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_days: 90 }) });
       if (lr.ok) rv.leavers = (await lr.json()).map((r) => ({ code: r.code, name: r.name || '', sf: r.sf || '', callx: r.callx || '', tl: r.tl || '',
         campaign: r.campaign || '', tenure: r.tenure || '', target: r.target, start: r.start_date || '', left: r.left_on }));
-    } catch {}
+      else console.warn('leavers not fetched (HTTP ' + lr.status + ') — publishing without them');
+    } catch (e) { console.warn('leavers not fetched (' + String(e && e.message || e) + ') — publishing without them'); }
     const adopted = await page.evaluate((j) => {
       const S = window.__mtd.state();
       const leaversMoved = Array.isArray(j.leavers) && typeof adoptLeavers === 'function' ? adoptLeavers(j.leavers) : false;

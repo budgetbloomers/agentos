@@ -1193,10 +1193,13 @@ const COMPOSITE_RULES = {
      affect the agent scores"). The R2A tier is NBA priority rule 2A; it still CLASSIFIES — the
      tier, the rule name and elite eligibility travel to every card for coaching — but every
      penalty is 0, so adj always equals the composite. specs/composite_rules.json _changes
-     carries the entry; verify-composite-score fails if the two copies drift. */
+     carries the entry; verify-composite-score fails if the two copies drift.
+     Since 2026-09-21 (Nick: "where it says blocked, the agents must not be blocked") no tier
+     reads Blocked either: a tier that fires is Retained, Tier 0 is Eligible. The band was
+     never gated on this field (band = adj against bands), so no rating moves. */
   r2aTiers:[
-    {tier:'R2A-3',  rule:'Critical Compliance Fail', level:1, failsMin:4, failsMax:null, cfrMin:30, cfrMax:null, penalty:0, elite:'Blocked'},
-    {tier:'R2A-2',  rule:'Compliance Risk',          level:2, failsMin:2, failsMax:3,    cfrMin:10, cfrMax:30,   penalty:0,  elite:'Blocked'},
+    {tier:'R2A-3',  rule:'Critical Compliance Fail', level:1, failsMin:4, failsMax:null, cfrMin:30, cfrMax:null, penalty:0, elite:'Retained'},
+    {tier:'R2A-2',  rule:'Compliance Risk',          level:2, failsMin:2, failsMax:3,    cfrMin:10, cfrMax:30,   penalty:0,  elite:'Retained'},
     {tier:'R2A-1',  rule:'Compliance Note',          level:3, failsMin:1, failsMax:1,    cfrMin:0,  cfrMax:10,   penalty:0,  elite:'Retained'},
     {tier:'Tier 0', rule:'Clean',                    level:0, failsMin:0, failsMax:0,    cfrMin:0,  cfrMax:0,    penalty:0,  elite:'Eligible'}
   ],
@@ -1282,6 +1285,11 @@ function normalizeState(){
      older client never pushed comes back undefined and then gets pushed back out that way. */
   if(!S.orgHist) S.orgHist={};
   if(!S.leavers||typeof S.leavers!=='object'||Array.isArray(S.leavers)) S.leavers={};   // departures (rule departures, 2026-09-15) — a blob saved before it must not read as "nobody ever left"
+  /* EVERY NAME A CODE HAS CARRIED (2026-09-21; specs/identity-aliases-plan.md). normName(old) ->
+     {code,name,since}. The 18 Sep list re-spelt twelve agents and Salesforce kept the old spelling,
+     so ~206 September sales fell to Unmatched. Not a DATA_STORE: like orgHist it survives "Clear
+     uploaded data" with the roster it belongs to. */
+  if(!S.aliases||typeof S.aliases!=='object'||Array.isArray(S.aliases)) S.aliases={};
   if(S.refs===undefined) S.refs=null;   // referrals snapshot — must survive a hydrate from an older cloud blob
   /* ONE ROW PER AGENT ON THE ROSTER. The ingest replaces by campaign and by code, so it
      cannot mint a duplicate any more — but a state blob saved before that fix can still
@@ -1427,6 +1435,15 @@ function mergeStates(mine,theirs){
   const myFiles=mine.files||[], thFiles=theirs.files||[];
   const have=new Set(thFiles.map(fileKey));
   out.files=thFiles.concat(myFiles.filter(f=>!have.has(fileKey(f))));
+  /* regFile keeps ONE entry per type+name; the union must too. The adopted Agent List record
+     carries no hash by design, so two tabs adopting the same record at different times both
+     passed the key above and the register read "Agent List — published as of 2026-09-18" twice
+     (verify-composite-score, 2026-09-21). Keep the later stamp. ROSTER ENTRIES ONLY: they carry
+     no dates, so nothing is orphaned; a dated file's twin must go through regFile, whose
+     stale-day cleanup this collapse would bypass. */
+  { const isRoster=f=>/^roster/.test(String(f&&f.type||'')); const newest={};
+    for(const f of out.files){ if(!isRoster(f)) continue; const k=String(f.type)+'|'+String(f.name||''); if(!newest[k]||String(f.at||'')>String(newest[k].at||'')) newest[k]=f; }
+    out.files=out.files.filter(f=>!isRoster(f)||newest[String(f.type)+'|'+String(f.name||'')]===f); }
   const newestAt=files=>{ const m={}; for(const f of files) for(const d of (f.dates||[])) if(!m[d]||String(f.at||'')>m[d]) m[d]=String(f.at||''); return m; };
   const mineAt=newestAt(myFiles), thAt=newestAt(thFiles);
   const mineWins=d=>{ const a=mineAt[d], b=thAt[d]; if(a==null&&b==null) return true; if(a==null) return false; if(b==null) return true; return a>=b; };
@@ -1434,7 +1451,7 @@ function mergeStates(mine,theirs){
     const m=mine[k]||{}, t=theirs[k]||{}, r={};
     for(const d of new Set([...Object.keys(m),...Object.keys(t)])) r[d]=(m[d]&&t[d])?(mineWins(d)?m[d]:t[d]):(m[d]||t[d]);
     out[k]=r; }
-  for(const k of ['cancRows','map','adjust','vici']) out[k]=Object.assign({},theirs[k]||{},mine[k]||{});
+  for(const k of ['cancRows','map','adjust','vici','aliases']) out[k]=Object.assign({},theirs[k]||{},mine[k]||{});   // aliases: a spelling remembered anywhere is remembered everywhere
   for(const k of ['refs','opencasesLM']){ const m=mine[k],t=theirs[k]; out[k]=!t?m:(!m?t:(String(m.at||'')>=String(t.at||'')?m:t)); }
   { const m=mine.closedcases,t=theirs.closedcases;
     out.closedcases=!t?m:(!m?t:Object.assign({},String(m.at||'')>=String(t.at||'')?m:t,{rows:Object.assign({},t.rows||{},m.rows||{})})); }
@@ -1750,6 +1767,38 @@ function adoptLeavers(list){
           target:(l.target!=null&&l.target!=='')?+l.target:0,start:l.start||'',left:String(l.left).slice(0,10)}; }
   if(JSON.stringify(m)!==JSON.stringify(S.leavers||{})){ S.leavers=m; return true; }
   return false;
+}
+/* THE SPELLINGS A CODE HAS CARRIED (2026-09-21; specs/identity-aliases-plan.md). Two writers, one
+   store, and only ever additive: a spelling once bound to a code stays bound until a human maps it
+   elsewhere (S.map wins in resolveKey). rememberNames runs in INGEST.roster when a list changes a
+   code's name; adoptAliases takes the archive's answer (agent_list_aliases(), served on /api/roster
+   beside leavers[]), so a fresh browser — or a state saved before this build — knows the history
+   without having seen the lists. Neither writes a spelling the live roster already carries: that
+   name belongs to whoever carries it now. */
+const rowNames=a=>[a&&a.name,a&&a.sf,a&&a.callx].map(normName).filter(Boolean);
+function rememberNames(oldRow,newRow,asOf){
+  if(!oldRow||!newRow||oldRow.code!==newRow.code) return false;
+  if(!S.aliases||typeof S.aliases!=='object') S.aliases={};
+  /* a different human under the same code is a REASSIGNMENT, not a rename: nothing is aliased */
+  if(!sameHuman(oldRow.sf||oldRow.name,newRow.sf||newRow.name)&&!sameHuman(oldRow.name,newRow.name)) return false;
+  const now=new Set(rowNames(newRow)); let renamed=false;
+  for(const raw of [oldRow.name,oldRow.sf,oldRow.callx]){ const k=normName(raw); if(!k||now.has(k)) continue;
+    if(!S.aliases[k]||S.aliases[k].code!==newRow.code) S.aliases[k]={code:newRow.code,name:String(raw).trim(),since:asOf||'',src:'list'};
+    if(raw===oldRow.name||raw===oldRow.sf) renamed=true; }
+  return renamed;
+}
+function adoptAliases(list){
+  if(!Array.isArray(list)||!list.length) return false;
+  if(!S.aliases||typeof S.aliases!=='object') S.aliases={};
+  const live=new Map(); for(const a of (S.roster||[])) for(const k of rowNames(a)) live.set(k,a.code);
+  const on=new Map((S.roster||[]).map(a=>[a.code,a])); let changed=false;
+  for(const l of list){ const c=l&&cbCode(String(l.code||'')); const k=normName(l&&l.name);
+    if(!c||!k||!on.has(c)||live.has(k)) continue;              // not an agent, or a spelling somebody carries today
+    { const a=on.get(c); if(!sameHuman(l.name,a.sf||a.name)&&!sameHuman(l.name,a.name)) continue; }   // a reassigned code, not a rename
+    const cur=S.aliases[k]; if(cur&&cur.code===c&&cur.src!=='record') continue;   // a list-recorded binding stands
+    const rec={code:c,name:String(l.name).trim(),since:String(l.last_on||l.since||'').slice(0,10),src:'record'};
+    if(!cur||cur.code!==rec.code||cur.since!==rec.since){ S.aliases[k]=rec; changed=true; } }
+  return changed;
 }
 function leftPill(code){
   if(!leaversCount()) return '';                    // rule off: a leaver is not in any report, so there is nothing to mark
@@ -2116,6 +2165,39 @@ function staleGrainBanner(){
    string, and the moment any future regression lets a mover keep an old campaign or team
    leader it becomes a red banner NAMING them — the failure mode is loud, never "nesting
    didn't move again" discovered by eye (Nick, 2026-08-27). */
+/* MONEY ATTRIBUTED TO NOBODY, SAID WHERE THE NUMBERS ARE (2026-09-21; specs/identity-aliases-plan.md).
+   M.unmatched already held every sale whose owner resolved to no agent — behind a count badge on
+   the Data tab and a warn-level V14, while Month to date, Weekly and Daily showed those agents at
+   0 sales with nothing on screen to say why. Two kinds of owner land here and they need different
+   words: a STRANGER (a spelling no list ever carried, or a look-alike the resolver rightly refused
+   to guess at) is a problem for a person today; a KNOWN LEAVER is off the report by rule (Nick,
+   2026-09-15) and is named in one muted line so nobody hunts for their sales. */
+function unattributedSales(){
+  const un=(M&&M.unmatched)||{}, out={strangers:[],leavers:[],n:0,gwp:0,ln:0};
+  for(const k in un){ const u=un[k]; if(!u||u.src!=='sales'||!(u.n>0)) continue;
+    const l=leaverMatch(k);
+    if(l){ out.leavers.push({k,n:u.n,gwp:u.gwp||0,left:l.left||'',code:l.code||''}); out.ln+=u.n; }
+    else { out.strangers.push({k,n:u.n,gwp:u.gwp||0,fits:(M.ambig||{})[k]||null}); out.n+=u.n; out.gwp+=u.gwp||0; } }
+  out.strangers.sort((a,b)=>b.n-a.n); out.leavers.sort((a,b)=>b.n-a.n);
+  return out;
+}
+function unattributedBanner(){
+  if(!M) return ''; const u=unattributedSales();
+  /* NEAR MATCHES ARE COUNTED, AND SAID (review, 2026-09-21): money attributed on a one-edit fit is on
+     screen the moment it is made, on an amber line, never only on the Data tab. */
+  const nr=Object.entries(M.near||{}); let nearLine='';
+  if(nr.length){
+    nearLine=`<div class="card" style="border-left:3px solid var(--amber);margin-bottom:14px"><div style="font-size:14px"><b>${fmtNum(nr.length)} name${nr.length===1?'':'s'} in the uploads matched an agent by near spelling</b> — counted for them now; confirm on the <a class="linky" onclick="go('data')">Upload Station</a> (Matched by spelling), or set one to Ignore if it is not the same person.</div>
+    <p class="note" style="margin:7px 0 0">${nr.slice(0,6).map(([k,v])=>'<code>'+esc(k)+'</code> → '+esc(v.code)+' '+esc(v.name)).join(' · ')}${nr.length>6?' +'+fmtNum(nr.length-6)+' more':''}</p></div>`; }
+  if(!u.strangers.length) return nearLine;
+  const who=u.strangers.slice(0,6).map(s=>'<code>'+esc(s.k)+'</code> ('+fmtNum(s.n)+(s.fits?' — fits '+s.fits.map(esc).join(' and '):'')+')');
+  const lv=u.leavers.length?`<p class="note" style="margin:6px 0 0;opacity:.8">Also not counted, by rule: ${fmtNum(u.ln)} sale(s) by ${u.leavers.length} agent(s) who have left the list — ${u.leavers.slice(0,4).map(l=>esc(l.k)+' (left '+esc(String(l.left).slice(5))+')').join(', ')}${u.leavers.length>4?' +'+(u.leavers.length-4)+' more':''}.</p>`:'';
+  return `<div class="card" style="border-left:3px solid #C42D2D;margin-bottom:14px">
+    <div style="font-size:14px"><b>${fmtNum(u.n)} sale${u.n===1?'':'s'} (R${fmtNum(u.gwp)}) in this period belong to nobody on the Agent List</b> — they are in no table, no total and no card.</div>
+    <p class="note" style="margin:7px 0 0">${who.join(' · ')}${u.strangers.length>6?' +'+fmtNum(u.strangers.length-6)+' more':''}.
+    These are the Salesforce Owner names as the export spells them. Either the Agent List spells the agent differently (correct it there and upload it again — the old spelling is remembered from then on),
+    or map each name once on the <a class="linky" onclick="go('data')">Upload Station</a>; a name that is nobody's can be set to Ignore.</p>${lv}</div>${nearLine}`;
+}
 function listAppliedBanner(){
   const c=window.__listCheck; if(!c||!c.bad||!c.bad.length) return '';
   const few=c.bad.slice(0,6).map(b=>esc(b.code)+' '+esc(b.name)+' (shows '+esc(b.model)+' — list says '+esc(b.list)+')');
@@ -2318,12 +2400,20 @@ const INGEST={
       stored.push(d);
     }
     if(kept) toast(kept+' day'+(kept>1?'s':'')+' in '+name+' already covered more fully — kept the fuller data');
+    /* A THIN DIALLER DAY IS SAID, NOT STORED QUIETLY (Nick, 2026-09-21: "courtesy stats are still
+       wrong"). The 17 Sep ViciDial pull held 44 calls against a floor that logs 23–48 thousand a day;
+       it landed green, and every Courtesy agent read as not worked on a day they sold 160 policies.
+       The slot cannot tell a partial pull from a whole one — the row count can. */
+    const thin=[]; { const ns=Object.keys(S.callsMeta).filter(d=>!stored.includes(d)).sort().slice(-12).map(d=>S.callsMeta[d].n||0).filter(n=>n>0).sort((a,b)=>a-b);
+      const med=ns.length?ns[Math.floor(ns.length/2)]:0;
+      if(med>=1000) for(const d of stored){ const n=(S.callsMeta[d]||{}).n||0; if(n<med*0.2) thin.push(d+' ('+fmtNum(n)+' calls)'); }
+      if(thin.length) toast('ViciDial day'+(thin.length>1?'s':'')+' '+thin.join(', ')+' in "'+name+'" '+(thin.length>1?'are':'is')+' far below the floor’s usual '+fmtNum(med)+' calls a day. Agents with no dialler time read as NOT WORKED — if this is a partial pull, re-export the whole day with every user group ticked and drop it here; the fuller file replaces this one.','err',20000); }
     if(retired) toast('Call Records (CallX) are retired — '+fmtNum(retired)+' row(s) in "'+name
       +'" were not loaded. The whole floor dials on ViciDial: pull EXPORT_CALL_REPORT '
       +'with every user group ticked and drop it on the ViciDial slot.',12000);
     if(!stored.length&&dates.size) return regFile(name,'calls',[],recs.length,{skip,retired}); // recognised, but every day was fuller elsewhere
     if(!dates.size) return retired?regFile(name,'calls',[],recs.length,{skip,retired}):null;   // all-retired file: acknowledged, nothing stored; otherwise not a load — fail loudly
-    return regFile(name,'calls',stored,recs.length,{skip,retired});
+    return regFile(name,'calls',stored,recs.length,{skip,retired,...(thin.length?{thin}:{})});   // the receipt carries the doubt
   },
   attendance(recs,name){
     const dates=new Set();
@@ -2531,9 +2621,22 @@ const INGEST={
        the same placeholder row blanked the Data tab's Agent list, the team-leader filter and
        the TL dropdown for that agent. It stayed hidden because the sheet carrying most of the
        placeholder rows was the VT one, and VT rows were being skipped before they got here. */
+    /* A RENAMED CODE KEEPS ITS OLD SPELLING (2026-09-21; specs/identity-aliases-plan.md). The 18 Sep
+       list re-typed "Surprise Lucky Cwele" as "Surprize Cwele", "Nolulamo Mazaka" as "Mazeka" — and
+       the Sales Force column with it, which is the string every Power BI Owner joins on. The roster
+       is replaced wholesale a few lines down, so without this the app forgot, in that instant, the
+       one fact that kept 206 September sales attributed: that CB242 had carried that name on every
+       list since August. Every name the outgoing row carried and the incoming row does not is filed
+       in S.aliases, dated by the list that changed it; buildIndex resolves through them SOFTLY (a
+       live agent's name always wins). Said out loud by the toast below. */
+    const renamed=[];
     { const prev=new Map(S.roster.map(a=>[a.code,a]));
+      const asOf0=rosterAsOf(name);
       for(const a of out){ const p=prev.get(a.code);
-        if(p&&provisionalTL(a.tl)&&!provisionalTL(p.tl)) a.tl=p.tl; } }
+        if(p&&provisionalTL(a.tl)&&!provisionalTL(p.tl)) a.tl=p.tl;
+        if(p&&rememberNames(p,a,asOf0)) renamed.push(p.name+' → '+a.name+' ('+a.code+')'); } }
+    if(renamed.length) toast(renamed.length+' agent(s) renamed on "'+name+'" — the old spelling is kept, so their sales still land: '
+      +renamed.slice(0,5).join('; ')+(renamed.length>5?' +'+(renamed.length-5)+' more':''),12000);
     const incoming=new Set(out.map(a=>a.code));
     const leftRows=S.roster.filter(a=>covered.has(a.campaign)&&!incoming.has(a.code));
     const left=leftRows.length;
@@ -3244,7 +3347,7 @@ let IDX=null;
 const normFull = s => (s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 function buildIndex(){
   __rkMemo=Object.create(null);   // identity may have changed — every cached resolveKey answer is void
-  IDX={byCode:{},byName:{},byCallx:{},tok:[],ruleLabel:{},ruleAlias:{}};
+  IDX={byCode:{},byName:{},byCallx:{},tok:[],ruleLabel:{},ruleAlias:{},byAlias:{},near:{},ambig:{}};
   /* The spec's own correction tables (§3), indexed once. These are the LAST resort in
      resolveKey — a roster that already carries the right "Call x" string resolves first —
      but they are what keeps identity right when the agent list goes stale, which open item
@@ -3267,6 +3370,95 @@ function buildIndex(){
      every one of those facts fell to "unmatched" the moment the list published. Indexed SOFTLY —
      a live agent's code, name or dialler label is never overridden by a leaver's. */
   if(leaversCount()) for(const c in (S.leavers||{})){ const a=S.leavers[c]; if(a&&a.code) index(a,true); }
+  /* THE SPELLINGS A CODE USED TO CARRY (2026-09-21), softest of all: never over a live name, never
+     for a code the list no longer names — a leaver's old spelling is a leaver's, not a hint. */
+  for(const k in (S.aliases||{})){ const al=S.aliases[k]; if(!al||!al.code||!IDX.byCode[al.code]||IDX.byName[k]) continue; IDX.byAlias[k]=al.code; }
+}
+/* NEAR SPELLING — the Ops doctrine (Chatterbox_AgentOS_Analytics.html `_ownerCandidates`, Nick
+   2026-08-14), ported 2026-09-21 because the two systems keep disagreeing about the same names:
+   Salesforce's "Roshel Dinika Naidoo" is the list's "Roshel Naidoo"; a new starter typed as
+   "Rajagopaul" sells as "Rajagopal". Every token of one name must find a token of the other (either
+   direction — a middle name on either side), a token matches on one edit (a substitution, an
+   insertion, a deletion or one adjacent transposition — "Lindokuhle"/"Lindokhule") when both are
+   four letters or longer, and the answer is UNIQUE-OR-NOTHING: "Thandie Ngcobo" beside Thandi AND
+   Thando Ngcobo fits nobody, a bare "Naidoo" fits nobody. Never over an exact match, an alias or
+   the spec tables (resolveKey asks those first), never a single-word key, and every hit is
+   REPORTED — IDX.near feeds M.near, the Data tab's "Matched by spelling" card and V24 — so a person
+   can say "not the same man" once (S.map), and that answer wins every rebuild after. */
+function tokNear(a,b){
+  if(a===b) return true;
+  if(a.length<4||b.length<4||Math.abs(a.length-b.length)>1) return false;
+  if(a.length===b.length){
+    const diff=[]; for(let i=0;i<a.length;i++) if(a[i]!==b[i]){ diff.push(i); if(diff.length>2) return false; }
+    if(diff.length<=1) return true;                                   // one substitution
+    const [i,j]=diff; return j===i+1&&a[i]===b[j]&&a[j]===b[i];       // one adjacent transposition
+  }
+  const [s,l]=a.length<b.length?[a,b]:[b,a];                          // one insertion / deletion
+  let i=0; while(i<s.length&&s[i]===l[i]) i++;
+  return s.slice(i)===l.slice(i+1);
+}
+/* ONE TYPO PER NAME, NOT ONE PER WORD. Allowing an edit in every token matched the leaver "Ayanda
+   Zulu" to the live "Amanda Xulu" (ayanda≈amanda, zulu≈xulu) on the first live run — two people.
+   Every real case this was built for has exactly one misspelt word (Rajagopal/Rajagopaul,
+   Mazaka/Mazeka, Nonhlanhlo/Nonhlanhla) or a whole word missing on one side, so that is the rule:
+   every word of the shorter name must be in the longer one, at most ONE of them by an edit. */
+function tokensFit(a,b){                       // every token of a is in b, at most one of them fuzzily
+  let fuzzy=0;
+  for(const t of a){ if(b.includes(t)) continue; if(b.some(x=>tokNear(t,x))&&++fuzzy<=1) continue; return false; }
+  return true;
+}
+/* IS THIS A LEAVER'S NAME? Exact, or by the same one-typo / middle-name rule the live roster gets
+   (Salesforce books "Nolwazi Yolanda Mbokazi"; the list knew "Nolwazi Mbokazi", left 3 Sep). Used
+   before near-matching — a leaver's name is a leaver's, never a misspelling of someone still here —
+   and by the unattributed-sales banner, so a leaver's money is named as a leaver's, not a stranger's.
+   Never resolves anything: a leaver is off every report (Nick, 2026-09-15). */
+function leaverMatch(key){
+  if(/^CB\d+$/i.test(String(key))){ const c=cbCode(String(key)); return (c&&S.leavers&&S.leavers[c])||null; }   // a bare code: normName would strip it to nothing
+  const k=normName(key); if(!k) return null;
+  const kt=nameTokens(key); const fits=new Map();          // UNIQUE-OR-NOTHING here too: two leavers fitting is nobody
+  for(const c in (S.leavers||{})){ const l=S.leavers[c]; if(!l) continue;
+    for(const nm of [l.name,l.sf]){ const n=normName(nm); if(!n) continue;
+      if(n===k) return l;
+      const lt=nameTokens(nm);
+      if(kt.length>=2&&lt.length>=2){ if(tokensFit(kt,lt)||tokensFit(lt,kt)) fits.set(l.code,l); }
+      else if(k.length>=8&&(tokNear(k,n)||(lt.length>=2&&k.length>n.length&&k.startsWith(lt[0])&&k.endsWith(lt[lt.length-1])&&new RegExp('^'+lt.join('.+')+'$').test(k)))) fits.set(l.code,l); } }
+  return fits.size===1?[...fits.values()][0]:null;
+}
+/* THE SAME PERSON, OR A RE-ISSUED CODE? Before a spelling is remembered as an alias of a code, the
+   old and new names must plausibly be one human: a word in common, or a one-typo fit. "Surprise
+   Lucky Cwele" → "Surprize Cwele" shares Cwele; "Nolulamo Mazaka" → "Mazeka" shares Nolulamo. Two
+   unrelated names on one code is a reassignment (a new hire given a leaver's number, or a mistyped
+   code on one upload) — aliasing it would hand the old person's sales to the new one for ever. */
+function sameHuman(a,b){
+  const ta=nameTokens(a), tb=nameTokens(b); if(!ta.length||!tb.length) return false;
+  if(ta.some(t=>t.length>=4&&tb.includes(t))) return true;
+  return tokensFit(ta,tb)||tokensFit(tb,ta);
+}
+function nearName(key){
+  const kt=nameTokens(key);
+  const hits=new Set();
+  /* a name the archive knows as a leaver is a leaver — unless that leaver's own spelling is on the
+     live roster today: the list re-issued the same person under a new code (Nuluthando Ngcobo,
+     CB340 → CB342, 18 Sep), and the live agent wins */
+  { const lv=leaverMatch(key); if(lv&&!IDX.byName[normName(lv.name)]&&!IDX.byName[normName(lv.sf)]) return null; }
+  if(kt.length>=2){
+    for(const e of IDX.tok){ const rt=e.t;
+      if(tokensFit(kt,rt)||tokensFit(rt,kt)) hits.add(e.code); }
+  }else{
+    /* A COLLAPSED KEY. The BI ingest stores the Owner as normName(owner) — letters only, no spaces
+       ("rosheldinikanaidoo") — so there are no tokens to compare. Two questions instead, each
+       against every spelling on the roster: is the whole string one edit away ("noluthandongcobo"
+       / "nuluthandongcobo"), or do the agent's name tokens appear in order inside it with
+       something in between ("roshel…naidoo" — a middle name Salesforce carries and the list does
+       not)? Eight letters or more, so a bare short word never plays. */
+    const k=normName(key); if(k.length<8) return null;
+    for(const e of IDX.tok){ const flat=e.t.join('');
+      if(tokNear(k,flat)||(e.t.length>=2&&k.length>flat.length&&k.startsWith(e.t[0])&&k.endsWith(e.t[e.t.length-1])&&new RegExp('^'+e.t.join('.+')+'$').test(k))) hits.add(e.code); }
+    for(const n in IDX.byName){ if(n!==k&&n.length>=8&&tokNear(k,n)) hits.add(IDX.byName[n]); }
+  }
+  if(hits.size===1){ const code=[...hits][0]; IDX.near[String(key)]={code,name:(IDX.byCode[code]||{}).name||''}; return code; }
+  if(hits.size>1) IDX.ambig[String(key)]=[...hits];
+  return null;
 }
 /* the departures rule, in one place: true only while a leaver's days are to be kept */
 function leaversCount(){ return !!(MTD_RULES.departures&&MTD_RULES.departures.keepDaysUntilLeft); }
@@ -3306,11 +3498,16 @@ function resolveKeyUncached(key){
      labels in it carry a CB number belonging to someone else, and "Kyle Kisten CB-138"
      resolving on its number pays 735 of his calls to Jabu Ntombela. */
   const rl=IDX.ruleLabel[normFull(key)]; if(rl&&IDX.byCode[rl]) return rl;
+  /* A SPELLING THIS CODE CARRIED ON AN EARLIER LIST (2026-09-21) — a recorded fact, asked before any
+     inference below: "Surprise Lucky Cwele" was CB242 on every list from August to 16 Sep. */
+  const ak=IDX.byAlias[normName(key)]; if(ak) return ak;
   // middle names: match on tokens, but only when exactly one roster agent contains them all
   const kt=nameTokens(key);
   if(kt.length>=2){ const h=IDX.tok.filter(e=>kt.every(x=>e.t.includes(x))); if(h.length===1) return h[0].code; }
   // spelled differently from the roster (spec §3 name aliases) — resolve the alias, then retry
   const al=IDX.ruleAlias[normName(key)]; if(al&&IDX.byName[al]) return IDX.byName[al];
+  // near spelling — either-direction tokens, one edit per token, unique-or-nothing, reported
+  const nr=nearName(key); if(nr) return nr;
   const c=cbCode(key); if(c&&IDX.byCode[c]) return c;
   return null;
 }
@@ -3401,6 +3598,12 @@ function pruneDeadFiles(){
      2026-09-10), which registered one hash twice and failed verify-no-duplicates. Stripped here so
      state saved before the fix heals on the next rebuild. */
   (S.files||[]).forEach(f=>{ if(f&&f.hash&&/^Agent List — published/.test(String(f.name||''))) delete f.hash; });
+  /* ONE ROSTER ENTRY PER TYPE+NAME (regFile's own rule). A compare-and-set merge before 2026-09-21
+     could keep two adopted-roster entries with different stamps; state saved that way heals here.
+     Roster entries only — they carry no dates, so dropping the older twin orphans nothing. */
+  { const isRoster=f=>/^roster/.test(String(f&&f.type||'')); const newest={};
+    for(const f of (S.files||[])){ if(!isRoster(f)) continue; const k=String(f.type)+'|'+String(f.name||''); if(!newest[k]||String(f.at||'')>String(newest[k].at||'')) newest[k]=f; }
+    S.files=(S.files||[]).filter(f=>f&&(!isRoster(f)||newest[String(f.type)+'|'+String(f.name||'')]===f)); }
   S.files=(S.files||[]).filter(f=>{
     // Entries carrying a content hash were ingested AFTER the xlsx fix by a reader that
     // verified them — they are never phantoms, and a 0-date calls entry can be legitimate
@@ -3646,6 +3849,19 @@ function validateMTD(m){
      nobody mistakes the borrowed rules for a decision about that campaign. */
   { const nc=m.newCampaigns||[];
     add('V23','warn',!nc.length, nc.length?'campaign(s) on the Agent List the rule book does not name — reported under the Courtesy rules until it does: '+nc.join(', '):'every reported campaign is named in the rule book'); }
+  /* V24 — SALES ATTRIBUTED TO NOBODY (2026-09-21). Sales-specific, unlike V14's names-in-general:
+     an owner with sales in the period whom no list ever named and the archive does not know as a
+     leaver is money missing from a real agent's row (the 18 Sep renames: 206 September sales at 0
+     on screen). Known leavers are excluded — off the report by rule, not missing. Warn, not error:
+     an owner from another floor or an agent gone longer than the archive window is a legitimate
+     state the August reference data itself contains — the RED BANNER on every report page
+     (unattributedBanner) is the loud part; this is the ledger entry. Near-spelling matches are
+     reported beside it as information, so a person can check them. */
+  { const u=(function(){ const un=m.unmatched||{}; const s=[]; for(const k in un){ const x=un[k]; if(x&&x.src==='sales'&&x.n>0&&!leaverMatch(k)) s.push(k+' ('+x.n+')'); } return s; })();
+    add('V24','warn',!u.length, u.length?u.length+' Salesforce owner spelling(s) with sales in the period match nobody on the Agent List — those sales are counted for no agent: '+u.slice(0,4).join(', ')+(u.length>4?' +'+(u.length-4)+' more':'')+'. Correct the list or map the name on the Upload Station.'
+      :'every Salesforce owner with sales in the period resolves to an agent (or a known leaver)');
+    const nr=Object.keys(m.near||{});
+    if(nr.length) out.push({id:'V24a',sev:'warn',ok:false,msg:nr.length+' spelling(s) counted for an agent by NEAR match (one edit, unique) — confirm them under "Matched by spelling" on the Upload Station, or set one to Ignore: '+nr.slice(0,4).map(k=>k+' → '+m.near[k].code).join(', ')+(nr.length>4?' +'+(nr.length-4)+' more':'')}); }
     if(open) out.push({id:'QA',sev:'warn',ok:false,msg:open+' of '+ev+' evaluations are not closed — QA is provisional'}); }
 
   /* Campaigns deliberately left out of this dashboard. Reported every build, with the sales
@@ -4298,6 +4514,7 @@ function buildModel(range, periodKey){
   for(const f of facts){ if(f.talk>0) talkDays.add(f.date); if(f.act>0||f.sales>0) workedDays.add(f.date); }
   const noDialler=[...workedDays].filter(d=>!talkDays.has(d)).sort();
   return {range,newCampaigns,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
+    near:IDX.near,ambig:IDX.ambig,           // identities resolved by near spelling / left unresolved as ambiguous (2026-09-21), for the Data tab and V24
     viciSkipped,viciPartial,talkDays,noDialler,attDates,diallingDays,refsAreTotals:M_refsAreTotals,
     /* the same aggregator the grand total used, for a page that must total a FILTERED set of
        facts (the Dashboard under the header Team/Campaign filters, 2026-09-07) */
@@ -6158,7 +6375,7 @@ PAGES.mtd=()=>{
     return `<div class="card mt"><div class="cardhead"><div><h3>${CAMPLAB[camp]||camp} — team leaders</h3></div></div>${tableHTML(cols,metricRows)}</div>`;
   };
   return `
-  ${listRefusedBanner()}${listAppliedBanner()}${grainWarn}${diallerWarning()}${coverageNote()}<div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialling day${M.diallingDays===1?'':'s'}${S.ui.asAt?' · <b>as at '+esc(S.ui.asAt)+'</b>':''} · sorted by SPD</div>
+  ${listRefusedBanner()}${listAppliedBanner()}${unattributedBanner()}${grainWarn}${diallerWarning()}${coverageNote()}<div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialling day${M.diallingDays===1?'':'s'}${S.ui.asAt?' · <b>as at '+esc(S.ui.asAt)+'</b>':''} · sorted by SPD</div>
     <div class="spacer"></div><button class="btn small" onclick="exportTracker()">${I.download}<span>Generate MTD tracker</span></button><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
   <div class="chiprow" style="margin-bottom:14px">
     ${[...CAMPS.map(c=>[c,CAMPLAB[c]||c]),['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}${camp0&&t!==camp0?' off':''}" ${camp0&&t!==camp0?'disabled title="the header Campaign filter is set to '+esc(CAMPLAB[camp0]||camp0)+'"':''} onclick="S.ui.mtdSub='${t}';saveUI();renderPage()">${esc(l)}</button>`).join('')}
@@ -6176,7 +6393,7 @@ PAGES.weekly=()=>{
   const camp=camp0||(CAMPS.includes(S.ui.wtdCamp)?S.ui.wtdCamp:'Cuddle');
   const team=S.ui.team||null;
   return `
-  ${diallerWarning()}<div class="page-head"><h2>Weekly reports</h2><div class="sub">weeks run Monday–Sunday inside the period</div></div>
+  ${unattributedBanner()}${diallerWarning()}<div class="page-head"><h2>Weekly reports</h2><div class="sub">weeks run Monday–Sunday inside the period</div></div>
   <div class="chiprow" style="margin-bottom:14px">
     ${CAMPS.map(c=>`<button class="chip ${camp===c?'on':''}${camp0&&c!==camp0?' off':''}" ${camp0&&c!==camp0?'disabled title="the header Campaign filter is set to '+esc(CAMPLAB[camp0]||camp0)+'"':''} onclick="S.ui.wtdCamp='${c}';saveUI();renderPage()">${esc(CAMPLAB[c]||c)}</button>`).join('')}
     ${(camp0||team)?`<span class="note" style="margin-left:10px">filtered by ${[camp0?'campaign <b>'+esc(CAMPLAB[camp0]||camp0)+'</b>':'',team?'team leader <b>'+esc(team)+'</b>':''].filter(Boolean).join(' and ')} — <a href="#" onclick="__clearFilters();return false">clear</a></span>`:''}</div>
@@ -6220,7 +6437,7 @@ PAGES.daily=()=>{
     {h:'Referrals',f:r=>(r.ref||0)>0?fmtNum(r.ref):(M&&M.refsAreTotals?'<span title="Referrals come from the HighLevel pull as a period TOTAL per agent — the source carries no date, so it cannot be split across days">–</span>':'0'),csv:r=>r.ref||''}];
   window.__exp={name:'daily',cols,rows};
   return `
-  ${diallerWarning()}<div class="page-head"><h2>Daily detail</h2><div class="sub">${rows.length} agent-day rows</div>
+  ${unattributedBanner()}${diallerWarning()}<div class="page-head"><h2>Daily detail</h2><div class="sub">${rows.length} agent-day rows</div>
     <div class="spacer"></div><button class="btn small" onclick="exportCSV('daily_${S.ui.month}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
   <div class="filters">
     <button class="btn small" title="Previous day" onclick="dailyStep(-1)">‹</button>
@@ -6891,16 +7108,25 @@ PAGES.data=()=>{
   const unHtml=un.length?`<div class="card mt"><div class="cardhead"><div><h3>Unmatched agents</h3>
     <div class="sub"><b>This activity is NOT counted in any total until mapped${unGwp?' — R'+fmtNum(unGwp)+' GWP is currently unattributed':''}.</b> Names in the uploads that don't match the agent list — upload a fresh Agent List (new starters appear here), or map them once and it sticks</div></div></div>
     <div class="tablewrap" style="max-height:300px"><table class="data"><thead><tr><th class="l">Identity in file</th><th class="l">Source</th><th>Volume</th><th class="l">Map to</th></tr></thead><tbody>
-    ${un.map(([k,v])=>`<tr><td class="l"><code>${esc(k)}</code></td><td class="l">${v.src}</td><td>${v.n}${v.gwp?' · R'+fmtNum(v.gwp):''}</td>
+    ${un.map(([k,v])=>`<tr><td class="l"><code>${esc(k)}</code>${(M.ambig||{})[k]?' <span class="pill pwarn" title="fits more than one agent — the resolver never guesses">fits '+(M.ambig[k]||[]).map(esc).join(' and ')+'</span>':''}</td><td class="l">${v.src}</td><td>${v.n}${v.gwp?' · R'+fmtNum(v.gwp):''}</td>
       <td class="l"><select onchange="mapIdentity(this.dataset.k,this.value)" onfocus="fillAgentOptions(this)" data-k="${esc(k)}"><option value="">— choose —</option><option value="__ignore__">Ignore</option></select></td></tr>`).join('')}
     </tbody></table></div></div>`:'';
-  return `${listRefusedBanner()}${listAppliedBanner()}${staleGrainBanner()}<div class="page-head"><h2>Upload station</h2>
+  /* MATCHED BY SPELLING (2026-09-21): every identity the resolver accepted on one edit — shown so a
+     person can check the guess and overrule it once; the manual map wins every rebuild after. */
+  const nr=Object.entries(M?.near||{}).sort((a,b)=>a[0].localeCompare(b[0]));
+  const nrHtml=nr.length?`<div class="card mt"><div class="cardhead"><div><h3>Matched by spelling</h3>
+    <div class="sub">${nr.length} name(s) in the uploads differ from the Agent List by one edit or a middle name and fit exactly ONE agent, so they are counted for that agent. Check them — if one is not the same person, set it to Ignore or map it, and that sticks.</div></div></div>
+    <div class="tablewrap" style="max-height:300px"><table class="data"><thead><tr><th class="l">Identity in file</th><th class="l">Counted as</th><th class="l">Override</th></tr></thead><tbody>
+    ${nr.map(([k,v])=>`<tr><td class="l"><code>${esc(k)}</code></td><td class="l">${esc(v.code)} · ${esc(v.name)}</td>
+      <td class="l"><select onchange="mapIdentity(this.dataset.k,this.value)" onfocus="fillAgentOptions(this)" data-k="${esc(k)}"><option value="">— keep —</option><option value="__ignore__">Ignore</option></select></td></tr>`).join('')}
+    </tbody></table></div></div>`:'';
+  return `${listRefusedBanner()}${listAppliedBanner()}${unattributedBanner()}${staleGrainBanner()}<div class="page-head"><h2>Upload station</h2>
     <div class="sub">one slot per file — drop the file on its slot or click Choose file. Renamed files are fine: the type is confirmed from the file's own columns, and anything dropped on the wrong slot gets filed correctly with a heads-up.</div></div>
   <div class="slots">${slotCards}</div>
   ${largeFileCard()}
   <div class="card"><div class="cardhead"><div><h3>Uploaded files</h3></div></div>${reg}
     <p class="note" style="margin:10px 0 0">Files are recognised by their <b>content</b> — re-uploading a file that's already loaded (even renamed) is skipped automatically, so you can safely upload your whole export folder every day and only new files are added. Daily sources (sales, calls, attendance, QA) <b>append</b> — each file adds to the history as the month builds up; re-uploading the same day/month refreshes it. The <b>Agent List replaces the roster</b> — upload a fresh one as often as agents join, leave or move. Everything saves to the cloud database, and <b>removing a file here removes it from the database too</b>.</p></div>
-  ${cov}${ruleChecksCard()}${unHtml}`;
+  ${cov}${ruleChecksCard()}${unHtml}${nrHtml}`;
 };
 /* THE RULE BOOK, ANSWERING BACK. Every check in spec §11, run against the model that was
    just built, printed next to the upload that built it. Failures first — a check that passes
@@ -7052,7 +7278,13 @@ async function rakeInPage(file, id, say){
     merged+=j.merged||0; rejected+=j.rejected||0; from=to;
     say('Merging '+file.name+' — '+fmtNum(to)+' of '+fmtNum(rowsIn)+' rows…'); }
   await step('finish',{p_file:id,p_rows_in:rowsIn});
-  say('Loaded '+file.name+' — '+fmtNum(merged)+' rows into the lake'+(rejected?' ('+fmtNum(rejected)+' rejected)':'')+'. The lead book refreshes within ten minutes.');
+  /* SAY WHERE IT WENT (2026-09-21). Only the lead book reads back from the lake; Dashboard, MTD,
+     Daily and Weekly read the in-page stores, which a file on this path never reaches. "Loaded"
+     for a 40 MB BI or ViciDial export read as done while every figure on screen stayed put. */
+  if(src==='SF_OPEN_CASES') say('Loaded '+file.name+' — '+fmtNum(merged)+' rows into the lake'+(rejected?' ('+fmtNum(rejected)+' rejected)':'')+'. The lead book refreshes within ten minutes.');
+  else{ const note='Files over '+Math.round(LARGE_MIN/1048576)+' MB go to the lake only — Dashboard, MTD, Daily and Weekly do not read them. Export a smaller date range for those figures.';
+    say('Loaded '+file.name+' — '+fmtNum(merged)+' rows into the lake'+(rejected?' ('+fmtNum(rejected)+' rejected)':'')+'. '+note);
+    try{ toast('"'+file.name+'" went to the lake, not the dashboard. '+note,'err',15000); }catch(e){} }
   if(src==='SF_OPEN_CASES'&&typeof syncLeadBookFromLake==='function') setTimeout(()=>{ try{ syncLeadBookFromLake(true); }catch(e){} },2000);
 }
 async function largeStatus(){
@@ -7126,7 +7358,12 @@ window.fillAgentOptions=(sel)=>{
   }
   sel.appendChild(frag);
 };
-window.mapIdentity=(k,v)=>{ if(!v) return; S.map[k]=v; save(); rebuild(); renderAll();
+window.mapIdentity=(k,v)=>{ if(!v) return;
+  /* IGNORE IS PERMANENT AND SILENT AFTERWARDS (review, 2026-09-21): say what it hides, and ask. */
+  if(v==='__ignore__'){ const u=(M&&M.unmatched||{})[k]||{}; const nr=(M&&M.near||{})[k];
+    const what=u.n?(u.src==='sales'?u.n+' sale(s)'+(u.gwp?' / R'+fmtNum(u.gwp)+' GWP':''):u.n+' '+u.src+' row(s)'):(nr?'its activity (currently counted for '+nr.code+')':'its activity');
+    if(!confirm('Ignore "'+k+'" from now on?\n\nThis drops '+what+' from every report until the name is mapped again on the Upload Station.')) { renderAll(); return; } }
+  S.map[k]=v; save(); rebuild(); renderAll();
   toast(v==='__ignore__'?'Ignored':'Mapped'); };
 
 PAGES.adjust=()=>{
@@ -8292,6 +8529,15 @@ async function adoptRosterFromRecord(given){
        them, fingerprint or no fingerprint; a change re-attributes their days on the next rebuild. */
     let leaversMoved=false;
     if(Array.isArray(j.leavers)){ leaversMoved=adoptLeavers(j.leavers); if(leaversMoved) save(); }
+    /* THE SPELLINGS COME FROM THE RECORD TOO (2026-09-21): agent_list_aliases() — every earlier
+       spelling of a code on the current list — so a browser that never saw the 16 Sep list still
+       resolves "Surprise Lucky Cwele" to CB242. Adopted on every poll; a change re-attributes on the
+       next rebuild, which the fingerprint path below triggers when anything moved. */
+    if(Array.isArray(j.aliases)&&adoptAliases(j.aliases)){ leaversMoved=true; save(); }
+    /* THE ARCHIVE DID NOT ANSWER (review, 2026-09-21): a failed leavers/aliases lookup is named, once
+       per session, never mistaken for "nobody left, no other spellings". */
+    if(Array.isArray(j.extras_degraded)&&j.extras_degraded.length&&!window.__extrasDegradedSaid){ window.__extrasDegradedSaid=1;
+      toast('The Worker could not read the Agent List archive ('+j.extras_degraded.join(', ')+') — renamed or departed agents may show as Unmatched until it recovers.',12000); }
     /* ALREADY ON THIS LIST — but is the roster on screen actually the record's? A tab on an older
        build kept saving a stale 131-agent roster over the shared state while the record said 129
        (2026-09-15), and a matching fingerprint skipped everything below. Reconcile the code set on
@@ -8539,6 +8785,11 @@ if(!S.ui.month) S.ui.month=latestMonth();
    a reload. Runs here, at load, so pressing Yesterday still works. Typed custom ranges and
    the cycle view are deliberate and are left alone. */
 if(S.ui.preset==='today'||S.ui.preset==='yesterday') S.ui.preset='month';
+/* The Daily tab's pinned day is the same kind of thing (2026-09-21): it lived in S.ui, survived
+   every reload and every upload, and kept that one old day on screen until "All days" was
+   clicked — today's upload never surfaced there. A pinned day is one click away; it does not
+   need to outlive the session either. */
+if(S.ui.dailyFilter&&S.ui.dailyFilter.date) S.ui.dailyFilter.date='';
 if(!PAGES[S.ui.tab]) S.ui.tab='dashboard';
 rebuild(); renderAll();
 
@@ -8954,7 +9205,13 @@ function tlSummary(o){
       if(!window.__vasHydrated) return;                       // still syncing — M may be partial
       if(!S||!(S.files||[]).length) return;                   // empty session must never overwrite
       return send();
-    }catch(e){}
+    }catch(e){
+      /* NOT SILENT (2026-09-21): this is the "team leader view follows within seconds" kick, and a
+         structural error here failed identically every 90 s with nothing on screen. */
+      try{console.warn('agent digest not published',e)}catch(_){}
+      window.__digestPushFails=(window.__digestPushFails||0)+1;
+      if(window.__digestPushFails===3) try{toast('The agent digest is not publishing ('+(e&&e.message||e)+') — Agent Analytics and the team leader views are reading the state before your last upload.','err',15000)}catch(_){}
+    }
   }
   function send(){
     try{

@@ -1867,8 +1867,9 @@ function pageMyTeam(){
       +'<b class="num">'+num(x.n)+'</b><span class="qsub">'+(x.l===1?'act today':x.l===2?'this week':x.l===3?'coach':'recognise')+'</span></div>';
   }).join('')
   +(closed.length?'<div class="qrow"><span>Closed this week — off this list, on the record in HighLevel</span><b class="num">'+num(closed.length)+'</b><span class="qsub">'+esc(closed.map(function(a){return firstName(a.name);}).slice(0,6).join(', '))+(closed.length>6?' +'+(closed.length-6):'')+'</span></div>':'')
-  +'<div class="qrow"><span>Elite blocked by compliance</span><b class="num">'
-    +num(list.filter(function(a){return a.r2a.elite==='Blocked';}).length)+'</b><span class="qsub">R2A tier set</span></div>'
+  /* A compliance tier is a coaching flag, never a block (Nick, 2026-09-21): count who has one. */
+  +'<div class="qrow"><span>On a compliance tier</span><b class="num">'
+    +num(list.filter(function(a){return a.r2a.tier&&a.r2a.tier!=='Tier 0';}).length)+'</b><span class="qsub">coach the fails</span></div>'
   +'<div class="qrow"><span>Coaching recorded this window</span><b class="num">'
     +num((D.coaching&&D.coaching.totals&&D.coaching.totals.sessions)||0)+'</b><span class="qsub">last 90 days</span></div>';
 
@@ -1899,9 +1900,9 @@ function pageTeamResults(){
       +'<div class="kpi-val num">'+num(onTarget)+' of '+num(list.length)+'</div>'
       +'<div class="track" style="margin-top:9px"><i style="width:'+Math.round(onTarget/list.length*100)+'%;background:var(--green)"></i></div>'
       +'<div class="kpi-sub">Both checks passed — value and volume.</div></div>'
-    +'<div class="kpi"><div class="kpi-name">Elite eligible</div>'
-      +'<div class="kpi-val num">'+num(list.filter(function(a){return a.r2a.elite!=='Blocked';}).length)+' of '+num(list.length)+'</div>'
-      +'<div class="kpi-sub">Not blocked by an R2A compliance tier.</div></div>'
+    +'<div class="kpi"><div class="kpi-name">On a compliance tier</div>'
+      +'<div class="kpi-val num">'+num(list.filter(function(a){return a.r2a.tier&&a.r2a.tier!=='Tier 0';}).length)+' of '+num(list.length)+'</div>'
+      +'<div class="kpi-sub">Critical fails to coach. A tier never withholds Elite or moves a score.</div></div>'
     +'<div class="kpi"><div class="kpi-name">Average composite</div>'
       +'<div class="kpi-val num">'+num(list.reduce(function(n,a){return n+(a.composite.adj||0);},0)/list.length,1)+'</div>'
       +'<div class="kpi-sub">Out of 100, after penalties.</div></div>'
@@ -1960,7 +1961,7 @@ function pageTeamResults(){
         +'<td class="num">'+num(a.r2a.fails)+'</td>'
         +'<td class="num"><span class="pill '+(t==='Tier 0'?'n':((a.r2a.lvl===1||t==='R2A-3')?'r':'a'))+'">'+esc(t)+'</span></td>'
         +'<td class="num">'+(a.composite.pen?'−'+num(a.composite.pen):'0')+'</td>'
-        +'<td class="num"><span class="pill '+(a.r2a.elite==='Blocked'?'r':'g')+'">'+esc(a.r2a.elite)+'</span></td></tr>';
+        +'<td class="num"><span class="pill g">'+esc(a.r2a.elite||'Eligible')+'</span></td></tr>';
     }).join('')+'</tbody></table></div></div>';
 
   /* WHERE YOUR TIME BUYS THE MOST — the weakest driver per agent, which is the
@@ -2110,8 +2111,8 @@ function nbaDetail(){
     +acTile('R2A TIER',esc(a.r2a.tier||'Tier 0'),
         a.composite.pen?('−'+f1(a.composite.pen)+' off the score'):'Nothing off the score',
         a.r2a.tier&&a.r2a.tier!=='Tier 0'?'focus':'pass')
-    +acTile('ELITE',esc(a.r2a.elite||'Allowed'),'Whether the top band is reachable',
-        a.r2a.elite==='Blocked'?'focus':'pass')
+    +acTile('ELITE',esc(a.r2a.elite||'Eligible'),'The top band is always reachable — a tier coaches, it never blocks',
+        'pass')
     +'</div>'
     +'<p class="why">Two things come off the score and nothing else: critical fails, and a theme '
     +'being coached repeatedly. Each is capped, and the two together are capped again.</p></div>';
@@ -2226,7 +2227,7 @@ function drawerHTML(P){
       +'<div class="dk-mini">'
       +'<span>Composite <b>'+num(n.composite.adj,1)+'</b> <i>of 100, after '+num(n.composite.pen,1)+' off</i></span>'
       +'<span>Critical fails <b>'+num(n.r2a.fails)+'</b> <i>'+esc(n.r2a.tier||'Tier 0')+'</i></span>'
-      +'<span>Elite <b>'+esc(n.r2a.elite||'Allowed')+'</b></span>'
+      +'<span>Elite <b>'+esc(n.r2a.elite||'Eligible')+'</b></span>'
       +'<span>Two checks <b>'+esc(n.twoCheck.status||'—')+'</b></span>'
       +'</div>'
       +(P.nba.period&&(P.nba.workDays||0)>40
@@ -4919,8 +4920,12 @@ function acTile(label,val,sub,state){
     +'<div class="ac-lab">'+esc(label)+'</div><div class="ac-sub">'+esc(sub)+'</div>'
     +'<span class="pill '+pill[0]+'">'+pill[1]+'</span></div>';
 }
-function agentKpis(a,c){
-  var head='<div class="ac-head">'
+/* WHO YOU ARE, WHERE YOU STAND — the strip at the top of Today, and since 2026-09-21 of Projected
+   Commission too (Nick: "add this to comms calculator as well"). One renderer, so the two never
+   drift: name and code, campaign · tenure · team leader · period · days worked, and the two
+   GWP ranks. */
+function agentHead(a){
+  return '<div class="ac-head">'
     +'<div style="flex:1;min-width:220px">'
     +'<div class="ac-nm">'+esc(a.name)+' <span class="ac-cd">'+esc(a.code)+'</span></div>'
     +'<div class="ac-meta">'+esc(a.campaign||'')+(a.tenure?' · '+esc(a.tenure):'')
@@ -4928,6 +4933,9 @@ function agentKpis(a,c){
     +(a.rankTeam?'<div class="ac-box"><div class="v">#'+num(a.rankTeam)+'</div><div class="k">OF '+num(a.nTeam)+' IN TEAM · BY GWP</div></div>':'')
     +(a.rankCo?'<div class="ac-box"><div class="v">#'+num(a.rankCo)+'</div><div class="k">OF '+num(a.nCo)+' ON FLOOR · BY GWP</div></div>':'')
     +'</div>';
+}
+function agentKpis(a,c){
+  var head=agentHead(a);
 
   /* THE AGENT'S OWN DAILY TARGET. Dividing the period target by the month's working days
      answered a different question — Jolene read "target 7.6/day" against a tenure target of
@@ -6339,9 +6347,11 @@ function topHTML(){
           +'<td class="l">'+esc(r.campaign)+'</td><td class="num">'+num(r.sales)+'</td><td class="num">'+R(r.gwpEx)+'</td></tr>';
       }).join('')+'</tbody></table></div>';
   };
-  return '<div class="card"><h2>Top performers</h2>'
-    +'<p class="why">The floor\'s top '+num(T.floor.length)+' by '+esc(T.basis||'premium written')
-    +(T.myPos?' — you are <b>#'+num(T.myPos)+' of '+num(T.n)+'</b>':'')+'.</p>'
+  /* the ladder is the agent's OWN campaign (Nick, 2026-09-21) — say so; the floor only when no campaign is known */
+  var who=T.campaign?esc(T.campaign)+'\'s':'The floor\'s';
+  return '<div class="card"><h2>Top performers'+(T.campaign?' — '+esc(T.campaign):'')+'</h2>'
+    +'<p class="why">'+who+' top '+num(T.floor.length)+' by '+esc(T.basis||'premium written')
+    +(T.myPos?' — you are <b>#'+num(T.myPos)+' of '+num(T.n)+'</b>'+(T.campaign?' in '+esc(T.campaign):''):'')+'.</p>'
     +tbl(T.floor)
     +'</div>';
 }
@@ -6543,8 +6553,8 @@ function comsPage(c){
   /* TOP PERFORMERS LIVE HERE (Nick, 2026-09-15: "the top performers must be on the commission
      calculator and they must only see the top 10 performers, not in their team") — the floor's
      ten, under the earnings, where the "what would it take" question is already being asked. */
-  if(!ME.plan) return comsTop()+heroHTML(c)+topHTML();   // heroHTML's "not set up yet" card says why, without guessing
-  return comsTop()+comsExplain(c)+comsHero(c)+comsFigures(c)+whatIfHTML(c)+topHTML()+comsTableCard(c);
+  if(!ME.plan) return agentHead(ME)+comsTop()+heroHTML(c)+topHTML();   // heroHTML's "not set up yet" card says why, without guessing
+  return agentHead(ME)+comsTop()+comsExplain(c)+comsHero(c)+comsFigures(c)+whatIfHTML(c)+topHTML()+comsTableCard(c);
 }
 function refreshTool(c){
   if($('comsHero')) $('comsHero').innerHTML=comsHeroInner(c);

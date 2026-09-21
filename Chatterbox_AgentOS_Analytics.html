@@ -2034,7 +2034,15 @@ async function syncUploadsFromVAS(){
       toast(lines.length+' file(s) relayed from the VAS Upload Station — '+lines.slice(0,3).map(esc).join(' · ')+(lines.length>3?' +'+(lines.length-3)+' more':''));
     }
     if(dirty)saveConfig();
-  }catch(e){}finally{__uploadSyncBusy=false}
+  }catch(e){
+    /* NOT SILENT (2026-09-21) — the sibling syncRosterFromVAS got this on 2026-08-28 and this one
+       never did. Anything thrown outside the per-file try (state access, the sticky toast, render
+       after a save) ended the cycle with no toast, no console line and no pageerror for the
+       headless relay to see — indistinguishable from "nothing new to load". */
+    try{console.warn('syncUploadsFromVAS failed',e)}catch(_){}
+    if(!window.__uploadSyncErrWarned){window.__uploadSyncErrWarned=1;
+      toast('VAS uploads could not be relayed here ('+esc(e&&e.message||String(e))+') — figures may be missing the latest files. Reload to retry.','err');}
+  }finally{__uploadSyncBusy=false}
 }
 function extractCB(str){const m=String(str||'').match(/CB[\s._-]*0*(\d{1,4})/i);return m?('CB'+m[1]):null}
 /* MEMOISED ON THE DATA VERSION. cbOf reads three identity stores — the manual alias map,
@@ -4129,9 +4137,12 @@ function cfTier(st){ // v3.0 graduated critical-fail rule: tier = highest of cou
   /* THE TIER CLASSIFIES, IT NO LONGER DEDUCTS (Nick, 2026-09-11: "nba priority rules must not
      affect the agent scores"). pen1/pen2/pen3 default to 0 here AND in the rule's vals — the
      live cb-config rule predates these keys, so the code default is what actually fires. The
-     ladder, the tier and Elite eligibility are unchanged; only the composite stops moving. */
-  if(cf>=nbaVal('r2a3Count',4)||cfr>=nbaVal('r2a3Rate',30))return{tier:'R2A-3',lvl:1,pen:nbaVal('pen3',0),cf,cfr,elite:'Blocked'};
-  if(cf>=nbaVal('r2a2Count',2)||cfr>=nbaVal('r2a2Rate',10))return{tier:'R2A-2',lvl:2,pen:nbaVal('pen2',0),cf,cfr,elite:'Blocked'};
+     ladder and the tier are unchanged; only the composite stops moving.
+     Since 2026-09-21 (Nick: "where it says blocked, the agents must not be blocked") no tier
+     returns Blocked either — R2A-2/R2A-3 read Retained like R2A-1, so the digest's r2a.elite
+     never withholds Elite on a coaching card. The rating band never read this field. */
+  if(cf>=nbaVal('r2a3Count',4)||cfr>=nbaVal('r2a3Rate',30))return{tier:'R2A-3',lvl:1,pen:nbaVal('pen3',0),cf,cfr,elite:'Retained'};
+  if(cf>=nbaVal('r2a2Count',2)||cfr>=nbaVal('r2a2Rate',10))return{tier:'R2A-2',lvl:2,pen:nbaVal('pen2',0),cf,cfr,elite:'Retained'};
   return{tier:'R2A-1',lvl:3,pen:nbaVal('pen1',0),cf,cfr,elite:'Retained'};
 }
 function acComposite(st,pctile,coachPen){

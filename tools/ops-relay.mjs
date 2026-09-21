@@ -55,13 +55,21 @@ try {
   await page.goto(SITE, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => typeof window.acStats === 'function', null, { timeout: 90000 });
   console.log('Ops booted as ' + admin.username + ' — waiting for the upload relay');
-  /* the relay starts ~2 min after boot; then keep going until it has been quiet for 30 s */
-  const t0 = Date.now();
+  /* the relay starts ~2 min after boot; then keep going until it has been quiet for 30 s.
+     THE PAGE SAYS WHEN IT IS DONE (2026-09-21). Wire silence is not idleness: a 1.7 MB BI workbook
+     parses and pushes to the database for well over 30 s with no download and no store POST, so
+     this loop closed the browser mid-relay — before saveFacts and saveConfig — and every file
+     behind the slow one was pulled again next run and never decided (seven files queued from
+     20 Sep; Ops sat on a 17 Sep attendance of one row while VAS had 179). Leave only when the
+     page's own relay flag is down as well. */
+  const t0 = Date.now(); let busy = false;
   while (Date.now() - t0 < MAX_WAIT) {
     await page.waitForTimeout(5000);
+    busy = await page.evaluate(() => typeof __uploadSyncBusy !== 'undefined' && !!__uploadSyncBusy).catch(() => false);
     const quietFor = Date.now() - lastActivity;
-    if (pulls.length && quietFor > 30000) break;
+    if (pulls.length && !busy && quietFor > 30000) break;
   }
+  if (busy) { failed++; console.log('DEADLINE: the relay was still loading at ' + Math.round(MAX_WAIT / 1000) + ' s — files left undecided for the next run (raise --wait)'); }   // a cut-off run is a FAILED run: the tick stamps it red, not green
   const st = await page.evaluate(() => ({ facts: Object.fromEntries(Object.entries(state.facts || {}).map(([k, v]) => [k, (v || []).length])), seen: Object.keys(state.syncedUploads || {}).length }));
   console.log('archive files pulled: ' + pulls.length + ' (' + pulls.filter((s) => s === 200).length + ' ok) · files already decided: ' + st.seen);
   if (!writes.length) console.log('fact stores written: none — nothing new in the archive for Ops');

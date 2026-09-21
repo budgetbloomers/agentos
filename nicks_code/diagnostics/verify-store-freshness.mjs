@@ -151,6 +151,17 @@ head('A · THE SENTINEL, AGAINST FIXTURES');
   ok(!evaluateFreshness({ ...base, jobs: stale, runnerExpected: true, now: at('2026-09-06T09:00:00Z') }).some((x) => x.id === 'runner-silent'), 'the same silence on a Sunday: quiet');
   const red = { steps: { 'verify-nightly': { ranAt: '2026-09-06T20:10:00Z', ok: false, note: 'verify-all-tabs 49/50' } } };
   ok(evaluateFreshness({ ...base, jobs: red }).some((x) => x.id === 'verification-failed' && /49\/50/.test(x.message)), 'a red nightly verify is named');
+  /* THE HELP CENTER ANSWERS (Nick, 2026-09-21: "always make sure if I ask the team leader for help or ask campaign manager it works") */
+  ok(!evaluateFreshness({ ...base, helpCenter: { ok: true, status: 200, help: true, assist: true } }).some((x) => /help-center/.test(x.id)), 'HighLevel answers with both pipelines: quiet');
+  ok(evaluateFreshness({ ...base, helpCenter: { ok: false, status: 401, error: 'Invalid JWT' } }).some((x) => x.id === 'help-center-unreachable' && x.severity === 'critical' && /401/.test(x.message)), 'a refused key: help-center-unreachable (critical), status named');
+  ok(evaluateFreshness({ ...base, helpCenter: { ok: false, status: 0, error: 'no answer within 10s' } }).some((x) => x.id === 'help-center-unreachable'), 'a timeout: help-center-unreachable');
+  ok(evaluateFreshness({ ...base, helpCenter: { ok: true, status: 200, help: true, assist: false } }).some((x) => x.id === 'help-center-pipeline-missing' && x.severity === 'warning' && /Campaign Assistance/.test(x.message)), 'a missing assistance pipeline: warning naming it');
+  ok(!evaluateFreshness({ ...base }).some((x) => /help-center/.test(x.id)), 'no probe result (older Worker): no opinion');
+  /* THE RELAY SAYS IT RAN, NO STORE MOVED (2026-09-21) */
+  const relayed = { steps: { 'ops-relay': { ranAt: '2026-09-07T08:55:00Z', ok: true } } };
+  ok(evaluateFreshness({ ...base, jobs: relayed, manifestAt: '2026-09-07T06:00:00Z', opsFactsAt: '2026-09-07T02:00:00Z' }).some((x) => x.id === 'ops-relay-no-store-moved' && x.severity === 'warning'), 'relay ran after the upload, no Ops store saved for 4 h: warning');
+  ok(!evaluateFreshness({ ...base, jobs: relayed, manifestAt: '2026-09-07T06:00:00Z', opsFactsAt: '2026-09-07T06:30:00Z' }).some((x) => x.id === 'ops-relay-no-store-moved'), 'a store saved after the upload: quiet');
+  ok(!evaluateFreshness({ ...base, jobs: relayed, manifestAt: '2026-09-07T08:30:00Z', opsFactsAt: '2026-09-07T02:00:00Z' }).some((x) => x.id === 'ops-relay-no-store-moved'), 'an upload 30 min ago: too soon to say');
   /* sources: Monday 11:00 SAST → expected through Saturday 5 Sep */
   ok(expectedReachFor(at('2026-09-07T09:00:00Z')) === '2026-09-05', 'Monday before 13:00 expects Saturday (no Sunday data)');
   ok(expectedReachFor(at('2026-09-07T12:00:00Z')) === '2026-09-05', 'Monday after 13:00 still expects Saturday');

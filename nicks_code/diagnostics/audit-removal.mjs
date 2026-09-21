@@ -1,9 +1,11 @@
 // Removal / cleanup audit: every uploaded source must be fully removable, and removing
 // one file must never take another file's data with it.
 import { chromium } from 'playwright';
-import fs from 'node:fs'; import path from 'node:path'; import http from 'node:http';
+import fs from 'node:fs'; import path from 'node:path'; import http from 'node:http'; import { fileURLToPath } from 'node:url';
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
-const UP = path.join(REPO,'uploads','2026-08-06'); const S=process.cwd();
+const UP = path.join(REPO,'uploads','2026-08-06'); const S=path.join(HERE, 'scratch');
+fs.mkdirSync(S, { recursive: true });
 const SERVE={'/index.html':path.join(REPO,'nicks_code','index.html'),'/xlsx.full.min.js':path.join(REPO,'site','xlsx.full.min.js')};
 const server=http.createServer((q,s)=>{const p=SERVE[q.url.split('?')[0]];
   if(!p){s.writeHead(404);s.end('nf');return} s.writeHead(200,{'Content-Type':p.endsWith('.js')?'text/javascript':'text/html'});fs.createReadStream(p).pipe(s)});

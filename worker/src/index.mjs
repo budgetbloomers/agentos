@@ -91,12 +91,24 @@ const HEALTH_RECIPIENTS = new Set(['aarav', 'nicholas', 'nick', 'barry']);      
        14 Sep list removed had 49 sales and 205 h of talk credited to nobody). The archive says
        who left and when; no browser derives it. */
 async function rosterExtras(DB) {
-  const leaders = (await DB.select('team_leader_cbs?select=leader_name,employee_code,campaign,manager,on_list_as_of').catch(() => null) || [])
+  /* A FAILED LOOKUP IS NOT AN EMPTY ANSWER (review, 2026-09-21). `.catch(() => null) || []` made a
+     broken function indistinguishable from "nobody left / no aliases" — the exact silent shape the
+     aliases exist to end. Each failure is logged and named in `degraded[]`, which travels with the
+     payload so PULSE can say "the archive did not answer" instead of quietly resolving nothing. */
+  const degraded = [];
+  const ask = async (what, p) => { try { return (await p) || []; } catch (e) { degraded.push(what); console.error('rosterExtras ' + what + ' failed: ' + (e && e.message || e)); return []; } };
+  const leaders = (await ask('leaders', DB.select('team_leader_cbs?select=leader_name,employee_code,campaign,manager,on_list_as_of')))
     .filter((l) => l && l.employee_code).map((l) => ({ name: l.leader_name, cb: normCb(l.employee_code), campaign: l.campaign || '', manager: l.manager || '', on_list_as_of: l.on_list_as_of || '' }));
-  const leavers = (await DB.rpc('agent_list_leavers', { p_days: 90 }).catch(() => null) || [])
+  const leavers = (await ask('leavers', DB.rpc('agent_list_leavers', { p_days: 90 })))
     .filter((r) => r && r.code && r.left_on).map((r) => ({ code: String(r.code).toUpperCase(), name: r.name || '', sf: r.sf || '', callx: r.callx || '',
       tl: r.tl || '', campaign: r.campaign || '', tenure: r.tenure || '', target: r.target, start: r.start_date || '', last_on: r.last_on, left: r.left_on }));
-  return { leaders, leavers };
+  /* · aliases — agent_list_aliases() (migration-044, 2026-09-21): every earlier spelling of a code
+       on the current list. The 18 Sep list re-typed twelve names and Salesforce kept the old ones,
+       so ~206 September sales were credited to nobody; PULSE resolves an Owner through these when
+       no live name matches. Reported, never invented: only spellings a list actually carried. */
+  const aliases = (await ask('aliases', DB.rpc('agent_list_aliases', { p_days: 180 })))
+    .filter((r) => r && r.code && r.name).map((r) => ({ code: normCb(r.code) || String(r.code).toUpperCase(), name: String(r.name), last_on: r.last_on || '' }));
+  return { leaders, leavers, aliases, degraded };
 }
 
 
@@ -213,7 +225,17 @@ async function rosterSync(env, DB, { fresh = false, who = 'roster-sync' } = {}) 
            rewritten whenever that moves. Guarded by verify-roster-propagation.mjs. */
         let seeded = null;
         {
-          const cr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-current')}&select=value,updated_at`).catch(() => null);
+          /* A READ THAT FAILS IS NOT "NO RECORD" (2026-09-21). Swallowing it here fell through to
+             the vas-state derivation below, which carries a different fingerprint and so re-mirrored
+             Ops' Agent List and the portal's agent-teams floor from VAS state instead of the
+             published record — silently, for up to the cache's two minutes. Keep the cached roster
+             if there is one, else answer with the error; never derive. */
+          let cr = null;
+          try { cr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-current')}&select=value,updated_at`); }
+          catch (e) {
+            console.warn('rosterSync: roster-current read failed — not deriving from vas-state', String(e && e.message || e));
+            return rc ? rc.payload : { error: 'roster of record unreadable: ' + String(e && e.message || e), status: 503 };
+          }
           const rec = cr && cr[0] && cr[0].value;
           if (rec && Array.isArray(rec.roster) && rec.roster.length && rec.source === 'seed') seeded = { rec, at: cr[0].updated_at || '' };
           else if (rec && Array.isArray(rec.roster) && rec.roster.length) {
@@ -1074,16 +1096,16 @@ export default {
            filed six of them under "dialler logins the Agent List does not know" — the one bucket
            that tells a person to act. Served here so both apps can class a leader's login as a
            leader, never as a missing agent. */
-        const { leaders, leavers } = await rosterExtras(DB);
+        const { leaders, leavers, aliases, degraded } = await rosterExtras(DB);
         if (rec && Array.isArray(rec.roster) && rec.roster.length && rec.source !== 'seed') {
           return json({ fingerprint: rec.fingerprint, n: rec.roster.length, as_of: rec.as_of || '',
             file: rec.file || '', source: rec.source || '', uploaded_by: rec.uploaded_by || '',
             uploaded_at: rec.uploaded_at || '', state_updated_at: (cur[0].updated_at || ''),
-            targets_stamp: tstamp, roster: applyTargets(rec.roster), leaders, leavers, review: rec.review || null });
+            targets_stamp: tstamp, roster: applyTargets(rec.roster), leaders, leavers, aliases, extras_degraded: degraded, renamed: rec.renamed || [], review: rec.review || null });
         }
         const payload = await rosterSync(env, DB, { fresh: !!url.searchParams.get('fresh'), who: user && user.username });
         if (payload && payload.error) return json({ error: payload.error }, payload.status || 500);
-        if (payload && Array.isArray(payload.roster)) { payload.roster = applyTargets(payload.roster); payload.targets_stamp = tstamp; payload.leaders = leaders; payload.leavers = leavers; }
+        if (payload && Array.isArray(payload.roster)) { payload.roster = applyTargets(payload.roster); payload.targets_stamp = tstamp; payload.leaders = leaders; payload.leavers = leavers; payload.aliases = aliases; payload.extras_degraded = degraded; }
         return json(payload);
       }
 
@@ -1191,6 +1213,17 @@ export default {
            left, which campaigns went — that the health cron shows as a banner for three days and
            the next publish replaces. Nothing is refused by it. */
         let review = null;
+        /* A RENAMED CODE IS NAMED (2026-09-21). The 18 Sep list re-spelt twelve agents and nobody knew
+           until their sales read 0 four days later. Same code, different name → listed on the record
+           and in the reply so both stations can say so at upload time. Never a refusal: the list is
+           the record; the archive keeps the old spelling (agent_list_aliases) so nothing is lost. */
+        const renamed = [];
+        if (prev && Array.isArray(prev.roster) && prev.roster.length) {
+          const norm = (v) => String(v == null ? '' : v).toLowerCase().replace(/[^a-z]/g, '');
+          const was = new Map(prev.roster.filter((a) => a && a.code).map((a) => [normCb(a.code), a]));
+          for (const a of clean) { const p = was.get(normCb(a.code)); if (!p) continue;
+            if (norm(p.name) !== norm(a.name) || norm(p.sf || p.name) !== norm(a.sf || a.name)) renamed.push({ code: normCb(a.code), from: p.name || '', to: a.name || '' }); }
+        }
         if (prev && Array.isArray(prev.roster) && prev.roster.length) {
           const nowCodes = new Set(clean.map((a) => normCb(a.code)));
           const removed = prev.roster.filter((a) => a && !nowCodes.has(normCb(a.code))).map((a) => ({ code: a.code, name: a.name || '', tl: a.tl || '', campaign: a.campaign || '' }));
@@ -1202,7 +1235,7 @@ export default {
         const rec = { v: 1, fingerprint: fp, leaders_sig: leadersSig || (prev && prev.fingerprint === fp ? (prev.leaders_sig || '') : ''), as_of: asOf, n: clean.length, roster: clean,
           on_file: out.on_file, dropped: (out.dropped || []).length,
           file: String(body.file || '').slice(0, 120), source: String(body.source || '').slice(0, 16),
-          uploaded_by: actor, uploaded_at: now, review,
+          uploaded_by: actor, uploaded_at: now, review, renamed: renamed.slice(0, 60),
           replaced: prev ? { fingerprint: prev.fingerprint, as_of: prev.as_of || '', at: prev.uploaded_at || '' } : null };
         await DB.insert('rules', [{ key: 'kv:roster-current', value: rec, updated_by: actor, updated_at: now }], true);
         globalThis.__rosterCache = null;                      // the GET must not serve the previous list
@@ -1214,11 +1247,11 @@ export default {
         catch (e) { mirrored = false; }
         /* THE ANSWER IS THE RECORD (one classifier, 2026-09-15): the station that posted the raw rows
            adopts the roster, the leaders and the leavers exactly as served to everyone else. */
-        const extras = await rosterExtras(DB).catch(() => ({ leaders: [], leavers: [] }));
+        const extras = await rosterExtras(DB).catch((e) => { console.error('rosterExtras failed: ' + (e && e.message || e)); return { leaders: [], leavers: [], aliases: [], degraded: ['leaders', 'leavers', 'aliases'] }; });
         return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length, on_file: out.on_file, roster: clean,
           dropped: out.dropped || [], blank_campaign: out.blank_campaign || [], campaigns_on_list: out.campaigns_on_list || [],
           mirrored, replaced: rec.replaced, sync: out.agents, leaders: out.leaders, campaigns: out.campaigns,
-          review, record_leaders: extras.leaders, leavers: extras.leavers });
+          review, renamed, record_leaders: extras.leaders, leavers: extras.leavers, aliases: extras.aliases || [], extras_degraded: extras.degraded || [] });
       }
 
       // ---------- upload relay: one Upload Station feeds BOTH dashboards ----------

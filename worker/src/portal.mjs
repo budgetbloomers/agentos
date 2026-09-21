@@ -114,7 +114,7 @@ export async function loadDigest(DB, month) {
   if (c && Date.now() - c.t < 60000) return c.d;
   const [r, tr] = await Promise.all([
     DB.select(`rules?key=eq.${encodeURIComponent(key)}&select=value`),
-    DB.select(`rules?key=eq.${encodeURIComponent('kv:agent-teams')}&select=value`).catch(() => null),
+    DB.select(`rules?key=eq.${encodeURIComponent('kv:agent-teams')}&select=value`).catch((e) => { console.warn('agent-teams read failed — tl merge skipped', String(e && e.message || e)); return null; }),
   ]);
   const v = r?.[0]?.value || {};
   let payload = String(v.data || '');
@@ -159,7 +159,9 @@ export async function listDigestMonths(DB) {
 export async function loadNba(DB) {
   const c = globalThis.__nbaCache;
   if (c && Date.now() - c.t < 60000) return c.d;
-  const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:nba-digest')}&select=value`).catch(() => null);
+  /* a failed read is said, and the last good copy is kept — "not published" was shown for both (2026-09-21) */
+  const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:nba-digest')}&select=value`).catch((e) => { console.warn('nba-digest read failed', String(e && e.message || e)); return c ? [{ value: null, __cached: true }] : null; });
+  if (r && r[0] && r[0].__cached) return c.d;
   const v = r?.[0]?.value || {};
   let payload = String(v.data || '');
   if (!payload && v.store) payload = (await DB.storageGet('raw', v.store.replace(/^raw\//, ''))) || '';
@@ -259,14 +261,22 @@ const peersFor = (digest, row) =>
    reported agents only. Nobody below the cut travels — and NO team list (Nick, the same day:
    "only the top 10 performers, not in their team"); the leader's name does not travel either. */
 const TOP_N = 10;
-const topPerformers = (digest, cb) => {
-  const rows = (digest.agents || []).filter((a) => a && a.code && ((a.gwpEx || 0) > 0 || (a.sales || 0) > 0))
+export const topPerformers = (digest, cb) => {
+  const all = (digest.agents || []).filter((a) => a && a.code && ((a.gwpEx || 0) > 0 || (a.sales || 0) > 0))
     .sort((a, b) => (b.gwpEx || 0) - (a.gwpEx || 0) || (b.sales || 0) - (a.sales || 0));
+  /* THEIR OWN CAMPAIGN'S TOP TEN (Nick, 2026-09-21: "if we are looking at a Courtesy view agent they
+     need to see the top 10 in their campaign"). Courtesy and Cuddle sell different products at
+     different premiums, so a floor-wide ladder was a Cuddle ladder with Courtesy nowhere on it.
+     The agent's campaign comes from their own digest row; an agent with no campaign (or none on
+     record with sales) sees the floor, and the card says which it is. */
+  const me = (digest.agents || []).find((a) => a && normCb(a.code) === cb) || null;
+  const camp = me && String(me.campaign || '').trim();
+  const rows = camp ? all.filter((a) => String(a.campaign || '').trim().toLowerCase() === camp.toLowerCase()) : all;
   const pick = (a, i) => ({ pos: i + 1, name: a.name || a.code, campaign: a.campaign || '', tenure: a.tenure || '',
     sales: a.sales || 0, gwpEx: a.gwpEx || 0, me: normCb(a.code) === cb });
   const mine = rows.find((a) => normCb(a.code) === cb) || null;
   return { floor: rows.slice(0, TOP_N).map(pick), myPos: mine ? rows.indexOf(mine) + 1 : null, n: rows.length,
-    basis: 'premium written (ex-VAT), month to date' };
+    campaign: camp || null, basis: 'premium written (ex-VAT), month to date' };
 };
 
 /** The bits of the digest that are not about any particular person. */

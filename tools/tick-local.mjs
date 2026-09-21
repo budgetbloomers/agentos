@@ -49,7 +49,7 @@ async function main() {
 const cur = (await (await fetch(REST + 'rules?key=eq.kv:jobs-status&select=value', { headers: H })).json())[0];
 let doc = { steps: {} };
 try { const v = (cur && cur.value) || {}; doc = v.steps ? v : (v.data ? JSON.parse(v.data) : doc); } catch {}
-const TICK = ['agent-digest', 'ops-relay', 'nba-digest'];
+const TICK = ['agent-digest', 'ops-relay', 'lake-load', 'nba-digest'];
 const newest = TICK.map((k) => Date.parse((doc.steps[k] || {}).ranAt || 0) || 0).reduce((a, b) => Math.max(a, b), 0);
 const silentMin = newest ? Math.round((Date.now() - newest) / 60000) : null;
 const due = FORCE || (working && (PRIMARY || silentMin == null || silentMin > SILENT_MIN));
@@ -85,7 +85,10 @@ try {
   /* the same order as the workflow: the rake first so a file that just landed is in the lake */
   const rake = run('rake', ['tools/rake.mjs']); await stamp('rake', rake.ok, rake.tail);
   const dig = run('agent-digest', ['tools/digest-republish.mjs', '--apply']); await stamp('agent-digest', dig.ok, dig.tail);
-  const rel = run('ops-relay', ['tools/ops-relay.mjs', '--wait', '300']); await stamp('ops-relay', rel.ok, rel.tail);
+  const rel = run('ops-relay', ['tools/ops-relay.mjs', '--wait', '600']); await stamp('ops-relay', rel.ok, rel.tail);   // 600: the relay now waits for the page's busy flag, and a BI workbook + attendance can take minutes (2026-09-21)
+  /* THE LAKE FOLLOWS THE RELAY (plan: "after every relay"). lake-load only ever ran from the GitHub
+     workflow, so with Actions off the lake froze on 14 Sep while files arrived daily (2026-09-21). */
+  const lake = run('lake-load', ['tools/lake-load.mjs']); await stamp('lake-load', lake.ok, lake.tail);
   const nba = run('nba-republish', ['tools/nba-republish.mjs', '--apply']); await stamp('nba-digest', nba.ok, nba.tail);
   say('local tick done');
 } finally { try { fs.unlinkSync(LOCK); } catch {} }

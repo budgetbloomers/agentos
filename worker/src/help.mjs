@@ -47,7 +47,12 @@ export async function hl(env, path, opts) {
     throw new Error('HighLevel ' + path.split('?')[0] + ' unreachable: ' + String(e && e.message || e).slice(0, 120));
   } finally { clearTimeout(timer); }
   let j = null; try { j = t ? JSON.parse(t) : null; } catch {}
-  if (!r.ok) throw new Error('HighLevel ' + path.split('?')[0] + ' → ' + r.status + ': ' + t.slice(0, 160));
+  if (!r.ok) {
+    /* the status and body ride on the error so a caller can recover from a specific
+       refusal — HL's "duplicated contacts" 400 names the existing contact (2026-09-21) */
+    const err = new Error('HighLevel ' + path.split('?')[0] + ' → ' + r.status + ': ' + t.slice(0, 160));
+    err.status = r.status; err.body = j; throw err;
+  }
   return j;
 }
 
@@ -118,10 +123,31 @@ export async function contactFor(env, DB, cb, name, memo, stats) {
     /* HL requires first+last (or email/phone). The CB code rides as a tag — the
        opportunity NAME is what carries identity for the app's own parsing. */
     const parts = String(name || cb).trim().split(/\s+/);
-    bump(); const j = await hl(env, '/contacts/', { method: 'POST', body: JSON.stringify({
-      locationId: env.HL_HELP_LOCATION_ID, firstName: parts[0] || cb,
-      lastName: parts.slice(1).join(' ') || cb, tags: ['agentos-help', cb.toLowerCase()] }) });
-    id = j.contact && j.contact.id;
+    const body = { locationId: env.HL_HELP_LOCATION_ID, firstName: parts[0] || cb,
+      lastName: parts.slice(1).join(' ') || cb, tags: ['agentos-help', cb.toLowerCase()] };
+    try {
+      bump(); const j = await hl(env, '/contacts/', { method: 'POST', body: JSON.stringify(body) });
+      id = j.contact && j.contact.id;
+    } catch (e) {
+      /* THE PERSON ALREADY EXISTS — ADOPT THEM (Nick, 2026-09-21: "asking my team leader for help
+         is giving 400 … something for duplications — this must not happen"). The location refuses
+         a second contact with the same name and answers 400 with the existing contact's id in
+         meta. When our per-agent pointer is missing (a cleared row, a re-keyed CB, a contact made
+         by hand in HighLevel) every request minted the same person again and every request
+         failed. The refusal IS the lookup: take the id it names; failing that, search the
+         location by name for a contact tagged with this CB. Only then is it an error. */
+      const dup = e && e.status === 400 && /duplicat/i.test(String((e.body && e.body.message) || e.message || ''));
+      if (!dup) throw e;
+      id = e.body && e.body.meta && (e.body.meta.contactId || (e.body.meta.contact && e.body.meta.contact.id)) || null;
+      if (!id) {
+        bump(); const s = await hl(env, '/contacts/?locationId=' + env.HL_HELP_LOCATION_ID + '&query=' + encodeURIComponent(String(name || cb).trim()) + '&limit=20').catch(() => null);
+        const cs = (s && s.contacts) || [];
+        const tagged = cs.find((c) => (c.tags || []).map((x) => String(x).toLowerCase()).includes(cb.toLowerCase()));
+        const named = cs.find((c) => String(c.firstName || '').toLowerCase() === String(body.firstName).toLowerCase() && String(c.lastName || '').toLowerCase() === String(body.lastName).toLowerCase());
+        id = (tagged || named || {}).id || null;
+      }
+      if (!id) throw e;
+    }
     if (!id) throw new Error('contact create returned no id');
     bump(); await DB.insert('rules', [{ key: 'kv:help-contact:' + cb, value: { id },
       updated_by: 'help-center', updated_at: new Date().toISOString() }], true);

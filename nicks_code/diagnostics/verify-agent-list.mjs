@@ -32,9 +32,11 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const HTML = process.env.PULSE_HTML ? path.resolve(REPO, process.env.PULSE_HTML)
                                     : path.join(REPO, 'nicks_code', 'index.html');
@@ -191,7 +193,7 @@ section('a list with no campaign column');
   const out = rr.slice(hi).map(r => (r || []).map((c, i) => (i === ci && r === rr[hi]) ? 'Floor' : c));
   const nb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(nb, XLSX.utils.aoa_to_sheet(out), 'VAS');
-  const tmp = path.join(process.cwd(), 'simfix'); fs.mkdirSync(tmp, { recursive: true });
+  const tmp = path.join(HERE, 'scratch', 'simfix'); fs.mkdirSync(tmp, { recursive: true });
   const f = path.join(tmp, 'Matrix - Agent List NO CAMPAIGN.xlsx');
   /* site/xlsx.full.min.js is the browser build — it has no fs, so writeFile throws.
      Take the buffer and write it here. */
@@ -229,7 +231,7 @@ section('a list whose live tab has no Nesting agents');
     }
     XLSX.utils.book_append_sheet(nb, XLSX.utils.aoa_to_sheet(out), sn);
   }
-  const tmp = path.join(process.cwd(), 'simfix'); fs.mkdirSync(tmp, { recursive: true });
+  const tmp = path.join(HERE, 'scratch', 'simfix'); fs.mkdirSync(tmp, { recursive: true });
   const f = path.join(tmp, 'Matrix - Agent List NO NESTING.xlsx');
   fs.writeFileSync(f, Buffer.from(XLSX.write(nb, { type: 'array', bookType: 'xlsx' })));
 

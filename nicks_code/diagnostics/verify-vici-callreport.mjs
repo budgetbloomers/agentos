@@ -17,7 +17,9 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const HTML = process.env.PULSE_HTML ? path.resolve(REPO, process.env.PULSE_HTML)
                                     : path.join(REPO, 'nicks_code', 'index.html');
@@ -30,7 +32,7 @@ if (!SRC) {
   process.exit(0);
 }
 const SRCPATH = path.join(UPDIR, SRC);
-const FIX = path.join(process.cwd(), 'simfix');
+const FIX = path.join(HERE, 'scratch', 'simfix');
 fs.mkdirSync(FIX, { recursive: true });
 
 /* ---------- independent recompute, straight from the raw text ------------ */

@@ -3,10 +3,13 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const UP = path.join(REPO, 'uploads', '2026-08-06');
-const SCRATCH = process.cwd();
+const SCRATCH = path.join(HERE, 'scratch');
+fs.mkdirSync(SCRATCH, { recursive: true });
 const SERVE = {
   '/': path.join(REPO, 'nicks_code', 'index.html'),
   '/index.html': path.join(REPO, 'nicks_code', 'index.html'),

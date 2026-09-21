@@ -23,12 +23,14 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 const XLSX = createRequire(import.meta.url)('xlsx');
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const UP = path.join(REPO, 'uploads', '2026-08-06');
-const DL = path.join(process.cwd(), 'dl-values');
+const DL = path.join(HERE, 'scratch', 'dl-values');
 fs.rmSync(DL, { recursive: true, force: true }); fs.mkdirSync(DL, { recursive: true });
 const SERVE = { '/': path.join(REPO, 'nicks_code', 'index.html'), '/index.html': path.join(REPO, 'nicks_code', 'index.html'),
   '/xlsx.full.min.js': path.join(REPO, 'site', 'xlsx.full.min.js') };

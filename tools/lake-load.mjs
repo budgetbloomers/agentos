@@ -186,4 +186,7 @@ for (const r of audit.rows)
 
 console.log('\n' + (DRY ? 'dry run. ' : '') + grandIn.toLocaleString('en-ZA') + ' blob rows considered, '
   + grandOut.toLocaleString('en-ZA') + ' new row(s) in the lake.');
+/* agent_day is built from these tables and was only ever refreshed by the rake after ITS loads —
+   so when this tool was the one adding days (Vici, closed cases) the view sat behind (14–21 Sep 2026). */
+if (!DRY && grandOut > 0) { console.log('refreshing agent_day…'); await client.query('refresh materialized view concurrently agent_day'); }
 await client.end();

@@ -143,7 +143,7 @@
    "cfrMin": 30,
    "cfrMax": null,
    "penalty": 0,
-   "elite": "Blocked"
+   "elite": "Retained"
   },
   {
    "tier": "R2A-2",
@@ -154,7 +154,7 @@
    "cfrMin": 10,
    "cfrMax": 30,
    "penalty": 0,
-   "elite": "Blocked"
+   "elite": "Retained"
   },
   {
    "tier": "R2A-1",
@@ -271,6 +271,14 @@
    "from": "sales ÷ unique leads, whatever the ratio",
    "to": "unmeasured when sales exceed leads on record",
    "why": "two cards read 457 % and 153 % conversion"
+  },
+  {
+   "date": "2026-09-21",
+   "by": "Nick",
+   "key": "r2aTiers[].elite",
+   "from": "R2A-3: Blocked, R2A-2: Blocked, R2A-1: Retained, Tier 0: Eligible",
+   "to": "Retained for every tier that fires; Tier 0 Eligible — nothing reads Blocked",
+   "why": "\"for coaching where it says blocked, the agents must not be blocked\" — the R2A tier still classifies for coaching (tier, rule name, fails and CFR travel to every card) but withholds nothing: no penalty since 2026-09-11 and now no Elite block. The band was never gated on this field (band = adj against bands), so no rating moves; only the label does."
   }
  ],
  "windowConfirmedOnly": true

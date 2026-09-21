@@ -141,7 +141,7 @@ ok('the weakest driver carries the key the reader looks it up by',
   JSON.stringify((p.agents.find(x => x.driver) || {}).driver));
 ok("the compliance tier carries its level and the rule book's words",
   p.agents.every(x => x.r2a && x.r2a.tier && x.r2a.lvl != null
-    && ['Eligible', 'Retained', 'Blocked'].indexOf(x.r2a.elite) >= 0),
+    && ['Eligible', 'Retained'].indexOf(x.r2a.elite) >= 0),   // Blocked retired 2026-09-21 — a tier coaches, it never blocks
   JSON.stringify(p.agents[0].r2a));
 ok('the composite is on the 0-100 scale', a.composite.adj == null || (a.composite.adj >= 0 && a.composite.adj <= 100),
   String(a.composite.adj));
