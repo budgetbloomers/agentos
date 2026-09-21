@@ -226,6 +226,7 @@ const R = await page.evaluate(() => {
     codes: [...new Set(M.facts.map(f => f.code))],
     attCodes: [...new Set(Object.values(S.att).flatMap(o => Object.keys(o)))],
     rosterNames: S.roster.filter(a => a.code === 'CB156').map(a => a.name),
+    cb156ViaSf: resolveKey('Ashnee Kasavani Sankarparsad'),
     /* Money whose OWNER resolves to nobody on the roster. Campaign-excluded money (Nesting,
        Tracker) is NOT counted here — offCampaign already carries it, and counting it twice is
        what made this check overshoot by exactly the Tracker total. */
@@ -275,8 +276,11 @@ for (const c of ['CB67', 'CB205', 'CB265']) ok(`${c} excluded from the fact tabl
 // §2 — the register covers the whole company; only Call Agents are shifts
 ok('support staff kept out of the register', R.attCodes.length > 0 && R.camps.Cuddle.emp > 0);
 
-// §3 — display name comes from Sales Force
-ok('CB156 displays the Sales Force name', R.rosterNames[0] === 'Ashnee Kasavani Sankarparsad', String(R.rosterNames[0]));
+// §3 as amended 2026-09-21 (Nick: "the only thing must match is the agent name, the sales force name
+// will be the same as the agent name") — AGENT NAME is the identity; the Sales Force spelling is still
+// indexed, so CB156's 30 BI rows / 10 sales (booked under the Sales Force spelling) still land on her.
+ok('CB156 displays the Agent Name (Sales Force kept as the second spelling)', R.rosterNames[0] === 'Kasavani Snakarparsad', String(R.rosterNames[0]));
+ok('…and her Sales Force spelling still resolves to CB156', R.cb156ViaSf === 'CB156', String(R.cb156ViaSf));
 
 /* §6.5 — every rand in the BI union is accounted for. The campaign totals plus the money the
    fact table deliberately does not carry (Vehicle Tracking, and owners who match no roster

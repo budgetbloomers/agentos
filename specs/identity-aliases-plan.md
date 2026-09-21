@@ -59,3 +59,12 @@ Worker serves `aliases[]`. Added to the nightly list.
 * Thokozile Irene Maphumulo (CB14) is on the VT sheet and has 73 Salesforce sales / R15,787 in
   September that the VT rules do not count (VT sales come from dialler dispositions). A list
   question for Nick, not a resolver bug.
+
+## Amendment 2026-09-21 PM — the Agent Name is the identity
+Nick: "the only thing must match is the agent name, the sales force name will be the same as the agent
+name." The list is now maintained with Sales Force = Agent Name, so **Agent Name** is the name of record
+(`publish_agent_list`, migration-046; PULSE `INGEST.roster`; `verify-list-vs-uploads --file`), and the
+Sales Force cell is filed as the second spelling — still indexed by both apps, so the one historical
+row where they differ (CB156) keeps resolving either way. A sheet where the two columns disagree is
+named on upload ("Sales Force differs from Agent Name") as a list-content error. The unattributed /
+near-spelling notices show on the Upload Station only; the report pages stay clean.

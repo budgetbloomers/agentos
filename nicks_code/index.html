@@ -2524,7 +2524,7 @@ const INGEST={
        immediately after this returns) does not. Timing-independent, unlike a token that a
        delayed publish could miss. */
     S.rosterFp=null;
-    const out=[]; const newCamp=new Set(); const noCamp=[];
+    const out=[]; const newCamp=new Set(); const noCamp=[]; const sfDiffers=[];
     /* WHICH COLUMN NAMES THE CAMPAIGN decides how far this sheet is trusted. The current
        format says 'Campaign'; the legacy tabs say 'Que'. A sheet with neither cannot say who
        is Cuddle and who is Courtesy at all — see the refusal below. */
@@ -2568,15 +2568,18 @@ const INGEST={
          campaigns". A row on a tab named VT (or Tracker / Vehicle) IS a VT row. */
       const vtSheet=/^\s*vt\s*$|vehicle|tracker/i.test(sheet||'');
       if(!vtSheet && rawCamp && !KNOWN_CAMP.test(rawCamp)) newCamp.add(campOf(rawCamp));
-      /* DISPLAY NAME COMES FROM 'Sales Force', NOT 'Agent Name' (spec §3). Only one agent
-         differs — CB156 is "Kasavani Snakarparsad" under Agent Name and "Ashnee Kasavani
-         Sankarparsad" under Sales Force — but that string is the join key the workbook's
-         Cancellations and QA columns VLOOKUP on, and using the wrong one silently drops 30
-         BI rows and 10 sales. Agent Name is kept as the fallback for rows with no Sales
-         Force value (the VT sheet leaves it blank for scheduling staff). */
+      /* THE AGENT NAME IS THE IDENTITY (Nick, 2026-09-21 PM: "the only thing must match is the
+         agent name, the sales force name will be the same as the agent name"). Until today the
+         name came from 'Sales Force' first (spec §3 — one row, CB156, differed and that string
+         was the workbook's VLOOKUP key). The list is now kept so the two columns are EQUAL, so
+         'Agent Name' is the name and 'Sales Force' is filed as the second spelling: buildIndex
+         indexes both, so a row where they still differ resolves either way, and a difference is
+         named on upload (below) as a list-content error rather than silently preferred. */
       const sfName=(r['Sales Force']||'').trim()==='-'?'':(r['Sales Force']||'').trim();
+      const agentName=String(r['Agent Name']||r['Agent']||'').trim();
+      if(agentName&&sfName&&normName(agentName)!==normName(sfName)) sfDiffers.push(code+' '+agentName+' / '+sfName);
       out.push({
-        tl:r['Team Leader']||'', code, name:sfName||r['Agent Name']||r['Agent']||'',
+        tl:r['Team Leader']||'', code, name:agentName||sfName,
         campaign:vtSheet?'VT':campOf(rawCamp),
         tenure:r['Tenure']||'', callx:r['Call x']||'', sf:sfName,
         target:parseFloat(r['Target'])||0, start:parseDateLoose(r['Start Date'])||'',
@@ -2594,6 +2597,8 @@ const INGEST={
         +'Add a "Campaign" column (or "Que") and upload it again.',14000);
       return null;
     }
+    if(sfDiffers.length) toast(sfDiffers.length+' row(s) in "'+name+'" where Sales Force differs from Agent Name — Agent Name is used (Nick, 21 Sep) and both spellings resolve; make them equal on the sheet: '
+      +sfDiffers.slice(0,4).join('; ')+(sfDiffers.length>4?' +'+(sfDiffers.length-4)+' more':''),11000);
     if(noCamp.length) toast(noCamp.length+' agent(s) in "'+name+'" have a blank Campaign cell and were filed as Courtesy — '
       +'check them at source: '+noCamp.slice(0,4).join(', ')+(noCamp.length>4?' +'+(noCamp.length-4)+' more':''),11000);
     if(newCamp.size) toast(newCamp.size+' campaign'+(newCamp.size===1?'':'s')+' new to this dashboard on "'+name+'": '+[...newCamp].join(', ')

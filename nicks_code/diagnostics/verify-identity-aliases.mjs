@@ -99,6 +99,7 @@ try {
     set('CB930001', 'Surprize Cwele'); set('CB930002', 'Lindokhule Phakathi'); set('CB930003', 'Nolulamo Mazeka');
     R.push({ code: 'CB930031', name: 'Delano Rajagopaul', sf: 'Delano Rajagopaul', tl: 'Leader Alpha', campaign: 'Courtesy', tenure: 'Exp', callx: '', target: 5, start: '2026-09-14' });
     set('CB930030', 'Completely Different Person');   // Stay Agent 30's code handed to somebody else: a reassignment, never an alias
+    R.find((a) => a.code === 'CB930008').sf = 'Zinhle Mchunu';   // Sales Force typed differently from Agent Name (Mandisa Cele)
     window.__mtd.setRosterAsOf('2026-09-18');
     const toasts = []; const t0 = window.toast; window.toast = (m) => { toasts.push(String(m)); };
     await window.__mtd.ingest('Matrix - Agent List.csv', window.__csvOf(R), 'roster', 'alias-rename');
@@ -111,7 +112,7 @@ try {
     const mtd = PAGES.mtd(), daily = PAGES.daily(), weekly = PAGES.weekly(), data = PAGES.data();
     const v24 = (window.__mtd.checks() || []).find((c) => c.id === 'V24');
     return {
-      aliases: S.aliases, names: { c1: S.roster.find((a) => a.code === 'CB930001').name }, reassigned: resolveKey('Zodwa Original Holder'),
+      aliases: S.aliases, names: { c1: S.roster.find((a) => a.code === 'CB930001').name }, reassigned: resolveKey('Zodwa Original Holder'), sfRow: { name: S.roster.find((a) => a.code === 'CB930008').name, viaSf: resolveKey('Zinhle Mchunu') },
       sales: { cwele: f('CB930001'), phakathi: f('CB930002'), mazaka: f('CB930003'), delano: f('CB930031'), roshel: f('CB930004'), thokozile: f('CB930005') },
       rk: { cwele: rk('Surprise Lucky Cwele'), phakathi: rk('Lindokuhle Phakathi'), mazaka: rk('Nolulamo Mazaka'), delano: rk('Delano Rajagopal'), roshel: rk('Roshel Dinika Naidoo'),
         thokozile: rk('Thokozile Maphumulo'), thandie: rk('Thandu Ngcobo'), naidoo: rk('Naidoo'), stranger: rk('Zanele Stranger Person'), gone: rk('Gone Person'),
@@ -130,6 +131,8 @@ try {
   ok('S.aliases remembers "Surprise Lucky Cwele" → CB930001', after.aliases && after.aliases.surpriseluckycwele && after.aliases.surpriseluckycwele.code === 'CB930001', JSON.stringify(after.aliases).slice(0, 200));
   ok('…and the other two renames', after.aliases && after.aliases.lindokuhlephakathi && after.aliases.lindokuhlephakathi.code === 'CB930002' && after.aliases.nolulamomazaka && after.aliases.nolulamomazaka.code === 'CB930003');
   ok('a code handed to a DIFFERENT person is a reassignment: "Zodwa Original Holder" is not aliased to CB930030', !(after.aliases && after.aliases.zodwaoriginalholder) && after.reassigned === null, JSON.stringify([after.aliases && after.aliases.zodwaoriginalholder, after.reassigned]));
+  ok('AGENT NAME is the identity (Nick, 21 Sep): a row whose Sales Force differs shows the Agent Name…', after.sfRow.name === 'Mandisa Cele', JSON.stringify(after.sfRow));
+  ok('…still resolves the Sales Force spelling, and the upload said the two columns differ', after.sfRow.viaSf === 'CB930008' && after.toasts.some((t) => /Sales Force differs from Agent Name/.test(t) && /CB930008/.test(t)), JSON.stringify(after.sfRow));
   ok('the ingest said so (a rename toast naming the old and new spelling)', after.toasts.some((t) => /renamed/i.test(t) && /Surprise Lucky Cwele/.test(t) && /Surprize Cwele/.test(t)), after.toasts.join(' | ').slice(0, 300));
   ok('resolveKey answers the alias', after.rk.cwele === 'CB930001' && after.rk.phakathi === 'CB930002' && after.rk.mazaka === 'CB930003', JSON.stringify(after.rk));
   ok('Cwele still has 3 sales, Phakathi 1, Mazaka 6 on 17 Sep', after.sales.cwele === 3 && after.sales.phakathi === 1 && after.sales.mazaka === 6, JSON.stringify(after.sales));

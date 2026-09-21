@@ -69,7 +69,7 @@ if (FILE) {
     for (const r of rows) {
       const code = String(r['Employee Code'] || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
       if (!/^CB\d+$/.test(code)) continue;
-      const name = String(r['Sales Force'] || '').trim().replace(/^-$/, '') || String(r['Agent Name'] || '').trim();
+      const name = String(r['Agent Name'] || '').trim() || String(r['Sales Force'] || '').trim().replace(/^-$/, '');   // Agent Name is the identity (Nick, 21 Sep); Sales Force the fallback
       const a = byCode.get(code); seen.add(code);
       if (!a) { extra.push(code + ' ' + name + ' [' + sn + ']'); continue; }
       if (norm(name) !== norm(a.name)) diffs.push(code + ': file "' + name + '" · record "' + a.name + '"');
