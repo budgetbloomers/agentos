@@ -210,9 +210,16 @@ try {
     const r = await fetch(env.SUPABASE_URL + '/rest/v1/rpc/agent_list_aliases', { method: 'POST', headers: H, body: JSON.stringify({ p_days: 180 }) });
     const rows = r.ok ? await r.json() : null;
     ok('agent_list_aliases() answers (' + (rows ? rows.length : r.status) + ' rows)', Array.isArray(rows));
-    const has = (code, name) => Array.isArray(rows) && rows.some((x) => x.code === code && String(x.name).toLowerCase() === name.toLowerCase());
-    ok('it names CB242 "Surprise Lucky Cwele", CB263 "Lindokuhle Phakathi", CB275 "Nolulamo Mazaka"', has('CB242', 'Surprise Lucky Cwele') && has('CB263', 'Lindokuhle Phakathi') && has('CB275', 'Nolulamo Mazaka'));
-    ok('it never returns a spelling the current list carries', Array.isArray(rows) && !rows.some((x) => x.code === 'CB242' && /surprize cwele/i.test(x.name)));
+    /* Both spellings of the 18 Sep incident must be KNOWN for each code — one as the current name, the
+       other as an alias — whichever way the list of the day spells them (Ashton corrected the list
+       at 10:19 on 21 Sep, so the typo became the alias). And no alias may equal a live spelling. */
+    const nn = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+    const recCur = (await (await fetch(env.SUPABASE_URL + '/rest/v1/rules?key=eq.' + encodeURIComponent('kv:roster-current') + '&select=value', { headers: H })).json())[0].value.roster;
+    const liveNames = new Set(); for (const a of recCur) for (const n of [a.name, a.sf, a.callx]) if (n) liveNames.add(nn(n));
+    const knows = (code, a, b) => { const cur = recCur.find((x) => x.code === code); const names = new Set([nn(cur && cur.name), nn(cur && cur.sf)]); (rows || []).filter((x) => x.code === code).forEach((x) => names.add(nn(x.name))); return names.has(nn(a)) && names.has(nn(b)); };
+    ok('both spellings are known for CB242, CB263, CB275 (current name + alias, either way round)', knows('CB242', 'Surprise Lucky Cwele', 'Surprize Cwele') && knows('CB263', 'Lindokuhle Phakathi', 'Lindokhule Phakathi') && knows('CB275', 'Nolulamo Mazaka', 'Nolulamo Mazeka'),
+      JSON.stringify((rows || []).filter((x) => /CB(242|263|275)/.test(x.code))));
+    ok('it never returns a spelling the current list carries', Array.isArray(rows) && !rows.some((x) => liveNames.has(nn(x.name))));
     /* the deployed Worker, as a signed-in user would see it */
     const crypto = await import('node:crypto');
     const token = crypto.randomBytes(32).toString('hex'), tokenHash = crypto.createHash('sha256').update(token).digest('hex');
@@ -222,7 +229,8 @@ try {
     const j = await (await fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/roster', { headers: { Authorization: 'Bearer ' + token } })).json();
     await fetch(env.SUPABASE_URL + '/rest/v1/app_sessions?token_hash=eq.' + tokenHash, { method: 'DELETE', headers: H });
     ok('/api/roster serves aliases[] beside leavers[]', Array.isArray(j.aliases) && Array.isArray(j.leavers), Object.keys(j).join(','));
-    ok('…including CB242\'s earlier spelling', Array.isArray(j.aliases) && j.aliases.some((a) => a.code === 'CB242' && /surprise lucky cwele/i.test(a.name)));
+    ok('…including CB242\'s other spelling', Array.isArray(j.aliases) && j.aliases.some((a) => a.code === 'CB242' && /surpri[sz]e/i.test(a.name)));
+    ok('…and nothing degraded (the archive answered every lookup)', Array.isArray(j.extras_degraded) && j.extras_degraded.length === 0, JSON.stringify(j.extras_degraded));
   }
 } finally { await b.close(); server.close(); }
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
