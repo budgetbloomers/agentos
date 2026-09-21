@@ -1238,21 +1238,22 @@ function teamAgg(rows){
 var REPORT_TABS=[['mtd_team','Month to date'],['daily_team','Daily'],['weekly_team','Weekly'],['variance_team','Variance'],['leads_team','Lead management']];
 var LAST_REPORT='mtd_team';
 function isReport(v){ return REPORT_TABS.some(function(t){return t[0]===v;}); }
-function reportsTabs(active){
-  LAST_REPORT=active;
+function reportsTabs(active,tabs){
+  if(tabs) LAST_CM_REPORT=active; else LAST_REPORT=active;
+  var list=tabs||REPORT_TABS;
   /* THE TOOLBAR (Nick, 2026-09-11: the three reports "must be exportable" and must not be
      static). Left, the sub-tabs. Right: when management last published these figures, a
      Refresh that asks the Worker for the latest copy now, and two exports — this report, or
      all three in one workbook. The page also re-asks on its own (LIVE, below loadPortal). */
   return '<div class="rep-bar"><div class="seg" id="reportTabs" role="tablist">'
-    +REPORT_TABS.map(function(t){
+    +list.map(function(t){
       return '<button class="pill'+(t[0]===active?' on':'')+'" role="tab" aria-selected="'+(t[0]===active)+'" data-report="'+t[0]+'">'+esc(t[1])+'</button>';
     }).join('')+'</div>'
     +'<div class="rep-tools">'
     +'<span class="rep-stamp" title="When the management dashboard last published these figures">Published '+esc(repKind(active)?repStamp(repKind(active)):stamp())+'</span>'
     +'<button class="btn2" id="repRefresh" title="Ask for the latest published figures now">&#8635; Refresh</button>'
     +'<button class="btn2" data-export="'+active+'" title="Download this report as an Excel workbook">&#8595; Export</button>'
-    +'<button class="btn2" data-export="all" title="Month to date, Daily, Weekly, Variance and Lead management in one workbook">&#8595; Export all</button>'
+    +(tabs?'':'<button class="btn2" data-export="all" title="Month to date, Daily, Weekly, Variance and Lead management in one workbook">&#8595; Export all</button>')
     +'</div></div>';
 }
 
@@ -1554,13 +1555,14 @@ function pageDailyTeam(){
    as "not for this account / not published yet" — never as a sign-out. */
 var REP={variance:{d:null,at:0,busy:false,err:''},leads:{d:null,at:0,busy:false,err:''}};
 var VAR_DAY='';
-function repKind(v){ return v==='variance_team'?'variance':(v==='leads_team'?'leads':''); }
+function repKind(v){ return (v==='variance_team'||v==='cm_variance')?'variance':((v==='leads_team'||v==='cm_leads')?'leads':''); }
+function repScopeOk(){ return liveTeamScope()||!!(D&&!D.me&&D.scope==='campaign'); }
 function repStamp(kind){
   var d=REP[kind]&&REP[kind].d; if(!d||!d.updatedAt) return 'not yet';
   try{ return new Date(d.updatedAt).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return String(d.updatedAt).slice(0,16); }
 }
 function repLoad(kind,manual){
-  var st=REP[kind]; if(!st||st.busy||!liveTeamScope()) return Promise.resolve();
+  var st=REP[kind]; if(!st||st.busy||!repScopeOk()) return Promise.resolve();
   st.busy=true; st.at=Date.now();
   return api('/api/portal/tl/reports?kind='+kind).then(function(r){
     st.busy=false;
@@ -1585,6 +1587,24 @@ function repStateCard(kind,title){
   if(st.err==='unpublished') return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">Management has not published this report yet. It follows the VAS dashboard within a couple of minutes of the next upload — press Refresh in a moment.</p></div>';
   if(st.err==='forbidden') return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">This report is a team leader page and is not available to this account.</p></div>';
   return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">Could not load the report ('+esc(st.err.replace(/^error: /,''))+'). Press Refresh to try again.</p></div>';
+}
+function repAgents(){
+  if(D&&D.scope==='campaign'){ var c=(typeof cmCamp==='function')?cmCamp():null; return c?(c.agentIndex||[]):[]; }
+  return D.agents||[];
+}
+/* the manager's blocks: every leader × campaign block of the selected campaign (or all of theirs) */
+function repCmBlocks(kind){
+  var d=REP[kind].d; if(!d||!d.teamsByCamp) return [];
+  var c=(typeof cmCamp==='function')?cmCamp():null; var key=c?String(c.key||''):'';
+  return Object.keys(d.teamsByCamp).filter(function(k){ return key==='all'||!key||k.split('|')[0].toLowerCase()===key.toLowerCase(); })
+    .map(function(k){ return {camp:k.split('|')[0], tl:k.split('|').slice(1).join('|'), b:d.teamsByCamp[k]}; })
+    .sort(function(x,y){ return x.camp.localeCompare(y.camp)||x.tl.localeCompare(y.tl); });
+}
+function repCmTotal(kind){
+  var d=REP[kind].d; if(!d||!d.campaigns) return null;
+  var c=(typeof cmCamp==='function')?cmCamp():null; var key=c?String(c.key||''):'';
+  if(key&&key!=='all'){ var k=Object.keys(d.campaigns).filter(function(x){return x.toLowerCase()===key.toLowerCase();})[0]; return k?d.campaigns[k]:null; }
+  return null;   // "All campaigns" has no single published total — the per-campaign rows are the totals
 }
 function repTeamBlock(kind){
   var d=REP[kind].d; if(!d||!d.teams) return null;
@@ -1620,9 +1640,10 @@ function varianceCols(rp){
 }
 function reportVariance(wholeMonth){
   var rp=REP.variance.d; if(!rp||!rp.cols) return {sheet:'Variance',cols:[],rows:[],days:[],rp:null};
-  var byCode={}; (D.agents||[]).forEach(function(a){ byCode[a.code]=a; });
+  var byCode={}; repAgents().forEach(function(a){ byCode[a.code]=a; });
   var all=[], daySet={};
   Object.keys(rp.agents||{}).forEach(function(code){
+    if(D&&D.scope==='campaign'&&!byCode[code]) return;                 // the manager's selected campaign only
     var a=byCode[code]||{code:code,name:code};
     (rp.agents[code]||[]).forEach(function(arr){ var f={}; rp.cols.forEach(function(c,i){ f[c]=arr[i]; }); all.push({a:a,f:f}); daySet[f.d]=1; });
   });
@@ -1634,16 +1655,42 @@ function reportVariance(wholeMonth){
   rows.sort(function(x,y){ return x.f.d<y.f.d?1:(x.f.d>y.f.d?-1:(((rank[y.f.st]||0)-(rank[x.f.st]||0))||(Math.abs(y.f.vs||0)-Math.abs(x.f.vs||0)))); });
   return {sheet:flt?('Variance '+flt):'Variance', cols:varianceCols(rp), rows:rows, days:days, rp:rp};
 }
+function cmVarianceTable(){
+  var blocks=repCmBlocks('variance'); if(!blocks.length) return '';
+  var rp=REP.variance.d, rcn=(rp.rules&&rp.rules.rootCauses)||{};
+  return '<div class="card"><h3>Team leaders — reconciliation <span class="cnt">'+num(blocks.length)+' team'+(blocks.length===1?'':'s')+' (one leader × one campaign)</span></h3>'
+    +'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Team leader</th><th class="l">Campaign</th><th>Agents</th><th>Agent-days</th><th>Exact</th><th>±1</th><th>Material</th><th>Blocked</th><th>Skew</th><th>Flags</th><th class="l">Root causes</th></tr></thead><tbody>'
+    +blocks.map(function(x){ var b=x.b; var rc=Object.keys(b.rc||{}).filter(function(k){return b.rc[k];}).map(function(k){return '<code title="'+esc(rcn[k]||'')+'">'+esc(k)+'</code> ×'+num(b.rc[k]);}).join(' ');
+      return '<tr><td class="l"><b>'+esc(x.tl||'(unassigned)')+'</b></td><td class="l">'+esc(x.camp)+'</td><td class="num">'+num(b.agents)+'</td><td class="num">'+num(b.rows)+'</td><td class="num">'+num(b.exact)+'</td><td class="num">'+num(b.rounding)+'</td><td class="num">'+(b.material?'<span class="pill r">'+num(b.material)+'</span>':'0')+'</td><td class="num">'+num(b.blocked)+'</td><td class="num">'+num(b.indeterminate)+'</td><td class="num">'+num(b.flags)+'</td><td class="l">'+(rc||'–')+'</td></tr>'; }).join('')
+    +'</tbody></table></div></div>';
+}
+function cmLeadsTable(){
+  var blocks=repCmBlocks('leads'); if(!blocks.length) return '';
+  var rp=REP.leads.d, cols=leadsCols(rp);
+  var list=blocks.map(function(x){ return Object.assign({name:x.tl||'(unassigned)',code:x.camp,isTeam:true},x.b); });
+  var tot=repCmTotal('leads');
+  return '<div class="card"><h3>Team leaders — the funnel <span class="cnt">'+num(blocks.length)+' team'+(blocks.length===1?'':'s')+' (one leader × one campaign)</span></h3>'+vasAgentsTable(list,tot?Object.assign({isTeam:true},tot):null,cols)+'</div>';
+}
+function pageCmReport(kind){
+  var view=kind==='leads'?'cm_leads':'cm_variance';
+  var head=reportsTabs(view,CM_REPORT_TABS);
+  var state=repStateCard(kind,kind==='leads'?'Lead management':'Variance'); if(state) return head+state;
+  var inner;
+  if(kind==='variance'){ VIEW='variance_team'; inner=cmVarianceTable()+pageVarianceTeam().replace(reportsTabs('variance_team'),''); }
+  else { VIEW='leads_team'; inner=cmLeadsTable()+pageLeadsTeam().replace(reportsTabs('leads_team'),''); }
+  VIEW=view; LAST_CM_REPORT=view;
+  return head+inner;
+}
 function pageVarianceTeam(){
   var head=reportsTabs('variance_team');
   var state=repStateCard('variance','Variance'); if(state) return head+state;
   var rep=reportVariance(); var rp=rep.rp;
   if(!rep.rows.length&&!VAR_DAY) return head+'<div class="card"><h3>Variance</h3><p class="why">No variance rows have been published for your team this month. The report compares Salesforce against the agent-logged board per agent per day — it needs the BI exports and the Manual Stats board uploaded on the VAS dashboard.</p></div>';
-  var t=repTeamBlock('variance')||{};
+  var t=((D&&D.scope==='campaign')?repCmTotal('variance'):repTeamBlock('variance'))||{};
   var tile=function(lab,val,cls,note){ return '<div class="stat"><div class="lab">'+esc(lab)+'</div><div class="val'+(cls?' '+cls:'')+'">'+val+'</div>'+(note?'<div class="sub2">'+esc(note)+'</div>':'')+'</div>'; };
   var rcn=(rp.rules&&rp.rules.rootCauses)||{};
   var rcLine=Object.keys(t.rc||{}).filter(function(k){return t.rc[k];}).map(function(k){return k+' '+esc(rcn[k]||'')+' × '+num(t.rc[k]);}).join(' · ');
-  var summary='<div class="card"><h3>My team\'s reconciliation <span class="cnt">'+esc(prettyPeriod())+'</span></h3>'
+  var summary='<div class="card"><h3>'+((D&&D.scope==='campaign')?'Campaign reconciliation':'My team\'s reconciliation')+' <span class="cnt">'+esc(prettyPeriod())+'</span></h3>'
     +'<div class="stats">'
     +tile('Agents compared',num(t.agents||0))
     +tile('Exact',num(t.exact||0),'g','difference = 0')
@@ -1704,9 +1751,9 @@ function leadsCols(rp){
 }
 function reportLeads(){
   var rp=REP.leads.d; if(!rp||!rp.agents) return null;
-  var rows=(D.agents||[]).filter(function(a){return rp.agents[a.code];}).map(function(a){ var x=rp.agents[a.code]; return Object.assign({name:a.name,code:a.code},x); });
+  var rows=repAgents().filter(function(a){return rp.agents[a.code];}).map(function(a){ var x=rp.agents[a.code]; return Object.assign({name:a.name,code:a.code},x); });
   rows.sort(function(x,y){ return (y.sales-x.sales)||(y.open-x.open)||String(x.name).localeCompare(String(y.name)); });
-  var t=repTeamBlock('leads'); var total=t?Object.assign({isTeam:true},t):null;
+  var t=(D&&D.scope==='campaign')?repCmTotal('leads'):repTeamBlock('leads'); var total=t?Object.assign({isTeam:true},t):null;
   return {sheet:'Lead management', cols:leadsCols(rp), rows:rows, total:total, rp:rp};
 }
 function pageLeadsTeam(){
@@ -1717,7 +1764,7 @@ function pageLeadsTeam(){
   var t=rep.total||{};
   var tile=function(lab,val,note){ return '<div class="stat"><div class="lab">'+esc(lab)+'</div><div class="val">'+val+'</div>'+(note?'<div class="sub2">'+note+'</div>':'')+'</div>'; };
   var conv=t.convL==null?'–':num(t.convL,1)+'%';
-  var kpis='<div class="card"><h3>My team\'s funnel <span class="cnt">'+esc(prettyPeriod())+' · '+num(rp.wd)+' working day(s)</span></h3><div class="stats">'
+  var kpis='<div class="card"><h3>'+((D&&D.scope==='campaign')?'Campaign funnel':'My team\'s funnel')+' <span class="cnt">'+esc(prettyPeriod())+' · '+num(rp.wd)+' working day(s)</span></h3><div class="stats">'
     +tile('Open leads',num(t.open||0),'held by your agents right now')
     +tile('Closed in period',num(t.tc||0),num(t.nofb||0)+' with no feedback')
     +tile('Sales',num(t.sales||0),(t.pSpd==null?'':num(t.pSpd,1)+' per working day'))
@@ -1761,7 +1808,7 @@ function exportReports(which){
     if(total) out.push(['Grand Total',''].concat(cols.map(function(c){return cellOf(c[1](total));})));
     return out;
   };
-  var parts=which==='all'?['mtd_team','daily_team','weekly_team','variance_team','leads_team']:[which];
+  var parts=which==='all'?['mtd_team','daily_team','weekly_team','variance_team','leads_team']:[which==='cm_variance'?'variance_team':(which==='cm_leads'?'leads_team':which)];
   parts.forEach(function(p){
     if(p==='mtd_team'){
       var m=reportMTD(); if(m.rows.length) add(m.sheet,table(m.cols,m.rows,m.total));
@@ -1783,8 +1830,8 @@ function exportReports(which){
     if(p==='leads_team'){ var l=reportLeads(); if(l&&l.rows.length) add(l.sheet,table(l.cols,l.rows,l.total)); }
   });
   if(!n){ toast('Nothing to export yet — no figures are published for this report.',5000); return; }
-  var label=which==='all'?'Reports':((REPORT_TABS.filter(function(t){return t[0]===which;})[0]||[])[1]||'Report');
-  var team=String(D.team||'team').replace(/[\\\/:*?"<>|]+/g,'-');
+  var label=which==='all'?'Reports':((REPORT_TABS.concat(CM_REPORT_TABS).filter(function(t){return t[0]===which;})[0]||[])[1]||'Report');
+  var team=String(D.team||((D.scope==='campaign'&&typeof cmCamp==='function'&&cmCamp())?cmCamp().label:'team')).replace(/[\\\/:*?"<>|]+/g,'-');
   XLSX.writeFile(wb,'TL '+label+' - '+team+' - '+prettyPeriod()+'.xlsx');
   toast('Workbook exported (.xlsx) — '+n+' sheet'+(n>1?'s':'')+'.');
 }
@@ -3598,11 +3645,15 @@ var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:
 var TL_VIEWS=['team','help','kpihub','coach_team','forms','results','reports','mtd_team','weekly_team','daily_team','variance_team','leads_team','nik_team'];
 /* The third view. Campaign · Team Leaders · Assistance · Nikola — the spec's
    four pages, nothing else. */
-var CM_VIEWS=['cm','cm_teams','cm_assist','cm_nik','cm_set'];
+var CM_VIEWS=['cm','cm_teams','cm_assist','cm_reports','cm_variance','cm_leads','cm_nik','cm_set'];
+var CM_REPORT_TABS=[['cm_variance','Variance'],['cm_leads','Lead management']];
+var LAST_CM_REPORT='cm_variance';
 function navFor(active){
   if(CM_VIEWS.indexOf(active)>=0)
     return [['cm','Campaign',ICON.results],['cm_teams','Team Leaders',ICON.team],
-            ['cm_assist','Assistance',ICON.kpi],['cm_nik','Nikola',ICON.nik],['cm_set','Settings',ICON.set]];
+            ['cm_assist','Assistance',ICON.kpi],
+            /* ONE REPORTS TAB for the manager too (Nick, 2026-09-21): Variance · Lead management as sub-tabs */
+            ['cm_reports','Reports',ICON.mtd],['cm_nik','Nikola',ICON.nik],['cm_set','Settings',ICON.set]];
   if(TL_VIEWS.indexOf(active)>=0)
     /* 'All Forms' is OFF the nav (Nick, 2026-08-26) — the view survives for old
        links; both hubs still carry their own forms. */
@@ -3688,6 +3739,25 @@ function shell(title,sub,body,active,right){
   window.scrollTo(0,0);
 }
 
+/* Reports wiring (2026-09-10, shared with the campaign-manager view 2026-09-21):
+   sub-tab pills, the Daily/Variance day pickers, the load-on-entry of the two
+   report keys, and the Refresh / Export toolbar. One function so the team-leader
+   and the campaign-manager pages cannot drift — the CM Reports tab once sat on
+   "Loading the published report…" forever because only teamView asked for it. */
+function wireReports(){
+  Array.prototype.forEach.call(document.querySelectorAll('[data-report]'),function(b){
+    b.onclick=function(){ VIEW=b.getAttribute('data-report'); render(); };
+  });
+  var df=$('dayFilter'); if(df) df.onchange=function(){ DAY_FILTER=df.value; render(); };
+  var vdf=$('varDayFilter'); if(vdf) vdf.onchange=function(){ VAR_DAY=vdf.value; render(); };
+  /* the two report keys load when their tab is opened, and on Refresh with the overview */
+  { var rk=repKind(VIEW); if(rk&&!REP[rk].d&&!REP[rk].busy&&!REP[rk].err) repLoad(rk,false); }
+  /* the Reports toolbar (2026-09-11): Refresh asks the Worker now; Export builds the workbook */
+  var rr=$('repRefresh'); if(rr) rr.onclick=function(){ refreshPortal(true); var rk2=repKind(VIEW); if(rk2){ REP[rk2].err=''; repLoad(rk2,true); } };
+  Array.prototype.forEach.call(document.querySelectorAll('[data-export]'),function(b){
+    b.onclick=function(){ exportReports(b.getAttribute('data-export')); };
+  });
+}
 function wireShell(){
   var b=$('signOutBtn'); if(b) b.onclick=signOut;
   var pb=$('pwBtn'); if(pb) pb.onclick=function(){ changePassword(true); };   // every role: agent, team leader, campaign manager, admin
@@ -3875,7 +3945,7 @@ function loadPortal(){
    typed into — that copy waits (LIVE.pending) and lands on the next safe render. */
 var LIVE={at:0,busy:false,timer:null,pending:null};
 var LIVE_EVERY_MS=120000, LIVE_MIN_GAP_MS=30000;
-var LIVE_SAFE_VIEWS=['team','results','reports','mtd_team','daily_team','weekly_team','variance_team','leads_team','forms'];
+var LIVE_SAFE_VIEWS=['team','results','reports','mtd_team','daily_team','weekly_team','variance_team','leads_team','cm_variance','cm_leads','forms'];
 function liveTeamScope(){ return !!(D&&!D.__back&&!D.me&&(D.role==='team_leader'||D.scope==='team'||D.scope==='all')); }
 function liveSafeToRender(){
   return !PW_OPEN&&LIVE_SAFE_VIEWS.indexOf(VIEW)>=0
@@ -4368,6 +4438,7 @@ function cmOpenReq(id){
 function cmView(){
   TEAM=D;
   if(CM_VIEWS.indexOf(VIEW)<0) VIEW='cm';
+  if(VIEW==='cm_reports') VIEW=LAST_CM_REPORT;   // the Reports nav entry opens the sub-tab that was open last
   var c=cmCamp();
   if(!c){
     shell('Campaign Manager','',
@@ -4391,8 +4462,12 @@ function cmView(){
     cm_teams:'One row per team leader — the number, the blockage and the next action',
     cm_assist:'Every request, its clock, its owner and its evidence',
     cm_nik:'One fact, one explanation, one next action',
+    cm_variance:'Salesforce against the agent-logged board, per agent per day — your campaigns only',
+    cm_leads:'The lead funnel per team leader and per agent — your campaigns only',
     cm_set:'The targets each campaign is measured against — set here, applied everywhere'};
   var body=VIEW==='cm_teams'?cmTeamsPage(c)
+    :VIEW==='cm_variance'?pageCmReport('variance')
+    :VIEW==='cm_leads'?pageCmReport('leads')
     :VIEW==='cm_assist'?cmAssistPage()
     :VIEW==='cm_nik'?cmNikPage(c)
     :VIEW==='cm_set'?cmSetPage()
@@ -4446,6 +4521,11 @@ function cmView(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-cb]:not(option)'),function(b){
     b.onclick=function(){ openDrawer(b.getAttribute('data-cb')); };
   });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-expand]'),function(b){
+    b.onclick=function(e){ e.stopPropagation();
+      var cb=b.getAttribute('data-expand'); EXPANDED[cb]=!EXPANDED[cb]; render(); };
+  });
+  wireReports();   // Reports sub-tabs: Variance + Lead management (2026-09-21)
   if(VIEW==='cm_set') cmSetLoad();
 }
 
@@ -4799,19 +4879,7 @@ function teamView(){
   if(VIEW==='help'){ if(!HELPD) helpLoad(); else { wireHelp(); if(Date.now()-HELPD_AT>45000) helpLoad(); } }
   if(VIEW==='team'){ if(!ACTS&&nbaAgents().length) actsLoad(); else wireActs(); }
   if(VIEW==='team'){ if(!TLA) tlaLoad(); else wireTlAssist(); }
-  /* Reports sub-tabs and the Daily day picker (2026-09-10) */
-  Array.prototype.forEach.call(document.querySelectorAll('[data-report]'),function(b){
-    b.onclick=function(){ VIEW=b.getAttribute('data-report'); render(); };
-  });
-  var df=$('dayFilter'); if(df) df.onchange=function(){ DAY_FILTER=df.value; render(); };
-  var vdf=$('varDayFilter'); if(vdf) vdf.onchange=function(){ VAR_DAY=vdf.value; render(); };
-  /* the two report keys load when their tab is opened, and on Refresh with the overview */
-  { var rk=repKind(VIEW); if(rk&&!REP[rk].d&&!REP[rk].busy&&!REP[rk].err) repLoad(rk,false); }
-  /* the Reports toolbar (2026-09-11): Refresh asks the Worker now; Export builds the workbook */
-  var rr=$('repRefresh'); if(rr) rr.onclick=function(){ refreshPortal(true); var rk2=repKind(VIEW); if(rk2){ REP[rk2].err=''; repLoad(rk2,true); } };
-  Array.prototype.forEach.call(document.querySelectorAll('[data-export]'),function(b){
-    b.onclick=function(){ exportReports(b.getAttribute('data-export')); };
-  });
+  wireReports();
   Array.prototype.forEach.call(document.querySelectorAll('[data-expand]'),function(b){
     b.onclick=function(e){ e.stopPropagation();
       var cb=b.getAttribute('data-expand'); EXPANDED[cb]=!EXPANDED[cb]; render(); };

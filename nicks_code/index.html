@@ -9249,7 +9249,7 @@ function agentReportsVariancePayload(){
   const VR=buildVarianceCached(M.range); if(!VR||!VR.range) return null;
   const teamOf={}; M.agents.forEach(a=>{ teamOf[a.code]=a.tl||''; });
   const n=v=>(v==null||v===''?null:v);
-  const agents={}, byTeam={};
+  const agents={}, byTeam={}, byTeamCamp={}, byCamp={};
   for(const r of VR.rows){
     if(r.camp==='VT') continue;                                         // VT is not reported by this engine (as the page)
     const gps=(r.sfGwp!=null&&r.sfSales)?Math.round(r.sfGwp/r.sfSales*10)/10:null;   // the page's own GWP-per-sale
@@ -9259,11 +9259,17 @@ function agentReportsVariancePayload(){
       r.rcSales||null,r.rcGwp||null,r.rcSalesAuto||null,r.rcGwpAuto||null,(r.flags||[]).map(f=>[f.sev,f.f,f.dv])];
     (agents[r.code]=agents[r.code]||[]).push(row);
     const tl=teamOf[r.code]||''; (byTeam[tl]=byTeam[tl]||[]).push(r);
+    /* the campaign manager's team is one leader AND one campaign (campaign.mjs): blocks split on the
+       row's own campaign (orgAt, day-effective), plus a per-campaign total — published, never summed later */
+    const ck=(r.camp||'')+'|'+tl; (byTeamCamp[ck]=byTeamCamp[ck]||[]).push(r);
+    (byCamp[r.camp||'']=byCamp[r.camp||'']||[]).push(r);
   }
-  const teams={};
-  for(const tl in byTeam){ const sm=vrSummarize(byTeam[tl]); const rc={RC1:0,RC2:0,RC3:0,RC4:0,RC5:0,RC6:0,RC7:0};
-    byTeam[tl].forEach(r=>{ for(const k of [r.rcSales,r.rcGwp]) if(k&&rc[k]!=null) rc[k]++; });
-    teams[tl]={agents:sm.agents.size,rows:byTeam[tl].length,exact:sm.exact,rounding:sm.rounding,material:sm.material,blocked:sm.blocked,indeterminate:sm.indeterminate,flags:sm.flags,rc}; }
+  const block=rows=>{ const sm=vrSummarize(rows); const rc={RC1:0,RC2:0,RC3:0,RC4:0,RC5:0,RC6:0,RC7:0};
+    rows.forEach(r=>{ for(const k of [r.rcSales,r.rcGwp]) if(k&&rc[k]!=null) rc[k]++; });
+    return {agents:sm.agents.size,rows:rows.length,exact:sm.exact,rounding:sm.rounding,material:sm.material,blocked:sm.blocked,indeterminate:sm.indeterminate,flags:sm.flags,rc}; };
+  const teams={}; for(const tl in byTeam) teams[tl]=block(byTeam[tl]);
+  const teamsByCamp={}; for(const k in byTeamCamp) teamsByCamp[k]=block(byTeamCamp[k]);
+  const campaigns={}; for(const k in byCamp) campaigns[k]=block(byCamp[k]);
   const rcNames={}; for(const k in VARIANCE_RULES.rootCauses) rcNames[k]=VARIANCE_RULES.rootCauses[k].name;
   const cov={}; for(const c in (VARIANCE_RULES.diallerCoverage.campaigns||{})) cov[c]=VARIANCE_RULES.diallerCoverage.campaigns[c].remedy||'';
   return {v:1,kind:'variance',updatedAt:new Date().toISOString(),period:{from:VR.range.from,to:VR.range.to},
@@ -9271,7 +9277,7 @@ function agentReportsVariancePayload(){
       statusLabels:VSTAT,rootCauses:rcNames,diallerCoverage:cov},
     cols:VARIANCE_REPORT_COLS,
     days:(VR.days||[]).map(x=>({d:x.d,bi:x.bi?1:0,board:x.board?1:0,calls:x.calls?1:0,att:x.att?1:0,skew:x.skew?1:0})),
-    checks:(VR.checks||[]).map(c=>({id:c.id,ok:!!c.ok,sev:c.sev,msg:c.msg})),blocked:VR.blocked||[],skew:!!VR.skew,agents,teams};
+    checks:(VR.checks||[]).map(c=>({id:c.id,ok:!!c.ok,sev:c.sev,msg:c.msg})),blocked:VR.blocked||[],skew:!!VR.skew,agents,teams,teamsByCamp,campaigns};
 }
 function agentReportsLeadsPayload(){
   if(!M||!M.range||!Array.isArray(M.agents)||!M.agents.length) return null;
@@ -9283,23 +9289,26 @@ function agentReportsLeadsPayload(){
   if(!wd)wd=1;
   const rows=Object.values(A); const statuses=leadStatusCols(rows,10);
   const teamOf={}; M.agents.forEach(a=>{ teamOf[a.code]=a.tl||''; });
-  const agents={}, T={};
+  const agents={}, T={}, TC={}, CC={};
+  const acc=(t,a)=>{ t.agents++; t.open+=a.open; t.cl+=a.cl; t.nofb+=a.nofb; t.tc+=a.tc; t.sales+=a.sales; t.canc+=a.canc;
+    a.leads.forEach(k=>t.leads.add(k)); statuses.forEach(c=>{ t.sts[c]=(t.sts[c]||0)+(a.sts[c]||0); }); };
+  const fresh=()=>({agents:0,sts:{},open:0,cl:0,nofb:0,tc:0,sales:0,canc:0,leads:new Set(),dialDays:new Set()});
   for(const a of rows){
     const ul=a.leads.size, F=leadFunnel(a,wd,ul); const sts={}; statuses.forEach(c=>{ sts[c]=a.sts[c]||0; });
     agents[a.cb]={sts,open:a.open,tc:a.tc,nofb:a.nofb,sales:a.sales,canc:a.canc,ul,dd:a.dialDays.size,
       aveClosed:F.aveClosed,aveWasted:F.aveWasted,pSpd:F.pSpd,dSpd:F.dSpd,convL:F.convL,convLv:F.convLv,convC:F.convC,convCv:F.convCv,convW:F.convW,cancPct:F.cancPct};
-    const tl=teamOf[a.cb]||''; const t=T[tl]=T[tl]||{agents:0,sts:{},open:0,cl:0,nofb:0,tc:0,sales:0,canc:0,leads:new Set(),dialDays:new Set()};
-    t.agents++; t.open+=a.open; t.cl+=a.cl; t.nofb+=a.nofb; t.tc+=a.tc; t.sales+=a.sales; t.canc+=a.canc;
-    a.leads.forEach(k=>t.leads.add(k)); statuses.forEach(c=>{ t.sts[c]=(t.sts[c]||0)+(a.sts[c]||0); });
+    const tl=teamOf[a.cb]||''; acc(T[tl]=T[tl]||fresh(),a);
+    const ck=(a.camp||'')+'|'+tl; acc(TC[ck]=TC[ck]||fresh(),a); acc(CC[a.camp||'']=CC[a.camp||'']||fresh(),a);   // leader × campaign, and the campaign
   }
-  const teams={};
-  for(const tl in T){ const t=T[tl], F=leadFunnel(t,wd,t.leads.size);
-    teams[tl]={agents:t.agents,sts:t.sts,open:t.open,tc:t.tc,nofb:t.nofb,sales:t.sales,canc:t.canc,ul:t.leads.size,
-      aveClosed:F.aveClosed,aveWasted:F.aveWasted,pSpd:F.pSpd,convL:F.convL,convLv:F.convLv,convC:F.convC,convCv:F.convCv,convW:F.convW,cancPct:F.cancPct}; }
+  const fin=t=>{ const F=leadFunnel(t,wd,t.leads.size); return {agents:t.agents,sts:t.sts,open:t.open,tc:t.tc,nofb:t.nofb,sales:t.sales,canc:t.canc,ul:t.leads.size,
+      aveClosed:F.aveClosed,aveWasted:F.aveWasted,pSpd:F.pSpd,convL:F.convL,convLv:F.convLv,convC:F.convC,convCv:F.convCv,convW:F.convW,cancPct:F.cancPct}; };
+  const teams={}; for(const tl in T) teams[tl]=fin(T[tl]);
+  const teamsByCamp={}; for(const k in TC) teamsByCamp[k]=fin(TC[k]);
+  const campaigns={}; for(const k in CC) campaigns[k]=fin(CC[k]);
   return {v:1,kind:'leads',updatedAt:new Date().toISOString(),period:{from:range.from,to:range.to},wd,
     book:{snapshot:(oc&&oc.snapshot)||'',lakeAt:(oc&&oc.lakeAt)||'',at:(oc&&oc.at)||'',open:!!oc,closed:!!(S.closedcases&&Object.keys(S.closedcases.rows||{}).length)},
     statuses,rules:{convTarget:LEAD_CONV_RULES.target,convAmber:+(LEAD_CONV_RULES.target*LEAD_CONV_RULES.amberFactor).toFixed(1),convClosed:{good:LEAD_CONV_RULES.closedGood,warn:LEAD_CONV_RULES.closedAmber}},
-    unmatched:{open:book.unOpen||0,closed:book.unClosed||0},agents,teams};
+    unmatched:{open:book.unOpen||0,closed:book.unClosed||0},agents,teams,teamsByCamp,campaigns};
 }
 
 /* Publish on the same cadence and with the same guards as the AI digest

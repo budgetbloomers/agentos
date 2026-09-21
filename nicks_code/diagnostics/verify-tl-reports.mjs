@@ -39,7 +39,9 @@ console.log('\nA · THE WORKER SLICES BY authorise() — nothing else');
     rules: { statusLabels: { exact: ['pgood', 'Exact'] }, rootCauses: {}, diallerCoverage: {} }, cols: ['d', 'camp', 'ss', 'sg', 'gps', 'bs', 'bg', 'br', 'ds', 'dse', 'vs', 'vg', 'sd', 'tk', 'tke', 'ta', 'pr', 'sk', 'vsv', 'vgv', 'st', 'rcs', 'rcg', 'ras', 'rag', 'fl'],
     days: [{ d: '2026-09-17', bi: 1, board: 1, calls: 1, att: 1, skew: 0 }], checks: [{ id: 'VR01', ok: true, sev: 'error', msg: 'fine' }], blocked: [], skew: false,
     agents: { CB1: [rowV('2026-09-17', 3)], CB2: [rowV('2026-09-17', 1), rowV('2026-09-16', 2)], CB3: [rowV('2026-09-17', 5)] },
-    teams: { 'Leader A': { agents: 2, rows: 3, exact: 6, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} }, 'Leader B': { agents: 1, rows: 1, exact: 2, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} } } };
+    teams: { 'Leader A': { agents: 2, rows: 3, exact: 6, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} }, 'Leader B': { agents: 1, rows: 1, exact: 2, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} } },
+    teamsByCamp: { 'Courtesy|Leader A': { agents: 2, rows: 3, exact: 6, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} }, 'Courtesy|Leader B': { agents: 1, rows: 1, exact: 2, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} }, 'Cuddle|Leader B': { agents: 1, rows: 4, exact: 8, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} } },
+    campaigns: { Courtesy: { agents: 3, rows: 4, exact: 8, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} }, Cuddle: { agents: 1, rows: 4, exact: 8, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} } } };
   const agentL = (open, tc, sales) => ({ sts: { New: open }, open, tc, nofb: 0, sales, canc: 0, ul: open + tc, dd: 5, aveClosed: 1, aveWasted: 0, pSpd: 1, dSpd: 1, convL: 10, convLv: 'good', convC: 20, convCv: 'good', convW: null, cancPct: 0 });
   const leads = { v: 1, kind: 'leads', updatedAt: '2026-09-21T10:06:00Z', period: { from: '2026-09-01', to: '2026-09-30' }, wd: 15, book: { snapshot: '2026-09-19', open: true, closed: true }, statuses: ['New'],
     rules: { convTarget: 10, convClosed: { good: 20, warn: 10 } }, unmatched: { open: 0, closed: 0 },
@@ -60,7 +62,11 @@ console.log('\nA · THE WORKER SLICES BY authorise() — nothing else');
   ok('an agent is refused (403) with no data', ag.status === 403 && !ag.body.agents);
   globalThis.__cmCtx = { assign: { dalwin: { campaigns: ['courtesy'] } }, campaigns: [], leaders: {}, sla: {}, blockages: [] };
   const cm = tlReports({ username: 'dalwin', role: 'campaign_manager', cb: '' }, digest, variance, 'variance');
-  ok('a campaign manager is refused (403/409/503 — never a slice)', cm.status >= 400 && !cm.body.agents, String(cm.status));
+  ok('a campaign manager gets the agents of their campaigns (all three are Courtesy)', cm.status === 200 && Object.keys(cm.body.agents).sort().join(',') === 'CB1,CB2,CB3', JSON.stringify(cm.body).slice(0, 200));
+  ok('…only leader × campaign blocks of THEIR campaigns — Leader B\'s Cuddle block never travels, nor any leader-only block', Object.keys(cm.body.teamsByCamp).sort().join(',') === 'Courtesy|Leader A,Courtesy|Leader B' && Object.keys(cm.body.teams).length === 0 && !/Cuddle/.test(JSON.stringify(cm.body.teamsByCamp)), JSON.stringify(Object.keys(cm.body.teamsByCamp)));
+  ok('…and only their campaign totals', Object.keys(cm.body.campaigns).join(',') === 'Courtesy' && cm.body.scope === 'campaign');
+  const cm2 = tlReports({ username: 'dalwin', role: 'campaign_manager', cb: '' }, digest, leads, 'leads');
+  ok('the lead report gives a manager no leader-only blocks and no foreign campaign', cm2.status === 200 && Object.keys(cm2.body.teams).length === 0 && !/Cuddle/.test(JSON.stringify(cm2.body.teamsByCamp || {})));
   const st = tlReports({ username: 'aarav', role: 'admin', cb: '' }, digest, variance, 'variance');
   ok('staff preview sees every agent and every team', st.status === 200 && Object.keys(st.body.agents).length === 3 && Object.keys(st.body.teams).length === 2);
   const un = tlReports(tlA, digest, null, 'leads');
@@ -112,6 +118,9 @@ try {
     const teamOf = {}; M.agents.forEach((a) => { teamOf[a.code] = a.tl || ''; });
     const byTeam = {}; engineRows.forEach((r) => { const t = teamOf[r.code] || ''; byTeam[t] = (byTeam[t] || 0) + 1; });
     const teamsAgree = v && Object.keys(byTeam).every((t) => v.teams[t] && v.teams[t].rows === byTeam[t]);
+    const byTC = {}; engineRows.forEach((r) => { const k = (r.camp || '') + '|' + (teamOf[r.code] || ''); byTC[k] = (byTC[k] || 0) + 1; });
+    const tcAgree = v && Object.keys(byTC).every((k) => v.teamsByCamp[k] && v.teamsByCamp[k].rows === byTC[k]) && Object.keys(v.teamsByCamp).length === Object.keys(byTC).length;
+    const campAgree = v && Object.keys(v.campaigns).every((c) => v.campaigns[c].rows === engineRows.filter((r) => (r.camp || '') === c).length);
     /* the lead figures against the page's own export */
     S.ui.camp = ''; S.ui.team = ''; PAGES.leads(); const exp = window.__exp; let leadMismatch = null, leadChecked = 0, uniqueOk = null;
     if (exp && exp.name === 'lead_management' && l) {
@@ -130,7 +139,7 @@ try {
     const bannedHit = [src(agentReportsVariancePayload), src(agentReportsLeadsPayload)].map((t) => (t.match(banned) || [])[0]).filter(Boolean);
     const rowKeys = v ? v.cols.join(',') : '';
     return { vKB: v ? Math.round(JSON.stringify(v).length / 1024) : 0, lKB: l ? Math.round(JSON.stringify(l).length / 1024) : 0, dKB: Math.round(JSON.stringify(agentDigestPayload()).length / 1024),
-      engineRows: engineRows.length, pubRows, checked, mismatch, nullKept, gwpRoundedOnce, teamsAgree, leadChecked, leadMismatch, uniqueOk, bannedHit, rowKeys,
+      engineRows: engineRows.length, pubRows, checked, mismatch, nullKept, gwpRoundedOnce, teamsAgree, tcAgree, campAgree, leadChecked, leadMismatch, uniqueOk, bannedHit, rowKeys,
       vPeriod: v && v.period, lPeriod: l && l.period, hasNames: v ? /"name"|"tl"|"agent"|"comment"/.test(JSON.stringify(v.agents)) : null, lNames: l ? /"name"|"tl"/.test(JSON.stringify(l.agents)) : null };
   }, [blob, month]);
   ok('the variance payload carries every engine row (' + B.pubRows + ' of ' + B.engineRows + ', non-VT)', B.pubRows === B.engineRows && B.engineRows > 0);
@@ -138,6 +147,7 @@ try {
   ok('a board-less day publishes null, never 0 (' + B.nullKept + ' null board cells kept)', B.nullKept > 0 || B.engineRows === 0);
   ok('Sales Force GWP travels as the engine\'s own DV02 value (rounded once, never re-derived)', B.gwpRoundedOnce);
   ok('team blocks ≡ the engine rows grouped on the digest\'s team', B.teamsAgree === true);
+  ok('leader × campaign blocks and campaign totals ≡ the engine rows grouped on the row\'s campaign', B.tcAgree === true && B.campAgree === true);
   ok('every lead figure equals the page\'s own export value (' + B.leadChecked + ' agents)', B.leadChecked > 0 && !B.leadMismatch, B.leadMismatch || '');
   ok('unique leads are per-team unions (they sum to at least the floor\'s union)', B.uniqueOk === true);
   ok('no agent name, leader or comment travels in either payload\'s rows', B.hasNames === false && B.lNames === false, B.rowKeys);

@@ -136,15 +136,23 @@ export function tlReports(user, digest, report, kind) {
   const auth = authorise(user, digest);
   if (auth.error) return { status: auth.status, body: { error: auth.error } };
   if (auth.scope === 'agent') return { status: 403, body: { error: 'The Variance and Lead management reports are a team leader page.' } };
-  if (auth.scope === 'campaign') return { status: 403, body: { error: 'The team-leader reports are not on the campaign view yet.' } };
   if (!report) return { status: 404, body: { error: 'This report has not been published yet — it follows PULSE within a couple of minutes of the next upload.' } };
   const agents = {};
   for (const code of auth.codes) if (report.agents && report.agents[code] != null) agents[code] = report.agents[code];
-  const teams = {};
-  if (auth.staff) Object.assign(teams, report.teams || {});
+  const teams = {}, teamsByCamp = {}, campaigns = {};
+  if (auth.staff) { Object.assign(teams, report.teams || {}); Object.assign(teamsByCamp, report.teamsByCamp || {}); Object.assign(campaigns, report.campaigns || {}); }
+  else if (auth.scope === 'campaign') {
+    /* THE CAMPAIGN MANAGER (2026-09-21): a team is one leader AND one campaign (campaign.mjs), so the
+       leader-only blocks never travel here — a leader running two campaigns would carry a campaign
+       this manager does not hold. Only the leader × campaign blocks and the campaign totals of the
+       campaigns the account is ASSIGNED, matched on campKey like everything else on this view. */
+    const mine = new Set((auth.campaigns || []).map(campKey));
+    for (const k in (report.teamsByCamp || {})) if (mine.has(campKey(k.split('|')[0]))) teamsByCamp[k] = report.teamsByCamp[k];
+    for (const k in (report.campaigns || {})) if (mine.has(campKey(k))) campaigns[k] = report.campaigns[k];
+  }
   else if (report.teams && report.teams[auth.team] != null) teams[auth.team] = report.teams[auth.team];
-  const { agents: _a, teams: _t, ...floor } = report;             // rules, days, checks, statuses, book … — nobody named
-  return { status: 200, body: { ...floor, kind, agents, teams, team: auth.team || '', missing: Math.max(0, auth.codes.size - Object.keys(agents).length) } };
+  const { agents: _a, teams: _t, teamsByCamp: _tc, campaigns: _c, ...floor } = report;   // rules, days, checks, statuses, book … — nobody named
+  return { status: 200, body: { ...floor, kind, agents, teams, teamsByCamp, campaigns, team: auth.team || '', scope: auth.scope, missing: Math.max(0, auth.codes.size - Object.keys(agents).length) } };
 }
 
 export async function loadDigest(DB, month) {
