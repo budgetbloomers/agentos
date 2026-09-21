@@ -42,12 +42,17 @@ console.log('\nA · THE WORKER SLICES BY authorise() — nothing else');
     teams: { 'Leader A': { agents: 2, rows: 3, exact: 6, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} }, 'Leader B': { agents: 1, rows: 1, exact: 2, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} } },
     teamsByCamp: { 'Courtesy|Leader A': { agents: 2, rows: 3, exact: 6, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} }, 'Courtesy|Leader B': { agents: 1, rows: 1, exact: 2, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} }, 'Cuddle|Leader B': { agents: 1, rows: 4, exact: 8, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} } },
     campaigns: { Courtesy: { agents: 3, rows: 4, exact: 8, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} }, Cuddle: { agents: 1, rows: 4, exact: 8, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {} } } };
+  variance.teamsByCamp['Courtesy|VIP|Leader C'] = { agents: 1, rows: 1, exact: 1, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {}, camp: 'Courtesy|VIP', tl: 'Leader C' };
+  variance.campaigns['Courtesy|VIP'] = { agents: 1, rows: 1, exact: 1, rounding: 0, material: 0, blocked: 0, indeterminate: 0, flags: 0, rc: {}, camp: 'Courtesy|VIP' };
   const agentL = (open, tc, sales) => ({ sts: { New: open }, open, tc, nofb: 0, sales, canc: 0, ul: open + tc, dd: 5, aveClosed: 1, aveWasted: 0, pSpd: 1, dSpd: 1, convL: 10, convLv: 'good', convC: 20, convCv: 'good', convW: null, cancPct: 0 });
   const leads = { v: 1, kind: 'leads', updatedAt: '2026-09-21T10:06:00Z', period: { from: '2026-09-01', to: '2026-09-30' }, wd: 15, book: { snapshot: '2026-09-19', open: true, closed: true }, statuses: ['New'],
     rules: { convTarget: 10, convClosed: { good: 20, warn: 10 } }, unmatched: { open: 0, closed: 0 },
     agents: { CB1: agentL(10, 4, 2), CB2: agentL(5, 1, 1), CB3: agentL(7, 2, 9) },
     teams: { 'Leader A': { agents: 2, sts: { New: 15 }, open: 15, tc: 5, nofb: 0, sales: 3, canc: 0, ul: 20, aveClosed: 0.3, aveWasted: 0.1, pSpd: 0.2, convL: 15, convLv: 'good', convC: 60, convCv: 'good', convW: null, cancPct: 0 },
              'Leader B': { agents: 1, sts: { New: 7 }, open: 7, tc: 2, nofb: 0, sales: 9, canc: 0, ul: 9, aveClosed: 0.1, aveWasted: 0, pSpd: 0.6, convL: 100, convLv: 'good', convC: 450, convCv: 'good', convW: null, cancPct: 0 } } };
+  const blkL = (camp, tl, open) => Object.assign({ agents: 1, sts: { New: open }, open, tc: 1, nofb: 0, sales: 1, canc: 0, ul: open + 1, aveClosed: 0.1, aveWasted: 0, pSpd: 0.2, convL: 10, convLv: 'good', convC: 20, convCv: 'good', convW: null, cancPct: 0 }, { camp, tl });
+  leads.teamsByCamp = { 'Courtesy|Leader A': blkL('Courtesy', 'Leader A', 15), 'Courtesy|Leader B': blkL('Courtesy', 'Leader B', 7), 'Cuddle|Leader B': blkL('Cuddle', 'Leader B', 3) };
+  leads.campaigns = { Courtesy: Object.assign(blkL('Courtesy', '', 22), { tl: undefined }), Cuddle: Object.assign(blkL('Cuddle', '', 3), { tl: undefined }) };
   const tlA = { username: 'cb100', role: 'team_leader', cb: 'CB100', team: 'Leader A' };
   const v = tlReports(tlA, digest, variance, 'variance');
   ok('a team leader gets their own agents\' variance rows only (CB1, CB2)', v.status === 200 && Object.keys(v.body.agents).sort().join(',') === 'CB1,CB2', JSON.stringify(Object.keys(v.body.agents)));
@@ -64,9 +69,15 @@ console.log('\nA · THE WORKER SLICES BY authorise() — nothing else');
   const cm = tlReports({ username: 'dalwin', role: 'campaign_manager', cb: '' }, digest, variance, 'variance');
   ok('a campaign manager gets the agents of their campaigns (all three are Courtesy)', cm.status === 200 && Object.keys(cm.body.agents).sort().join(',') === 'CB1,CB2,CB3', JSON.stringify(cm.body).slice(0, 200));
   ok('…only leader × campaign blocks of THEIR campaigns — Leader B\'s Cuddle block never travels, nor any leader-only block', Object.keys(cm.body.teamsByCamp).sort().join(',') === 'Courtesy|Leader A,Courtesy|Leader B' && Object.keys(cm.body.teams).length === 0 && !/Cuddle/.test(JSON.stringify(cm.body.teamsByCamp)), JSON.stringify(Object.keys(cm.body.teamsByCamp)));
-  ok('…and only their campaign totals', Object.keys(cm.body.campaigns).join(',') === 'Courtesy' && cm.body.scope === 'campaign');
+  ok('…and only their campaign totals', Object.keys(cm.body.campaigns).join(',') === 'Courtesy' && cm.body.scope === 'campaign' && cm.body.campBlocks === 'ok');
+  ok('…a block whose KEY starts "Courtesy|" but whose campaign is "Courtesy|VIP" never travels (the slice reads the block, not the key)', !/VIP|Leader C/.test(JSON.stringify(cm.body)));
   const cm2 = tlReports({ username: 'dalwin', role: 'campaign_manager', cb: '' }, digest, leads, 'leads');
-  ok('the lead report gives a manager no leader-only blocks and no foreign campaign', cm2.status === 200 && Object.keys(cm2.body.teams).length === 0 && !/Cuddle/.test(JSON.stringify(cm2.body.teamsByCamp || {})));
+  ok('the lead report gives a manager their leader × campaign blocks and campaign total only — no leader-only block, no Cuddle',
+    cm2.status === 200 && Object.keys(cm2.body.teams).length === 0 && Object.keys(cm2.body.teamsByCamp).sort().join(',') === 'Courtesy|Leader A,Courtesy|Leader B' && Object.keys(cm2.body.campaigns).join(',') === 'Courtesy' && !/Cuddle/.test(JSON.stringify(cm2.body)), JSON.stringify(Object.keys(cm2.body.teamsByCamp)));
+  const cmOld = tlReports({ username: 'dalwin', role: 'campaign_manager', cb: '' }, digest, { ...variance, teamsByCamp: undefined, campaigns: undefined }, 'variance');
+  ok('a report published before the campaign blocks existed says so (campBlocks = absent), never an empty 200 that paints zeros', cmOld.status === 200 && cmOld.body.campBlocks === 'absent' && Object.keys(cmOld.body.teamsByCamp).length === 0);
+  const cmNone = tlReports({ username: 'dalwin', role: 'campaign_manager', cb: '' }, digest, { ...variance, teamsByCamp: { 'Cuddle|Leader B': { ...variance.teamsByCamp['Courtesy|Leader B'], camp: 'Cuddle' } }, campaigns: { Cuddle: variance.campaigns.Cuddle } }, 'variance');
+  ok('…and a report with nothing under the manager\'s campaigns says so (campBlocks = none)', cmNone.status === 200 && cmNone.body.campBlocks === 'none' && Object.keys(cmNone.body.teamsByCamp).length === 0);
   const st = tlReports({ username: 'aarav', role: 'admin', cb: '' }, digest, variance, 'variance');
   ok('staff preview sees every agent and every team', st.status === 200 && Object.keys(st.body.agents).length === 3 && Object.keys(st.body.teams).length === 2);
   const un = tlReports(tlA, digest, null, 'leads');
@@ -120,7 +131,9 @@ try {
     const teamsAgree = v && Object.keys(byTeam).every((t) => v.teams[t] && v.teams[t].rows === byTeam[t]);
     const byTC = {}; engineRows.forEach((r) => { const k = (r.camp || '') + '|' + (teamOf[r.code] || ''); byTC[k] = (byTC[k] || 0) + 1; });
     const tcAgree = v && Object.keys(byTC).every((k) => v.teamsByCamp[k] && v.teamsByCamp[k].rows === byTC[k]) && Object.keys(v.teamsByCamp).length === Object.keys(byTC).length;
-    const campAgree = v && Object.keys(v.campaigns).every((c) => v.campaigns[c].rows === engineRows.filter((r) => (r.camp || '') === c).length);
+    const campAgree = v && Object.keys(v.campaigns).every((c) => v.campaigns[c].rows === engineRows.filter((r) => (r.camp || '') === c).length && v.campaigns[c].camp === c)
+      && Object.keys(v.campaigns).length === new Set(engineRows.map((r) => r.camp || '')).size
+      && Object.keys(v.teamsByCamp).every((k) => v.teamsByCamp[k].camp + '|' + v.teamsByCamp[k].tl === k);
     /* the lead figures against the page's own export */
     S.ui.camp = ''; S.ui.team = ''; PAGES.leads(); const exp = window.__exp; let leadMismatch = null, leadChecked = 0, uniqueOk = null;
     if (exp && exp.name === 'lead_management' && l) {
@@ -185,11 +198,27 @@ try {
     exportReports('variance_team'); exportReports('leads_team');
     const vHeads = [...vh.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
     const lHeads = [...lh.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
+    /* the campaign manager paints the SAME fixtures through pageCmReport: one leader × campaign row, one tab strip */
+    const tlD = D;
+    window.D = { role: 'campaign_manager', scope: 'campaign', team: '', name: 'Dalwin', period: D.period, updatedAt: D.updatedAt, agents: [],
+      cm: { campaigns: [{ key: 'courtesy', label: 'Courtesy', agents: 2, agentIndex: [{ code: 'CB1', name: 'Alpha One', covered: true }, { code: 'CB2', name: 'Alpha Two', covered: true }] }] } };
+    CMSEL = 'courtesy';
+    REP.variance.d.teamsByCamp = { 'Courtesy|Leader A': Object.assign({}, REP.variance.d.teams['Leader A'], { camp: 'Courtesy', tl: 'Leader A' }) };
+    REP.variance.d.campaigns = { Courtesy: Object.assign({}, REP.variance.d.teams['Leader A'], { camp: 'Courtesy' }) };
+    REP.variance.d.campBlocks = 'ok'; REP.variance.d.scope = 'campaign';
+    REP.leads.d.teamsByCamp = { 'Courtesy|Leader A': Object.assign({}, REP.leads.d.teams['Leader A'], { camp: 'Courtesy', tl: 'Leader A' }) };
+    REP.leads.d.campaigns = { Courtesy: Object.assign({}, REP.leads.d.teams['Leader A'], { camp: 'Courtesy' }) };
+    REP.leads.d.campBlocks = 'ok'; REP.leads.d.scope = 'campaign';
+    VIEW = 'cm_variance'; const cvh = pageCmReport('variance');
+    VIEW = 'cm_leads'; const clh = pageCmReport('leads');
+    const cmSheets = sheets.length; exportReports('cm_variance'); const cmWritten = written;
+    REP.variance.d.campBlocks = 'none'; VIEW = 'cm_variance'; const cvNone = pageCmReport('variance'); REP.variance.d.campBlocks = 'ok';
+    window.D = tlD; CMSEL = '';
     /* an unpublished key */
     REP.leads.d = null; REP.leads.err = 'unpublished';
     const lu = pageLeadsTeam();
     try { sessionStorage.setItem('cbx_agent_token', 'keep'); } catch (e) {}
-    return { vh, lh, lu, vHeads, lHeads, sheets: sheets.map((s) => [s[0], s[1][0], s[1].length]), written, tokenKept: (function () { try { return sessionStorage.getItem('cbx_agent_token') === 'keep'; } catch (e) { return true; } })() };
+    return { vh, lh, lu, vHeads, lHeads, cvh, clh, cvNone, cmSheetsAdded: sheets.length - cmSheets, cmWritten, sheets: sheets.map((s) => [s[0], s[1][0], s[1].length]), written, tokenKept: (function () { try { return sessionStorage.getItem('cbx_agent_token') === 'keep'; } catch (e) { return true; } })() };
   });
   ok('the Variance tab renders the summary tiles and 3 agent-day rows, worst status first', /My team/.test(C.vh) && /Agents compared/.test(C.vh) && (C.vh.match(/<tr>/g) || []).length >= 3 && C.vh.indexOf('MATERIAL') < C.vh.indexOf('Exact</span>'));
   ok('…with the report\'s own Published stamp (not the digest\'s)', /Published 21 Sep/.test(C.vh) && /:05/.test(C.vh) && !/Published not yet/.test(C.vh), (C.vh.match(/Published [^<]*/) || [])[0]);
@@ -200,6 +229,10 @@ try {
   ok('the Variance export sheet header is the on-screen header plus Code', C.sheets[0] && C.sheets[0][0] === 'Variance' && C.sheets[0][1].join('|') === ['Date', 'Agent', 'Code'].concat(C.vHeads.slice(2)).join('|') && C.sheets[0][2] === 4, JSON.stringify(C.sheets[0]));
   ok('the Lead management sheet carries every on-screen column and a Grand Total row', C.sheets[1] && C.sheets[1][0] === 'Lead management' && C.sheets[1][1].length === C.lHeads.length + 1 && C.sheets[1][2] === 4, JSON.stringify(C.sheets[1] && C.sheets[1][1]));
   ok('an unpublished report is a plain card that says so — and the session token is untouched', /not published this report yet/.test(C.lu) && C.tokenKept);
+  ok('the campaign-manager Variance page paints ONE tab strip (cm_variance / cm_leads), the leader × campaign table and the agent rows', (C.cvh.match(/data-report="cm_variance"/g) || []).length === 1 && !/data-report="variance_team"/.test(C.cvh) && /Team leaders — reconciliation/.test(C.cvh) && /Leader A/.test(C.cvh) && /Campaign reconciliation/.test(C.cvh) && (C.cvh.match(/<tr>/g) || []).length >= 4, C.cvh.slice(0, 300));
+  ok('…and the Lead management page likewise (one strip, the funnel per leader, the agent funnel)', (C.clh.match(/data-report="cm_leads"/g) || []).length === 1 && !/data-report="leads_team"/.test(C.clh) && /Team leaders — the funnel/.test(C.clh) && /Alpha One/.test(C.clh));
+  ok('…the manager\'s export goes through the same builders (one sheet, named after the campaign)', C.cmSheetsAdded === 1 && /Courtesy/.test(String(C.cmWritten)), String(C.cmWritten));
+  ok('…and a report with nothing under their campaign is a sentence naming the campaign, never a zero tile', /Nothing on the published report is filed under your campaign \(Courtesy\)/.test(C.cvNone) && !/Agents compared/.test(C.cvNone), C.cvNone.slice(0, 300));
   ok('no page errors on the agent app', aerr.length === 0, aerr.join(' | '));
 } finally { await b.close(); server.close(); }
 

@@ -1582,6 +1582,11 @@ function repLoad(kind,manual){
 function repTick(){ var k=repKind(VIEW); if(k&&!REP[k].busy&&Date.now()-REP[k].at>LIVE_MIN_GAP_MS) repLoad(k,false); }
 function repStateCard(kind,title){
   var st=REP[kind];
+  if(st.d&&D&&D.scope==='campaign'&&st.d.campBlocks&&st.d.campBlocks!=='ok'){
+    var camps=((D.cm&&D.cm.campaigns)||[]).map(function(x){return x.label||x.key;}).join(', ');
+    if(st.d.campBlocks==='absent') return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">This report was published before it carried campaign blocks. PULSE republishes it within a couple of minutes — press Refresh in a moment.</p></div>';
+    return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">Nothing on the published report is filed under your campaign'+(camps.indexOf(',')>=0?'s':'')+(camps?' ('+esc(camps)+')':'')+'. Either nothing has been loaded for '+(camps.indexOf(',')>=0?'them':'it')+' this month, or the campaign is spelt differently on the report and the Agent List — tell Nick if the VAS dashboard shows figures.</p></div>';
+  }
   if(st.d) return '';
   if(st.busy||(!st.err&&!st.d)) return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">Loading the published report…</p></div>';
   if(st.err==='unpublished') return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">Management has not published this report yet. It follows the VAS dashboard within a couple of minutes of the next upload — press Refresh in a moment.</p></div>';
@@ -1596,14 +1601,16 @@ function repAgents(){
 function repCmBlocks(kind){
   var d=REP[kind].d; if(!d||!d.teamsByCamp) return [];
   var c=(typeof cmCamp==='function')?cmCamp():null; var key=c?String(c.key||''):'';
-  return Object.keys(d.teamsByCamp).filter(function(k){ return key==='all'||!key||k.split('|')[0].toLowerCase()===key.toLowerCase(); })
-    .map(function(k){ return {camp:k.split('|')[0], tl:k.split('|').slice(1).join('|'), b:d.teamsByCamp[k]}; })
+  /* the block names its campaign and leader; the key split only serves a report published before it did */
+  return Object.keys(d.teamsByCamp).map(function(k){ var b=d.teamsByCamp[k]||{};
+      return {camp:b.camp!=null?String(b.camp):k.split('|')[0], tl:b.tl!=null?String(b.tl):k.split('|').slice(1).join('|'), b:b}; })
+    .filter(function(x){ return key==='all'||!key||x.camp.toLowerCase()===key.toLowerCase(); })
     .sort(function(x,y){ return x.camp.localeCompare(y.camp)||x.tl.localeCompare(y.tl); });
 }
 function repCmTotal(kind){
   var d=REP[kind].d; if(!d||!d.campaigns) return null;
   var c=(typeof cmCamp==='function')?cmCamp():null; var key=c?String(c.key||''):'';
-  if(key&&key!=='all'){ var k=Object.keys(d.campaigns).filter(function(x){return x.toLowerCase()===key.toLowerCase();})[0]; return k?d.campaigns[k]:null; }
+  if(key&&key!=='all'){ var k=Object.keys(d.campaigns).filter(function(x){ var b=d.campaigns[x]||{}; return String(b.camp!=null?b.camp:x).toLowerCase()===key.toLowerCase(); })[0]; return k?d.campaigns[k]:null; }
   return null;   // "All campaigns" has no single published total — the per-campaign rows are the totals
 }
 function repTeamBlock(kind){
@@ -1656,7 +1663,7 @@ function reportVariance(wholeMonth){
   return {sheet:flt?('Variance '+flt):'Variance', cols:varianceCols(rp), rows:rows, days:days, rp:rp};
 }
 function cmVarianceTable(){
-  var blocks=repCmBlocks('variance'); if(!blocks.length) return '';
+  var blocks=repCmBlocks('variance'); if(!blocks.length) return '<div class="card"><h3>Team leaders — reconciliation</h3><p class="why">No team-leader block for this campaign on the published report.</p></div>';
   var rp=REP.variance.d, rcn=(rp.rules&&rp.rules.rootCauses)||{};
   return '<div class="card"><h3>Team leaders — reconciliation <span class="cnt">'+num(blocks.length)+' team'+(blocks.length===1?'':'s')+' (one leader × one campaign)</span></h3>'
     +'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Team leader</th><th class="l">Campaign</th><th>Agents</th><th>Agent-days</th><th>Exact</th><th>±1</th><th>Material</th><th>Blocked</th><th>Skew</th><th>Flags</th><th class="l">Root causes</th></tr></thead><tbody>'
@@ -1665,7 +1672,7 @@ function cmVarianceTable(){
     +'</tbody></table></div></div>';
 }
 function cmLeadsTable(){
-  var blocks=repCmBlocks('leads'); if(!blocks.length) return '';
+  var blocks=repCmBlocks('leads'); if(!blocks.length) return '<div class="card"><h3>Team leaders — the funnel</h3><p class="why">No team-leader block for this campaign on the published report.</p></div>';
   var rp=REP.leads.d, cols=leadsCols(rp);
   var list=blocks.map(function(x){ return Object.assign({name:x.tl||'(unassigned)',code:x.camp,isTeam:true},x.b); });
   var tot=repCmTotal('leads');
@@ -1676,16 +1683,16 @@ function pageCmReport(kind){
   var head=reportsTabs(view,CM_REPORT_TABS);
   var state=repStateCard(kind,kind==='leads'?'Lead management':'Variance'); if(state) return head+state;
   var inner;
-  if(kind==='variance'){ VIEW='variance_team'; inner=cmVarianceTable()+pageVarianceTeam().replace(reportsTabs('variance_team'),''); }
-  else { VIEW='leads_team'; inner=cmLeadsTable()+pageLeadsTeam().replace(reportsTabs('leads_team'),''); }
+  if(kind==='variance'){ VIEW='variance_team'; inner=cmVarianceTable()+pageVarianceTeam(true); }
+  else { VIEW='leads_team'; inner=cmLeadsTable()+pageLeadsTeam(true); }
   VIEW=view; LAST_CM_REPORT=view;
   return head+inner;
 }
-function pageVarianceTeam(){
-  var head=reportsTabs('variance_team');
+function pageVarianceTeam(noHead){
+  var head=noHead?'':reportsTabs('variance_team');   // the campaign-manager page paints its own tab strip
   var state=repStateCard('variance','Variance'); if(state) return head+state;
   var rep=reportVariance(); var rp=rep.rp;
-  if(!rep.rows.length&&!VAR_DAY) return head+'<div class="card"><h3>Variance</h3><p class="why">No variance rows have been published for your team this month. The report compares Salesforce against the agent-logged board per agent per day — it needs the BI exports and the Manual Stats board uploaded on the VAS dashboard.</p></div>';
+  if(!rep.rows.length&&!VAR_DAY) return head+'<div class="card"><h3>Variance</h3><p class="why">No variance rows have been published for '+(D&&D.scope==='campaign'?'your campaign':'your team')+' this month. The report compares Salesforce against the agent-logged board per agent per day — it needs the BI exports and the Manual Stats board uploaded on the VAS dashboard.</p></div>';
   var t=((D&&D.scope==='campaign')?repCmTotal('variance'):repTeamBlock('variance'))||{};
   var tile=function(lab,val,cls,note){ return '<div class="stat"><div class="lab">'+esc(lab)+'</div><div class="val'+(cls?' '+cls:'')+'">'+val+'</div>'+(note?'<div class="sub2">'+esc(note)+'</div>':'')+'</div>'; };
   var rcn=(rp.rules&&rp.rules.rootCauses)||{};
@@ -1756,11 +1763,11 @@ function reportLeads(){
   var t=(D&&D.scope==='campaign')?repCmTotal('leads'):repTeamBlock('leads'); var total=t?Object.assign({isTeam:true},t):null;
   return {sheet:'Lead management', cols:leadsCols(rp), rows:rows, total:total, rp:rp};
 }
-function pageLeadsTeam(){
-  var head=reportsTabs('leads_team');
+function pageLeadsTeam(noHead){
+  var head=noHead?'':reportsTabs('leads_team');   // the campaign-manager page paints its own tab strip
   var state=repStateCard('leads','Lead management'); if(state) return head+state;
   var rep=reportLeads(); var rp=rep&&rep.rp;
-  if(!rep||!rep.rows.length) return head+'<div class="card"><h3>Lead management</h3><p class="why">No lead rows are published for your team yet. The funnel needs the Salesforce open and closed case exports loaded on the VAS dashboard (the open book arrives through the data lake).</p></div>';
+  if(!rep||!rep.rows.length) return head+'<div class="card"><h3>Lead management</h3><p class="why">No lead rows are published for '+(D&&D.scope==='campaign'?'your campaign':'your team')+' yet. The funnel needs the Salesforce open and closed case exports loaded on the VAS dashboard (the open book arrives through the data lake).</p></div>';
   var t=rep.total||{};
   var tile=function(lab,val,note){ return '<div class="stat"><div class="lab">'+esc(lab)+'</div><div class="val">'+val+'</div>'+(note?'<div class="sub2">'+note+'</div>':'')+'</div>'; };
   var conv=t.convL==null?'–':num(t.convL,1)+'%';

@@ -140,6 +140,7 @@ export function tlReports(user, digest, report, kind) {
   const agents = {};
   for (const code of auth.codes) if (report.agents && report.agents[code] != null) agents[code] = report.agents[code];
   const teams = {}, teamsByCamp = {}, campaigns = {};
+  let campBlocks;   // campaign managers only: 'ok' | 'none' (published, nothing under their campaigns) | 'absent' (published before the blocks existed)
   if (auth.staff) { Object.assign(teams, report.teams || {}); Object.assign(teamsByCamp, report.teamsByCamp || {}); Object.assign(campaigns, report.campaigns || {}); }
   else if (auth.scope === 'campaign') {
     /* THE CAMPAIGN MANAGER (2026-09-21): a team is one leader AND one campaign (campaign.mjs), so the
@@ -147,12 +148,18 @@ export function tlReports(user, digest, report, kind) {
        this manager does not hold. Only the leader × campaign blocks and the campaign totals of the
        campaigns the account is ASSIGNED, matched on campKey like everything else on this view. */
     const mine = new Set((auth.campaigns || []).map(campKey));
-    for (const k in (report.teamsByCamp || {})) if (mine.has(campKey(k.split('|')[0]))) teamsByCamp[k] = report.teamsByCamp[k];
-    for (const k in (report.campaigns || {})) if (mine.has(campKey(k))) campaigns[k] = report.campaigns[k];
+    /* the block NAMES its campaign (review 2026-09-21 PM) — the "<campaign>|<leader>" key is only
+       read for a report published before it did, and a campaign spelt with a "|" must never leak
+       another leader's block through the split. */
+    const campOfBlock = (k, b) => campKey(b && b.camp != null ? b.camp : k.split('|')[0]);
+    const tbc = report.teamsByCamp || {}, cps = report.campaigns || {};
+    for (const k in tbc) if (mine.has(campOfBlock(k, tbc[k]))) teamsByCamp[k] = tbc[k];
+    for (const k in cps) if (mine.has(campOfBlock(k, cps[k]))) campaigns[k] = cps[k];
+    campBlocks = !report.teamsByCamp ? 'absent' : Object.keys(teamsByCamp).length ? 'ok' : 'none';
   }
   else if (report.teams && report.teams[auth.team] != null) teams[auth.team] = report.teams[auth.team];
   const { agents: _a, teams: _t, teamsByCamp: _tc, campaigns: _c, ...floor } = report;   // rules, days, checks, statuses, book … — nobody named
-  return { status: 200, body: { ...floor, kind, agents, teams, teamsByCamp, campaigns, team: auth.team || '', scope: auth.scope, missing: Math.max(0, auth.codes.size - Object.keys(agents).length) } };
+  return { status: 200, body: { ...floor, kind, agents, teams, teamsByCamp, campaigns, team: auth.team || '', scope: auth.scope, missing: Math.max(0, auth.codes.size - Object.keys(agents).length), ...(campBlocks ? { campBlocks } : {}) } };
 }
 
 export async function loadDigest(DB, month) {

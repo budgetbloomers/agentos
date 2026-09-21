@@ -9261,15 +9261,17 @@ function agentReportsVariancePayload(){
     const tl=teamOf[r.code]||''; (byTeam[tl]=byTeam[tl]||[]).push(r);
     /* the campaign manager's team is one leader AND one campaign (campaign.mjs): blocks split on the
        row's own campaign (orgAt, day-effective), plus a per-campaign total — published, never summed later */
-    const ck=(r.camp||'')+'|'+tl; (byTeamCamp[ck]=byTeamCamp[ck]||[]).push(r);
+    const ck=(r.camp||'')+'|'+tl; (byTeamCamp[ck]=byTeamCamp[ck]||{camp:r.camp||'',tl,rows:[]}).rows.push(r);
     (byCamp[r.camp||'']=byCamp[r.camp||'']||[]).push(r);
   }
   const block=rows=>{ const sm=vrSummarize(rows); const rc={RC1:0,RC2:0,RC3:0,RC4:0,RC5:0,RC6:0,RC7:0};
     rows.forEach(r=>{ for(const k of [r.rcSales,r.rcGwp]) if(k&&rc[k]!=null) rc[k]++; });
     return {agents:sm.agents.size,rows:rows.length,exact:sm.exact,rounding:sm.rounding,material:sm.material,blocked:sm.blocked,indeterminate:sm.indeterminate,flags:sm.flags,rc}; };
   const teams={}; for(const tl in byTeam) teams[tl]=block(byTeam[tl]);
-  const teamsByCamp={}; for(const k in byTeamCamp) teamsByCamp[k]=block(byTeamCamp[k]);
-  const campaigns={}; for(const k in byCamp) campaigns[k]=block(byCamp[k]);
+  /* each block NAMES its campaign and leader (review 2026-09-21 PM): the Worker slices on the field,
+     never by splitting the key — a campaign spelt with a "|" would otherwise leak or vanish */
+  const teamsByCamp={}; for(const k in byTeamCamp) teamsByCamp[k]=Object.assign(block(byTeamCamp[k].rows),{camp:byTeamCamp[k].camp,tl:byTeamCamp[k].tl});
+  const campaigns={}; for(const k in byCamp) campaigns[k]=Object.assign(block(byCamp[k]),{camp:k});
   const rcNames={}; for(const k in VARIANCE_RULES.rootCauses) rcNames[k]=VARIANCE_RULES.rootCauses[k].name;
   const cov={}; for(const c in (VARIANCE_RULES.diallerCoverage.campaigns||{})) cov[c]=VARIANCE_RULES.diallerCoverage.campaigns[c].remedy||'';
   return {v:1,kind:'variance',updatedAt:new Date().toISOString(),period:{from:VR.range.from,to:VR.range.to},
@@ -9298,13 +9300,13 @@ function agentReportsLeadsPayload(){
     agents[a.cb]={sts,open:a.open,tc:a.tc,nofb:a.nofb,sales:a.sales,canc:a.canc,ul,dd:a.dialDays.size,
       aveClosed:F.aveClosed,aveWasted:F.aveWasted,pSpd:F.pSpd,dSpd:F.dSpd,convL:F.convL,convLv:F.convLv,convC:F.convC,convCv:F.convCv,convW:F.convW,cancPct:F.cancPct};
     const tl=teamOf[a.cb]||''; acc(T[tl]=T[tl]||fresh(),a);
-    const ck=(a.camp||'')+'|'+tl; acc(TC[ck]=TC[ck]||fresh(),a); acc(CC[a.camp||'']=CC[a.camp||'']||fresh(),a);   // leader × campaign, and the campaign
+    const ck=(a.camp||'')+'|'+tl; acc(TC[ck]=TC[ck]||Object.assign(fresh(),{camp:a.camp||'',tl}),a); acc(CC[a.camp||'']=CC[a.camp||'']||fresh(),a);   // leader × campaign, and the campaign
   }
   const fin=t=>{ const F=leadFunnel(t,wd,t.leads.size); return {agents:t.agents,sts:t.sts,open:t.open,tc:t.tc,nofb:t.nofb,sales:t.sales,canc:t.canc,ul:t.leads.size,
       aveClosed:F.aveClosed,aveWasted:F.aveWasted,pSpd:F.pSpd,convL:F.convL,convLv:F.convLv,convC:F.convC,convCv:F.convCv,convW:F.convW,cancPct:F.cancPct}; };
   const teams={}; for(const tl in T) teams[tl]=fin(T[tl]);
-  const teamsByCamp={}; for(const k in TC) teamsByCamp[k]=fin(TC[k]);
-  const campaigns={}; for(const k in CC) campaigns[k]=fin(CC[k]);
+  const teamsByCamp={}; for(const k in TC) teamsByCamp[k]=Object.assign(fin(TC[k]),{camp:TC[k].camp,tl:TC[k].tl});   // the block names its campaign + leader (see the variance payload)
+  const campaigns={}; for(const k in CC) campaigns[k]=Object.assign(fin(CC[k]),{camp:k});
   return {v:1,kind:'leads',updatedAt:new Date().toISOString(),period:{from:range.from,to:range.to},wd,
     book:{snapshot:(oc&&oc.snapshot)||'',lakeAt:(oc&&oc.lakeAt)||'',at:(oc&&oc.at)||'',open:!!oc,closed:!!(S.closedcases&&Object.keys(S.closedcases.rows||{}).length)},
     statuses,rules:{convTarget:LEAD_CONV_RULES.target,convAmber:+(LEAD_CONV_RULES.target*LEAD_CONV_RULES.amberFactor).toFixed(1),convClosed:{good:LEAD_CONV_RULES.closedGood,warn:LEAD_CONV_RULES.closedAmber}},
