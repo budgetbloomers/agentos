@@ -92,3 +92,17 @@ that only says who owns them **now** must never be read for a past date.
 
 Items 6-9 are four separate copies of the same knowledge. Consolidating them into one
 registry is the single highest-value refactor available in this file.
+## The Denise pilot (2026-09-21)
+
+Three files, run in this order, answering "is the agent and team-leader view safe to go live?"
+with numbers rather than a feeling. They need no credentials and no data drop: the fixtures are
+written in the real export header contracts and go through the real ingest.
+
+| File | What it does |
+|---|---|
+| `verify-denise-pilot.mjs` | Six weeks (3 Aug – 12 Sep 2026), nine agents on Denise Haripersad's team, every source. Tests the six joins — agent, team, campaign, interaction, sale, QA — against an INDEPENDENT recompute of the same fixture rows, then re-uploads every file to prove nothing doubles. Deliberate defects: a near spelling, a transposition, a middle name, a zero-padded QA code, a dialler login issued to someone else, a team leader dialling, a system login, a renamed agent, a stranger owning real money, an ambiguous surname. Round 3 measures what each finding COSTS. Writes `scratch/denise/evidence.json`. |
+| `verify-denise-views.mjs` | Takes that digest through the Worker's own `authorise()` and `checksFor()` — the real modules, unmodified — to test the agent view and the team-leader view: scoping, the two checks, the composite's renormalisation, and whether the leader's two panels agree. Writes `scratch/denise/views.json`. |
+| `trace-denise-record.mjs [CB910] [2026-08-04]` | One agent, one day, end to end: the raw row in each source file, the key it joins on, the formula, the reconciliation, the exclusions, and what the agent and the leader finally read. Writes `scratch/denise/trace.txt`. |
+
+The failing checks are the point — each one is a finding, not a broken test. See
+`reports/denise-pilot-2026-09-21/`.
