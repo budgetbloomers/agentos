@@ -43,6 +43,9 @@ Nick: "the lead management and variance needs to be in reporting as sub … with
 - Reports wiring is ONE `wireReports()` (sub-tab pills, day pickers, load-on-entry, Refresh, Export) called
   by teamView and cmView — the CM tab first shipped stuck on "Loading the published report…" because
   only teamView asked the Worker.
-- Guard: `verify-tl-reports.mjs` 39 (CM Worker slice with `teamsByCamp`/`campaigns` fixtures, `tcAgree` /
+- Review round (df18959): every block carries `camp` + `tl`; the Worker slices on the FIELD (a campaign spelt
+  with "|" could leak through a key split); `campBlocks` ok|none|absent → page sentence, never zero tiles;
+  `pageVarianceTeam(noHead)` replaces the String.replace surgery.
+- Guard: `verify-tl-reports.mjs` 46 (CM Worker slice with `teamsByCamp`/`campaigns` fixtures, `tcAgree` /
   `campAgree` payload ≡ engine, CM render + export). Live walk as Dalwin (CB145): 6 leader × campaign
   blocks, 67 agents, Courtesy + Cuddle totals = Campaign tab sales.
