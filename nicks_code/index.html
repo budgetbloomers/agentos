@@ -6600,6 +6600,26 @@ function leadBook(all){
   if(all) __leadsCacheAll=out; else __leadsCache=out;
   return out;
 }
+/* THE FUNNEL'S DERIVED FIGURES, DECLARED ONCE (team-leader reports, 2026-09-21). PAGES.leads used to
+   close over these inside LEADS_COLS; the team-leader publish needs the same arithmetic and copying it
+   is exactly the drift the "ported verbatim from Ops" rule forbids. The page's export (csv) and the
+   published report both read THIS, so a figure a team leader sees can never differ from the page.
+   Verdicts are decided on the RAW ratio, as the page's rag() always did; the value is exported to one
+   decimal, as the page's csv always did. The thresholds were literals in the page (10 / 8 / 20 / 10);
+   they are one constant now, still not a spec rule — a spec rule needs a dated _changes[] entry. */
+const LEAD_CONV_RULES={target:10,amberFactor:0.8,closedGood:20,closedAmber:10};
+function leadFunnel(a,wd,ul){
+  const wasted=Math.max(0,a.tc-a.sales);
+  const r1=v=>v==null?null:+v.toFixed(1);
+  const rawL=ul>0?a.sales/ul*100:null, rawC=a.tc>0?a.sales/a.tc*100:null;
+  const verdict=(v,g,am)=>v==null?null:(v>=g?'good':v>=am?'warn':'crit');
+  const dd=a.dialDays&&a.dialDays.size;
+  return {wasted, aveClosed:r1(a.tc/wd), aveWasted:r1(wasted/wd), pSpd:r1(a.sales/wd),
+    dSpd:dd?r1(a.sales/dd):null,
+    convL:r1(rawL), convLv:verdict(rawL,LEAD_CONV_RULES.target,LEAD_CONV_RULES.target*LEAD_CONV_RULES.amberFactor),
+    convC:r1(rawC), convCv:verdict(rawC,LEAD_CONV_RULES.closedGood,LEAD_CONV_RULES.closedAmber),
+    convW:wasted>0?r1(a.sales/wasted*100):null, cancPct:a.sales>0?r1(a.canc/a.sales*100):null};
+}
 PAGES.leads=()=>{
   /* ITS OWN BOOK. Lead Management is fed by the Lead Management pulls (open + closed).
      It used to borrow the Lead Allocation book before its own file landed; that page and
@@ -6625,7 +6645,7 @@ PAGES.leads=()=>{
     stCols.forEach(c=>G.sts[c]=(G.sts[c]||0)+(a.sts[c]||0))});
   const pc=(n,d)=>d>0?fmtNum(n/d*100,1)+'%':'–';
   const f1=v=>fmtNum(v,1);
-  const ctL=10;                                            // convTarget — the scorecard's Conversion dial
+  const ctL=LEAD_CONV_RULES.target;                        // convTarget — the scorecard's Conversion dial
   const rag=(v,g,a)=>v==null?'–':`<span class="pill ${v>=g?'pgood':v>=a?'pwarn':'pcrit'}">${fmtNum(v,1)}%</span>`;
   /* One-definition rule: the funnel is declared once and both the
      table and the export read it, so a column can never appear on screen and be missing (or
@@ -6634,6 +6654,7 @@ PAGES.leads=()=>{
      them. Percentages export as plain numbers; the pill is a screen affordance only. */
   const wastedOf=a=>Math.max(0,a.tc-a.sales);
   const uleadsOf=(a,gt)=>(gt?G.leads:a.leads).size;
+  const fun=a=>leadFunnel(a,wd,uleadsOf(a,a.gt));            // the one definition (export + team-leader report)
   const LEADS_COLS=[
     {h:'Team Leader',l:1,f:a=>a.gt?'':esc(a.tl),csv:a=>a.gt?'':a.tl},
     {h:'Agent',l:1,f:a=>a.gt?'<b>ALL AGENTS</b>':`<span class="agentcell">${avatarOf(a.name,a.cb)}<span class="nm">${esc(a.name)}</span></span>`,csv:a=>a.gt?'ALL AGENTS':a.name},
@@ -6642,18 +6663,18 @@ PAGES.leads=()=>{
     {h:'Total open',b:1,f:a=>fmtNum(a.open),csv:a=>a.open},
     {h:'Total closed',f:a=>fmtNum(a.tc),csv:a=>a.tc},
     {h:'No feedback',f:a=>fmtNum(a.nofb),csv:a=>a.nofb},
-    {h:'Ave closed p/d',f:a=>f1(a.tc/wd),csv:a=>+(a.tc/wd).toFixed(1)},
-    {h:'Ave wasted p/d',f:a=>f1(wastedOf(a)/wd),csv:a=>+(wastedOf(a)/wd).toFixed(1)},
+    {h:'Ave closed p/d',f:a=>f1(a.tc/wd),csv:a=>fun(a).aveClosed},
+    {h:'Ave wasted p/d',f:a=>f1(wastedOf(a)/wd),csv:a=>fun(a).aveWasted},
     {h:'Sales',b:1,f:a=>fmtNum(a.sales),csv:a=>a.sales},
-    {h:'Payroll SPD',f:a=>f1(a.sales/wd),csv:a=>+(a.sales/wd).toFixed(1)},
+    {h:'Payroll SPD',f:a=>f1(a.sales/wd),csv:a=>fun(a).pSpd},
     {h:'Dialing SPD',t:'Sales divided by the days this agent actually dialled',
-      f:a=>a.gt?'–':(a.dialDays.size?f1(a.sales/a.dialDays.size):'–'),csv:a=>(!a.gt&&a.dialDays.size)?+(a.sales/a.dialDays.size).toFixed(1):''},
-    {h:'Conv % (leads)',t:'Sales ÷ unique leads',f:a=>rag(uleadsOf(a,a.gt)>0?a.sales/uleadsOf(a,a.gt)*100:null,ctL,ctL*.8),
-      csv:a=>uleadsOf(a,a.gt)>0?+(a.sales/uleadsOf(a,a.gt)*100).toFixed(1):''},
-    {h:'Conv % (closed)',t:'Sales ÷ closed',f:a=>a.tc>0?rag(a.sales/a.tc*100,20,10):'–',csv:a=>a.tc>0?+(a.sales/a.tc*100).toFixed(1):''},
-    {h:'Conv % wasted',f:a=>pc(a.sales,wastedOf(a)),csv:a=>wastedOf(a)>0?+(a.sales/wastedOf(a)*100).toFixed(1):''},
+      f:a=>a.gt?'–':(a.dialDays.size?f1(a.sales/a.dialDays.size):'–'),csv:a=>{const v=a.gt?null:fun(a).dSpd; return v==null?'':v;}},
+    {h:'Conv % (leads)',t:'Sales ÷ unique leads',f:a=>rag(uleadsOf(a,a.gt)>0?a.sales/uleadsOf(a,a.gt)*100:null,ctL,ctL*LEAD_CONV_RULES.amberFactor),
+      csv:a=>{const v=fun(a).convL; return v==null?'':v;}},
+    {h:'Conv % (closed)',t:'Sales ÷ closed',f:a=>a.tc>0?rag(a.sales/a.tc*100,LEAD_CONV_RULES.closedGood,LEAD_CONV_RULES.closedAmber):'–',csv:a=>{const v=fun(a).convC; return v==null?'':v;}},
+    {h:'Conv % wasted',f:a=>pc(a.sales,wastedOf(a)),csv:a=>{const v=fun(a).convW; return v==null?'':v;}},
     {h:'Cancellations',f:a=>a.canc?`<span class="pill pcrit">${a.canc}</span>`:'0',csv:a=>a.canc||0},
-    {h:'Canc to sales %',f:a=>pc(a.canc,a.sales),csv:a=>a.sales>0?+(a.canc/a.sales*100).toFixed(1):''},
+    {h:'Canc to sales %',f:a=>pc(a.canc,a.sales),csv:a=>{const v=fun(a).cancPct; return v==null?'':v;}},
   ];
   const cell=(a,gt)=>`<tr${gt?' class="subtotal"':''}>`
     +LEADS_COLS.map(c=>`<td${c.l?' class="l"':''}${c.b?' style="font-weight:800"':''}>${c.f({...a,gt})}</td>`).join('')
@@ -6954,7 +6975,7 @@ window.__vrAudit=i=>{
   el.style.display='flex';
 };
 window.__vrCloseAudit=()=>{ const el=document.getElementById('vrAudit'); if(el) el.style.display='none'; };
-window.__vrSetRC=(key,val)=>{ if(val) S.varRC[key]=val; else delete S.varRC[key]; save(); renderPage(); toast(val?('Classified '+val):'Classification cleared'); };
+window.__vrSetRC=(key,val)=>{ if(val) S.varRC[key]=val; else delete S.varRC[key]; save(); renderPage(); toast(val?('Classified '+val):'Classification cleared'); if(typeof kickAgentDigest==='function') kickAgentDigest(); };
 /* export — the workbook mirrors spec output_structure; every cell is a computed VALUE
    (never a formula), so VR10's cached-value requirement is satisfied structurally, and
    the exported figures are the SAME buildVariance() rows the screen shows. */
@@ -8686,6 +8707,7 @@ async function syncLeadBookFromLake(){
     __curFileHash=null;                                     // a lake adoption has no file bytes to fingerprint
     regFile(name,'open cases (lead mgmt)',[],+book.total||rows.length,{cases:rows.length,queues:+book.queue_rows||0,lake:true,snapshot:book.snapshot_date||''});
     try{ save(); rebuild(); if(S.ui.tab==='leads'||S.ui.tab==='data') renderPage(); }catch(e){}
+    if(typeof kickAgentDigest==='function') kickAgentDigest();     // the team leaders' Lead management tab follows the lake
     toast('Lead Management open cases updated from the data lake — "'+name+'": '+fmtNum(rows.length)+' agent-held cases (snapshot '+(book.snapshot_date||'?')+').',9000);
   }catch(e){}finally{__leadBookBusy=false}
 }
@@ -8816,6 +8838,8 @@ window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
   compositeRules:()=>COMPOSITE_RULES,
   digest:()=>agentDigestPayload(),          // the Agent Analytics payload, for the harness
   variance:(from,to)=>buildVariance(from&&to?{from,to}:periodRange()),   // Variance Report engine, for the harness
+  reports:k=>k==='leads'?agentReportsLeadsPayload():agentReportsVariancePayload(),   // the team-leader report keys (2026-09-21)
+  leads:()=>leadBook(true), leadFunnel, leadConvRules:()=>LEAD_CONV_RULES,
   varianceRules:()=>VARIANCE_RULES,
   rebuild:()=>{rebuild();renderAll();}, openDrawer, go };
 
@@ -9200,12 +9224,117 @@ function tlSummary(o){
     aveTalk:r2(o.aveTalk), ref:o.ref||0, refPct:r4(o.refPct), onT:o.onT||0};
 }
 
+/* ================= TEAM-LEADER REPORTS: VARIANCE + LEAD MANAGEMENT (2026-09-21) =================
+   Nick: "bring variance report and lead management report to team leader view and map it out just
+   for that team leader." Same doctrine as the digest: PULSE computes, publishes two SIBLING keys
+   (kv:agent-reports-variance, kv:agent-reports-leads — never the digest, which stays ~300 KB and
+   travels to every agent), the Worker slices by authorise(), the page paints. Both payloads are
+   built from the SAME engines the PULSE pages use (buildVariance, leadBook(true), leadFunnel), so a
+   team leader's tab can never disagree with the management page. What never travels: agent and
+   leader names (the digest has them), unmapped owner strings, management comments, raw attendance
+   status strings, case numbers. Nulls stay null — an absence is not a nought. Variance rows are
+   POSITIONAL arrays under `cols` (one row per agent-day is ~2,900 rows a month) so the Worker's
+   10 ms parse budget holds; the row status and GWP-per-sale travel as published values, so the
+   team-leader page paints and never divides (one number, one verdict). */
+let __varCache=null;   // {m, k, VR} — buildVariance is uncached and the publisher runs every 90 s
+function buildVarianceCached(range){
+  const k=[range&&range.from,range&&range.to,JSON.stringify(S.varRC||{})].join('|');
+  if(__varCache&&__varCache.m===M&&__varCache.k===k) return __varCache.VR;
+  const VR=buildVariance(range); __varCache={m:M,k,VR}; return VR;
+}
+const VARIANCE_REPORT_COLS=['d','camp','ss','sg','gps','bs','bg','br','ds','dse','vs','vg','sd','tk','tke','ta','pr','sk','vsv','vgv','st','rcs','rcg','ras','rag','fl'];
+function agentReportsVariancePayload(){
+  if(!M||!M.range||!Array.isArray(M.agents)||!M.agents.length) return null;
+  if(!(Object.keys(S.board||{}).length||Object.keys(S.sales||{}).length)) return null;
+  const VR=buildVarianceCached(M.range); if(!VR||!VR.range) return null;
+  const teamOf={}; M.agents.forEach(a=>{ teamOf[a.code]=a.tl||''; });
+  const n=v=>(v==null||v===''?null:v);
+  const agents={}, byTeam={};
+  for(const r of VR.rows){
+    if(r.camp==='VT') continue;                                         // VT is not reported by this engine (as the page)
+    const gps=(r.sfGwp!=null&&r.sfSales)?Math.round(r.sfGwp/r.sfSales*10)/10:null;   // the page's own GWP-per-sale
+    const row=[r.d,r.camp||'',n(r.sfSales),n(r.sfGwp),gps,n(r.bdSales),n(r.bdGwp),n(r.bdRef),n(r.dlSales),n(r.dlSalesEst),
+      n(r.salesVar),n(r.gwpVar),(r.sfSales!=null&&r.dlSales!=null)?r.sfSales-r.dlSales:null,n(r.talk),n(r.talkEst),
+      r.talkAdj?{d:r.talkAdj.d,tk:r.talkAdj.talk}:null,r.present?1:0,r.skew?1:0,r.v.sales,r.v.gwp,vrRowStat(r),
+      r.rcSales||null,r.rcGwp||null,r.rcSalesAuto||null,r.rcGwpAuto||null,(r.flags||[]).map(f=>[f.sev,f.f,f.dv])];
+    (agents[r.code]=agents[r.code]||[]).push(row);
+    const tl=teamOf[r.code]||''; (byTeam[tl]=byTeam[tl]||[]).push(r);
+  }
+  const teams={};
+  for(const tl in byTeam){ const sm=vrSummarize(byTeam[tl]); const rc={RC1:0,RC2:0,RC3:0,RC4:0,RC5:0,RC6:0,RC7:0};
+    byTeam[tl].forEach(r=>{ for(const k of [r.rcSales,r.rcGwp]) if(k&&rc[k]!=null) rc[k]++; });
+    teams[tl]={agents:sm.agents.size,rows:byTeam[tl].length,exact:sm.exact,rounding:sm.rounding,material:sm.material,blocked:sm.blocked,indeterminate:sm.indeterminate,flags:sm.flags,rc}; }
+  const rcNames={}; for(const k in VARIANCE_RULES.rootCauses) rcNames[k]=VARIANCE_RULES.rootCauses[k].name;
+  const cov={}; for(const c in (VARIANCE_RULES.diallerCoverage.campaigns||{})) cov[c]=VARIANCE_RULES.diallerCoverage.campaigns[c].remedy||'';
+  return {v:1,kind:'variance',updatedAt:new Date().toISOString(),period:{from:VR.range.from,to:VR.range.to},
+    rules:{version:VARIANCE_RULES.version,salesTolerance:VARIANCE_RULES.salesTolerance,gwpTolerance:VARIANCE_RULES.gwpTolerance,talkNoSaleSecs:VARIANCE_RULES.talkNoSaleSecs,
+      statusLabels:VSTAT,rootCauses:rcNames,diallerCoverage:cov},
+    cols:VARIANCE_REPORT_COLS,
+    days:(VR.days||[]).map(x=>({d:x.d,bi:x.bi?1:0,board:x.board?1:0,calls:x.calls?1:0,att:x.att?1:0,skew:x.skew?1:0})),
+    checks:(VR.checks||[]).map(c=>({id:c.id,ok:!!c.ok,sev:c.sev,msg:c.msg})),blocked:VR.blocked||[],skew:!!VR.skew,agents,teams};
+}
+function agentReportsLeadsPayload(){
+  if(!M||!M.range||!Array.isArray(M.agents)||!M.agents.length) return null;
+  const oc=S.opencasesLM;
+  if(!(oc||S.closedcases)||!S.roster.length) return null;             // the page's own two empty states: nothing published
+  const book=leadBook(true); const A=book.A; const range=book.range||M.range;
+  let wd=0;{const c=new Date(range.from+'T00:00:00Z'),e=new Date(range.to+'T00:00:00Z');let g=0;
+    while(c<=e&&g++<4000){const dow=c.getUTCDay();if(dow!==0&&dow!==6)wd++;c.setUTCDate(c.getUTCDate()+1)}}
+  if(!wd)wd=1;
+  const rows=Object.values(A); const statuses=leadStatusCols(rows,10);
+  const teamOf={}; M.agents.forEach(a=>{ teamOf[a.code]=a.tl||''; });
+  const agents={}, T={};
+  for(const a of rows){
+    const ul=a.leads.size, F=leadFunnel(a,wd,ul); const sts={}; statuses.forEach(c=>{ sts[c]=a.sts[c]||0; });
+    agents[a.cb]={sts,open:a.open,tc:a.tc,nofb:a.nofb,sales:a.sales,canc:a.canc,ul,dd:a.dialDays.size,
+      aveClosed:F.aveClosed,aveWasted:F.aveWasted,pSpd:F.pSpd,dSpd:F.dSpd,convL:F.convL,convLv:F.convLv,convC:F.convC,convCv:F.convCv,convW:F.convW,cancPct:F.cancPct};
+    const tl=teamOf[a.cb]||''; const t=T[tl]=T[tl]||{agents:0,sts:{},open:0,cl:0,nofb:0,tc:0,sales:0,canc:0,leads:new Set(),dialDays:new Set()};
+    t.agents++; t.open+=a.open; t.cl+=a.cl; t.nofb+=a.nofb; t.tc+=a.tc; t.sales+=a.sales; t.canc+=a.canc;
+    a.leads.forEach(k=>t.leads.add(k)); statuses.forEach(c=>{ t.sts[c]=(t.sts[c]||0)+(a.sts[c]||0); });
+  }
+  const teams={};
+  for(const tl in T){ const t=T[tl], F=leadFunnel(t,wd,t.leads.size);
+    teams[tl]={agents:t.agents,sts:t.sts,open:t.open,tc:t.tc,nofb:t.nofb,sales:t.sales,canc:t.canc,ul:t.leads.size,
+      aveClosed:F.aveClosed,aveWasted:F.aveWasted,pSpd:F.pSpd,convL:F.convL,convLv:F.convLv,convC:F.convC,convCv:F.convCv,convW:F.convW,cancPct:F.cancPct}; }
+  return {v:1,kind:'leads',updatedAt:new Date().toISOString(),period:{from:range.from,to:range.to},wd,
+    book:{snapshot:(oc&&oc.snapshot)||'',lakeAt:(oc&&oc.lakeAt)||'',at:(oc&&oc.at)||'',open:!!oc,closed:!!(S.closedcases&&Object.keys(S.closedcases.rows||{}).length)},
+    statuses,rules:{convTarget:LEAD_CONV_RULES.target,convAmber:+(LEAD_CONV_RULES.target*LEAD_CONV_RULES.amberFactor).toFixed(1),convClosed:{good:LEAD_CONV_RULES.closedGood,warn:LEAD_CONV_RULES.closedAmber}},
+    unmatched:{open:book.unOpen||0,closed:book.unClosed||0},agents,teams};
+}
+
 /* Publish on the same cadence and with the same guards as the AI digest
    (ask-widget.js:58-73): never push without a token, never push an empty
    session over a rich digest, never re-push an unchanged payload. */
 (function(){
   var API='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
   var last='';
+  var lastRep={variance:'',leads:''};
+  /* gzip the body when the browser can (the Worker sniffs the magic bytes — no header, rule 14a) */
+  function postKv(tk,key,body){
+    var url=API+'/api/kv?key='+key, hdr={'Content-Type':'text/plain','Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'};
+    if(typeof CompressionStream==='function'){
+      return new Response(new Blob([body]).stream().pipeThrough(new CompressionStream('gzip'))).blob()
+        .then(function(gz){ return fetch(url,{method:'POST',headers:hdr,body:gz}); },function(){ return fetch(url,{method:'POST',headers:hdr,body:body}); })
+        .catch(function(){});
+    }
+    return fetch(url,{method:'POST',headers:hdr,body:body}).catch(function(){});
+  }
+  /* THE TEAM-LEADER REPORTS ride the same tick with their OWN fingerprints, posted before the
+     digest's "unchanged" return: a lead-book adoption or a board upload can change these while
+     the digest's figures stand still. Same month fence as the live digest. */
+  function pushReports(tk,p,live){
+    if(!live) return;
+    [['variance',agentReportsVariancePayload],['leads',agentReportsLeadsPayload]].forEach(function(kv){
+      var kind=kv[0], rp=null;
+      try{ rp=kv[1](); }catch(e){ try{console.warn('report '+kind+' not built',e)}catch(_){} return; }
+      if(!rp||!rp.period||rp.period.from!==p.period.from) return;      // never a different month than the digest
+      var cmp=JSON.stringify(rp.agents)+JSON.stringify(rp.teams)+rp.period.to;
+      if(cmp===lastRep[kind]) return;
+      lastRep[kind]=cmp;
+      postKv(tk,'agent-reports-'+kind,JSON.stringify(rp));
+    });
+  }
+  window.__agentReportsPush=function(){ try{ var tk=sessionStorage.getItem('cbx_token'); var p=agentDigestPayload(); if(tk&&p) { lastRep={variance:'',leads:''}; pushReports(tk,p,true); } }catch(e){} };
   function push(){
     try{
       var tk=sessionStorage.getItem('cbx_token'); if(!tk) return;
@@ -9237,8 +9366,17 @@ function tlSummary(o){
          because a browser on the right period publishes moments later anyway and a
          stale-but-true digest beats a fresh-but-wrong one. */
       if(!/^\d{4}-\d{2}-01$/.test((p.period&&p.period.from)||'')) return;
+      /* …AND IT RUNS TO THE MONTH'S LAST DAY (2026-09-21). An "as at" cut is a private reading aid
+         (applyAsAt) — a tab reviewing "1–14 Sep" republished the floor's live month as 1–14 Sep, and
+         every team leader's tabs read 10 working days. The 1st-of-month check above never looked at
+         the far end. The whole month or nothing; a capped tab simply does not publish. */
+      { var __y=+p.period.from.slice(0,4), __m=+p.period.from.slice(5,7);
+        var __end=new Date(Date.UTC(__y,__m,0)).toISOString().slice(0,10);
+        if(String(p.period.to||'')!==__end) return; }
       var body=JSON.stringify(p);
       var cmp=JSON.stringify(p.agents)+p.period.from+p.period.to;   // ignore updatedAt churn
+      { var __dmR=String(p.period.from).slice(0,7), __curR=new Date(Date.now()+2*3600000).toISOString().slice(0,7);
+        try{ pushReports(tk,p,__dmR===__curR); }catch(e){} }
       /* A STALE PUBLISHER MUST NOT WIN (2026-09-11). The GitHub runner republishes this key every
          fifteen minutes from whatever code main carries; while main lagged the deploy it put the
          retired R2A deductions back on 31 agents and dropped the Reports-tab summary, and an open

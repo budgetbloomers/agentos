@@ -373,6 +373,9 @@ const CODE = PAGE
      them accepts an identity supplied by the page. */
   const allowed = new Set(['/api/login', '/api/logout', '/api/password',
     '/api/portal/me', '/api/portal/overview', '/api/portal/agent', '/api/portal/ask',
+    /* The team leader's Variance and Lead management slices (2026-09-21): cut by the Worker's
+       authorise() from the SESSION, refused to agents and campaign managers. */
+    '/api/portal/tl/reports',
     /* The hub proxies. The browser never reaches Convex; these forward to it with
        the leader id taken from the session. */
     '/api/portal/hub/', '/api/portal/hub/coaching', '/api/portal/hub/kpi',
@@ -678,7 +681,7 @@ const CODE = PAGE
   (function(){
     const lp = PAGE.slice(PAGE.indexOf('function loadPortal('), PAGE.indexOf('function notReported('));
     /startLiveRefresh\(\); return teamView\(\);/.test(lp) ? ok('a team payload starts the live re-ask the moment it loads') : bad('the live refresh is never started');
-    /setInterval\(function\(\)\{ if\(!document\.hidden\) refreshPortal\(false\); \},LIVE_EVERY_MS\)/.test(lp)
+    /setInterval\(function\(\)\{ if\(!document\.hidden\)\{ refreshPortal\(false\); repTick\(\); \} \},LIVE_EVERY_MS\)/.test(lp)
       && /addEventListener\('visibilitychange'/.test(lp) && /addEventListener\('focus'/.test(lp)
       ? ok('the page re-asks on a timer while visible, when the tab comes back, and on focus')
       : bad('one of the refresh triggers is missing');

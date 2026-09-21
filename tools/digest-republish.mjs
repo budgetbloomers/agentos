@@ -122,6 +122,21 @@ if (argMonth) {
   if (/^\d{4}-\d{2}$/.test(m0)) jobs.push([m0, payload0]);   // the live month IS its own history key
 }
 const payload = jobs.find(j => j[0] === null)?.[1] || jobs[0][1];
+/* THE TEAM-LEADER REPORT KEYS (2026-09-21): kv:agent-reports-variance / -leads, built by the same
+   engine over the same state, published beside the LIVE digest only (never for a history month).
+   The leads book here is the vas-state copy of S.opencasesLM — the lake book as of the last PULSE
+   session that adopted it (this tool has no session token, so syncLeadBookFromLake does not run). */
+const reportJobs = [];
+if (!argMonth && !HISTORY) {
+  for (const kind of ['variance', 'leads']) {
+    const body = await page.evaluate((k) => { const r = window.__mtd.reports && window.__mtd.reports(k); return r ? JSON.stringify(r) : ''; }, kind);
+    if (!body) { console.log('report ' + kind + ': nothing to publish (no board/BI, or no case books in the state)'); continue; }
+    const rj = JSON.parse(body);
+    if ((rj.period?.from || '').slice(0, 7) !== (JSON.parse(payload).period?.from || '').slice(0, 7)) { console.log('report ' + kind + ' is not the digest month — skipped'); continue; }
+    reportJobs.push([kind, body]);
+    console.log('report ' + kind + ' built — ' + Object.keys(rj.agents || {}).length + ' agents, ' + Object.keys(rj.teams || {}).length + ' teams, ' + Math.round(body.length / 1024) + ' KB');
+  }
+}
 await b.close(); server.close();
 if (errs.length) { console.error('page errors: ' + errs.slice(0, 3).join(' | ')); process.exit(1); }
 
@@ -148,5 +163,14 @@ for (const [mk, body] of jobs) {
   if (!r.ok) { console.error(keyName + ' rules write failed: ' + r.status + ' ' + (await r.text()).slice(0, 200)); process.exit(1); }
   const pj = JSON.parse(body);
   console.log('published ' + keyName + ' — ' + pj.agents.length + ' agents, ' + (pj.period ? pj.period.from + '..' + pj.period.to : '?'));
+}
+for (const [kind, body] of reportJobs) {
+  const keyName = 'agent-reports-' + kind, store = 'raw/kv/' + keyName;
+  const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json', 'x-upsert': 'true' }, body });
+  if (!put.ok) { console.error(keyName + ' storage write failed: ' + put.status + ' ' + (await put.text()).slice(0, 200)); process.exit(1); }
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?on_conflict=key`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify([{ key: 'kv:' + keyName, value: { store, updated_at: new Date().toISOString() } }]) });
+  if (!r.ok) { console.error(keyName + ' rules write failed: ' + r.status + ' ' + (await r.text()).slice(0, 200)); process.exit(1); }
+  console.log('published ' + keyName);
 }
 console.log('done. The Worker edge/memory caches hold old copies for up to 5 minutes.');

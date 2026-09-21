@@ -1235,7 +1235,7 @@ function teamAgg(rows){
    the sidebar carries one "Reports" entry, and the page opens with this row of sub-tabs.
    LAST_REPORT remembers which sub-tab was open, so leaving for Coaching Hub and coming back
    lands on the same report. */
-var REPORT_TABS=[['mtd_team','Month to date'],['daily_team','Daily'],['weekly_team','Weekly']];
+var REPORT_TABS=[['mtd_team','Month to date'],['daily_team','Daily'],['weekly_team','Weekly'],['variance_team','Variance'],['leads_team','Lead management']];
 var LAST_REPORT='mtd_team';
 function isReport(v){ return REPORT_TABS.some(function(t){return t[0]===v;}); }
 function reportsTabs(active){
@@ -1249,10 +1249,10 @@ function reportsTabs(active){
       return '<button class="pill'+(t[0]===active?' on':'')+'" role="tab" aria-selected="'+(t[0]===active)+'" data-report="'+t[0]+'">'+esc(t[1])+'</button>';
     }).join('')+'</div>'
     +'<div class="rep-tools">'
-    +'<span class="rep-stamp" title="When the management dashboard last published these figures">Published '+esc(stamp())+'</span>'
+    +'<span class="rep-stamp" title="When the management dashboard last published these figures">Published '+esc(repKind(active)?repStamp(repKind(active)):stamp())+'</span>'
     +'<button class="btn2" id="repRefresh" title="Ask for the latest published figures now">&#8635; Refresh</button>'
     +'<button class="btn2" data-export="'+active+'" title="Download this report as an Excel workbook">&#8595; Export</button>'
-    +'<button class="btn2" data-export="all" title="Month to date, Daily and Weekly in one workbook">&#8595; Export all</button>'
+    +'<button class="btn2" data-export="all" title="Month to date, Daily, Weekly, Variance and Lead management in one workbook">&#8595; Export all</button>'
     +'</div></div>';
 }
 
@@ -1544,6 +1544,189 @@ function pageDailyTeam(){
     +'</tbody></table></div></div>';
 }
 
+/* ===================== VARIANCE + LEAD MANAGEMENT, FOR THE TEAM LEADER (2026-09-21) =====================
+   Nick: "bring variance report and lead management report to team leader view and map it out just for
+   that team leader." PULSE publishes two report keys beside the digest; the Worker slices them to this
+   leader's own agents (/api/portal/tl/reports?kind=); this page paints. Nothing is computed here — the
+   row status, the GWP-per-sale, every conversion verdict arrive as published values (one number, one
+   verdict). Each report keeps its OWN publish stamp (it can lag the digest when a book is not loaded),
+   is fetched on its own on the LIVE timer, on focus and on Refresh (never static), and treats 403/404
+   as "not for this account / not published yet" — never as a sign-out. */
+var REP={variance:{d:null,at:0,busy:false,err:''},leads:{d:null,at:0,busy:false,err:''}};
+var VAR_DAY='';
+function repKind(v){ return v==='variance_team'?'variance':(v==='leads_team'?'leads':''); }
+function repStamp(kind){
+  var d=REP[kind]&&REP[kind].d; if(!d||!d.updatedAt) return 'not yet';
+  try{ return new Date(d.updatedAt).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return String(d.updatedAt).slice(0,16); }
+}
+function repLoad(kind,manual){
+  var st=REP[kind]; if(!st||st.busy||!liveTeamScope()) return Promise.resolve();
+  st.busy=true; st.at=Date.now();
+  return api('/api/portal/tl/reports?kind='+kind).then(function(r){
+    st.busy=false;
+    if(r.ok){
+      var prev=st.d; st.d=r.json; st.err='';
+      var changed=!prev||prev.updatedAt!==r.json.updatedAt;
+      if(changed){ if(liveSafeToRender()) render(); }
+      else if(manual) toast('Already on the latest published '+(kind==='leads'?'Lead management':'Variance')+' figures ('+repStamp(kind)+').');
+      return;
+    }
+    /* 401 is a real sign-out (refreshPortal handles it); 403 = not for this account; 404 = not published yet */
+    st.err=r.status===401?'session':(r.status===404?'unpublished':(r.status===403?'forbidden':('error: '+((r.json&&r.json.error)||r.status))));
+    if(repKind(VIEW)===kind&&liveSafeToRender()) render();
+    if(manual&&r.status!==401) toast((r.json&&r.json.error)||'Could not load the report.',5000);
+  }).catch(function(){ st.busy=false; st.err='error: network'; if(repKind(VIEW)===kind&&liveSafeToRender()) render(); });
+}
+function repTick(){ var k=repKind(VIEW); if(k&&!REP[k].busy&&Date.now()-REP[k].at>LIVE_MIN_GAP_MS) repLoad(k,false); }
+function repStateCard(kind,title){
+  var st=REP[kind];
+  if(st.d) return '';
+  if(st.busy||(!st.err&&!st.d)) return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">Loading the published report…</p></div>';
+  if(st.err==='unpublished') return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">Management has not published this report yet. It follows the VAS dashboard within a couple of minutes of the next upload — press Refresh in a moment.</p></div>';
+  if(st.err==='forbidden') return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">This report is a team leader page and is not available to this account.</p></div>';
+  return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">Could not load the report ('+esc(st.err.replace(/^error: /,''))+'). Press Refresh to try again.</p></div>';
+}
+function repTeamBlock(kind){
+  var d=REP[kind].d; if(!d||!d.teams) return null;
+  if(d.teams[D.team]) return d.teams[D.team];
+  var keys=Object.keys(d.teams); return keys.length===1?d.teams[keys[0]]:null;
+}
+/* ---- Variance: one row per agent-day, newest day first, worst status first within a day ---- */
+function varianceCols(rp){
+  var dash='–', lab=(rp.rules&&rp.rules.statusLabels)||{}, rcn=(rp.rules&&rp.rules.rootCauses)||{}, cov=(rp.rules&&rp.rules.diallerCoverage)||{};
+  var fN=function(v){return v==null?dash:num(v);};
+  var fV=function(v){return v==null?dash:((v>0?'+':'')+num(v));};
+  var vcell=function(x,v){ return v==='material'?'<b style="color:var(--crit,#c42d2d)">'+fV(x)+'</b>':(v==='indeterminate'?'<span style="color:var(--amber,#b7791f)">'+fV(x)+'</span>':fV(x)); };
+  var stPill=function(st){ var x=lab[st]||['',st]; var cls=x[0]==='pcrit'?'r':(x[0]==='pgood'?'g':(x[0]==='pwarn'?'a':'n')); return '<span class="pill '+cls+'">'+esc(x[1])+'</span>'; };
+  return [
+    ['Date',   function(r){return '<b>'+esc(r.f.d)+'</b>';}, function(r){return r.f.d;}],
+    ['Agent',  function(r){return '<b>'+esc(firstName(r.a.name))+'</b> <span class="sub2" style="display:inline">'+esc(r.a.code)+'</span>';}, function(r){return r.a.name;}],
+    ['Code',   null, function(r){return r.a.code;}],
+    ['Campaign', function(r){return esc(r.f.camp||'');}],
+    ['Dialer sales', function(r){ return r.f.ds!=null?num(r.f.ds):(r.f.dse!=null?'<span style="color:var(--amber,#b7791f)" title="estimate — allocated from a period-aggregated dialler export">~'+num(r.f.dse)+'</span>':(cov[r.f.camp]?'<span class="pill a" title="'+esc(cov[r.f.camp])+'">no pull</span>':dash)); },
+                     function(r){ return r.f.ds!=null?num(r.f.ds):(r.f.dse!=null?'~'+num(r.f.dse):''); }],
+    ['VAS Tracker', function(r){return fN(r.f.bs);}],
+    ['Sales Force', function(r){return fN(r.f.ss);}],
+    ['Var SF vs Tracker', function(r){return vcell(r.f.vs,r.f.vsv);}, function(r){return r.f.vs==null?'':r.f.vs;}],
+    ['Var SF vs Dialer',  function(r){return fV(r.f.sd);}, function(r){return r.f.sd==null?'':r.f.sd;}],
+    ['SF GWP (ex VAT)', function(r){return fN(r.f.sg);}],
+    ['GWP per sale', function(r){return r.f.gps==null?dash:num(r.f.gps,1);}],
+    ['Flags', function(r){ var fl=r.f.fl||[]; return fl.length?fl.map(function(f){return '<span class="pill '+(f[0]==='error'?'r':(f[0]==='warning'?'a':'n'))+'" title="'+esc(f[2]||'')+'">'+esc(f[1])+'</span>';}).join(' '):dash; },
+              function(r){ return (r.f.fl||[]).map(function(f){return f[1];}).join('; '); }],
+    ['Status', function(r){return stPill(r.f.st);}, function(r){return (lab[r.f.st]||['',r.f.st])[1];}],
+    ['Root cause', function(r){ var rc=[r.f.rcs,r.f.rcg].filter(Boolean); return rc.length?rc.map(function(x){return '<code title="'+esc(rcn[x]||'')+'">'+esc(x)+'</code>';}).join(' '):((r.f.vsv==='material'||r.f.vgv==='material')?'<span class="pill r">unclassified</span>':dash); },
+                   function(r){ return [r.f.rcs,r.f.rcg].filter(Boolean).join(' '); }],
+  ];
+}
+function reportVariance(wholeMonth){
+  var rp=REP.variance.d; if(!rp||!rp.cols) return {sheet:'Variance',cols:[],rows:[],days:[],rp:null};
+  var byCode={}; (D.agents||[]).forEach(function(a){ byCode[a.code]=a; });
+  var all=[], daySet={};
+  Object.keys(rp.agents||{}).forEach(function(code){
+    var a=byCode[code]||{code:code,name:code};
+    (rp.agents[code]||[]).forEach(function(arr){ var f={}; rp.cols.forEach(function(c,i){ f[c]=arr[i]; }); all.push({a:a,f:f}); daySet[f.d]=1; });
+  });
+  var days=Object.keys(daySet).sort().reverse();
+  if(VAR_DAY&&!daySet[VAR_DAY]) VAR_DAY='';
+  var flt=wholeMonth?'':VAR_DAY;
+  var rows=flt?all.filter(function(r){return r.f.d===flt;}):all;
+  var rank={material:4,indeterminate:3,blocked:2,rounding:1,exact:0};
+  rows.sort(function(x,y){ return x.f.d<y.f.d?1:(x.f.d>y.f.d?-1:(((rank[y.f.st]||0)-(rank[x.f.st]||0))||(Math.abs(y.f.vs||0)-Math.abs(x.f.vs||0)))); });
+  return {sheet:flt?('Variance '+flt):'Variance', cols:varianceCols(rp), rows:rows, days:days, rp:rp};
+}
+function pageVarianceTeam(){
+  var head=reportsTabs('variance_team');
+  var state=repStateCard('variance','Variance'); if(state) return head+state;
+  var rep=reportVariance(); var rp=rep.rp;
+  if(!rep.rows.length&&!VAR_DAY) return head+'<div class="card"><h3>Variance</h3><p class="why">No variance rows have been published for your team this month. The report compares Salesforce against the agent-logged board per agent per day — it needs the BI exports and the Manual Stats board uploaded on the VAS dashboard.</p></div>';
+  var t=repTeamBlock('variance')||{};
+  var tile=function(lab,val,cls,note){ return '<div class="stat"><div class="lab">'+esc(lab)+'</div><div class="val'+(cls?' '+cls:'')+'">'+val+'</div>'+(note?'<div class="sub2">'+esc(note)+'</div>':'')+'</div>'; };
+  var rcn=(rp.rules&&rp.rules.rootCauses)||{};
+  var rcLine=Object.keys(t.rc||{}).filter(function(k){return t.rc[k];}).map(function(k){return k+' '+esc(rcn[k]||'')+' × '+num(t.rc[k]);}).join(' · ');
+  var summary='<div class="card"><h3>My team\'s reconciliation <span class="cnt">'+esc(prettyPeriod())+'</span></h3>'
+    +'<div class="stats">'
+    +tile('Agents compared',num(t.agents||0))
+    +tile('Exact',num(t.exact||0),'g','difference = 0')
+    +tile('Within tolerance',num(t.rounding||0),'g','GWP ±'+num((rp.rules&&rp.rules.gwpTolerance)||1)+' — rounding only')
+    +tile('Material',num(t.material||0),(t.material?'r':'g'),'outside tolerance — classify, never tune')
+    +tile('Indeterminate',num(t.indeterminate||0),(t.indeterminate?'a':''),'snapshot skew')
+    +tile('Blocked',num(t.blocked||0),'','a side with no source — not a zero')
+    +tile('Flags',num(t.flags||0),(t.flags?'a':''),'DV checks raised')
+    +'</div>'
+    +(rcLine?'<p class="why">Root causes classified by management: '+rcLine+'.</p>':'')
+    +'<p class="why">Sales Force GWP here is the charge total ex VAT, rounded once per the Variance rule book (DV02) — it is not the money-model GWP on the Month to date tab; the two are different windows on the same rand and are never reconciled to each other.</p>'
+    +'</div>';
+  var picker='<select id="varDayFilter" class="kc" style="max-width:220px"><option value="">All days</option>'
+    +rep.days.map(function(d){return '<option value="'+esc(d)+'"'+(d===VAR_DAY?' selected':'')+'>'+esc(d)+'</option>';}).join('')+'</select>';
+  var cols=rep.cols.filter(function(c){return !!c[1];});
+  var notesFor=function(d){ var m=(rp.days||[]).filter(function(x){return x.d===d;})[0]||{}; var out=[];
+    if(!m.board) out.push('Tracker columns blank — no Manual Stats sheet for this day');
+    if(!m.bi) out.push('Sales Force columns blank — no BI export covers this day');
+    if(m.skew) out.push('snapshot skew — variances indeterminate');
+    return out; };
+  var body=rep.rows.length?('<div class="scroller"><table class="tbl vastbl"><thead><tr>'
+    +cols.map(function(c,i){return '<th class="'+(i===0?'l stick':(i===1||i===2?'l':''))+'">'+esc(c[0])+'</th>';}).join('')
+    +'</tr></thead><tbody>'
+    +rep.rows.map(function(r,i){
+      var first=(i===0||rep.rows[i-1].f.d!==r.f.d);
+      var note=first?notesFor(r.f.d):[];
+      return (first&&note.length?'<tr class="dayfirst"><td class="l" colspan="'+cols.length+'"><span class="sub2" style="color:var(--amber,#b7791f)">'+esc(r.f.d)+' — '+esc(note.join(' · '))+'</span></td></tr>':'')
+        +'<tr'+(first&&!note.length?' class="dayfirst"':'')+'>'
+        +cols.map(function(c,j){ var cell=(j===0&&!first)?'':c[1](r); return '<td class="'+(j===0?'l stick':(j===1||j===2?'l':'num'))+'">'+cell+'</td>'; }).join('')+'</tr>';
+    }).join('')
+    +'</tbody></table></div>'):'<p class="why">No rows on that day for your team.</p>';
+  var checks=(rp.checks||[]).length?'<details class="card"><summary><b>Rule checks</b> <span class="sub2">'+num((rp.checks||[]).filter(function(c){return !c.ok;}).length)+' to know about</span></summary>'
+    +'<table class="tbl"><tbody>'+(rp.checks||[]).map(function(c){return '<tr><td class="l"><b>'+esc(c.id)+'</b></td><td><span class="pill '+(c.ok?'g':(c.sev==='error'?'r':'a'))+'">'+(c.ok?'pass':(c.sev==='error'?'FAIL':'note'))+'</span></td><td class="l">'+esc(c.msg)+'</td></tr>';}).join('')+'</tbody></table></details>':'';
+  return head+summary+'<div class="card"><h3>Daily variance <span class="cnt">'+num(rep.rows.length)+' agent-days</span></h3>'
+    +'<div style="margin-top:8px">'+picker+'</div>'+body+'</div>'+checks;
+}
+/* ---- Lead management: the funnel per agent, in the order and words of the VAS page ---- */
+function leadsCols(rp){
+  var dash='–'; var sts=rp.statuses||[];
+  var vp=function(v,verdict){ if(v==null) return dash; var cls=verdict==='good'?'g':(verdict==='warn'?'a':(verdict==='crit'?'r':'n')); return '<span class="pill '+cls+'">'+num(v,1)+'%</span>'; };
+  var f1=function(v){return v==null?dash:num(v,1);};
+  var pc=function(v){return v==null?dash:num(v,1)+'%';};
+  return sts.map(function(c){ return ['Currently on: '+c, function(a){return num((a.sts||{})[c]||0);}]; }).concat([
+    ['Total open', function(a){return '<b>'+num(a.open)+'</b>';}],
+    ['Total closed', function(a){return num(a.tc);}],
+    ['No feedback', function(a){return num(a.nofb);}],
+    ['Ave closed p/d', function(a){return f1(a.aveClosed);}],
+    ['Ave wasted p/d', function(a){return f1(a.aveWasted);}],
+    ['Sales', function(a){return '<b>'+num(a.sales)+'</b>';}],
+    ['Payroll SPD', function(a){return f1(a.pSpd);}],
+    ['Dialing SPD', function(a){return a.isTeam?dash:f1(a.dSpd);}],
+    ['Conv % (leads)', function(a){return vp(a.convL,a.convLv);}],
+    ['Conv % (closed)', function(a){return vp(a.convC,a.convCv);}],
+    ['Conv % wasted', function(a){return pc(a.convW);}],
+    ['Cancellations', function(a){return a.canc?'<span class="pill r">'+num(a.canc)+'</span>':'0';}],
+    ['Canc to sales %', function(a){return pc(a.cancPct);}],
+  ]);
+}
+function reportLeads(){
+  var rp=REP.leads.d; if(!rp||!rp.agents) return null;
+  var rows=(D.agents||[]).filter(function(a){return rp.agents[a.code];}).map(function(a){ var x=rp.agents[a.code]; return Object.assign({name:a.name,code:a.code},x); });
+  rows.sort(function(x,y){ return (y.sales-x.sales)||(y.open-x.open)||String(x.name).localeCompare(String(y.name)); });
+  var t=repTeamBlock('leads'); var total=t?Object.assign({isTeam:true},t):null;
+  return {sheet:'Lead management', cols:leadsCols(rp), rows:rows, total:total, rp:rp};
+}
+function pageLeadsTeam(){
+  var head=reportsTabs('leads_team');
+  var state=repStateCard('leads','Lead management'); if(state) return head+state;
+  var rep=reportLeads(); var rp=rep&&rep.rp;
+  if(!rep||!rep.rows.length) return head+'<div class="card"><h3>Lead management</h3><p class="why">No lead rows are published for your team yet. The funnel needs the Salesforce open and closed case exports loaded on the VAS dashboard (the open book arrives through the data lake).</p></div>';
+  var t=rep.total||{};
+  var tile=function(lab,val,note){ return '<div class="stat"><div class="lab">'+esc(lab)+'</div><div class="val">'+val+'</div>'+(note?'<div class="sub2">'+note+'</div>':'')+'</div>'; };
+  var conv=t.convL==null?'–':num(t.convL,1)+'%';
+  var kpis='<div class="card"><h3>My team\'s funnel <span class="cnt">'+esc(prettyPeriod())+' · '+num(rp.wd)+' working day(s)</span></h3><div class="stats">'
+    +tile('Open leads',num(t.open||0),'held by your agents right now')
+    +tile('Closed in period',num(t.tc||0),num(t.nofb||0)+' with no feedback')
+    +tile('Sales',num(t.sales||0),(t.pSpd==null?'':num(t.pSpd,1)+' per working day'))
+    +tile('Conversion (leads)',conv,'target '+num((rp.rules||{}).convTarget)+'% · '+num(t.ul||0)+' unique leads')
+    +'</div><p class="why">Conversion counts UNIQUE cases — a case that opened and closed is one lead, not two. Book: '+(rp.book&&rp.book.snapshot?'open cases snapshot '+esc(rp.book.snapshot):'open cases from the VAS upload')+(rp.book&&rp.book.closed?' · closed cases loaded':' · <b>no closed-cases export loaded</b>')+'.'
+    +((rp.unmatched&&(rp.unmatched.open||rp.unmatched.closed))?' '+num(rp.unmatched.open)+' open and '+num(rp.unmatched.closed)+' closed case(s) on the floor carry an owner that matches nobody on the Agent List — excluded from every figure, never guessed onto an agent.':'')+'</p></div>';
+  return head+kpis+'<div class="card"><h3>The funnel per agent <span class="cnt">'+num(rep.rows.length)+' agents</span></h3>'+vasAgentsTable(rep.rows,rep.total,rep.cols)+'</div>';
+}
+
 /* ===================== EXPORT (Nick, 2026-09-11: "must be exportable") =====================
    An .xlsx built from the SAME column lists the screen is drawn from — a cell is whatever the
    table prints, with the markup stripped and the printed number read back as a number
@@ -1578,7 +1761,7 @@ function exportReports(which){
     if(total) out.push(['Grand Total',''].concat(cols.map(function(c){return cellOf(c[1](total));})));
     return out;
   };
-  var parts=which==='all'?['mtd_team','daily_team','weekly_team']:[which];
+  var parts=which==='all'?['mtd_team','daily_team','weekly_team','variance_team','leads_team']:[which];
   parts.forEach(function(p){
     if(p==='mtd_team'){
       var m=reportMTD(); if(m.rows.length) add(m.sheet,table(m.cols,m.rows,m.total));
@@ -1590,6 +1773,14 @@ function exportReports(which){
       if(d.rows.length) add(d.sheet,[d.cols.map(function(c){return c[0];})]
         .concat(d.rows.map(function(r){ return d.cols.map(function(c){return cellOf((c[2]||c[1])(r));}); })));
     }
+    /* the two team-leader reports (2026-09-21): same column lists as the screen; a report not
+       published yet simply adds no sheet (the toast below says so when nothing at all was) */
+    if(p==='variance_team'){
+      var v=reportVariance(which==='all');
+      if(v.rows.length) add(v.sheet,[v.cols.map(function(c){return c[0];})]
+        .concat(v.rows.map(function(r){ return v.cols.map(function(c){return cellOf((c[2]||c[1])(r));}); })));
+    }
+    if(p==='leads_team'){ var l=reportLeads(); if(l&&l.rows.length) add(l.sheet,table(l.cols,l.rows,l.total)); }
   });
   if(!n){ toast('Nothing to export yet — no figures are published for this report.',5000); return; }
   var label=which==='all'?'Reports':((REPORT_TABS.filter(function(t){return t[0]===which;})[0]||[])[1]||'Report');
@@ -3404,7 +3595,7 @@ var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:
    asked for it separately, and My coaching because it is real and already working. */
 /* 'reports' is the NAV id; it resolves to whichever of the three report views was open
    last (REPORT_TABS / LAST_REPORT above) — the view ids themselves are unchanged. */
-var TL_VIEWS=['team','help','kpihub','coach_team','forms','results','reports','mtd_team','weekly_team','daily_team','nik_team'];
+var TL_VIEWS=['team','help','kpihub','coach_team','forms','results','reports','mtd_team','weekly_team','daily_team','variance_team','leads_team','nik_team'];
 /* The third view. Campaign · Team Leaders · Assistance · Nikola — the spec's
    four pages, nothing else. */
 var CM_VIEWS=['cm','cm_teams','cm_assist','cm_nik','cm_set'];
@@ -3684,7 +3875,7 @@ function loadPortal(){
    typed into — that copy waits (LIVE.pending) and lands on the next safe render. */
 var LIVE={at:0,busy:false,timer:null,pending:null};
 var LIVE_EVERY_MS=120000, LIVE_MIN_GAP_MS=30000;
-var LIVE_SAFE_VIEWS=['team','results','reports','mtd_team','daily_team','weekly_team','forms'];
+var LIVE_SAFE_VIEWS=['team','results','reports','mtd_team','daily_team','weekly_team','variance_team','leads_team','forms'];
 function liveTeamScope(){ return !!(D&&!D.__back&&!D.me&&(D.role==='team_leader'||D.scope==='team'||D.scope==='all')); }
 function liveSafeToRender(){
   return !PW_OPEN&&LIVE_SAFE_VIEWS.indexOf(VIEW)>=0
@@ -3693,9 +3884,9 @@ function liveSafeToRender(){
 function startLiveRefresh(){
   if(LIVE.timer||typeof document.addEventListener!=='function') return;
   LIVE.at=Date.now();
-  LIVE.timer=setInterval(function(){ if(!document.hidden) refreshPortal(false); },LIVE_EVERY_MS);
-  document.addEventListener('visibilitychange',function(){ if(!document.hidden&&Date.now()-LIVE.at>LIVE_MIN_GAP_MS) refreshPortal(false); });
-  window.addEventListener('focus',function(){ if(Date.now()-LIVE.at>LIVE_MIN_GAP_MS) refreshPortal(false); });
+  LIVE.timer=setInterval(function(){ if(!document.hidden){ refreshPortal(false); repTick(); } },LIVE_EVERY_MS);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden&&Date.now()-LIVE.at>LIVE_MIN_GAP_MS){ refreshPortal(false); repTick(); } });
+  window.addEventListener('focus',function(){ if(Date.now()-LIVE.at>LIVE_MIN_GAP_MS){ refreshPortal(false); repTick(); } });
 }
 /* Did management publish different FIGURES, or only a new timestamp? The runner and the
    self-heal republish identical numbers; those must not shout "updated" at the leader. */
@@ -4564,6 +4755,8 @@ function teamView(){
     (VIEW==='mtd_team' ? 'Your team\'s month to date — the table management reads.'
       : VIEW==='weekly_team' ? 'Your team, week by week — the same weeks management reports on.'
       : VIEW==='daily_team' ? 'Your team\'s day-by-day detail — the daily table management reads.'
+      : VIEW==='variance_team' ? 'Salesforce against the agent-logged board, per agent per day — your team only.'
+      : VIEW==='leads_team' ? 'The lead funnel per agent — open, closed, sales conversion and cancellations — your team only.'
       : VIEW==='kpihub' ? 'The KPI acknowledgement forms for your team.'
       : VIEW==='nik_team' ? 'One fact, one explanation, one next action.'
       : VIEW==='coach_team' ? 'Every coaching product recorded for your team.'
@@ -4574,6 +4767,8 @@ function teamView(){
     (VIEW==='mtd_team' ? pageMTD()
       : VIEW==='weekly_team' ? pageWeeklyTeam()
       : VIEW==='daily_team' ? pageDailyTeam()
+      : VIEW==='variance_team' ? pageVarianceTeam()
+      : VIEW==='leads_team' ? pageLeadsTeam()
       : VIEW==='kpihub' ? (FORM.id?kpiFormPage():kpiHubPage())
       : VIEW==='nik_team' ? nikolaPage(null,null)
       : VIEW==='coach_team' ? (CFORM.type?coachFormPage():coachHubPage())
@@ -4609,8 +4804,11 @@ function teamView(){
     b.onclick=function(){ VIEW=b.getAttribute('data-report'); render(); };
   });
   var df=$('dayFilter'); if(df) df.onchange=function(){ DAY_FILTER=df.value; render(); };
+  var vdf=$('varDayFilter'); if(vdf) vdf.onchange=function(){ VAR_DAY=vdf.value; render(); };
+  /* the two report keys load when their tab is opened, and on Refresh with the overview */
+  { var rk=repKind(VIEW); if(rk&&!REP[rk].d&&!REP[rk].busy&&!REP[rk].err) repLoad(rk,false); }
   /* the Reports toolbar (2026-09-11): Refresh asks the Worker now; Export builds the workbook */
-  var rr=$('repRefresh'); if(rr) rr.onclick=function(){ refreshPortal(true); };
+  var rr=$('repRefresh'); if(rr) rr.onclick=function(){ refreshPortal(true); var rk2=repKind(VIEW); if(rk2){ REP[rk2].err=''; repLoad(rk2,true); } };
   Array.prototype.forEach.call(document.querySelectorAll('[data-export]'),function(b){
     b.onclick=function(){ exportReports(b.getAttribute('data-export')); };
   });

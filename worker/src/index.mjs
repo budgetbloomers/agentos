@@ -8,7 +8,7 @@ import { db } from './db.mjs';
 import { login, logout, session, hashPassword, changePassword, signinByCb } from './auth.mjs';
 import { retrieveKB } from './kb.mjs';
 import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWave } from './coaching.mjs';
-import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, listDigestMonths, overview, agentDetail, normCb } from './portal.mjs';
+import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, loadReports, tlReports, listDigestMonths, overview, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn } from './help.mjs';
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, effPerDay } from './campaign.mjs';
@@ -905,6 +905,18 @@ export default {
         }
       }
 
+      /* THE TEAM LEADER'S VARIANCE / LEAD MANAGEMENT SLICE (2026-09-21). authorise() needs the digest
+         (that is where the team's codes live); the report key is loaded lazily, never on the overview. */
+      if (path === '/api/portal/tl/reports' && req.method === 'GET') {
+        const kind = String(url.searchParams.get('kind') || '');
+        if (!/^(variance|leads)$/.test(kind)) return json({ error: 'kind must be variance or leads' }, 400);
+        const digest = await loadDigest(DB, null);
+        if (!digest) return json({ error: 'Nothing has been published yet. Check again a little later.' }, 404);
+        const report = await loadReports(DB, kind).catch((e) => { console.error('loadReports ' + kind + ' failed: ' + (e && e.message || e)); return null; });
+        const r = tlReports(user, digest, report, kind);
+        return json(r.body, r.status);
+      }
+
       if (path === '/api/portal/agent' && req.method === 'GET') {
         const digest = await loadDigest(DB, /^\d{4}-\d{2}$/.test(url.searchParams.get('month') || '') ? url.searchParams.get('month') : null);
         if (!digest) return json({ error: 'Nothing has been published yet. Check again a little later.' }, 404);
@@ -1624,7 +1636,7 @@ export default {
            write too: a live-key payload whose period is not the current SAST month is
            409'd. History keys (agent-digest-YYYY-MM) are untouched; the republish tool
            writes Storage directly and is unaffected. */
-        if (qk === 'agent-digest') {
+        if (qk === 'agent-digest' || /^agent-reports-(variance|leads)$/.test(qk)) {   // the report keys are fenced to the live month too (2026-09-21)
           try {
             const from = String((JSON.parse(body).period || {}).from || '');
             const cur = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
@@ -1702,6 +1714,7 @@ export default {
            leader's Refresh a few seconds after a VAS upload used to get the old copy from it. Only
            this isolate's copy can be dropped — another isolate's ages out inside the minute. */
         if (/^agent-digest(-\d{4}-\d{2})?$/.test(qk) && globalThis.__digestCaches) delete globalThis.__digestCaches['kv:' + qk];
+        if (/^agent-reports-(variance|leads)$/.test(qk) && globalThis.__reportCaches) delete globalThis.__reportCaches['kv:' + qk];
         /* THE AGENT→TEAM MAP FOLLOWS THE DIGEST (audit round 3, 2026-08-27). It is the
            authorisation FLOOR for team-leader scoping, and refreshing it only from
            /api/roster left it stale whenever nobody happened to open Ops — measured: it

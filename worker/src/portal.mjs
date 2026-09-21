@@ -43,6 +43,9 @@ export const PORTAL_ALLOWED = new Set([
   '/api/portal/me',
   '/api/portal/overview',
   '/api/portal/agent',
+  /* The team leader's Variance and Lead management tabs (2026-09-21): a slice of two report keys
+     PULSE publishes, cut by the same authorise() as the overview — nothing computed here. */
+  '/api/portal/tl/reports',
   /* Nikola. Scoped by the same authorise() as the overview it is built from, so it
      can only ever discuss the caller's own results. */
   '/api/portal/ask',
@@ -104,6 +107,46 @@ export const normCb = (v) => {
  * wherever the digest does not carry it. The digest still wins when it has a
  * value — it is the period-correct leader, and this map is only a floor.
  */
+/* THE TEAM-LEADER REPORT KEYS (2026-09-21): kv:agent-reports-variance / kv:agent-reports-leads,
+   published by PULSE beside the digest. Same load path as loadDigest — the pointer row's data, else
+   the storage object — one parse per key per minute per isolate. Never merged into the digest: the
+   digest travels to every agent's own page, these travel only to a team leader's slice. */
+export async function loadReports(DB, kind) {
+  if (!/^(variance|leads)$/.test(String(kind || ''))) return null;
+  const key = 'kv:agent-reports-' + kind;
+  const cc = (globalThis.__reportCaches = globalThis.__reportCaches || {});
+  const c = cc[key];
+  if (c && Date.now() - c.t < 60000) return c.d;
+  const r = await DB.select(`rules?key=eq.${encodeURIComponent(key)}&select=value`);
+  const v = r?.[0]?.value || {};
+  let payload = String(v.data || '');
+  if (!payload && v.store) payload = (await DB.storageGet('raw', v.store.replace(/^raw\//, ''))) || '';
+  if (!payload) return null;
+  const d = JSON.parse(payload);
+  cc[key] = { t: Date.now(), d };
+  return d;
+}
+
+/** GET /api/portal/tl/reports?kind=variance|leads — the team leader's slice of a report key.
+ *  Only a TEAM scope (or staff preview) may read it: an agent has no team, a campaign manager has
+ *  the campaign view. The slice is by the digest's authorise(): agents keyed by the caller's own
+ *  codes, the team block for the caller's own team string — never the whole team map (its keys
+ *  are leaders' names). Nothing is summed or derived here; PULSE published every figure. */
+export function tlReports(user, digest, report, kind) {
+  const auth = authorise(user, digest);
+  if (auth.error) return { status: auth.status, body: { error: auth.error } };
+  if (auth.scope === 'agent') return { status: 403, body: { error: 'The Variance and Lead management reports are a team leader page.' } };
+  if (auth.scope === 'campaign') return { status: 403, body: { error: 'The team-leader reports are not on the campaign view yet.' } };
+  if (!report) return { status: 404, body: { error: 'This report has not been published yet — it follows PULSE within a couple of minutes of the next upload.' } };
+  const agents = {};
+  for (const code of auth.codes) if (report.agents && report.agents[code] != null) agents[code] = report.agents[code];
+  const teams = {};
+  if (auth.staff) Object.assign(teams, report.teams || {});
+  else if (report.teams && report.teams[auth.team] != null) teams[auth.team] = report.teams[auth.team];
+  const { agents: _a, teams: _t, ...floor } = report;             // rules, days, checks, statuses, book … — nobody named
+  return { status: 200, body: { ...floor, kind, agents, teams, team: auth.team || '', missing: Math.max(0, auth.codes.size - Object.keys(agents).length) } };
+}
+
 export async function loadDigest(DB, month) {
   /* month ('YYYY-MM', optional) selects a HISTORY digest - kv:agent-digest-2026-07 -
      published per month so people can look back (Nick 2026-08-26). No month = the live
