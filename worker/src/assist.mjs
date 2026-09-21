@@ -51,6 +51,7 @@ import { campKey, blockageOf, CM_SLA_DEFAULTS } from './campaign.mjs';
 const PIPE = 'Campaign Assistance';
 const STAGES = ['New', 'Triaged', 'Assisting', 'Awaiting confirmation', 'Follow-up due', 'Closed'];
 const MK = 'kv:cm-areq:';
+const ARCH = 'kv:cm-areq-arch:';   // a closed request whose card was reused for a new one (see assistCreate)
 
 async function pipeline(env) {
   const c = globalThis.__cmPipe;
@@ -72,11 +73,32 @@ async function pipeline(env) {
 async function mirrors(DB) {
   const c = globalThis.__cmMir;
   if (c && Date.now() - c.t < 30000) return c.m;
-  const rows = await DB.select('rules?key=like.' + encodeURIComponent(MK + '*') + '&select=key,value').catch(() => []);
+  /* FAIL CLOSED (review, 2026-09-21): a failed read used to come back as {} — every SLA clock
+     then ran from the card's creation time and every priority read P3, on a register that looked
+     perfectly confident. A read failure now throws, and the caller's outer catch turns it into the
+     "register could not be reached" banner the page already has. */
+  const rows = await DB.select('rules?key=like.' + encodeURIComponent(MK + '*') + '&select=key,value');
   const m = {};
   for (const r of rows || []) m[r.key.slice(MK.length)] = r.value || {};
   globalThis.__cmMir = { t: Date.now(), m };
   return m;
+}
+/* The archived requests — closed ones whose HighLevel card has since been reused. They no longer
+   exist as their own opportunity, so the register rebuilds each from the row saved at reuse time. */
+async function archives(DB) {
+  const c = globalThis.__cmArch;
+  if (c && Date.now() - c.t < 30000) return c.rows;
+  const rows = (await DB.select('rules?key=like.' + encodeURIComponent(ARCH + '*') + '&select=key,value')) || [];   // fail closed, as mirrors()
+  const out = rows.map((r) => ({ key: r.key, m: r.value || {} })).filter((x) => x.m && x.m.card && x.m.card.id);
+  globalThis.__cmArch = { t: Date.now(), rows: out };
+  return out;
+}
+/* ONE ROW, FRESH — for a read-modify-write. The 30 s cache is fine for the register; for an action
+   it is a lost-update window across edge isolates (the CM's "start" and the TL's "acknowledge" half a
+   minute apart on different nodes, the later blind upsert erasing the earlier stamps). */
+async function mirrorOne(DB, id) {
+  const rows = await DB.select('rules?key=eq.' + encodeURIComponent(MK + id) + '&select=value');
+  return (rows && rows[0] && rows[0].value) || null;
 }
 async function writeMirror(DB, id, v) {
   await DB.insert('rules', [{ key: MK + id, value: v, updated_by: 'campaign-assist',
@@ -131,9 +153,12 @@ function statusOf(row, mir) {
   }
 }
 
+/* A note that did not save is SAID (review, 2026-09-21): logged with the request id, and returned as
+   null so the caller can stamp note_failed on the mirror — the drawer then knows a note is missing
+   rather than reading "nobody wrote anything". */
 const note = (env, contactId, oppId, title, body) =>
   hl(env, '/contacts/' + contactId + '/notes', { method: 'POST', body: JSON.stringify({
-    body: 'Assist ' + oppId + '\n' + title + (body ? '\n\n' + String(body).slice(0, 2000) : '') }) }).catch(() => null);
+    body: 'Assist ' + oppId + '\n' + title + (body ? '\n\n' + String(body).slice(0, 2000) : '') }) }).catch((e) => { console.warn('assist note failed for ' + oppId + ': ' + (e && e.message || e)); return null; });
 
 const hist = (mir, actor, what) => {
   (mir.history = mir.history || []).push({ at: new Date().toISOString(), actor, what });
@@ -201,30 +226,91 @@ export async function assistCreate(env, DB, user, digest, ctx, body) {
   if (sr.truncated) return { status: 503, body: { error: 'The pipeline scan was cut short — refusing to create a possible duplicate. Try again shortly.' } };
 
   const contactId = await contactFor(env, DB, cb, tlName);
-  const opp = await hl(env, '/opportunities/', { method: 'POST', body: JSON.stringify({
-    locationId: env.HL_HELP_LOCATION_ID, pipelineId: p.id, pipelineStageId: p.stages[0].id,
-    name: cardName(blk.key, cb, tlName, camp), status: 'open', contactId }) });
-  const id = (opp.opportunity && opp.opportunity.id) || '';
-  if (!id) return { status: 502, body: { error: 'HighLevel did not return the new request.' } };
-
   const now = new Date().toISOString();
-  const m = {
-    priority, sla_target_mins: slaTargetOf(ctx.sla, priority),
-    blockage: blk.key, restricted, campaign: camp, cb, tl: tlName,
-    affected, requested_at: now, repeat_key: repeatKey, contactId,
-    route: blk.routes_to, owner_hint: blk.owner,
-    baseline: baselineFor(blk.baseline_metric, digest, String(user.team || '').trim() || tlName, camp),
-    evidence_n: 0, tl_confirmed: false, agent_confirmed: false, reopened: 0, history: [],
+  /* ONE OPPORTUNITY PER CONTACT PER PIPELINE — HighLevel's rule, whatever the status (2026-09-21:
+     "OPPORTUNITY_NO_DUPLICATE — Can not create duplicate opportunity for the contact", raised by the
+     end-to-end check the SECOND time the same team leader asked, after the first request had been
+     closed and marked won). Left alone, a team leader could ask their campaign manager exactly once
+     in the life of the pipeline and get a 502 ever after. The Help Center met the same wall on 17 Sep
+     and REUSES the contact's card; so does this, with one addition the Help Center does not need:
+     the closed request's record is ARCHIVED first (kv:cm-areq-arch:<id>:<stamp>), so the register and
+     the 24 KPIs keep counting it after the card starts a new life. An OPEN card that is a different
+     blockage cannot be reused — that is a second live request on one card — so it is named honestly
+     as a 409 (open it and add what changed, or have the manager close it), never a 502. */
+  const mineCards = sr.ops.filter((o) => String(o.contactId || (o.contact && o.contact.id) || '') === String(contactId)).map((o) => parseCard(o, p.stages));
+  const openMine = mineCards.find((r) => !r.closed);
+  if (openMine) {
+    const om = mir[openMine.id] || {}; const ob = blockageOf(ctx, om.blockage || openMine.blockage);
+    return { status: 409, body: { error: 'Your team already has an open request with your campaign manager — ' + ((ob && ob.label) || openMine.blockage)
+      + ', raised ' + String(om.requested_at || openMine.created || '').slice(0, 10) + '. One card per team leader at a time: open it and add what has changed, or ask your manager to close it first.', id: openMine.id, open: true } };
+  }
+  const reuse = mineCards.filter((r) => r.closed).sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')))[0] || null;
+  /* THE RECORD IS STAGED BEFORE ANY CARD MOVES (review, 2026-09-21). It used to be written after the
+     HighLevel call: a failed write left a live card with no record — or, on the reuse path, the OLD
+     request's clock and history served against the reopened card — and a failed PUT after the archive
+     write counted the same closed request twice. Now: archive + new record first; the card mutation
+     is the last step; if it fails, the archive row and the old record are put back exactly as they were. */
+  const newMirror = () => {
+    const m = {
+      priority, sla_target_mins: slaTargetOf(ctx.sla, priority),
+      blockage: blk.key, restricted, campaign: camp, cb, tl: tlName,
+      affected, requested_at: now, repeat_key: repeatKey, contactId,
+      route: blk.routes_to, owner_hint: blk.owner,
+      baseline: baselineFor(blk.baseline_metric, digest, String(user.team || '').trim() || tlName, camp),
+      evidence_n: 0, tl_confirmed: false, agent_confirmed: false, reopened: 0, history: [],
+    };
+    hist(m, tlName, 'raised · ' + priority + ' · ' + blk.key);
+    return m;
   };
-  hist(m, tlName, 'raised · ' + priority + ' · ' + blk.key);
-  await writeMirror(DB, id, m);
+  let id = '', m;
+  if (reuse) {
+    const old = mir[reuse.id] || {};
+    const stamp = String(old.requested_at || reuse.created || now).replace(/[^0-9]/g, '').slice(0, 14) || 'x';
+    const archKey = ARCH + reuse.id + ':' + stamp;
+    await DB.insert('rules', [{ key: archKey, value: { ...old, card: { id: reuse.id, blockage: reuse.blockage, cb: reuse.cb, tl: reuse.tl, campaign: reuse.campaign, created: reuse.created, contactId } },
+      updated_by: 'campaign-assist', updated_at: now }], true);
+    id = reuse.id; m = newMirror();
+    try {
+      await writeMirror(DB, id, m);                                     // the new record…
+      await hl(env, '/opportunities/' + encodeURIComponent(reuse.id), { method: 'PUT', body: JSON.stringify({
+        name: cardName(blk.key, cb, tlName, camp), pipelineStageId: p.stages[0].id, status: 'open' }) });   // …then the card
+    } catch (e) {                                                       // put everything back: old record, no archive row
+      await writeMirror(DB, id, old).catch(() => {});
+      await DB.del('rules?key=eq.' + encodeURIComponent(archKey)).catch(() => {});
+      const ac0 = globalThis.__cmArch; if (ac0) ac0.t = 0;
+      throw e;
+    }
+    const ac = globalThis.__cmArch; if (ac) ac.t = 0;                 // the archive changed: next list re-reads it
+  } else {
+    let opp;
+    try {
+      opp = await hl(env, '/opportunities/', { method: 'POST', body: JSON.stringify({
+        locationId: env.HL_HELP_LOCATION_ID, pipelineId: p.id, pipelineStageId: p.stages[0].id,
+        name: cardName(blk.key, cb, tlName, camp), status: 'open', contactId }) });
+    } catch (e) {
+      /* the search index lags a write by a few seconds: a card the scan did not see yet still blocks
+         the create at HighLevel — answer as the 409 above, never as a raw 502 */
+      if (/NO_DUPLICATE|duplicate opportunity/i.test(String(e && e.message || ''))) return { status: 409, body: { error: 'Your team already has a request card with your campaign manager that the register has not caught up with yet — wait a few seconds and open your requests again.', open: true } };
+      throw e;
+    }
+    id = (opp.opportunity && opp.opportunity.id) || '';
+    if (!id) return { status: 502, body: { error: 'HighLevel did not return the new request.' } };
+    m = newMirror();
+    try { await writeMirror(DB, id, m); }
+    catch (e) {                                                         // no record → no card: take it back rather than leave a bare "New"
+      await hl(env, '/opportunities/' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => {});
+      throw e;
+    }
+  }
+
   /* The note carries the team leader's words — UNLESS restricted, in which case
      the text never travels. That line IS the confidentiality control. */
-  await note(env, contactId, id, restricted
+  const noted = await note(env, contactId, id, restricted
     ? 'Restricted — personal matter. Details held with the team leader.'
     : 'Request raised · ' + blk.label + ' · ' + priority + (affected ? ' · ' + affected + ' agents affected' : ''),
     restricted ? '' : desc + (impact ? '\n\nBusiness impact: ' + impact : ''));
-  return { status: 200, body: { ok: true, id } };
+  if (noted === null && !restricted) { m.note_failed = now; await writeMirror(DB, id, m).catch(() => {}); }
+  return { status: 200, body: { ok: true, id, note_failed: noted === null && !restricted } };
 }
 
 /** GET /api/portal/cm/assist — the register + every assistance KPI, from ONE
@@ -237,14 +323,16 @@ export async function assistList(env, DB, user, digest, ctx) {
 
   const p = await pipeline(env);
   if (!p) return { status: 503, body: { error: 'The Campaign Assistance pipeline could not be reached.' } };
-  const [sr, mir] = await Promise.all([searchAll(env, p.id), mirrors(DB)]);
+  const [sr, mir, arch] = await Promise.all([searchAll(env, p.id), mirrors(DB), archives(DB)]);
   const now = Date.now();
   const sla = ctx.sla || CM_SLA_DEFAULTS;
   const myCb = normCb(user.cb);
 
-  let rows = sr.ops.map((o) => {
-    const r = parseCard(o, p.stages);
-    const m = mir[r.id] || {};
+  /* live cards from HighLevel, then the archived requests (closed, card since reused) — same shape */
+  const cards = sr.ops.map((o) => ({ r: parseCard(o, p.stages), m: mir[o.id] || {} }))
+    .concat(arch.map((a) => ({ r: { id: a.key.slice(ARCH.length), blockage: a.m.card.blockage, cb: normCb(a.m.card.cb), tl: String(a.m.card.tl || a.m.tl || ''), campaign: a.m.card.campaign || a.m.campaign || '',
+      contactId: a.m.card.contactId || '', stageIdx: p.stages.length - 1, stage: 'Closed', closed: true, created: a.m.card.created || a.m.requested_at || '', updated: a.m.completed_at || '', archived: true }, m: a.m })));
+  let rows = cards.map(({ r, m }) => {
     const s = slaOf({ requested_at: m.requested_at || r.created, ...m }, sla, now);
     const b = blockageOf(ctx, m.blockage || r.blockage);
     return { ...r,
@@ -258,7 +346,7 @@ export async function assistList(env, DB, user, digest, ctx) {
       sessionEnd: m.session_end || null, completedAt: m.completed_at || null,
       followUpDue: m.follow_up_due_at || null, outcome: m.outcome || null,
       evidenceN: m.evidence_n || 0, tlConfirmed: !!m.tl_confirmed, agentConfirmed: !!m.agent_confirmed,
-      reopened: m.reopened || 0, escalated: !!m.escalated_at,
+      reopened: m.reopened || 0, escalated: !!m.escalated_at, noteFailed: m.note_failed || null,
       repeatKey: m.repeat_key || (campKey(r.campaign) + '|' + r.cb + '|' + r.blockage),
       resolutionMins: m.resolution_mins != null ? m.resolution_mins : null };
   });
@@ -348,6 +436,18 @@ export async function assistDetail(env, DB, user, digest, ctx, id) {
   if (list.status !== 200) return list;
   const row = (list.body.requests || []).find((r) => r.id === String(id || ''));
   if (!row) return { status: 404, body: { error: 'That request is not in your scope.' } };
+  /* AN ARCHIVED REQUEST (card since reused): its history lives in the archive row and its notes on the
+     contact under the PLAIN card id — never the compound "<id>:<stamp>" the register uses. */
+  if (row.archived) {
+    const a = (await archives(DB)).find((x) => x.key.slice(ARCH.length) === row.id);
+    const cardId = a && a.m.card && a.m.card.id;
+    let notesA = [];
+    if (a && !row.restricted && row.contactId && cardId) {
+      const nj = await hl(env, '/contacts/' + encodeURIComponent(row.contactId) + '/notes').catch(() => ({}));
+      notesA = ((nj && nj.notes) || []).filter((x) => String(x.body || '').startsWith('Assist ' + cardId + '\n')).map((x) => ({ at: x.dateAdded || '', text: String(x.body || '').slice(('Assist ' + cardId + '\n').length) }));
+    }
+    return { status: 200, body: { request: row, notes: notesA, history: (a && a.m.history) || [] } };
+  }
   let notes = [];
   if (!row.restricted && row.contactId) {
     try {
@@ -389,13 +489,12 @@ export async function assistAct(env, DB, user, digest, ctx, body) {
   if (auth.scope === 'team' && row.cb !== normCb(user.cb))
     return { status: 403, body: { error: 'That request is not yours.' } };
 
-  const mir = await mirrors(DB);
-  const m = mir[id] || { requested_at: row.created, history: [] };
+  const m = (await mirrorOne(DB, id)) || { requested_at: row.created, history: [] };   // fresh, never the 30 s cache
   const now = new Date();
   const nowIso = now.toISOString();
   const stage = (i) => hl(env, '/opportunities/' + encodeURIComponent(id), { method: 'PUT',
     body: JSON.stringify({ pipelineStageId: p.stages[i].id, status: i === p.stages.length - 1 ? 'won' : 'open' }) });
-  const say = (title, text) => m.restricted ? Promise.resolve() : note(env, row.contactId || m.contactId, id, title, text || '');
+  const say = async (title, text) => { if (m.restricted) return; const r = await note(env, row.contactId || m.contactId, id, title, text || ''); if (r === null) m.note_failed = nowIso; };
   const started = !!m.assistance_started_at;
   const CM_ONLY = { error: 'That action belongs to the campaign manager.', status: 403 };
 

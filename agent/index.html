@@ -4056,7 +4056,10 @@ function cmAssistPage(){
     +'<th>Priority</th><th>Raised</th><th>First assistance</th><th>SLA</th><th>Status</th><th>Session</th><th class="l">Owner</th>'
     +'</tr></thead><tbody>'
     +rows.map(function(r){
-      return '<tr style="cursor:pointer" data-openreq="'+esc(r.id)+'">'
+      /* an ARCHIVED request (closed; its HighLevel card has since been reused for a newer one) is
+         history — counted in every KPI, shown, but it opens nothing: the card now belongs to the newer request */
+      return (r.archived?'<tr title="Closed — this team leader has since raised a newer request on the same card">'
+                        :'<tr style="cursor:pointer" data-openreq="'+esc(r.id)+'">')
         +'<td class="l"><b>'+esc(r.tl)+'</b></td><td class="l sub2">'+esc(r.team)+'</td>'
         +'<td class="num">'+(r.affected?num(r.affected)+' agents':'—')+'</td>'
         +'<td class="l">'+esc(r.blockageLabel)+(r.repeat?' <span class="mini a">repeat</span>':'')+(r.restricted?' <span class="mini n">restricted</span>':'')+'</td>'
@@ -4442,6 +4445,10 @@ function wireTlAssist(){
         if(!r.ok){ go.disabled=false; var e2=host.querySelector('#tlaErr');
           e2.textContent=r.json.error||'That did not go through.'; e2.style.display='block'; return; }
         host.remove(); TLA=null; tlaLoad();
+        /* MERGED IS NOT NEW (review, 2026-09-21): the same blockage while one is open joins the first
+           request — say so, or the team leader walks away believing a second case exists. */
+        if(r.json&&r.json.merged) toast('Your team already had this blockage open with your campaign manager — what you wrote was added to that request.',9000);
+        else if(r.json&&r.json.note_failed) toast('Raised — but your description did not save to the card. Open the request and add it as a note.',9000);
       });
     };
   };

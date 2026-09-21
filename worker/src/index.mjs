@@ -892,7 +892,17 @@ export default {
             r = { status: 200, body: { markdown: eodMarkdown(ov.body.cm, assist, user.full_name || user.username) } };
           }
           return json(r.body, r.status);
-        } catch (e) { return json({ error: String(e.message || e).slice(0, 300) }, 502); }
+        } catch (e) {
+          /* NEVER THE RAW BODY (review, 2026-09-21): an hl() error message carries up to 160 chars of
+             HighLevel's response — contact ids, duplicate-contact details — and it went to whichever
+             browser asked. A client-shaped HighLevel answer (4xx) is named in plain words; anything
+             else is logged here and summarised there. */
+          const msg = String(e && e.message || e);
+          console.error('portal/cm ' + path + ' failed: ' + msg.slice(0, 300));
+          const st = e && e.status;
+          if (st >= 400 && st < 500) return json({ error: 'HighLevel refused that (' + st + ') — refresh your requests and try again; if it keeps happening tell Aarav.' }, 409);
+          return json({ error: /HighLevel/.test(msg) ? 'HighLevel did not answer in time — try again in a moment.' : msg.slice(0, 200) }, 502);
+        }
       }
 
       if (path === '/api/portal/agent' && req.method === 'GET') {

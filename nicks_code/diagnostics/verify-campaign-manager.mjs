@@ -54,6 +54,10 @@ globalThis.fetch = async (url, opts) => {
     return json({ opportunity: OPPS.find((o) => o.id === id) || {} });
   }
   if (u.endsWith('/opportunities/') && method === 'POST') {
+    /* HighLevel's OPPORTUNITY_NO_DUPLICATE (seen live 2026-09-21): one card per contact per pipeline,
+       won or not. The stub refuses exactly as the location does. */
+    if (OPPS.some((x) => x.pipelineId === body.pipelineId && String(x.contactId) === String(body.contactId)))
+      return { ok: false, status: 400, text: async () => JSON.stringify({ statusCode: 400, message: 'Can not create duplicate opportunity for the contact.', code: 'OPPORTUNITY_NO_DUPLICATE' }), json: async () => ({ code: 'OPPORTUNITY_NO_DUPLICATE' }) };
     const o = { id: 'opp' + (NEXT_ID++), name: body.name, pipelineId: body.pipelineId,
       pipelineStageId: body.pipelineStageId, status: body.status, contactId: body.contactId,
       createdAt: new Date().toISOString() };
@@ -61,13 +65,14 @@ globalThis.fetch = async (url, opts) => {
     return json({ opportunity: o });
   }
   if (u.includes('/opportunities/') && method === 'PUT') {
+    if (globalThis.FAIL_NEXT_PUT) { globalThis.FAIL_NEXT_PUT = false; return { ok: false, status: 500, text: async () => 'boom', json: async () => ({}) }; }   // a HighLevel hiccup, once
     const id = decodeURIComponent(u.split('/opportunities/')[1].split('?')[0]);
     const o = OPPS.find((x) => x.id === id);
     if (o) Object.assign(o, body.pipelineStageId ? { pipelineStageId: body.pipelineStageId, status: body.status } : {}, body.name ? { name: body.name } : {});
     return json({ ok: true });
   }
   if (u.includes('/contacts/') && u.includes('/notes')) { NOTES.push(body ? body.body : ''); return json({ ok: true }); }
-  if (u.endsWith('/contacts/') && method === 'POST') return json({ contact: { id: 'contact1' } });
+  if (u.endsWith('/contacts/') && method === 'POST') return json({ contact: { id: 'contact-' + ((body.tags || []).find((t) => /^cb\d+$/i.test(t)) || 'x') } });   // one contact per CB, as help.mjs tags them
   throw new Error('unstubbed fetch: ' + method + ' ' + u);
 };
 const NOTES = [];
@@ -91,6 +96,7 @@ const DB = {
     return [];
   },
   insert: async (table, rows) => { for (const r of rows) RULES[r.key] = r.value; },
+  del: async (q) => { const k = decodeURIComponent(q.split('eq.')[1]); delete RULES[k]; },
   update: async () => {},
   storageGet: async () => null,
 };
@@ -116,6 +122,7 @@ const { assistCreate, assistList, assistAct, closeBlockers } = await import(W('a
 
 const cmUser = { username: 'dalwin', full_name: 'Dalwin Callaghan', role: 'campaign_manager', cb: '' };
 const tlUser = { username: 'cb207', full_name: 'Renolan Pillay', role: 'team_leader', cb: 'CB207', team: 'Renolan Pillay' };
+const tl2User = { username: 'cb212', full_name: 'Shane Methalal', role: 'team_leader', cb: 'CB212', team: 'Shane Methalal' };
 
 console.log('A. SCOPE');
 ok(PORTAL_ROLES.has('campaign_manager'), 'campaign_manager is a portal role (lockdown applies)');
@@ -153,12 +160,17 @@ ok(!NOTES.some((n) => n.includes('SECRET-TEXT') || n.includes('SECRET-IMPACT')),
 ok(NOTES.some((n) => n.includes('Restricted — personal matter')), 'the note says restricted, details held with the team leader');
 ok(!OPPS.some((o) => o.name.includes('SECRET')), 'nor the card name');
 
+/* ONE CARD PER TEAM LEADER AT A TIME (HighLevel's rule): a second, different blockage while the first
+   is open is refused HONESTLY — a 409 naming the open request — never a 502 from HighLevel. */
+globalThis.__cmMir = null;
 r = await assistCreate(env, DB, tlUser, digest, ctx, { blockage: 'dialler', description: 'dialler drops every call', priority: 'P1', campaign: 'Cuddle' });
+ok(r.status === 409 && r.body.open === true && /already has an open request/.test(r.body.error), 'a second live request from the same team leader is a 409 naming the open one, not a 502 (' + r.status + ')');
+r = await assistCreate(env, DB, tl2User, digest, ctx, { blockage: 'dialler', description: 'dialler drops every call', priority: 'P1', campaign: 'Cuddle' });
 const reqId = r.body.id;
-ok(r.status === 200 && !r.body.merged, 'a normal request creates a card');
+ok(r.status === 200 && !r.body.merged, 'a normal request (another team leader) creates a card'); if (r.status !== 200) console.log('      → ' + JSON.stringify(r).slice(0, 300));
 ok(NOTES.some((n) => n.includes('dialler drops every call')), 'its description travels in the note');
 globalThis.__cmMir = null;   // drop the 30s mirror cache so the dup scan sees the new row
-r = await assistCreate(env, DB, tlUser, digest, ctx, { blockage: 'dialler', description: 'still down', priority: 'P2', campaign: 'Cuddle' });
+r = await assistCreate(env, DB, tl2User, digest, ctx, { blockage: 'dialler', description: 'still down', priority: 'P2', campaign: 'Cuddle' });
 ok(r.status === 200 && r.body.merged === true && r.body.id === reqId, 'same team + same blockage while open → MERGES, never a second card');
 ok(NOTES.some((n) => n.includes('Duplicate request merged into this one')), 'and says so on the surviving record');
 
@@ -198,7 +210,9 @@ const restrictedRow = r.body.requests.find((x) => x.restricted);
 ok(restrictedRow && JSON.stringify(restrictedRow).indexOf('SECRET') === -1, 'the restricted row carries no text at all');
 globalThis.__cmMir = null;
 r = await assistList(env, DB, tlUser, digest, ctx);
-ok(r.body.requests.length === 2 && r.body.requests.every((x) => x.cb === 'CB207'), 'a team leader sees only their own');
+ok(r.body.requests.length === 1 && r.body.requests.every((x) => x.cb === 'CB207'), 'a team leader sees only their own (Renolan: 1 — the dialler request belongs to Shane)');
+globalThis.__cmMir = null; r = await assistList(env, DB, tl2User, digest, ctx);
+ok(r.body.requests.length === 1 && r.body.requests[0].cb === 'CB212' && r.body.requests[0].id === reqId, 'and the other team leader sees only theirs');
 globalThis.__cmMir = null;
 r = await assistList(env, DB, { username: 'x', role: 'agent', cb: 'CB1' }, digest, ctx);
 ok(r.status === 403, 'an agent is refused the register');
@@ -278,6 +292,50 @@ console.log('G. THE ROSTER DRILL-DOWN CARRIES NAMES');
   ok(Array.isArray(c3.agentIndex) && c3.agentIndex.length > 0 && c3.agentIndex[0].name,
     'agentIndex travels, so expanding a team prints names not bare CB codes');
 }
+
+
+console.log('J. A SECOND REQUEST AFTER THE FIRST CLOSED (HighLevel: one card per contact, ever — 2026-09-21)');
+/* self-contained: a fresh floor, Shane raises a dialler request and the manager works it to the gates */
+OPPS = []; for (const k of Object.keys(RULES)) if (/^kv:cm-areq/.test(k)) delete RULES[k];
+globalThis.__cmMir = null; globalThis.__cmArch = null; globalThis.__cmPipe = null;
+r = await assistCreate(env, DB, tl2User, digest, ctx, { blockage: 'dialler', description: 'dialler drops every call', priority: 'P1', campaign: 'Cuddle' });
+const reqId2 = r.body.id;
+ok(r.status === 200 && reqId2, 'Shane raises a dialler request');
+await assistAct(env, DB, cmUser, digest, ctx, { id: reqId2, action: 'start' });
+await assistAct(env, DB, cmUser, digest, ctx, { id: reqId2, action: 'complete', resolution: 'reset the carrier trunk' });
+await assistAct(env, DB, cmUser, digest, ctx, { id: reqId2, action: 'evidence', text: 'trunk log' });
+r = await assistAct(env, DB, tl2User, digest, ctx, { id: reqId2, action: 'confirm_tl' });
+ok(r.status === 200 && (r.body.blockers || []).length === 0, 'the team leader confirms and nothing blocks');
+globalThis.__cmMir = null;
+r = await assistList(env, DB, tl2User, digest, ctx);
+ok(r.body.requests.length === 1 && r.body.requests[0].closed === true, 'the request is Closed on the register');
+ok(OPPS.find((o) => o.id === reqId2).status === 'won', 'and HighLevel holds the card as won');
+/* A HIGHLEVEL HICCUP ON THE REOPEN PUTS EVERYTHING BACK (review, 2026-09-21): no archive row left behind,
+   the old record restored — never the same closed request counted twice. */
+globalThis.__cmMir = null; globalThis.FAIL_NEXT_PUT = true;
+let threw = null; try { await assistCreate(env, DB, tl2User, digest, ctx, { blockage: 'leads', description: 'first try', priority: 'P2', campaign: 'Cuddle' }); } catch (e) { threw = e; }
+ok(threw && /HighLevel/.test(String(threw.message)), 'a failed reopen surfaces as an error (the route turns it into a plain message)');
+ok(!Object.keys(RULES).some((k) => k.startsWith('kv:cm-areq-arch:' + reqId2)), 'no archive row was left behind');
+ok(RULES['kv:cm-areq:' + reqId2].resolution === 'reset the carrier trunk' && RULES['kv:cm-areq:' + reqId2].blockage === 'dialler', 'the closed request record is back in place');
+globalThis.__cmMir = null; globalThis.__cmArch = null;
+r = await assistList(env, DB, cmUser, digest, ctx);
+ok(r.body.requests.length === 1 && r.body.requests[0].closed, 'the register still shows exactly one, closed request — nothing double-counted');
+/* HighLevel would now refuse a NEW card for Shane (the stub does too). The next request REUSES the card. */
+globalThis.__cmMir = null;
+r = await assistCreate(env, DB, tl2User, digest, ctx, { blockage: 'leads', description: 'no leads loaded this morning', priority: 'P2', campaign: 'Cuddle' });
+ok(r.status === 200 && r.body.ok && r.body.id === reqId2 && !r.body.merged, 'a later request from the same team leader goes through — on the same card (' + r.status + ')');
+const card = OPPS.find((o) => o.id === reqId2);
+ok(card.status === 'open' && card.pipelineStageId === 'st0' && /^\[leads\]/.test(card.name), 'the card is back at New, open, renamed to the new blockage');
+const archKeys = Object.keys(RULES).filter((k) => k.startsWith('kv:cm-areq-arch:' + reqId2 + ':'));
+ok(archKeys.length === 1 && RULES[archKeys[0]].resolution === 'reset the carrier trunk' && RULES[archKeys[0]].card && RULES[archKeys[0]].card.blockage === 'dialler', 'the closed dialler request was archived with its record and card');
+ok(RULES['kv:cm-areq:' + reqId2].blockage === 'leads' && !RULES['kv:cm-areq:' + reqId2].assistance_started_at, 'the live mirror is the NEW request — fresh clock, nothing inherited');
+globalThis.__cmMir = null; globalThis.__cmArch = null;
+r = await assistList(env, DB, tl2User, digest, ctx);
+ok(r.body.requests.length === 2 && r.body.requests.filter((x) => x.closed).length === 1 && r.body.requests.filter((x) => !x.closed).length === 1, 'the team leader sees both: the closed dialler request (archived) and the open leads one');
+const archived = r.body.requests.find((x) => x.archived);
+ok(archived && archived.closed && archived.blockage === 'dialler' && archived.resolutionMins != null && archived.status === 'Resolved', 'the archived row is closed, resolved, and still carries its resolution time for the KPIs');
+r = await assistList(env, DB, cmUser, digest, ctx);
+ok(r.body.kpis.received === 2 && r.body.kpis.open === 1 && r.body.kpis.sessionsCompleted === 1, 'the manager KPIs count both requests (received 2, open 1, completed 1) — the archived one still counts');
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

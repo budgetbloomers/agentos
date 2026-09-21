@@ -58,7 +58,7 @@ const call = async (p, body) => {
 };
 
 try {
-  const users = await (await fetch(REST + `app_users?username=eq.${WHO}&select=id,username,full_name,role,cb,theme`, { headers: H })).json();
+  const users = await (await fetch(REST + `app_users?username=eq.${WHO}&select=id,username,full_name,role,cb,theme,apps`, { headers: H })).json();
   const u = users[0];
   if (!u) { console.error('no such account: ' + WHO); process.exit(1); }
   console.log(`Signing in as ${u.username} — ${u.full_name} · ${u.role} · cb=${u.cb || '(none)'}`);
@@ -133,17 +133,29 @@ try {
     r.status + ' ' + JSON.stringify(r.json).slice(0, 160));
   if (r.json.markdown) console.log('       ' + r.json.markdown.split('\n').slice(0, 4).join('\n       '));
 
-  head('E · the lockdown still holds for this role');
-  for (const shut of ['/api/kv', '/api/bi', '/api/ask', '/api/coaching', '/api/referrals', '/api/agent-link']) {
+  /* THE LOCKDOWN IS FOR PORTAL-ONLY ACCOUNTS (portalOnly(): a portal role with NO management app).
+     Dalwin and Ryan were given VAS/Ops on 30 Aug (campaign_manager sees every VAS page but the Upload
+     Station), so for them the management routes are OPEN by design; only /api/kv (the whole state
+     blob) and /api/ask stay shut to that role. A campaign manager with no management app is still
+     locked down in full — the check branches on the account's apps, never on the name. */
+  const mgmt = ['ops', 'vas'].some((a) => (u.apps || []).includes(a));
+  head('E · the lockdown ' + (mgmt ? 'is relaxed for a manager who also holds ' + (u.apps || []).join('/') : 'still holds for this role'));
+  for (const shut of ['/api/kv', '/api/ask']) {
     const x = await call(shut);
     ok(x.status === 403 || x.status === 404 || x.status === 405, shut + ' is refused (' + x.status + ')');
+  }
+  for (const route of ['/api/bi', '/api/coaching', '/api/referrals', '/api/agent-link']) {
+    const x = await call(route);
+    if (mgmt) ok(x.status !== 403 && x.status !== 404, route + ' answers a manager who holds VAS/Ops (' + x.status + ')');
+    else ok(x.status === 403 || x.status === 404 || x.status === 405, route + ' is refused (' + x.status + ')');
   }
   const hub = await call('/api/portal/hub/kpi');
   ok(hub.status === 403, '/api/portal/hub/kpi is a TEAM LEADER tool — refused (' + hub.status + ')');
   const raise = await call('/api/portal/cm/request', { blockage: 'dialler', description: 'x', priority: 'P3' });
   ok(raise.status === 403, 'a campaign manager cannot raise a request to themselves (' + raise.status + ')');
-  const th = await call('/api/theme', { theme: 'dark' });
-  ok(th.status === 403, '/api/theme is refused for a portal role (' + th.status + ') — the agent app has no dark palette');
+  const th = await call('/api/theme', { theme: u.theme || 'light' });   // writes back the value already on the account
+  if (mgmt) ok(th.status === 200, '/api/theme answers a manager who uses the management apps (' + th.status + ')');
+  else ok(th.status === 403, '/api/theme is refused for a portal-only role (' + th.status + ') — the agent app has no dark palette');
 
   head('F · a request the manager should NOT be able to touch');
   const bogus = await call('/api/portal/cm/act', { id: 'not-a-real-opportunity', action: 'start' });
