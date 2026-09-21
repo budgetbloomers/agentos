@@ -564,6 +564,13 @@ const CODE = PAGE
   /\['mtd_team','Month to date'\],\['daily_team','Daily'\],\['weekly_team','Weekly'\]/.test(tabsBlk)
     ? ok('its sub-tabs are Month to date · Daily · Weekly, in that order')
     : bad('the Reports sub-tabs are not Month to date / Daily / Weekly');
+  /* 2026-09-21 (Nick): the sub-tabs ALSO open under Reports in the sidebar — the nav entry carries
+     REPORT_TABS (CM_REPORT_TABS for the manager) and sidebarHTML paints them as .nav-item.sub */
+  const sideBlk = PAGE.slice(PAGE.indexOf('function sidebarHTML('), PAGE.indexOf('function shell('));
+  (/'reports','Reports',ICON\.mtd,REPORT_TABS/.test(navBlk) && /'cm_reports','Reports',ICON\.mtd,CM_REPORT_TABS/.test(navBlk)
+    && /nav-item sub/.test(sideBlk) && /k\[0\]===VIEW\?' active'/.test(sideBlk))
+    ? ok('the Reports entry opens its sub-tabs in the sidebar (team leader and campaign manager), the current one lit')
+    : bad('the sidebar no longer nests the Reports sub-tabs');
   (!/'weekly_team','Weekly'/.test(navBlk) && !/'daily_team','Daily'/.test(navBlk) && !/'mtd_team','Month to date'/.test(navBlk))
     ? ok('Month to date, Weekly and Daily are no longer separate sidebar entries')
     : bad('a report view is still its own sidebar entry');
