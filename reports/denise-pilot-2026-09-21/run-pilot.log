@@ -1,0 +1,231 @@
+
+================ THE DENISE PILOT — 2026-08-03 to 2026-09-12 ================
+cast: 9 agents · dialling days: 36 (Aug 25 / Sep 11) · Saturdays: 6
+
+-- uploading the pilot drop (roster Aug, roster Sep, attendance, BI active, BI inactive, ViciDial, QA)
+   files loaded: 6 · fact rows: 306 · dates in period: 34
+   attendance(324) · bi(608) · cancellations(2) · calls (ViciDial)(3697) · evals(65) · roster(9)
+
+-- JOIN 1 · agent identity (does a row find its agent?)
+  ok   [CB910] Thandiwe Ngcobo has a fact row
+  ok   [CB911] Roshel Naidoo has a fact row
+  ok   [CB912] Lindokuhle Mahlangu has a fact row
+  ok   [CB913] Meelindree Melanie Crowie has a fact row
+  ok   [CB95] Sipho Dlamini has a fact row
+  ok   [CB915] Precious Khumalo has a fact row
+  ok   [CB916] Jabu Ntombela has a fact row
+  ok   [CB917] Surprise Cwele has a fact row
+  ok   [CB918] Enoch Mabaso has a fact row
+  ok   the zero-padded dialler login CB095 lands on CB95
+  ok   the near spelling "Roshel Dinika Naidoo" lands CB911’s money
+  ok   the transposition "Lindokhule" lands CB912’s talk
+  ok   the dropped middle name lands CB913’s talk
+  ok   the WRONG LOGIN is corrected by name — CB915 keeps her own talk
+  ok   …and CB916 is not paid CB915’s calls
+  ok   the renamed agent CB917 keeps the money sold under the old spelling
+
+-- JOIN 2 · team (does the agent find the leader who owned them THAT DAY?)
+  ok   [CB910] August work is attributed to Denise Haripersad
+  ok   [CB911] August work is attributed to Denise Haripersad
+  ok   [CB912] August work is attributed to Denise Haripersad
+  ok   [CB913] August work is attributed to Denise Haripersad
+  ok   [CB95] August work is attributed to Denise Haripersad
+  ok   [CB915] August work is attributed to Denise Haripersad
+  ok   [CB916] August work is attributed to Denise Haripersad
+  ok   [CB917] August work is attributed to Denise Haripersad
+  ok   [CB918] August work is attributed to Sharoma Pillay
+  ok   the MOVER is split across two leaders, not re-attributed wholesale
+  ok   the September list did NOT drag August’s sales to Denise
+
+-- JOIN 3 · campaign
+  ok   [CB910] campaign reads Courtesy
+  ok   [CB911] campaign reads Courtesy
+  ok   [CB912] campaign reads Nesting
+  ok   [CB913] campaign reads Cuddle
+  ok   [CB95] campaign reads Courtesy
+  ok   [CB915] campaign reads Courtesy
+  ok   [CB916] campaign reads Nesting
+  ok   [CB917] campaign reads Download & Test
+  ok   [CB918] campaign reads Courtesy
+  ok   the campaign new to the rule book is REPORTED, not swallowed into Courtesy
+
+-- JOIN 4 · interaction (per-call export -> agent-day)
+  ok   [CB910] talk time reconciles with the file
+  ok   [CB910] call count reconciles with the file
+  ok   [CB911] talk time reconciles with the file
+  ok   [CB911] call count reconciles with the file
+  ok   [CB912] talk time reconciles with the file
+  ok   [CB912] call count reconciles with the file
+  ok   [CB913] talk time reconciles with the file
+  ok   [CB913] call count reconciles with the file
+  ok   [CB95] talk time reconciles with the file
+  ok   [CB95] call count reconciles with the file
+  ok   [CB915] talk time reconciles with the file
+  ok   [CB915] call count reconciles with the file
+  ok   [CB916] talk time reconciles with the file
+  ok   [CB916] call count reconciles with the file
+  ok   [CB917] talk time reconciles with the file
+  ok   [CB917] call count reconciles with the file
+  ok   [CB918] talk time reconciles with the file
+  ok   [CB918] call count reconciles with the file
+  ok   the corrupt negative length is zeroed, not subtracted
+
+-- JOIN 5 · sale and money (Power BI Active ∪ Inactive)
+   measured days (Power BI): 30 · dialler-priced days: 4 (2026-09-07…2026-09-10) @ R89/sale
+  ok   [CB910] sales reconcile (measured 90 + provisional 12)
+  ok   [CB910] GWP reconciles (measured R8910 + assumed R1068)
+  ok   [CB911] sales reconcile (measured 60 + provisional 8)
+  ok   [CB911] GWP reconciles (measured R5940 + assumed R712)
+  ok   [CB912] sales reconcile (measured 60 + provisional 8)
+  ok   [CB912] GWP reconciles (measured R5940 + assumed R712)
+  ok   [CB913] sales reconcile (measured 120 + provisional 16)
+  ok   [CB913] GWP reconciles (measured R11880 + assumed R1424)
+  ok   [CB95] sales reconcile (measured 30 + provisional 4)
+  ok   [CB95] GWP reconciles (measured R2970 + assumed R356)
+  ok   [CB915] sales reconcile (measured 60 + provisional 8)
+  ok   [CB915] GWP reconciles (measured R5940 + assumed R712)
+  ok   [CB916] sales reconcile (measured 30 + provisional 4)
+  ok   [CB916] GWP reconciles (measured R2970 + assumed R356)
+  ok   [CB917] sales reconcile (measured 60 + provisional 8)
+  ok   [CB917] GWP reconciles (measured R5940 + assumed R712)
+  ok   [CB918] sales reconcile (measured 90 + provisional 12)
+  ok   [CB918] GWP reconciles (measured R8910 + assumed R1068)
+   team GWP on screen R66520 = R59400 measured + R7120 assumed (10.7% of the figure)
+  ok   [CB910] the cancellation is counted once
+  ok   [CB911] the cancellation is counted once
+
+-- JOIN 6 · QA evaluation -> agent
+  ok   [CB910] QA average reconciles
+  ok   [CB911] QA average reconciles
+  ok   [CB912] QA average reconciles
+  ok   [CB913] QA average reconciles
+  FAIL [CB95] QA average reconciles — app=null source=85.00 n=0
+  ok   [CB915] QA average reconciles
+  ok   [CB916] QA average reconciles
+  ok   [CB917] QA average reconciles
+  ok   [CB918] QA average reconciles
+  ok   a real 0% QA score is kept, not dropped as missing data
+
+-- UNMATCHED ROWS (the exception register)
+   · CB902TL  [calls]  n=5 talk=3000s — missing from the Agent List
+   · Denise Haripersad  [calls]  n=5 talk=3000s — team leader
+   · CB999  [calls]  n=5 talk=4500s — missing from the Agent List
+   · nomsazikalala  [sales]  n=4 gwp=R396
+   · naidoo  [sales]  n=4 gwp=R396
+  ok   the stranger owning real money is reported, not invented onto the roster
+  ok   the ambiguous surname resolves to NOBODY and is reported
+  ok   the unknown dialler login is named as "missing from the Agent List"
+  ok   a team leader dialling under their NAME is classified as a leader
+  FAIL a team leader dialling under a CODE-shaped login is also classified as a leader — CB902TL reads "missing from the Agent List" — the code path needs S.tlCbs from the Worker’s /api/roster, which a file-only run has not got
+  ok   the system login (VDAD) never reaches the unmatched register
+   QA rows stored against a code no list names: CB095, CB999
+  FAIL a QA evaluation for an unknown agent appears in the exception register — QA codes with no roster row: ["CB095","CB999"] · M.unmatched has no QA source
+
+-- MATCHED BY SPELLING (every inference is reported)
+   · rosheldinikanaidoo -> {"code":"CB911","name":"Roshel Naidoo"}
+   · Roshel Dinika Naidoo -> {"code":"CB911","name":"Roshel Naidoo"}
+  ok   the near-spelling match is REPORTED, not applied silently
+
+-- FORMULAS
+  ok   [CB910] Employed Shifts = model days − September Saturdays
+  ok   [CB911] Employed Shifts = model days − September Saturdays
+  ok   [CB912] Employed Shifts = model days − September Saturdays
+  ok   [CB913] Employed Shifts = model days − September Saturdays
+  ok   [CB95] Employed Shifts = model days − September Saturdays
+  ok   [CB915] Employed Shifts = model days − September Saturdays
+  ok   [CB916] Employed Shifts = model days − September Saturdays
+  ok   [CB917] Employed Shifts = model days − September Saturdays
+  ok   [CB918] Employed Shifts = model days − September Saturdays
+   register days the model never sees: 2026-09-11, 2026-09-12
+  ok   the register-only tail is EXCLUDED from Employed Shifts (documented, and a reconciliation gap)
+  ok   [CB910] Sales Target = 5/day × Employed Shifts
+  ok   [CB911] Sales Target = 5/day × Employed Shifts
+  ok   [CB912] Sales Target = 2/day × Employed Shifts
+  ok   [CB913] Sales Target = 8/day × Employed Shifts
+  ok   [CB95] Sales Target = 3/day × Employed Shifts
+  ok   [CB915] Sales Target = 4/day × Employed Shifts
+  ok   [CB916] Sales Target = 2/day × Employed Shifts
+  ok   [CB918] Sales Target = 5/day × Employed Shifts
+  ok   GWP grosses up EX-VAT charges by the rule-book VAT, rounded per account
+  ok   the engine grosses up with the rule-book VAT, not a scattered literal
+  ok   a September Saturday carries its data but no shift
+  ok   Attendance % = Actual ÷ Employed, both over the same days
+
+-- COVERAGE (the sources do not end on the same day, and must say so)
+   attendance reaches 2026-09-12 · dialler 2026-09-10 · money 2026-09-05
+  ok   the register reaches further than the dialler
+  ok   the dialler reaches further than the money file
+  ok   the money source stops on the day the file stops — no phantom days
+
+================ ROUND 2 — every file uploaded AGAIN ================
+  ok   [CB910] sales did not double
+  ok   [CB910] GWP did not double
+  ok   [CB910] talk did not double
+  ok   [CB910] QA n did not double
+  ok   [CB911] sales did not double
+  ok   [CB911] GWP did not double
+  ok   [CB911] talk did not double
+  ok   [CB911] QA n did not double
+  ok   [CB912] sales did not double
+  ok   [CB912] GWP did not double
+  ok   [CB912] talk did not double
+  ok   [CB912] QA n did not double
+  ok   [CB913] sales did not double
+  ok   [CB913] GWP did not double
+  ok   [CB913] talk did not double
+  ok   [CB913] QA n did not double
+  ok   [CB95] sales did not double
+  ok   [CB95] GWP did not double
+  ok   [CB95] talk did not double
+  ok   [CB95] QA n did not double
+  ok   [CB915] sales did not double
+  ok   [CB915] GWP did not double
+  ok   [CB915] talk did not double
+  ok   [CB915] QA n did not double
+  ok   [CB916] sales did not double
+  ok   [CB916] GWP did not double
+  ok   [CB916] talk did not double
+  ok   [CB916] QA n did not double
+  ok   [CB917] sales did not double
+  ok   [CB917] GWP did not double
+  ok   [CB917] talk did not double
+  ok   [CB917] QA n did not double
+  ok   [CB918] sales did not double
+  ok   [CB918] GWP did not double
+  ok   [CB918] talk did not double
+  ok   [CB918] QA n did not double
+  ok   the evaluation store holds each Record ID once
+  ok   no agent appears twice on the roster
+
+================ ROUND 3 — the cost of the findings ================
+   CB95 QA   : null  ->  0.85
+   CB95 score: 0.429  ->  0.541
+   CB95 composite: 42.9 (Needs support, 70% of the framework scored)  ->  54.1 (Needs support, 90%)
+  ok   the SAME evaluations reach the agent once the CB is written unpadded
+  ok   the padded-CB defect is worth measuring, not theoretical
+   Download & Test: 68 sales against target 0, %-to-target null
+  FAIL a campaign new to the rule book still gets a sales target — target=0 pctT=null — no salesTargetMatrix row for "Download & Test|Exp" and the Agent List Target cell is blank
+   headcount over the window: Denise Haripersad 9 + Sharoma Pillay 1 = 10 for 9 people
+  ok   a leader’s headcount over a window spanning a move counts the mover in BOTH teams
+
+-- page errors: none
+  ok   no uncaught page error during the run
+
+================================================================
+  158 passed · 4 failed
+
+  FAILURES:
+   · [CB95] QA average reconciles — app=null source=85.00 n=0
+   · a team leader dialling under a CODE-shaped login is also classified as a leader — CB902TL reads "missing from the Agent List" — the code path needs S.tlCbs from the Worker’s /api/roster, which a file-only run has not got
+   · a QA evaluation for an unknown agent appears in the exception register — QA codes with no roster row: ["CB095","CB999"] · M.unmatched has no QA source
+   · a campaign new to the rule book still gets a sales target — target=0 pctT=null — no salesTargetMatrix row for "Download & Test|Exp" and the Agent List Target cell is blank
+
+  FINDINGS:
+   · PROVISIONAL MONEY: 10.7% of the pilot team’s GWP (R7120 of R66520) is dialler-priced at a flat R89, not read from the money source, because the Power BI file stops 4 dialling days short of the dialler.
+   · TL LOGIN CLASSIFICATION: a leader dialling under a code-shaped login (CB902TL) reads as "missing from the Agent List" until S.tlCbs arrives from /api/roster — 50 minutes shown as a roster defect that is not one.
+   · SHIFT DENOMINATOR: 2 day(s) (2026-09-11, 2026-09-12) sit in the HR register but in no fact row, because the model’s calendar is built from sales/calls/tracker only. Employed Shifts — and every target multiplied out of it — therefore grows as the dialler catches up.
+   · QA IDENTITY: the QA ingest is the only join in the system that does not go through resolveKey. It builds the code from the digits of "Sales Agent CB" alone — so CB-095 is stored as CB095 and never meets the Agent List’s CB95. The agent’s own card read "QA — not measured" for the whole pilot; correcting the spelling of the code alone moved the composite 11.2 points (Needs support → Needs support) and the framework scored from 70% to 90%.
+   · NEW-CAMPAIGN TARGET: "Download & Test" is reported (correctly) but has no row in MTD_RULES.salesTargetMatrix and no Target cell on the Agent List, so its sales target is 0 and every %-to-target on that team section is blank — 68 sales measured against nothing.
+   · TL HEADCOUNT: over a window that spans a movement, headcount is "agents who worked for me at any point" (10 rows for 9 people), not "my team today". The sales split is correct; the head count is a different question and the team-leader view should say which one it is answering.
+
+  evidence -> nicks_code/diagnostics/scratch/denise/evidence.json

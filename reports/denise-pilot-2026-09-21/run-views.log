@@ -1,0 +1,131 @@
+
+================ THE TWO VIEWS — over the pilot digest ================
+digest: 9 agents · period {"from":"2026-08-03","to":"2026-09-12"} · published 2026-09-21T12:39:06.457Z
+
+-- THE FLOOR, DERIVED ONCE
+   gwpFloor R99 incl · gwpFloorEx R86.08 ex · VAT 1.15
+  ok   the ex-VAT floor is FLOORED to the cent Salesforce books, not the raw quotient
+  ok   gwpFloorEx is a pure function of the incl floor
+
+-- AGENT VIEW · scope
+  ok   [CB910] sees exactly one row — their own
+  ok   [CB911] sees exactly one row — their own
+  ok   [CB912] sees exactly one row — their own
+  ok   [CB913] sees exactly one row — their own
+  ok   [CB95] sees exactly one row — their own
+  ok   [CB915] sees exactly one row — their own
+  ok   [CB916] sees exactly one row — their own
+  ok   [CB917] sees exactly one row — their own
+  ok   [CB918] sees exactly one row — their own
+  ok   an agent with no row in the period gets an honest empty month, not an error
+  ok   an account with no CB is refused loudly
+  ok   a login provisioned with a PADDED CB still finds the agent
+
+-- TEAM LEADER VIEW · scope
+   Denise Haripersad: CB910, CB911, CB912, CB913, CB95, CB915, CB916, CB917, CB918
+   Sharoma Pillay: 
+  ok   Denise sees a team
+  ok   every row Denise sees is hers
+  ok   no agent appears in both leaders’ lists
+  ok   a team leader with no team linked is refused loudly, never shown an empty team
+  ok   a team leader whose team name no longer matches the list is told so
+   the mover CB918 is filed under: Denise Haripersad
+  ok   the mover appears under exactly one leader in the agent-facing digest
+
+-- THE TWO CHECKS ON EVERY CARD (value · volume)
+  ok   [CB910] the value check is decided by the engine, not the page
+  ok   [CB910] the volume check compares %-to-target against the rule-book line
+  ok   [CB911] the value check is decided by the engine, not the page
+  ok   [CB911] the volume check compares %-to-target against the rule-book line
+  ok   [CB912] the value check is decided by the engine, not the page
+  ok   [CB912] the volume check compares %-to-target against the rule-book line
+  ok   [CB913] the value check is decided by the engine, not the page
+  ok   [CB913] the volume check compares %-to-target against the rule-book line
+  ok   [CB95] the value check is decided by the engine, not the page
+  ok   [CB95] the volume check compares %-to-target against the rule-book line
+  ok   [CB915] the value check is decided by the engine, not the page
+  ok   [CB915] the volume check compares %-to-target against the rule-book line
+  ok   [CB916] the value check is decided by the engine, not the page
+  ok   [CB916] the volume check compares %-to-target against the rule-book line
+  ok   [CB917] the value check is decided by the engine, not the page
+  ok   [CB917] the volume check compares %-to-target against the rule-book line
+  ok   [CB918] the value check is decided by the engine, not the page
+  ok   [CB918] the volume check compares %-to-target against the rule-book line
+
+   code    name                    aveG(shown)  aveG(measured)  value   prov.sales
+   CB910   Thandiwe Ngcobo           85.06          86.09   FAIL        12
+   CB911   Roshel Naidoo             85.06          86.09   FAIL         8
+   CB912   Lindokuhle Mahlangu       85.06          86.09   FAIL         8
+   CB913   Meelindree Melanie Crowie   85.06          86.09   FAIL        16
+   CB95    Sipho Dlamini             85.06          86.09   FAIL         4
+   CB915   Precious Khumalo          85.06          86.09   FAIL         8
+   CB916   Jabu Ntombela             85.06          86.09   FAIL         4
+   CB917   Surprise Cwele            85.06          86.09   FAIL         8
+   CB918   Enoch Mabaso              85.06          86.09   FAIL        12
+  FAIL the value check does not flip on days the money file has not reached yet — CB910: measured R86.09 PASS -> shown R85.06 FAIL · CB911: measured R86.09 PASS -> shown R85.06 FAIL · CB912: measured R86.09 PASS -> shown R85.06 FAIL · CB913: measured R86.09 PASS -> shown R85.06 FAIL · CB95: measured R86.09 PASS -> shown R85.06 FAIL · CB915: measured R86.09 PASS -> shown R85.06 FAIL · CB916: measured R86.09 PASS -> shown R85.06 FAIL · CB917: measured R86.09 PASS -> shown R85.06 FAIL · CB918: measured R86.09 PASS -> shown R85.06 FAIL
+
+-- TEAM LEADER TOTALS reconcile against the agent rows
+   agent rows: 9 agents, 680 sales, target 1122, emp 297 · tlAgg: 9 headcount, 605 sales, target 997, emp 272
+  FAIL the leader’s campaign roll-up and their agent rows report the same sales — tlAgg 605 vs agents 680
+  FAIL …the same sales target — tlAgg 997 vs agents 1122
+  FAIL …the same employed shifts — tlAgg 272 vs agents 297
+  ok   …and the same head count
+
+-- ABSENCE IS NOT A NOUGHT (non-negotiable 6)
+  ok   [CB910] the composite renormalises over the drivers this agent actually has
+  ok   [CB910] an unmeasured driver scores no points and claims no availability
+  ok   [CB911] the composite renormalises over the drivers this agent actually has
+  ok   [CB911] an unmeasured driver scores no points and claims no availability
+  ok   [CB912] the composite renormalises over the drivers this agent actually has
+  ok   [CB912] an unmeasured driver scores no points and claims no availability
+  ok   [CB913] the composite renormalises over the drivers this agent actually has
+  ok   [CB913] an unmeasured driver scores no points and claims no availability
+  ok   [CB95] the composite renormalises over the drivers this agent actually has
+  ok   [CB95] an unmeasured driver scores no points and claims no availability
+  ok   [CB915] the composite renormalises over the drivers this agent actually has
+  ok   [CB915] an unmeasured driver scores no points and claims no availability
+  ok   [CB916] the composite renormalises over the drivers this agent actually has
+  ok   [CB916] an unmeasured driver scores no points and claims no availability
+  ok   [CB917] the composite renormalises over the drivers this agent actually has
+  ok   [CB917] an unmeasured driver scores no points and claims no availability
+  ok   [CB918] the composite renormalises over the drivers this agent actually has
+  ok   [CB918] an unmeasured driver scores no points and claims no availability
+  ok   a real 0% QA is an OUTCOME — scored, not renormalised away
+  ok   a MISSING QA is left out of the denominator — never imputed, never zeroed
+
+-- WHAT A ZERO TARGET DOES TO A RATING
+   rank  code    campaign          score   framework scored   sales/target
+      1  CB912   Nesting            92.0            90%     68/66
+      2  CB917   Download & Test    90.9            55%     68/0
+      3  CB918   Courtesy           63.3            90%     102/165
+      4  CB910   Courtesy           59.9            90%     102/165
+      5  CB915   Courtesy           54.6            90%     68/132
+      6  CB913   Cuddle             53.6            90%     136/264
+      7  CB911   Courtesy           52.6            90%     68/165
+      8  CB95    Courtesy           42.9            70%     34/99
+      9  CB916   Nesting            33.3            90%     34/66
+  FAIL no agent is rated over a smaller framework than their peers because of a missing target — CB917 (Download & Test) scored over 55% of the framework
+
+-- THE MOVER, ON THE TEAM LEADER’S SCREEN
+   the facts split CB918: {"Sharoma Pillay":75,"Denise Haripersad":27}
+   the digest row files all 102 under Denise Haripersad
+   Denise’s campaign roll-up: 605 sales · Denise’s agent rows: 680 sales
+  FAIL the team-leader screen’s two panels agree on the team’s sales — roll-up 605 vs agent rows 680 — difference 75, exactly the 75 sales CB918 made under Sharoma Pillay
+  FAIL the previous leader can still see the month they actually led — No agents are currently assigned to "Sharoma Pillay" on the Agent List. If your team has been renamed there, the link needs re-syncing. (status 409) — 75 sales were made under Sharoma Pillay in this period
+
+================================================================
+  59 passed · 7 failed
+
+  FAILURES:
+   · the value check does not flip on days the money file has not reached yet — CB910: measured R86.09 PASS -> shown R85.06 FAIL · CB911: measured R86.09 PASS -> shown R85.06 FAIL · CB912: measured R86.09 PASS -> shown R85.06 FAIL · CB913: measured R86.09 PASS -> shown R85.06 FAIL · CB95: measured R86.09 PASS -> shown R85.06 FAIL · CB915: measured R86.09 PASS -> shown R85.06 FAIL · CB916: measured R86.09 PASS -> shown R85.06 FAIL · CB917: measured R86.09 PASS -> shown R85.06 FAIL · CB918: measured R86.09 PASS -> shown R85.06 FAIL
+   · the leader’s campaign roll-up and their agent rows report the same sales — tlAgg 605 vs agents 680
+   · …the same sales target — tlAgg 997 vs agents 1122
+   · …the same employed shifts — tlAgg 272 vs agents 297
+   · no agent is rated over a smaller framework than their peers because of a missing target — CB917 (Download & Test) scored over 55% of the framework
+   · the team-leader screen’s two panels agree on the team’s sales — roll-up 605 vs agent rows 680 — difference 75, exactly the 75 sales CB918 made under Sharoma Pillay
+   · the previous leader can still see the month they actually led — No agents are currently assigned to "Sharoma Pillay" on the Agent List. If your team has been renamed there, the link needs re-syncing. (status 409) — 75 sales were made under Sharoma Pillay in this period
+
+  FINDINGS:
+   · CHECK 1 FLIPS ON A LAGGING MONEY FILE: 9 of 9 pilot agents read FAIL on the value check only because the four dialling days the Power BI export has not reached are priced at a flat R89 incl (R77.39 ex), below the R86.08 floor. On the measured sales alone every one of them is at or above the floor. CB910 R86.09 → R85.06; CB911 R86.09 → R85.06; CB912 R86.09 → R85.06; CB913 R86.09 → R85.06; CB95 R86.09 → R85.06; CB915 R86.09 → R85.06; CB916 R86.09 → R85.06; CB917 R86.09 → R85.06; CB918 R86.09 → R85.06.
+   · MOVER ATTRIBUTION IN THE DIGEST: the fact table splits CB918’s period correctly ({"Sharoma Pillay":75,"Denise Haripersad":27}), and the campaign roll-up (tlAgg) carries that split. The per-agent digest row cannot — it has one `tl` field — so all 102 of the mover’s sales are filed under Denise Haripersad. On one team-leader screen the roll-up says 605 and the agent rows say 680.
+   · A LEADER WITH NO CURRENT AGENTS IS LOCKED OUT OF THEIR OWN HISTORY: Sharoma Pillay led 75 of the pilot’s sales, but because no agent on today’s list names her, authorise() returns 409 — "No agents are currently assigned". Correct as written; wrong for a month-end review.
