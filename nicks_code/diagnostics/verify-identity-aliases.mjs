@@ -117,10 +117,11 @@ try {
         thokozile: rk('Thokozile Maphumulo'), thandie: rk('Thandu Ngcobo'), naidoo: rk('Naidoo'), stranger: rk('Zanele Stranger Person'), gone: rk('Gone Person'),
         ayanda: rk('Ayanda Zulu'), bongi: rk('Bongi Mthembu'), bongiLeaver: !!leaverMatch('Bongi Mthembu'), amandaFlat: rk('amandabridgetexulu'), twoTypos: rk('Amande Xula'), delanoFlat: rk('delanorajagopal'), roshelFlat: rk('rosheldinikanaidoo') },
       near: M.near || null, ambig: M.ambig || null, unKeys: Object.keys(un), unStranger: un['Zanele Stranger Person'], toasts,
-      banner: { mtd: /belong to nobody on the Agent List/.test(mtd) && /Zanele Stranger Person/.test(mtd), daily: /belong to nobody/.test(daily), weekly: /belong to nobody/.test(weekly), data: /belong to nobody/.test(data),
-        leaverLine: /Gone Person/.test(mtd) && /left the list/.test(mtd), tie: /Thandu Ngcobo<\/code> \(2 — fits CB93000[67] and CB93000[67]\)/.test(mtd), strangerCount: (mtd.match(/<b>(\d+) sales? \(R[\d\s,. ]+\)/) || [])[1] },
+      banner: { mtd: /belong to nobody/.test(mtd), daily: /belong to nobody/.test(daily), weekly: /belong to nobody/.test(weekly), data: /belong to nobody on the Agent List/.test(data) && /Zanele Stranger Person/.test(data),
+        leaverLine: /Gone Person/.test(data) && /left the list/.test(data), tie: /Thandu Ngcobo<\/code> \(2 — fits CB93000[67] and CB93000[67]\)/.test(data), strangerCount: (data.match(/<b>(\d+) sales? \(R[\d\s,. ]+\)/) || [])[1] },
       spellingCard: /Matched by spelling/.test(data) && /Delano Rajagopal/.test(data) && /CB930031/.test(data),
-      nearLine: /matched an agent by near spelling/.test(mtd) && /Delano Rajagopal/.test(mtd) && /matched an agent by near spelling/.test(daily),
+      nearLine: /matched an agent by near spelling/.test(data) && /Delano Rajagopal/.test(data),
+      nearOnReports: /matched an agent by near spelling/.test(mtd) || /matched an agent by near spelling/.test(daily) || /matched an agent by near spelling/.test(weekly),
       v24a: (window.__mtd.checks() || []).find((c) => c.id === 'V24a'),
       v24 };
   });
@@ -143,7 +144,8 @@ try {
   ok('a stranger resolves to nobody', after.rk.stranger === null && after.unStranger && after.unStranger.n === 5);
   ok('near matches are reported on the model (M.near names Delano → CB930031)', after.near && after.near['Delano Rajagopal'] && after.near['Delano Rajagopal'].code === 'CB930031', JSON.stringify(after.near).slice(0, 300));
   ok('…and on the Data tab under "Matched by spelling"', after.spellingCard);
-  ok('…and on an AMBER line on Month to date and Daily, naming the match', after.nearLine);
+  ok('…and on an amber line on the Upload Station, naming the match', after.nearLine);
+  ok('…and NOT on Month to date, Weekly or Daily (Nick, 21 Sep PM: the report pages stay clean)', after.nearOnReports === false);
   ok('V24a is a warn, not an info footnote', after.v24a && after.v24a.sev === 'warn' && after.v24a.ok === false, JSON.stringify(after.v24a));
   ok('an alias is not a near match (Cwele resolved by the alias, not listed as spelling)', !(after.near && after.near['Surprise Lucky Cwele']));
   ok('a COLLAPSED key (how the BI ingest stores an Owner) resolves on one edit: delanorajagopal → CB930031', after.rk.delanoFlat === 'CB930031', String(after.rk.delanoFlat));
@@ -153,8 +155,8 @@ try {
   ok('a known LEAVER\'s name is a leaver, never a misspelling of someone still here ("Ayanda Zulu" ≠ Amanda Xulu)', after.rk.ayanda === null && !(after.near && after.near['Ayanda Zulu']), String(after.rk.ayanda));
 
   console.log('\nD · LOUD WHERE THE NUMBERS ARE');
-  ok('Month to date carries the red banner naming the stranger', after.banner.mtd, JSON.stringify(after.banner));
-  ok('so do Daily, Weekly and the Upload Station', after.banner.daily && after.banner.weekly && after.banner.data);
+  ok('the Upload Station carries the red banner naming the stranger', after.banner.data, JSON.stringify(after.banner));
+  ok('Month to date, Weekly and Daily do NOT (Nick, 21 Sep PM: "remove this part, do not display")', !after.banner.mtd && !after.banner.daily && !after.banner.weekly, JSON.stringify(after.banner));
   ok('the banner counts every unattributed sale that is not a leaver\'s: stranger 5 + tie 2 + bare surname 1 + two-typo 1 + leaver-tie 1 = 10', after.banner.strangerCount === '10', String(after.banner.strangerCount));
   ok('…and says the tie fits two agents', after.banner.tie, JSON.stringify(after.banner));
   ok('the known leaver is named on a muted line, not as a stranger', after.banner.leaverLine);
@@ -173,9 +175,9 @@ try {
     window.__mtd.rebuild();
     const M = window.__mtd.model(); const D = '2026-09-17';
     const f = (code) => ((M.facts || []).find((x) => x.code === code && x.date === D) || {}).sales;
-    const mtd = PAGES.mtd();
+    const data = PAGES.data();
     const v24 = (window.__mtd.checks() || []).find((c) => c.id === 'V24');
-    return { banner: /belong to nobody/.test(mtd), v24ok: v24 && v24.ok === true, thandi: f('CB930006'), delano: f('CB930031'), delanoRk: resolveKey('Delano Rajagopal'), cele: resolveKey('Mandisa Cele'),
+    return { banner: /belong to nobody/.test(data), v24ok: v24 && v24.ok === true, thandi: f('CB930006'), delano: f('CB930031'), delanoRk: resolveKey('Delano Rajagopal'), cele: resolveKey('Mandisa Cele'),
       unKeys: Object.keys(M.unmatched || {}) };
   });
   console.log('\nE · A PERSON ANSWERS ONCE, AND IT STICKS');

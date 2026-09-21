@@ -2181,6 +2181,8 @@ function unattributedSales(){
   out.strangers.sort((a,b)=>b.n-a.n); out.leavers.sort((a,b)=>b.n-a.n);
   return out;
 }
+/* UPLOAD STATION ONLY (Nick, 2026-09-21 PM: "remove this part … do not display"): the report pages
+   stay clean; the names that need a decision are asked for in the summary and answered here. */
 function unattributedBanner(){
   if(!M) return ''; const u=unattributedSales();
   /* NEAR MATCHES ARE COUNTED, AND SAID (review, 2026-09-21): money attributed on a one-edit fit is on
@@ -6375,7 +6377,7 @@ PAGES.mtd=()=>{
     return `<div class="card mt"><div class="cardhead"><div><h3>${CAMPLAB[camp]||camp} — team leaders</h3></div></div>${tableHTML(cols,metricRows)}</div>`;
   };
   return `
-  ${listRefusedBanner()}${listAppliedBanner()}${unattributedBanner()}${grainWarn}${diallerWarning()}${coverageNote()}<div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialling day${M.diallingDays===1?'':'s'}${S.ui.asAt?' · <b>as at '+esc(S.ui.asAt)+'</b>':''} · sorted by SPD</div>
+  ${listRefusedBanner()}${listAppliedBanner()}${grainWarn}${diallerWarning()}${coverageNote()}<div class="page-head"><h2>Month to date</h2><div class="sub">${M.range.from} → ${M.range.to} · ${M.diallingDays} dialling day${M.diallingDays===1?'':'s'}${S.ui.asAt?' · <b>as at '+esc(S.ui.asAt)+'</b>':''} · sorted by SPD</div>
     <div class="spacer"></div><button class="btn small" onclick="exportTracker()">${I.download}<span>Generate MTD tracker</span></button><button class="btn small" onclick="exportReport()">${I.download}<span>Export workbook</span></button></div>
   <div class="chiprow" style="margin-bottom:14px">
     ${[...CAMPS.map(c=>[c,CAMPLAB[c]||c]),['Team Leaders','Team Leaders']].map(([t,l])=>`<button class="chip ${sub===t?'on':''}${camp0&&t!==camp0?' off':''}" ${camp0&&t!==camp0?'disabled title="the header Campaign filter is set to '+esc(CAMPLAB[camp0]||camp0)+'"':''} onclick="S.ui.mtdSub='${t}';saveUI();renderPage()">${esc(l)}</button>`).join('')}
@@ -6393,7 +6395,7 @@ PAGES.weekly=()=>{
   const camp=camp0||(CAMPS.includes(S.ui.wtdCamp)?S.ui.wtdCamp:'Cuddle');
   const team=S.ui.team||null;
   return `
-  ${unattributedBanner()}${diallerWarning()}<div class="page-head"><h2>Weekly reports</h2><div class="sub">weeks run Monday–Sunday inside the period</div></div>
+  ${diallerWarning()}<div class="page-head"><h2>Weekly reports</h2><div class="sub">weeks run Monday–Sunday inside the period</div></div>
   <div class="chiprow" style="margin-bottom:14px">
     ${CAMPS.map(c=>`<button class="chip ${camp===c?'on':''}${camp0&&c!==camp0?' off':''}" ${camp0&&c!==camp0?'disabled title="the header Campaign filter is set to '+esc(CAMPLAB[camp0]||camp0)+'"':''} onclick="S.ui.wtdCamp='${c}';saveUI();renderPage()">${esc(CAMPLAB[c]||c)}</button>`).join('')}
     ${(camp0||team)?`<span class="note" style="margin-left:10px">filtered by ${[camp0?'campaign <b>'+esc(CAMPLAB[camp0]||camp0)+'</b>':'',team?'team leader <b>'+esc(team)+'</b>':''].filter(Boolean).join(' and ')} — <a href="#" onclick="__clearFilters();return false">clear</a></span>`:''}</div>
@@ -6437,7 +6439,7 @@ PAGES.daily=()=>{
     {h:'Referrals',f:r=>(r.ref||0)>0?fmtNum(r.ref):(M&&M.refsAreTotals?'<span title="Referrals come from the HighLevel pull as a period TOTAL per agent — the source carries no date, so it cannot be split across days">–</span>':'0'),csv:r=>r.ref||''}];
   window.__exp={name:'daily',cols,rows};
   return `
-  ${unattributedBanner()}${diallerWarning()}<div class="page-head"><h2>Daily detail</h2><div class="sub">${rows.length} agent-day rows</div>
+  ${diallerWarning()}<div class="page-head"><h2>Daily detail</h2><div class="sub">${rows.length} agent-day rows</div>
     <div class="spacer"></div><button class="btn small" onclick="exportCSV('daily_${S.ui.month}.csv',__exp.cols,__exp.rows)">${I.download}<span>Export</span></button></div>
   <div class="filters">
     <button class="btn small" title="Previous day" onclick="dailyStep(-1)">‹</button>
