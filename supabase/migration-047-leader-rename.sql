@@ -74,6 +74,7 @@ begin
   -- no new one created (its CB already had an account): the leader lost their sign-in in one publish.
   -- Only when the old spelling is itself no longer on the list — two spellings both live is a list
   -- problem reported as unrepresented, never guessed here.
+  drop table if exists _tl_rename;   -- a second publish in one transaction (the verifier, a retry) — publish_agent_list drops the others
   create temp table _tl_rename on commit drop as
   select u.id, u.username, u.full_name as old_name, btrim(coalesce(u.team, '')) as old_team, l.leader_name as new_name, l.cb
   from   app_users u
