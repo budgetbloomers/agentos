@@ -4175,7 +4175,7 @@ function acNBA(st,coach){
      coached sessions. Checked after R1/R2/R3 below, which is where order 4 sits. */
   const r2bFires = worst && COMPLIANCE_THEMES.has(worst.key) && worst.scored >= COACH_TH.persistentMin;
   if(!(st.sched>0&&st.p===0)&&!(st.qaS!=null&&st.qaS<T('qaCritical'))&&tier.tier==='R2A-3')
-    return{code:'R2A-3',lvl:1,lvlName:'Protect the Business',label:'Critical Compliance Fail',detail:tier.cf+' fails · CFR '+fmtVal(tier.cfr,'pct')+' of audited calls ('+ (tier.cf>=nbaVal('r2a3Count',4)?'count':'rate')+' trigger).',action:'P1 compliance review within 48h — audit each fail, corrective action signed, daily monitoring 10 days. Elite blocked.'};
+    return{code:'R2A-3',lvl:1,lvlName:'Protect the Business',label:'Critical Compliance Fail',detail:tier.cf+' fails · CFR '+fmtVal(tier.cfr,'pct')+' of audited calls ('+ (tier.cf>=nbaVal('r2a3Count',4)?'count':'rate')+' trigger).',action:'P1 compliance review within 48h — audit each fail, corrective action signed, daily monitoring 10 days. Elite retained.'};
 
   const R=(code,lvl,lvlName,label,detail,action)=>({code,lvl,lvlName,label,detail,action});
   if(st.sched>0&&st.p===0)return R('R1',1,'Protect the Business','Zero Attendance','Did not attend any scheduled day in the period.','Escalate to HR immediately; attempt contact within 24 hrs; start formal absence management.');
@@ -4184,7 +4184,7 @@ function acNBA(st,coach){
   if(r2bFires)return R('R2B',1,'Protect the Business','Repeat Compliance Coaching',
     'The same compliance theme has been coached '+worst.scored+' times in the window — '+esc(clusterLabel(worst.key))+'.',
     'Compliance review with QA within 48 hours. The theme is recurring after coaching, so review the calls behind each session, not only the last one, and agree a written commitment.');
-  if(tier.tier==='R2A-2')return R('R2A-2',2,'Protect the Revenue','Compliance Risk',tier.cf+' fails · CFR '+fmtVal(tier.cfr,'pct')+' (emerging tier).','P2 structured compliance coaching 5 days — root-cause review, raised audit cadence. Elite blocked.');
+  if(tier.tier==='R2A-2')return R('R2A-2',2,'Protect the Revenue','Compliance Risk',tier.cf+' fails · CFR '+fmtVal(tier.cfr,'pct')+' (emerging tier).','P2 structured compliance coaching 5 days — root-cause review, raised audit cadence. Elite retained.');
   if(st.gwpSale!=null&&st.gwpSale<gwpFloorIncl())return R('R4',2,'Protect the Revenue','GWP Value Failure','GWP per sale R'+Math.round(st.gwpSale)+' — below the R'+T('gwpFloor')+' line.','Value coaching 48h: policy mix, upsell, GWP mini-target.');
   if(st.ta!=null&&st.gwpSale!=null&&st.gwpSale>=gwpFloorIncl()&&st.ta<T('salesLow'))return R('R4A',2,'Protect the Revenue','Critical Sales-Volume Failure','Value clears R'+T('gwpFloor')+' but volume is '+fmtVal(st.ta,'pct')+' of target.','Start PIP: weekly 1:1, side-by-side call listening, workshops, review activity and pipeline.');
   if(st.qaS!=null&&st.qaS<T('qaTarget'))return R('R5',2,'Protect the Revenue','Moderate QA Risk','QA '+fmtVal(st.qaS,'pct')+' — between '+T('qaCritical')+'% and '+T('qaTarget')+'%.','QA refresher within 5 days; audit 5 calls per week; coach every 2 weeks.');

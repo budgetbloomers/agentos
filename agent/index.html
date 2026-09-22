@@ -529,15 +529,22 @@ details.tool summary .chev{margin-left:auto;color:var(--muted);font-size:11px}
    sentences is easy to miss. Now the six columns share the card's width in fixed proportions:
    Reason and Action wrap; the NBA pill, the deadline and the score do not. Below 820px the
    scroller still takes over. */
+/* the ladder table (tidied, Nick 2026-09-22): five fixed columns — the "By" column left with it,
+   nothing ever published a deadline — Composite right-aligned, zebra rows, one line per NBA */
 .nbatbl{min-width:820px;table-layout:fixed}
-.nbatbl th:nth-child(1),.nbatbl td:nth-child(1){width:18%}
-.nbatbl th:nth-child(2),.nbatbl td:nth-child(2){width:15%}
-.nbatbl th:nth-child(3),.nbatbl td:nth-child(3){width:22%}
-.nbatbl th:nth-child(4),.nbatbl td:nth-child(4){width:28%}
+.nbatbl th:nth-child(1),.nbatbl td:nth-child(1){width:21%}
+.nbatbl th:nth-child(2),.nbatbl td:nth-child(2){width:14%}
+.nbatbl th:nth-child(3),.nbatbl td:nth-child(3){width:25%}
+.nbatbl th:nth-child(4),.nbatbl td:nth-child(4){width:31%}
 .nbatbl th:nth-child(5),.nbatbl td:nth-child(5){width:9%}
-.nbatbl th:nth-child(6),.nbatbl td:nth-child(6){width:8%}
-.nbatbl td{vertical-align:top}
+.nbatbl th.num,.nbatbl td.num{text-align:right}
+.nbatbl td{vertical-align:top;padding:10px 9px}
+.nbatbl tbody tr:nth-child(even) td{background:#F8FAFD}
+.nbatbl tbody tr:hover td{background:#F1F6FD}
 .nbatbl td.sml{font-size:12px;line-height:1.5;color:var(--body);white-space:normal;overflow-wrap:anywhere}
+.nbatbl .pill{white-space:nowrap}
+.nbatbl .nbaname{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.3}
+.nbatbl .before{font-size:11px;color:var(--muted);margin-top:2px}
 .nbatbl td .pill{white-space:nowrap}
 .nbatbl td:nth-child(6){white-space:nowrap}   /* the score; the By phrase may wrap to two lines */
 .nbatbl td.l,.nbatbl th.l{text-align:left}
@@ -2090,7 +2097,7 @@ function pageMyTeam(){
       +'<div class="lead-b"><b>Agent rating:</b> '+num(teamScoreOf(a))+' out of 100'
       +(a.driver?' — most points available in '+esc(a.driver.label):'')+'</div>'
       +'<div class="lead-b"><b>Do this:</b> '+esc(a.nba.action||'—')+'</div>'
-      +'<div class="lead-b"><b>By:</b> '+esc(byDeadline(a.nba.hrs))+'</div>'
+      +(a.nba.hrs!=null?'<div class="lead-b"><b>By:</b> '+esc(byDeadline(a.nba.hrs))+'</div>':'')
       +'<button class="btn primary" data-cb="'+esc(a.cb)+'">Open '+esc(firstName(a.name))+'</button>'
       +actPills(a)
       +'</div>';
@@ -2167,17 +2174,18 @@ function pageTeamResults(){
     +'<span class="pill g">P4</span></p>'
     +'<div class="scroller"><table class="tbl nbatbl"><thead><tr>'
     +'<th class="l">Agent</th><th class="l">NBA</th><th class="l">Reason</th><th class="l">Action</th>'
-    +'<th>By</th><th>Composite</th></tr></thead><tbody>'
+    +'<th class="num">Composite</th></tr></thead><tbody>'
     +list.map(function(a){
       var l=lvlOf(a.nba.lvl);
+      /* "before" only when a penalty moved the score — the same number twice is noise */
+      var before=(a.composite.raw!=null&&num(a.composite.raw)!==num(a.composite.adj))?'<div class="before">'+num(a.composite.raw)+' before</div>':'';
       return '<tr><td class="l"><button class="lnk" data-cb="'+esc(a.cb)+'">'+esc(a.name)+'</button>'
         +'<div class="sub2">'+esc(a.cb)+' · '+esc(a.group||'')+'</div></td>'
         +'<td class="l"><span class="pill '+l.p+'">P'+a.nba.lvl+' · '+esc(a.nba.code)+'</span>'
-        +'<div class="sub2">'+esc(a.nba.label)+'</div></td>'
+        +'<div class="nbaname">'+esc(a.nba.label)+'</div></td>'
         +'<td class="l sml">'+esc(a.nba.reason||'—')+'</td>'
         +'<td class="l sml">'+esc(a.nba.action||'—')+'</td>'
-        +'<td class="num">'+esc(byDeadline(a.nba.hrs))+'</td>'
-        +'<td class="num"><b>'+num(a.composite.adj)+'</b><div class="sub2">'+num(a.composite.raw)+' before</div></td></tr>';
+        +'<td class="num"><b>'+num(a.composite.adj)+'</b>'+before+'</td></tr>';
     }).join('')+'</tbody></table></div></div>';
 
   /* TWO-CHECK: value is checked BEFORE volume, and the wording says which. */
@@ -2347,7 +2355,7 @@ function nbaDetail(){
     +'<b>'+esc(a.nba.label)+'</b><span class="nbalvl">'+esc(L.n)+'</span></div>'
     +'<div class="nbab"><b>Why it fired:</b> '+esc(a.nba.reason||'—')+'</div>'
     +'<div class="nbab"><b>What happens next:</b> '+esc(a.nba.action||'—')+'</div>'
-    +'<div class="nbab"><b>By:</b> '+esc(byDeadline(a.nba.hrs))+'</div>'
+    +(a.nba.hrs!=null?'<div class="nbab"><b>By:</b> '+esc(byDeadline(a.nba.hrs))+'</div>':'')
     +'</div>';
 
   var score='<div class="card"><h3>The score, and what came off it</h3>'
