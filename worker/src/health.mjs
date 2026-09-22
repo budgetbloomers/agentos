@@ -417,7 +417,10 @@ export async function runHealthChecks(DB, opts = {}) {
      (assist.mjs). Probe the location every sentinel run with the same key the requests use —
      a revoked key, a deleted location or a dead endpoint is then a banner before it is an
      agent's 502. Read-only: one GET, nothing minted. */
-  const helpCenter = await probeHelpCenter(env);
+  /* `env` arrives in opts — this function has no env of its own. From 21 Sep (7f3398f) to
+     22 Sep it read a bare `env`, threw ReferenceError on every tick, and the whole sentinel
+     (freshness, list refusal, integrity) was silent for a day. verify-roster-propagation caught it. */
+  const helpCenter = await probeHelpCenter(opts.env);
   const alerts = evaluateFreshness({
     helpCenter,
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],

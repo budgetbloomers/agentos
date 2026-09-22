@@ -29,6 +29,8 @@ let rules = { 'kv:vas-state': { value: { data: JSON.stringify(vasState) }, updat
 let storage = {};                 // path -> body
 const sessions = {};              // token_hash -> session row (for the auth layer)
 let writes = [];                  // every storage write, in order
+const logs = [];                  // the Worker's own warnings — a sentinel that threw says so here, nowhere else
+const __warn = console.warn; console.warn = (...a) => { logs.push(a.join(' ')); __warn(...a); };
 
 globalThis.fetch = async (u, o = {}) => {
   const url = String(u);
@@ -90,7 +92,10 @@ ok('the agent→team authorisation map is refreshed too',
 /* ---- 2. an UNCHANGED roster must write nothing ---- */
 writes = []; globalThis.__rosterCache = null;
 await worker.default.scheduled({}, env, ctx); await done;
-ok('an unchanged roster writes nothing (fingerprint-gated)', writes.length === 0, writes.join(', '));
+/* every scheduled event stamps kv:cron-log (index.mjs) — that is the tick's heartbeat, not a roster write */
+const rosterWrites = writes.filter((w) => !/kv:(cron-log|health-alerts|jobs-status)/.test(w));   // the sentinel's own keys are not roster writes
+ok('an unchanged roster writes nothing (fingerprint-gated)', rosterWrites.length === 0, rosterWrites.join(', '));
+ok('…and the health sentinel ran to completion (no "env is not defined" — 22 Sep regression)', !logs.some((l) => /health checks failed/.test(l)), logs.filter((l) => /health checks failed/.test(l)).join(' | '));
 
 /* ---- 3. a CHANGED roster propagates on the very next run ---- */
 ROSTER[0].tl = 'Denise Haripersad'; ROSTER[0].tenure = 'M1';

@@ -454,7 +454,7 @@ export default {
              incident never had (its data survived only because the raw-file relay
              happens to archive uploads);
            · hygiene: orphaned zz-* probe keys and write-log rows past 90 days. */
-      try { await runHealthChecks(DB, { runnerExpected: env.GITHUB_RUNNER === 'on' }); }
+      try { await runHealthChecks(DB, { runnerExpected: env.GITHUB_RUNNER === 'on', env }); }
       catch (e) { console.warn('[cron] health checks failed: ' + (e && e.message || e)); }
       /* THE GITHUB KICK IS OFF (Nick, 2026-09-16: "my email keeps getting github emails saying failed …
          I dont want to be on any paid plans"). Every ask produced a billing-refused run and an email
@@ -1158,6 +1158,12 @@ export default {
          The caller is told which happened, so the station can say it out loud instead of
          leaving two dashboards quietly disagreeing. */
       if (path === '/api/roster' && req.method === 'POST') {
+        /* PUBLISHING THE LIST IS A MANAGEMENT ACTION (security review, 2026-09-22). The Upload
+           Station is hidden from campaign managers in the UI, but a manager holding the vas app
+           passed the portal gate and could post a list straight at the API — creating and
+           removing logins, and re-pointing a leader's team. The role decides here, not the page. */
+        if (user && PORTAL_ROLES.has(user.role))
+          return json({ error: 'Publishing the Agent List is a management action — it belongs to the Upload Station accounts.' }, 403);
         let body = null;
         try { body = await req.json(); } catch { return json({ error: 'json body required' }, 400); }
         /* THE FILE IS THE RECORD (Nick, 2026-09-03: "so this never happens again"). The
