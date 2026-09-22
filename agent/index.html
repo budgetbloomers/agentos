@@ -542,8 +542,11 @@ details.tool summary .chev{margin-left:auto;color:var(--muted);font-size:11px}
 .nbatbl tbody tr:nth-child(even) td{background:#F8FAFD}
 .nbatbl tbody tr:hover td{background:#F1F6FD}
 .nbatbl td.sml{font-size:12px;line-height:1.5;color:var(--body);white-space:normal;overflow-wrap:anywhere}
-.nbatbl .pill{white-space:nowrap}
-.nbatbl .nbaname{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.3}
+/* the pill is an inline span with 8px of vertical padding — inline, it spills past its line box and
+   the rule name beneath paints over it. Stack the two as a column so the pill's real height counts. */
+.nbatbl .nbastack{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
+.nbatbl .nbastack .pill{display:inline-block;white-space:nowrap;padding:5px 12px;line-height:1.2}
+.nbatbl .nbaname{font-size:11px;color:var(--muted);line-height:1.3}
 .nbatbl .before{font-size:11px;color:var(--muted);margin-top:2px}
 .nbatbl td .pill{white-space:nowrap}
 .nbatbl td:nth-child(6){white-space:nowrap}   /* the score; the By phrase may wrap to two lines */
@@ -2181,8 +2184,8 @@ function pageTeamResults(){
       var before=(a.composite.raw!=null&&num(a.composite.raw)!==num(a.composite.adj))?'<div class="before">'+num(a.composite.raw)+' before</div>':'';
       return '<tr><td class="l"><button class="lnk" data-cb="'+esc(a.cb)+'">'+esc(a.name)+'</button>'
         +'<div class="sub2">'+esc(a.cb)+' · '+esc(a.group||'')+'</div></td>'
-        +'<td class="l"><span class="pill '+l.p+'">P'+a.nba.lvl+' · '+esc(a.nba.code)+'</span>'
-        +'<div class="nbaname">'+esc(a.nba.label)+'</div></td>'
+        +'<td class="l"><div class="nbastack"><span class="pill '+l.p+'">P'+a.nba.lvl+' · '+esc(a.nba.code)+'</span>'
+        +'<div class="nbaname">'+esc(a.nba.label)+'</div></div></td>'
         +'<td class="l sml">'+esc(a.nba.reason||'—')+'</td>'
         +'<td class="l sml">'+esc(a.nba.action||'—')+'</td>'
         +'<td class="num"><b>'+num(a.composite.adj)+'</b>'+before+'</td></tr>';
