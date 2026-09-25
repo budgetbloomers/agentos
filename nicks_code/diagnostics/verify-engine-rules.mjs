@@ -45,6 +45,11 @@ ok('GWP rate per sale matches', inlined.gwpPerSale === SPEC.reference_data.gwp_r
 ok('VAT multiplier matches', inlined.vat === SPEC.reference_data.vat_multiplier.value);
 ok('Saturday shift rule matches (data only, from)', inlined.saturdayShiftsFrom === (SPEC.reference_data.saturday_shifts || {}).data_only_from,
   inlined.saturdayShiftsFrom + ' vs ' + JSON.stringify((SPEC.reference_data.saturday_shifts || {}).data_only_from));
+/* PUBLIC HOLIDAYS (Nick, 2026-09-25): data, not a shift — same as a Saturday; one-offs mirrored too. */
+ok('public holiday shift rule matches (data only, from)', inlined.publicHolidaysFrom === (SPEC.reference_data.public_holidays || {}).data_only_from,
+  inlined.publicHolidaysFrom + ' vs ' + JSON.stringify((SPEC.reference_data.public_holidays || {}).data_only_from));
+ok('one-off (extra) public holidays match the rule book', JSON.stringify(inlined.extraHolidays || []) === JSON.stringify((SPEC.reference_data.public_holidays || {}).extra || []),
+  JSON.stringify(inlined.extraHolidays) + ' vs ' + JSON.stringify((SPEC.reference_data.public_holidays || {}).extra));
 /* DEPARTURES (Nick, 2026-09-15): a leaver keeps their days until the list that dropped them. */
 { const d = SPEC.reference_data.departures || {}, i = inlined.departures || {};
   ok('departures rule matches (keep days until left, since)', i.keepDaysUntilLeft === d.keep_days_until_left && i.since === d.since,

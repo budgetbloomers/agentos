@@ -38,7 +38,7 @@ jobs:
       - name: Credential-free suites
         run: |
           set -e
-          for t in verify-agent-analytics verify-wimpy verify-engine-rules verify-rule-constants \
+          for t in verify-agent-analytics verify-wimpy verify-engine-rules verify-rule-constants verify-public-holidays verify-saturday-rule \
                    verify-cm-targets verify-campaign-manager verify-perf-score verify-history \
                    verify-tbc-backdate verify-variance verify-save-acks verify-login-lockout; do
             echo "== $t =="; node nicks_code/diagnostics/$t.mjs

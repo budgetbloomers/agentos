@@ -5064,20 +5064,44 @@ function stamp(){
    and a commission of R7,670 where the real figure was R17,896. The period is
    right there in the payload, so count the weekdays in it and only fall back
    when even that is impossible. */
-/* A PUBLIC HOLIDAY IS NOT A WORKING DAY (Nick, 2026-09-02). The list mirrors
-   SA_HOLIDAYS in PULSE's workingDays — observed dates, extended each December.
-   The fallback must agree with the publisher or a stale digest and a fresh one
-   would show two different "working days" for the same month. */
-var SA_HOLIDAYS={'2026-01-01':1,'2026-03-21':1,'2026-04-03':1,'2026-04-06':1,'2026-04-27':1,'2026-05-01':1,
-  '2026-06-16':1,'2026-08-10':1,'2026-09-24':1,'2026-12-16':1,'2026-12-25':1,'2026-12-26':1,
-  '2027-01-01':1,'2027-03-22':1,'2027-03-26':1,'2027-03-29':1,'2027-04-27':1,'2027-05-01':1,
-  '2027-06-16':1,'2027-08-09':1,'2027-09-24':1,'2027-12-16':1,'2027-12-25':1,'2027-12-27':1};
+/* A PUBLIC HOLIDAY IS NOT A WORKING DAY (Nick, 2026-09-02). The calendar is the same
+   function PULSE's engine uses (computed, so it never runs out — the table it replaces
+   had to be extended each December). The fallback must agree with the publisher or a
+   stale digest and a fresh one would show two different "working days" for the same
+   month. One-off holidays travel in the digest as extraHolidays. */
+/* @mirror:sa-holidays start — identical in nicks_code/index.html and agent/index.html; verify-public-holidays.mjs fails on any difference */
+/* SA PUBLIC HOLIDAYS, COMPUTED (Public Holidays Act 36 of 1994): the ten fixed dates, Good
+   Friday and Family Day from the Gregorian Easter algorithm (Meeus/Jones/Butcher), and a
+   holiday that falls on a Sunday observed on the Monday. Returns the OBSERVED dates for the
+   year as 'YYYY-MM-DD' strings — the table this replaces had to be extended every December
+   and would have silently gone blank in a January. One-off holidays the Act does not list
+   (an election day) are added by the caller from the rule book, never here. */
+function saHolidaysFor(year){
+  var y=+year, a=y%19, b=Math.floor(y/100), c=y%100, d=Math.floor(b/4), e=b%4, f=Math.floor((b+8)/25),
+      g=Math.floor((b-f+1)/3), h=(19*a+b-d-g+15)%30, i=Math.floor(c/4), k=c%4, l=(32+2*e+2*i-h-k)%7,
+      m=Math.floor((a+11*h+22*l)/451), em=Math.floor((h+l-7*m+114)/31), ed=((h+l-7*m+114)%31)+1;
+  var easter=Date.UTC(y,em-1,ed), DAY=864e5;
+  var iso=function(t){ return new Date(t).toISOString().slice(0,10); };
+  var days=[Date.UTC(y,0,1),Date.UTC(y,2,21),easter-2*DAY,easter+DAY,Date.UTC(y,3,27),Date.UTC(y,4,1),
+            Date.UTC(y,5,16),Date.UTC(y,7,9),Date.UTC(y,8,24),Date.UTC(y,11,16),Date.UTC(y,11,25),Date.UTC(y,11,26)];
+  var out=[]; for(var n=0;n<days.length;n++){ var t=days[n]; if(new Date(t).getUTCDay()===0) t+=DAY; out.push(iso(t)); }
+  return out;
+}
+/* @mirror:sa-holidays end */
+var _SA_HOLIDAYS_BY_YEAR={};
+function isPublicHoliday(d){
+  d=String(d||''); if(!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  var y=d.slice(0,4), list=_SA_HOLIDAYS_BY_YEAR[y]||(_SA_HOLIDAYS_BY_YEAR[y]=saHolidaysFor(+y));
+  if(list.indexOf(d)>-1) return true;
+  var extra=(typeof D!=='undefined'&&D&&D.extraHolidays)||[];
+  return extra.indexOf(d)>-1;
+}
 function DAYS(){
   if(D&&D.workingDays>0) return D.workingDays;
   try{
     var n=0,d=new Date(D.period.from+'T00:00:00Z'),e=new Date(D.period.to+'T00:00:00Z');
     while(d<=e){ var w=d.getUTCDay();
-      if(w>0&&w<6&&!SA_HOLIDAYS[d.toISOString().slice(0,10)])n++;
+      if(w>0&&w<6&&!isPublicHoliday(d.toISOString().slice(0,10)))n++;
       d.setUTCDate(d.getUTCDate()+1); }
     if(n>0) return n;
   }catch(e){}
@@ -5099,7 +5123,7 @@ function DATA_DAYS(){
     var last=D.dates[D.dates.length-1];
     var n=0,d=new Date(D.period.from+'T00:00:00Z'),e=new Date(last+'T00:00:00Z');
     while(d<=e){ var w=d.getUTCDay();
-      if(w>0&&w<6&&!SA_HOLIDAYS[d.toISOString().slice(0,10)])n++;
+      if(w>0&&w<6&&!isPublicHoliday(d.toISOString().slice(0,10)))n++;
       d.setUTCDate(d.getUTCDate()+1); }
     return n;
   }catch(e){ return null; }

@@ -569,6 +569,21 @@ const MTD_RULES = {
      Mirror of specs/mtd_engine_rules.json reference_data.saturday_shifts. */
   saturdayShiftsFrom: '2026-09-01',
 
+  /* A PUBLIC HOLIDAY IS DATA, NOT A SHIFT EITHER (Nick, 2026-09-25: "the employee shifts says 18
+     it should be 17"). Heritage Day, Thu 24 Sep, had a register row for every agent and nobody
+     on the phones, and the engine handed the whole floor a phantom Employed Shift — one more
+     day of target, a lower Attendance, an 18th dialling day — because only Saturday had a guard.
+     Same rule as the Saturday one, same effective date: the day's sales, GWP, talk, referrals
+     and cancellations count in every total; it is never an Employed or Actual Shift and never
+     a dialling day. The calendar is COMPUTED (saHolidaysFor: the Act's fixed dates, Good Friday
+     and Family Day from the Easter algorithm, Sunday observance moved to Monday), so it cannot
+     run out in a January; a one-off holiday the Act does not list (an election day) goes in
+     extraHolidays as 'YYYY-MM-DD' — in the spec too. Rule check V25 fails on any shift that
+     lands on such a day, and V25a warns on any weekday the floor was employed but nobody worked.
+     Mirror of specs/mtd_engine_rules.json reference_data.public_holidays. */
+  publicHolidaysFrom: '2026-09-01',
+  extraHolidays: [],
+
   /* AVERAGE TALK TIME IS MINUTES PER EMPLOYED SHIFT (Nick, 2026-09-08: "total talk time divided
      by shifts, and must be in minutes"). The denominator was already employed shifts (spec §6.4);
      the unit was h:mm:ss. One value, read by fmtTalk() for every average-talk figure on screen
@@ -3871,6 +3886,19 @@ function validateMTD(m){
     if(nr.length) out.push({id:'V24a',sev:'warn',ok:false,msg:nr.length+' spelling(s) counted for an agent by NEAR match (one edit, unique) — confirm them under "Matched by spelling" on the Upload Station, or set one to Ignore: '+nr.slice(0,4).map(k=>k+' → '+m.near[k].code).join(', ')+(nr.length>4?' +'+(nr.length-4)+' more':'')}); }
     if(open) out.push({id:'QA',sev:'warn',ok:false,msg:open+' of '+ev+' evaluations are not closed — QA is provisional'}); }
 
+  /* V25 — A DAY NOBODY WORKS IS NOT A SHIFT (Nick, 2026-09-25: Heritage Day, with a register row
+     for every agent and nobody dialling, handed the whole floor an Employed Shift). Two checks:
+     (a) no fact row dated a Saturday or a public holiday under the rule carries a shift — an
+     error, it is the rule itself; (b) a day inside the period on which the floor has employed
+     shifts and NOT ONE actual shift, sale or second of talk looks like a holiday the calendar
+     does not know, or a day whose dialler and BI files never landed — a warning, so the next
+     such day is on this panel before it reaches an agent's card. */
+  { const bad=F.filter(f=>(f.emp||f.act)&&dataOnlyDay(f.date));
+    add('V25','error',!bad.length, bad.length?bad.length+' shift row(s) on a Saturday or public holiday under the rule, e.g. '+[...new Set(bad.map(f=>f.date))].slice(0,3).join(', '):'no Saturday or public holiday carries a shift');
+    const byDay={}; for(const f of F){ const t=byDay[f.date]=byDay[f.date]||{emp:0,act:0,sales:0,talk:0}; t.emp+=f.emp||0; t.act+=f.act||0; t.sales+=f.sales||0; t.talk+=f.talk||0; }
+    const idle=Object.keys(byDay).filter(d=>byDay[d].emp>0&&!byDay[d].act&&!byDay[d].sales&&!byDay[d].talk).sort();
+    add('V25a','warn',!idle.length, idle.length?idle.length+' day(s) carry Employed Shifts but no actual shift, sale or talk anywhere on the floor — a public holiday the calendar does not know, or dialler/BI files that never landed: '+idle.slice(0,4).join(', '):'every day with Employed Shifts has someone at work'); }
+
   /* Campaigns deliberately left out of this dashboard. Reported every build, with the sales
      and GWP they take with them, so "the totals look light" always has an answer on screen. */
   { const off=Object.entries(m.offCampaign||{});
@@ -3892,6 +3920,42 @@ function saturdayDataOnly(d){
   const from=MTD_RULES.saturdayShiftsFrom; if(!from||d<from) return false;
   return new Date(d+'T00:00:00Z').getUTCDay()===6;
 }
+/* @mirror:sa-holidays start — identical in nicks_code/index.html and agent/index.html; verify-public-holidays.mjs fails on any difference */
+/* SA PUBLIC HOLIDAYS, COMPUTED (Public Holidays Act 36 of 1994): the ten fixed dates, Good
+   Friday and Family Day from the Gregorian Easter algorithm (Meeus/Jones/Butcher), and a
+   holiday that falls on a Sunday observed on the Monday. Returns the OBSERVED dates for the
+   year as 'YYYY-MM-DD' strings — the table this replaces had to be extended every December
+   and would have silently gone blank in a January. One-off holidays the Act does not list
+   (an election day) are added by the caller from the rule book, never here. */
+function saHolidaysFor(year){
+  var y=+year, a=y%19, b=Math.floor(y/100), c=y%100, d=Math.floor(b/4), e=b%4, f=Math.floor((b+8)/25),
+      g=Math.floor((b-f+1)/3), h=(19*a+b-d-g+15)%30, i=Math.floor(c/4), k=c%4, l=(32+2*e+2*i-h-k)%7,
+      m=Math.floor((a+11*h+22*l)/451), em=Math.floor((h+l-7*m+114)/31), ed=((h+l-7*m+114)%31)+1;
+  var easter=Date.UTC(y,em-1,ed), DAY=864e5;
+  var iso=function(t){ return new Date(t).toISOString().slice(0,10); };
+  var days=[Date.UTC(y,0,1),Date.UTC(y,2,21),easter-2*DAY,easter+DAY,Date.UTC(y,3,27),Date.UTC(y,4,1),
+            Date.UTC(y,5,16),Date.UTC(y,7,9),Date.UTC(y,8,24),Date.UTC(y,11,16),Date.UTC(y,11,25),Date.UTC(y,11,26)];
+  var out=[]; for(var n=0;n<days.length;n++){ var t=days[n]; if(new Date(t).getUTCDay()===0) t+=DAY; out.push(iso(t)); }
+  return out;
+}
+/* @mirror:sa-holidays end */
+const _SA_HOLIDAYS_BY_YEAR={};
+/* Is this 'YYYY-MM-DD' an observed SA public holiday (Act + MTD_RULES.extraHolidays)? Used by every
+   working-day count in the engine and the digest, and by the shift guard below. */
+function isPublicHoliday(d){
+  d=String(d||''); if(!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const y=d.slice(0,4); const set=_SA_HOLIDAYS_BY_YEAR[y]||(_SA_HOLIDAYS_BY_YEAR[y]=new Set(saHolidaysFor(+y)));
+  return set.has(d)||(MTD_RULES.extraHolidays||[]).indexOf(d)>-1;
+}
+/* A public holiday under the rule (MTD_RULES.publicHolidaysFrom): before that date it is an ordinary day. */
+function publicHolidayDataOnly(d){
+  const from=MTD_RULES.publicHolidaysFrom; if(!from||d<from) return false;
+  return isPublicHoliday(d);
+}
+/* THE ONE QUESTION THE SHIFT ENGINE ASKS: is this a day that carries its data but can never be a
+   shift or a dialling day? Saturdays and public holidays under their rules. Every guard reads
+   this, so a third kind of non-working day would be one line here and nowhere else. */
+function dataOnlyDay(d){ return saturdayDataOnly(d)||publicHolidayDataOnly(d); }
 /* HOW FAR THE DATA REACHES (never-stale plan, Phase 2, 2026-09-07). The trust bar used to count
    files by upload age; what a manager needs is the last DAY each source covers, against the day
    it should cover. expectedReach(): the daily drop lands by 13:00 SAST with yesterday's data,
@@ -3924,7 +3988,7 @@ function buildModel(range, periodKey){
      SPD (Sales / Employed HC / Dialing Days) by three instead of two and understates every
      team by a third. Falls back to the data dates when no register is loaded, so the figure
      degrades to "what we know" rather than to zero. */
-  const attDates=Object.keys(S.att).filter(d=>d>=range.from&&d<=range.to&&Object.keys(S.att[d]||{}).length&&!saturdayDataOnly(d)).sort();
+  const attDates=Object.keys(S.att).filter(d=>d>=range.from&&d<=range.to&&Object.keys(S.att[d]||{}).length&&!dataOnlyDay(d)).sort();
   /* A dialling day needs BOTH a register and something to report on it. The register runs
      ahead of the other exports — on the August drop it reaches the 6th while the dialler and
      BI stop at the 5th — and those trailing register-only days carry no fact rows at all, so
@@ -3933,8 +3997,8 @@ function buildModel(range, periodKey){
      is the honest answer; the fallbacks keep the figure meaningful when a source is missing
      entirely rather than collapsing it to zero. */
   const factDates=new Set(dates);
-  /* …and a Saturday under the rule is not a dialling day whichever fallback answers */
-  const diallingDays=attDates.filter(d=>factDates.has(d)).length||attDates.length||dates.filter(d=>!saturdayDataOnly(d)).length;
+  /* …and a Saturday or a public holiday under the rule is not a dialling day whichever fallback answers */
+  const diallingDays=attDates.filter(d=>factDates.has(d)).length||attDates.length||dates.filter(d=>!dataOnlyDay(d)).length;
 
   // termination map: first date an agent is marked Terminated/Resigned
   const term={};
@@ -4153,12 +4217,13 @@ function buildModel(range, periodKey){
       if(trackerIsSource){ emp=tr.emp; act=tr.act; }
       if(!emp&&(active)) emp=1;                    // has activity → must be employed
       if(act>0&&!emp) emp=1;
-      /* SATURDAY IS DATA, NOT A SHIFT (rule saturdayShiftsFrom, Nick 2026-09-07): whatever the
-         register or the dialler say, the day carries its sales, GWP, talk, referrals and
-         cancellations into the totals and contributes 0 to Employed and Actual Shifts — so
-         the target (perDay × emp) does not grow by it either. The row survives the guard
-         below on its data. */
-      if(saturdayDataOnly(d)){ emp=0; act=0; }
+      /* SATURDAY IS DATA, NOT A SHIFT (rule saturdayShiftsFrom, Nick 2026-09-07) — AND SO IS A
+         PUBLIC HOLIDAY (rule publicHolidaysFrom, Nick 2026-09-25: Heritage Day read as an 18th
+         shift): whatever the register or the dialler say, the day carries its sales, GWP, talk,
+         referrals and cancellations into the totals and contributes 0 to Employed and Actual
+         Shifts — so the target (perDay × emp) does not grow by it either. The row survives the
+         guard below on its data. dataOnlyDay() is the one place that decides. */
+      if(dataOnlyDay(d)){ emp=0; act=0; }
       /* THE DAILY TARGET IS A RULE, NOT A CELL (Nick, 2026-08-20: 'the nesting target is
          2 SPD'). It used to come straight from the roster's Target column, which let a
          stale per-agent value override the campaign's rule — four agents who moved into
@@ -4968,7 +5033,7 @@ function compositeFor(code, agent){
      is SHOWN but not scored — the others renormalise, exactly as the rule book already
      does for a driver nobody has supplied — and the note says why. */
   const dataDays=(function(){ const last=(M.dates||[]).slice().sort().pop(); if(!last) return 0;
-    let n=0,d=M.range.from; while(d<=last){const w=new Date(d+'T00:00:00Z').getUTCDay(); if(w>0&&w<6&&!SA_HOLIDAYS.has(d))n++; d=addDays(d,1);} return n; })();
+    let n=0,d=M.range.from; while(d<=last){const w=new Date(d+'T00:00:00Z').getUTCDay(); if(w>0&&w<6&&!isPublicHoliday(d))n++; d=addDays(d,1);} return n; })();
   const CONV_MIN_DAYS=+R.convMinDataDays||5;
   /* MULTI-DAY VICIDIAL TALK LIVES ON A ROW WITH NO SHIFT, so the window would miss it.
      A range export has no per-day detail, so the engine parks its whole total on one
@@ -8918,15 +8983,9 @@ const COMM_RULES_2026_08={
   }
 };
 const COMM_RULES_BY_MONTH={'2026-07':COMM_RULES_2026_08,'2026-08':COMM_RULES_2026_08};
-/* SA PUBLIC HOLIDAYS, observed dates (a Sunday holiday moves to Monday per the
-   Public Holidays Act; Saturday ones stay put and never touch a weekday count).
-   Used by workingDays and daysWithData in the agent digest. EXTEND EACH DECEMBER.
-   Mirrored in agent/index.html (SA_HOLIDAYS) for its fallback — keep them equal. */
-const SA_HOLIDAYS=new Set([
-  '2026-01-01','2026-03-21','2026-04-03','2026-04-06','2026-04-27','2026-05-01',
-  '2026-06-16','2026-08-10','2026-09-24','2026-12-16','2026-12-25','2026-12-26',
-  '2027-01-01','2027-03-22','2027-03-26','2027-03-29','2027-04-27','2027-05-01',
-  '2027-06-16','2027-08-09','2027-09-24','2027-12-16','2027-12-25','2027-12-27']);
+/* SA PUBLIC HOLIDAYS used to be a hand-typed table here that had to be extended every December.
+   They are computed now — isPublicHoliday() / saHolidaysFor(), beside dataOnlyDay() — and the
+   agent page carries the same function (verify-public-holidays.mjs fails if the two differ). */
 /* campaign+tenure -> commission bracket. The calculator's four bracket keys are
    a one-to-one match with salesTargetMatrix (MTD_RULES:501), which is why this
    map is a lookup and not a heuristic. 'M0' means the M0 calculator (commission
@@ -9172,15 +9231,17 @@ function agentDigestPayload(){
        but the comm model (Matrix Vas Comm Model_September26.xlsx) is built on 21
        dialling days because Heritage Day (Thu 24 Sep) is a weekday nobody dials.
        August proved the same rule: 21 weekdays, DD 20 in the model — Women's Day
-       observed Mon 10 Aug. SA_HOLIDAYS below carries the observed dates (a Sunday
+       observed Mon 10 Aug. isPublicHoliday() computes the observed dates (a Sunday
        holiday moves to Monday per the Public Holidays Act; Saturday ones stay and
        never touch this count). EXTEND IT EACH DECEMBER for the coming year. */
     /* Monday-anchored weeks inside the period, for the portal's Weekly view — the same
        M.weeks the Weekly tab here iterates, boundaries and all. */
     weeks:(M.weeks||[]).map(w=>({num:w.num,from:w.dates[0],to:w.dates[w.dates.length-1]})),
     diallingDays:M.diallingDays||M.dates.length||0,
+    /* one-off holidays from the rule book, so the agent page's own working-day fallback agrees */
+    extraHolidays:(MTD_RULES.extraHolidays||[]).slice(),
     workingDays:(function(){let n=0,d=M.range.from;
-      while(d<=M.range.to){const w=new Date(d+'T00:00:00Z').getUTCDay();if(w>0&&w<6&&!SA_HOLIDAYS.has(d))n++;d=addDays(d,1);}
+      while(d<=M.range.to){const w=new Date(d+'T00:00:00Z').getUTCDay();if(w>0&&w<6&&!isPublicHoliday(d))n++;d=addDays(d,1);}
       return n||M.diallingDays||M.dates.length||0;})(),
     /* DAYS WITH DATA (Nick, 2026-09-03: "1st to 2nd is not 3 working days — do not
        include today, today's stats are not included"). The agent page's "days worked"
@@ -9191,7 +9252,7 @@ function agentDigestPayload(){
        ends on). The page caps days-worked at it: a day counts once its files land. */
     daysWithData:(function(){const last=(M.dates||[]).filter(x=>x>=M.range.from&&x<=M.range.to).sort().pop();
       if(!last) return 0; let n=0,d=M.range.from;
-      while(d<=last){const w=new Date(d+'T00:00:00Z').getUTCDay();if(w>0&&w<6&&!SA_HOLIDAYS.has(d))n++;d=addDays(d,1);}
+      while(d<=last){const w=new Date(d+'T00:00:00Z').getUTCDay();if(w>0&&w<6&&!isPublicHoliday(d))n++;d=addDays(d,1);}
       return n;})(),
     dates:M.dates,
     /* the model that was in force for THIS period's month — see COMM_RULES_BY_MONTH */

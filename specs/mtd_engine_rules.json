@@ -358,6 +358,15 @@
    "source": "Nick, 2026-09-07: 'for the month to date add the data but do not add to the numerator for saturday only' — numerator of Attendance and denominator of SPD are both Actual Shifts.",
    "note": "Effective-dated so the August reference period, verified row-for-row, is untouched. Mirror: MTD_RULES.saturdayShiftsFrom."
   },
+  "public_holidays": {
+   "data_only_from": "2026-09-01",
+   "rule": "A South African public holiday on/after this date is treated exactly as a Saturday under saturday_shifts: its sales, GWP, talk time, referrals and cancellations count in every total, but it is never an Employed Shift, an Actual Shift or a dialling day, and no target grows out of it. Rule check V25 (error) fails the build if any shift lands on such a day; V25a (warn) names any day the floor was employed but nobody worked, so an unknown holiday or a missing file is on screen before it reaches an agent.",
+   "calendar": "COMPUTED, not tabulated (saHolidaysFor in nicks_code/index.html, mirrored byte-for-byte in agent/index.html): the Public Holidays Act's fixed dates (1 Jan, 21 Mar, 27 Apr, 1 May, 16 Jun, 9 Aug, 24 Sep, 16 Dec, 25 Dec, 26 Dec), Good Friday and Family Day from the Gregorian Easter algorithm, and a holiday falling on a Sunday observed on the Monday. Reproduces the 2026 and 2027 tables it replaced and needs no December extension.",
+   "extra": [],
+   "extra_note": "One-off holidays the Act does not list (a general election day) go here as YYYY-MM-DD and in MTD_RULES.extraHolidays; verify-engine-rules fails on drift.",
+   "source": "Nick, 2026-09-25: \"the employee shifts says 18 it should be 17\" — Heritage Day (Thu 24 Sep 2026) had an HR register row for all 67 agents and nobody dialling; the engine gave the whole floor a phantom Employed Shift (18 not 17), an 18th dialling day, one more day of target and a lower Attendance, because only Saturday had a guard.",
+   "note": "Same effective date as saturday_shifts so August, verified row-for-row, is untouched (Women's Day observed 10 Aug 2026 stays as it was). Mirror: MTD_RULES.publicHolidaysFrom / extraHolidays; guarded by diagnostics/verify-public-holidays.mjs."
+  },
   "departures": {
    "keep_days_until_left": false,
    "since": "2026-09-15",
@@ -1850,6 +1859,14 @@
    "from": "a leaver keeps their days up to the list that dropped them",
    "to": "a leaver is off every report; the current Agent List is the whole roster (keep_days_until_left = false)",
    "why": "\"redo the leavers must be removed from the reports, only focus on the new agent list\""
+  },
+  {
+   "date": "2026-09-25",
+   "by": "Nick",
+   "key": "reference_data.public_holidays",
+   "from": "a public holiday with a register was an ordinary day: every agent on the register got an Employed Shift, the day was a dialling day and targets grew by it (the holiday table was only used for working-day counts)",
+   "to": "data only from 2026-09-01, like a Saturday — never a shift or a dialling day; calendar computed from the Act, one-offs in extra[]; V25/V25a guard it",
+   "why": "\"the employee shifts says 18 it should be 17\" — Heritage Day 24 Sep 2026 read as the floor's 18th shift"
   }
  ]
 }
