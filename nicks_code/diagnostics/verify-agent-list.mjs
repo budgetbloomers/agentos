@@ -320,8 +320,10 @@ section('a Campaign cell reading exactly "VT"');
     odd.roster.some(a => a.code === 'CB904' && a.campaign === 'Back Office'), JSON.stringify(odd.roster));
   ok('…and is named as new in a toast, never silently',
     odd.toasts.some(t => /new to this dashboard/i.test(t) && /Back Office/.test(t)), JSON.stringify(odd.toasts));
-  ok('…CAMPS now reports it alongside the rule book\'s campaigns',
-    Array.isArray(odd.camps) && odd.camps.includes('Back Office') && odd.camps[0] === 'Cuddle', JSON.stringify(odd.camps));
+  /* CAMPS is what the list CARRIES (Nick, 2026-09-27: a campaign not on the next list is removed):
+     this list names Courtesy and Back Office, so Cuddle and Nesting are not reported */
+  ok('…CAMPS now reports it alongside the list\'s other campaigns — and only those',
+    Array.isArray(odd.camps) && odd.camps.join('|') === 'Courtesy|Back Office', JSON.stringify(odd.camps));
   ok('…the model names it and V23 flags it as reported under the Courtesy rules',
     odd.newCamps.includes('Back Office') && odd.v23 && odd.v23.ok === false && /Courtesy rules/.test(odd.v23.msg), JSON.stringify(odd.v23));
 

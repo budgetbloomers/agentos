@@ -117,3 +117,30 @@ the integrity view counts a vanished login and a phantom campaign. `verify-campa
 **Still Nick's.** Leaders are created only from `team_leader_cbs` (the list carries no
 leader CB); an unrepresented leader is now an ALERT, but the CB still has to come from a
 human. Phase 2 (targets, owner, PULSE reporting of a new campaign) unchanged.
+
+## Phase 3 — the list decides what is reported (built 2026-09-27)
+
+Nick: "if I upload an agent list and there are new campaigns it must be automatically created in
+VAS month to date, weekly, daily etc, and the correct data must be showing … the campaign must be
+taken from the agent list … if the old ones are not in the new one it must be removed … always
+place the agents in the correct campaigns as well as their team leaders."
+
+| Rule | Where |
+|---|---|
+| A new campaign is named as the list names it, minus a leading `Matrix VAS -` ("Matrix VAS - Download & Test" → "Download & Test"). PULSE and SQL strip the same prefix in the same order. | `campOf()` + `CAMP_PREFIX` (PULSE) · `campaign_label()` in **migration-050** |
+| `CAMPS` = the campaigns the Agent List carries **for the period on screen** (roster agents' org history), rule-book campaigns included only when carried. The current month follows the latest list alone, so a dropped campaign disappears and its movers' whole month goes to their new campaign; a past month shows what that month's lists assigned. No roster at all → the rule book's list. Excluded agents (spec §5) never keep a campaign on screen. | `refreshCamps(range)` |
+| The comparison period (MP) keeps its own campaigns plus the ones on screen, so "vs last month" still counts a campaign the list has since dropped. | `rebuild()` → `buildModel(…, {withCamps})` |
+| Campaign **and team leader** come from the list's own segments (`src:'agent-list'`) ahead of the tracker daily sheet; a tracker row can no longer overwrite the list's same-day segment. Days before the first list keep the old order. | `listSegAt()` · `recordOrg()` guard |
+| A campaign with facts in the period but not on the list is a **warning** (`campaign-dropped`), not a green info row; VT stays information. A header filter left on a dropped campaign is cleared with a toast. MTD/Weekly default to the first carried campaign, never a literal "Cuddle". | `validateMTD` · `rebuild()` · `PAGES.mtd/weekly` |
+| Dashboard "Daily sales by campaign" stacks every reported campaign; a list-created campaign gets a stable colour from its name. | `stackChart()` · `campColor()` |
+
+Guard: `nicks_code/diagnostics/verify-new-campaign.mjs` (52 checks: a real-format list with a new
+campaign → label, CAMPS, dropdown, MTD/Weekly/Daily/digest figures equal to independently computed
+sums; ViciDial/SF campaign hints ignored; a mover's whole month moves; a second list without the
+campaign removes it everywhere; uncarried Nesting not reported; tracker sheet cannot outvote the list's
+campaign or TL; no-Cuddle list still opens MTD/Weekly on rows; last month keeps its Nesting sale).
+Honours `AGENTOS=<checkout>`. `verify-agent-list.mjs` updated to the carried-only rule.
+
+**To go live (Nick):** `node tools/apply-migration.mjs supabase/migration-050-campaign-label-prefix.sql`
+(no live campaign re-keys: every current list row labels Courtesy/Cuddle/VT before the prefix rule is
+reached), then the normal PULSE deploy + post-deploy smoke.

@@ -891,7 +891,13 @@ const campOf = c => { const s=String(c||'').trim().replace(/\s+/g,' ');
   if(/cuddle/i.test(s)) return 'Cuddle';
   if(/track|vehicle|vision|^vt$/i.test(s)) return 'VT';
   if(/courtesy/i.test(s)) return 'Courtesy';
-  return s; };
+  /* THE LIST'S OWN NAME, MINUS THE HOUSE PREFIX (Nick, 2026-09-27: "the campaign must be taken
+     from the agent list"). The list spells every VAS campaign "Matrix VAS - <name>"; the known
+     four fold above, but a new one came through as the whole cell ("Matrix VAS - Rewarded")
+     beside plain "Courtesy". Only the leading prefix goes — the rest is the list's spelling,
+     verbatim. SQL campaign_label() (migration-050) strips the same; change both together. */
+  return s.replace(CAMP_PREFIX,'')||s; };
+const CAMP_PREFIX=/^(matrix\s+)?vas\s*[-–—:|]\s*/i;
 /* THE SAME VOCABULARY THE ROSTER INGEST JUDGES BY (2026-08-28). campOf knew that a Campaign
    cell reading exactly "VT" is Vehicle Tracking; the ingest's off-campaign guard did not — it
    tested track|vehicle|vision and nothing else. So all 46 VT agents were pushed off the sheet
@@ -910,12 +916,40 @@ const CAMPS=MTD_RULES.reportedCampaigns.slice();
    first; any other campaign the current Agent List names (never VT — the tracker is
    reported elsewhere) is appended so it gets its own section, tab, pivot and export
    like the rest. Mutated in place so the thirty-odd readers of CAMPS keep working.
-   Called at the top of every buildModel; returns the extras so the model can name them. */
-function refreshCamps(){
+   Called at the top of every buildModel; returns the extras so the model can name them.
+   …AND ONLY WHILE A LIST CARRIES IT (Nick, 2026-09-27: "if there is a new campaign in the next
+   agent list and the old ones are not in the new one it must be removed"). A campaign is
+   reported for a period when the Agent List assigns it to somebody on the current roster in
+   that period — the rule book's three included: the live list has carried no Nesting agent
+   since mid-September, and an empty Nesting section on every tab read as "the upload did
+   nothing". The current month follows the latest list alone (recordOrgList rewrites the
+   whole month), so a dropped campaign vanishes and its movers' figures go with them to their
+   new campaign; a past month still shows what that month's lists assigned. With no roster at
+   all (a fresh browser) the rule book's list stands, as before. */
+function refreshCamps(range){
   const base=MTD_RULES.reportedCampaigns.slice();
-  const extra=[...new Set(((typeof S!=='undefined'&&S&&S.roster)||[]).map(a=>a.campaign))]
-    .filter(c=>c&&c!=='VT'&&!base.includes(c)).sort();
-  CAMPS.length=0; CAMPS.push(...base,...extra);
+  const roster=((typeof S!=='undefined'&&S&&S.roster)||[]);
+  /* through campOf, as the fact loop does: a roster adopted from the record before migration-050
+     still carries "Matrix VAS - X", and a CAMPS key the facts never use drops every row */
+  const carried=new Set();
+  for(const a of roster){
+    // an agent the fact loop never reports (spec §5 exclusion list) cannot keep a campaign on screen
+    if(S.settings&&S.settings.applyExclusions!==false&&MTD_RULES.excludeAgents[a.code]) continue;
+    if(!range||!range.from){ if(a.campaign) carried.add(campOf(a.campaign)); continue; }
+    const hist=(S.orgHist&&S.orgHist[a.code])||[];
+    if(!hist.length){ if(a.campaign) carried.add(campOf(a.campaign)); continue; }
+    let inForce=hist[0];                             // before the first observation: orgAt's answer
+    for(const s of hist){
+      if(s.d<=range.from) inForce=s;
+      else if(s.d<=range.to){ if(s.campaign) carried.add(campOf(s.campaign)); }
+      else break;
+    }
+    if(inForce&&inForce.campaign) carried.add(campOf(inForce.campaign));
+  }
+  carried.delete('VT'); carried.delete('');
+  const kept=carried.size?base.filter(c=>carried.has(c)):base;
+  const extra=[...carried].filter(c=>!base.includes(c)).sort();
+  CAMPS.length=0; CAMPS.push(...kept,...extra);
   return extra;
 }
 const CAMPLAB={Courtesy:'Matrix Courtesy',Cuddle:'Matrix Cuddle',Nesting:'Nesting',VT:'Matrix Tracker'};
@@ -1727,6 +1761,11 @@ function recordOrg(code,d,val,src){
   if(!seg.tl&&!seg.campaign) return false;          // nothing to attribute — don't record a blank
   const list=S.orgHist[code]=S.orgHist[code]||[];
   const at=list.findIndex(s=>s.d===d);
+  /* THE LIST'S OWN ENTRY IS NEVER OVERWRITTEN BY ANOTHER SOURCE (2026-09-27, verify-new-campaign
+     §10): a new starter's first list segment lands on the list's own date, and a tracker daily
+     sheet for that same date replaced it in place — leaving listSegAt nothing to read, so the
+     tracker's campaign and team leader won the day after all. */
+  if(at>=0&&/agent-list/.test(list[at].src||'')&&!/agent-list/.test(seg.src)) return false;
   let moved=false;
   /* THE PLACEHOLDER RULE CUTS BOTH WAYS (review, 2026-08-26). A "TBC"/blank TL is
      the ABSENCE of an assignment — so it must never REPLACE or OPEN OVER a real
@@ -1828,6 +1867,25 @@ function orgAt(code,d){
   for(const s of list){ if(s.d<=d) cur=s; else break; }
   return cur;
 }
+/* CAMPAIGN AND TEAM LEADER ARE THE AGENT LIST'S (Nick, 2026-09-27: "the campaign must be taken
+   from the agent list … always place the agents in the correct campaigns as well as their team
+   leaders"). What the most recent LIST in force on day d said about this agent — the list's
+   segments (src 'agent-list', written by recordOrgList) only, so a tracker daily sheet's
+   Campaign or Team Leader cell can no longer outvote the list for a day the list covers.
+   recordOrgList has already applied the placeholder rules (a TBC row never erases a real
+   leader), so a provisional leader here means the list genuinely has none yet and the older
+   sources may answer. '' before the first list that named the agent: those days keep the old
+   order (tracker row, then history). */
+function listSegAt(code,d){
+  const list=S.orgHist&&S.orgHist[code];
+  let c='',tl='';
+  if(list) for(const s of list){ if(s.d>d) break;
+    if(!/agent-list/.test(s.src||'')) continue;
+    if(s.campaign) c=s.campaign;
+    tl=provisionalTL(s.tl)?'':s.tl; }
+  return {campaign:c,tl};
+}
+const listCampAt=(code,d)=>listSegAt(code,d).campaign;
 /* THE AGENT LIST WINS THE WHOLE CURRENT MONTH (Nick, 2026-08-27 — the third time: "when
    the agent list is updating, it needs to update all the time"). The list is a CORRECTION
    of the current month, not an event inside it: when a new list moves an agent's team
@@ -3663,7 +3721,19 @@ function rebuild(){
   const r=periodRange();
   M=r?buildModel(r, r.from+'|'+r.to):null;
   const pr=prevRange();
-  MP=pr?buildModel(pr, pr.from+'|'+pr.to):null;
+  /* THE COMPARISON PERIOD KEEPS ITS OWN CAMPAIGNS (2026-09-27). MP is modelled on what the lists
+     carried in ITS period plus every campaign on screen now (withCamps) — so last month's Nesting
+     still counts in last month's totals after this month's list dropped it, and MP still has a
+     key for a campaign that is new this month. CAMPS is then put back: it is what pages render. */
+  const campsNow=CAMPS.slice();
+  MP=pr?buildModel(pr, pr.from+'|'+pr.to, {withCamps:campsNow}):null;
+  CAMPS.length=0; CAMPS.push(...campsNow);
+  /* a header filter left on a campaign the list no longer carries would show an empty app —
+     cleared, and SAID, so it never reads as "my filter didn't stick" */
+  if(S.ui&&S.ui.camp&&S.ui.camp!=='VT'&&!CAMPS.includes(S.ui.camp)){
+    const was=S.ui.camp; S.ui.camp=''; try{ saveUI(); }catch(e){}
+    setTimeout(()=>{ try{ toast('Campaign filter cleared: "'+was+'" is not on the Agent List for this period'); }catch(e){} },0);
+  }
   VCHK=M?validateMTD(M):null;      // rule checks run on every rebuild, so every upload is checked
   /* THE LIST MUST HAVE TAKEN EFFECT — checked on every build (Nick, 2026-08-27: "everytime
      the agent list is uploaded data must change"). When the modelled period is the CURRENT
@@ -3901,10 +3971,18 @@ function validateMTD(m){
 
   /* Campaigns deliberately left out of this dashboard. Reported every build, with the sales
      and GWP they take with them, so "the totals look light" always has an answer on screen. */
-  { const off=Object.entries(m.offCampaign||{});
-    if(off.length) out.push({id:'campaign',sev:'info',ok:true,
-      msg:'not reported on: '+off.map(([c,v])=>`${c} (${v.agents} agent${v.agents===1?'':'s'}, ${v.sales} sale${v.sales===1?'':'s'}${v.gwp?', '+fmtR(v.gwp):''})`).join('; ')
-        +' — excluded by the reported-campaigns rule, not missing data'}); }
+  { const all=Object.entries(m.offCampaign||{});
+    const say=off=>off.map(([c,v])=>`${c} (${v.agents} agent${v.agents===1?'':'s'}, ${v.sales} sale${v.sales===1?'':'s'}${v.gwp?', '+fmtR(v.gwp):''})`).join('; ');
+    /* VT is left out by design (tracker units, reported elsewhere) — information. Anything ELSE
+       carrying sales here is a campaign the Agent List no longer carries for this period while
+       its facts still exist (2026-09-27: campaigns follow the list), so the totals really are
+       lighter than the floor's — a WARNING, never a green pass that reads as good news. */
+    const vt=all.filter(([c])=>c==='VT'), other=all.filter(([c])=>c!=='VT');
+    if(vt.length) out.push({id:'campaign',sev:'info',ok:true,
+      msg:'not reported on: '+say(vt)+' — excluded by the reported-campaigns rule, not missing data'});
+    if(other.length) out.push({id:'campaign-dropped',sev:'warn',ok:!other.some(([,v])=>v.sales||v.gwp),
+      msg:'not on the Agent List for this period, so left out of every total: '+say(other)
+        +' — upload the list that carries them, or these figures stay out'}); }
 
   // The exclusions are applied, so they must be visible: a head count short by three with no
   // explanation is exactly the kind of silent hole the spec keeps warning about.
@@ -3976,10 +4054,14 @@ function expectedReach(nowMs,saturday){
   return d.toISOString().slice(0,10);
 }
 const REACH_SATURDAY={sales:true,calls:true,attendance:false,qa:false};
-function buildModel(range, periodKey){
+function buildModel(range, periodKey, opts){
   let M_refsAreTotals=false;
   if(!range) return null;
-  const newCampaigns=refreshCamps();    // CAMPS = rule book + whatever else the roster names
+  let newCampaigns=refreshCamps(range);   // CAMPS = the campaigns the Agent List carries in this period
+  if(opts&&opts.withCamps){                // the comparison model: its own campaigns + those on screen
+    for(const c of opts.withCamps) if(!CAMPS.includes(c)) CAMPS.push(c);
+    newCampaigns=CAMPS.filter(c=>!MTD_RULES.reportedCampaigns.includes(c));
+  }
   const dates=[...allDataDates()].filter(d=>d>=range.from&&d<=range.to).sort();
   /* DIALLING DAYS ARE THE REGISTER'S DAYS (spec §1), not every date some file happens to
      carry. 01 Aug 2026 is the case that makes the difference: a Saturday with four sales
@@ -4150,9 +4232,11 @@ function buildModel(range, periodKey){
          is what used to move an agent's whole sales history to their new team leader the
          moment a fresh Agent List landed. Order: the day's own tracker row (it states the
          team leader for that date), then the effective-dated history, then the live roster
-         as the last resort for an agent we have never observed being assigned. */
+         as the last resort for an agent we have never observed being assigned.
+         The CAMPAIGN is the Agent List's wherever a list covers the day (listCampAt) — the
+         tracker row still names the team leader, but never the campaign over the list. */
       const oh=orgAt(code,d);
-      const camp=campOf((tr&&tr.campaign)||(oh&&oh.campaign)||(a&&a.campaign));
+      const camp=campOf(listCampAt(code,d)||(tr&&tr.campaign)||(oh&&oh.campaign)||(a&&a.campaign));
       if(!CAMPS.includes(camp)){
         // not a reported campaign — tally what is being left out, then drop the row
         const sd0=salesBy[d][code];
@@ -4251,7 +4335,7 @@ function buildModel(range, periodKey){
          so the row was skipped and its cancellation vanished from every total. */
       if(!emp&&!act&&!sales&&!talk&&!opt&&!refDay&&!canc) continue;   // a referral (or a cancellation) alone is still a fact
       facts.push({date:d,week:weekOf[d],code,
-        tl:(tr?.tl)||(oh&&oh.tl)||a?.tl||'',
+        tl:listSegAt(code,d).tl||(tr?.tl)||(oh&&oh.tl)||a?.tl||'',   // the list's leader first (listSegAt)
         tlNow:a?.tl||'',                        // current owner, for the "who reports to whom today" views
         campaign:camp,
         agent:a?.name||tr?.agent||code,
@@ -4335,7 +4419,7 @@ function buildModel(range, periodKey){
          that and would have reported it as an error on legitimate data. Where a day row
          already exists for this date it is the answer; otherwise fall back to the history. */
       const dayRow=(perAgent[rc]||[]).find(f=>!f.rangeAgg&&f.date===last);
-      const rcCamp=dayRow?dayRow.campaign:campOf((orgAt(rc,last)||{}).campaign||a.campaign);
+      const rcCamp=dayRow?dayRow.campaign:campOf(listCampAt(rc,last)||(orgAt(rc,last)||{}).campaign||a.campaign);
       if(!CAMPS.includes(rcCamp)){
         const t=offCampaign[rcCamp]=offCampaign[rcCamp]||{agents:new Set(),sales:0,gwp:0};
         t.agents.add(rc);
@@ -4357,7 +4441,7 @@ function buildModel(range, periodKey){
       overlap.forEach(d=>diallerDays[rc].add(d));
       // attributed to the org as it stood on the day the range is booked against, not today's
       const oh=orgAt(rc,last);
-      facts.push({date:last,week:weekOf[last]||1,code:rc,tl:(oh&&oh.tl)||a.tl||'',tlNow:a.tl||'',
+      facts.push({date:last,week:weekOf[last]||1,code:rc,tl:listSegAt(rc,last).tl||(oh&&oh.tl)||a.tl||'',tlNow:a.tl||'',
         campaign:rcCamp,                                          // already resolved + gated above
         agent:a.name||rc,tenure:(oh&&oh.tenure)||a.tenure||'',emp:0,act:0,target:0,sales:0,gwp:0,gwpT:0,
         talk,opt:Math.round((r.opt||0)*share),ref:0,canc:0,provisional:partial,calls,ans:calls,
@@ -4667,8 +4751,12 @@ function pctPill(x,warnAt=0.75){
   const cls=x>=S.settings.onTarget?'pgood':(x>=warnAt?'pwarn':'pcrit');
   return `<span class="pill ${cls}">${fmtPct(x)}</span>`;
 }
-const campChip=c=>`<span class="campchip"><i style="background:var(--${(c||'').toLowerCase()})"></i>${c}</span>`;
 const CAMPC={Cuddle:'var(--cuddle)',Courtesy:'var(--courtesy)',Nesting:'var(--nesting)',VT:'var(--vt)'};
+/* A campaign the Agent List created has no palette token of its own; it gets a stable colour
+   picked from its name (same name → same colour on every page and every reload), never blank. */
+const CAMP_EXTRA_COLOURS=['#0E7490','#BE185D','#4D7C0F','#9333EA','#C2410C','#0369A1'];
+const campColor=c=>CAMPC[c]||CAMP_EXTRA_COLOURS[[...String(c||'')].reduce((h,ch)=>(h*31+ch.charCodeAt(0))>>>0,7)%CAMP_EXTRA_COLOURS.length];
+const campChip=c=>`<span class="campchip"><i style="background:${campColor(c)}"></i>${esc(c)}</span>`;
 
 /* ---------- daily series builders ---------- */
 function seriesBy(fn,filter){ // -> {dates, values[]}
@@ -4794,22 +4882,28 @@ function wireLine(id,cfg){
   });
   hit.addEventListener('mouseleave',()=>{tip.style.display='none';cross.style.display='none';});
 }
-// stacked daily bars (two campaigns)
+/* stacked daily bars — one layer per reported campaign (CAMPS). It drew Courtesy and Cuddle
+   only, so Nesting and every list-created campaign were missing from the Dashboard's "Daily
+   sales by campaign" while their numbers were right everywhere else (2026-09-27). */
 function stackChart(box){
   const days=M.dates;
   if(!days.length) return '<div class="empty">No data</div>';
   const W=640,h=250,P={l:40,r:12,t:12,b:30};
-  const vals=days.map(d=>M.dailyByDate[d]||Object.fromEntries(CAMPS.map(c=>[c,0])));
-  const max=Math.max(10,...vals.map(v=>v.Cuddle+v.Courtesy+(v.VT||0)))*1.05;
+  const camps=CAMPS.slice();
+  const vals=days.map(d=>M.dailyByDate[d]||{});
+  const num=(v,c)=>+(v&&v[c])||0;
+  const tot=v=>camps.reduce((s,c)=>s+num(v,c),0);
+  const max=Math.max(10,...vals.map(tot))*1.05;
   const bw=Math.min(26,(W-P.l-P.r)/days.length-3);
   const x=i=>P.l+(W-P.l-P.r)*(i+0.5)/days.length;
   const y=v=>P.t+(h-P.t-P.b)*(1-v/max);
   let bars='';
   vals.forEach((v,i)=>{
-    const xc=x(i)-bw/2, yCo=y(v.Courtesy), yCu=y(v.Courtesy+v.Cuddle);
-    bars+=`<g class="dbar" data-i="${i}">
-      <rect class="bar" style="animation-delay:${i*18}ms" x="${xc}" y="${yCo}" width="${bw}" height="${Math.max(0,h-P.b-yCo)}" fill="var(--courtesy)" rx="3"/>
-      <rect class="bar" style="animation-delay:${i*18}ms" x="${xc}" y="${yCu}" width="${bw}" height="${Math.max(0,yCo-yCu-(v.Cuddle?2:0))}" fill="var(--cuddle)" rx="3"/>
+    const xc=x(i)-bw/2; let base=0, layers='';
+    camps.forEach(c=>{ const n=num(v,c); if(!n) return;
+      const y0=y(base), y1=y(base+n); base+=n;
+      layers+=`<rect class="bar" style="animation-delay:${i*18}ms" x="${xc}" y="${y1}" width="${bw}" height="${Math.max(0,y0-y1-(base>n?2:0))}" fill="${campColor(c)}" rx="3"/>`; });
+    bars+=`<g class="dbar" data-i="${i}">${layers}
       <rect x="${xc-2}" y="${P.t}" width="${bw+4}" height="${h-P.t-P.b}" fill="transparent"/></g>`;
   });
   const ticks=[0,.25,.5,.75,1].map(f=>Math.round(max*f));
@@ -4823,15 +4917,14 @@ function stackChart(box){
     const tip=bx.querySelector('.tip');
     bx.querySelectorAll('.dbar').forEach(g=>{
       g.addEventListener('mousemove',e=>{
-        const i=+g.dataset.i,d=days[i],v=M.dailyByDate[d];
+        const i=+g.dataset.i,d=days[i],v=M.dailyByDate[d]||{};
         const r=bx.getBoundingClientRect();
         tip.style.display='block';
         tip.style.left=Math.min(r.width-160,e.clientX-r.left+12)+'px';
         tip.style.top=(e.clientY-r.top-12)+'px';
-        tip.innerHTML=`<div class="t">${fmtDay(d)}</div>
-          <div class="r"><span><i style="background:var(--cuddle)"></i>Cuddle</span><b>${v.Cuddle}</b></div>
-          <div class="r"><span><i style="background:var(--courtesy)"></i>Courtesy</span><b>${v.Courtesy}</b></div>
-          <div class="r"><span>Total</span><b>${v.Cuddle+v.Courtesy}</b></div>`;
+        tip.innerHTML=`<div class="t">${fmtDay(d)}</div>`
+          +camps.map(c=>`<div class="r"><span><i style="background:${campColor(c)}"></i>${esc(c)}</span><b>${num(v,c)}</b></div>`).join('')
+          +`<div class="r"><span>Total</span><b>${tot(v)}</b></div>`;
       });
       g.addEventListener('mouseleave',()=>tip.style.display='none');
     });
@@ -4839,7 +4932,7 @@ function stackChart(box){
   return `<div class="chartbox draw" id="${id}"><svg viewBox="0 0 ${W} ${h}">${grid}${bars}
     <line x1="${P.l}" x2="${W-P.r}" y1="${h-P.b}" y2="${h-P.b}" stroke="var(--stroke)"/>${xl}</svg>
     <div class="tip"></div>
-    <div class="legend"><span><i style="background:var(--cuddle)"></i>Cuddle</span><span><i style="background:var(--courtesy)"></i>Courtesy</span></div></div>`;
+    <div class="legend">${camps.map(c=>`<span><i style="background:${campColor(c)}"></i>${esc(c)}</span>`).join('')}</div></div>`;
 }
 function hbarChart(entries,{money=false,pct=true,target=null}={}){
   if(!entries.length) return '<div class="empty">No data</div>';
@@ -4886,7 +4979,7 @@ function ringSVG(v,{size=86,color='var(--accent)',label='score'}={}){
 }
 
 /* ---------- analytics: score, risk, trend, insights, coaching ---------- */
-function primaryAgg(code){ if(!M)return null; const pc=M.primaryCamp[code]; return (M.mtdCC[pc]||{})[code]||M.mtdCC.Cuddle[code]||M.mtdCC.Courtesy[code]; }
+function primaryAgg(code){ if(!M)return null; const pc=M.primaryCamp[code]; return (M.mtdCC[pc]||{})[code]||CAMPS.map(c=>(M.mtdCC[c]||{})[code]).find(Boolean); }
 /* The score DECOMPOSED, so Agent Analytics can show each driver's real points
    (Nick, 2026-08-26: "the data must come from the vas analytics"). perfScore is
    built FROM these parts — one formula, one place, nothing to drift. */
@@ -5509,8 +5602,9 @@ function buildVariance(range){
     for(const code of codes){
       const a=IDX.byCode[code]||{};
       const org=orgAt(code,d);                       // history, never the live snapshot
-      const camp=campOf((org&&org.campaign)||a.campaign);
-      const tl=(org&&org.tl)||a.tl||'';
+      const ls=listSegAt(code,d);                     // the list's word first, as in the fact loop
+      const camp=campOf(ls.campaign||(org&&org.campaign)||a.campaign);
+      const tl=ls.tl||(org&&org.tl)||a.tl||'';
       const m={name:a.sf||a.name||code};
       const sfr=sfDay?sfDay[code]:null, bdr=bdDay?bdDay[code]:null;
       // a covered day where the agent is absent from that system is a TRUE ZERO on that
@@ -5732,7 +5826,7 @@ function renderTop(){
     ${preset==='custom'?`<div class="ctl"><input type="date" id="pFrom" value="${S.ui.from||''}"><span class="lab">→</span><input type="date" id="pTo" value="${S.ui.to||''}"></div>`:''}
     ${preset!=='custom'?`<div class="ctl" title="Stop the period on this day. Use it to line the dashboard up with a tracker that was cut earlier — the month keeps its shape, it just ends where you say."><span class="lab">as at</span><input type="date" id="pAsAt" value="${S.ui.asAt||''}">${S.ui.asAt?`<button class="btn ghost" id="pAsAtClear" style="padding:2px 8px" title="show every day again">✕</button>`:''}</div>`:''}
     <div class="ctl"><span class="lab">Campaign</span><select id="fCampG">
-      <option value="">All</option>${CAMPS.map(c=>`<option value="${c}" ${S.ui.camp===c?'selected':''}>${esc(CAMPLAB[c]||c)}</option>`).join('')}</select></div>
+      <option value="">All</option>${CAMPS.map(c=>`<option value="${esc(c)}" ${S.ui.camp===c?'selected':''}>${esc(CAMPLAB[c]||c)}</option>`).join('')}</select></div>
     <div class="ctl"><span class="lab">Team</span><select id="fTeamG"><option value="">All</option>
       ${tls.map(t=>`<option ${S.ui.team===t?'selected':''}>${esc(t)}</option>`).join('')}</select></div>
     <button class="btn primary" id="btnExportAll" style="margin-left:auto">${I.download}<span>Export report</span></button>`;
@@ -6030,7 +6124,7 @@ PAGES.dashboard=()=>{
 
   const ins=genInsights();
   const tlEntries=Object.entries(M.tlAgg).map(([k,o])=>{const [camp,tl]=k.split('|');
-    return {label:(tl||'—')+(Object.keys(M.tlAgg).filter(x=>x.endsWith('|'+tl)).length>1?' · '+camp:''),v:o.pctT||0,color:CAMPC[camp]};})
+    return {label:(tl||'—')+(Object.keys(M.tlAgg).filter(x=>x.endsWith('|'+tl)).length>1?' · '+camp:''),v:o.pctT||0,color:campColor(camp)};})
     .sort((a,b)=>b.v-a.v);
   const hist=monthlyHistory();
   const qa=qaSeries(null);
@@ -6423,7 +6517,7 @@ PAGES.mtd=()=>{
      to date"). Campaign: the global filter picks the chip, so the chips read as the filter
      does. Team: the section and the team-leader columns narrow to that leader. */
   const camp0=S.ui.camp&&CAMPS.includes(S.ui.camp)?S.ui.camp:null;
-  const sub=camp0||([...CAMPS,'Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:'Cuddle');
+  const sub=camp0||([...CAMPS,'Team Leaders'].includes(S.ui.mtdSub)?S.ui.mtdSub:(CAMPS[0]||'Cuddle'));
   const team=S.ui.team||null;
   /* ONE BLOCK PER REPORTED CAMPAIGN (Nick, 2026-09-11: "the month to date for the team leader
      columns are missing"). This used to render Courtesy, Cuddle and VT by name, so the Nesting
@@ -6462,7 +6556,7 @@ PAGES.weekly=()=>{
   /* THE HEADER FILTERS APPLY HERE TOO (Nick, 2026-09-07: "it must be fixed for weekly and daily").
      Campaign picks the chip; Team narrows every week's table to that leader. */
   const camp0=S.ui.camp&&CAMPS.includes(S.ui.camp)?S.ui.camp:null;
-  const camp=camp0||(CAMPS.includes(S.ui.wtdCamp)?S.ui.wtdCamp:'Cuddle');
+  const camp=camp0||(CAMPS.includes(S.ui.wtdCamp)?S.ui.wtdCamp:(CAMPS[0]||'Cuddle'));
   const team=S.ui.team||null;
   return `
   ${diallerWarning()}<div class="page-head"><h2>Weekly reports</h2><div class="sub">weeks run Monday–Sunday inside the period</div></div>
