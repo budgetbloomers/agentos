@@ -41,6 +41,23 @@ const num = (v) => { if (v == null || v === '') return null; const n = Number(St
 const int = (v) => { const n = num(v); return n == null ? null : Math.round(n); };
 const day = (v) => { const t = s(v); if (!t) return null; const m = /^(\d{4}-\d{2}-\d{2})/.exec(t); return m ? m[1] : null; };
 const ts = (v) => { const t = s(v); if (!t) return null; const d = new Date(t.replace(' ', 'T')); return isNaN(d) ? null : d.toISOString(); };
+/* VICI ONLY — migration-051. ts() above depends on the RUNNING PROCESS's local timezone for any
+   naive (no offset/Z) date-time string: ECMA-262 says a date-time string with no timezone is LOCAL
+   time. That is exactly how B0351/B0355/B0356 landed every ViciDial call up to 2h off true SAST —
+   the loading machine's clock, not Africa/Johannesburg, decided the instant. ViciDial's call_date is
+   always naive SAST (UTC+2, no DST) — never new Date() it. tsSast() computes the UTC instant with a
+   hard-coded offset so no machine's timezone can move a call again. Other sources keep ts(): unaudited
+   here, and SF_OPEN_CASES/SF_CLOSED_CASES pass day-only strings through it, which ts() handles safely
+   (no time component for the local-time rule to apply to). A string that already carries an explicit
+   offset or 'Z' is unambiguous and falls back to ts(). */
+const tsSast = (v) => {
+  const t = s(v); if (!t) return null;
+  if (/(Z|[+-]\d{2}:?\d{2})$/.test(t)) return ts(v);
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/.exec(t);
+  if (!m) return ts(v);
+  const [, Y, Mo, D, h, mi, se] = m.map(Number);
+  return new Date(Date.UTC(Y, Mo - 1, D, h, mi, se) - 2 * 3600 * 1000).toISOString();
+};
 /* An account number parsed as a float in some exports — "10299052.0" is the same account
    as "10299052", and the closed-case store held both for 17 445 cases. */
 const idish = (v) => { const t = s(v); return t == null ? null : t.replace(/\.0+$/, ''); };
@@ -101,7 +118,7 @@ const MAP = {
     table: 'vici_calls', conflict: '(call_date, agent_login, lead_id, status)',
     /* call_date is the FULL timestamp — see migration-016. Keyed on the day instead, 2 016
        real calls collapse and their billable seconds go with them. */
-    row: (r) => ({ call_date: ts(r.call_dt), call_day: day(r._d) || day(r.call_dt), agent_login: s(r.user_raw) || '',
+    row: (r) => ({ call_date: tsSast(r.call_dt), call_day: day(r._d) || day(r.call_dt), agent_login: s(r.user_raw) || '',
       lead_id: s(r.lead_id) || '', status: s(r.status) || '', full_name: s(r.full_name), user_group: s(r.user_group),
       campaign_id: s(r.campaign_id), length_in_sec: int(r.length_in_sec) || 0, status_name: s(r.status_name),
       employee_code: s(r.user_cb), batch_id: s(r._batch) }),

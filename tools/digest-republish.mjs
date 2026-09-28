@@ -147,6 +147,9 @@ console.log(`digest built by the deployed engine: ${p.agents.length} agents · $
 if (!p.agents.length) { console.error('empty digest — refusing.'); process.exit(1); }
 if (!withDays || !withScore) { console.error('the new fields are missing — is site/pulse the current build?'); process.exit(1); }
 
+/* --out <file>: keep the built digest on disk, so a guard (verify-composite-recompute.mjs <file>) can
+   prove a new build's numbers BEFORE anything is published (2026-09-28) */
+{ const i = process.argv.indexOf('--out'); if (i > 0 && process.argv[i + 1]) { fs.writeFileSync(process.argv[i + 1], payload); console.log('digest written to ' + process.argv[i + 1]); } }
 if (!APPLY) { console.log('\ndry run — nothing written. Re-run with --apply to publish.'); process.exit(0); }
 
 /* ---- publish exactly where the Worker reads (the backfill tool's write, verbatim) ---- */

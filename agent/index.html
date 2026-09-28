@@ -4158,8 +4158,10 @@ function cmCmdPage(c){
     +kpi('💰','var(--green-soft)','Total GWP',R(k.gwp.v),'',
       'of '+R(k.gwp.target)+' month target'+(k.gwp.projected!=null?' · projected '+R(k.gwp.projected):''))
     +kpi('📐','var(--blue-soft)','Average GWP per Sale',(k.aveG.v==null?'—':R(k.aveG.v)),'',
-      'reference R'+num(k.aveG.ref)+' a sale',
-      k.aveG.v!=null?'<span class="delta '+(k.aveG.v>=k.aveG.ref?'up':'down')+'">'+(k.aveG.v>=k.aveG.ref?'+':'')+'R'+num(Math.round(k.aveG.v-k.aveG.ref))+'</span>':'')
+      /* ref is the ex-VAT floor (R86,08) since 2026-09-28 — aveG is ex VAT, so the two now compare
+         like for like; refIncl (R99) is only the label's second figure */
+      'floor '+R(k.aveG.ref,2)+' ex VAT'+(k.aveG.refIncl?' (R'+num(k.aveG.refIncl)+' incl)':'')+' a sale',
+      k.aveG.v!=null?'<span class="delta '+(k.aveG.v>=k.aveG.ref?'up':'down')+'">'+(k.aveG.v>=k.aveG.ref?'+':'−')+R(Math.abs(k.aveG.v-k.aveG.ref),2)+'</span>':'')
     +(k.conv==null?'':kpi('🔁',(k.conv.v>=k.conv.target?'var(--green-soft)':'var(--amber-soft)'),'Conversion Rate',
       pct(k.conv.v,1),'','sales ÷ '+num(k.conv.leads)+' unique leads · target '+pct(k.conv.target,0),
       '<span class="delta '+(k.conv.v>=k.conv.target?'up':'down')+'">'+pct(k.conv.v,1)+' of '+pct(k.conv.target,0)+'</span>'))

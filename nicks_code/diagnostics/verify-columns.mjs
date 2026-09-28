@@ -39,11 +39,15 @@ const got=await pg.evaluate(()=>{
   return t?[...t.querySelectorAll('thead th')].map(h=>h.textContent.trim()).filter(Boolean):[];
 });
 console.log('on screen       :', JSON.stringify(got));
-const missing=want.filter(h=>!got.includes(h));
+/* a unit suffix is not a missing column: "Ave Talk Time (min)" since 7d1cad7 (8 Sep, Nick —
+   average talk reads in minutes per employed shift); the August template predates the label */
+const bare=h=>String(h).replace(/\s*\((min|mins|minutes)\)\s*$/i,'').trim();
+const gotB=got.map(bare);
+const missing=want.filter(h=>!gotB.includes(bare(h)));
 console.log('missing from screen:', JSON.stringify(missing));
 ok('every workbook column heading appears on screen', missing.length===0, missing.join(' | '));
 // and in the same order
-const idx=want.map(h=>got.indexOf(h));
+const idx=want.map(h=>gotB.indexOf(bare(h)));
 const ordered=idx.every((v,i)=>i===0||v>idx[i-1]);
 ok('and in the same left-to-right order', ordered, JSON.stringify(idx));
 ok('no page errors', errors.length===0, errors.slice(0,3).join(' | '));

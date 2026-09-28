@@ -99,6 +99,25 @@ for (const a of rated) {
   ok(id + ': onTarget count', c.onTarget === c.parts.filter((p) => p.onTarget).length);
   const r2 = c.r2a || {}; const tier = R.r2aTiers.find((tt) => tt.tier === r2.tier);
   ok(id + ': compliance tier is a rule-book tier with its own penalty', !!tier && r2.penalty === tier.penalty, JSON.stringify(r2).slice(0, 120));
+  /* THE TIER IS THE MORE SEVERE BAND (non-negotiable 3), decided by SEVERITY — the rule book lists
+     r2aTiers most severe first. It used to be decided by penalty, and with every penalty 0 since
+     2026-09-11 the count band always won: 3 fails of 5 audited (60%) read R2A-2, not R2A-3. */
+  if (r2.fails != null) {
+    const inB = (v, lo, hi) => v != null && (lo == null || v >= lo) && (hi == null || v <= hi);
+    const cfr = r2.audited > 0 ? r2.fails / r2.audited * 100 : null;
+    const byC = R.r2aTiers.findIndex((tt) => inB(r2.fails, tt.failsMin, tt.failsMax));
+    const byR = (r2.fails && cfr != null) ? R.r2aTiers.findIndex((tt) => tt.tier !== 'Tier 0' && inB(cfr, tt.cfrMin, tt.cfrMax)) : -1;
+    /* severity by the rule book's `level` (1 = worst; 0 = Tier 0, none) — never by list position */
+    const sev = (i) => (+R.r2aTiers[i].level > 0 ? +R.r2aTiers[i].level : 99);
+    const idx = [byC, byR].filter((i) => i >= 0).sort((x, y) => sev(x) - sev(y));
+    const want = idx.length ? R.r2aTiers[idx[0]].tier : 'Tier 0';
+    ok(id + ': compliance tier = the more severe of the count and rate bands', r2.tier === want, r2.tier + ' vs ' + want + ' (' + r2.fails + '/' + r2.audited + ')');
+  }
+  /* GWP A SALE AT THE CENT (composite_rules._calibration.gwpFloorCentBasis): the Worker's value check
+     compares aveG with the floor at the cent, so aveG must be GWP ÷ sales, not whole-rand GWP ÷ sales
+     (CB282: R2 410,24 over 28 sales is R86,08 — it read R86,07 and "Value Issue") */
+  if (+a.sales > 0 && a.gwpEx != null && a.aveG != null)
+    ok(id + ': month GWP a sale is GWP ÷ sales at the cent', near(+a.aveG, Math.round(a.gwpEx / a.sales * 100) / 100, 0.0051), a.aveG + ' vs ' + (a.gwpEx / a.sales));
   /* the period figures the card quotes vs the day rows */
   ok(id + ': period sales = Σ day sales', (+a.sales || 0) === sum(days, 's'), a.sales + ' vs ' + sum(days, 's'));
   ok(id + ': period GWP = Σ day GWP', near(+a.gwpEx || 0, sum(days, 'x'), 0.02), a.gwpEx + ' vs ' + sum(days, 'x'));

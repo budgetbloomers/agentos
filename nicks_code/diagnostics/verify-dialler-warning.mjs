@@ -34,6 +34,9 @@ ok('model flags the working days with no dialler data', noDial.days>0, String(no
 ok('the screen warns instead of silently showing 0:00:00', noDial.banner, 'no banner rendered');
 
 // --- 2. load the dialler: the warning must clear for the covered days
+/* August's dialler was CallX, which the intake has refused WHOLE since fe21aff (15 Sep, Nick). This
+   suite tests the coverage warning, not the cutover, so it loads August's file as August did. */
+await pg.evaluate(()=>{ MTD_RULES.callxRetired=null; });
 await pg.setInputFiles('#fileInput',[j(UP,'Call X Call report - 3 - 5.xlsx')],{timeout:180000});
 await settle(6);
 await pg.evaluate(()=>{go('mtd')}); await pg.waitForTimeout(1200);
@@ -93,7 +96,9 @@ for (const [tab, label] of [['weekly','Weekly'],['daily','Daily'],['mtd','MTD']]
   const empty = /No data for .* yet|Nothing uploaded yet/i.test(r);
   if (empty) console.log('  --   ' + label + ' page is in its empty state, warning not applicable');
   else ok(label + ' page carries the dialler-coverage warning',
-    /Talk time is incomplete|No dialler data for/i.test(r), r.slice(0, 90));
+    /* since 71ac7e9 (17 Sep) a period with every dialling day loaded titles the same card "Talk time
+       notes for this period" — here the days ARE covered and the card carries the ViciDial-range note */
+    /Talk time is incomplete|Talk time notes for this period|No dialler data for/i.test(r), r.slice(0, 90));
 }
 { /* a real zero must survive: dialler covered the agent, they talked for none of it */
   const z = await pg.evaluate(() => {

@@ -107,7 +107,7 @@
    "file_pattern": "Call_X_Call_report_-_D_-_D.xlsx",
    "sheet": "Call Records",
    "retired": "2026-09-01",
-   "retired_note": "The whole floor dials on ViciDial from 1 Sep 2026 (Nick, 2026-09-01: 'there is no longer a need for call x/call records all the agents will be on vicci now'). The upload intake refuses rows dated on/after this date and points at the ViciDial slot; earlier days still load as history corrections. Courtesy/Nesting talk time and dialler-derived Actual Shifts read ViciDial from the cutover — the shift rule itself (talk>0 -> 1) is unchanged, only where the talk comes from. NOTE the talk-time definition changes with the source: CallX billed Billable Seconds (connected leg only), ViciDial bills length_in_sec (ringing included, ~38%, per the 2026-08-13 decision) — September Courtesy talk therefore reads higher than August for the same work.",
+   "retired_note": "The whole floor dials on ViciDial from 1 Sep 2026 (Nick, 2026-09-01: 'there is no longer a need for call x/call records all the agents will be on vicci now'). The upload intake refuses rows dated on/after this date and points at the ViciDial slot. SINCE 2026-09-15 (Nick: 'remove all records because it all comes from vici dial now not call x', commit fe21aff) a Call Records file is refused WHOLE, whatever its dates — earlier days no longer load as history corrections; August days already stored are untouched, but August Courtesy talk can no longer be rebuilt from the CallX source (verify-mtd-values switches the cutover off to reconcile August). Courtesy/Nesting talk time and dialler-derived Actual Shifts read ViciDial from the cutover — the shift rule itself (talk>0 -> 1) is unchanged, only where the talk comes from. NOTE the talk-time definition changes with the source: CallX billed Billable Seconds (connected leg only), ViciDial bills length_in_sec (ringing included, ~38%, per the 2026-08-13 decision) — September Courtesy talk therefore reads higher than August for the same work.",
    "feeds": [
     "August.N (Talk Time) for Courtesy and Nesting"
    ],
@@ -292,6 +292,7 @@
    "CB208": "CB220",
    "CB214": "CB227",
    "CB215": "CB228",
+   "CB233": "CB413",
    "_scope_warning": "Apply ONLY to qa_evaluations rows. CB207 is also the Vici ID for team leader Renolan Pillay - never apply this map to vici_cuddle."
   },
   "dialler_label_corrections": {
@@ -1820,6 +1821,22 @@
   "Nesting"
  ],
  "_changes": [
+  {
+   "date": "2026-09-28",
+   "by": "audit",
+   "key": "qa code_corrections.CB233",
+   "from": null,
+   "to": "CB413",
+   "why": "Delano Rajagopal re-issued CB413 (list 17 Sep); QA still files him as CB-233 — he read no QA for September"
+  },
+  {
+   "date": "2026-09-15",
+   "by": "Nick",
+   "key": "sources.call_x_call.retired_note",
+   "from": "rows before the cutover still load as history corrections",
+   "to": "a Call Records file is refused whole, whatever its dates",
+   "why": "'remove all records because it all comes from vici dial now not call x' — recorded 2026-09-28 (the app changed in fe21aff, the rule book had not)"
+  },
   {
    "date": "2026-09-01",
    "by": "Nick",

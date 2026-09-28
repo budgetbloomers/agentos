@@ -79,6 +79,12 @@ await page.waitForFunction(() => window.__mtd && window.__mtd.state(), null, { t
 const FILES = ['Matrix - Agent List.xlsx', 'attendance_2026-08-01_to_2026-08-06.csv', 'BI Active - 05.08.xlsx',
   'BI Inactive - 05.08.xlsx', 'Call X Call report - 3 - 5.xlsx', 'Vici - Cuddle Agents - 3 - 5 Aug.csv',
   'evaluations-full-export-2026-08-06.csv'].map(f => j(UP, f));
+/* THE CALLX CUTOVER IS SWITCHED OFF FOR THIS RECONCILIATION (2026-09-28). Since fe21aff (15 Sep,
+   Nick: "remove all records because it all comes from vici dial now not call x") the intake refuses
+   a Call Records file WHOLE, whatever its dates — so August's Courtesy talk, which only ever came
+   from CallX, can no longer be rebuilt from source (stored August days are untouched). This suite
+   proves the August ENGINE against the workbook, so it loads the CallX file as August loaded it. */
+await page.evaluate(() => { MTD_RULES.callxRetired = null; });
 console.log('uploading…');
 await page.setInputFiles('#fileInput', FILES, { timeout: 60000 });
 await page.waitForFunction(() => (window.__mtd.state().files || []).length >= 6, null, { timeout: 600000 });
@@ -120,13 +126,12 @@ function tabulate(bk, sn) {
 const num = (o, col) => { const i = o.hdr.indexOf(col); if (i < 0) return null;
   const n = Number(o.r[i]); return Number.isFinite(n) ? n : null; };
 
-/* No aliases needed any more. This used to map the workbook's "Ashnee Kasavani Sankarparsad"
-   onto the app's "Kasavani Snakarparsad", because the app took its display name from the Agent
-   List's `Agent Name` column, which carries that typo. The engine now takes it from `Sales
-   Force` (spec §3) — the column the workbook itself uses, and the string its Cancellations and
-   QA lookups join on — so both sides spell the name the same way and the alias would misdirect.
-   If this map ever needs an entry again, the roster is wrong, not the comparison. */
-const ALIAS = {};
+/* CB156 (2026-09-21, Nick: "the Agent Name is the identity" — 910c4e5, specs/identity-aliases-plan.md).
+   The engine names agents from the list's `Agent Name` again, and the August list spells CB156
+   "Kasavani Snakarparsad" there while the workbook uses the Sales Force spelling. Her numbers still
+   join (both spellings are indexed); only the display name differs, so map the workbook's name onto
+   the app's. */
+const ALIAS = { ashneekasavanisankarparsad: 'kasavanisnakarparsad' };
 
 const EXACT = ['Employed Shifts', 'Actual Shifts', 'Att %', 'Sales Target', 'GWP Target',
   'Sales Achieved', 'GWP Achieved', 'Ave GWP', 'Cancellations'];

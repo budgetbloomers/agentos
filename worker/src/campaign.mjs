@@ -26,7 +26,14 @@
  * (non-negotiable 6). Do not "fix" a null by inventing a number here.
  */
 
+import { gwpFloorEx } from './rules.mjs';   // the floor at the cent Salesforce books — one number, one verdict
+
 const norm = (v) => String(v == null ? '' : v).trim();
+/* GWP A SALE AGAINST ITS FLOOR, LIKE FOR LIKE (scorecard audit, 2026-09-28). The campaign's aveG is
+   EX VAT (the digest's display basis); gwp_ref is the R99 floor INCL VAT. Comparing the two raw put
+   every campaign ~R13 under its reference. `ref` is now the ex-VAT floor the agents' Check 1 uses
+   (R86,08), `refIncl` the incl figure for the label. */
+const aveGKpi = (v, sla) => { const incl = Number(sla && sla.gwp_ref) || 99; return { v, ref: gwpFloorEx(incl), refIncl: incl }; };
 export const campKey = (v) => norm(v).toLowerCase();
 
 /* ---------------------------------------------------------------------------
@@ -468,7 +475,7 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
       sales: { v: c.sales, target: Math.round(c.targetMtd), month: c.target, pct: c.pct },
       gwp: { v: Math.round(c.gwp), target: gwpMonthOv != null ? Math.round(gwpMonthOv) : Math.round(c.gwpT),
         set: gwpMonthOv != null || undefined, projected: c.projGwp == null ? null : Math.round(c.projGwp) },
-      aveG: { v: c.aveG, ref: Number(slaC.gwp_ref) || 99 },
+      aveG: aveGKpi(c.aveG, slaC),
       /* No pitch count exists anywhere in this suite — answered calls are contacts,
          not pitches — so this stays honestly empty rather than borrowing `ans`. */
       pitches: null,
@@ -538,7 +545,7 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
       kpis: {
         sales: { v: c.sales, target: Math.round(c.targetMtd), month: c.target, pct: c.pct },
         gwp: { v: Math.round(c.gwp), target: Math.round(c.gwpT), projected: c.projGwp == null ? null : Math.round(c.projGwp) },
-        aveG: { v: c.aveG, ref: Number(sla.gwp_ref) || 99 },
+        aveG: aveGKpi(c.aveG, sla),
         pitches: null,
         conv: c.conv == null ? null : { v: c.conv, target: (Number(sla.conv_target) || 10) / 100,
           leads: c.leads, basis: 'sales \u00f7 unique leads' },

@@ -591,8 +591,9 @@ const MTD_RULES = {
   aveTalkUnit: 'minutes',
 
   /* CallX retired — the whole floor dials on ViciDial from this date (Nick, 2026-09-01).
-     The calls() intake refuses rows on/after it and points at the ViciDial slot; earlier
-     days still load as history corrections. The dialler-derived shift rule is untouched —
+     The calls() intake refuses rows on/after it and points at the ViciDial slot — and since
+     2026-09-15 (Nick, fe21aff) it refuses a Call Records file WHOLE, whatever its dates: earlier
+     days no longer load as history corrections. The dialler-derived shift rule is untouched —
      it reads the merged call book, which ViciDial rows fill for every campaign now.
      Mirror of specs/mtd_engine_rules.json sources[id=call_x_call].retired. */
   callxRetired: '2026-09-01',
@@ -671,7 +672,10 @@ const MTD_RULES = {
   /* §3 — superseded QA codes, later code canonical. APPLY TO QA ROWS ONLY: CB207 is also
      team leader Renolan Pillay's ViciDial ID, and remapping it there pays his talk time to
      someone else. */
-  qaCodeCorrections: { CB207:'CB219', CB216:'CB229', CB210:'CB222', CB209:'CB221', CB212:'CB225', CB208:'CB220', CB214:'CB227', CB215:'CB228' },
+  qaCodeCorrections: { CB207:'CB219', CB216:'CB229', CB210:'CB222', CB209:'CB221', CB212:'CB225', CB208:'CB220', CB214:'CB227', CB215:'CB228',
+    /* Delano Rajagopal was CB233 on every list to 15 Sep and CB413 from 17 Sep; QA still files him
+       as CB-233 (69 evaluations), so he read no QA at all (VAS fact-check, 2026-09-28) */
+    CB233:'CB413' },
 
   /* §3 — the roster's embedded CB numbers contradict its own Employee Code column. Match on
      the NAME portion, never the number: CB-138 is claimed by two people and matching on the
@@ -1503,7 +1507,8 @@ function mergeStates(mine,theirs){
   for(const k of ['cancRows','map','adjust','vici','aliases']) out[k]=Object.assign({},theirs[k]||{},mine[k]||{});   // aliases: a spelling remembered anywhere is remembered everywhere
   for(const k of ['refs','opencasesLM']){ const m=mine[k],t=theirs[k]; out[k]=!t?m:(!m?t:(String(m.at||'')>=String(t.at||'')?m:t)); }
   { const m=mine.closedcases,t=theirs.closedcases;
-    out.closedcases=!t?m:(!m?t:Object.assign({},String(m.at||'')>=String(t.at||'')?m:t,{rows:Object.assign({},t.rows||{},m.rows||{})})); }
+    /* rows are the UNION, so neither side's running count (closedCasesN) holds — cleared to recount once */
+    out.closedcases=!t?m:(!m?t:Object.assign({},String(m.at||'')>=String(t.at||'')?m:t,{rows:Object.assign({},t.rows||{},m.rows||{}),n:null})); }
   const myL=String((mine.rosterEffect||{}).at||''), thL=String((theirs.rosterEffect||{}).at||'');
   const listFrom=myL>=thL?mine:theirs;
   for(const k of ['roster','rosterFp','rosterEffect','rosterRefused','tlCbs','leavers']) out[k]=listFrom[k];
@@ -1972,6 +1977,21 @@ function attWeight(status){
   if(s==='terminated'||s==='resigned') return -1;   // ends employment
   return 0;
 }
+/* A REGISTER DAY IS A DAY THE REGISTER RECORDED WORK (VAS fact-check, 2026-09-28). HR files leave
+   ahead of time — CB180's maternity leave, two others — so 21–25 Sep carried one or two rows each
+   while the real register ended on the 18th. "Any row" called those days covered: the trust bar and
+   the digest said attendance reached the 25th, and Cuddle's actual shifts for that week came from
+   the did-they-work fallback instead of the register the rule book names. A day counts when
+   somebody on it is marked as working (weight ≥ 0.5) — OR when the register lists a real share of
+   the floor even if nobody worked (Heritage Day: everyone marked PH is still a register day, and
+   V25a must see it). One or two leave rows filed ahead are neither. */
+function attDayCovered(d){
+  const day=S.att&&S.att[d]; if(!day) return false;
+  let n=0;
+  for(const c in day){ if(attWeight(day[c])>=0.5) return true; n++; }
+  return n>=Math.max(3,Math.ceil(0.1*((S.roster||[]).length||0)));
+}
+function attLastDay(){ const ks=Object.keys(S.att||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).sort(); for(let i=ks.length-1;i>=0;i--) if(attDayCovered(ks[i])) return ks[i]; return null; }
 function isOptIn(disp){
   const s=(disp||'').toLowerCase();
   return s.includes('insurance opt') && !s.includes('no insurance');
@@ -2574,6 +2594,22 @@ const INGEST={
        (a re-export carries the corrected score, dispute status and outcome) and an ID not
        stored is added. Rows with no Record ID — older exports predate the column — fall back
        to their content and position, which keeps a re-upload of the same file idempotent. */
+    /* A FULL EXPORT IS THE WHOLE RECORD FOR ITS SPAN (VAS fact-check, 2026-09-28). The merge above
+       only ever adds or updates, so an evaluation QA deleted at source lived on for good: CB369 kept
+       a 0% "Pending TL Action" evaluation (dated 8 Sep) that the 25 Sep full export no longer carries,
+       and read 67.79 instead of 70.21. The QA system's FULL export (evaluations-full-export-*.csv —
+       never a per-campaign or windowed pull) is the complete history, so inside the dates it spans an
+       evaluation with a Record ID it does not repeat is retired. Rows with no Record ID are left alone. */
+    let retiredEvals=0;
+    if(/full[-_ ]?export/i.test(name)&&dates.size){
+      const inFile=new Set(); for(const d of dates) for(const c in byDate[d]) for(const e of byDate[d][c]) if(e.rid) inFile.add(e.rid);
+      const ds=[...dates].sort(), lo=ds[0], hi=ds[ds.length-1];
+      if(inFile.size) for(const d in S.evals){ if(d<lo||d>hi) continue;
+        const bk=S.evals[d];
+        for(const c in bk){ const keep=(bk[c]||[]).filter(e=>!(e&&e.rid&&!inFile.has(e.rid))); retiredEvals+=(bk[c]||[]).length-keep.length;
+          if(keep.length) bk[c]=keep; else delete bk[c]; }
+        if(!Object.keys(bk).length) delete S.evals[d]; }
+    }
     for(const d of dates){
       const cur=S.evals[d]||{}, next=byDate[d]||{};
       const keyOf=(e,i)=>e.rid?'#'+e.rid:'~'+[e.s,e.dec,e.cat,e.camp,i].join('|');
@@ -2588,7 +2624,8 @@ const INGEST={
       S.evals[d]=out;
     }
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    return regFile(name,'evals',dates,recs.length,{skip,dupes,basis:MTD_RULES.qa.dateField});
+    if(retiredEvals) setTimeout(()=>{ try{ toast(retiredEvals+' QA evaluation'+(retiredEvals===1?'':'s')+' no longer in the full export — removed'); }catch(e){} },0);
+    return regFile(name,'evals',dates,recs.length,{skip,dupes,retired:retiredEvals,basis:MTD_RULES.qa.dateField});
   },
   roster(recs,name,sheet){
     /* THIS LIST DID NOT COME FROM THE RECORD unless the adopter says otherwise straight
@@ -3342,7 +3379,8 @@ const INGEST={
   },
   opencasesLM(recs,name){ return INGEST._openCases(recs,name,'opencasesLM','open cases (lead mgmt)'); },
   closedcases(recs,name){
-    if(!S.closedcases) S.closedcases={rows:{},f:name,at:''};
+    if(!S.closedcases) S.closedcases={rows:{},f:name,at:'',n:0};
+    closedCasesN();  // self-heal .n against any rows this state already held before it existed
     let added=0, dupes=0, skip=0; const dates=new Set();
     for(const r of recs){
       const cs=String(r['Case Number']||'').trim();
@@ -3356,9 +3394,22 @@ const INGEST={
     }
     if(!added){ toast('"'+name+'" carried no closed cases that could be dated'); return null; }
     S.closedcases.f=name; S.closedcases.at=new Date().toISOString().slice(0,16).replace('T',' ');
+    S.closedcases.n=(S.closedcases.n||0)+added;  // kept running — see closedCasesN()
     return regFile(name,'closed cases',[...dates].sort(),recs.length,{added,dupes,skip});
   }
 };
+/* RUNNING COUNT, NOT A RECOUNT (perf, 2026-09-28). leadBook()'s cache key used to call
+   Object.keys(S.closedcases.rows).length on every call to detect a changed book; fine
+   once per Lead Management paint, but the Agents tab now calls leadBook (via the
+   composite's conversion driver) once per agent, so that ~66,000-entry array got
+   rebuilt on every row just to compare a length that had not moved. Maintained here and
+   at the one other mutation site (removeFile's closed-cases branch); self-heals once for
+   a state stored before this field existed. */
+function closedCasesN(){
+  const cc=S.closedcases; if(!cc) return 0;
+  if(cc.n==null) cc.n=Object.keys(cc.rows||{}).length;
+  return cc.n;
+}
 
 function removeFile(idx){
   const f=S.files[idx]; if(!f) return;
@@ -3408,8 +3459,11 @@ function removeFile(idx){
   if(f.type==='open cases (lead mgmt)') S.opencasesLM=null;
   // closed cases key by case number, so drop exactly the ones this file contributed
   if(f.type==='closed cases'&&S.closedcases){
-    for(const k in S.closedcases.rows) if((f.dates||[]).includes(S.closedcases.rows[k].d)) delete S.closedcases.rows[k];
-    if(!Object.keys(S.closedcases.rows).length) S.closedcases=null;
+    closedCasesN();  // self-heal .n before this removal so the count below stays exact
+    let removed=0;
+    for(const k in S.closedcases.rows) if((f.dates||[]).includes(S.closedcases.rows[k].d)){ delete S.closedcases.rows[k]; removed++; }
+    S.closedcases.n=Math.max(0,(S.closedcases.n||0)-removed);
+    if(!S.closedcases.n) S.closedcases=null;
   }
   if(f.type==='referrals'&&S.refs&&S.refs.f===f.name) S.refs=null;
   S.files.splice(idx,1);
@@ -3611,7 +3665,7 @@ function applyAsAt(r,p){
    stretches to the furthest one — which is exactly the reconciliation trap above. */
 function sourceEnds(){
   const last=o=>{ const k=Object.keys(o||{}); return k.length?k.sort()[k.length-1]:null; };
-  return {attendance:last(S.att), sales:last(S.sales), calls:last(S.calls)};
+  return {attendance:attLastDay(), sales:last(S.sales), calls:last(S.calls)};
 }
 function periodRange(){
   const p=S.ui.preset||(S.ui.mode==='cycle'?'cycle':'month');
@@ -4042,7 +4096,7 @@ function dataOnlyDay(d){ return saturdayDataOnly(d)||publicHolidayDataOnly(d); }
    expectedReach) so the Worker's sentinel and Agent Analytics read the same answer. */
 function dataReach(){
   const mx=o=>{const ks=Object.keys(o||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).sort();return ks.length?ks[ks.length-1]:null};
-  return {sales:mx(S.sales),calls:mx(S.calls),attendance:mx(S.att),qa:mx(S.evals),
+  return {sales:mx(S.sales),calls:mx(S.calls),attendance:attLastDay(),qa:mx(S.evals),
     roster:{n:(S.roster||[]).length,fp:S.rosterFp||null}};
 }
 function expectedReach(nowMs,saturday){
@@ -4070,7 +4124,7 @@ function buildModel(range, periodKey, opts){
      SPD (Sales / Employed HC / Dialing Days) by three instead of two and understates every
      team by a third. Falls back to the data dates when no register is loaded, so the figure
      degrades to "what we know" rather than to zero. */
-  const attDates=Object.keys(S.att).filter(d=>d>=range.from&&d<=range.to&&Object.keys(S.att[d]||{}).length&&!dataOnlyDay(d)).sort();
+  const attDates=Object.keys(S.att).filter(d=>d>=range.from&&d<=range.to&&attDayCovered(d)&&!dataOnlyDay(d)).sort();   // a register day records work — forward-dated leave alone is not one (2026-09-28)
   /* A dialling day needs BOTH a register and something to report on it. The register runs
      ahead of the other exports — on the August drop it reaches the 6th while the dialler and
      BI stop at the 5th — and those trailing register-only days carry no fact rows at all, so
@@ -4201,7 +4255,7 @@ function buildModel(range, periodKey, opts){
      exactly what is not in the totals. A campaign leaving the report silently is the bug the
      spec spent a whole section on; leaving it out LOUDLY is a decision. */
   const offCampaign={};
-  const attCovered=d=>!!S.att[d]&&Object.keys(S.att[d]).length>0;
+  const attCovered=attDayCovered;
   const metaOf={}; S.roster.forEach(a=>{ metaOf[a.code]=a; });
   /* LEAVERS (rule departures, 2026-09-15): on the floor for every day before `left`, and on any
      day they still have a fact — a sale or a call dated after the list dropped them is a fact,
@@ -4511,7 +4565,12 @@ function buildModel(range, periodKey, opts){
     o.att=o.emp?o.act/o.emp:null; o.pctT=o.target?o.sales/o.target:null;
     // SPD is =IFERROR(Sales/Actual Shifts,0) — zero, not blank, when no shift was worked
     o.spd=o.act?o.sales/o.act:0;
-    o.pctG=o.gwpT?o.gwp/o.gwpT:null; o.aveG=o.sales?o.gwp/o.sales:null;
+    /* GWP A SALE AT THE CENT (composite_rules._calibration.gwpFloorCentBasis, scorecard audit
+       2026-09-28): divided from the UNROUNDED total. Whole-rand GWP ÷ sales put CB282 — R2 410,24
+       over 28 sales, exactly R86,08 — at R86,07, and the value check told them "Value Issue" beside
+       a rating row saying R86,08 "At target". */
+    o.pctG=o.gwpT?o.gwp/o.gwpT:null;
+    o.aveG=o.sales?((MTD_RULES.gwpDisplayBasis==='ex')?o.gwpEx:o.gwpEx*MTD_VAT)/o.sales:null;
     /* AVE TALK TIME DIVIDES BY EMPLOYED SHIFTS (spec §6.4: "divide by employed days, not days
        on which calls were made"). It used to divide by the shifts the dialler saw the agent
        WORK, which is a different question and breaks in both directions: an agent who dialled
@@ -5070,7 +5129,12 @@ function r2aTierOf(fails,audited){
      band and was handed a −2 "Compliance Note" for having no compliance problem at
      all. The count band is the only one that may speak when the count is zero. */
   if(!fails) byRate=null;
-  const worst=[byCount,byRate].filter(Boolean).sort((a,b)=>b.penalty-a.penalty)[0]
+  /* MORE SEVERE = THE TIER'S OWN `level` (1 = R2A-3, the worst; Tier 0 carries 0 = none). It was
+     picked by penalty, and with every penalty 0 since 2026-09-11 that sort was a tie the count band
+     always won: 3 fails of 5 audited (60%) read R2A-2 instead of R2A-3 (scorecard audit, 2026-09-28).
+     The level, not the list order, so re-sorting the rule set can never change who is worse. */
+  const sev=t=>(+t.level>0)?+t.level:99;
+  const worst=[byCount,byRate].filter(Boolean).sort((a,b)=>sev(a)-sev(b))[0]
     ||tiers.find(t=>t.tier==='Tier 0');
   return {tier:worst.tier, rule:worst.rule, level:worst.level, elite:worst.elite,
     penalty:Math.min(+COMPOSITE_RULES.r2aCap||10, worst.penalty||0),
@@ -6722,8 +6786,9 @@ function leadBook(all){
   const oc=S.opencasesLM;
   const range=periodRange()||{from:'0000',to:'9999'};
   const camp=all?'':(S.ui.camp||''), team=all?'':(S.ui.team||'');
+  // closedCasesN() below is a running count, not a recount — see its own comment (perf, 2026-09-28)
   const key=[range.from,range.to,camp,team,
-    (oc?oc.rows.length:0),Object.keys(((S.closedcases||{}).rows)||{}).length].join('|');
+    (oc?oc.rows.length:0),closedCasesN()].join('|');
   /* M must be truthy for a hit: with no period there is no model, and null===null
      would otherwise let one degenerate render's answer stand for every later one. */
   const slot=all?__leadsCacheAll:__leadsCache;

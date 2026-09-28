@@ -177,7 +177,9 @@ for (const me of agents) {
   }
 
   /* 4 — the two checks */
-  if (me.aveG != null && me.pctT != null) {
+  /* only where checks actually reached the page: this sweep mocks /api/** so the Worker's verdicts
+     (me.checks) never arrive — see the SUPERSEDED note above; verify-agent-card owns this now */
+  if (me.aveG != null && me.pctT != null && me.checks) {
     /* CHECK 2 PASSES AT 100% — Chatterbox_Decision_Rules.xlsx, NBA_THRESHOLDS: "target_ach |
        100 | % | Check 2 passes at or above this". This guard asserted 70, which is where R4A
        FIRES, so the page and the team leader's table were held to two different lines for the

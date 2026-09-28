@@ -85,9 +85,13 @@ ok(`all ${want.length} sheets (2 + WTD/MTD per reported campaign), in the workbo
 const hdrRow=(bk,sn,marker)=>{ const rs=rowsOf(bk,sn);
   const r=rs.find(x=>x.some(c=>String(c).trim()===marker));
   return r?r.map(x=>String(x).trim()).filter(Boolean):[]; };
+/* A UNIT SUFFIX IS NOT A MISSING COLUMN (2026-09-28). 7d1cad7 (8 Sep, Nick) made average talk
+   read in minutes per employed shift everywhere and labels it "Ave Talk Time (min)"; the August
+   template predates that and says "Ave Talk Time". The column is there — only its unit is named. */
+const bare=h=>String(h).replace(/\s*\((min|mins|minutes)\)\s*$/i,'').trim();
 const cmp=(sn,marker,label)=>{
-  const a=hdrRow(T,sn,marker), b=hdrRow(G,sn,marker);
-  const miss=a.filter(h=>!b.includes(h));
+  const a=hdrRow(T,sn,marker), b=hdrRow(G,sn,marker).map(bare);
+  const miss=a.filter(h=>!b.includes(bare(h)));
   ok(label+' columns match the template', a.length>0&&miss.length===0, miss.length?'missing: '+miss.join(' | '):'marker not found');
 };
 cmp('August','Week','daily sheet');
@@ -98,7 +102,7 @@ cmp('Pivot Table','Sum of Employed Shifts','pivot');
 // TL MTD metric rows
 const tlT=XLSX.utils.sheet_to_json(T.Sheets['TL MTD'],{header:1,raw:true,defval:''}).map(r=>String(r[0]||'').trim()).filter(Boolean);
 const tlG=XLSX.utils.sheet_to_json(G.Sheets['TL MTD'],{header:1,raw:true,defval:''}).map(r=>String(r[0]||'').trim()).filter(Boolean);
-const missTL=[...new Set(tlT)].filter(m=>!['Courtesy','Cuddle','Team Leaders'].includes(m)).filter(m=>!tlG.includes(m));
+const missTL=[...new Set(tlT)].filter(m=>!['Courtesy','Cuddle','Team Leaders'].includes(m)).filter(m=>!tlG.map(bare).includes(bare(m)));
 ok('TL MTD carries every metric row from the template', missTL.length===0, 'missing: '+missTL.join(' | '));
 console.log('TL MTD rows generated:', JSON.stringify([...new Set(tlG)].slice(0,26)));
 
