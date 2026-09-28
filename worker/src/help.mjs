@@ -156,6 +156,84 @@ export async function contactFor(env, DB, cb, name, memo, stats) {
   return id;
 }
 
+/* ONE CARD PER AGENT, WHEN THE LOCATION SAYS SO (Nick, 2026-09-28: "the ask for help was not
+   working … if you ask for the second time"). With "Allow Duplicate Opportunity" off, HighLevel
+   answers a second card for the same contact in the same pipeline with 400 OPPORTUNITY_NO_DUPLICATE
+   — whatever the first card's status — so every agent who had EVER asked got a 502 on every later
+   ask. The fresh card is still tried first (duplicates on = every ask its own card, the design
+   above); on that refusal the agent's own card is reused: an OPEN card takes the new ask (renamed
+   to the new topic, back to the first stage, both notes readable); a CLOSED card is ARCHIVED first
+   (kv:help-arch:<id>:<stamp>, so the team leader's record and close-time average keep counting it)
+   and then reopened for the new ask. kv:help-card:<id> dates the card by its latest ask (so it
+   sorts to the top of the queue) and marks where a reopened card's own round of notes begins. */
+const CARD = 'kv:help-card:';
+const ARCH = 'kv:help-arch:';
+const isNoDup = (e) => !!e && e.status === 400
+  && /NO_DUPLICATE|duplicate opportunity/i.test(String((e.body && (e.body.code + ' ' + e.body.message)) || e.message || ''));
+/* an archived request's id is <cardId>:<stamp>; HighLevel ids never carry a colon */
+const isArchivedId = (id) => String(id).includes(':');
+
+async function cardOne(DB, id) {
+  const rows = await DB.select('rules?key=eq.' + encodeURIComponent(CARD + id) + '&select=value');
+  return (rows && rows[0] && rows[0].value) || null;
+}
+async function cardWrite(DB, id, v) {
+  if (v) await DB.insert('rules', [{ key: CARD + id, value: v, updated_by: 'help-center', updated_at: new Date().toISOString() }], true);
+  else await DB.del('rules?key=eq.' + encodeURIComponent(CARD + id));
+}
+/* every card record + every archived request, two selects. FAILS CLOSED like assist.mjs's
+   mirrors(): a missing archive would quietly shrink a team leader's record. */
+async function helpMeta(DB) {
+  const [cards, arch] = await Promise.all([
+    DB.select('rules?key=like.' + encodeURIComponent(CARD + '*') + '&select=key,value'),
+    DB.select('rules?key=like.' + encodeURIComponent(ARCH + '*') + '&select=key,value')]);
+  const byId = {};
+  for (const r of cards || []) byId[r.key.slice(CARD.length)] = r.value || {};
+  const archived = (arch || []).map((r) => ({ ...(r.value || {}), id: r.key.slice(ARCH.length) })).filter((a) => a.cb);
+  return { cards: byId, archived };
+}
+function archivedRow(a, stages, byCb) {
+  const last = stages.length ? stages[stages.length - 1] : { id: '', name: 'Closed' };
+  return { id: a.id, cb: a.cb, agent: (byCb[a.cb] && byCb[a.cb].name) || a.agent || a.cb,
+    category: a.category || 'Something else', contactId: a.contactId || '',
+    stageId: last.id, stage: last.name, stageIdx: stages.length - 1, closed: true, archived: true,
+    created: a.created || '', updated: a.closed_at || '' };
+}
+
+async function reuseCard(env, DB, p, contactId, cb, oppName, now) {
+  const sr = await searchAll(env, p.id);
+  const mine = sr.ops.filter((o) => String(o.contactId || (o.contact && o.contact.id) || '') === String(contactId))
+    .map((o) => ({ o, r: parseRow(o, p.stages, {}) }))
+    .sort((x, y) => String(y.o.updatedAt || '').localeCompare(String(x.o.updatedAt || '')));
+  /* HighLevel refused because a card exists, but its search has not caught up with it yet */
+  if (!mine.length) return sr.truncated
+    ? { status: 503, body: { error: 'The Help Center has too many records to find your earlier request — ask your team leader to archive old ones in HighLevel.' } }
+    : { status: 409, body: { error: 'Your earlier request is still being filed — wait a few seconds and send this again.' } };
+  const hit = mine.find((x) => !x.r.closed) || mine[0];
+  const id = hit.o.id;
+  const old = await cardOne(DB, id);
+  let archKey = null, next;
+  if (!hit.r.closed) next = { ...(old || {}), asked_at: now, asks: ((old && old.asks) || 1) + 1 };
+  else {
+    archKey = ARCH + id + ':' + now.replace(/[^0-9]/g, '').slice(0, 14);
+    await DB.insert('rules', [{ key: archKey, value: { cb: hit.r.cb || cb, agent: hit.r.agent, category: hit.r.category,
+      contactId, created: (old && old.asked_at) || hit.r.created, closed_at: hit.o.lastStatusChangeAt || hit.o.updatedAt || '',
+      archived_at: now }, updated_by: 'help-center', updated_at: now }], true);
+    next = { asked_at: now, round_from: now, asks: 1 };
+  }
+  /* the records first, the card last — a failed move puts both records back exactly as they were */
+  try {
+    await cardWrite(DB, id, next);
+    await hl(env, '/opportunities/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify({
+      name: oppName, pipelineStageId: p.stages[0].id, status: 'open' }) });
+  } catch (e) {
+    await cardWrite(DB, id, old).catch(() => {});
+    if (archKey) await DB.del('rules?key=eq.' + encodeURIComponent(archKey)).catch(() => {});
+    throw e;
+  }
+  return archKey ? { id, reopened: true } : { id, merged: true };
+}
+
 export async function helpRequest(env, DB, user, digest, body) {
   if (user.role !== 'agent') return { status: 403, body: { error: 'Requests come from agents.' } };
   const auth = authorise(user, digest);
@@ -169,14 +247,34 @@ export async function helpRequest(env, DB, user, digest, body) {
   const me = (auth.rows && auth.rows[0]) || {};
   const name = user.full_name || user.username || cb;
   const contactId = await contactFor(env, DB, cb, name);
-  const opp = await hl(env, '/opportunities/', { method: 'POST', body: JSON.stringify({
-    locationId: env.HL_HELP_LOCATION_ID, pipelineId: p.id, pipelineStageId: p.stages[0].id,
-    name: '[' + cat + '] ' + cb + ' ' + name, status: 'open', contactId }) });
-  const oppId = (opp.opportunity && opp.opportunity.id) || '';
-  await hl(env, '/contacts/' + contactId + '/notes', { method: 'POST', body: JSON.stringify({
-    body: 'Help request ' + oppId + '\nTopic: ' + cat + '\nFrom: ' + name + ' (' + cb + ')'
-      + (me.campaign ? ' · ' + me.campaign : '') + (me.tl ? ' · Team ' + me.tl : '') + '\n\n' + note }) });
-  return { status: 200, body: { ok: true, id: oppId } };
+  const oppName = '[' + cat + '] ' + cb + ' ' + name;
+  const now = new Date().toISOString();
+  let oppId = '', merged = false, reopened = false;
+  try {
+    const opp = await hl(env, '/opportunities/', { method: 'POST', body: JSON.stringify({
+      locationId: env.HL_HELP_LOCATION_ID, pipelineId: p.id, pipelineStageId: p.stages[0].id,
+      name: oppName, status: 'open', contactId }) });
+    oppId = (opp.opportunity && opp.opportunity.id) || '';
+  } catch (e) {
+    if (!isNoDup(e)) throw e;
+    const r = await reuseCard(env, DB, p, contactId, cb, oppName, now);
+    if (r.status) return r;
+    oppId = r.id; merged = !!r.merged; reopened = !!r.reopened;
+  }
+  /* line 2 "Asked: <iso>" dates this ask — helpDetail uses it to show a reopened card's own round */
+  try {
+    await hl(env, '/contacts/' + contactId + '/notes', { method: 'POST', body: JSON.stringify({
+      body: 'Help request ' + oppId + '\nAsked: ' + now + '\nTopic: ' + cat + '\nFrom: ' + name + ' (' + cb + ')'
+        + (me.campaign ? ' · ' + me.campaign : '') + (me.tl ? ' · Team ' + me.tl : '') + '\n\n' + note }) });
+  } catch (e) {
+    /* THE CARD IS ALREADY ON THE BOARD, THE NOTE IS NOT (review, 2026-09-28). The note IS the request
+       — answering ok would lose the agent's words silently (assist.mjs can flag note_failed because its
+       record holds the text; this one has nowhere else to keep it). So say exactly what happened: the
+       modal keeps the text, and Send again joins the same card and lands the note. */
+    return { status: 502, body: { error: 'Your request reached your team leader\'s Help Center, but your note did not save — press Send again; it joins the same request.',
+      id: oppId, note_failed: true } };
+  }
+  return { status: 200, body: { ok: true, id: oppId, merged, reopened } };
 }
 
 /* The agent's own requests — so they can see where each one stands and close one
@@ -189,9 +287,9 @@ export async function helpMine(env, DB, user, digest) {
   const cb = normCb(user.cb);
   const p = await pipeline(env);
   if (!p) return { status: 200, body: { stages: [], requests: [] } };
-  const __sr = await searchAll(env, p.id);
-  const j = { opportunities: __sr.ops };
-  const rows = (j.opportunities || []).map((o) => parseRow(o, p.stages, {}))
+  const [__sr, meta] = await Promise.all([searchAll(env, p.id), helpMeta(DB)]);
+  const rows = __sr.ops.map((o) => parseRow(o, p.stages, {}, meta.cards[o.id]))
+    .concat(meta.archived.map((a) => archivedRow(a, p.stages, {})))
     .filter((r) => r.cb === cb)
     .sort((a, b) => String(b.created).localeCompare(String(a.created)));
   return { status: 200, body: { stages: p.stages.map((s) => ({ id: s.id, name: s.name })), requests: rows, truncated: __sr.truncated, total: __sr.total } };
@@ -203,6 +301,7 @@ export async function helpCloseOwn(env, DB, user, digest, body) {
   const cb = normCb(user.cb);
   const id = String(body.id || '');
   if (!id) return { status: 400, body: { error: 'id required.' } };
+  if (isArchivedId(id)) return { status: 404, body: { error: 'That request is already closed.' } };
   const p = await pipeline(env);
   if (!p || !p.stages.length) return { status: 503, body: { error: 'Pipeline missing.' } };
   const cur = await hl(env, '/opportunities/' + encodeURIComponent(id));
@@ -215,7 +314,8 @@ export async function helpCloseOwn(env, DB, user, digest, body) {
   return { status: 200, body: { ok: true } };
 }
 
-function parseRow(o, stages, byCb) {
+/* `card` (optional) is the kv:help-card record: a reused card is dated by its latest ask */
+function parseRow(o, stages, byCb, card) {
   const m = String(o.name || '').match(/^\[([^\]]+)\]\s+(CB\d+)\s*(.*)$/i);
   /* Identity comes from the [cat] CBnn name; the fallback for a hand-made/renamed record
      accepts ONLY an explicit CB token in the contact name — never digit-stripping, which
@@ -232,7 +332,7 @@ function parseRow(o, stages, byCb) {
     contactId: o.contactId || (o.contact && o.contact.id) || '',
     stageId: o.pipelineStageId, stage: si >= 0 ? stages[si].name : '?', stageIdx: si,
     closed: (stages.length && si === stages.length - 1) || o.status === 'won',
-    created: o.createdAt || o.dateAdded || '', updated: o.updatedAt || '' };
+    created: (card && card.asked_at) || o.createdAt || o.dateAdded || '', updated: o.updatedAt || '' };
 }
 
 const tlOnly = (auth) => (auth.scope !== 'team' && auth.scope !== 'all')
@@ -244,10 +344,10 @@ export async function helpList(env, DB, user, digest) {
   const deny = tlOnly(auth); if (deny) return deny;
   const p = await pipeline(env);
   if (!p) return { status: 200, body: { setup: 'Create a pipeline named "' + PIPE_NAME + '" in HighLevel and requests will land here.', stages: [], requests: [] } };
-  const __sr = await searchAll(env, p.id);
-  const j = { opportunities: __sr.ops };
+  const [__sr, meta] = await Promise.all([searchAll(env, p.id), helpMeta(DB)]);
   const byCb = {}; for (const a of auth.rows || []) byCb[a.code] = a;
-  const rows = (j.opportunities || []).map((o) => parseRow(o, p.stages, byCb))
+  const rows = __sr.ops.map((o) => parseRow(o, p.stages, byCb, meta.cards[o.id]))
+    .concat(meta.archived.map((a) => archivedRow(a, p.stages, byCb)))
     .filter((r) => auth.scope === 'all' || auth.codes.has(r.cb))
     .sort((a, b) => String(b.created).localeCompare(String(a.created)));
   return { status: 200, body: { stages: p.stages.map((s) => ({ id: s.id, name: s.name })), requests: rows, truncated: __sr.truncated, total: __sr.total } };
@@ -258,6 +358,7 @@ export async function helpDetail(env, DB, user, digest, id) {
   if (auth.error) return { status: auth.status, body: { error: auth.error } };
   const deny = tlOnly(auth); if (deny) return deny;
   if (!id) return { status: 400, body: { error: 'id required.' } };
+  if (isArchivedId(id)) return { status: 404, body: { error: 'That request was closed and its card has since been reused — its note stays on the contact in HighLevel.' } };
   const p = await pipeline(env);
   /* No known pipeline → refuse. The old `p && …` guard SKIPPED the pipeline check when
      the lookup returned null, letting a TL fetch any opportunity in the location whose
@@ -266,16 +367,25 @@ export async function helpDetail(env, DB, user, digest, id) {
   const j = await hl(env, '/opportunities/' + encodeURIComponent(id));
   const __oppD = j.opportunity || j;
   if (String(__oppD.pipelineId || '') !== p.id) return { status: 404, body: { error: 'That is not a request in this pipeline.' } };
-  const row = parseRow(__oppD, (p && p.stages) || [], {});
+  const card = await cardOne(DB, id);
+  const row = parseRow(__oppD, (p && p.stages) || [], {}, card);
   if (auth.scope !== 'all' && !auth.codes.has(row.cb)) return { status: 403, body: { error: 'That request is not from your team.' } };
   let note = '';
   try {
     const n = await hl(env, '/contacts/' + row.contactId + '/notes');
     /* the EXACT prefix helpRequest writes — never a substring match (a later note's
        free text could contain this id) and never a blind fallback to the newest
-       note, which belongs to a different request (review, 2026-08-26) */
-    const hit = (n.notes || []).find((x) => String(x.body || '').startsWith('Help request ' + id + String.fromCharCode(10)));
-    note = hit ? String(hit.body || '') : '';
+       note, which belongs to a different request (review, 2026-08-26).
+       A REUSED card carries every ask made on it (2026-09-28): all of this round's notes,
+       newest first. A reopened card's round starts at card.round_from — the closed request's
+       notes before it (including pre-2026-09-28 ones with no "Asked:" line) stay out. */
+    const askedOf = (b) => { const l = String(b).split(String.fromCharCode(10))[1] || ''; return l.startsWith('Asked: ') ? l.slice(7) : ''; };
+    const from = (card && card.round_from) || '';
+    note = (n.notes || [])
+      .filter((x) => String(x.body || '').startsWith('Help request ' + id + String.fromCharCode(10)))
+      .filter((x) => !from || askedOf(x.body) >= from)
+      .sort((a, b) => String(askedOf(b.body) || b.dateAdded || '').localeCompare(String(askedOf(a.body) || a.dateAdded || '')))
+      .map((x) => String(x.body || '')).join('\n\n— — —\n\n');
   } catch {}
   return { status: 200, body: { ...row, note } };
 }
@@ -663,6 +773,7 @@ export async function helpStage(env, DB, user, digest, body) {
   if (!p) return { status: 503, body: { error: 'Pipeline missing.' } };
   const id = String(body.id || ''), stage = p.stages.find((s) => s.id === String(body.stageId || ''));
   if (!id || !stage) return { status: 400, body: { error: 'id and a valid stageId are required.' } };
+  if (isArchivedId(id)) return { status: 404, body: { error: 'That request is already closed.' } };
   const cur = await hl(env, '/opportunities/' + encodeURIComponent(id));
   const __opp = cur.opportunity || cur;
   if (String(__opp.pipelineId || '') !== p.id) return { status: 404, body: { error: 'That is not a request in this pipeline.' } };
