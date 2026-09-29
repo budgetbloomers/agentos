@@ -51,6 +51,10 @@ ok('Saturday shift rule matches (data only, from)', inlined.saturdayShiftsFrom =
     inlined.leaveNotShiftFrom + ' vs ' + JSON.stringify(c.leave_not_shift_from));
   ok('leave / unavailable code lists match', JSON.stringify(i.leave) === JSON.stringify(c.leave) && JSON.stringify(i.unavailable) === JSON.stringify(c.unavailable),
     JSON.stringify(i) + ' vs ' + JSON.stringify({ leave: c.leave, unavailable: c.unavailable })); }
+/* L IS A HALF DAY (2026-09-29): effective date and codes, both copies. */
+{ const h = SPEC.reference_data.half_day_codes || {}, i = inlined.halfDayCodes || {};
+  ok('half-day codes rule matches (from, codes)', i.from === h.from && JSON.stringify(i.codes) === JSON.stringify(h.codes),
+    JSON.stringify(i) + ' vs ' + JSON.stringify({ from: h.from, codes: h.codes })); }
 /* DEPARTURES (Nick, 2026-09-15): a leaver keeps their days until the list that dropped them. */
 { const d = SPEC.reference_data.departures || {}, i = inlined.departures || {};
   ok('departures rule matches (keep days until left, since)', i.keepDaysUntilLeft === d.keep_days_until_left && i.since === d.since,

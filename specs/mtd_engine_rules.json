@@ -372,7 +372,16 @@
    ],
    "rule": "On/after leave_not_shift_from, an employed day whose register Status Code is in leave or unavailable, and on which the agent neither talked nor sold, is NOT an Employed Shift, NOT an Actual Shift and carries no target; it is recorded as a leave / unavailable day. Any other zero-weight code (UCA, and every code not named here) stays an ABSENCE: an Employed Shift with no Actual Shift. Activity wins: a leave code on a day with talk or sales is a working day. Codes are compared upper-case; an export without a Status Code column classifies long-form statuses by the word leave / suspended.",
    "source": "POC floor feedback, 2026-09-29: 'Ryan to investigate why agents who were on annual leave were not reflected correctly. AgentOS must understand whether an agent was working, on leave, absent or otherwise unavailable before calculating performance or recommending actions.'",
-   "note": "Effective-dated so the August reference period, verified row-for-row against the hand-built tracker (which counts leave as an employed, unworked shift), is untouched. Class meanings follow the Ops rules presentCodes/leaveCodes (CA = Committed Absence, authorised). L is deliberately unclassified: Ops reads it as Running Late, the register weight table as 0 — confirm before classing it. Mirror: MTD_RULES.leaveNotShiftFrom / MTD_RULES.attClasses."
+   "note": "Effective-dated so the August reference period, verified row-for-row against the hand-built tracker (which counts leave as an employed, unworked shift), is untouched. Class meanings follow the Ops rules presentCodes/leaveCodes (CA = Committed Absence, authorised). L is a half day (see half_day_codes), not leave. Mirror: MTD_RULES.leaveNotShiftFrom / MTD_RULES.attClasses."
+  },
+  "half_day_codes": {
+   "from": "2026-09-01",
+   "codes": [
+    "L"
+   ],
+   "rule": "On/after from, a register Status Code in codes weighs 0.5 — exactly like HDCA: the half-day override on the Courtesy/Nesting dialler rule, and the Cuddle register weight. Before from, attendance_shift_weights stands (L = 0).",
+   "source": "Nick, 2026-09-29: 'L code mark as half day'",
+   "note": "Effective-dated with attendance_classes so the August reference period is untouched. Mirror: MTD_RULES.halfDayCodes."
   },
   "departures": {
    "keep_days_until_left": false,
@@ -1874,6 +1883,14 @@
    "from": "every zero-weight register code (AL, SL, FRL, CA, UCA, Suspended …) is an Employed Shift with no Actual Shift — leave read as absence",
    "to": "leave (AL, SL, FRL, CA, CASAT) and unavailable (Suspended) days with no activity are not shifts and carry no target, from 2026-09-01; UCA and unknown codes stay absences",
    "why": "\"AgentOS must understand whether an agent was working, on leave, absent or otherwise unavailable before calculating performance or recommending actions\" — agents on annual leave were not reflected correctly"
+  },
+  {
+   "date": "2026-09-29",
+   "by": "Nick",
+   "key": "reference_data.half_day_codes",
+   "from": "L weighs 0 (attendance_shift_weights) — read as not worked",
+   "to": "L weighs 0.5 from 2026-09-01, like HDCA",
+   "why": "\"L code mark as half day\""
   }
  ]
 }

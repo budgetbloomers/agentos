@@ -33,9 +33,13 @@ else {
   if (Math.round(sum) !== 100) problems.push('Composite weights sum to ' + sum + ', not 100. Weights must sum to exactly 100 (framework section 7).');
 }
 
-// 2. Graduated R2A engine must remain present with the -10 cap
+// 2. Graduated R2A engine must remain present — as a CLASSIFIER only. There is no penalty
+//    (Nick, 2026-09-11: "nba priority rules must not affect the agent scores"; 2026-09-29:
+//    "remove the penalty"): no rule key, and the composite never subtracts one.
 if (!/function\s+cfTier\s*\(/.test(html)) problems.push('cfTier() missing — the graduated critical-fail tier engine (R2A-1/-2/-3, higher of count/rate band) must not be removed.');
-if (!/pen3',\s*10\)|pen3",\s*10\)/.test(html)) problems.push('R2A-3 penalty cap of 10 not found — the composite penalty must stay capped at −10 (never per-fail multipliers).');
+if (/'pen[123]:\d/.test(html)) problems.push('A pen1/pen2/pen3 key is back in the nbaThresholds rule — the composite penalty was removed (2026-09-29); the R2A tier classifies, it never deducts.');
+if (/nbaVal\(\s*['"]pen[123]['"]/.test(html)) problems.push('Code reads a pen1/pen2/pen3 rule value — the composite penalty was removed (2026-09-29); tiers carry pen:0.');
+if (/raw\s*-\s*pen\b|raw-\(?\s*(cfPen|coachPen)/.test(html)) problems.push('The composite subtracts a penalty again — Adj must equal the composite (penalty removed 2026-09-29).');
 
 // 3. Decision ladder must remain a single-primary-NBA function
 if (!/function\s+acNBA\s*\(/.test(html)) problems.push('acNBA() missing — the fixed-order decision ladder must stay in code.');

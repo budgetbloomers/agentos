@@ -583,6 +583,11 @@ const MTD_RULES = {
      Mirror of specs/mtd_engine_rules.json reference_data.attendance_classes. */
   leaveNotShiftFrom: '2026-09-01',
   attClasses: { leave:['AL','SL','FRL','CA','CASAT'], unavailable:['SUSPENDED'] },
+  /* L IS A HALF DAY (Nick, 2026-09-29: "L code mark as half day"). The weight table below scored
+     it 0; from this date it weighs 0,5 exactly like HDCA — for Courtesy/Nesting the half-day
+     override on the dialler rule, for Cuddle the register weight. Same effective date as the
+     leave rule so August stays workbook-exact. Mirror of reference_data.half_day_codes. */
+  halfDayCodes: { from:'2026-09-01', codes:['L'] },
 
   /* AVERAGE TALK TIME IS MINUTES PER EMPLOYED SHIFT (Nick, 2026-09-08: "total talk time divided
      by shifts, and must be in minutes"). The denominator was already employed shifts (spec §6.4);
@@ -1902,10 +1907,14 @@ function toast(msg,ms){ const t=document.getElementById('toast'); t.textContent=
    so the word-match fallback has to stay or every historical day silently reads zero.
    Terminated/Resigned is an app extension, not a spec status — it ends employment and is
    the reason this returns -1 rather than 0. */
-function attWeight(status){
+function attWeight(status,d){
   const ov=S.settings.attOverride||{};
   if(status in ov) return ov[status];
   const raw=String(status||'').trim();
+  /* a half-day code in force on the day (rule halfDayCodes) — dated, so a caller without a day
+     (the Settings status list) still shows the table's own weight */
+  const hd=MTD_RULES.halfDayCodes;
+  if(d&&hd&&d>=hd.from&&(hd.codes||[]).includes(raw.toUpperCase())) return 0.5;
   if(raw in MTD_RULES.attWeights) return MTD_RULES.attWeights[raw];
   const s=raw.toLowerCase();
   if(s==='present') return 1;
@@ -1929,7 +1938,7 @@ function attClass(status){
 }
 function offShiftClass(status,d){
   const from=MTD_RULES.leaveNotShiftFrom; if(!from||d<from||status==null) return '';
-  const w=attWeight(status); if(w>0||w===-1) return '';
+  const w=attWeight(status,d); if(w>0||w===-1) return '';
   return attClass(status);
 }
 function isOptIn(disp){
@@ -4153,7 +4162,7 @@ function buildModel(range, periodKey){
       const active=(talk>0||sales>0);
       let act;
       const st=(S.att[d]||{})[code];
-      const w=(st!=null)?attWeight(st):null;
+      const w=(st!=null)?attWeight(st,d):null;
       /* ACTUAL SHIFTS (spec §6.2). Two rules, because the two campaigns have two different
          best sources — this is not an inconsistency, it is the finding.
 
@@ -4293,7 +4302,7 @@ function buildModel(range, periodKey){
       if(hit) (perAgent[f.code]=perAgent[f.code]||[]).push(f);
     });
     const shifts=(code,list)=>list.reduce((t,d)=>{const st=(S.att[d]||{})[code];
-      const w=st!=null?attWeight(st):0; return t+(w>0?w:0)},0);
+      const w=st!=null?attWeight(st,d):0; return t+(w>0?w:0)},0);
     for(const r of v.rows){
       const rc=resolveKey(r.name); if(!rc) continue;              // not on the Agent List
       const a=metaOf[rc]; if(!a) continue;                        // leaver — off the current roster
@@ -5434,7 +5443,7 @@ function buildVariance(range){
       while(dkey(dt)<=v.to&&rDays.length<400){ rDays.push(dkey(dt)); dt.setUTCDate(dt.getUTCDate()+1); } }
     for(const r of v.rows){
       const rc=resolveKey(r.name); if(!rc||!(r.talk>0)) continue;
-      let emp=rDays.filter(dd=>{ const st=(S.att[dd]||{})[rc]; return st!=null&&attWeight(st)>0; });
+      let emp=rDays.filter(dd=>{ const st=(S.att[dd]||{})[rc]; return st!=null&&attWeight(st,dd)>0; });
       if(!emp.length) emp=rDays.filter(dd=>{ const g=new Date(dd+'T00:00:00Z').getUTCDay(); return g!==0&&g!==6; });
       if(!emp.length) emp=rDays;
       viciEst[rc]={per:(r.talk||0)/emp.length,sale:(r.saleD||0)/emp.length,days:new Set(emp),from:v.from,to:v.to};
@@ -5471,7 +5480,7 @@ function buildVariance(range){
     // present or the dialler shows active that day (the "present but not dialling" and
     // "activity, no conversion" flags need them even with zero sales on both sides)
     const codes=new Set([...(sfDay?Object.keys(sfDay):[]),...(bdDay?Object.keys(bdDay):[])]);
-    if(S.att[d]) for(const c in S.att[d]){ if(attWeight(S.att[d][c])>=1&&IDX.byCode[c]) codes.add(c); }
+    if(S.att[d]) for(const c in S.att[d]){ if(attWeight(S.att[d][c],d)>=1&&IDX.byCode[c]) codes.add(c); }
     for(const c in talkMap) if(talkMap[c]>0&&IDX.byCode[c]) codes.add(c);
     /* EVERY AGENT ON THE AGENT LIST GETS A ROW (Nick, 2026-08-20: 'agents missing in the
        variance report — must be taken from the agent list'). The report used to show only
@@ -5516,7 +5525,7 @@ function buildVariance(range){
       if(!talkKnown){ const e=viciEst[code]; if(e&&e.days.has(d)){ talkEst=Math.round(e.per); dlSalesEst=Math.round((e.sale||0)*10)/10; } }
       const dlSales=talkKnown?(saleMap[code]||0):null;   // dialler-side sales: null when the dialler cannot answer for this agent-day
       const st=(S.att[d]||{})[code];
-      const present=st!=null&&attWeight(st)>=1;
+      const present=st!=null&&attWeight(st,d)>=1;
       const flags=[];
       let talkAdj=null;
       if(talkKnown){

@@ -49,7 +49,7 @@ try {
     S.roster = []; S.att = {}; S.calls = {}; S.sales = {}; S.tracker = {}; S.orgHist = {}; S.vici = {}; S.cancRows = {}; S.viciDays = {};
     const add = (code, camp) => S.roster.push({ code, name: 'Agent ' + code, sf: 'Agent ' + code, tl: 'Leader Alpha', campaign: camp, tenure: camp === 'Cuddle' ? 'Exp' : 'M1', callx: '', target: 0, start: '2026-01-01' });
     /* five extra present agents so the floor looks like a floor */
-    ['CB801', 'CB802', 'CB803', 'CB804'].forEach((c) => add(c, 'Courtesy')); ['CB805', 'CB806'].forEach((c) => add(c, 'Cuddle'));
+    ['CB801', 'CB802', 'CB803', 'CB804'].forEach((c) => add(c, 'Courtesy')); ['CB805', 'CB806', 'CB807'].forEach((c) => add(c, 'Cuddle')); add('CB808', 'Courtesy');
     for (let i = 1; i <= 5; i++) add('CB81' + i, 'Courtesy');
     const SEP = ['2026-09-07', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11'];
     const AUG = ['2026-08-03', '2026-08-04', '2026-08-05', '2026-08-06', '2026-08-07'];
@@ -61,13 +61,15 @@ try {
       CB804: ['AL', 'P', 'P', 'P', 'P'],               // on leave by the register, but dialled Monday
       CB805: ['SL', 'SL', 'SL', 'SL', 'SL'],           // sick the whole week — nothing to score
       CB806: ['Suspended', 'Suspended', 'P', 'P', 'P'],// unavailable two days
+      CB807: ['L', 'L', 'P', 'P', 'P'],                // Cuddle (register rule): two half days
+      CB808: ['L', 'P', 'P', 'P', 'P'],                // Courtesy (dialler rule): one half day, dialled
     };
     for (const days of [SEP, AUG]) days.forEach((d, i) => {
       S.att[d] = {}; S.calls[d] = {}; S.sales[d] = {};
       for (const a of S.roster) {
         const st = (plan[a.code] || ['P', 'P', 'P', 'P', 'P'])[i];
         S.att[d][a.code] = st;
-        const talks = st === 'P' || (a.code === 'CB804' && i === 0);
+        const talks = st === 'P' || st === 'L' || (a.code === 'CB804' && i === 0);
         if (talks) S.calls[d][a.code] = { talk: 3600, calls: 30, ans: 15, opt: 0, saleD: 0, v: 1 };
         if (talks) S.sales[d][a.code] = { n: 1, gwp: 89, gwpEx: 77.39 };
       }
@@ -118,11 +120,16 @@ try {
   ok('sick all week: no shifts, no target, no fact rows', P.CB805.emp === 0 && P.CB805.target === 0 && P.CB805.rows === 0 && P.CB805.off.length === 5, JSON.stringify(P.CB805));
   ok('…and the digest says "leave", not "no activity yet"', !out.sep.row805 && out.sep.nc805 && out.sep.nc805.why === 'leave', JSON.stringify(out.sep.nc805));
 
+  ok('L is a half day (Cuddle, register rule): 5 employed, 3 + 0,5 + 0,5 = 4 worked', P.CB807.emp === 5 && P.CB807.act === 4 && !P.CB807.off.length, JSON.stringify(P.CB807));
+  ok('L is a half day (Courtesy, dialler rule) even though they dialled: 5 employed, 4,5 worked', P.CB808.emp === 5 && P.CB808.act === 4.5, JSON.stringify(P.CB808));
+
   console.log('\nB · PULSE — AUGUST, BEFORE THE RULE: UNCHANGED');
   const A = out.aug.per;
   ok('August leave is still an employed, unworked shift (5 employed, 2 worked) — the workbook-verified month does not move',
     A.CB802.emp === 5 && A.CB802.act === 2 && !A.CB802.off.length, JSON.stringify(A.CB802));
   ok('August sick week still carries its shifts (5 employed, 0 worked)', A.CB805.emp === 5 && A.CB805.act === 0, JSON.stringify(A.CB805));
+  ok('August L keeps its old weight: Cuddle 5 employed, 3 worked; Courtesy (dialled) 5 worked', A.CB807.emp === 5 && A.CB807.act === 3 && A.CB808.act === 5,
+    JSON.stringify({ c: A.CB807, k: A.CB808 }));
   ok('no page errors (PULSE)', errs.length === 0, errs.join(' | '));
   await page.close();
 

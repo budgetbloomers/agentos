@@ -584,12 +584,12 @@ const DEFAULT_RULES = {
   qaCoaching:{label:'QA decisions that count as COACHING',vals:['Coaching'],help:'Escalation Decisions that trigger a coaching action.'},
   qaCritical:{label:'QA decisions that count as CRITICAL FAIL',vals:['Critical Fail'],help:'Escalation Decisions treated as compliance-critical.'},
   saleAssess:{label:'Assessment types that represent a SALE',vals:['Sale'],help:'QA "Assessment Type" values used for clean-sale rate.'},
-  presentCodes:{label:'Attendance codes that count as PRESENT',vals:['P','T','L','HDAL','HDCA'],help:'On-site codes: P Present, T Training, L Running Late, HDAL/HDCA half-days. Counted in every productivity denominator.'},
+  presentCodes:{label:'Attendance codes that count as PRESENT',vals:['P','T','L','HDAL','HDCA'],help:'On-site codes: P Present, T Training, L / HDAL / HDCA half-days (L is a half day since 29 Sep 2026 — Nick). Counted in every productivity denominator.'},
   leaveCodes:{label:'Attendance codes that count as LEAVE (authorised)',vals:['AL','SL','CA','CASAT'],help:'Authorised time off: Annual, Sick, Committed Absence (+Sat). Excluded from unplanned absenteeism. Codes in NO rule count as unplanned absence (e.g. UCA).'},
   excludeCodes:{label:'Roster-exit codes excluded from attendance maths',vals:['Terminated','Resigned'],help:'These rows mark people leaving the roster, not attendance events — they are excluded from attendance and absenteeism rates but still visible in the status distribution.'},
   salesDepts:{label:'Departments in scope for Sales views',vals:['Sales'],help:'Attendance "Department" values included in Sales workforce metrics.'},
   discStages:{label:'Disciplinary stage ladder (offense number → stage)',vals:['1:Coaching conversation','2:Verbal warning','3:Written warning','4:Final written warning','5:Disciplinary hearing'],help:'Format is count:Stage label. An agent sits on the highest rung their offense number has reached. CONFIGURATION REQUIRED — confirm the ladder with Claudell / HR.'},
-  nbaThresholds:{label:'NBA & scoring thresholds (key:value)',vals:['qaCritical:80','qaTarget:90','qaStd:85','attRisk:80','attTarget:95','gwpFloor:99','targetAch:100','salesLow:70','salesNear:90','convTarget:10','talkFloorMin:150','talkTargetMin:210','cancelPctOK:10','attemptsMin:3','attemptsMax:5','r2a2Count:2','r2a2Rate:10','r2a3Count:4','r2a3Rate:30','pen1:0','pen2:0','pen3:0'],help:'Powers the Agent Card, the Two-Check rule, the graduated critical-fail tiers and the NBA decision ladder. R2A tiers: R2A-3 fires at r2a3Count fails OR r2a3Rate% CFR (penalty pen3); R2A-2 at r2a2Count / r2a2Rate (pen2); else R2A-1 (pen1, note only). Tier = the HIGHER band; penalty is capped at pen3. Since 11 Sep 2026 every penalty is 0 — NBA priority rules must not affect the agent scores (Nick); the tier is still reported on every card. Edit any value and every card rescores instantly.'},
+  nbaThresholds:{label:'NBA & scoring thresholds (key:value)',vals:['qaCritical:80','qaTarget:90','qaStd:85','attRisk:80','attTarget:95','gwpFloor:99','targetAch:100','salesLow:70','salesNear:90','convTarget:10','talkFloorMin:150','talkTargetMin:210','cancelPctOK:10','attemptsMin:3','attemptsMax:5','r2a2Count:2','r2a2Rate:10','r2a3Count:4','r2a3Rate:30'],help:'Powers the Agent Card, the Two-Check rule, the graduated critical-fail tiers and the NBA decision ladder. R2A tiers: R2A-3 fires at r2a3Count fails OR r2a3Rate% CFR; R2A-2 at r2a2Count / r2a2Rate; else R2A-1 (note only). Tier = the HIGHER band. There is NO penalty: the tier classifies and drives the ladder but never moves a score (0 since 11 Sep 2026, removed from the rule 29 Sep 2026 — Nick). Edit any value and every card rescores instantly.'},
   compositeWeights:{label:'Composite score weights (%)',vals:['GWP/Sale:25','Target Ach:20','QA:20','GWP %ile:15','Conversion:10','Talk:5','Attendance:5'],help:'How the /100 composite is built (weights renormalise across metrics an agent actually has). Keep the intent: value first, then volume, then quality.'},
   cycleStart:{label:'VAS cycle start date (YYYY-MM-DD)',vals:['2026-06-26'],help:'First dialing day of the current Matrix VAS cycle. Drives the Operational Performance panels on Sales Production.'},
   cycleDialingDays:{label:'Dialing days in the cycle',vals:['21'],numeric:true,help:'Total dialing days the cycle runs. Days Past counts the distinct cycle days a campaign banked BI money or dialled (the union — a no-sale day still counts as worked, and a thin call-record export can no longer shrink it); Remaining = this minus Days Past.'},
@@ -4142,15 +4142,16 @@ function cfTier(st){ // v3.0 graduated critical-fail rule: tier = highest of cou
      card and the team leader's adjustments table as if it were. */
   if(cf===0)return{tier:'',lvl:0,pen:0,cf,cfr,elite:'Eligible'};
   /* THE TIER CLASSIFIES, IT NO LONGER DEDUCTS (Nick, 2026-09-11: "nba priority rules must not
-     affect the agent scores"). pen1/pen2/pen3 default to 0 here AND in the rule's vals — the
-     live cb-config rule predates these keys, so the code default is what actually fires. The
-     ladder and the tier are unchanged; only the composite stops moving.
+     affect the agent scores"), and since 2026-09-29 there is no penalty to configure at all
+     (Nick: "remove the penalty") — pen1/pen2/pen3 are gone from the rule and pen is always 0,
+     so a stale live rule carrying those keys cannot bring a deduction back. The ladder and the
+     tier are unchanged.
      Since 2026-09-21 (Nick: "where it says blocked, the agents must not be blocked") no tier
      returns Blocked either — R2A-2/R2A-3 read Retained like R2A-1, so the digest's r2a.elite
      never withholds Elite on a coaching card. The rating band never read this field. */
-  if(cf>=nbaVal('r2a3Count',4)||cfr>=nbaVal('r2a3Rate',30))return{tier:'R2A-3',lvl:1,pen:nbaVal('pen3',0),cf,cfr,elite:'Retained'};
-  if(cf>=nbaVal('r2a2Count',2)||cfr>=nbaVal('r2a2Rate',10))return{tier:'R2A-2',lvl:2,pen:nbaVal('pen2',0),cf,cfr,elite:'Retained'};
-  return{tier:'R2A-1',lvl:3,pen:nbaVal('pen1',0),cf,cfr,elite:'Retained'};
+  if(cf>=nbaVal('r2a3Count',4)||cfr>=nbaVal('r2a3Rate',30))return{tier:'R2A-3',lvl:1,pen:0,cf,cfr,elite:'Retained'};
+  if(cf>=nbaVal('r2a2Count',2)||cfr>=nbaVal('r2a2Rate',10))return{tier:'R2A-2',lvl:2,pen:0,cf,cfr,elite:'Retained'};
+  return{tier:'R2A-1',lvl:3,pen:0,cf,cfr,elite:'Retained'};
 }
 function acComposite(st,pctile,coachPen){
   const ws=compWeights();
@@ -4159,15 +4160,12 @@ function acComposite(st,pctile,coachPen){
     if(v==null)return;wSum+=w;acc+=v*w;parts.push({name,v:Math.round(v),w,contrib:v*w})});
   const raw=wSum?acc/wSum:0;
   const tier=cfTier(st);
-  // adjusted = composite − min(combined_cap, r2a_penalty + coaching_penalty).
-  // coachPen is 0 for everyone except the agent whose drill-down is open —
-  // peer ranking below calls this without coaching, because loading a whole
-  // team's coaching to sort one list would be a request per peer. So the rank
-  // is peer-relative on the r2a half only, and the coaching half shows on the
-  // agent's own card where the evidence for it is also on screen.
-  const cfPen=tier.pen;
-  const pen=Math.min(COACH_TH.combinedCap, cfPen + (coachPen||0));
-  return{parts,wSum,raw,pen,cfPen,coachPen:coachPen||0,tier,adj:Math.max(0,Math.min(100,raw-pen))};
+  // coachPen is still accepted so callers need not change; it is ignored (no penalty).
+  /* NO PENALTY (Nick, 2026-09-29: "remove the penalty"; 2026-09-11: "nba priority rules must
+     not affect the agent scores"). Neither the R2A tier nor the coaching tier deducts any more —
+     both still CLASSIFY and still drive the ladder, but Adj IS the composite. The fields stay on
+     the object at 0 so every reader (digest, drill-down, AI context) keeps its shape. */
+  return{parts,wSum,raw,pen:0,cfPen:0,coachPen:0,tier,adj:Math.max(0,Math.min(100,raw))};
 }
 function acNBA(st,coach){
   const T=k=>nbaVal(k,0);const tier=cfTier(st);
@@ -4397,10 +4395,11 @@ async function agentOpen(cb){
             :'chosen by the coach')+'</td>'
         +'<td style="font-size:11px;color:var(--muted)">'+esc(t.last||'—')+'</td></tr>';
     }).join('');
-    const pen=cTier.pen;
-    const note=pen
-      ? '<b>−'+pen+'</b> applied to the composite · worst live theme '+esc(clusterLabel(cTier.worst.key))+' ('+cTier.tier+') · next session should be <b>'+esc(coachFormat(cTier.tier))+'</b>'
-      : 'No composite adjustment — no development theme has reached Repeat on a classification a coach chose. Only the gap family escalates.';
+    /* the coaching tier CLASSIFIES and shapes the next session — it never moves the score
+       (penalty removed 2026-09-29, Nick: "remove the penalty") */
+    const note=cTier.tier
+      ? 'Worst live theme '+esc(clusterLabel(cTier.worst.key))+' ('+cTier.tier+') · next session should be <b>'+esc(coachFormat(cTier.tier))+'</b> · no score deduction'
+      : 'No development theme has reached Repeat on a classification a coach chose. Only the gap family escalates. Coaching never deducts from the score.';
     return head
       +'<table class="tbl"><thead><tr><th class="noclick">Theme</th><th class="noclick">Sessions</th><th class="noclick">Tier</th><th class="noclick">Source</th><th class="noclick">Last raised</th></tr></thead><tbody>'
       +rows+'</tbody></table>'
@@ -4445,7 +4444,7 @@ async function agentOpen(cb){
    +'<div class="card" style="margin-bottom:12px;font-size:12px"><b>[Follow-through]</b> Review at the next weekly rhythm; clear if resolved, escalate if not.</div>'
    +'<div class="ac-sec">HOW THE COMPOSITE IS BUILT</div><table class="tbl">'
    +comp.parts.map(p2=>'<tr><td style="font-size:12px">'+esc(p2.name)+'</td><td style="width:44%"><div style="background:#EEF2F8;border-radius:4px;height:12px"><div style="width:'+p2.v+'%;background:#F0B429;height:12px;border-radius:4px"></div></div></td><td class="num" style="font-size:11px">'+p2.v+' ×'+p2.w+'%</td><td class="num" style="font-weight:700">'+(Math.round(p2.contrib/ (comp.wSum||1)*10)/10).toFixed(1)+'</td></tr>').join('')
-   +'<tr><td colspan="3">Critical-fail tier penalty'+(comp.tier.tier?' ('+comp.tier.tier+' · '+comp.tier.cf+' fails · CFR '+fmtVal(comp.tier.cfr,'pct')+')':' (none)')+'</td><td class="num" style="color:var(--red)">−'+comp.pen+'</td></tr>'
+   +(comp.tier.tier?'<tr><td colspan="3">Critical-fail tier: '+comp.tier.tier+' · '+comp.tier.cf+' fails · CFR '+fmtVal(comp.tier.cfr,'pct')+' — classification only, no deduction</td><td class="num">0</td></tr>':'')
    +'<tr style="font-weight:800;border-top:2px solid var(--line)"><td colspan="3">Composite (Adj)</td><td class="num">'+(Math.round(comp.adj*10)/10).toFixed(1)+'</td></tr>'
    +'</table></div></div>');
   setTimeout(function(){
@@ -5694,7 +5693,7 @@ setTimeout(function(){
         talkTargetMin:T('talkTargetMin'),talkFloorMin:T('talkFloorMin')},
       /* the penalty rule this engine ran under — a copy without it was built by an older engine
          (see push's self-heal); 0/0/0 since 2026-09-11 */
-      rules:{pen:[nbaVal('pen1',0),nbaVal('pen2',0),nbaVal('pen3',0)]},
+      rules:{pen:[0,0,0]},                    // penalties removed 2026-09-29 — kept for the payload's shape
       agents:agents};
   }
   function push(){
