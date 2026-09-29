@@ -1292,6 +1292,9 @@ function pageMTD(){
     +'<h3>Month to date <span class="cnt">'+esc(prettyPeriod())+'</span></h3>'
     +'<p class="why">The same table management reads — one row per agent, your team\'s totals on the last row. Nothing here is worked out twice; these are the published figures.</p>'
     +vasAgentsTable(r.rows,r.total,r.cols)
+    /* campaign split (2026-09-29): say which rows are one campaign of several, and where the rest is */
+    +(r.rows.some(function(a){return SPLIT(a);})?'<p class="why" style="margin-top:12px"><b>'+num(r.rows.filter(function(a){return SPLIT(a);}).length)
+      +' agent(s) worked more than one campaign this month.</b> Their row — and the Grand Total — is the campaign they are on now; the other campaign\'s days are named under their name and shown in full when you open them, never added into this row.</p>':'')
     +'<p class="why" style="margin-top:12px">Dialling days this month: <b>'+num(D.diallingDays)+'</b> '
     +'· working days: <b>'+num(D.workingDays)+'</b>. A dash means that figure has not been supplied for '
     +'this month — it is not a zero.</p>'
@@ -1380,7 +1383,8 @@ function vasAgentsTable(list,total,cols){
     +cols.map(function(c){return '<th>'+esc(c[0])+'</th>';}).join('')
     +'</tr></thead><tbody>'
     +list.map(function(a){
-      return '<tr><td class="l stick"><b>'+esc(a.name)+'</b><div class="sub2">'+esc(a.code)+'</div></td>'
+      return '<tr><td class="l stick"><b>'+esc(a.name)+'</b><div class="sub2">'+esc(a.code)+'</div>'
+        +(SPLIT(a)?'<div class="sub2" style="color:var(--amber)">'+splitLine(a)+'</div>':'')+'</td>'
         +cols.map(function(c){return '<td class="num">'+c[1](a)+'</td>';}).join('')+'</tr>';
     }).join('')
     +(total?'<tr class="grand"><td class="l stick"><b>Grand Total</b></td>'
@@ -5239,11 +5243,11 @@ function show(a){
       : VIEW==='nik' ? nikolaPage(a,c)
       /* A DRILL-DOWN SHOWS EVERYTHING THE NAME WAS LISTED FOR. Clicking a name in
          Team Results opened only the month, which is not why it was clicked. */
-      : D.__back ? nbaDetail()+agentKpis(a,c)+heroHTML(c)+breakdownHTML(c)+doneHTML()+trackHTML()+standHTML()
+      : D.__back ? nbaDetail()+agentKpis(a,c)+campSplitHTML(a)+heroHTML(c)+breakdownHTML(c)+doneHTML()+trackHTML()+standHTML()
       /* ONE HOME PER FIGURE (Nick, 2026-09-03: "why are we repeating the agent's
          tracking on each page"). The rand projection lives on Projected Commission
          and nowhere else; Today keeps tracking-vs-target and a one-line pointer. */
-      : agentKpis(a,c)+todayHTML(c)+trackHTML()+commPointer(c))
+      : agentKpis(a,c)+campSplitHTML(a)+todayHTML(c)+trackHTML()+commPointer(c))
     +'<div class="foot">'+(reachLabel()?'Figures to '+esc(reachLabel())+'<br>':'')+(isAgentUser()?'':'Numbers updated '+esc(stamp())+'<br>')
     +'<button id="notme">'+(D.__back?'Back to my team':'Sign out')+'</button></div>',
     VIEW,
@@ -5281,6 +5285,43 @@ function acTile(label,val,sub,state){
     +'<div class="ac-lab">'+esc(label)+'</div><div class="ac-sub">'+esc(sub)+'</div>'
     +'<span class="pill '+pill[0]+'">'+pill[1]+'</span></div>';
 }
+/* THE CAMPAIGN SPLIT (POC feedback, 2026-09-29: "If an agent worked Download/Upsell for part of
+   the month and another campaign thereafter, AgentOS must not blend those results together
+   without clearly showing the campaign split. We should still have an overall view, but
+   campaign-level performance must be available"). PULSE publishes the agent's CURRENT campaign
+   as the row — its own figures, plan and peer group — and, only when they worked more than one
+   campaign, byCampaign (each campaign with its dates) and overall (the whole period). This page
+   never adds campaigns together: the card below shows each on its own plus the total, and every
+   other number on the page is the current campaign's, said out loud where it matters. */
+function SPLIT(a){ a=a||ME; return (a&&Array.isArray(a.byCampaign)&&a.byCampaign.length>1)?a.byCampaign:null; }
+/* "8 Sep" — built by hand so every device prints the same thing (en-ZA would say "08 Sept") */
+function shortDate(d){ var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d||'')); if(!m) return String(d||'');
+  return (+m[3])+' '+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m[2]-1]; }
+function campRange(x){ return (x&&x.from&&x.to)?(x.from===x.to?shortDate(x.from):shortDate(x.from)+' – '+shortDate(x.to)):''; }
+function nowCamp(a){ var sp=SPLIT(a); if(!sp) return null; return sp.filter(function(x){return x.now;})[0]||null; }
+/* "Courtesy since 8 Sep · also Download & Test 1 Sep – 7 Sep" */
+function splitLine(a){ var sp=SPLIT(a); if(!sp) return ''; var cur=nowCamp(a);
+  return (cur?esc(cur.campaign)+' since '+esc(shortDate(cur.from)):esc(a.campaign||''))
+    +' · also '+sp.filter(function(x){return !x.now;}).map(function(x){return esc(x.campaign)+' '+esc(campRange(x));}).join(', '); }
+function campSplitHTML(a){
+  var sp=SPLIT(a); if(!sp) return '';
+  var cur=nowCamp(a)||{campaign:a.campaign}, ov=a.overall||{};
+  var cell=function(v,f){ return v==null?'—':f(v); };
+  var row=function(label,sub,o,strong){
+    return '<tr'+(strong?' style="font-weight:700"':'')+'><td>'+label+(sub?'<div class="sub2">'+sub+'</div>':'')+'</td>'
+      +'<td class="num">'+cell(o.act,function(v){return num(v,v%1?1:0);})+'</td>'
+      +'<td class="num">'+num(o.sales||0)+'</td>'
+      +'<td class="num">'+R(o.gwpEx||0)+'</td>'
+      +'<td class="num">'+cell(o.pctT,function(v){return pct(v,0);})+'</td>'
+      +'<td class="num">'+cell(o.att,function(v){return pct(v,0);})+'</td></tr>'; };
+  return '<div class="card"><h2>Your month by campaign</h2>'
+    +'<p class="why">You worked more than one campaign this month, so each one is shown on its own and never added into another. '
+    +'Everything else on this page — your commission included — is worked out on <b>'+esc(cur.campaign)+'</b>, the campaign you are on now.</p>'
+    +'<div class="scroller"><table class="tbl"><thead><tr><th>Campaign</th><th>Days worked</th><th>Sales</th><th>Premium (ex VAT)</th><th>% of target</th><th>Attendance</th></tr></thead><tbody>'
+    +sp.map(function(x){ return row('<b>'+esc(x.campaign)+'</b>'+(x.now?' <span class="chip2 beat"><i></i>now</span>':''), esc(campRange(x)), x, false); }).join('')
+    +row('All campaigns', 'the whole month so far', ov, true)
+    +'</tbody></table></div></div>';
+}
 /* WHO YOU ARE, WHERE YOU STAND — the strip at the top of Today, and since 2026-09-21 of Projected
    Commission too (Nick: "add this to comms calculator as well"). One renderer, so the two never
    drift: name and code, campaign · tenure · team leader · period · days worked, and the two
@@ -5289,8 +5330,8 @@ function agentHead(a){
   return '<div class="ac-head">'
     +'<div style="flex:1;min-width:220px">'
     +'<div class="ac-nm">'+esc(a.name)+' <span class="ac-cd">'+esc(a.code)+'</span></div>'
-    +'<div class="ac-meta">'+esc(a.campaign||'')+(a.tenure?' · '+esc(a.tenure):'')
-    +(a.tl?' · Team leader: '+esc(a.tl):'')+' · '+esc(prettyPeriod())+' · '+num(WORKED(),WORKED()%1?1:0)+' of '+num(DAYS())+' working days worked'
+    +'<div class="ac-meta">'+(SPLIT(a)?splitLine(a):esc(a.campaign||''))+(a.tenure?' · '+esc(a.tenure):'')
+    +(a.tl?' · Team leader: '+esc(a.tl):'')+' · '+esc(prettyPeriod())+' · '+num(WORKED(),WORKED()%1?1:0)+' of '+num(DAYS())+' working days worked'+(SPLIT(a)?' on '+esc(a.campaign||''):'')
     +(offDaysNote(a)?' ('+esc(offDaysNote(a))+')':'')+'</div></div>'
     +(a.rankTeam?'<div class="ac-box"><div class="v">#'+num(a.rankTeam)+'</div><div class="k">OF '+num(a.nTeam)+' IN TEAM · BY GWP</div></div>':'')
     +(a.rankCo?'<div class="ac-box"><div class="v">#'+num(a.rankCo)+'</div><div class="k">OF '+num(a.nCo)+' ON FLOOR · BY GWP</div></div>':'')
@@ -5415,7 +5456,7 @@ function heroHTML(c){
   return '<div class="card hero"><div class="lab">Projected commission this month</div>'
     +'<div class="amt num">'+R(c.projection)+'</div>'
     +'<div class="note">'+line+'</div>'
-    +'<div class="tiny">A projection: based on the '+R(ME.gwpEx)+' of business you have written over '
+    +'<div class="tiny">A projection'+(SPLIT()?' for '+esc(ME.campaign||'')+' only':'')+': based on the '+R(ME.gwpEx)+' of business you have written over '
     +num(WORKED(),WORKED()%1?1:0)+' day'+(WORKED()===1?'':'s')+', carried over your '+num(REMAINING())+' working day'+(REMAINING()===1?'':'s')+' still to come'
     +(LEAVE_DAYS()?' (your '+num(LEAVE_DAYS())+' leave day'+(LEAVE_DAYS()===1?'':'s')+' are not counted against you)':'')+'. '
     +'It moves every time you sell.</div></div>';
@@ -6236,7 +6277,7 @@ function todayHTML(c){
         +', with '+num(rem)+' working day'+(rem===1?'':'s')+' still to go. Every sale from here is upside.</p>';
     } else {
       var perDay=Math.ceil(needT/rem);
-      h+='<p class="why">To reach your '+esc(monthLabel())+' target of <b>'+num(monthTarget)+' sales</b> you need about '
+      h+='<p class="why">To reach your '+(SPLIT()?esc(ME.campaign||'')+' target for '+esc(monthLabel())+' of <b>':esc(monthLabel())+' target of <b>')+num(monthTarget)+' sales</b> you need about '
         +'<b>'+num(perDay)+' a day</b> over the <b>'+num(rem)+' working day'+(rem===1?'':'s')+' left</b>'
         +(remainingLabel()?' ('+esc(remainingLabel())+')':'')+'. '
         +'You have <b>'+num(ME.sales||0)+'</b> so far'+(worked?' from '+num(worked,worked%1?1:0)+' day'+(worked===1?'':'s')+' worked':'')
@@ -6933,7 +6974,7 @@ function comsPage(c){
      calculator and they must only see the top 10 performers, not in their team") — the floor's
      ten, under the earnings, where the "what would it take" question is already being asked. */
   if(!ME.plan) return agentHead(ME)+comsTop()+heroHTML(c)+topHTML();   // heroHTML's "not set up yet" card says why, without guessing
-  return agentHead(ME)+comsTop()+comsExplain(c)+comsHero(c)+comsFigures(c)+whatIfHTML(c)+topHTML()+comsTableCard(c);
+  return agentHead(ME)+comsTop()+campSplitHTML(ME)+comsExplain(c)+comsHero(c)+comsFigures(c)+whatIfHTML(c)+topHTML()+comsTableCard(c);
 }
 function refreshTool(c){
   if($('comsHero')) $('comsHero').innerHTML=comsHeroInner(c);

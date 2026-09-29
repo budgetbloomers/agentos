@@ -337,5 +337,33 @@ ok(archived && archived.closed && archived.blockage === 'dialler' && archived.re
 r = await assistList(env, DB, cmUser, digest, ctx);
 ok(r.body.kpis.received === 2 && r.body.kpis.open === 1 && r.body.kpis.sessionsCompleted === 1, 'the manager KPIs count both requests (received 2, open 1, completed 1) — the archived one still counts');
 
+console.log('K. THE CAMPAIGN SPLIT — a mover\'s earlier week counts in ITS campaign, never in the new one (2026-09-29)');
+{ /* CB4 is on Courtesy now; the first week of the month was worked on Cuddle. PULSE publishes the row as
+     Courtesy and the Cuddle week in byCampaign — the manager overview must count that week under Cuddle
+     and leave Courtesy exactly as it was. */
+  const split = JSON.parse(JSON.stringify(digest));
+  const c4 = split.agents.find((x) => x.code === 'CB4');
+  c4.byCampaign = [
+    { campaign: 'Cuddle', from: '2026-08-03', to: '2026-08-07', now: false, sales: 20, target: 40, gwpEx: 2000, gwpT: 3960, canc: 0, talk: 50000, act: 5, emp: 5, calls: 0, ans: 0 },
+    { campaign: 'Courtesy', from: '2026-08-10', to: '2026-08-31', now: true, sales: 60, target: 100, gwpEx: 5900, gwpT: 9900, canc: 3, talk: 190000, act: 19, emp: 20, calls: 0, ans: 0 }];
+  globalThis.__cmCtx.assign = { dalwin: { campaigns: ['cuddle', 'courtesy'] }, ryan: { campaigns: ['cuddle', 'courtesy'] } };
+  const bs = cmOverviewBody(split, authorise(cmUser, split), { requests: [] }, globalThis.__cmCtx);
+  const cudS = bs.campaigns.find((c) => c.key === 'cuddle'), couS = bs.campaigns.find((c) => c.key === 'courtesy');
+  ok(cudS.kpis.sales.v === 350, 'Cuddle counts the mover\'s Cuddle week: 330 + 20 = 350 (got ' + cudS.kpis.sales.v + ')');
+  ok(cudS.reconciled, '…and still reconciles with its teams');
+  ok(couS.kpis.sales.v === 60, 'Courtesy is exactly as before (60) — the Cuddle week is never added into it (got ' + couS.kpis.sales.v + ')');
+  const shane = cudS.teams.find((t) => t.tl === 'Shane Methalal');
+  ok(shane && shane.codes.includes('CB4') && shane.sales === 170, 'the week lands in the team the mover sat in (150 + 20 = 170)');
+  ok(cudS.kpis.qa && cudS.kpis.qa.v != null && Math.abs(cudS.kpis.qa.v - (0.92 + 0.88 + 0.95) / 3) < 1e-9, 'the part-row carries no QA of its own — Cuddle QA is still the mean of its three agents');
+  /* a manager who holds only Cuddle sees the week too — it is Cuddle's */
+  globalThis.__cmCtx.assign = { dalwin: { campaigns: ['cuddle'] } };
+  const bc = cmOverviewBody(split, authorise(cmUser, split), { requests: [] }, globalThis.__cmCtx);
+  ok(bc.campaigns.length === 1 && bc.campaigns[0].kpis.sales.v === 350, 'a Cuddle-only manager sees the Cuddle week (350)');
+  globalThis.__cmCtx.assign = { dalwin: { campaigns: ['cuddle', 'courtesy'] }, ryan: { campaigns: ['cuddle', 'courtesy'] } };
+  /* nothing changes for a digest without a split */
+  const plain = cmOverviewBody(digest, authorise(cmUser, digest), { requests: [] }, globalThis.__cmCtx);
+  ok(plain.campaigns.find((c) => c.key === 'cuddle').kpis.sales.v === 330, 'without a split the Cuddle total is unchanged (330)');
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

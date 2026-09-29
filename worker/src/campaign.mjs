@@ -423,9 +423,23 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
     if (r.outcome && r.outcome !== 'Not measurable') { s.measured++; if (r.outcome === 'Improved') s.improved++; }
   }
 
+  /* THE CAMPAIGN SPLIT (2026-09-29). PULSE publishes an agent who moved mid-month under the
+     campaign they are on NOW; the part of the month they worked on another campaign travels in
+     byCampaign. That part belongs to its OWN campaign's totals — so a Download & Test manager still
+     counts the week a mover sold there, and Courtesy never absorbs it. One part-row per earlier
+     campaign, carrying only what the digest publishes per campaign: no QA, leads or rating, which
+     are the agent's, not the campaign part's (null = not counted, never a zero). */
+  const partRows = [];
+  for (const a of (digest.agents || [])) for (const x of (Array.isArray(a.byCampaign) ? a.byCampaign : [])) {
+    if (!x || x.now) continue;
+    partRows.push({ code: a.code, name: a.name, tl: a.tl, tenure: a.tenure, campaign: x.campaign, part: true, from: x.from, to: x.to,
+      sales: x.sales, target: x.target, gwpEx: x.gwpEx, gwpT: x.gwpT, canc: x.canc, talk: x.talk, act: x.act, emp: x.emp,
+      calls: x.calls, ans: x.ans, qa: null, leads: null, composite: null });
+  }
   const campaigns = [];
   for (const key of auth.campaigns || []) {
-    const rows = (auth.rows || []).filter((a) => campKey(a.campaign) === key);
+    const rows = (auth.rows || []).filter((a) => campKey(a.campaign) === key)
+      .concat(partRows.filter((p) => campKey(p.campaign) === key));
     const label = rows.length ? norm(rows[0].campaign) : key.charAt(0).toUpperCase() + key.slice(1);
     /* Per-campaign dials (cm:targets settings) sit over the global cm:sla row —
        Courtesy and Cuddle can run different QA/talk/attendance/conversion bars. */

@@ -994,7 +994,10 @@ const CAMPS=MTD_RULES.reportedCampaigns.slice();
    Called at the top of every buildModel; returns the extras so the model can name them. */
 function refreshCamps(){
   const base=MTD_RULES.reportedCampaigns.slice();
-  const extra=[...new Set(((typeof S!=='undefined'&&S&&S.roster)||[]).map(a=>a.campaign))]
+  /* …and every campaign an effective-dated assignment names (2026-09-29): a week on Download &
+     Test must land in its own campaign, not vanish because this month's list says Courtesy */
+  const assigned=Object.values(((typeof S!=='undefined'&&S&&S.campAssign)||{})).filter(x=>x&&!x.deleted&&x.campaign).map(x=>x.campaign);
+  const extra=[...new Set([...((typeof S!=='undefined'&&S&&S.roster)||[]).map(a=>a.campaign),...assigned])]
     .filter(c=>c&&c!=='VT'&&!base.includes(c)).sort();
   CAMPS.length=0; CAMPS.push(...base,...extra);
   return extra;
@@ -1380,6 +1383,7 @@ function normalizeState(){
      does have to be seeded here — hydrate() adopts a cloud blob wholesale, so a store an
      older client never pushed comes back undefined and then gets pushed back out that way. */
   if(!S.orgHist) S.orgHist={};
+  if(!S.campAssign||typeof S.campAssign!=='object'||Array.isArray(S.campAssign)) S.campAssign={};   // effective-dated campaign assignments (2026-09-29)
   if(!S.leavers||typeof S.leavers!=='object'||Array.isArray(S.leavers)) S.leavers={};   // departures (rule departures, 2026-09-15) — a blob saved before it must not read as "nobody ever left"
   /* EVERY NAME A CODE HAS CARRIED (2026-09-21; specs/identity-aliases-plan.md). normName(old) ->
      {code,name,since}. The 18 Sep list re-spelt twelve agents and Salesforce kept the old spelling,
@@ -1547,7 +1551,12 @@ function mergeStates(mine,theirs){
     const m=mine[k]||{}, t=theirs[k]||{}, r={};
     for(const d of new Set([...Object.keys(m),...Object.keys(t)])) r[d]=(m[d]&&t[d])?(mineWins(d)?m[d]:t[d]):(m[d]||t[d]);
     out[k]=r; }
-  for(const k of ['cancRows','map','adjust','vici','aliases']) out[k]=Object.assign({},theirs[k]||{},mine[k]||{});   // aliases: a spelling remembered anywhere is remembered everywhere
+  for(const k of ['cancRows','map','adjust','vici','aliases']) out[k]=Object.assign({},theirs[k]||{},mine[k]||{});
+  /* campaign assignments: the newest version of every id wins, tombstones included, so a removal
+     in one tab is never undone by another tab's older copy (2026-09-29) */
+  { const r=Object.assign({},theirs.campAssign||{}); for(const id in (mine.campAssign||{})){ const m=mine.campAssign[id], t=r[id];
+      const ma=String((m&&m.at)||''), ta=String((t&&t.at)||'');
+      if(!t||ma>ta||(ma===ta&&m&&m.deleted)) r[id]=m; } out.campAssign=r; }   // newest wins; on a tie the tombstone wins   // aliases: a spelling remembered anywhere is remembered everywhere
   for(const k of ['refs','opencasesLM']){ const m=mine[k],t=theirs[k]; out[k]=!t?m:(!m?t:(String(m.at||'')>=String(t.at||'')?m:t)); }
   { const m=mine.closedcases,t=theirs.closedcases;
     out.closedcases=!t?m:(!m?t:Object.assign({},String(m.at||'')>=String(t.at||'')?m:t,{rows:Object.assign({},t.rows||{},m.rows||{})})); }
@@ -2029,6 +2038,54 @@ function attFloorCovered(d,cache){
   if(cache) cache[d]=v;
   return v;
 }
+/* EFFECTIVE-DATED CAMPAIGN ASSIGNMENTS (POC feedback, 2026-09-29: "If an agent worked Download/
+   Upsell for part of the month and another campaign thereafter, AgentOS must not blend those
+   results together without clearly showing the campaign split"). The Agent List wins its whole
+   month (non-negotiable 11) because a list is a snapshot — it cannot say WHEN someone moved, so a
+   move on the 8th read as the new campaign from the 1st and both campaigns' work landed in one
+   row. An assignment can say it: CB, campaign, effective from, optionally to. On its dates it
+   decides the day's campaign (after the day's own tracker row, before the list); outside them the
+   list still rules. Stored in S.campAssign keyed by id, each stamped with when it was written; a
+   removal is a tombstone, so two tabs merging (mergeStates keeps the newest of each id) never
+   bring a deleted assignment back. */
+function campCanon(label){
+  const s=String(label||'').trim(); if(!s) return '';
+  if(/download|upsell|up-sell/i.test(s)){
+    const known=CAMPS.concat(((typeof S!=='undefined'&&S&&S.roster)||[]).map(a=>a.campaign)).find(c=>/download|upsell/i.test(String(c||'')));
+    return known||'Download & Test'; }
+  return campOf(s);
+}
+function campAssignIndex(){
+  const idx={};
+  for(const id in ((typeof S!=='undefined'&&S&&S.campAssign)||{})){ const x=S.campAssign[id];
+    if(!x||x.deleted||!x.code||!x.campaign||!/^\d{4}-\d{2}-\d{2}$/.test(x.from||'')) continue;
+    (idx[x.code]=idx[x.code]||[]).push(x); }
+  for(const c in idx) idx[c].sort((a,b)=>a.from.localeCompare(b.from)||String(a.at||'').localeCompare(String(b.at||'')));
+  return idx;
+}
+/* the assignment in force for this agent on this day: the latest `from` on or before it that has
+   not ended; on the same `from`, the one written last */
+function campaignAssignedOn(idx,code,d){ const L=idx&&idx[code]; if(!L) return null; let hit=null;
+  for(const x of L){ if(x.from>d) break; if(!x.until||d<=x.until) hit=x; } return hit; }
+/* add (or correct) one assignment; a second one for the same agent and start date replaces the
+   first rather than competing with it */
+function addCampAssign(code,campaign,from,until,src){
+  code=cbCode(code)||(/^\s*\d+\s*$/.test(String(code||''))?'CB'+parseInt(code,10):String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'')); campaign=campCanon(campaign);
+  if(!code||!campaign||!/^\d{4}-\d{2}-\d{2}$/.test(from||'')) return null;
+  if(until&&!/^\d{4}-\d{2}-\d{2}$/.test(until)) until='';
+  if(until&&until<from) return null;
+  if(!S.campAssign||typeof S.campAssign!=='object') S.campAssign={};
+  const at=new Date().toISOString();
+  for(const id in S.campAssign){ const x=S.campAssign[id]; if(x&&!x.deleted&&x.code===code&&x.from===from) removeCampAssign(id); }
+  const id=code+'|'+from+'|'+at;
+  S.campAssign[id]={id,code,campaign,from,until:until||'',at,src:src||'manual'};
+  return S.campAssign[id];
+}
+/* a tombstone is always stamped AFTER what it removes, even within the same millisecond, so the
+   merge can never prefer the older live copy */
+function removeCampAssign(id){ const x=S.campAssign&&S.campAssign[id]; if(!x) return;
+  const now=Date.now(), prev=Date.parse(x.at||'')||0;
+  S.campAssign[id]={id,code:x.code,deleted:true,at:new Date(Math.max(now,prev+1)).toISOString()}; }
 function offShiftClass(status,d){
   const from=MTD_RULES.leaveNotShiftFrom; if(!from||d<from||status==null) return '';
   const w=attWeight(status,d); if(w>0||w===-1) return '';
@@ -2090,6 +2147,10 @@ function detectType(header, sheetName, recs){
      Sales Manager | Campaign | VICCI Dial. Checked before the roster shape (it has no Agent
      Name, so it could never have been mistaken for one, but the order says what it is). */
   if(has('team leader name','employee code')) return 'leaders';
+  /* CAMPAIGN ASSIGNMENTS (2026-09-29): CB | Campaign | Effective From | [Effective To]. Tested
+     before the Agent List and only when there is no Team Leader column, so a list is never read
+     as assignments. */
+  if(has('campaign','effective')&&!has('team leader')&&H.some(h=>/code|^cb/.test(h))) return 'campAssign';
   if(has('team leader','agent name')&&(has('sales force')||has('call x'))) return 'roster';
   if(has('date','team leader','emp code','sales achieved')) return 'trackerDaily';
   return null;
@@ -2394,6 +2455,22 @@ function grossUpSales(){
 }
 
 const INGEST={
+  /* EFFECTIVE-DATED CAMPAIGN ASSIGNMENTS (2026-09-29) — see addCampAssign. One row per move:
+     CB (or Employee Code), Campaign, Effective From, optionally Effective To. A row that cannot be
+     read is named with its reason, never guessed. */
+  campAssign(recs,name){
+    const col=(r,...ks)=>{ for(const k of Object.keys(r)) if(ks.some(x=>x.test(k.trim()))) return r[k]; return ''; };
+    let ok=0; const bad=[];
+    recs.forEach((r,i)=>{
+      const code=col(r,/^(employee code|cb( number| code)?|agent code|code)$/i), camp=col(r,/^campaign$/i);
+      const from=parseDateLoose(col(r,/^effective (from|date)$/i,/^from$/i)), until=parseDateLoose(col(r,/^effective (to|until)$/i,/^(to|until)$/i))||'';
+      const x=(from?addCampAssign(code,camp,from,until,name):null);
+      if(x) ok++; else bad.push('row '+(i+2)+(!code?' (no CB)':!camp?' (no campaign)':!from?' (no effective-from date)':' (the dates do not make sense)'));
+    });
+    if(bad.length) toast(bad.length+' campaign assignment row(s) in "'+name+'" were not read: '+bad.slice(0,6).join(', ')+(bad.length>6?' …':''),12000);
+    if(!ok) return null;
+    return regFile(name,'campAssign',[],ok);
+  },
   // Power BI - Active Cases — THE money source (replaces Activated Services + the GWP
   // price list). GWP = Σ Charge Amount per account × (1+VAT); charges are EX-VAT (proof:
   // 30,43+33,91+21,74 = 86,08 = 99 ÷ 1,15). Each row is dated by its OWN Contract Create
@@ -4206,6 +4283,7 @@ function buildModel(range, periodKey){
   /* code -> [{d,k:'leave'|'unavailable',campaign}] — employed days the register says the agent
      was not available to work (rule leaveNotShiftFrom). Not facts: they carry no shift. */
   const offBy={};
+  const caIdx=campAssignIndex();          // effective-dated campaign assignments, indexed once per build
   const attCovered=d=>attFloorCovered(d,attCov);   // rule registerCoverage — any entry, before its date
   const metaOf={}; S.roster.forEach(a=>{ metaOf[a.code]=a; });
   /* LEAVERS (rule departures, 2026-09-15): on the floor for every day before `left`, and on any
@@ -4239,7 +4317,10 @@ function buildModel(range, periodKey){
          team leader for that date), then the effective-dated history, then the live roster
          as the last resort for an agent we have never observed being assigned. */
       const oh=orgAt(code,d);
-      const camp=campOf((tr&&tr.campaign)||(oh&&oh.campaign)||(a&&a.campaign));
+      /* an effective-dated campaign assignment beats the list's month-grain answer on its own
+         dates (2026-09-29); the day's tracker row, which states that day, still comes first */
+      const ca=campaignAssignedOn(caIdx,code,d);
+      const camp=campOf((tr&&tr.campaign)||(ca&&ca.campaign)||(oh&&oh.campaign)||(a&&a.campaign));
       if(!CAMPS.includes(camp)){
         // not a reported campaign — tally what is being left out, then drop the row
         const sd0=salesBy[d][code];
@@ -4590,6 +4671,13 @@ function buildModel(range, periodKey){
       if(n>bestN){bestN=n;best=c;} }
     primaryCamp[code]=best||'Courtesy';
   }
+  /* THE CAMPAIGN THEY ARE ON NOW (2026-09-29): the campaign of their latest day with anything on
+     it. primaryCamp (most sales) still decides where undated adjustments attach; the agent's own
+     card, commission and scoping follow the CURRENT campaign, and every other campaign they worked
+     this period travels beside it, never blended into it. */
+  const curCamp={};
+  { const last={}; for(const f of facts){ if(!(f.emp||f.act||f.sales||f.talk)) continue; const l=last[f.code]; if(!l||f.date>=l.date) last[f.code]=f; }
+    for(const code in last) curCamp[code]=last[code].campaign; }
   const mtdCC={}; CAMPS.forEach(c=>mtdCC[c]={}); const wtdCC={};
   const weeks=mondays.map((m,i)=>({num:i+1,from:m,to:addDays(m,6),dates:dates.filter(d=>mondayOf(d)===m)}));
   for(const camp of CAMPS){
@@ -4680,7 +4768,7 @@ function buildModel(range, periodKey){
   const talkDays=new Set(), workedDays=new Set();
   for(const f of facts){ if(f.talk>0) talkDays.add(f.date); if(f.act>0||f.sales>0) workedDays.add(f.date); }
   const noDialler=[...workedDays].filter(d=>!talkDays.has(d)).sort();
-  return {range,newCampaigns,dates,weeks,facts,agents,byAgentDay,offBy,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
+  return {range,newCampaigns,dates,weeks,facts,agents,byAgentDay,offBy,curCamp,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
     near:IDX.near,ambig:IDX.ambig,           // identities resolved by near spelling / left unresolved as ambiguous (2026-09-21), for the Data tab and V24
     viciSkipped,viciPartial,talkDays,noDialler,attDates,diallingDays,refsAreTotals:M_refsAreTotals,
     /* the same aggregator the grand total used, for a page that must total a FILTERED set of
@@ -5038,7 +5126,12 @@ function perfScore(a){
    session is now shown on the card and left out of the rating until its money is confirmed. */
 function compositeWindow(code){
   const rows=(M&&M.byAgentDay&&M.byAgentDay[code])||[];
-  const worked=rows.filter(f=>f.act>0&&!f.provisional).sort((a,b)=>a.date.localeCompare(b.date));
+  let worked=rows.filter(f=>f.act>0&&!f.provisional).sort((a,b)=>a.date.localeCompare(b.date));
+  /* ONE CAMPAIGN'S SESSIONS (2026-09-29): a Download & Test week sells a R40 product, so its
+     sessions scored against a Courtesy floor would read as failures — the window is the last
+     sessions of the campaign the agent is on now. */
+  const cur=worked.length?worked[worked.length-1].campaign:null;
+  if(cur!=null) worked=worked.filter(f=>f.campaign===cur);
   const n=+COMPOSITE_RULES.windowSessions||5;
   return worked.slice(-n);
 }
@@ -7684,6 +7777,7 @@ PAGES.settings=()=>{
       <td><input type="number" class="cell" step="0.5" value="${a.target}" onchange="S.roster[${i}].target=parseFloat(this.value)||0;save();rebuild();"></td>
       <td class="l">${a.start||''}</td></tr>`).join('')}
     </tbody></table></div></div>
+  ${campAssignCard()}
   ${orgHistCard()}
   <div class="card mt" id="jobsCard"><div class="cardhead"><div><h3>Scheduled jobs</h3><div class="sub">The runner that republishes the digests, relays uploads into Ops, loads the lake and refreshes coaching — what ran, when, and whether it worked</div></div></div><div class="note">Loading…</div></div>
   <div class="card mt"><div class="cardhead"><div><h3>Danger zone</h3></div></div>
@@ -7692,6 +7786,42 @@ PAGES.settings=()=>{
       <button class="btn danger" onclick="if(confirm('Reset EVERYTHING to factory defaults?')){localStorage.removeItem(STORE_KEY);location.reload();}">Full reset</button>
     </div></div>`;
 };
+
+/* CAMPAIGN ASSIGNMENTS, BY EFFECTIVE DATE (2026-09-29). Where a campaign manager says when an agent
+   moved campaign — the one thing an Agent List snapshot cannot say. Add one here, or upload a sheet
+   with the columns CB | Campaign | Effective From | Effective To (optional). On its dates an
+   assignment decides the day's campaign; every report then shows each campaign's work on its own
+   and never blends it. Removing one leaves a tombstone so another open tab cannot bring it back. */
+function campAssignCard(){
+  const idx=campAssignIndex(), rows=[];
+  for(const code of Object.keys(idx).sort()) for(const x of idx[code]) rows.push(x);
+  const nameOf=c=>{ const a=(S.roster||[]).find(r=>r.code===c); return a?a.name:''; };
+  const camps=[...new Set([...CAMPS,...(S.roster||[]).map(a=>a.campaign).filter(Boolean)])].filter(c=>c!=='VT');
+  return `<div class="card mt"><div class="cardhead"><div><h3>Campaign assignments by effective date</h3>
+    <div class="sub">When an agent moves campaign mid-month, record it here so each campaign's work is reported on its own — the Agent List alone cannot say when a move happened</div></div></div>
+    <div class="formrow" style="flex-wrap:wrap;gap:8px">
+      <select id="caCode" class="cell" style="max-width:240px"><option value="">Agent…</option>${(S.roster||[]).slice().sort((x,y)=>String(x.name).localeCompare(String(y.name))).map(a=>`<option value="${esc(a.code)}">${esc(a.name)} · ${esc(a.code)}</option>`).join('')}</select>
+      <select id="caCamp" class="cell" style="max-width:190px"><option value="">Campaign…</option>${camps.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
+      <label class="note" style="margin:0">from <input id="caFrom" type="date" class="cell" style="max-width:160px"></label>
+      <label class="note" style="margin:0">to <input id="caTo" type="date" class="cell" style="max-width:160px"></label>
+      <button class="btn small primary" onclick="__caAdd()">Add assignment</button>
+    </div>
+    <p class="note" style="margin:6px 0 10px">Or upload a sheet with the columns <b>CB · Campaign · Effective From · Effective To</b> (To is optional — leave it blank for "until further notice").</p>
+    ${rows.length?`<div class="tablewrap" style="max-height:260px"><table class="data"><thead><tr><th class="l">Code</th><th class="l">Agent</th><th class="l">Campaign</th><th class="l">From</th><th class="l">To</th><th class="l">Source</th><th></th></tr></thead><tbody>
+      ${rows.map(x=>`<tr><td class="l">${esc(x.code)}</td><td class="l">${esc(nameOf(x.code))}</td><td class="l">${esc(x.campaign)}</td><td class="l">${esc(x.from)}</td><td class="l">${esc(x.until||'—')}</td>
+        <td class="l">${esc(x.src==='manual'?'added here':x.src||'')}</td><td><button class="btn small" onclick="__caDel('${esc(String(x.id).replace(/'/g,''))}')">Remove</button></td></tr>`).join('')}
+    </tbody></table></div>`:'<p class="note">No assignments yet — every agent follows the Agent List for the whole month.</p>'}
+  </div>`;
+}
+function __caAfter(){ save(); rebuild(); renderPage(); if(typeof kickAgentDigest==='function') kickAgentDigest(); }
+function __caAdd(){
+  const v=id=>{ const el=document.getElementById(id); return el?el.value:''; };
+  const x=addCampAssign(v('caCode'),v('caCamp'),v('caFrom'),v('caTo'),'manual');
+  if(!x){ toast('Choose an agent, a campaign and a from-date (and a to-date on or after it, if you give one).'); return; }
+  toast(x.code+' is on '+x.campaign+' from '+x.from+(x.until?' to '+x.until:'')+' — every report now splits by campaign on those dates.',7000);
+  __caAfter();
+}
+function __caDel(id){ if(!confirm('Remove this campaign assignment? The agent follows the Agent List on those dates again.')) return; removeCampAssign(id); __caAfter(); }
 
 /* THE MOVEMENT REGISTER. Every organisational change the uploads have ever shown, and the
    answer to "why does last month still say Nadine when he reports to Renolan now". Only
@@ -9161,8 +9291,13 @@ function agentDigestPayload(){
     return n; };
   const rows=[];
   for(const a of M.agents){
-    const g=primaryAgg(a.code)||{};
-    const camp=M.primaryCamp[a.code]||a.campaign||'';
+    /* THE CURRENT CAMPAIGN'S FIGURES, NOT A BLEND (2026-09-29). An agent who worked two campaigns
+       this period is published under the one they are on now — its own aggregate, its own plan,
+       its own peer group — and every campaign they worked travels in byCampaign, with the whole
+       period in overall. For everyone on one campaign nothing changes. */
+    const camp=(M.curCamp&&M.curCamp[a.code])||M.primaryCamp[a.code]||a.campaign||'';
+    const g=((M.mtdCC[camp]||{})[a.code])||primaryAgg(a.code)||{};
+    const campsWorked=CAMPS.filter(c=>(M.mtdCC[c]||{})[a.code]);
     const tenure=g.tenure||a.tenure||'';
     const t=trendOf(a.code)||{dir:'flat',pct:null};
 
@@ -9243,6 +9378,24 @@ function agentDigestPayload(){
       absent:(M.byAgentDay[a.code]||[]).filter(f=>f.campaign===camp&&f.emp>0&&!(f.act>0)).length,
       off:(M.offBy&&M.offBy[a.code]||[]).map(o=>({d:o.d,k:o.k==='leave'?'leave':'unavailable'})),
       leaveAhead:leaveAheadOf(a.code),
+      /* THE CAMPAIGN SPLIT (2026-09-29) — published only when the agent worked more than one
+         campaign this period. One entry per campaign with the dates it covers and its own figures
+         and commission plan (now marks the one the top-level row is), and overall = the whole
+         period across every campaign. Never summed into the top-level figures. */
+      ...(campsWorked.length>1?(()=>{
+        const rowsOf=c=>(M.byAgentDay[a.code]||[]).filter(f=>f.campaign===c&&(f.emp||f.act||f.sales||f.talk||f.gwpEx));
+        const pick=o=>({emp:r2(o.emp)||0,act:r2(o.act)||0,target:r2(o.target)||0,sales:o.sales||0,gwpEx:r2(o.gwpEx)||0,
+          gwpT:o.gwpT==null?null:r2(o.gwpT),canc:o.canc==null?null:r2(o.canc),talk:Math.round(o.talk||0),calls:o.calls||0,ans:o.ans||0,
+          pctT:r4(o.pctT),att:r4(o.att),spd:r4(o.spd),aveG:r2(o.aveG)});
+        const byCampaign=campsWorked.map(c=>{ const o=M.mtdCC[c][a.code], ds=rowsOf(c).map(f=>f.date).sort();
+          return {campaign:c,from:ds[0]||'',to:ds[ds.length-1]||'',plan:commPlanOf(c,o.tenure||tenure),now:c===camp,...pick(o)}; })
+          .sort((x,y)=>String(x.from).localeCompare(String(y.from)));
+        const overall=pick(M.aggFacts(M.byAgentDay[a.code]||[]));
+        /* an overall "% of target" is only honest when EVERY campaign carries a target: Download &
+           Test has none in the rule book yet, and its sales over Courtesy's target alone read 75%
+           where neither campaign is at 75% (caught on the rendered card, 2026-09-29) */
+        if(byCampaign.some(x=>!(x.target>0))) overall.pctT=null;
+        return {byCampaign, overall}; })():{}),
       rankCo:rankCo[a.code]||null, nCo:rankAll.length,
       rankTeam:rankTeam[a.code]||null, nTeam:teamSize[teamOf[a.code]]||0,
       trend:t.dir, trendPct:(t.pct==null?null:Math.round(t.pct*1000)/1000),
@@ -9287,7 +9440,7 @@ function agentDigestPayload(){
          is honestly headed "Sales that counted", had no way to say WHY it did not count. It
          read as a day they wrote nothing. The engine has carried canc on every fact row since
          the money model was regrained; it simply never travelled. */
-      days:(M.byAgentDay[a.code]||[]).map(f=>({d:f.date,w:f.week,emp:r2(f.emp)||0,act:r2(f.act)||0,
+      days:(M.byAgentDay[a.code]||[]).map(f=>({d:f.date,w:f.week,...(campsWorked.length>1?{cp:f.campaign}:{}),emp:r2(f.emp)||0,act:r2(f.act)||0,
         t:r2(f.target)||0,s:f.sales||0,x:r2(f.gwpEx)||0,tk:Math.round(f.talk||0),c:f.calls||0,
         r:f.ref||0,k:f.canc||0,p:f.provisional?1:0,dc:f.dCov?1:0}))
     });
