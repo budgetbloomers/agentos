@@ -56,6 +56,7 @@ try {
       const whys = [...root.querySelectorAll('.why')].map((r) => r.innerText.replace(/\s+/g, ' ').trim());
       const sessCard = [...root.querySelectorAll('h2')].find((h) => /Sales by session/.test(h.textContent)); const sessRows = sessCard ? sessCard.closest('.card').querySelectorAll('tbody tr').length : -1;
       const pageDays = (window.ME && Array.isArray(window.ME.days)) ? window.ME.days.length : null;   // the payload THIS page rendered
+      const hasScore = !!root.querySelector('.pg-score');   // read on My Progress, BEFORE the switch to Today below
       /* THE TODAY TILES PAINT THE ENGINE'S DRILL-DOWN VERDICTS (sprint 2026-09-29, item 3) — read back the
          tiles and the verdicts from the payload the page itself received */
       window.VIEW = 'month'; render();
@@ -67,7 +68,7 @@ try {
         tiles[k] = { state: ['pass', 'watch', 'focus', 'none'].find((s) => t.classList.contains(s)) || '?', tap: t.hasAttribute('data-drill') };
       }
       const drill = window.ME && window.ME.drill ? Object.fromEntries(Object.entries(window.ME.drill).map(([k, v]) => [k, v && v.status])) : null;
-      return { score, rows, whys, sessRows, pageDays, hasScore: !!root.querySelector('.pg-score'), tiles, drill };
+      return { score, rows, whys, sessRows, pageDays, hasScore, tiles, drill };
     }, a.code);
     const c = me.composite;
     ok(a.code + ': the card renders a score', view.hasScore, view.score);
