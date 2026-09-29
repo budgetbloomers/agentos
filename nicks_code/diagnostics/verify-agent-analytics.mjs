@@ -693,6 +693,9 @@ const CODE = PAGE
     /startLiveRefresh\(\);[^\n]*return teamView\(\);/.test(lp) ? ok('a team payload starts the live re-ask the moment it loads') : bad('the live refresh is never started');
     /* the Help Center icon's pulse starts with the team view too (D5, sprint 2026-09-29) */
     /startHelpPulse\(\);[^\n]*return teamView\(\);/.test(lp) ? ok('a team payload starts the Help Center icon\'s pulse') : bad('the Help Center icon is never fed');
+    /* D2 / item 6 (sprint 2026-09-29): an agent's own page re-asks too — it used to load once at sign-in */
+    /startAgentRefresh\(\);\s*show\(D\.me\);/.test(lp) ? ok('an agent\'s page starts its own re-ask (focus + every 5 minutes)') : bad('an agent\'s page is still loaded once and never refreshed');
+    /AGENT_LIVE_MS=300000/.test(PAGE) ? ok('the agent re-ask runs every 5 minutes while visible') : bad('the agent re-ask interval is not 5 minutes');
     /setInterval\(function\(\)\{ if\(!document\.hidden\)\{ refreshPortal\(false\); repTick\(\); \} \},LIVE_EVERY_MS\)/.test(lp)
       && /addEventListener\('visibilitychange'/.test(lp) && /addEventListener\('focus'/.test(lp)
       ? ok('the page re-asks on a timer while visible, when the tab comes back, and on focus')
@@ -1186,6 +1189,8 @@ try {
   if (!/How you are tracking — September to date/.test(text)) throw new Error('the tracking heading does not name its scope');
   if (!/A projection of how your month is going so far/.test(text)) throw new Error('Today does not say it is a projection');
   if (/Numbers last refreshed|Up to date|older copy|Numbers updated/.test(text)) throw new Error('data-assurance chrome is still shown to an agent');
+  /* D2 (sprint 2026-09-29): ONE quiet line instead — what the figures cover and when they last moved */
+  if (!/class="fresh-line"[^>]*>Figures to [^<·]+ · updated [^<]*\d\d:\d\d</.test(html)) throw new Error('the agent has no quiet "Figures to … · updated …" line: ' + ((html.match(/fresh-line[^<]*<?[^<]*/) || ['none'])[0]));
   if (/>Nikola</.test(html) || /data-view="nik"/.test(html)) throw new Error('Nikola is still on the agent nav');
   if (!/Projected Commission</.test(html)) throw new Error('the nav tab is not "Projected Commission"');
   ok('Today is precise: 2 of 21 days, 168 target, 8 a day over 19 days (3 – 30 Sep), same last session in both cards, no chrome, no Nikola');
@@ -1202,6 +1207,7 @@ try {
   P.setTeam({ name: 'Lead', role: 'team_leader' }); P.setD({ ...SEP, role: 'team_leader', agents: [ENOCH], __back: { name: 'Lead' } }); P.setMe(ENOCH); P.show(ENOCH);
   const t3 = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   if (!/Numbers last refreshed/.test(t3)) throw new Error('a team leader lost the freshness card');
+  if (/fresh-line/.test(N.root.innerHTML)) throw new Error('the agent\'s quiet line leaked onto a team leader\'s drilldown');
   ok('team leaders keep the data-assurance chrome');
   P.setTeam(null);
 } catch (e) { bad('Today precision (2026-09-03 round)', e.message); }

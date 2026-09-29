@@ -114,6 +114,8 @@ a{color:var(--blue)}
 .nav-item.sub{padding:6px 12px 6px 40px;font-size:12.5px;font-weight:500;color:#B4C3DD}
 .nav-item.sub.active{background:rgba(255,255,255,.14);color:#fff}
 .nav-item.parent.open{background:rgba(255,255,255,.07)}
+/* D2 (2026-09-29): the agent's one quiet freshness line */
+.fresh-line{font-size:12px;color:#64748B;margin:0 0 12px}
 /* the Help Center icon (D5, 2026-09-29): how many requests from the leader's team nobody has opened yet */
 .nav-badge{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;gap:3px;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:#EF4444;color:#fff;font-size:11px;font-weight:800;line-height:1}
 .sys-card{margin-top:auto;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);border-radius:11px;padding:11px 12px;font-size:12px}
@@ -3957,6 +3959,7 @@ function loadPortal(){
     if(D.role==='team_leader'||D.scope==='team'||D.scope==='all'){ startLiveRefresh(); startHelpPulse(); return teamView(); }
     if(D.notReported) return notReported();
     if(!D.me) return fatal('Nothing to show yet','No figures have been published for you this month.');
+    startAgentRefresh();
     show(D.me);
   })
   /* A RENDER THAT THROWS MUST NOT LOOK LIKE A SLOW NETWORK. Without this the
@@ -3993,6 +3996,36 @@ function startLiveRefresh(){
   LIVE.timer=setInterval(function(){ if(!document.hidden){ refreshPortal(false); repTick(); } },LIVE_EVERY_MS);
   document.addEventListener('visibilitychange',function(){ if(!document.hidden&&Date.now()-LIVE.at>LIVE_MIN_GAP_MS){ refreshPortal(false); repTick(); } });
   window.addEventListener('focus',function(){ if(Date.now()-LIVE.at>LIVE_MIN_GAP_MS){ refreshPortal(false); repTick(); } });
+}
+/* AN AGENT'S PAGE RE-ASKS TOO (item 6, sprint 2026-09-29). It used to load once at sign-in, so an
+   agent who kept the tab open read the morning's figures all day. Every 5 minutes while on screen, and
+   when the tab comes back (30 s apart at most) — one Worker call, no HighLevel. A copy with the same
+   figures changes nothing; a new one redraws the same tab in place. Never under the help form or the
+   password form — that copy waits for the next beat. */
+var AGENT_LIVE={timer:null,busy:false,at:0};
+var AGENT_LIVE_MS=300000;
+function agentLiveScope(){ return !!(D&&D.me&&!D.__back&&isAgentUser()); }
+function refreshAgent(){
+  if(AGENT_LIVE.busy||!agentLiveScope()) return;
+  AGENT_LIVE.busy=true; AGENT_LIVE.at=Date.now();
+  api('/api/portal/overview').then(function(r){
+    AGENT_LIVE.busy=false;
+    if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} return loginScreen('Your session has expired. Please sign in again.'); }
+    if(!r.ok||!r.json||!r.json.me||!agentLiveScope()) return;   // a missed beat, or the page changed hands meanwhile
+    var fresh=r.json;
+    if(fresh.updatedAt===D.updatedAt&&JSON.stringify(fresh.me)===JSON.stringify(D.me)) return;
+    if(PW_OPEN||document.getElementById('helpOv')) return;
+    var y=window.scrollY||0;
+    D=fresh; show(D.me);
+    try{ window.scrollTo(0,y); }catch(e){}
+  });
+}
+function startAgentRefresh(){
+  if(AGENT_LIVE.timer||typeof document.addEventListener!=='function') return;
+  AGENT_LIVE.at=Date.now();
+  AGENT_LIVE.timer=setInterval(function(){ if(!document.hidden) refreshAgent(); },AGENT_LIVE_MS);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden&&Date.now()-AGENT_LIVE.at>LIVE_MIN_GAP_MS) refreshAgent(); });
+  window.addEventListener('focus',function(){ if(Date.now()-AGENT_LIVE.at>LIVE_MIN_GAP_MS) refreshAgent(); });
 }
 /* Did management publish different FIGURES, or only a new timestamp? The runner and the
    self-heal republish identical numbers; those must not shout "updated" at the leader. */
@@ -5197,6 +5230,14 @@ function isAgentUser(){ var acct=TEAM||D||{}; return !TEAM&&acct.role==='agent';
    everyone, agents included: it says WHAT the numbers cover, never when they were pushed. */
 function reachLabel(){ try{ var r=(D&&D.dataReach&&D.dataReach.sales)||(D&&D.dates&&D.dates[D.dates.length-1]); if(!r) return '';
   return new Date(r+'T00:00:00Z').toLocaleDateString('en-ZA',{weekday:'long',day:'numeric',month:'long',timeZone:'UTC'}); }catch(e){ return ''; } }
+/* D2 (sprint 2026-09-29, Nick: "AgentOS must also clearly display when the data was last updated").
+   The 3 Sep round took the freshness CARD away from agents ("no data-assurance chrome") and that stays:
+   an agent gets ONE quiet line — what the figures cover and when they last moved — and nothing else. */
+function agentFreshLine(){
+  if(!isAgentUser()||D.__back||!D.updatedAt) return '';
+  var rl=reachLabel();
+  return '<div class="fresh-line">'+(rl?'Figures to '+esc(rl)+' · ':'')+'updated '+esc(sastWhen(D.updatedAt))+'</div>';
+}
 function calcNow(){
   var f=function(id,dflt){ var el=$(id); return el?el.value:dflt; };
   var plan=($('cPlan')&&$('cPlan').value)||ME.plan;   // the figures card's tenure select — sandbox only, never saved
@@ -5226,7 +5267,8 @@ function show(a){
         /* A PROJECTION, SAID UP FRONT (Nick, 2026-09-03: "at the beginning, this is a
            projection of how your month is going thus far"). */
         : 'A projection of how your month is going so far, from your '+esc(prettyPeriod())+' figures. Today’s sales land with tonight’s upload.'),
-    (VIEW==='links' ? linksPage()
+    agentFreshLine()
+    +(VIEW==='links' ? linksPage()
       : VIEW==='coaching' ? coachPageAgent()
       /* COMMISSION IS ITS OWN TAB. It used to sit collapsed at the bottom of My
          month, which is where Nick found it — that is, did not find it. The money
