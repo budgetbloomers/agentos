@@ -51,6 +51,10 @@ ok('Saturday shift rule matches (data only, from)', inlined.saturdayShiftsFrom =
     inlined.leaveNotShiftFrom + ' vs ' + JSON.stringify(c.leave_not_shift_from));
   ok('leave / unavailable code lists match', JSON.stringify(i.leave) === JSON.stringify(c.leave) && JSON.stringify(i.unavailable) === JSON.stringify(c.unavailable),
     JSON.stringify(i) + ' vs ' + JSON.stringify({ leave: c.leave, unavailable: c.unavailable })); }
+/* A DAY THE REGISTER ONLY TOUCHES IS NOT A DAY IT REPORTS (2026-09-29): both copies. */
+{ const c = SPEC.reference_data.register_coverage || {}, i = inlined.registerCoverage || {};
+  ok('register coverage rule matches (from, min share of the roster)', i.from === c.from && i.minShareOfRoster === c.min_share_of_roster,
+    JSON.stringify(i) + ' vs ' + JSON.stringify({ from: c.from, min: c.min_share_of_roster })); }
 /* L IS A HALF DAY (2026-09-29): effective date and codes, both copies. */
 { const h = SPEC.reference_data.half_day_codes || {}, i = inlined.halfDayCodes || {};
   ok('half-day codes rule matches (from, codes)', i.from === h.from && JSON.stringify(i.codes) === JSON.stringify(h.codes),

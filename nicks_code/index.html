@@ -582,12 +582,26 @@ const MTD_RULES = {
      August, verified row-for-row against the workbook, stays exactly as it was.
      Mirror of specs/mtd_engine_rules.json reference_data.attendance_classes. */
   leaveNotShiftFrom: '2026-09-01',
-  attClasses: { leave:['AL','SL','FRL','CA','CASAT'], unavailable:['SUSPENDED'] },
+  attClasses: { leave:['AL','SL','FRL','CA','CASAT','ML'], unavailable:['SUSPENDED'] },   // ML: maternity leave, first seen on the Sept 2026 register
   /* L IS A HALF DAY (Nick, 2026-09-29: "L code mark as half day"). The weight table below scored
      it 0; from this date it weighs 0,5 exactly like HDCA — for Courtesy/Nesting the half-day
      override on the dialler rule, for Cuddle the register weight. Same effective date as the
      leave rule so August stays workbook-exact. Mirror of reference_data.half_day_codes. */
-  halfDayCodes: { from:'2026-09-01', codes:['L'] },
+  halfDayCodes: { from:'2026-09-01', codes:['L','HDSL','HDAL'] },   // HDSL / HDAL: half-day sick / annual leave (Sept 2026 register) — a half day like HDCA
+
+  /* A DAY THE REGISTER ONLY TOUCHES IS NOT A DAY IT REPORTS (2026-09-29). A day with any register
+     entry used to count as "covered", and on a covered day every rostered agent the register does
+     not name is an employed shift. The September 2026 register reaches Fri 18 Sep in full but
+     carries a handful of ADVANCE entries after it — one agent's maternity leave written out to
+     30 Sep, a sick day on the 21st — so those single entries made the whole floor "employed and
+     absent" on every later day with sales. A day now reports the floor only when the register
+     names at least this share of the rostered agents (those started by that day); on any other
+     day the people it DOES name follow their own entry and everyone else follows the no-register
+     rule (only activity counts). Measured against the ROSTER, not the register's own fullest day,
+     so a month whose register holds nothing but advance entries (an October export on the 1st)
+     cannot make its own sparse days look full. Effective-dated so the workbook-verified August is
+     untouched. Mirror of reference_data.register_coverage. */
+  registerCoverage: { from:'2026-09-01', minShareOfRoster:0.5 },
 
   /* AVERAGE TALK TIME IS MINUTES PER EMPLOYED SHIFT (Nick, 2026-09-08: "total talk time divided
      by shifts, and must be in minutes"). The denominator was already employed shifts (spec §6.4);
@@ -878,6 +892,68 @@ async function toObjectsAsync(rows){
   }
   return {header,recs};
 }
+/* WIDE ATTENDANCE REGISTERS — one row per person, one column per day (2026-09-29).
+   The HR register now arrives with "Tue 1 … Wed 30" day columns, the status code in the cell and
+   no Date or Status Code column at all, and the September 2026 register loaded NOTHING in either
+   app ("Could not recognise"). This turns that layout back into the long register both parsers
+   already read: one row per person per day that carries a code; a blank cell is no entry.
+   THE MONTH IS NEVER GUESSED LOOSELY. It comes from the file (or sheet) name — "September_2026",
+   "Sep 2026", "2026-09" (a month word standing on its own, so "Marketing_2026" is not March) — and
+   every day header's weekday must agree with it. With no month in the name, the month nearest to
+   now (from a year back to next month; a past month wins a tie) whose calendar fits EVERY header
+   is used, and the caller says so — an October register exported early is October, never the
+   January whose days also fall that way. A name the headers contradict, or headers no month fits,
+   is refused whole: filing a register against the wrong month is worse than not loading it.
+   Returns null (not a wide register), {ok:false,why} (refused) or
+   {ok:true,header,recs,month,basis:'name'|'calendar',people,days}.
+   TWO COPIES, ONE FUNCTION: this exact text lives in nicks_code/index.html and in
+   Chatterbox_AgentOS_Analytics.html between the WIDE-REGISTER markers, because each app must run
+   on its own from file://. diagnostics/verify-wide-register.mjs fails the build if they differ. */
+// ── WIDE-REGISTER:BEGIN ──
+function unpivotRegister(headers,recs,fileName,sheetName,nowMs){
+  const WD=['sun','mon','tue','wed','thu','fri','sat'];
+  const DAY=/^(sun|mon|tue|wed|thu|fri|sat)[a-z]*\.?\s+(\d{1,2})$/i;
+  const str=v=>String(v==null?'':v).trim();
+  const cols=[];
+  (headers||[]).forEach(h=>{ const m=DAY.exec(str(h)); if(m) cols.push({h,wd:WD.indexOf(m[1].toLowerCase()),day:+m[2]}); });
+  const find=re=>{ for(const h of (headers||[])) if(re.test(str(h))) return h; return null; };
+  const codeH=find(/^employee code$/i);
+  if(cols.length<7||!codeH) return null;
+  const fits=(y,m)=>{ const last=new Date(Date.UTC(y,m,0)).getUTCDate();
+    return cols.every(c=>c.day>=1&&c.day<=last&&new Date(Date.UTC(y,m-1,c.day)).getUTCDay()===c.wd); };
+  const MON=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+  const MW='(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+  const RE1=new RegExp('(?:^|[^a-z])'+MW+'(?![a-z])[\\s_\\-.,]*((?:19|20)\\d\\d)(?!\\d)','i'),
+        RE2=new RegExp('(?:^|\\D)((?:19|20)\\d\\d)[\\s_\\-.,]*'+MW+'(?![a-z])','i'),
+        RE3=/(?:^|\D)((?:19|20)\d\d)[\-_.](0?[1-9]|1[0-2])(?!\d)/;
+  const fromName=s=>{ s=str(s); let m;
+    if((m=RE1.exec(s))) return {y:+m[2],m:MON.indexOf(m[1].toLowerCase().slice(0,3))+1};
+    if((m=RE2.exec(s))) return {y:+m[1],m:MON.indexOf(m[2].toLowerCase().slice(0,3))+1};
+    if((m=RE3.exec(s))) return {y:+m[1],m:+m[2]};
+    return null; };
+  const pad=n=>String(n).padStart(2,'0');
+  let ym=fromName(fileName)||fromName(sheetName), basis='name';
+  if(ym&&!fits(ym.y,ym.m)) return {ok:false,why:'its name says '+ym.y+'-'+pad(ym.m)+', but its day headers ("'+cols[0].h+'" …) do not fall on those weekdays in that month'};
+  if(!ym){ basis='calendar';
+    const now=new Date(nowMs||Date.now()), base=now.getUTCFullYear()*12+now.getUTCMonth();
+    for(const k of [0,-1,1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-11,-12]){ const t=base+k, y=Math.floor(t/12), m=t-y*12+1;
+      if(fits(y,m)){ ym={y,m}; break; } }
+    if(!ym) return {ok:false,why:'no month from a year back to next month has its days on the weekdays these headers name — put the month in the file name (e.g. "…September_2026")'}; }
+  const month=ym.y+'-'+pad(ym.m);
+  const nameH=find(/^(employee )?name$/i), titleH=find(/^(employee )?title$/i), typeH=find(/^employee type$/i),
+        deptH=find(/^department$/i), repH=find(/^reports to$/i);
+  const extra=[[nameH,'Employee Name'],[titleH,'Title'],[typeH,'Employee Type'],[deptH,'Department'],[repH,'Reports To']].filter(x=>x[0]);
+  const out=[], people=new Set();
+  for(const r of (recs||[])){
+    const code=str(r[codeH]); if(!code) continue;
+    for(const c of cols){ const v=str(r[c.h]); if(!v) continue;
+      const o={'Date':month+'-'+pad(c.day),'Employee Code':code};
+      for(const [src,dst] of extra) o[dst]=str(r[src]);
+      o['Status Code']=v; o['Status']=v;
+      out.push(o); people.add(code); } }
+  return {ok:true,header:['Date','Employee Code'].concat(extra.map(x=>x[1]),['Status Code','Status']),recs:out,month,basis,people:people.size,days:cols.length};
+}
+// ── WIDE-REGISTER:END ──
 /* NESTING IS TESTED FIRST. The agent list writes it plainly on the VAS sheet, but the
    spec records the variant "Courtesy - Nesting" — which contains "courtesy" and would
    otherwise be swallowed by the Courtesy fallback, silently merging a campaign with its
@@ -1936,6 +2012,23 @@ function attClass(status){
   if(/suspen/i.test(raw)) return 'unavailable';
   return '';
 }
+/* DOES THE REGISTER REPORT THE FLOOR ON THIS DAY? (rule registerCoverage, 2026-09-29). Before the
+   rule's date any entry covers the day, exactly as before. From it, the day must name at least
+   minShareOfRoster of the rostered agents who had started by that day — a day carrying only
+   advance entries (planned leave written out to month end) is not a report of the floor. With no
+   roster loaded there is nothing to measure against and any entry covers, as before. `cache`
+   memoises the answer per day for one model build. */
+function attFloorCovered(d,cache){
+  const day=(S.att||{})[d]; if(!day) return false;
+  const rc=MTD_RULES.registerCoverage;
+  if(!rc||!rc.from||d<rc.from) return Object.keys(day).length>0;
+  if(cache&&cache[d]!==undefined) return cache[d];
+  let den=0, named=0;
+  for(const a of (S.roster||[])){ if(!a||!a.code||(a.start&&a.start>d)) continue; den++; if(day[a.code]!=null) named++; }
+  const v=den?named>=(+rc.minShareOfRoster||0.5)*den:Object.keys(day).length>0;
+  if(cache) cache[d]=v;
+  return v;
+}
 function offShiftClass(status,d){
   const from=MTD_RULES.leaveNotShiftFrom; if(!from||d<from||status==null) return '';
   const w=attWeight(status,d); if(w>0||w===-1) return '';
@@ -2063,12 +2156,20 @@ async function ingestText(name, text, expected, hash){
     return rank(a)-rank(b);
   });
   let dailyDone=false;
+  let wideRefused=null;     // a refused one-column-per-day register says WHY, instead of "not recognised"
   for(const sn of order){
     if(/"USER NAME"/.test(sheets[sn])&&/time range:/i.test(sheets[sn])){
       const vr=INGEST.vici(sheets[sn],name); if(vr){ ingested.push(vr); continue; }
     }
-    const {header,recs}=await toObjectsAsync(await parseCSVAsync(sheets[sn], sniffDelim(sheets[sn])));
+    let {header,recs}=await toObjectsAsync(await parseCSVAsync(sheets[sn], sniffDelim(sheets[sn])));
     if(!recs.length) continue;
+    /* A ONE-COLUMN-PER-DAY REGISTER BECOMES THE LONG REGISTER FIRST (2026-09-29) — see
+       unpivotRegister. Without this the September 2026 register was "not recognised". */
+    const wide=unpivotRegister(header,recs,name,sn);
+    if(wide&&!wide.ok){ wideRefused='"'+name+'" looks like an attendance register with one column per day, but it was not loaded — '+wide.why+'.'; continue; }
+    if(wide){ header=wide.header; recs=wide.recs;
+      toast('"'+name+'" read as the '+wide.month+' register — '+fmtNum(wide.people)+' people, '+fmtNum(recs.length)+' day entries'
+        +(wide.basis==='calendar'?' (the month was worked out from the day headers; put it in the file name to be certain)':'')+'.',9000); }
     let type=detectType(header, sn, recs);
     if(!type) continue;
     /* WHICH LEAD PAGE DOES THIS OPEN-CASES PULL BELONG TO? The two Salesforce exports are
@@ -2101,7 +2202,7 @@ async function ingestText(name, text, expected, hash){
     const {recs}=await toObjectsAsync(await parseCSVAsync(first, sniffDelim(first)));
     if(recs.length){ try{ const res=INGEST[expected](recs,name); if(res) ingested.push(res); }catch(err){} }
   }
-  if(!ingested.length){ toast('Could not recognise "'+name+'" — check the file headers'); return false; }
+  if(!ingested.length){ toast(wideRefused||('Could not recognise "'+name+'" — check the file headers'),wideRefused?12000:undefined); return false; }
   if(expected){
     const SLOT_TYPES={bi:['bi'],calls:['calls'],attendance:['attendance'],inactive:['cancellations'],vici:['calls (ViciDial)','vici'],
       evals:['evals'],roster:['roster'],trackerDaily:['tracker','roster'],referrals:['referrals'],board:['board']};
@@ -3942,7 +4043,11 @@ function saturdayDataOnly(d){
    expectedReach) so the Worker's sentinel and Agent Analytics read the same answer. */
 function dataReach(){
   const mx=o=>{const ks=Object.keys(o||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).sort();return ks.length?ks[ks.length-1]:null};
-  return {sales:mx(S.sales),calls:mx(S.calls),attendance:mx(S.att),qa:mx(S.evals),
+  /* attendance reaches the last day the register REPORTS the floor, not its last advance entry
+     (a leave written out to month end would otherwise read as "register complete to the 30th"
+     and hide a genuinely stale register from the freshness sentinel) — rule registerCoverage */
+  const attReach=(()=>{const c={};const ks=Object.keys(S.att||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)&&attFloorCovered(k,c)).sort();return ks.length?ks[ks.length-1]:null})();
+  return {sales:mx(S.sales),calls:mx(S.calls),attendance:attReach,qa:mx(S.evals),
     roster:{n:(S.roster||[]).length,fp:S.rosterFp||null}};
 }
 function expectedReach(nowMs,saturday){
@@ -3966,7 +4071,8 @@ function buildModel(range, periodKey){
      SPD (Sales / Employed HC / Dialing Days) by three instead of two and understates every
      team by a third. Falls back to the data dates when no register is loaded, so the figure
      degrades to "what we know" rather than to zero. */
-  const attDates=Object.keys(S.att).filter(d=>d>=range.from&&d<=range.to&&Object.keys(S.att[d]||{}).length&&!saturdayDataOnly(d)).sort();
+  const attCov={};                        // one memo per day of "does the register report the floor", for this build
+  const attDates=Object.keys(S.att).filter(d=>d>=range.from&&d<=range.to&&attFloorCovered(d,attCov)&&!saturdayDataOnly(d)).sort();
   /* A dialling day needs BOTH a register and something to report on it. The register runs
      ahead of the other exports — on the August drop it reaches the 6th while the dialler and
      BI stop at the 5th — and those trailing register-only days carry no fact rows at all, so
@@ -4100,7 +4206,7 @@ function buildModel(range, periodKey){
   /* code -> [{d,k:'leave'|'unavailable',campaign}] — employed days the register says the agent
      was not available to work (rule leaveNotShiftFrom). Not facts: they carry no shift. */
   const offBy={};
-  const attCovered=d=>!!S.att[d]&&Object.keys(S.att[d]).length>0;
+  const attCovered=d=>attFloorCovered(d,attCov);   // rule registerCoverage — any entry, before its date
   const metaOf={}; S.roster.forEach(a=>{ metaOf[a.code]=a; });
   /* LEAVERS (rule departures, 2026-09-15): on the floor for every day before `left`, and on any
      day they still have a fact — a sale or a call dated after the list dropped them is a fact,
@@ -4193,7 +4299,10 @@ function buildModel(range, periodKey){
          with two sales on it became a full working day for the entire roster and inflated
          Employed Shifts, Actual Shifts and every target derived from them. With no register,
          only agents who actually did something that day count. */
-      if(!attCovered(d)&&!active&&!tr){ emp=0; act=0; }
+      /* …and on a day the register does not REPORT (rule registerCoverage), the people it does
+         name still follow their own entry — only the unnamed fall back to activity. Before the
+         rule's date an uncovered day has no entries at all, so st is always null there. */
+      if(!attCovered(d)&&st==null&&!active&&!tr){ emp=0; act=0; }
       /* ON LEAVE / UNAVAILABLE IS NOT A SHIFT (rule leaveNotShiftFrom, 2026-09-29). No employed
          shift, no actual shift, no target — the row then falls to the no-data guard below and
          the day is kept in offBy instead, so every view can say "on leave" rather than read a
@@ -9039,6 +9148,17 @@ function agentDigestPayload(){
   try{ if(S.opencasesLM||S.closedcases){ const lb=leadBook(true); leadsBy={};
     for(const cb in lb.A) leadsBy[cb]=lb.A[cb].leads.size; } }catch(e){ leadsBy=null; }
 
+  /* PLANNED LEAVE STILL TO COME (2026-09-29): register entries of a leave / unavailable class on
+     working days AFTER the last day the figures reach, inside the period. The Sept 2026 register
+     writes one agent's maternity leave out to the 30th; Agent Analytics takes these days off that
+     agent's days still to come, so nobody on leave to month end is asked for "N sales a day" over
+     days they will not work. Weekends and public holidays are never working days. */
+  const lastDataDay=(M.dates||[]).filter(x=>x>=M.range.from&&x<=M.range.to).sort().pop()||null;
+  const leaveAheadOf=code=>{ if(!lastDataDay) return 0; let n=0;
+    for(const d in (S.att||{})){ if(d<=lastDataDay||d<M.range.from||d>M.range.to) continue;
+      const wd=new Date(d+'T00:00:00Z').getUTCDay(); if(wd===0||wd===6||SA_HOLIDAYS.has(d)) continue;
+      const st=(S.att[d]||{})[code]; if(st!=null&&offShiftClass(st,d)) n++; }
+    return n; };
   const rows=[];
   for(const a of M.agents){
     const g=primaryAgg(a.code)||{};
@@ -9122,6 +9242,7 @@ function agentDigestPayload(){
       unavail:(M.offBy&&M.offBy[a.code]||[]).filter(o=>o.k!=='leave').length,
       absent:(M.byAgentDay[a.code]||[]).filter(f=>f.campaign===camp&&f.emp>0&&!(f.act>0)).length,
       off:(M.offBy&&M.offBy[a.code]||[]).map(o=>({d:o.d,k:o.k==='leave'?'leave':'unavailable'})),
+      leaveAhead:leaveAheadOf(a.code),
       rankCo:rankCo[a.code]||null, nCo:rankAll.length,
       rankTeam:rankTeam[a.code]||null, nTeam:teamSize[teamOf[a.code]]||0,
       trend:t.dir, trendPct:(t.pct==null?null:Math.round(t.pct*1000)/1000),

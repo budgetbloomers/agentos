@@ -1350,6 +1350,26 @@ try {
   if (!/You have been on leave so far this month/.test(t2) || /not recorded any activity/.test(t2))
     throw new Error('an agent on leave all month is told there is no activity');
   ok('an agent on leave all month is told they are on leave, and that leave is never counted against them');
+
+  /* PLANNED LEAVE AHEAD (2026-09-29, the real Sept register writes maternity leave to the 30th):
+     PULSE publishes leaveAhead — leave on working days after the figures' reach — and the page
+     takes it off THIS agent's days still to come. All three remaining days on leave: no daily
+     number, and it says why; one of three: 2 days left, and the dates line names the leave. */
+  const AWAY = { ...LEAVER, code: 'CB79', leaveAhead: 3 };
+  P.setD({ ...SEPL, agents: [AWAY] }); P.setMe(AWAY); P.setView('month'); P.show(AWAY);
+  let t3 = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/The rest of September is planned leave for you/.test(t3) || /sales? a day over/.test(t3))
+    throw new Error('an agent whose remaining days are all planned leave is still asked for a daily number');
+  P.setView('calc'); P.show(AWAY); t3 = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/Remaining days 0\b/.test(t3) || !/Days the projection covers \(worked \+ still to come\) 13\b/.test(t3))
+    throw new Error('planned leave is still counted as days to come on the commission page');
+  const PART = { ...LEAVER, code: 'CB80', leaveAhead: 1 };
+  P.setD({ ...SEPL, agents: [PART] }); P.setMe(PART); P.setView('month'); P.show(PART);
+  t3 = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/over the 2 working days left \(28 – 30 September, less 1 day of planned leave\)/.test(t3))
+    throw new Error('one planned leave day is not taken off, or the dates do not name it: ' + ((t3.match(/over the .{0,90}/) || ['not found'])[0]));
+  P.setView('month');
+  ok('planned leave after the figures\' reach comes off the agent\'s own days left, and the page says so');
 } catch (e) { bad('leave-aware days and projection', e.message); }
 
 {

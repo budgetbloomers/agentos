@@ -584,8 +584,8 @@ const DEFAULT_RULES = {
   qaCoaching:{label:'QA decisions that count as COACHING',vals:['Coaching'],help:'Escalation Decisions that trigger a coaching action.'},
   qaCritical:{label:'QA decisions that count as CRITICAL FAIL',vals:['Critical Fail'],help:'Escalation Decisions treated as compliance-critical.'},
   saleAssess:{label:'Assessment types that represent a SALE',vals:['Sale'],help:'QA "Assessment Type" values used for clean-sale rate.'},
-  presentCodes:{label:'Attendance codes that count as PRESENT',vals:['P','T','L','HDAL','HDCA'],help:'On-site codes: P Present, T Training, L / HDAL / HDCA half-days (L is a half day since 29 Sep 2026 — Nick). Counted in every productivity denominator.'},
-  leaveCodes:{label:'Attendance codes that count as LEAVE (authorised)',vals:['AL','SL','CA','CASAT'],help:'Authorised time off: Annual, Sick, Committed Absence (+Sat). Excluded from unplanned absenteeism. Codes in NO rule count as unplanned absence (e.g. UCA).'},
+  presentCodes:{label:'Attendance codes that count as PRESENT',vals:['P','T','L','HDAL','HDCA','HDSL'],help:'On-site codes: P Present, T Training, L / HDAL / HDCA / HDSL half-days (L is a half day since 29 Sep 2026 — Nick; HDSL half-day sick leave, first seen on the Sept 2026 register). Counted in every productivity denominator.'},
+  leaveCodes:{label:'Attendance codes that count as LEAVE (authorised)',vals:['AL','SL','CA','CASAT','FRL','ML'],help:'Authorised time off: Annual, Sick, Committed Absence (+Sat), Family Responsibility, Maternity. Excluded from unplanned absenteeism and from the attendance denominator. Codes in NO rule count as unplanned absence (e.g. UCA).'},
   excludeCodes:{label:'Roster-exit codes excluded from attendance maths',vals:['Terminated','Resigned'],help:'These rows mark people leaving the roster, not attendance events — they are excluded from attendance and absenteeism rates but still visible in the status distribution.'},
   salesDepts:{label:'Departments in scope for Sales views',vals:['Sales'],help:'Attendance "Department" values included in Sales workforce metrics.'},
   discStages:{label:'Disciplinary stage ladder (offense number → stage)',vals:['1:Coaching conversation','2:Verbal warning','3:Written warning','4:Final written warning','5:Disciplinary hearing'],help:'Format is count:Stage label. An agent sits on the highest rung their offense number has reached. CONFIGURATION REQUIRED — confirm the ladder with Claudell / HR.'},
@@ -900,7 +900,29 @@ async function load(key){
    refuses it when the store has moved on, and the saver RELOADS the store and REPLAYS the
    batches this session applied on top of the other session's copy — the supersede rules are
    key-based and idempotent, so a replay is the same operation as the first application. */
-const cfgPayload=()=>({kpis:state.kpis,rules:state.rules,agentMap:state.agentMap,sfOwnerMap:state.sfOwnerMap,cbInfo:state.cbInfo,user:state.user,syncedUploads:state.syncedUploads||{}});
+const cfgPayload=()=>({kpis:state.kpis,rules:state.rules,agentMap:state.agentMap,sfOwnerMap:state.sfOwnerMap,cbInfo:state.cbInfo,user:state.user,syncedUploads:state.syncedUploads||{},rulesMigrated:state.rulesMigrated||[]});
+/* RULE MIGRATIONS — additive, and once each (2026-09-29). A saved rule replaces its default WHOLE
+   (applyCfg), so a code added to DEFAULT_RULES never reaches a floor whose rules were ever saved:
+   Family Responsibility and Maternity leave kept scoring as unplanned absence in production however
+   the defaults read. Each migration adds only codes the saved list lacks and runs once per config
+   (its id is saved in rulesMigrated), so a code someone later removes on purpose stays removed.
+   The same pass drops the penalty keys the composite no longer reads (penalty removed 2026-09-29),
+   so the rules editor stops offering knobs that do nothing. */
+const RULE_MIGRATIONS=[
+  {id:'2026-09-29-leave-codes',add:{leaveCodes:['FRL','ML'],presentCodes:['HDSL']},drop:{nbaThresholds:/^pen[123]:/}}
+];
+function migrateRules(){
+  const done=new Set(state.rulesMigrated||[]);let changed=false;
+  for(const m of RULE_MIGRATIONS){ if(done.has(m.id))continue;
+    for(const k in (m.add||{})){ const r=state.rules[k]; if(!r||!Array.isArray(r.vals))continue;
+      const have=new Set(r.vals.map(v=>String(v).toUpperCase()));
+      for(const v of m.add[k]) if(!have.has(v.toUpperCase())){ r.vals=r.vals.concat([v]); changed=true; } }
+    for(const k in (m.drop||{})){ const r=state.rules[k]; if(!r||!Array.isArray(r.vals))continue;
+      const kept=r.vals.filter(v=>!m.drop[k].test(String(v))); if(kept.length!==r.vals.length){ r.vals=kept; changed=true; } }
+    done.add(m.id); }
+  state.rulesMigrated=[...done];
+  return changed;
+}
 const SAVE_TRIES=4;
 async function saveConfig(){
   bumpDataVer();
@@ -912,6 +934,7 @@ async function saveConfig(){
     const fresh=await load('cb-config');
     if(fresh){
       state.syncedUploads=Object.assign({},fresh.syncedUploads||{},state.syncedUploads||{});
+      state.rulesMigrated=[...new Set([...(fresh.rulesMigrated||[]),...(state.rulesMigrated||[])])];
       for(const k of ['cbInfo','agentMap','sfOwnerMap']) state[k]=Object.assign({},fresh[k]||{},state[k]||{});
     }
   }
@@ -999,6 +1022,68 @@ function ensurePapa(){
   });
   return __papaP;
 }
+/* WIDE ATTENDANCE REGISTERS — one row per person, one column per day (2026-09-29).
+   The HR register now arrives with "Tue 1 … Wed 30" day columns, the status code in the cell and
+   no Date or Status Code column at all, and the September 2026 register loaded NOTHING in either
+   app ("Could not recognise"). This turns that layout back into the long register both parsers
+   already read: one row per person per day that carries a code; a blank cell is no entry.
+   THE MONTH IS NEVER GUESSED LOOSELY. It comes from the file (or sheet) name — "September_2026",
+   "Sep 2026", "2026-09" (a month word standing on its own, so "Marketing_2026" is not March) — and
+   every day header's weekday must agree with it. With no month in the name, the month nearest to
+   now (from a year back to next month; a past month wins a tie) whose calendar fits EVERY header
+   is used, and the caller says so — an October register exported early is October, never the
+   January whose days also fall that way. A name the headers contradict, or headers no month fits,
+   is refused whole: filing a register against the wrong month is worse than not loading it.
+   Returns null (not a wide register), {ok:false,why} (refused) or
+   {ok:true,header,recs,month,basis:'name'|'calendar',people,days}.
+   TWO COPIES, ONE FUNCTION: this exact text lives in nicks_code/index.html and in
+   Chatterbox_AgentOS_Analytics.html between the WIDE-REGISTER markers, because each app must run
+   on its own from file://. diagnostics/verify-wide-register.mjs fails the build if they differ. */
+// ── WIDE-REGISTER:BEGIN ──
+function unpivotRegister(headers,recs,fileName,sheetName,nowMs){
+  const WD=['sun','mon','tue','wed','thu','fri','sat'];
+  const DAY=/^(sun|mon|tue|wed|thu|fri|sat)[a-z]*\.?\s+(\d{1,2})$/i;
+  const str=v=>String(v==null?'':v).trim();
+  const cols=[];
+  (headers||[]).forEach(h=>{ const m=DAY.exec(str(h)); if(m) cols.push({h,wd:WD.indexOf(m[1].toLowerCase()),day:+m[2]}); });
+  const find=re=>{ for(const h of (headers||[])) if(re.test(str(h))) return h; return null; };
+  const codeH=find(/^employee code$/i);
+  if(cols.length<7||!codeH) return null;
+  const fits=(y,m)=>{ const last=new Date(Date.UTC(y,m,0)).getUTCDate();
+    return cols.every(c=>c.day>=1&&c.day<=last&&new Date(Date.UTC(y,m-1,c.day)).getUTCDay()===c.wd); };
+  const MON=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+  const MW='(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+  const RE1=new RegExp('(?:^|[^a-z])'+MW+'(?![a-z])[\\s_\\-.,]*((?:19|20)\\d\\d)(?!\\d)','i'),
+        RE2=new RegExp('(?:^|\\D)((?:19|20)\\d\\d)[\\s_\\-.,]*'+MW+'(?![a-z])','i'),
+        RE3=/(?:^|\D)((?:19|20)\d\d)[\-_.](0?[1-9]|1[0-2])(?!\d)/;
+  const fromName=s=>{ s=str(s); let m;
+    if((m=RE1.exec(s))) return {y:+m[2],m:MON.indexOf(m[1].toLowerCase().slice(0,3))+1};
+    if((m=RE2.exec(s))) return {y:+m[1],m:MON.indexOf(m[2].toLowerCase().slice(0,3))+1};
+    if((m=RE3.exec(s))) return {y:+m[1],m:+m[2]};
+    return null; };
+  const pad=n=>String(n).padStart(2,'0');
+  let ym=fromName(fileName)||fromName(sheetName), basis='name';
+  if(ym&&!fits(ym.y,ym.m)) return {ok:false,why:'its name says '+ym.y+'-'+pad(ym.m)+', but its day headers ("'+cols[0].h+'" …) do not fall on those weekdays in that month'};
+  if(!ym){ basis='calendar';
+    const now=new Date(nowMs||Date.now()), base=now.getUTCFullYear()*12+now.getUTCMonth();
+    for(const k of [0,-1,1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-11,-12]){ const t=base+k, y=Math.floor(t/12), m=t-y*12+1;
+      if(fits(y,m)){ ym={y,m}; break; } }
+    if(!ym) return {ok:false,why:'no month from a year back to next month has its days on the weekdays these headers name — put the month in the file name (e.g. "…September_2026")'}; }
+  const month=ym.y+'-'+pad(ym.m);
+  const nameH=find(/^(employee )?name$/i), titleH=find(/^(employee )?title$/i), typeH=find(/^employee type$/i),
+        deptH=find(/^department$/i), repH=find(/^reports to$/i);
+  const extra=[[nameH,'Employee Name'],[titleH,'Title'],[typeH,'Employee Type'],[deptH,'Department'],[repH,'Reports To']].filter(x=>x[0]);
+  const out=[], people=new Set();
+  for(const r of (recs||[])){
+    const code=str(r[codeH]); if(!code) continue;
+    for(const c of cols){ const v=str(r[c.h]); if(!v) continue;
+      const o={'Date':month+'-'+pad(c.day),'Employee Code':code};
+      for(const [src,dst] of extra) o[dst]=str(r[src]);
+      o['Status Code']=v; o['Status']=v;
+      out.push(o); people.add(code); } }
+  return {ok:true,header:['Date','Employee Code'].concat(extra.map(x=>x[1]),['Status Code','Status']),recs:out,month,basis,people:people.size,days:cols.length};
+}
+// ── WIDE-REGISTER:END ──
 function readUpload(file,srcKey){
   const spec=srcKey?SOURCES[srcKey]:null;
   return Promise.all([ensureXLSX(),ensurePapa()]).then(()=>new Promise((resolve,reject)=>{
@@ -1056,9 +1141,14 @@ function readUpload(file,srcKey){
         }
         rows=rows.filter(r=>r&&r.some(c=>String(c??'').trim()!==''));
         if(rows.length<1)throw new Error('The file appears to be empty.');
-        const headers=rows[0].map(h=>String(h??'').trim());
+        let headers=rows[0].map(h=>String(h??'').trim());
         const seen={};const keyFor=headers.map(h=>{seen[h]=(seen[h]||0)+1;return seen[h]>1?h+' #'+seen[h]:h});
-        const data=rows.slice(1).map(r=>{const o={};keyFor.forEach((k,i)=>o[k]=r[i]!==undefined?r[i]:'');return o});
+        let data=rows.slice(1).map(r=>{const o={};keyFor.forEach((k,i)=>o[k]=r[i]!==undefined?r[i]:'');return o});
+        /* A ONE-COLUMN-PER-DAY REGISTER BECOMES THE LONG REGISTER (2026-09-29) — see unpivotRegister.
+           Without this the September 2026 register was not recognised as any source. */
+        const wide=unpivotRegister(headers,data,file.name||'','');
+        if(wide&&!wide.ok)throw new Error('This looks like an attendance register with one column per day, but it was not loaded — '+wide.why+'.');
+        if(wide){headers=wide.header;data=wide.recs;rows=[headers].concat(data.map(o=>headers.map(h=>o[h]??'')));}
         resolve({headers,data,rowsRaw:rows,textHash:hashStr(headers.join('|')+'|'+rows.length+'|'+file.size+'|'+(file.name||''))});
       }catch(e){reject(e)}
     };
@@ -5427,6 +5517,8 @@ function migrateKpis(saved){
 }
 function applyCfg(cfg){if(!cfg)return;
   if(cfg.kpis?.length)state.kpis=migrateKpis(cfg.kpis);if(cfg.rules)state.rules=Object.assign({},structuredClone(DEFAULT_RULES),cfg.rules);
+  state.rulesMigrated=Array.isArray(cfg.rulesMigrated)?cfg.rulesMigrated.slice():[];
+  migrateRules();   // in memory at once; persisted with the next settings save (idempotent until then)
   if(cfg.agentMap)state.agentMap=cfg.agentMap;if(cfg.sfOwnerMap)state.sfOwnerMap=cfg.sfOwnerMap;if(cfg.cbInfo)state.cbInfo=cfg.cbInfo;if(cfg.user)state.user=cfg.user;if(cfg.syncedUploads)state.syncedUploads=cfg.syncedUploads}
 /* PHASE A — paint from the local IndexedDB snapshot before any network happens. The auth
    gate still covers the screen until the session validates; this only removes the blank

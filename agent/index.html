@@ -5122,7 +5122,12 @@ function WORKED(){
    last day the figures reach, to the end of the period: exactly the dates remainingLabel()
    prints, so the count and the dates can no longer disagree. Days that have passed but whose
    files have not landed are in it on purpose — their sales are not in the figures yet. */
-function REMAINING(){
+function REMAINING(){ return Math.max(0,FLOOR_REMAINING()-LEAVE_AHEAD()); }
+/* Planned leave on the days still to come — the register's leave entries after the figures'
+   reach (PULSE leaveAhead, 2026-09-29). An agent on maternity leave to month end has no days
+   left to write sales over, whatever the calendar says. 0 on an older digest. */
+function LEAVE_AHEAD(){ return (ME&&+ME.leaveAhead)||0; }
+function FLOOR_REMAINING(){
   /* the same count from the publisher's own figure when it has one: the month's working days
      less the working days the figures reach (daysWithData) — so remaining and days-with-data
      are one partition of the month and can never overlap or leave a gap */
@@ -5174,7 +5179,10 @@ function remainingLabel(){
     if(f>t) return '';
     var mf=new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',month:'long'});
     var df=new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',day:'numeric'});
-    return df.format(f)+' – '+df.format(t)+' '+mf.format(t);
+    /* the dates are the calendar's; planned leave inside them is named, so the count beside the
+       label (which excludes it) and the dates never read as a contradiction */
+    var la=LEAVE_AHEAD();
+    return df.format(f)+' – '+df.format(t)+' '+mf.format(t)+(la?', less '+la+' day'+(la===1?'':'s')+' of planned leave':'');
   }catch(e){ return ''; }
 }
 /* An AGENT signed in as themselves — not a team leader or campaign manager, and not
@@ -6213,6 +6221,11 @@ function todayHTML(c){
   var h='<div class="card"><h2>Your number for today</h2>';
   if(monthTarget==null){
     h+='<p class="why">We need a target on file before we can work out your number. Ask your team leader.</p>';
+  } else if(rem<=0&&LEAVE_AHEAD()>0){
+    /* the calendar still has days, but they are all this agent's planned leave (2026-09-29) —
+       say that, never "the month is done" */
+    h+='<p class="why">The rest of '+esc(monthLabel())+' is planned leave for you, so there is no daily number to chase — <b>'+num(ME.sales||0)+' of '+num(monthTarget)+' sales</b>'
+      +(ME.pctT!=null?' ('+num(ME.pctT*100)+'% of target)':'')+' for the days you worked. Leave is never counted against you.</p>';
   } else if(rem<=0){
     h+='<p class="why">'+esc(monthLabel())+'\'s working days are counted — <b>'+num(ME.sales||0)+' of '+num(monthTarget)+' sales</b>'
       +(ME.pctT!=null?' ('+num(ME.pctT*100)+'% of target)':'')+'. A fresh number arrives with the new month.</p>';
@@ -6867,11 +6880,12 @@ function comsFigures(c){
   var w=WORKED();
   return '<div class="card figures"><h2>Your figures for '+esc(prettyPeriod())+'</h2>'
     +'<p class="why">Your real figures from Agent OS — this is what the calculator works from.'
-    +(done?' '+esc(monthLabel())+'\'s working days are counted, so there are no remaining days left to add sales to.':'')+'</p>'
+    +(done?(LEAVE_AHEAD()>0?' The rest of '+esc(monthLabel())+' is planned leave for you, so there are no remaining days left to add sales to.'
+      :' '+esc(monthLabel())+'\'s working days are counted, so there are no remaining days left to add sales to.'):'')+'</p>'
     +'<div class="coms-rows">'
     +'<div><span>Plan</span><b>'+esc(PLAN_LAB[ME.plan]||ME.plan||'—')+'</b></div>'
     +'<div><span>Working days worked (days whose files have landed)</span><b class="num">'+num(w,w%1?1:0)+'</b></div>'
-    +'<div><span>Days the projection covers (worked + still to come)</span><b class="num">'+num(TDAYS())+'</b></div>'
+    +'<div><span>Days the projection covers (worked + still to come)</span><b class="num">'+num(TDAYS(),TDAYS()%1?1:0)+'</b></div>'
     +(offDaysNote()?'<div><span>Not counted (on leave or absent, of '+num(DAYS())+' working days in '+esc(monthLabel())+')</span><b class="num">'+esc(offDaysNote())+'</b></div>':'')
     +'<div><span>Premium written, excluding VAT</span><b class="num">'+R(ME.gwpEx,2)+'</b></div>'
     +'</div>'

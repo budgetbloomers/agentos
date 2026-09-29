@@ -35,13 +35,13 @@ const SERVE = { '/pulse.html': PULSE, '/ops.html': OPS, '/xlsx.full.min.js': pat
 const server = http.createServer((q, s) => { const p = SERVE[q.url.split('?')[0]];
   if (!p || !fs.existsSync(p)) { s.writeHead(404); s.end(); return; }
   s.writeHead(200, { 'Content-Type': p.endsWith('.js') ? 'text/javascript' : 'text/html' }); fs.createReadStream(p).pipe(s); });
-await new Promise((r) => server.listen(8261, '127.0.0.1', r));
+await new Promise((r) => server.listen(8292, '127.0.0.1', r));
 const b = await chromium.launch();
 try {
   /* ═══ A · PULSE ═══ */
   const page = await b.newPage();
   const errs = []; page.on('pageerror', (e) => errs.push(String(e.message).slice(0, 160)));
-  await page.goto('http://127.0.0.1:8261/pulse.html', { waitUntil: 'domcontentloaded' });
+  await page.goto('http://127.0.0.1:8292/pulse.html', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.__mtd && window.__mtd.state(), null, { timeout: 30000 });
 
   const out = await page.evaluate(() => {
@@ -137,7 +137,7 @@ try {
   console.log('\nC · OPS — THE NBA ENGINE');
   const ops = await b.newPage();
   const oerrs = []; ops.on('pageerror', (e) => oerrs.push(String(e.message).slice(0, 160)));
-  await ops.goto('http://127.0.0.1:8261/ops.html', { waitUntil: 'domcontentloaded' });
+  await ops.goto('http://127.0.0.1:8292/ops.html', { waitUntil: 'domcontentloaded' });
   await ops.waitForTimeout(2500);
   const o = await ops.evaluate(() => {
     const win = { from: '2026-09-01', to: '2026-09-30' };

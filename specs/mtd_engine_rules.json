@@ -365,7 +365,8 @@
     "SL",
     "FRL",
     "CA",
-    "CASAT"
+    "CASAT",
+    "ML"
    ],
    "unavailable": [
     "SUSPENDED"
@@ -377,11 +378,20 @@
   "half_day_codes": {
    "from": "2026-09-01",
    "codes": [
-    "L"
+    "L",
+    "HDSL",
+    "HDAL"
    ],
-   "rule": "On/after from, a register Status Code in codes weighs 0.5 — exactly like HDCA: the half-day override on the Courtesy/Nesting dialler rule, and the Cuddle register weight. Before from, attendance_shift_weights stands (L = 0).",
+   "rule": "On/after from, a register Status Code in codes (L; HDSL half-day sick leave; HDAL half-day annual leave) weighs 0.5 — exactly like HDCA: the half-day override on the Courtesy/Nesting dialler rule, and the Cuddle register weight. Before from, attendance_shift_weights stands (L = 0).",
    "source": "Nick, 2026-09-29: 'L code mark as half day'",
    "note": "Effective-dated with attendance_classes so the August reference period is untouched. Mirror: MTD_RULES.halfDayCodes."
+  },
+  "register_coverage": {
+   "from": "2026-09-01",
+   "min_share_of_roster": 0.5,
+   "rule": "On/after from, a day counts as REPORTED by the attendance register only when the register names at least min_share_of_roster of the rostered agents who had started by that day. On a reported day every rostered agent the register does not name is an employed shift (the existing rule). On any other day the people the register does name follow their own entry, and everyone else follows the no-register rule (only activity counts). Dialling days and the register reach (dataReach.attendance) count reported days only. Measured against the roster, not the register's own fullest day, so a month holding only advance entries cannot make its own sparse days look full. With no roster loaded, and before from, any entry makes a day covered, as before.",
+   "source": "The September 2026 register (one column per day) reaches Fri 18 Sep in full but carries advance entries after it — one agent's maternity leave to 30 Sep, single sick / absence entries on 21-22 Sep. Under the old rule those single entries made the whole floor employed-and-absent on every later day with sales, and made the register look complete to the 30th.",
+   "note": "Effective-dated so the workbook-verified August is untouched. Mirror: MTD_RULES.registerCoverage."
   },
   "departures": {
    "keep_days_until_left": false,
@@ -1891,6 +1901,30 @@
    "from": "L weighs 0 (attendance_shift_weights) — read as not worked",
    "to": "L weighs 0.5 from 2026-09-01, like HDCA",
    "why": "\"L code mark as half day\""
+  },
+  {
+   "date": "2026-09-29",
+   "by": "Nick",
+   "key": "reference_data.attendance_classes.leave",
+   "from": "AL, SL, FRL, CA, CASAT",
+   "to": "+ ML (maternity leave)",
+   "why": "the September 2026 register carries ML (18 VAS agent-days); unclassified it scored as unplanned absence"
+  },
+  {
+   "date": "2026-09-29",
+   "by": "Nick",
+   "key": "reference_data.half_day_codes.codes",
+   "from": "L",
+   "to": "L, HDSL, HDAL",
+   "why": "the September 2026 register carries HDSL / HDAL (half-day sick / annual leave); weighed 0 they read as full absences — a half day is a half day, like HDCA"
+  },
+  {
+   "date": "2026-09-29",
+   "by": "Nick",
+   "key": "reference_data.register_coverage",
+   "from": "any register entry makes a day covered",
+   "to": "a day is reported when it names at least half the rostered agents (started by that day); from 2026-09-01",
+   "why": "advance entries on the September 2026 register (leave written to 30 Sep) would otherwise have made the whole floor employed-and-absent on 21-30 Sep and hidden a stale register"
   }
  ]
 }
