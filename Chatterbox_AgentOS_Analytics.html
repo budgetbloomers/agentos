@@ -585,7 +585,8 @@ const DEFAULT_RULES = {
   qaCritical:{label:'QA decisions that count as CRITICAL FAIL',vals:['Critical Fail'],help:'Escalation Decisions treated as compliance-critical.'},
   saleAssess:{label:'Assessment types that represent a SALE',vals:['Sale'],help:'QA "Assessment Type" values used for clean-sale rate.'},
   presentCodes:{label:'Attendance codes that count as PRESENT',vals:['P','T','L','HDAL','HDCA'],help:'On-site codes: P Present, T Training, L Running Late, HDAL/HDCA half-days. Counted in every productivity denominator.'},
-  leaveCodes:{label:'Attendance codes that count as LEAVE (authorised)',vals:['AL','SL','CA','CASAT'],help:'Authorised time off: Annual, Sick, Committed Absence (+Sat). Excluded from unplanned absenteeism. Codes in NO rule count as unplanned absence (e.g. UCA).'},
+  leaveCodes:{label:'Attendance codes that are EXCUSED (leave / unavailable)',vals:['AL','SL','FRL','ML','EAL','HDAL:0.5','HDSL:0.5','HDFRL:0.5','Suspended','SUSP'],help:'One list with PULSE (decision D1, 29 Sep 2026; the rule book reference_data.excused_statuses): leave AL annual, SL sick, FRL family responsibility, ML maternity, EAL emergency annual excuse the whole day; the half-days HDAL, HDSL, HDFRL excuse half of it (the other half is worked and counts as present); unavailable Suspended / SUSP (the register spelling) excuse the whole day. Write CODE, or CODE:share for part of a day. Excluded from unplanned absenteeism. CA, CASAT, UCA, WFH and every code in NO rule are ABSENCES. From the "leave stops being a shift" date, an excused day with no dialler activity and no sale is not a scheduled day in agent attendance, so leave alone never fires R1 Zero Attendance or R3 Attendance Risk; a leave day the agent worked keeps its shift.'},
+  leaveExcusedFrom:{label:'Leave stops being a scheduled shift from (YYYY-MM-DD)',vals:['2026-09-01'],help:'Decision D1: from this date an excused day (the leave list above) with no dialler activity and no sale that day is no longer a scheduled day for that agent (HDAL leaves half). Before it, every register row is a scheduled day exactly as it always was, so August never moves. Clear it to switch the rule off.'},
   excludeCodes:{label:'Roster-exit codes excluded from attendance maths',vals:['Terminated','Resigned'],help:'These rows mark people leaving the roster, not attendance events — they are excluded from attendance and absenteeism rates but still visible in the status distribution.'},
   salesDepts:{label:'Departments in scope for Sales views',vals:['Sales'],help:'Attendance "Department" values included in Sales workforce metrics.'},
   discStages:{label:'Disciplinary stage ladder (offense number → stage)',vals:['1:Coaching conversation','2:Verbal warning','3:Written warning','4:Final written warning','5:Disciplinary hearing'],help:'Format is count:Stage label. An agent sits on the highest rung their offense number has reached. CONFIGURATION REQUIRED — confirm the ladder with Claudell / HR.'},
@@ -2202,6 +2203,19 @@ function resolveRule(v){
   if(typeof v==='string'&&v.startsWith('$')){const r=state.rules[v.slice(1)];return r?r.vals:[]}
   return v;
 }
+/* THE EXCUSED-CODE LIST (decision D1, sprint 2026-09-29) — the leaveCodes rule, one list with
+   PULSE. An entry is CODE (the whole day is excused) or CODE:share (part of it — HDAL:0.5).
+   Returns {CODE: share} with codes upper-cased the way the register flags compare them. Read at
+   eval time, like every rule, so an edit in Dictionary → Rules recomputes at once. */
+function excusedCodes(){const m={};
+  (state.rules.leaveCodes?.vals||[]).forEach(v=>{const s=String(v).trim(),i=s.lastIndexOf(':');
+    const code=(i>0?s.slice(0,i):s).trim().toUpperCase();if(!code)return;
+    const sh=i>0?parseFloat(s.slice(i+1)):1;m[code]=isNaN(sh)?1:Math.max(0,Math.min(1,sh))});
+  return m}
+/* the leaveExcusedFrom rule: the first day an excused day stops being a scheduled shift, or null
+   (blank / malformed = the rule is off and every row schedules, the pre-D1 behaviour) */
+function leaveExcusedFrom(){const v=String(state.rules.leaveExcusedFrom?.vals?.[0]||'').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:null}
 function callBandFor(sec){
   const rungs=(state.rules.callTypes?.vals||[]).map(v=>{const i=String(v).indexOf(':');return{n:parseFloat(String(v).slice(0,i)),label:String(v).slice(i+1).trim()}}).filter(r=>!isNaN(r.n)).sort((a,b)=>a.n-b.n);
   let cur=rungs.length?rungs[0].label:'(no bands)';
@@ -2361,8 +2375,8 @@ function rowsForRaw(src,win,sc){
   if(src==='CALLX_CALL_RECORDS'||spec.session?.base==='CALLX_CALL_RECORDS')rows=rows.map(r=>({...r,call_band:callBandForRow(r),answered:callAnswered(r)?1:0,is_sale_disp:isSaleDisp(r)?1:0}));
   if(src==='ATTENDANCE'){
     const U=a=>a.map(x=>String(x).toUpperCase());
-    const P=U(resolveRule('$presentCodes')),L=U(resolveRule('$leaveCodes')),X=U(resolveRule('$excludeCodes')),S=state.rules.salesDepts.vals;
-    rows=rows.map(r=>{const c=String(r.status_code||'').toUpperCase();
+    const P=U(resolveRule('$presentCodes')),L=Object.keys(excusedCodes()),X=U(resolveRule('$excludeCodes')),S=state.rules.salesDepts.vals;
+    rows=rows.map(r=>{const c=String(r.status_code||'').trim().toUpperCase();   // the same key acCtxBuild reads for leave (ingest trims already)
       const ex=X.includes(c),p=!ex&&P.includes(c),l=!ex&&L.includes(c);
       return{...r,excluded_flag:ex?1:0,present_flag:p?1:0,leave_flag:l?1:0,absence_flag:(!ex&&!p&&!l)?1:0,is_sales:S.includes(r.department)?1:0}});
   }
@@ -3942,7 +3956,21 @@ function acCtxBuild(win){
        agent's QA down by the share of blank Score % cells in the export. */
     if(r.score_percent!=null){o.s+=r.score_percent;o.sn++;o.sd++;o.s0+=isC?0:r.score_percent}
     else if(isC){o.sd++}});
-  rowsNF('ATTENDANCE',win).forEach(r=>{const cb=normCB(r.employee_code);if(!cb||r.excluded_flag)return;const o=C.att[cb]=C.att[cb]||{sched:0,p:0};o.sched++;if(r.present_flag)o.p++});
+  /* LEAVE IS NOT A SCHEDULED SHIFT (decision D1, sprint 2026-09-29). Every register row used to
+     count as a scheduled day, so an agent on annual leave all window fired R1 "Zero Attendance —
+     escalate to HR" and R3 "Attendance Risk". From the leaveExcusedFrom rule, a row whose code is
+     on the excused list (leaveCodes) is held back here and settled below, once the dialler and
+     the money are known: with no call and no sale that day it leaves `sched`; a part-day code
+     (HDAL/HDSL/HDFRL :0.5) always leaves its share and the rest is the half the agent WORKED, so
+     it counts as present whether or not the code is in presentCodes (the rule book's "HDAL is
+     half a day worked"). A whole-day code WITH activity keeps its shift untouched and is counted
+     in leaveWorked (PULSE's V26 names the same agent-day). Rows before the
+     date schedule exactly as they always did, so August never moves. */
+  const lvFrom=leaveExcusedFrom(),lvCodes=excusedCodes(),lvHeld=[];
+  rowsNF('ATTENDANCE',win).forEach(r=>{const cb=normCB(r.employee_code);if(!cb||r.excluded_flag)return;const o=C.att[cb]=C.att[cb]||{sched:0,p:0,leave:0,leaveWorked:0};
+    const sh=(lvFrom&&r._d&&r._d>=lvFrom)?(lvCodes[String(r.status_code||'').trim().toUpperCase()]||0):0;
+    if(sh>0){lvHeld.push([cb,r,sh]);return}
+    o.sched++;if(r.present_flag)o.p++});
   rowsNF('CALLX_CALL_RECORDS',win).forEach(r=>{const cb=cbOf(r.agent);if(!cb)return;const o=C.call[cb]=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};o.n++;o.sec+=r.billable_seconds||0;o.bands[r.call_band]=(o.bands[r.call_band]||0)+1;if(r._d)o.days.add(r._d);const d=String(r.destination_number||'').trim();if(d&&d!=='s')o.uniq.add(d)});
   /* THE FLOOR DIALS ON VICIDIAL from CALLX_RETIRED (2026-09-01) — without this union the
      talk driver, R8 and calls/day read only CallX and every Courtesy agent's September
@@ -3970,12 +3998,21 @@ function acCtxBuild(win){
     accountPremiums(win).forEach(e=>{if(!e.cb)return;const o=C.sale[e.cb]=C.sale[e.cb]||{n:0,gwp:0};o.n++;o.gwp+=e.gwp||0});
     cancelPremiums(win).forEach(e=>{if(!e.cb)return;const o=C.canc[e.cb]=C.canc[e.cb]||{n:0};o.n++});
   }finally{state.filters=f}})();
+  /* settle the held leave rows (see LEAVE IS NOT A SCHEDULED SHIFT above). Activity = a dialler
+     row that day (C.call.days: CallX, and ViciDial from the cutover) or a BI sale dated that day. */
+  if(lvHeld.length){
+    const sold=new Set();rowsNF('BI_ACTIVE_CASES',win).forEach(r=>{const cb=r._d&&cbOfOwner(r.owner);if(cb)sold.add(cb+'|'+r._d)});
+    lvHeld.forEach(([cb,r,sh])=>{const o=C.att[cb];
+      const worked=!!(C.call[cb]&&C.call[cb].days.has(r._d))||sold.has(cb+'|'+r._d);
+      if(worked&&sh>=1){o.sched++;if(r.present_flag)o.p++;o.leaveWorked++;return}   // a leave day the agent worked keeps its shift
+      const w=1-sh;o.sched+=w;o.p+=w;o.leave+=sh});   // w is 0 for a whole day; for a half day it is the worked half
+  }
   return C;
 }
 function acStats(cb,win,C){
   const i=state.cbInfo[cb]||{};const T=k=>nbaVal(k,0);
   const sale=C.sale[cb]||{n:0,gwp:0},cl=C.closed[cb]||{tc:0},op=C.open[cb]||{n:0,aSum:0,aN:0};
-  const qa=C.qa[cb]||{n:0,s:0,s0:0,sn:0,sd:0,crit:0},at=C.att[cb]||{sched:0,p:0},ca=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};
+  const qa=C.qa[cb]||{n:0,s:0,s0:0,sn:0,sd:0,crit:0},at=C.att[cb]||{sched:0,p:0,leave:0,leaveWorked:0},ca=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};
   const canc=(C.canc[cb]||{n:0}).n;const refs=(C.ref[cb]||{n:0}).n;
   const p=at.p, sched=at.sched;
   const target=i.target??null;
@@ -4026,7 +4063,7 @@ function acStats(cb,win,C){
   sc['Attendance']=att==null?null:Math.min(100,att/T('attTarget')*100);
   return{cb,name:i.name||cb,code:i.code||cb,tl:i.tl||'—',queue:i.queue||'—',tenure:i.tenure||'—',group:groupOf(cb),
     target,sales:sale.n,gwp:sale.gwp,gwpSale,spd,ta,leads,conv,qaN:qa.n,qaS,crit:qa.crit,
-    calls:ca.n,uniqCalls,uniqPerDay,closedCases,closedPerSale,bands:ca.bands,talkMin,talkDay,dialDays:ca.days.size,p,sched,att,canc,cancPct,attempts,attLead,refs,sc};
+    calls:ca.n,uniqCalls,uniqPerDay,closedCases,closedPerSale,bands:ca.bands,talkMin,talkDay,dialDays:ca.days.size,p,sched,leave:at.leave||0,leaveWorked:at.leaveWorked||0,att,canc,cancPct,attempts,attLead,refs,sc};
 }
 /* ---------- coaching layer v1.0 (Chatterbox_Coaching_Rules.json) ----------
    The composite formula is  adjusted = composite − min(combined_cap, r2a + coaching).
@@ -4234,10 +4271,15 @@ function acNBA(st,coach){
      on R10 "Strong / Elite Performer" with a composite of 0: a green Level-4 bar of length
      zero. If the composite has an empty denominator, there is nothing to judge. */
   const __noDrivers=compWeights().every(([n])=>n==='GWP %ile'||st.sc[n]==null);
-  if(__noDrivers||(!(st.sched>0)&&!(st.qaN>0)&&!(st.sales>0)&&!(st.calls>0)))
+  if(__noDrivers||(!(st.sched>0)&&!(st.qaN>0)&&!(st.sales>0)&&!(st.calls>0))){
+    /* on leave the whole window (decision D1) — not a data gap and never an absence */
+    if(st.leave>0&&!(st.sched>0))return R('R0',4,'Develop & Recognise','On leave this period',
+      'Every register day in this window is excused leave ('+(Math.round(st.leave*10)/10)+' day'+(st.leave===1?'':'s')+') — no scheduled shift to judge.',
+      'No action: leave is not an absence. Pick the agent up on the next review after they return.');
     return R('R0',4,'Develop & Recognise','No data this period',
       'Nothing was measured for this agent in this window — no shifts, no evaluations, no sales and no calls.',
       'Check the date range, and that the exports for these days are uploaded. This is a gap in the data, not a judgement on the agent.');
+  }
   return R('R10',4,'Develop & Recognise','Strong / Elite Performer','Meeting or exceeding all key targets.','Recognise and reward; set a stretch goal; consider mentor / buddy roles.');
 }
 
@@ -4400,12 +4442,12 @@ async function agentOpen(cb){
    +'<div class="ac-box"><div style="font-size:24px;font-weight:800;color:#F0B429">'+(Math.round(comp.adj*10)/10).toFixed(1)+'</div><div style="font-size:9.5px;letter-spacing:.6px;opacity:.8">COMPOSITE / 100</div></div>'
    +'<div class="ac-box"><div style="font-size:24px;font-weight:800">#'+rank+'</div><div style="font-size:9.5px;letter-spacing:.6px;opacity:.8">OF '+peers.length+' · '+esc(st.group)+'</div></div></div>'
    +'<div class="ac-tiles">'
-   +tile('TARGET ACH.',st.ta==null?'—':fmtVal(st.ta,'pct'),(st.spd==null?(st.p===0&&st.sched===0?'no attendance record in this window':'no present days'):(Math.round(st.spd*10)/10)+' sales/day')+' · target '+(st.target??'—')+'/day',st3(st.ta,100,T('salesNear')))
+   +tile('TARGET ACH.',st.ta==null?'—':fmtVal(st.ta,'pct'),(st.spd==null?(st.p===0&&st.sched===0?(st.leave>0?'on leave this window':'no attendance record in this window'):'no present days'):(Math.round(st.spd*10)/10)+' sales/day')+' · target '+(st.target??'—')+'/day',st3(st.ta,100,T('salesNear')))
    +tile('GWP / SALE',st.gwpSale==null?'—':'R'+Math.round(st.gwpSale),(st.gwpSale==null?'':'R'+Math.round(exVat(st.gwpSale))+' ex VAT · ')+'Value check · ≥R'+T('gwpFloor')+' incl',st3(st.gwpSale,gwpFloorIncl(),gwpFloorIncl()*.9))
    +tile('QA SCORE',st.qaS==null?'—':fmtVal(st.qaS,'pct'),'≥'+T('qaTarget')+'% · n='+st.qaN,st3(st.qaS,T('qaTarget'),T('qaCritical')))
    +tile('CONVERSION',st.conv==null?'—':fmtVal(st.conv,'pct'),'sales ÷ total leads · ≥'+T('convTarget')+'%',st3(st.conv,T('convTarget'),T('convTarget')*.8))
    +tile('TALK TIME',st.talkDay==null?'—':Math.round(st.talkDay)+'m','per attended day · ≥'+T('talkTargetMin')+' floor '+T('talkFloorMin'),st3(st.talkDay,T('talkTargetMin'),T('talkFloorMin')))
-   +tile('ATTENDANCE',st.att==null?'—':fmtVal(st.att,'pct'),st.p+'/'+st.sched+' days · ≥'+T('attTarget')+'%',st3(st.att,T('attTarget'),T('attRisk')))
+   +tile('ATTENDANCE',st.att==null?'—':fmtVal(st.att,'pct'),(Math.round(st.p*10)/10)+'/'+(Math.round(st.sched*10)/10)+' days'+(st.leave>0?' · '+(Math.round(st.leave*10)/10)+' leave, not counted':'')+' · ≥'+T('attTarget')+'%',st3(st.att,T('attTarget'),T('attRisk')))
    +'</div>'
    +'<div class="card" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:14px;border-left:4px solid '+(nba.lvl===1?'#C42D2D':nba.lvl===2?'#B45309':nba.lvl===3?'#2563EB':'#158A4C')+'">'
    +'<span class="pill '+(nba.lvl===1?'r':nba.lvl===2?'a':nba.lvl===3?'b':'g')+'">Level '+nba.lvl+' · '+esc(nba.lvlName)+'</span>'
@@ -5411,8 +5453,20 @@ function migrateKpis(saved){
     return d&&(d.src!==s.src||JSON.stringify(d.num??null)!==JSON.stringify(s.num??null))});
   return out;
 }
+/* A CHANGED RULE DEFAULT NEVER REACHES A SAVED CONFIG. cb-config stores every rule whole (label,
+   help, vals) and the saved copy wins key by key, so after decision D1 (sprint 2026-09-29) the
+   live config still held leaveCodes = AL, SL, CA, CASAT under "Committed Absence (authorised)".
+   A rule whose saved vals are EXACTLY a retired default adopts the current default; a list
+   somebody edited by hand is theirs and stays. Saved back once after boot, like migrateKpis. */
+const RETIRED_RULE_DEFAULTS={leaveCodes:[['AL','SL','CA','CASAT']]};
+let __rulesHealed=false;
+function healRetiredRules(rules){const out=Object.assign({},rules);
+  for(const k in RETIRED_RULE_DEFAULTS){const cur=out[k];if(!cur||!DEFAULT_RULES[k])continue;
+    const j=JSON.stringify(cur.vals||[]);
+    if(RETIRED_RULE_DEFAULTS[k].some(v=>JSON.stringify(v)===j)){out[k]=structuredClone(DEFAULT_RULES[k]);__rulesHealed=true}}
+  return out}
 function applyCfg(cfg){if(!cfg)return;
-  if(cfg.kpis?.length)state.kpis=migrateKpis(cfg.kpis);if(cfg.rules)state.rules=Object.assign({},structuredClone(DEFAULT_RULES),cfg.rules);
+  if(cfg.kpis?.length)state.kpis=migrateKpis(cfg.kpis);if(cfg.rules)state.rules=healRetiredRules(Object.assign({},structuredClone(DEFAULT_RULES),cfg.rules));
   if(cfg.agentMap)state.agentMap=cfg.agentMap;if(cfg.sfOwnerMap)state.sfOwnerMap=cfg.sfOwnerMap;if(cfg.cbInfo)state.cbInfo=cfg.cbInfo;if(cfg.user)state.user=cfg.user;if(cfg.syncedUploads)state.syncedUploads=cfg.syncedUploads}
 /* PHASE A — paint from the local IndexedDB snapshot before any network happens. The auth
    gate still covers the screen until the session validates; this only removes the blank
@@ -5510,8 +5564,9 @@ async function init(){
   if(gen!==__initGen)return;
   await purgeRetired();                      // after the loads, so SES_ACT_* rows are caught too
   if(gen!==__initGen)return;
-  if(__kpisMigrated){__kpisMigrated=false;saveConfig();   // heal the stale cloud copy once
-    console.info('[AgentOS] KPI definitions refreshed from code (saved config predated a source retirement) — config re-saved')}
+  if(__kpisMigrated||__rulesHealed){   // heal the stale cloud copy once
+    console.info('[AgentOS] '+(__kpisMigrated?'KPI definitions refreshed from code (saved config predated a source retirement)':'a retired rule default replaced (healRetiredRules)')+' — config re-saved');
+    __kpisMigrated=false;__rulesHealed=false;saveConfig()}
   bumpDataVer();
   __initDone=true;
   // Auto-unmask names for authorised users (admins / users with pii_unmask).

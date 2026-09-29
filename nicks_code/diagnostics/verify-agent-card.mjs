@@ -56,7 +56,18 @@ try {
       const whys = [...root.querySelectorAll('.why')].map((r) => r.innerText.replace(/\s+/g, ' ').trim());
       const sessCard = [...root.querySelectorAll('h2')].find((h) => /Sales by session/.test(h.textContent)); const sessRows = sessCard ? sessCard.closest('.card').querySelectorAll('tbody tr').length : -1;
       const pageDays = (window.ME && Array.isArray(window.ME.days)) ? window.ME.days.length : null;   // the payload THIS page rendered
-      return { score, rows, whys, sessRows, pageDays, hasScore: !!root.querySelector('.pg-score') };
+      /* THE TODAY TILES PAINT THE ENGINE'S DRILL-DOWN VERDICTS (sprint 2026-09-29, item 3) — read back the
+         tiles and the verdicts from the payload the page itself received */
+      window.VIEW = 'month'; render();
+      const LAB = { ta: 'TARGET ACHIEVED', aveG: 'AVERAGE SALE', qa: 'QA SCORE', att: 'ATTENDANCE' };
+      const tiles = {};
+      for (const t of document.querySelectorAll('#root .ac-tile')) {
+        const lab = ((t.querySelector('.ac-lab') || {}).textContent || '').toUpperCase();
+        const k = Object.keys(LAB).find((x) => lab.startsWith(LAB[x])); if (!k) continue;
+        tiles[k] = { state: ['pass', 'watch', 'focus', 'none'].find((s) => t.classList.contains(s)) || '?', tap: t.hasAttribute('data-drill') };
+      }
+      const drill = window.ME && window.ME.drill ? Object.fromEntries(Object.entries(window.ME.drill).map(([k, v]) => [k, v && v.status])) : null;
+      return { score, rows, whys, sessRows, pageDays, hasScore: !!root.querySelector('.pg-score'), tiles, drill };
     }, a.code);
     const c = me.composite;
     ok(a.code + ': the card renders a score', view.hasScore, view.score);
@@ -82,6 +93,12 @@ try {
        (2026-09-10, a daytime run) — two true digests, one comparison. */
     /* pgSessions() shows the LAST SEVEN sessions by design (slice(-7)); the month passed seven day rows on
        2026-09-10 and this read 7 vs 8 for every agent. One row per day row, up to seven. */
+    ok(a.code + ': the Worker sends the drill-down verdicts', !!view.drill && ['ta', 'aveG', 'qa', 'att'].every((k) => view.drill[k]), JSON.stringify(view.drill));
+    for (const k of ['ta', 'aveG', 'qa', 'att']) {
+      const t = view.tiles[k], want = (view.drill && view.drill[k]) || 'none';
+      ok(a.code + ' ' + k + ': tile = drill verdict, tappable only when it needs attention',
+        !!t && t.state === want && t.tap === (want === 'watch' || want === 'focus'), JSON.stringify(t) + ' vs ' + want);
+    }
     const dayRows = Math.min(7, view.pageDays != null ? view.pageDays : (me.days || []).length);
     ok(a.code + ': one sessions row per day row (up to the seven the table shows)', view.sessRows === dayRows, view.sessRows + ' vs ' + dayRows);
   }

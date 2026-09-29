@@ -20,7 +20,11 @@
 
 import { getCoaching, rollUp, sessionsForAgent, withinWindow, CX_RULES } from './coaching.mjs';
 import { campKey, cmOverviewBody, effectiveCamps } from './campaign.mjs';
-import { withFloorEx, checksFor } from './rules.mjs';   // one number, one verdict (2026-09-07): the floor and the two checks are decided once
+import { withFloorEx, checksFor, VAT } from './rules.mjs';
+import { drillFor } from './drill.mjs';   // the KPI drill-down verdicts (sprint 2026-09-29, item 3)
+/* what drillFor needs beyond the agent row: the floor's ex-VAT twin and how far the month has run */
+const drillCtx = (digest, nba) => ({ floorEx: withFloorEx(nba && nba.thresholds).gwpFloorEx,
+  workingDays: digest.workingDays, daysWithData: digest.daysWithData, dates: digest.dates, period: digest.period });   // one number, one verdict (2026-09-07): the floor and the two checks are decided once
 
 export const PORTAL_ROLES = new Set(['agent', 'team_leader', 'campaign_manager']);
 
@@ -239,6 +243,33 @@ export async function loadNba(DB) {
    a name and a team but deliberately no numbers. Both carry `tl`, so both can be
    scoped — a VT agent on a team leader's list must still be listed as theirs
    rather than vanishing. */
+/* One row per (agent, campaign) for a mover — every other agent passes through unchanged. Only the
+   campaign-manager scope reads rows this way (item 2, D4). Each segment row carries ITS campaign's figures
+   and ITS days only (security review, 2026-09-29: a spread of the whole row leaked the other campaign's day
+   rows and totals). Figures the digest only has for the whole month (talk, calls, QA, cancellations,
+   referrals, ranks, the rating) travel once, on the CURRENT campaign's row — never on the earlier one, and
+   never twice — the same attribution tools/verify-cm-numbers.mjs reconciles against. */
+const WHOLE_MONTH_ONLY = ['talk', 'calls', 'ans', 'leads', 'canc', 'ref', 'qa', 'conv', 'gwpT', 'composite', 'score',
+  'scoreParts', 'checks', 'drill', 'wk', 'badges', 'spark', 'trend', 'trendPct', 'rankCo', 'nCo', 'rankTeam', 'nTeam'];
+export function bySegment(rows) {
+  const out = [];
+  for (const r of rows || []) {
+    if (!r || !Array.isArray(r.segments) || r.segments.length < 2) { out.push(r); continue; }
+    r.segments.forEach((s, i) => {
+      const cur = i === r.segments.length - 1, to = s.to || '9999-12-31';
+      const row = { ...r, campaign: s.campaign, sales: s.sales, gwpEx: s.gwpEx, target: s.target, pctT: s.pctT,
+        act: s.act, emp: s.emp, spd: s.spd, aveG: s.aveG, plan: s.plan,
+        att: s.emp ? s.act / s.emp : null,
+        gwp: s.gwpEx != null ? Math.round(s.gwpEx * VAT * 100) / 100 : null,
+        days: (r.days || []).filter((d) => d && d.d >= s.from && d.d <= to),
+        segment: { from: s.from, to: s.to }, segments: undefined };
+      if (!cur) for (const k of WHOLE_MONTH_ONLY) row[k] = null;
+      out.push(row);
+    });
+  }
+  return out;
+}
+
 function everyone(digest) {
   const rows = (digest.agents || []).map((a) => ({ ...a, covered: true }));
   for (const n of digest.notCovered || [])
@@ -290,9 +321,13 @@ export function authorise(user, digest) {
        a campaign with no agents yet fall away here rather than as an empty card. */
     const camps0 = effectiveCamps(ctx, user.username);
     if (!camps0.length) return { error: 'This campaign manager account is not assigned to a campaign yet. Ask Nick to update cm:assignments.', status: 403 };
-    const present = new Set(all.map((r) => campKey(r.campaign)));
+    /* A MOVER COUNTS ONCE PER CAMPAIGN (sprint 2026-09-29, item 2; D4): a campaign manager sees only the
+       days an agent worked on THEIR campaign — the Download & Test manager keeps a mover's first fortnight,
+       the Courtesy manager gets the rest, and neither sees the other's figures. */
+    const allC = bySegment(all);
+    const present = new Set(allC.map((r) => campKey(r.campaign)));
     const camps = camps0.filter((k) => present.has(k));
-    const rows = all.filter((r) => camps.includes(campKey(r.campaign)));
+    const rows = allC.filter((r) => camps.includes(campKey(r.campaign)));
     if (!rows.length) return { error: 'No agents are currently on ' + camps0.join(', ') + ' in the published digest.', status: 409 };
     return { scope: 'campaign', cb: normCb(user.cb), team: '', campaigns: camps,
       codes: new Set(rows.map((r) => r.code)), rows, leaders: ctx.leaders || {} };
@@ -540,6 +575,9 @@ export async function overview(env, DB, user, digest, months, extra) {
     /* THE TWO CHECKS, DECIDED HERE (one number, one verdict — 2026-09-07). The page used to
        compare aveG against a floor it derived itself and disagreed with the rating row. */
     if (me) me.checks = checksFor(me, nba && nba.thresholds);
+    /* THE KPI DRILL-DOWN, DECIDED HERE (sprint 2026-09-29, item 3): each Today tile's status, what
+       drives it, the action and whether to ask the team leader — the page paints, never judges */
+    if (me) me.drill = drillFor(me, drillCtx(digest, nba));
     return {
       status: 200,
       body: {
@@ -623,7 +661,14 @@ export async function agentDetail(env, DB, user, digest, wantCb) {
   if (!cb) return { status: 400, body: { error: 'No agent specified.' } };
   if (!auth.codes.has(cb)) return { status: 403, body: { error: 'That agent is not on your team.' } };
 
-  const row = auth.rows.find((r) => r.code === cb) || null;
+  let row = auth.rows.find((r) => r.code === cb) || null;
+  /* A MOVER OPENED BY A CAMPAIGN MANAGER (review, 2026-09-29): their scope holds one row per campaign
+     segment, so .find() landed on the FIRST campaign's days. The manager who holds the agent's CURRENT
+     campaign sees the whole month (with its split card); any other manager keeps their own campaign's days. */
+  if (auth.scope === 'campaign') {
+    const whole = (digest.agents || []).find((r) => r && normCb(r.code) === cb) || null;
+    if (whole && Array.isArray(whole.segments) && (auth.campaigns || []).includes(campKey(whole.campaign))) row = whole;
+  }
   const coaching = await coachingFor(env, DB, [row || { code: cb, name: cb }], { withSessions: true });
 
   /* THE LADDER TRAVELS WITH THE DRILL-DOWN, for a team scope only. Clicking a
@@ -645,6 +690,7 @@ export async function agentDetail(env, DB, user, digest, wantCb) {
   }
 
   if (row) row.checks = checksFor(row, nba && nba.thresholds);   // decided once, painted by the page
+  if (row) row.drill = drillFor(row, drillCtx(digest, nba));      // the same drill-down the agent sees (item 3)
   return {
     status: 200,
     body: { ...envelope(digest), role: user.role, scope: 'agent-detail', me: row,

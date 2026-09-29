@@ -92,6 +92,30 @@ if (rc.ok) {
   }
 }
 
+/* ---- the campaign moves (sprint 2026-09-29, item 2; D4) ---- An open PULSE tab asks the Worker's
+   /api/campaign-moves with its session; this tool has no session, so it runs the SAME derivation
+   (worker/src/moves.mjs, imported — never a second implementation) over the same dated agent_list
+   snapshots with the service key, and hands the result to the engine exactly as syncCampaignMoves
+   stores it. Without this a headless publish would blend every mover's month again. */
+{
+  const { campaignMoves } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'moves.mjs')).href);
+  const DBr = { select: async (q) => { const r = await fetch(`${env.SUPABASE_URL}/rest/v1/${q}`, { headers: H });
+    if (!r.ok) throw new Error(q.split('?')[0] + ' → ' + r.status); return r.json(); } };
+  const live = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
+  /* --history republishes past months too — they need their own moves or they revert to blended (review, 2026-09-29) */
+  const back = (n) => { const d = new Date(live + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() - n); return d.toISOString().slice(0, 7); };
+  const want = [...new Set([live, (process.argv.find((a) => /^--month=\d{4}-\d{2}$/.test(a)) || '').slice(8),
+    ...(process.argv.includes('--history') ? [back(1), back(2), back(3)] : [])].filter(Boolean))];
+  for (const m of want) {
+    try {
+      const mv = await campaignMoves(DBr, m);
+      await page.evaluate((x) => { const S = window.__mtd.state(); S.campaignMoves = S.campaignMoves || {};
+        S.campaignMoves[x.month] = { agents: x.agents, at: x.updatedAt }; window.__mtd.rebuild(); }, mv);
+      console.log('campaign moves ' + m + ': ' + Object.keys(mv.agents).length + ' mover(s)' + (Object.keys(mv.agents).length ? ' — ' + Object.keys(mv.agents).join(', ') : ''));
+    } catch (e) { console.warn('campaign moves ' + m + ' not read (' + String(e && e.message || e) + ') — publishing with the copy already in the state'); }
+  }
+}
+
 /* --month YYYY-MM builds a PAST month: the engine's own period switch, then the same
    payload function — the portal's month filter reads what this publishes. --history walks
    every month the sales data covers and publishes each, so the filter has a past to offer
@@ -117,6 +141,9 @@ if (argMonth) {
   jobs.push([null, await buildFor(monthsAvailable[monthsAvailable.length - 1])]);
 } else {
   const payload0 = await page.evaluate(() => JSON.stringify(agentDigestPayload()));
+  /* --dump=<file> writes the live payload locally for inspection (dry run or not) — nothing else */
+  const dumpTo = (process.argv.find((a) => a.startsWith('--dump=')) || '').slice(7);
+  if (dumpTo) { fs.writeFileSync(dumpTo, payload0); console.log('payload written to ' + dumpTo); }
   const m0 = (JSON.parse(payload0).period?.from || '').slice(0, 7);
   jobs.push([null, payload0]);
   if (/^\d{4}-\d{2}$/.test(m0)) jobs.push([m0, payload0]);   // the live month IS its own history key

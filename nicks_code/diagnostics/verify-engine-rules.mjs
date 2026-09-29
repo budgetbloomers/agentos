@@ -50,6 +50,17 @@ ok('public holiday shift rule matches (data only, from)', inlined.publicHolidays
   inlined.publicHolidaysFrom + ' vs ' + JSON.stringify((SPEC.reference_data.public_holidays || {}).data_only_from));
 ok('one-off (extra) public holidays match the rule book', JSON.stringify(inlined.extraHolidays || []) === JSON.stringify((SPEC.reference_data.public_holidays || {}).extra || []),
   JSON.stringify(inlined.extraHolidays) + ' vs ' + JSON.stringify((SPEC.reference_data.public_holidays || {}).extra));
+/* EXCUSED STATUSES (D1, 2026-09-29): leave / unavailability is data, not a shift, per agent. The date and
+   every code's excused share must agree — a code in one copy only would silently excuse (or not) a day. */
+{ const e = SPEC.reference_data.excused_statuses || {}, i = inlined.excusedStatuses || {};
+  ok('excused-status rule matches (data only, from)', !!inlined.excusedStatusFrom && inlined.excusedStatusFrom === e.data_only_from,
+    inlined.excusedStatusFrom + ' vs ' + JSON.stringify(e.data_only_from));
+  const kinds = [...new Set([...Object.keys(i), ...Object.keys(e).filter(k => k === 'leave' || k === 'unavailable')])];
+  const drift = kinds.flatMap(k => { const a = i[k] || {}, b = e[k] || {};
+    return [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(c => a[c] !== b[c]).map(c => k + '.' + c); });
+  ok('excused-status codes and shares match (leave, unavailable)', kinds.length === 2 && !drift.length, drift.join(',') || JSON.stringify(kinds));
+  const absent = (e.absence || []).filter(c => kinds.some(k => (i[k] || {})[c] != null));
+  ok('no code the rule book calls an absence is excused', !absent.length, absent.join(',')); }
 /* DEPARTURES (Nick, 2026-09-15): a leaver keeps their days until the list that dropped them. */
 { const d = SPEC.reference_data.departures || {}, i = inlined.departures || {};
   ok('departures rule matches (keep days until left, since)', i.keepDaysUntilLeft === d.keep_days_until_left && i.since === d.since,

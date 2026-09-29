@@ -66,12 +66,39 @@ try {
 
   head('2 · EVERY CAMPAIGN FIGURE, RECOMPUTED FROM THE AGENT ROWS');
   const n = (v) => (v == null || isNaN(v) ? 0 : Number(v));
+  /* A MOVER IS COUNTED ONCE PER CAMPAIGN (D4, 2026-09-29). A digest row with `segments` is the SUM over
+     every campaign the agent worked this month, labelled with the campaign the list names NOW; each
+     segment carries that campaign's own sales/gwpEx/target/act/emp. So a campaign's rows are: every
+     un-segmented row on that campaign, plus — for each mover — one row made of the segments on that
+     campaign. The row-level measures segments do not carry (dials, answered, leads, cancellations, QA,
+     compliance fails) stay with the campaign the agent is on NOW, so nothing is counted twice. Rows
+     without segments read exactly as before. */
+  const SEG_SUMS = ['sales', 'gwpEx', 'target', 'act', 'emp'];
+  const campView = (a, key) => {
+    if (!Array.isArray(a.segments) || !a.segments.length) return campKey(a.campaign) === key ? a : null;
+    const segs = a.segments.filter((s) => campKey(s.campaign) === key);
+    if (!segs.length) return null;
+    const now = campKey(a.campaign) === key;
+    const v = { ...a, campaign: segs[0].campaign };
+    for (const k of SEG_SUMS) v[k] = segs.reduce((s, x) => s + n(x[k]), 0);
+    if (!now) Object.assign(v, { calls: 0, ans: 0, leads: null, canc: null, qa: null, composite: null });
+    return v;
+  };
+  const rowsFor = (key) => digest.agents.map((a) => campView(a, key)).filter(Boolean);
+  /* the 'all' view: one row per PERSON over the in-scope campaigns (a mover whose campaigns are all in
+     scope reads as their whole row) */
+  const rowsAll = (keys) => digest.agents.map((a) => {
+    const parts = keys.map((k) => campView(a, k)).filter(Boolean);
+    if (!parts.length) return null;
+    if (parts.length === 1) return parts[0];
+    const v = { ...parts.find((p) => p.calls || p.qa != null || p.composite) || parts[0] };
+    for (const k of [...SEG_SUMS, 'calls', 'ans']) v[k] = parts.reduce((s, x) => s + n(x[k]), 0);
+    return v;
+  }).filter(Boolean);
   for (const c of served.cm.campaigns) {
     /* 'all' is a pseudo-campaign the Worker adds for a manager holding more than
        one — it covers every row in scope, not a campaign of that name. */
-    const rows = c.key === 'all'
-      ? digest.agents.filter((a) => (served.campaigns || []).includes(campKey(a.campaign)))
-      : digest.agents.filter((a) => campKey(a.campaign) === c.key);
+    const rows = c.key === 'all' ? rowsAll(served.campaigns || []) : rowsFor(c.key);
     console.log('  \x1b[1m' + c.label + '\x1b[0m (' + rows.length + ' agents in the digest)');
     ok(rows.length === c.agents, '  agent count matches the digest', 'served ' + c.agents + ' vs digest ' + rows.length);
 
@@ -133,8 +160,9 @@ try {
       /* on the All view two rows can share a leader, so the team must be matched
          on leader AND campaign — the intersection rule, applied to the check too */
       const tCamp = String(t.team || '').split(' · ')[0];
-      const tr = rows.filter((a) => String(a.tl || '').trim() === t.tl
-        && (c.key !== 'all' || campKey(a.campaign) === campKey(tCamp)));
+      /* on 'all' the team is one campaign's: its rows are that campaign's views (segments for movers) */
+      const tr = (c.key !== 'all' ? rows : rowsFor(campKey(tCamp)))
+        .filter((a) => String(a.tl || '').trim() === t.tl);
       const ts = tr.reduce((s, a) => s + n(a.sales), 0);
       const tl = tr.filter((a) => a.leads != null).reduce((s, a) => s + n(a.leads), 0);
       ok(t.agents === tr.length && t.sales === ts,

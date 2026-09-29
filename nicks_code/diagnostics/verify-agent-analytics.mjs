@@ -795,7 +795,8 @@ function loadPage(fetchImpl) {
     'document', 'window', 'localStorage', 'location', 'fetch', 'URLSearchParams', 'setTimeout', 'Intl', 'console',
     src + '\nreturn {show,notReported,commCalc,heroHTML,doneHTML,trackHTML,standHTML,whatIfHTML,comsPage,coachHTML,coachTeamHTML,teamView,loginScreen,greeting,sastHour,prettyPeriod,setD:function(d){D=d},setMe:function(m){ME=m},setTeam:function(t){TEAM=t},setView:function(v){VIEW=v},'
     + 'getD:function(){return D},getView:function(){return VIEW},cellOf,reportMTD,reportWeekly,reportDaily,reportTLSummary,exportReports,refreshPortal,liveFiguresChanged,setDayFilter:function(d){DAY_FILTER=d},setForm:function(f){FORM=f},render,'
-    + 'sidebarHTML,pgMyHelp,helpPage,setHelpUnread:function(n){HELP_UNREAD=n},setMyHelp:function(m){MYHELP=m},setHelpD:function(h){HELPD=h}};'
+    + 'sidebarHTML,pgMyHelp,helpPage,setHelpUnread:function(n){HELP_UNREAD=n},setMyHelp:function(m){MYHELP=m},setHelpD:function(h){HELPD=h},'
+    + 'agentKpis,drillPanelHTML,todayHTML,campaignSplitHTML,commissionSplitHTML};'
   );
   return {
     api: fn(doc, win, win.localStorage, win.location, fetchImpl || (() => Promise.reject(new Error('no network in test'))),
@@ -1213,6 +1214,75 @@ try {
 } catch (e) { bad('Today precision (2026-09-03 round)', e.message); }
 delete W.__agentToday;
 
+/* ═══ LEAVE IS NOT A SHIFT (decision D1, sprint 2026-09-29) — the display half ═══
+   The digest carries me.leave (excused days, 0.5-fractional, omitted when 0) and lv (1 or 0.5) on an
+   excused days[] entry. The page PAINTS both and never computes leave: one line on Today and My
+   Progress (and the leader's drill-down), "Leave" in the sessions table, and a leave day is skipped —
+   never short, never "still landing" — by the last-session and momentum cards. */
+head('Leave days (D1) — painted, never computed');
+try {
+  W.__agentToday = '2026-09-05';
+  const SEPL = { ...DIGEST, period: { from: '2026-09-01', to: '2026-09-30' }, workingDays: 21, diallingDays: 4,
+    dates: ['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04'], role: 'agent', updatedAt: new Date().toISOString(),
+    coaching: { stale: true, agents: [] } };
+  const BASE = { code: 'CB71', name: 'Lindiwe Mthembu', campaign: 'Cuddle', tenure: 'Exp', plan: 'EXP_CUDDLE',
+    gwpEx: 1500, sales: 17, target: 16, pctT: 1.06, spd: 8.5, att: 1, qa: 0.95, aveG: 88, ref: 0,
+    act: 2, emp: 2, rankCo: 3, nCo: 62, rankTeam: 1, nTeam: 15, trend: 'up', trendPct: 0.1, badges: [], spark: [8, 9] };
+  const txt = () => N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const row = (d) => (N.root.innerHTML.match(new RegExp('<tr><td class="num">' + d + '[\\s\\S]*?</tr>')) || [''])[0];
+
+  /* three whole days of leave; the NEWEST row is a leave day with a target on it (worst case) */
+  const LV = { ...BASE, leave: 3, days: [
+    { d: '2026-09-01', s: 8, x: 700, t: 8, act: 1 }, { d: '2026-09-02', s: 9, x: 800, t: 8, act: 1 },
+    { d: '2026-09-03', s: 0, x: 0, t: 8, act: 0, lv: 1 }, { d: '2026-09-04', s: 0, x: 0, t: 8, act: 0, lv: 1 } ] };
+  P.setTeam(null); P.setD({ ...SEPL, agents: [LV] }); P.setMe(LV); P.setView('month'); P.show(LV);
+  let t = txt();
+  if (!/Leave: 3 days — not counted as shifts, your target is set on the days you were in/.test(t)) throw new Error('Today has no leave line: ' + (t.match(/Leave:.{0,80}/) || ['none'])[0]);
+  if (!/Your last session · 2026-09-02 .{0,60}Target hit/.test(t)) throw new Error('the last session is not the last WORKED, non-leave day');
+  if (!/2 sessions in a row on target/.test(t)) throw new Error('momentum counted a leave day');
+  if (/2026-09-0[34] is still landing/.test(t)) throw new Error('a leave day was called "still landing"');
+  ok('Today: "Leave: 3 days — not counted as shifts…", last session and momentum skip the leave days');
+
+  P.setView('progress'); P.show(LV); t = txt();
+  if (!/Leave: 3 days/.test(t)) throw new Error('My Progress has no leave line');
+  const r3 = row('2026-09-03');
+  if (!/>Leave</.test(r3) || /chip2 next|chip2 beat/.test(r3)) throw new Error('the leave session does not read "Leave" (or still carries a Yes/No chip): ' + r3.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '));
+  if (!/chip2 beat/.test(row('2026-09-02'))) throw new Error('a worked session lost its Yes chip');
+  ok('My Progress: the leave line shows and the sessions table reads "Leave", not a short session');
+
+  /* half a day: an HDAL row the agent half-worked — old code judged it short (1 of 4) */
+  const HALF = { ...BASE, leave: 0.5, days: [
+    { d: '2026-09-01', s: 8, x: 700, t: 8, act: 1 }, { d: '2026-09-02', s: 1, x: 90, t: 4, act: 0.5, lv: 0.5 } ] };
+  P.setD({ ...SEPL, agents: [HALF] }); P.setMe(HALF); P.setView('month'); P.show(HALF); t = txt();
+  if (!/Leave: half a day — not counted as a shift/.test(t)) throw new Error('half a day is not said as such: ' + (t.match(/Leave:.{0,60}/) || ['none'])[0]);
+  if (!/Your last session · 2026-09-01 .{0,60}Target hit/.test(t) || /was short of target/.test(t)) throw new Error('the half-day leave session was judged');
+  P.setView('progress'); P.show(HALF);
+  if (!/>Half-day leave</.test(row('2026-09-02'))) throw new Error('the half-day row does not read "Half-day leave"');
+  ok('half a day reads "Leave: half a day" and "Half-day leave", and is not judged short');
+
+  /* no leave key → no line */
+  const NONE = { ...BASE, days: [{ d: '2026-09-01', s: 8, x: 700, t: 8, act: 1 }] };
+  P.setD({ ...SEPL, agents: [NONE] }); P.setMe(NONE); P.setView('month'); P.show(NONE);
+  if (/leave-line|Leave:/.test(N.root.innerHTML)) throw new Error('a leave line shows with no leave on the digest');
+  P.setView('progress'); P.show(NONE);
+  if (/leave-line|Leave:/.test(N.root.innerHTML)) throw new Error('My Progress shows a leave line with no leave on the digest');
+  ok('no leave on the digest → no leave line anywhere');
+
+  /* the team leader's drill-down of the same agent shows the same */
+  P.setTeam({ name: 'Lead', role: 'team_leader' });
+  P.setD({ ...SEPL, role: 'team_leader', agents: [LV], __back: { name: 'Lead' } }); P.setMe(LV); P.setView('month'); P.show(LV); t = txt();
+  if (!/Leave: 3 days — not counted as shifts, their target is set on the days they were in/.test(t)) throw new Error('the drill-down has no leave line: ' + (t.match(/Leave:.{0,80}/) || ['none'])[0]);
+  P.setView('progress'); P.show(LV);
+  if (!/>Leave</.test(row('2026-09-03'))) throw new Error('the drill-down sessions table does not read "Leave"');
+  ok('the team leader\'s drill-down shows the same leave line and "Leave" rows');
+  P.setTeam(null); P.setView('month');
+
+  /* the page paints; it never derives leave from the rows */
+  !/\.leave\s*=|leave\s*\+=|lv\s*\+=/.test(PAGE) ? ok('the page never computes leave (no assignment to or sum of leave/lv)') : bad('the page computes leave instead of painting the digest');
+} catch (e) { bad('Leave days (D1)', e.message); }
+delete W.__agentToday;
+P.setTeam(null);
+
 /* A STALE DIGEST MUST NOT COST AN AGENT MONEY.
    A PULSE tab running the old build publishes no workingDays, so the page fell
    back to elapsed days. For the floor's #2 earner that meant 16 days worked "out
@@ -1329,6 +1399,75 @@ try {
   if (!/no remaining days left to add sales to/i.test(text)) throw new Error('the figures card does not explain why the what-if is gone');
   ok('with no days left the what-if card is dropped and the always-visible figures card says why');
 } catch (e) { bad('no-days-left routing', e.message); }
+
+/* THE KPI DRILL-DOWN (sprint 2026-09-29, item 3; D3) — the tiles paint the engine's verdicts and a tile
+   that needs attention opens the six answers Nick asked for; the page judges nothing */
+try {
+  if (/function tileState|tileState\(/.test(PAGE.replace(/\/\*[\s\S]*?\*\//g, ''))) throw new Error('the page still decides tile states itself (tileState)');
+  const dv = (k, status, extra) => ({ k, label: { ta: 'Target achieved', aveG: 'Average sale (ex VAT)', qa: 'QA score', att: 'Attendance' }[k], status,
+    result: null, target: null, below: null, of: null, tlHelp: false, why: null, topic: 'Something else', action: null, ...(extra || {}) });
+  const me = { code: 'CB9', name: 'Agent Nine', tl: 'Denise Haripersad', campaign: 'Courtesy', tenure: 'EXP', plan: 'EXP_COURTESY',
+    pctT: 0.62, sales: 40, target: 64, spd: 4, emp: 8, act: 8, att: 1, qa: 0.72, aveG: 90, gwpEx: 3600, ref: 0, days: [],
+    drill: {
+      ta: dv('ta', 'focus', { result: 0.62, target: 1, below: 3, of: 5, tlHelp: true, why: { rule: 'sessions', below: 3, of: 5 }, topic: 'Review my call',
+        action: 'Every session at your daily target from here keeps the month on track — plan each shift around that number.' }),
+      aveG: dv('aveG', 'pass', { result: 90, target: 86.08 }),
+      qa: dv('qa', 'focus', { result: 0.72, target: 0.9, tlHelp: true, why: { rule: 'qa' }, topic: 'Explain my quality result', action: 'One clean week of calls moves this.' }),
+      att: dv('att', 'none') } };
+  P.setTeam(null); P.setD({ ...DIGEST, role: 'agent', workingDays: 21, agents: [me] }); P.setMe(me);
+  const k = P.agentKpis(me, {});
+  const tile = (lab) => (k.match(new RegExp('<div class="ac-tile[^"]*"[^>]*>(?:(?!<div class="ac-tile).)*?' + lab, 's')) || [''])[0];
+  if (!/ac-tile focus"[^>]*data-drill="ta"/.test(tile('TARGET ACHIEVED'))) throw new Error('the target tile does not paint the engine\'s focus verdict / is not tappable: ' + tile('TARGET ACHIEVED').slice(0, 160));
+  if (/data-drill/.test(tile('AVERAGE SALE'))) throw new Error('a tile on target is tappable');
+  if (!/ac-tile pass/.test(tile('AVERAGE SALE'))) throw new Error('the average-sale tile ignores the engine\'s pass verdict');
+  if (!/ac-tile none/.test(tile('ATTENDANCE'))) throw new Error('a KPI with no verdict is not NO DATA');
+  ok('the tiles paint the engine\'s verdicts; only the ones needing attention are tappable');
+
+  const p = P.drillPanelHTML('ta'), pt = p.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  for (const [what, re] of [['the KPI', /Target achieved/], ['the result', /Your result 62%/], ['the target', /Target 100%/],
+    ['what drives it', /Below target in 3 of your last 5 sessions/], ['the action', /plan each shift around that number/],
+    ['TL help recommended', /Team leader help: recommended/]])
+    if (!re.test(pt)) throw new Error('the drill panel does not show ' + what + ': ' + pt.slice(0, 300));
+  if (!/openHelp\('Review my call'\)/.test(p)) throw new Error('the panel\'s ask button does not open the help modal on its topic');
+  const q = P.drillPanelHTML('qa').replace(/<[^>]+>/g, ' ');
+  if (!/lowest band/.test(q) || !/Explain my quality result/.test(P.drillPanelHTML('qa'))) throw new Error('the QA panel does not say why or which topic');
+  ok('a tapped KPI answers all six: the KPI, result, target, driver, action and whether to ask the team leader');
+
+  P.setD({ ...DIGEST, role: 'team_leader', workingDays: 21, agents: [me], __back: { name: 'Denise Haripersad' } });
+  if (/openHelp\(/.test(P.drillPanelHTML('ta'))) throw new Error('a team leader\'s drilldown offers to file a help request under their own session');
+  ok('on a team leader\'s drilldown the panel shows the verdict without an ask button');
+
+  /* leave shrinks the month target the Today statement quotes (item 1 + 3, 2026-09-29) */
+  const lv = { ...me, target: 144, emp: 18, leave: 3, drill: undefined, days: [{ d: '2026-09-01', s: 8, x: 800, t: 8, act: 1 }] };
+  P.setD({ ...DIGEST, role: 'agent', workingDays: 21, period: { from: '2026-09-01', to: '2026-09-30' }, dates: ['2026-09-01'], agents: [lv] }); P.setMe(lv);
+  const tt = P.todayHTML({}).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/target of 144 sales/.test(tt)) throw new Error('the month target ignores leave (8 a day × 18 days = 144): ' + (tt.match(/target of \d+ sales/) || ['none'])[0]);
+  ok('leave days come off the month target the Today statement quotes');
+} catch (e) { bad('KPI drill-down', e.message); }
+P.setTeam(null);
+
+/* A MOVER'S MONTH BY CAMPAIGN (sprint 2026-09-29, item 2; D4) — the page paints PULSE's segments and the
+   whole-month row; commission per campaign plan is a labelled projection */
+try {
+  const segs = [
+    { campaign: 'Download & Test', from: '2026-09-01', to: '2026-09-11', sales: 60, gwpEx: 2087, target: 72, pctT: 0.83, act: 9, emp: 9, plan: 'EXP_DOWNUP' },
+    { campaign: 'Courtesy', from: '2026-09-14', to: '2026-09-25', sales: 50, gwpEx: 4300, target: 80, pctT: 0.63, act: 10, emp: 10, plan: 'EXP_COURTESY' }];
+  const mover = { code: 'CB121', name: 'Joeline Muniappen', tl: 'Denise Haripersad', campaign: 'Courtesy', tenure: 'EXP', plan: 'EXP_COURTESY',
+    sales: 110, gwpEx: 6387, target: 152, pctT: 0.72, act: 19, emp: 19, days: [], segments: segs };
+  P.setTeam(null);
+  P.setD({ ...DIGEST, role: 'agent', workingDays: 22, period: { from: '2026-09-01', to: '2026-09-30' }, dates: ['2026-09-25'], agents: [mover],
+    comm: { saleValue: 77.39, saleValues: { EXP_DOWNUP: 34.78 }, brackets: { EXP_DOWNUP: [{ gwp: 1000, comm: 100 }, { gwp: 3000, comm: 450 }], EXP_COURTESY: [{ gwp: 5000, comm: 500 }, { gwp: 12000, comm: 1800 }] } } });
+  P.setMe(mover);
+  const s = P.campaignSplitHTML(mover).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/Your month by campaign/.test(s) || !/moved to Courtesy on 14 Sep/.test(s)) throw new Error('the split card does not say where and when the agent moved: ' + s.slice(0, 200));
+  if (!/Download &(amp;)? Test 0?1 Sept? – 11 Sept? 60/.test(s) || !/Courtesy 14 Sept? – 25 Sept? 50/.test(s)) throw new Error('each campaign\'s own days and sales are not shown: ' + s.slice(0, 400));
+  if (!/Whole month 110/.test(s)) throw new Error('the whole-month row is missing or not the published total');
+  if (P.campaignSplitHTML({ ...mover, segments: undefined }) !== '') throw new Error('a non-mover gets a split card');
+  const c = P.commissionSplitHTML(mover).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/Commission by campaign — a projection/.test(c) || !/still to be confirmed by management/.test(c)) throw new Error('the commission split is not labelled a projection pending sign-off');
+  if (!/Download &(amp;)? Test .{0,80}R/.test(c) || !/Courtesy .{0,80}R/.test(c) || !/Split total/.test(c)) throw new Error('the commission split rows are missing: ' + c.slice(0, 300));
+  ok('a mover sees each campaign\'s own days beside the whole month, and commission per plan labelled a projection');
+} catch (e) { bad('campaign split on the agent page', e.message); }
 
 /* THE HELP CENTER ICON + NICK'S SIX STEPS ON SCREEN (sprint 2026-09-29, D5) */
 try {

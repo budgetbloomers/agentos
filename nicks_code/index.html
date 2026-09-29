@@ -584,6 +584,21 @@ const MTD_RULES = {
   publicHolidaysFrom: '2026-09-01',
   extraHolidays: [],
 
+  /* LEAVE IS NOT AN ABSENCE (D1, sprint 2026-09-29 — Ryan's UAT: annual leave weighed exactly like
+     an unplanned absence, so an agent's target grew by days they were never meant to work and their
+     Attendance fell). Each agent-day is working | leave | absent | unavailable. The codes below are
+     EXCUSED — the share of the day that is excused: leave AL/SL/FRL the whole day, HDAL half of it;
+     unavailable Suspended (the register's own code is SUSP) the whole day. Every other code — CA, UCA
+     included — stays an absence. An excused day with NO talk and NO sales is the Saturday rule, per
+     agent: Employed Shifts drop by the excused share, Actual never exceeds Employed, the target
+     (perDay × emp) shrinks with it, and Attendance / SPD are untouched by the leave. A leave-marked day
+     WITH talk or sales keeps its shift exactly as before and rule check V26 names it. HDAL is half a
+     day WORKED: register campaigns (Cuddle) credit the half as an Actual Shift, dialler campaigns keep
+     talk>0 and clamp it to the half. Read by excusedShare() only. Effective-dated so August, verified
+     row-for-row, never moves. Mirror of specs/mtd_engine_rules.json reference_data.excused_statuses. */
+  excusedStatusFrom: '2026-09-01',
+  excusedStatuses: { leave:{ AL:1, SL:1, FRL:1, HDAL:0.5, ML:1, EAL:1, HDSL:0.5, HDFRL:0.5 }, unavailable:{ Suspended:1, SUSP:1 } },
+
   /* AVERAGE TALK TIME IS MINUTES PER EMPLOYED SHIFT (Nick, 2026-09-08: "total talk time divided
      by shifts, and must be in minutes"). The denominator was already employed shifts (spec §6.4);
      the unit was h:mm:ss. One value, read by fmtTalk() for every average-talk figure on screen
@@ -950,6 +965,15 @@ function refreshCamps(range){
     }
     if(inForce&&inForce.campaign) carried.add(campOf(inForce.campaign));
   }
+  /* …AND WHAT A MOVER WORKED BEFORE THE MOVE (D4, 2026-09-29). The whole-month rewrite leaves no list
+     in the current month naming Download & Test once its last four agents moved on 14 Sep, so without
+     this their first fortnight would fall out of every report as an unreported campaign. Only the
+     Worker-named movers on the roster, only segments that overlap the period. */
+  if(range&&range.from) for(const a of roster){
+    if(S.settings&&S.settings.applyExclusions!==false&&MTD_RULES.excludeAgents[a.code]) continue;
+    const segs=moverSegments(a.code,range);
+    if(segs) for(const s of segs) if(s.from<=range.to&&s.to>=range.from&&s.campaign) carried.add(campOf(s.campaign));
+  }
   carried.delete('VT'); carried.delete('');
   const kept=carried.size?base.filter(c=>carried.has(c)):base;
   const extra=[...carried].filter(c=>!base.includes(c)).sort();
@@ -1279,6 +1303,7 @@ function freshState(){
     board:{},    // date -> normName(agent) -> {name,sales,gwp,ref,cells,cellGwp} — Manual Stats (agent-logged daily board), rows keyed RAW and resolved at report-build time so a later mapping repairs old days
     orgHist:{},  // CBnnn -> [{d,tl,campaign,tenure,src}] effective-dated org attribution, one entry per CHANGE
     leavers:{},  // CBnnn -> the last Agent List row that named them + {left:'YYYY-MM-DD'} — the first list that did not. From the record (/api/roster leavers[]); their days up to `left` still count
+    campaignMoves:{}, // 'YYYY-MM' -> {agents:{CBnnn:[{from,campaign,source}]},at} — the Worker's /api/campaign-moves (D4, 2026-09-29): movers only; a failed fetch keeps the last copy
     adjust:{},   // periodKey -> CBnnn -> {c,r}
     map:{},      // identityKey -> CBnnn (manual mapping)
     files:[],    // {name,type,dates:[..],rows,at}
@@ -1338,6 +1363,7 @@ function normalizeState(){
      older client never pushed comes back undefined and then gets pushed back out that way. */
   if(!S.orgHist) S.orgHist={};
   if(!S.leavers||typeof S.leavers!=='object'||Array.isArray(S.leavers)) S.leavers={};   // departures (rule departures, 2026-09-15) — a blob saved before it must not read as "nobody ever left"
+  if(!S.campaignMoves||typeof S.campaignMoves!=='object'||Array.isArray(S.campaignMoves)) S.campaignMoves={};   // campaign moves by effective date (D4, 2026-09-29) — an older blob reads as "no movers yet", never throws
   /* EVERY NAME A CODE HAS CARRIED (2026-09-21; specs/identity-aliases-plan.md). normName(old) ->
      {code,name,since}. The 18 Sep list re-spelt twelve agents and Salesforce kept the old spelling,
      so ~206 September sales fell to Unmatched. Not a DATA_STORE: like orgHist it survives "Clear
@@ -1516,6 +1542,10 @@ function mergeStates(mine,theirs){
   out.settings=Object.assign({},theirs.settings||{},mine.settings||{});
   if(mine.gwpPerUnit!=null) out.gwpPerUnit=mine.gwpPerUnit;
   out.cmTargets=String((mine.cmTargets||{}).stamp||'')>=String((theirs.cmTargets||{}).stamp||'')?mine.cmTargets:theirs.cmTargets;
+  /* the move feed (D4): per month, the copy the Worker stamped later wins — never the older tab's */
+  { const m=mine.campaignMoves||{}, t=theirs.campaignMoves||{}, r={};
+    for(const k of new Set([...Object.keys(m),...Object.keys(t)])) r[k]=(m[k]&&t[k])?(String(m[k].at||'')>=String(t[k].at||'')?m[k]:t[k]):(m[k]||t[k]);
+    out.campaignMoves=r; }
   for(const k in mine) if(!(k in out)) out[k]=mine[k];
   out._rev=Math.max(+mine._rev||0,+theirs._rev||0)+1;
   delete out.ui;
@@ -1891,6 +1921,45 @@ function listSegAt(code,d){
   return {campaign:c,tl};
 }
 const listCampAt=(code,d)=>listSegAt(code,d).campaign;
+/* A MOVER'S MONTH IS SPLIT BY THE DATE OF THE MOVE — CAMPAIGN ONLY (D4, sprint 2026-09-29; Nick to
+   confirm). UAT 28 Sep: CB121/CB150/CB162/CB245 worked Download & Test from 1 Sep and Courtesy from
+   14 Sep, CB233 Cuddle → Courtesy the same day, and every report blended the month under one campaign
+   because recordOrgList (below) hands the latest list the WHOLE month. That rewrite still stands for the
+   TEAM LEADER and for everyone else; for the agents the Worker's /api/campaign-moves NAMES as movers
+   (derived from the dated Agent List snapshots, Nesting graduations filtered out, an admin override
+   wins), the campaign in force on day d is the last segment whose `from` ≤ d. A day before the first
+   segment reads the first (as orgAt does). One segment is not a move. Everyone the feed does not name
+   is exactly what the list says — this returns '' for them and every caller falls through unchanged. */
+function movesFor(code,month){
+  const m=S&&S.campaignMoves&&S.campaignMoves[month];
+  const segs=m&&m.agents&&m.agents[code];
+  return (Array.isArray(segs)&&segs.length>=2)?segs:null;
+}
+function moveCampAt(code,d){
+  const segs=movesFor(code,String(d||'').slice(0,7)); if(!segs) return '';
+  let c=segs[0].campaign||'';
+  for(const s of segs){ if(String(s.from)<=d) c=s.campaign||c; else break; }
+  return c;
+}
+function monthEnd(mo){ const y=+mo.slice(0,4), m=+mo.slice(5,7); return mo+'-'+String(new Date(Date.UTC(y,m,0)).getUTCDate()).padStart(2,'0'); }
+function monthsOf(range){
+  const out=[]; if(!range||!range.from||!range.to) return out;
+  let mo=String(range.from).slice(0,7); const last=String(range.to).slice(0,7);
+  while(mo<=last&&out.length<24){ out.push(mo); mo=addDays(monthEnd(mo),1).slice(0,7); }
+  return out;
+}
+/* The mover's segments across the range's months, unclipped: [{campaign,from,to}], the first segment of a
+   month opening on the 1st and each running to the day before the next (or the month end). Null for
+   anyone the feed does not name in any month of the range. */
+function moverSegments(code,range){
+  const out=[]; let any=false;
+  for(const mo of monthsOf(range)){
+    const segs=movesFor(code,mo); if(!segs) continue; any=true;
+    segs.forEach((s,i)=>{ const next=segs[i+1];
+      out.push({campaign:String(s.campaign||''),from:i===0?mo+'-01':String(s.from),to:next?addDays(String(next.from),-1):monthEnd(mo)}); });
+  }
+  return any?out:null;
+}
 /* THE AGENT LIST WINS THE WHOLE CURRENT MONTH (Nick, 2026-08-27 — the third time: "when
    the agent list is updating, it needs to update all the time"). The list is a CORRECTION
    of the current month, not an event inside it: when a new list moves an agent's team
@@ -2830,7 +2899,9 @@ const INGEST={
             /* ADOPT THE RECORD. The server derived the roster from the whole file; what this
                tab classified is a preview. Pull the record now so this screen shows exactly
                what every other app shows. */
-            if(j.roster&&j.roster.length) setTimeout(function(){try{adoptRosterFromRecord({roster:j.roster,fingerprint:j.fingerprint,as_of:j.as_of,source:'record',leaders:j.record_leaders,leavers:j.leavers})}catch(e){}},800); }
+            if(j.roster&&j.roster.length) setTimeout(function(){try{adoptRosterFromRecord({roster:j.roster,fingerprint:j.fingerprint,as_of:j.as_of,source:'record',leaders:j.record_leaders,leavers:j.leavers})}catch(e){}},800);
+            /* the published snapshot is what creates (or ends) a campaign move — ask the feed now (D4) */
+            if(typeof syncCampaignMoves==='function') setTimeout(function(){ try{ syncCampaignMoves(); }catch(e){} },2500); }
           else if(j&&j.accepted===false&&j.publish) reportListRefused(Object.assign({file:name},j));
           /* an answer that is neither (a 4xx/5xx became null above, or an unlisted refusal) is
              still a list that did not publish — say so rather than nothing */
@@ -3814,7 +3885,7 @@ function rebuild(){
         /* m is a SPREAD of the roster row, so m.campaign===a.campaign always — the campaign
            half of this check was a tautology and could never fire. The campaign the model
            actually used is primaryCamp (audit round 6, second pass). */
-        const mCamp=(M.primaryCamp&&M.primaryCamp[a.code])||m.campaign;
+        const mCamp=(M.campNow&&M.campNow[a.code])||(M.primaryCamp&&M.primaryCamp[a.code])||m.campaign;   // a mover (D4) is on the list's campaign NOW
         if(mCamp!==a.campaign||!tlOk)
           bad.push({code:a.code,name:a.name||a.code,model:mCamp+' / '+(m.tl||'—'),list:a.campaign+' / '+(a.tl||'—')});
       }
@@ -3917,7 +3988,9 @@ function validateMTD(m){
       if(seenCD[k]&&seenCD[k]!==f.campaign){ dup++; if(dupEx.length<3) dupEx.push(f.code+' '+f.date+': '+seenCD[k]+'+'+f.campaign); }
       seenCD[k]=f.campaign; }
     add('V09','error',!dup, dup?dup+' agent-day(s) counted in two campaigns: '+dupEx.join(', '):'no agent-day appears in two campaigns');
-    const cu=new Set(Object.keys(m.mtdCC.Cuddle||{})), ov=Object.keys(m.mtdCC.Courtesy||{}).filter(c=>cu.has(c));
+    /* a Worker-named mover (D4, 2026-09-29) has Cuddle days AND Courtesy days by design — split by the date
+       of the move, each day in one campaign (V09 above still guards that); only an unexplained overlap fails */
+    const cu=new Set(Object.keys(m.mtdCC.Cuddle||{})), ov=Object.keys(m.mtdCC.Courtesy||{}).filter(c=>cu.has(c)&&!(m.movers&&m.movers[c]));
     add('V10','error',!ov.length, ov.length?ov.length+' agent(s) in both Cuddle and Courtesy: '+ov.slice(0,3).join(', '):'Cuddle and Courtesy agent sets are disjoint'); }
 
   // V11 — structural: totalRow() recomputes every ratio from the summed numerator and
@@ -4023,6 +4096,15 @@ function validateMTD(m){
     const idle=Object.keys(byDay).filter(d=>byDay[d].emp>0&&!byDay[d].act&&!byDay[d].sales&&!byDay[d].talk).sort();
     add('V25a','warn',!idle.length, idle.length?idle.length+' day(s) carry Employed Shifts but no actual shift, sale or talk anywhere on the floor — a public holiday the calendar does not know, or dialler/BI files that never landed: '+idle.slice(0,4).join(', '):'every day with Employed Shifts has someone at work'); }
 
+  /* V26 — A LEAVE-MARKED DAY WITH ACTIVITY (D1, 2026-09-29). An excused status (rule
+     excusedStatuses) takes the day out of Employed Shifts only when the agent neither talked nor
+     sold. HR files leave ahead of time, so a leave code on a day the dialler or Salesforce says the
+     agent worked is a register that was not corrected: the day keeps the shift it always had and is
+     named here for a person to fix — a warning, because the figures are already the safe answer. */
+  { const hit=F.filter(f=>f.leaveActive);
+    add('V26','warn',!hit.length, hit.length?hit.length+' leave-marked agent-day(s) carry talk or sales, so each kept its shift — correct the register if they worked: '+hit.slice(0,4).map(f=>f.code+' '+f.date+' ('+f.leaveActive+')').join(', ')+(hit.length>4?' +'+(hit.length-4)+' more':'')
+      :'no leave-marked day carries talk or sales'); }
+
   /* Campaigns deliberately left out of this dashboard. Reported every build, with the sales
      and GWP they take with them, so "the totals look light" always has an answer on screen. */
   { const all=Object.entries(m.offCampaign||{});
@@ -4088,6 +4170,17 @@ function publicHolidayDataOnly(d){
    shift or a dialling day? Saturdays and public holidays under their rules. Every guard reads
    this, so a third kind of non-working day would be one line here and nowhere else. */
 function dataOnlyDay(d){ return saturdayDataOnly(d)||publicHolidayDataOnly(d); }
+/* THE PER-AGENT QUESTION BESIDE IT (D1, 2026-09-29): what share of THIS agent's day does their
+   register status excuse? 0 = working or absent, 0.5 = half-day leave, 1 = a whole day of leave or
+   unavailability — read from MTD_RULES.excusedStatuses / excusedStatusFrom, nothing copied here.
+   It never answers for the floor: dialling days, V25 and V25a keep asking dataOnlyDay() alone, and
+   the fact builder applies this only on a day that could be a shift at all. */
+function excusedShare(d,st){
+  const from=MTD_RULES.excusedStatusFrom; if(!from||st==null||d<from) return 0;
+  const code=String(st).trim(), ex=MTD_RULES.excusedStatuses||{};
+  for(const kind in ex){ const v=+((ex[kind]||{})[code]); if(v>0) return Math.min(1,v); }
+  return 0;
+}
 /* HOW FAR THE DATA REACHES (never-stale plan, Phase 2, 2026-09-07). The trust bar used to count
    files by upload age; what a manager needs is the last DAY each source covers, against the day
    it should cover. expectedReach(): the daily drop lands by 13:00 SAST with yesterday's data,
@@ -4288,9 +4381,12 @@ function buildModel(range, periodKey, opts){
          team leader for that date), then the effective-dated history, then the live roster
          as the last resort for an agent we have never observed being assigned.
          The CAMPAIGN is the Agent List's wherever a list covers the day (listCampAt) — the
-         tracker row still names the team leader, but never the campaign over the list. */
+         tracker row still names the team leader, but never the campaign over the list.
+         …EXCEPT FOR A WORKER-NAMED MOVER (D4, 2026-09-29): their day reads the campaign in force
+         THAT day (moveCampAt); '' for everyone else, so nobody else's day moves. The team leader
+         below is untouched — it stays the list's, whole month. */
       const oh=orgAt(code,d);
-      const camp=campOf(listCampAt(code,d)||(tr&&tr.campaign)||(oh&&oh.campaign)||(a&&a.campaign));
+      const camp=campOf(moveCampAt(code,d)||listCampAt(code,d)||(tr&&tr.campaign)||(oh&&oh.campaign)||(a&&a.campaign));
       if(!CAMPS.includes(camp)){
         // not a reported campaign — tally what is being left out, then drop the row
         const sd0=salesBy[d][code];
@@ -4355,6 +4451,21 @@ function buildModel(range, periodKey, opts){
       if(trackerIsSource){ emp=tr.emp; act=tr.act; }
       if(!emp&&(active)) emp=1;                    // has activity → must be employed
       if(act>0&&!emp) emp=1;
+      /* AN EXCUSED DAY IS DATA, NOT A SHIFT — PER AGENT (rule excusedStatuses, D1 2026-09-29). Leave
+         (AL/SL/FRL, HDAL half) and unavailability (Suspended) take their share out of Employed Shifts
+         the way a Saturday takes the whole floor's — so the target (perDay × emp) shrinks with it and
+         Attendance / SPD never see the day. A whole-day code WITH talk or sales is not excused: the day
+         keeps exactly the shift it had and V26 names it (HR files leave ahead; the dialler is the
+         evidence). HDAL is half a day worked: a register campaign credits that half, a dialler campaign
+         keeps talk>0 clamped to it. A Saturday or public holiday is already no shift — never leave. */
+      let leave=0, leaveActive='';
+      const exc=(emp>0&&!dataOnlyDay(d))?excusedShare(d,st):0;
+      if(exc>=1&&active) leaveActive=String(st).trim();
+      else if(exc>0){
+        leave=Math.min(exc,emp); emp-=leave;
+        if(shiftSrc!=='dialler'&&emp>0) act=emp;     // HDAL on the register: the other half was worked
+        act=Math.min(act,emp);                       // Actual never above Employed
+      }
       /* SATURDAY IS DATA, NOT A SHIFT (rule saturdayShiftsFrom, Nick 2026-09-07) — AND SO IS A
          PUBLIC HOLIDAY (rule publicHolidaysFrom, Nick 2026-09-25: Heritage Day read as an 18th
          shift): whatever the register or the dialler say, the day carries its sales, GWP, talk,
@@ -4387,14 +4498,17 @@ function buildModel(range, periodKey, opts){
       /* canc belongs in this guard (audit round 3, 2026-08-27): under the NET rule a fully
          cancelled day has sales 0, and on a day with no attendance register emp/act are 0 too,
          so the row was skipped and its cancellation vanished from every total. */
-      if(!emp&&!act&&!sales&&!talk&&!opt&&!refDay&&!canc) continue;   // a referral (or a cancellation) alone is still a fact
+      /* …and an excused day alone is still a fact (D1): an agent on leave all month keeps their rows, so
+         they stay in the head count and the digest with their leave days and no target */
+      if(!emp&&!act&&!sales&&!talk&&!opt&&!refDay&&!canc&&!leave) continue;   // a referral (or a cancellation) alone is still a fact
       facts.push({date:d,week:weekOf[d],code,
         tl:listSegAt(code,d).tl||(tr?.tl)||(oh&&oh.tl)||a?.tl||'',   // the list's leader first (listSegAt)
         tlNow:a?.tl||'',                        // current owner, for the "who reports to whom today" views
         campaign:camp,
         agent:a?.name||tr?.agent||code,
         tenure:(tr?.tenure)||(oh&&oh.tenure)||a?.tenure||'',
-        emp,act,target,sales,gwp,gwpEx,gwpT,talk,opt,ref,canc,provisional,calls:ncalls,ans:nans});
+        emp,act,target,sales,gwp,gwpEx,gwpT,talk,opt,ref,canc,provisional,calls:ncalls,ans:nans,
+        leave,leaveActive});                    // excused share of the day; the code when a leave-marked day carried activity (V26)
     }
   }
 
@@ -4473,7 +4587,7 @@ function buildModel(range, periodKey, opts){
          that and would have reported it as an error on legitimate data. Where a day row
          already exists for this date it is the answer; otherwise fall back to the history. */
       const dayRow=(perAgent[rc]||[]).find(f=>!f.rangeAgg&&f.date===last);
-      const rcCamp=dayRow?dayRow.campaign:campOf(listCampAt(rc,last)||(orgAt(rc,last)||{}).campaign||a.campaign);
+      const rcCamp=dayRow?dayRow.campaign:campOf(moveCampAt(rc,last)||listCampAt(rc,last)||(orgAt(rc,last)||{}).campaign||a.campaign);   // a mover's anchor day: its own campaign (D4)
       if(!CAMPS.includes(rcCamp)){
         const t=offCampaign[rcCamp]=offCampaign[rcCamp]||{agents:new Set(),sales:0,gwp:0};
         t.agents.add(rc);
@@ -4544,9 +4658,9 @@ function buildModel(range, periodKey, opts){
   const refOf=code=>refsFromFile?(S.refs.by[code]||0):((adj[code]||{}).r||0);
 
   function agg(rows,code){
-    const o={emp:0,act:0,target:0,sales:0,gwp:0,gwpEx:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,days:0,prov:0,calls:0,ans:0,actDial:0,empDial:0};
+    const o={emp:0,act:0,target:0,sales:0,gwp:0,gwpEx:0,gwpT:0,talk:0,opt:0,ref:0,canc:0,days:0,prov:0,calls:0,ans:0,actDial:0,empDial:0,leave:0};
     for(const f of rows){ o.emp+=f.emp;o.act+=f.act;o.target+=f.target;o.sales+=f.sales;o.gwpEx+=(f.gwpEx||0);o.gwpT+=f.gwpT;
-      o.talk+=f.talk;o.opt+=f.opt;o.ref+=f.ref;o.canc+=f.canc;o.days++; o.calls+=(f.calls||0); o.ans+=(f.ans||0);
+      o.talk+=f.talk;o.opt+=f.opt;o.ref+=f.ref;o.canc+=f.canc;o.days++; o.calls+=(f.calls||0); o.ans+=(f.ans||0); o.leave+=(f.leave||0);
       if(f.dCov){o.actDial+=f.act; o.empDial+=f.emp;} // shifts the dialler actually observed
       if(f.provisional)o.prov++; }
     // referrals: the upload (or adjustment) is the per-agent TOTAL — it replaces, never
@@ -4660,6 +4774,33 @@ function buildModel(range, periodKey, opts){
     }
   }
 
+  /* MOVERS (D4, 2026-09-29): the agents the Worker's move feed names for a month of this period. Their
+     facts already sit under the campaign each day was worked in, so mtdCC/wtdCC/tlAgg/campAgg count each
+     campaign's days once and sum to the floor. What a campaign-less view needs for them is built here,
+     with the SAME aggregator the per-campaign rows use:
+       moverAgg[code]  — the whole period across every campaign (the one summed row; referral/cancellation
+                         adjustments attach once, as they do to primaryCamp's row)
+       moverWtd[w][c]  — the same per week
+       movers[code]    — the segments [{campaign,from,to}] clipped to the period and to the data days
+       campNow[code]   — the campaign the latest Agent List names (the list, not the feed, says NOW)
+     Nobody else gets an entry, so every non-mover path reads exactly what it read before. */
+  const movers={}, moverAgg={}, moverWtd={}, campNow={};
+  { const lo=(dates[0]&&dates[0]>range.from)?dates[0]:range.from;
+    const hi=(dates.length&&dates[dates.length-1]<range.to)?dates[dates.length-1]:range.to;
+    for(const code of seen){
+      const segs=moverSegments(code,range); if(!segs) continue;
+      const rows=byAgentDay[code]||[]; if(!rows.length) continue;
+      movers[code]=segs.map(s=>({campaign:campOf(s.campaign),from:s.from<lo?lo:s.from,to:s.to>hi?hi:s.to})).filter(s=>s.from<=s.to);
+      const o=agg(rows,code); Object.assign(o,meta(rows)); o.qa=qaFor(code,range.from,range.to); moverAgg[code]=o;
+      for(const w of weeks){ const wr=rows.filter(f=>f.week===w.num); if(!wr.length) continue;
+        const wo=agg(wr,null); Object.assign(wo,meta(wr));
+        wo.qa=qaFor(code, w.from<range.from?range.from:w.from, w.to>range.to?range.to:w.to);
+        (moverWtd[w.num]=moverWtd[w.num]||{})[code]=wo; }
+      const m0=metaOf[code];
+      campNow[code]=campOf(listCampAt(code,range.to)||(m0&&m0.campaign)||segs[segs.length-1].campaign);
+    }
+  }
+
   /* EMPLOYED HEADCOUNT COUNTS PEOPLE WHO WERE THERE (audit, 2026-08-28). hc was every distinct
      code appearing in the fact rows, and a cancellation alone is enough to mint a row: a fully
      cancelled day has sales 0, and with no attendance register for it emp and act are 0 too,
@@ -4670,7 +4811,7 @@ function buildModel(range, periodKey, opts){
      No such agent exists in August 2026 (checked: 0 of 79), so nothing on screen moves today;
      this is the guard, not a restatement. Their cancellation still counts in the totals, which
      is the whole reason the row is kept. */
-  const hcOf=rows=>[...new Set(rows.filter(f=>f.emp||f.act||f.sales||f.talk||f.opt||f.ref).map(f=>f.code))];
+  const hcOf=rows=>[...new Set(rows.filter(f=>f.emp||f.act||f.sales||f.talk||f.opt||f.ref||f.leave).map(f=>f.code))];   // on leave IS there (D1): CB143-style all-period leave stays in the head count
   // team-leader and campaign rollups
   const tlAgg={}, campAgg={};
   for(const camp of CAMPS){
@@ -4729,6 +4870,7 @@ function buildModel(range, periodKey, opts){
   for(const f of facts){ if(f.talk>0) talkDays.add(f.date); if(f.act>0||f.sales>0) workedDays.add(f.date); }
   const noDialler=[...workedDays].filter(d=>!talkDays.has(d)).sort();
   return {range,newCampaigns,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
+    movers,moverAgg,moverWtd,campNow,        // D4 campaign moves — only Worker-named movers have entries
     near:IDX.near,ambig:IDX.ambig,           // identities resolved by near spelling / left unresolved as ambiguous (2026-09-21), for the Data tab and V24
     viciSkipped,viciPartial,talkDays,noDialler,attDates,diallingDays,refsAreTotals:M_refsAreTotals,
     /* the same aggregator the grand total used, for a page that must total a FILTERED set of
@@ -5038,7 +5180,26 @@ function ringSVG(v,{size=86,color='var(--accent)',label='score'}={}){
 }
 
 /* ---------- analytics: score, risk, trend, insights, coaching ---------- */
-function primaryAgg(code){ if(!M)return null; const pc=M.primaryCamp[code]; return (M.mtdCC[pc]||{})[code]||CAMPS.map(c=>(M.mtdCC[c]||{})[code]).find(Boolean); }
+/* THE AGENT'S PERIOD ROW. agentAgg is the WHOLE period, whatever anybody's filter says — the digest,
+   the AI context and the composite read it, because S.ui is a shared blob and one person's campaign
+   chip must never narrow what the floor is told. For a Worker-named mover (D4, 2026-09-29) that is the
+   SUM over every campaign they worked (M.moverAgg); for everyone else it is exactly what it always was.
+   primaryAgg is what a PULSE screen shows: the same row, except that with the header Campaign filter
+   on, a mover shows only that campaign's days (mtdCC[camp][code]). Non-movers never read the filter
+   here, as before. */
+function agentAgg(code){ if(!M)return null; const mv=M.moverAgg&&M.moverAgg[code]; if(mv) return mv;
+  const pc=M.primaryCamp[code]; return (M.mtdCC[pc]||{})[code]||CAMPS.map(c=>(M.mtdCC[c]||{})[code]).find(Boolean); }
+function moverFilterCamp(code){ const fc=S.ui&&S.ui.camp; return (fc&&CAMPS.includes(fc)&&(M.mtdCC[fc]||{})[code])?fc:''; }
+function primaryAgg(code){ if(!M)return null;
+  if(M.moverAgg&&M.moverAgg[code]){ const fc=moverFilterCamp(code); return fc?M.mtdCC[fc][code]:M.moverAgg[code]; }
+  return agentAgg(code); }
+/* The campaign an agent is labelled with. A mover: the campaign the latest list names now (campNowOf) —
+   or, under the Campaign filter, the campaign whose days are on screen (viewCamp). Everyone else:
+   primaryCamp, unchanged. */
+function campNowOf(code){ return (M&&M.campNow&&M.campNow[code])||(M&&M.primaryCamp[code])||''; }
+function viewCamp(code){ if(!M) return '';
+  if(M.moverAgg&&M.moverAgg[code]) return moverFilterCamp(code)||campNowOf(code);
+  return M.primaryCamp[code]; }
 /* The score DECOMPOSED, so Agent Analytics can show each driver's real points
    (Nick, 2026-08-26: "the data must come from the vas analytics"). perfScore is
    built FROM these parts — one formula, one place, nothing to drift. */
@@ -5166,7 +5327,11 @@ function compositeFor(code, agent){
      never observed. The two agree for all 79 agents today, which is why this is a
      guard rather than a correction. */
   const last=win.length?win[win.length-1]:null;
-  const camp=(last&&last.campaign)||(M.primaryCamp&&M.primaryCamp[code])||a.campaign||'';
+  /* A MOVER IS RATED IN THE GROUP THEY ARE IN NOW (D4, 2026-09-29; non-negotiable 5). Their five sessions
+     can straddle the move — the last one worked may even be a day in the OLD campaign — so the window's
+     last row would put them in one group today and another tomorrow. The campaign the latest list names
+     decides, consistently; everyone else keeps the window's own campaign. */
+  const camp=(M.campNow&&M.campNow[code])||(last&&last.campaign)||(M.primaryCamp&&M.primaryCamp[code])||a.campaign||'';
   const tenure=(last&&last.tenure)||a.tenure||'';
   const grp=tenureGroupOf(tenure,camp);
   const sum=k=>win.reduce((s,f)=>s+(+f[k]||0),0);
@@ -5258,7 +5423,7 @@ function compositeFor(code, agent){
                     and scored him zero for it. So conversion uses the PERIOD sales that
                     match the period leads — the same pair the Lead Management tab divides. */
                  var L=leadsFor(code); if(!L) return null;
-                 var pa=(typeof primaryAgg==='function'?primaryAgg(code):null)||{};
+                 var pa=(typeof agentAgg==='function'?agentAgg(code):null)||{};   // the whole period, never one person's filter (D4)
                  var ps=+pa.sales||0;
                  /* MORE SALES THAN LEADS ON RECORD IS NOT A CONVERSION (2026-09-15: two cards read
                     457 % and 153 %). BI books sales the lead book never held as leads, so the ratio
@@ -5456,7 +5621,7 @@ function genInsights(){
 
 function coachingFor(code){
   const a=primaryAgg(code); if(!a) return [];
-  const camp=M.primaryCamp[code];
+  const camp=viewCamp(code);
   const peers=Object.values(M.mtdCC[camp]||{}).filter(x=>x.code!==code);
   const med=arr=>{const v=arr.filter(x=>x!=null).sort((a,b)=>a-b);return v.length?v[Math.floor(v.length/2)]:null;};
   const spdMed=med(peers.map(p=>p.spd)), ahtMed=med(peers.map(p=>p.aht)), optMed=med(peers.map(p=>p.optPct));
@@ -5667,7 +5832,7 @@ function buildVariance(range){
       const a=IDX.byCode[code]||{};
       const org=orgAt(code,d);                       // history, never the live snapshot
       const ls=listSegAt(code,d);                     // the list's word first, as in the fact loop
-      const camp=campOf(ls.campaign||(org&&org.campaign)||a.campaign);
+      const camp=campOf(moveCampAt(code,d)||ls.campaign||(org&&org.campaign)||a.campaign);   // …a Worker-named mover's day reads its own campaign (D4), as in the fact loop
       const tl=ls.tl||(org&&org.tl)||a.tl||'';
       const m={name:a.sf||a.name||code};
       const sfr=sfDay?sfDay[code]:null, bdr=bdDay?bdDay[code]:null;
@@ -6242,7 +6407,7 @@ function dashTable(ranked){
   </tr></thead><tbody>
   ${view.map(x=>{ const t=trendOf(x.a.code);
     return `<tr class="rowlink" onclick="openDrawer('${x.a.code}')">
-    <td class="l"><span class="agentcell">${avatarOf(x.a.name,x.a.code)}<span class="nm">${esc(x.a.name)}${leftPill(x.a.code)}<small>${x.a.code} · ${M.primaryCamp[x.a.code]||''}</small></span></span></td>
+    <td class="l"><span class="agentcell">${avatarOf(x.a.name,x.a.code)}<span class="nm">${esc(x.a.name)}${leftPill(x.a.code)}<small>${x.a.code} · ${viewCamp(x.a.code)||''}</small></span></span></td>
     <td class="l">${esc(x.a.tl)}</td>
     <td><b>${fmtR(x.g.gwp)}</b></td><td>${fmtNum(x.g.sales)}</td><td>${pctPill(x.g.pctT)}</td>
     <td>${x.g.qa?fmtPct(x.g.qa.avg,1):'–'}</td><td>${fmtPct(x.g.att,1)}</td>
@@ -6279,7 +6444,7 @@ PAGES.agents=()=>{
   rows.sort((x,y)=>{const a=val(x),b=val(y);return (typeof a==='string'?a.localeCompare(b):a-b)*agentSort.dir;});
   const th=(k,lab,left)=>`<th class="${left?'l':''}" onclick="setSort('${k}')">${lab}${dirOf(k)}</th>`;
   window.__exp={name:'agents',cols:[
-    {h:'Agent',f:x=>x.a.name},{h:'Code',f:x=>x.a.code},{h:'Team',f:x=>x.a.tl},{h:'Campaign',f:x=>M.primaryCamp[x.a.code]},
+    {h:'Agent',f:x=>x.a.name},{h:'Code',f:x=>x.a.code},{h:'Team',f:x=>x.a.tl},{h:'Campaign',f:x=>viewCamp(x.a.code)},
     {h:'GWP',f:x=>x.g.gwp||0},{h:'Sales',f:x=>x.g.sales||0},{h:'% Target',f:x=>x.g.pctT!=null?(x.g.pctT*100).toFixed(1)+'%':''},
     {h:'SPD',f:x=>fmtNum(x.g.spd,2)},{h:'QA',f:x=>x.g.qa?(x.g.qa.avg*100).toFixed(1)+'%':''},{h:'Att %',f:x=>fmtPct(x.g.att,1)},
     {h:'Calls',f:x=>x.g.calls||0},{h:'AHT',f:x=>x.g.aht?fmtDur(x.g.aht):''},{h:'Score',f:x=>x.sc==null?'':Math.round(x.sc*100)},{h:'Risk',f:x=>x.r.level}],rows};
@@ -6300,7 +6465,7 @@ PAGES.agents=()=>{
     ${th('qa','QA')}${th('att','Att %')}${th('calls','Calls')}${th('aht','AHT')}<th>Trend</th>${th('sc','Score')}<th>Risk</th><th>Coaching</th><th>Last Eval</th><th></th>
   </tr></thead><tbody>
   ${rows.map(x=>`<tr class="rowlink" onclick="openDrawer('${x.a.code}')">
-    <td class="l"><span class="agentcell">${avatarOf(x.a.name,x.a.code)}<span class="nm">${esc(x.a.name)}${leftPill(x.a.code)}<small>${x.a.code} · ${M.primaryCamp[x.a.code]||''} · ${esc(x.a.tenure)}</small></span></span></td>
+    <td class="l"><span class="agentcell">${avatarOf(x.a.name,x.a.code)}<span class="nm">${esc(x.a.name)}${leftPill(x.a.code)}<small>${x.a.code} · ${viewCamp(x.a.code)||''} · ${esc(x.a.tenure)}</small></span></span></td>
     <td class="l">${esc(x.a.tl)}</td>
     <td><b>${fmtR(x.g.gwp)}</b></td><td>${fmtNum(x.g.sales)}</td><td>${pctPill(x.g.pctT)}</td><td>${fmtNum(x.g.spd,2)}</td>
     <td>${x.g.qa?fmtPct(x.g.qa.avg,1):'–'}</td><td>${fmtPct(x.g.att,1)}</td>
@@ -6336,7 +6501,7 @@ PAGES.leaderboard=()=>{
   <div class="podium">${rows.slice(0,3).map((x,i)=>`
     <div class="card lift pod" onclick="openDrawer('${x.a.code}')" style="cursor:pointer">
       <span class="rankn">#${i+1}</span>${avatarOf(x.a.name,x.a.code,'lg')}
-      <b>${esc(x.a.name)}</b><div class="sub">${esc(x.a.tl)} · ${M.primaryCamp[x.a.code]||''}</div>
+      <b>${esc(x.a.name)}</b><div class="sub">${esc(x.a.tl)} · ${viewCamp(x.a.code)||''}</div>
       <div class="val num">${fmt(fn(x))}</div>
       <div class="scorebar"><i style="width:${(fn(x)/max*100).toFixed(1)}%"></i></div>
     </div>`).join('')}</div>
@@ -6712,7 +6877,7 @@ PAGES.attend=()=>{
   const head='<th class="l">Agent</th><th class="l">Team</th>'+days.map(d=>`<th>${d.slice(8)}/${d.slice(5,7)}</th>`).join('')+'<th>Att %</th>';
   const body=rows.map(r=>`<tr class="rowlink" onclick="openDrawer('${r.a.code}')">
     <td class="l"><span class="agentcell">${avatarOf(r.a.name,r.a.code)}<span class="nm">${esc(r.a.name)}${leftPill(r.a.code)}<small>${r.a.code} · ${esc(r.a.tl)}</small></span></span></td>
-    <td class="l">${campChip(M.primaryCamp[r.a.code]||r.a.campaign)}</td>`+
+    <td class="l">${campChip(viewCamp(r.a.code)||r.a.campaign)}</td>`+
     days.map(d=>`<td>${cell(r.per[d])}</td>`).join('')+
     `<td>${r.att!=null?`<span class="pill ${r.att>=0.95?'pgood':(r.att>=0.85?'pwarn':'pcrit')}">${fmtPct(r.att,1)}</span>`:'–'}</td></tr>`).join('');
   window.__exp={name:'attendance',cols:[{h:'Agent',f:r=>r.a.name},{h:'Code',f:r=>r.a.code},{h:'Team',f:r=>r.a.tl},
@@ -7629,7 +7794,7 @@ PAGES.adjust=()=>{
     <th class="l">Team Leader</th><th class="l">Agent</th><th class="l">Campaign</th><th>Cancellations</th><th>Referrals</th></tr></thead><tbody>
   ${rows.map(r=>`<tr><td class="l">${esc(r.a.tl)}</td>
     <td class="l"><span class="agentcell">${avatarOf(r.a.name,r.a.code)}<span class="nm">${esc(r.a.name)}${leftPill(r.a.code)}<small>${r.a.code}</small></span></span></td>
-    <td class="l">${campChip(M.primaryCamp[r.a.code]||r.a.campaign)}</td>
+    <td class="l">${campChip(viewCamp(r.a.code)||r.a.campaign)}</td>
     <td><input type="number" min="0" class="cell" value="${r.c}" onchange="setAdj('${r.a.code}','c',this.value)"></td>
     <td><input type="number" min="0" class="cell" value="${r.r}" onchange="setAdj('${r.a.code}','r',this.value)"></td></tr>`).join('')}
   </tbody></table></div></div>`;
@@ -8094,7 +8259,7 @@ function orgHistLine(code){
 function drawerHTML(code){
   const a=M.agents.find(x=>x.code===code); if(!a||!M) return '';
   const g=primaryAgg(code)||{};
-  const camp=M.primaryCamp[code]||a.campaign;
+  const camp=viewCamp(code)||a.campaign;
   const sc=displayScore(code,g), r=riskOf(g), t=trendOf(code);
   let gp=(MP&&MP.dates.length)?((MP.mtdCC[camp]||{})[code]||(MP.mtdCC.Cuddle||{})[code]||(MP.mtdCC.Courtesy||{})[code]):null;
   let gpDays=MP?MP.dates.length:0;
@@ -8833,6 +8998,7 @@ async function adoptRosterFromRecord(given){
        published one", so the publish scheduled by that ingest sees it three seconds later
        and stays quiet. A hand upload leaves it null and publishes normally. */
     try{ save(); rebuild(); renderAll(); }catch(e){}
+    if(typeof syncCampaignMoves==='function') syncCampaignMoves();   // a new list can create or end a campaign move (D4)
     toast('Agent List updated from the '+((j.source==='ops')?'Ops':'')+' Upload Station — '
       +(S.roster||[]).length+' agents'+(j.as_of?' (as of '+j.as_of+')':'')+'.',9000);
   }catch(e){}finally{__rosterAdoptBusy=false}
@@ -8935,19 +9101,76 @@ async function syncLeadBookFromLake(){
     toast('Lead Management open cases updated from the data lake — "'+name+'": '+fmtNum(rows.length)+' agent-held cases (snapshot '+(book.snapshot_date||'?')+').',9000);
   }catch(e){}finally{__leadBookBusy=false}
 }
+/* THE MOVE FEED (D4, sprint 2026-09-29). The Worker derives each month's campaign movers from the dated
+   Agent List snapshots (worker/src/moves.mjs — Nesting graduations filtered out, an admin override wins)
+   and serves them at /api/campaign-moves?month=YYYY-MM on the management session, like /api/roster. This
+   keeps S.campaignMoves[month] = {agents, at} for the months on screen (the period, the comparison period
+   and the current SAST month the digest publishes), and the model splits those agents' campaign by date.
+   A FAILED FETCH KEEPS THE LAST COPY — an error, a network blip or a malformed answer never reads as "no
+   movers" (that would silently re-blend every mover's month); only a successful answer replaces it, an
+   empty one included. Asked on boot, on focus, on the ten-minute poll and right after an Agent List
+   publish/adoption (the new snapshot is what creates a move). A call while one is in flight waits for it
+   and then asks again, so the post-publish ask is never swallowed by an older one. */
+function normMoves(agents){
+  const out={};
+  for(const k of Object.keys(agents||{})){ const cb=cbCode(String(k)); const segs=agents[k]; if(!cb||!Array.isArray(segs)) continue;
+    const clean=segs.filter(x=>x&&/^\d{4}-\d{2}-\d{2}$/.test(String(x.from||''))&&String(x.campaign||'').trim())
+      .map(x=>({from:String(x.from),campaign:String(x.campaign).trim(),source:String(x.source||'list')}))
+      .sort((a,b)=>a.from.localeCompare(b.from));
+    if(clean.length>=2) out[cb]=clean; }                    // one segment is not a move (the Worker's own rule)
+  return out;
+}
+function movesMonthsWanted(){
+  const want=new Set([new Date(Date.now()+2*3600000).toISOString().slice(0,7)]);   // the SAST month the digest publishes
+  try{ monthsOf(periodRange()).forEach(m=>want.add(m)); }catch(e){}
+  try{ monthsOf(prevRange()).forEach(m=>want.add(m)); }catch(e){}
+  return [...want].filter(m=>/^\d{4}-\d{2}$/.test(m)).sort().slice(-6);
+}
+async function syncCampaignMovesOnce(){
+  if(!window.__vasHydrated) return false;                     // never adopt into a half-loaded state
+  const tk=sessionStorage.getItem('cbx_token'); if(!tk) return false;
+  if(!S.campaignMoves||typeof S.campaignMoves!=='object'||Array.isArray(S.campaignMoves)) S.campaignMoves={};
+  const base='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
+  let changed=false;
+  for(const mo of movesMonthsWanted()){
+    let j=null;
+    try{ const r=await fetch(base+'/api/campaign-moves?month='+encodeURIComponent(mo),{headers:{'Authorization':'Bearer '+tk}});
+      if(!r.ok) continue; j=await r.json(); }catch(e){ continue; }                 // failure: the last copy stands
+    if(!j||typeof j!=='object'||!j.agents||typeof j.agents!=='object'||Array.isArray(j.agents)) continue;   // malformed = failure
+    const agents=normMoves(j.agents), cur=S.campaignMoves[mo];
+    if(cur&&JSON.stringify(cur.agents||{})===JSON.stringify(agents)) continue;   // unchanged: no save, no rebuild
+    S.campaignMoves[mo]={agents,at:String(j.updatedAt||new Date().toISOString())};
+    changed=true;
+  }
+  if(changed){ try{ save(); rebuild(); renderAll(); }catch(e){}
+    if(typeof kickAgentDigest==='function') kickAgentDigest(); }                 // the digest follows within seconds
+  return changed;
+}
+var __movesRun=null, __movesAgain=false;
+function syncCampaignMoves(){
+  if(__movesRun){ __movesAgain=true; return __movesRun; }
+  __movesRun=(async function(){ let changed=false;
+    try{ do{ __movesAgain=false; changed=(await syncCampaignMovesOnce())||changed; }while(__movesAgain); }
+    catch(e){} finally{ __movesRun=null; }
+    return changed; })();
+  return __movesRun;
+}
 /* …and on focus, like the Ops side (audit round 5, 2026-08-28). Without this a file uploaded
    in Ops took up to ten minutes to appear here, and if sign-in plus hydrate ran past the
    20-second first pass it took ten minutes GUARANTEED. Throttled to one pull a minute. */
 (function(){ var last=0; var go=function(){ var n=Date.now(); if(n-last<60000) return; last=n;
-    syncUploadsFromStation(); adoptRosterFromRecord(); syncLeadBookFromLake(); };
+    syncUploadsFromStation(); adoptRosterFromRecord(); syncLeadBookFromLake(); syncCampaignMoves(); };
   window.addEventListener('focus',go);
   document.addEventListener('visibilitychange',function(){ if(document.visibilityState==='visible') go(); }); })();
 setInterval(syncUploadsFromStation,600000);
 setInterval(adoptRosterFromRecord,600000);
 setInterval(syncLeadBookFromLake,600000);
+setInterval(syncCampaignMoves,600000);
 setTimeout(adoptRosterFromRecord,24000);                    // shortly after sign-in + hydrate
 setTimeout(syncUploadsFromStation,20000);                   // first pass shortly after sign-in + hydrate
 setTimeout(syncLeadBookFromLake,26000);                    // after the roster, so owners resolve against the current list
+setTimeout(syncCampaignMoves,22000);                       // the move feed, before the first digest push can blend a mover
+document.addEventListener('cbx-authed',function(){ setTimeout(syncCampaignMoves,18000); });
 /* A FILE TOO BIG TO READ HERE IS NOT AN INVALID FILE (Nick, 2026-09-09). The station reads every
    drop into browser memory to check it before saving; a 340 MB open-cases export died in that read
    and came back as unreadable, which sent the day looking for a bad file that was never bad. The
@@ -9049,6 +9272,7 @@ rebuild(); renderAll();
 /* test hook (kept API-compatible) */
 window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
   syncLeadBook:syncLeadBookFromLake,        // the lake adoption, for the harness
+  syncMoves:()=>syncCampaignMoves(),        // the campaign move feed (D4), for the harness
   setPeriod:(m,mode)=>{ S.ui.month=m; S.ui.preset=(mode==='cycle')?'cycle':'month'; if(mode)S.ui.mode=mode; saveUI(); rebuild(); renderAll(); },
   setRange:(from,to)=>{ S.ui.preset='custom'; S.ui.from=from; S.ui.to=to; saveUI(); rebuild(); renderAll(); },
   setPreset:p=>{ S.ui.preset=p; saveUI(); rebuild(); renderAll(); },
@@ -9169,7 +9393,7 @@ function agentDigestPayload(){
 
   /* Ranks: the drawer's ordering (5927-5930), computed once for the whole floor
      instead of once per agent. Same sort, same tie behaviour, O(n log n). */
-  const rankAll=M.agents.map(x=>({c:x.code,g:(primaryAgg(x.code)||{}).gwp||0})).sort((x,y)=>y.g-x.g);
+  const rankAll=M.agents.map(x=>({c:x.code,g:(agentAgg(x.code)||{}).gwp||0})).sort((x,y)=>y.g-x.g);
   const rankCo={}; rankAll.forEach((r,i)=>{ rankCo[r.c]=i+1; });
   const teamOf={}; M.agents.forEach(a=>{ teamOf[a.code]=a.tl||''; });
   const rankTeam={}, teamSize={};
@@ -9208,8 +9432,13 @@ function agentDigestPayload(){
 
   const rows=[];
   for(const a of M.agents){
-    const g=primaryAgg(a.code)||{};
-    const camp=M.primaryCamp[a.code]||a.campaign||'';
+    /* ONE ROW PER AGENT, THE WHOLE PERIOD (D4, 2026-09-29). agentAgg, never primaryAgg: the digest is read by
+       the whole floor and must not follow anybody's header filter. A Worker-named mover's row is the SUM
+       over every campaign they worked, labelled with the campaign the latest list names now; their
+       per-campaign figures travel in `segments` below. Everyone else: byte-for-byte what it was. */
+    const g=agentAgg(a.code)||{};
+    const mover=!!(M.moverAgg&&M.moverAgg[a.code]);
+    const camp=mover?campNowOf(a.code):(M.primaryCamp[a.code]||a.campaign||'');
     const tenure=g.tenure||a.tenure||'';
     const t=trendOf(a.code)||{dir:'flat',pct:null};
 
@@ -9249,6 +9478,16 @@ function agentDigestPayload(){
       pctT:r4(g.pctT), spd:r4(g.spd),
       att:r4(g.att), qa:(g.qa&&g.qa.avg!=null?r4(g.qa.avg):null),
       aveG:r2(g.aveG), ref:g.ref||0,
+      /* A MOVER'S CAMPAIGNS, BY DATE (D4, 2026-09-29) — present ONLY for the agents the Worker's move feed
+         names (omitted for everyone else: this payload rides to every reader). One entry per campaign
+         stretch, ordered by `from`, clipped to the period and to the data days; the figures are that
+         stretch's own facts through the model's aggregator, rounded like the row, and they sum to it. A
+         report that splits by campaign counts the mover once PER CAMPAIGN from these — never the row. */
+      ...(mover&&M.movers&&M.movers[a.code]?{segments:M.movers[a.code].map(s=>{
+        const fr=(M.byAgentDay[a.code]||[]).filter(f=>f.date>=s.from&&f.date<=s.to&&f.campaign===s.campaign);
+        const o=M.aggFacts(fr);
+        return {campaign:s.campaign,from:s.from,to:s.to,sales:o.sales||0,gwpEx:r2(o.gwpEx)||0,target:r2(o.target)||0,
+          pctT:r4(o.pctT),act:r2(o.act)||0,emp:r2(o.emp)||0,spd:r4(o.spd),aveG:r2(o.aveG),plan:commPlanOf(s.campaign,tenure)}; })}:{}),
       /* THE REST OF THE MONTH-TO-DATE ROW. Agent Analytics' Month to Date tab
          mirrors this app's own MTD table (metric rows x people), so it needs the
          same figures per agent rather than a second calculation of them. Published
@@ -9269,7 +9508,7 @@ function agentDigestPayload(){
          per week, same clamped QA window — so the team leader's Weekly carries every column
          management's does (target, attendance, GWP target, QA) instead of the eight it could
          re-derive from day rows. Ex-VAT GWP like the month row; null QA = no evaluation. */
-      wk:(M.weeks||[]).map(w=>{ const wg=((M.wtdCC[w.num]||{})[camp]||{})[a.code]; if(!wg) return null;
+      wk:(M.weeks||[]).map(w=>{ const wg=mover?((M.moverWtd||{})[w.num]||{})[a.code]:((M.wtdCC[w.num]||{})[camp]||{})[a.code]; if(!wg) return null;   // a mover's week spans both campaigns (D4)
         return {n:w.num,emp:r2(wg.emp)||0,act:r2(wg.act)||0,target:r2(wg.target)||0,sales:wg.sales||0,
           gwpEx:r2(wg.gwpEx)||0,gwpT:wg.gwpT==null?null:r2(wg.gwpT),talk:Math.round(wg.talk||0),
           aveTalk:r2(wg.aveTalk),talkPerWorked:r2(wg.talkPerWorked),
@@ -9280,6 +9519,11 @@ function agentDigestPayload(){
       calls:(callsBy[a.code]||{}).calls||0, ans:(callsBy[a.code]||{}).ans||0,
       leads:leadsBy?(leadsBy[a.code]||0):null,
       act:r2(g.act)||0, emp:r2(g.emp)||0,
+      /* EXCUSED DAYS (D1, 2026-09-29): the period's total leave + unavailability in days (HDAL = 0,5),
+         over EVERY day the agent has, so it matches the lv marks below. Omitted at 0 — most agents
+         have none and the digest rides to every reader. An agent on leave all month is still here,
+         with this, emp 0 and no target. */
+      ...(function(){ const n=(M.byAgentDay[a.code]||[]).reduce((t,f)=>t+(f.leave||0),0); return n>0?{leave:r2(n)}:{}; })(),
       rankCo:rankCo[a.code]||null, nCo:rankAll.length,
       rankTeam:rankTeam[a.code]||null, nTeam:teamSize[teamOf[a.code]]||0,
       trend:t.dir, trendPct:(t.pct==null?null:Math.round(t.pct*1000)/1000),
@@ -9326,7 +9570,8 @@ function agentDigestPayload(){
          the money model was regrained; it simply never travelled. */
       days:(M.byAgentDay[a.code]||[]).map(f=>({d:f.date,w:f.week,emp:r2(f.emp)||0,act:r2(f.act)||0,
         t:r2(f.target)||0,s:f.sales||0,x:r2(f.gwpEx)||0,tk:Math.round(f.talk||0),c:f.calls||0,
-        r:f.ref||0,k:f.canc||0,p:f.provisional?1:0,dc:f.dCov?1:0}))
+        r:f.ref||0,k:f.canc||0,p:f.provisional?1:0,dc:f.dCov?1:0,
+        ...(f.leave>0?{lv:f.leave}:{})}))   // lv = the excused share of THIS day (1, or 0,5 for HDAL); absent on every other day
     });
   }
 
@@ -9694,7 +9939,7 @@ function cbxVasContext(){try{
   try{var MP=window.__mtd.prevModel&&window.__mtd.prevModel();if(MP&&MP.grand&&MP.grand.sales!=null)p.push("Previous period: "+MP.grand.sales+" sales, R"+Math.round(MP.grand.gwp||0)+" GWP.")}catch(e){}
   try{var codes=Object.keys(M.primaryCamp||{});if(codes.length){
     p.push("");p.push("== Every agent, one line, all fields labelled (talk time, calls, sales, GWP, QA, attendance, opt-ins, SPD). Answer any single-agent question from this. ==");
-    var rows=codes.map(function(c){var a=primaryAgg(c)||{};var meta=(M.agents||[]).find(function(x){return x.code===c})||{};return {c:c,camp:M.primaryCamp[c],name:meta.name||c,tl:meta.tl||a.tl||"-",a:a}});
+    var rows=codes.map(function(c){var a=agentAgg(c)||{};var meta=(M.agents||[]).find(function(x){return x.code===c})||{};return {c:c,camp:campNowOf(c),name:meta.name||c,tl:meta.tl||a.tl||"-",a:a}});
     rows.sort(function(x,y){return (y.a.gwp||0)-(x.a.gwp||0)});
     rows.forEach(function(r){var a=r.a;p.push("- "+r.name+" ["+r.c+"] · campaign "+r.camp+" · TL "+r.tl
       +" · sales "+(a.sales||0)

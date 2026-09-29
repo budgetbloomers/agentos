@@ -225,8 +225,9 @@ export function cmSettingsBody(digest, user, ctx) {
     if (allowed && !allowed.includes(key)) continue;
     if (!camps[key]) { camps[key] = { key, label: c.label, rows: {} }; camps[key].rows[c.label + '|*'] = true; newKeys.add(key); }
   }
+  /* a mover's earlier campaign is still worked this month (item 2, D4) — its segments count as present */
   const digestCamps = new Set(((digest && digest.agents && Object.values(digest.agents)) || [])
-    .map((a) => norm(a.campaign)).filter(Boolean));
+    .flatMap((a) => [a.campaign, ...((a && a.segments) || []).map((s) => s.campaign)]).map(norm).filter(Boolean));
   const out = Object.values(camps).map((c) => {
     const ov = t.matrix || {};
     const rows = Object.keys(c.rows).sort().map((k) => ({

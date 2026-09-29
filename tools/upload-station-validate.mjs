@@ -35,7 +35,7 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 /* ---------------- RULES (from dashboard DEFAULT_RULES, 2026-08-14) ---------------- */
 const RULES = {
   presentCodes: ['P', 'T', 'L', 'HDAL', 'HDCA'],
-  leaveCodes: ['AL', 'SL', 'CA', 'CASAT'],
+  leaveCodes: ['AL', 'SL', 'FRL', 'ML', 'EAL', 'HDAL', 'HDSL', 'HDFRL', 'Suspended', 'SUSP'],   // decision D1 (2026-09-29): one excused list with PULSE; CA/CASAT/UCA/WFH are absences. HDAL is caught by presentCodes first.
   excludeCodes: ['Terminated', 'Resigned'],          // roster-exit rows (Q10) — attrition, never in denominators
   salesDepts: ['Sales'],
   callTypes: [[0, 'No Answer'], [30, 'Customer Service'], [180, 'Pitch'], [360, 'Closing']],

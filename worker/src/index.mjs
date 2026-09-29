@@ -10,6 +10,7 @@ import { retrieveKB } from './kb.mjs';
 import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWave } from './coaching.mjs';
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, loadReports, tlReports, listDigestMonths, overview, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn, helpConfirm, helpPulse } from './help.mjs';
+import { campaignMoves, setCampaignMove } from './moves.mjs';
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, effPerDay } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
@@ -1085,6 +1086,19 @@ export default {
       /* THE CAMPAIGNS THE LIST CURRENTLY NAMES (migration-019). Read from the table the
          sync maintains, never from a hardcoded set — any app that needs "which campaigns
          exist" asks here. */
+      /* CAMPAIGN MOVES BY EFFECTIVE DATE (sprint 2026-09-29, item 2; D4) — the movers of a month and the
+         day each move took effect, from the dated Agent List snapshots (moves.mjs). PULSE reads it to
+         split a mover's month; an admin can set the true day. Management apps only (not in PORTAL_ALLOWED). */
+      if (path === '/api/campaign-moves' && req.method === 'GET') {
+        const m = url.searchParams.get('month') || new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
+        if (!/^\d{4}-\d{2}$/.test(m)) return json({ error: 'month must be YYYY-MM' }, 400);
+        try { return json(await campaignMoves(DB, m)); }
+        catch (e) { return json({ error: 'campaign moves unavailable: ' + String(e.message || e).slice(0, 160) }, 502); }
+      }
+      if (path === '/api/campaign-moves' && req.method === 'POST') {
+        const r = await setCampaignMove(DB, user, await req.json().catch(() => ({})));
+        return json(r.body, r.status);
+      }
       if (path === '/api/campaigns' && req.method === 'GET') {
         const rows = await DB.select('active_campaigns?select=key,label,agents,first_seen,last_seen').catch(() => null);
         if (!rows) return json({ error: 'campaigns unavailable' }, 502);

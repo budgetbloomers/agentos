@@ -368,6 +368,33 @@
    "source": "Nick, 2026-09-25: \"the employee shifts says 18 it should be 17\" — Heritage Day (Thu 24 Sep 2026) had an HR register row for all 67 agents and nobody dialling; the engine gave the whole floor a phantom Employed Shift (18 not 17), an 18th dialling day, one more day of target and a lower Attendance, because only Saturday had a guard.",
    "note": "Same effective date as saturday_shifts so August, verified row-for-row, is untouched (Women's Day observed 10 Aug 2026 stays as it was). Mirror: MTD_RULES.publicHolidaysFrom / extraHolidays; guarded by diagnostics/verify-public-holidays.mjs."
   },
+  "excused_statuses": {
+   "data_only_from": "2026-09-01",
+   "leave": {
+    "AL": 1,
+    "SL": 1,
+    "FRL": 1,
+    "HDAL": 0.5,
+    "ML": 1,
+    "EAL": 1,
+    "HDSL": 0.5,
+    "HDFRL": 0.5
+   },
+   "unavailable": {
+    "Suspended": 1,
+    "SUSP": 1
+   },
+   "absence": [
+    "CA",
+    "UCA"
+   ],
+   "rule": "Each agent-day is working | leave | absent | unavailable, keyed on the register's Status Code. The value is the share of the day that is EXCUSED: leave AL, SL, FRL = the whole day, HDAL = half; unavailable Suspended = the whole day. CA, UCA and every code not listed here stay an absence (attendance_shift_weights is unchanged). On/after data_only_from, an excused day with NO talk and NO sales is the saturday_shifts rule applied to ONE agent: Employed Shifts drop by the excused share, Actual Shifts never exceed Employed, the targets multiplied out of employed days shrink with it, and Attendance (Actual/Employed) and SPD (Sales/Actual) are untouched by the leave. HDAL is half a day WORKED: register-derived campaigns (Cuddle) credit that half as an Actual Shift; dialler-derived campaigns (Courtesy/Nesting) keep talk>0 and clamp it to the half. A Saturday or public holiday is already no shift and is never counted as leave.",
+   "activity_rule": "A whole-day excused code on a day the agent talked or sold is NOT excused: HR files leave ahead of time, the dialler and Salesforce are the evidence, so the day keeps exactly the shift it had before this rule and rule check V26 (warn) names the agent-day for the register to be corrected. Half-day leave with activity is expected (the other half was worked) and is not flagged.",
+   "head_count": "An agent on leave for the WHOLE period keeps a fact row per excused day (emp 0, no target), so they stay in Employed HC and in the agent digest — the reference tracker counts CB143 (sick leave all period) in its head count, and so does the engine. Digest: per agent `leave` = total excused days (omitted at 0); per day `lv` = the excused share (omitted otherwise).",
+   "register_codes_note": "The live HR register (Status Code column) spells Suspended as SUSP — both are listed so the rule is not decorative on real data. Codes seen in the register and NOT decided by D1, so still absences: HDSL (half-day sick leave), HDFRL (half-day family responsibility), EAL (emergency annual leave), ML (maternity leave), HDUCA, CASAT, ABS, WFH. Adding one is a dated _changes[] entry here and in MTD_RULES.excusedStatuses together.",
+   "source": "Decision D1, sprint 2026-09-29 (specs/sprint-2026-09-29.md, decided by Aarav for Nick, Nick to confirm) — Ryan's UAT: annual leave was weighted as an absence, so the agent's target grew by the day and their Attendance fell. Why SL is excused: the §5 note on CB143 is about the reference tracker's head count, not a rule that sick leave is an absence.",
+   "note": "Same effective date as saturday_shifts and public_holidays so August, verified row-for-row, is untouched. Mirror: MTD_RULES.excusedStatusFrom / excusedStatuses, read only by excusedShare() beside dataOnlyDay() (which stays the one floor-wide decision); guarded by diagnostics/verify-leave-days.mjs and verify-engine-rules.mjs."
+  },
   "departures": {
    "keep_days_until_left": false,
    "since": "2026-09-15",
@@ -1884,6 +1911,30 @@
    "from": "a public holiday with a register was an ordinary day: every agent on the register got an Employed Shift, the day was a dialling day and targets grew by it (the holiday table was only used for working-day counts)",
    "to": "data only from 2026-09-01, like a Saturday — never a shift or a dialling day; calendar computed from the Act, one-offs in extra[]; V25/V25a guard it",
    "why": "\"the employee shifts says 18 it should be 17\" — Heritage Day 24 Sep 2026 read as the floor's 18th shift"
+  },
+  {
+   "date": "2026-09-29",
+   "by": "Aarav for Nick (D1, Nick to confirm)",
+   "key": "reference_data.excused_statuses",
+   "from": null,
+   "to": "data_only_from 2026-09-01; leave AL/SL/FRL 1, HDAL 0.5; unavailable Suspended/SUSP 1; CA/UCA stay absences — an excused day with no talk and no sales leaves Employed Shifts (target pro-rated, Attendance and SPD untouched); with activity it keeps its shift and V26 warns",
+   "why": "Ryan's UAT (sprint 2026-09-29 item 1): annual leave weighed like an unplanned absence — the target grew by leave days and Attendance fell"
+  },
+  {
+   "date": "2026-09-29",
+   "by": "Aarav for Nick (D1 extended, Nick to confirm)",
+   "key": "reference_data.excused_statuses.leave",
+   "from": "AL/SL/FRL 1, HDAL 0.5",
+   "to": "+ ML (maternity) 1, EAL 1, HDSL 0.5, HDFRL 0.5",
+   "why": "D1 excuses leave; the September register also carries ML (13 agent-days), HDSL (3), HDFRL and EAL — leave types by their own names, which D1 as first written left counted as absences. WFH (work from home) is NOT leave and is left for Nick: it currently weighs 0 for register-based campaigns."
+  },
+  {
+   "date": "2026-09-29",
+   "by": "Aarav for Nick (D4, Nick to confirm)",
+   "key": "processing_pipeline.campaign_attribution",
+   "from": "the latest Agent List owns the agent's WHOLE current month for campaign AND team leader (recordOrgList; CLAUDE.md non-negotiable 11) — a mover's month was blended under one campaign and the digest published one row from the campaign with most sales",
+   "to": "CAMPAIGN attribution for the movers the Worker names (/api/campaign-moves, derived from the dated Agent List snapshots; Nesting graduations excluded; an admin override wins) is split by effective date: each agent-day reads the campaign segment in force that day, so per-campaign MTD/WTD/team-leader/campaign blocks count a mover's days under the campaign they were worked in, once. TEAM LEADER attribution is unchanged (the latest list, whole month). Everyone the feed does not name is unchanged. The agent's overall row (PULSE with no Campaign filter, and the digest row) is the SUM over every campaign worked, labelled with the campaign the latest list names now; plan = that campaign's; movers carry segments[] {campaign, from, to, sales, gwpEx, target, pctT, act, emp, spd, aveG, plan}. Each campaign's days take that campaign's per-day target (salesTargetMatrix / campaign-manager override chain, keyed on the day's campaign). The composite is rated in the CURRENT campaign's tenure group. V10 does not fail on a Worker-named Cuddle/Courtesy mover (V09 still guards one campaign per agent-day). A failed feed fetch keeps the last copy.",
+   "why": "UAT 28 Sep 2026: CB121, CB150, CB162, CB245 worked Download & Test from 1 Sep and Courtesy from 14 Sep; CB233 moved Cuddle -> Courtesy on 14 Sep — each month was reported under one campaign (decision D4, sprint 2026-09-29)"
   }
  ]
 }

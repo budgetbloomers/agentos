@@ -1,0 +1,37 @@
+{
+  "_about": "KPI drill-down rule book (sprint 2026-09-29, item 3; decision D3). The Today tiles' ON TRACK / WATCH / FOCUS bands, the rule for recommending team-leader help, the help topic and the one-sentence action per KPI. The operative copy is DRILL_RULES in worker/src/drill.mjs — change BOTH together; nicks_code/diagnostics/verify-drill.mjs fails on drift. All windows are month-to-date except the named 'last N sessions' driver.",
+  "bands": {
+    "_note": "pass at or above `pass`, watch at or above `watch`, focus below. ta/qa/att are ratios; aveG is a multiple of the R99 floor's ex-VAT twin (1 = at the floor).",
+    "ta": { "pass": 1, "watch": 0.75 },
+    "aveG": { "pass": 1, "watch": 0.9 },
+    "qa": { "pass": 0.9, "watch": 0.8 },
+    "att": { "pass": 0.95, "watch": 0.85 }
+  },
+  "tl_help": {
+    "_note": "Recommended when the KPI is below target month-to-date AND either it was below target in >= sessionsBelow of the last ofLast sessions, or closing the gap needs more than paceMultiple x the agent's current daily pace (target achieved only). QA in the focus band always recommends it.",
+    "sessionsBelow": 3,
+    "ofLast": 5,
+    "paceMultiple": 1.5,
+    "qaFocus": true
+  },
+  "topics": {
+    "ta": "Review my call",
+    "aveG": "Explain the product",
+    "qa": "Explain my quality result",
+    "att": "Something else"
+  },
+  "actions": {
+    "ta": "Every session at your daily target from here keeps the month on track — plan each shift around that number.",
+    "aveG": "Hold every sale at the floor or better — the value of each sale is what this measures, so lead with the full product.",
+    "qa": "One clean week of calls moves this — ask for your last evaluated call to be reviewed with you.",
+    "att": "Every day on the floor protects the rest of your card — tell your team leader early if something is keeping you away."
+  },
+  "_changes": [
+    {
+      "date": "2026-09-29",
+      "by": "Aarav, for Nick (decision D3, sprint 2026-09-29) — Nick to confirm",
+      "what": "Created. Tile bands moved out of agent/index.html (tileState literals: 1/0.75, floor/0.9x floor, 0.9/0.8, 0.95/0.85 — unchanged values). TL-help rule: below target MTD AND (below in >= 3 of the last 5 sessions OR need > 1.5x current pace); QA focus always.",
+      "why": "UAT 28 Sep: agents asked to click a KPI needing attention and be told the issue, the action and whether to ask their team leader; the page-local bands broke one number, one verdict."
+    }
+  ]
+}

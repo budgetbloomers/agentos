@@ -114,8 +114,18 @@ a{color:var(--blue)}
 .nav-item.sub{padding:6px 12px 6px 40px;font-size:12.5px;font-weight:500;color:#B4C3DD}
 .nav-item.sub.active{background:rgba(255,255,255,.14);color:#fff}
 .nav-item.parent.open{background:rgba(255,255,255,.07)}
+/* the KPI drill-down (item 3, 2026-09-29): tappable tiles and the panel */
+.ac-tile[data-drill]{cursor:pointer}
+.ac-tile[data-drill]:hover,.ac-tile[data-drill]:focus{outline:2px solid #93C5FD;outline-offset:2px}
+.ac-tap{margin-top:6px;font-size:11px;font-weight:700;color:#2563EB}
+.drill-box .drill-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:13px}
+.drill-box .drill-sec{margin-top:12px}
+.drill-box .drill-sec .t{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#64748B;margin-bottom:4px}
+.drill-box .drill-sec p{margin:0 0 6px;font-size:13px}
 /* D2 (2026-09-29): the agent's one quiet freshness line */
 .fresh-line{font-size:12px;color:#64748B;margin:0 0 12px}
+/* D1 (2026-09-29): the one line that says how many excused days the digest carries */
+.leave-line{font-size:12.5px;color:var(--body);margin:0 0 12px}.leave-line b{color:var(--ink)}
 /* the Help Center icon (D5, 2026-09-29): how many requests from the leader's team nobody has opened yet */
 .nav-badge{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;gap:3px;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:#EF4444;color:#fff;font-size:11px;font-weight:800;line-height:1}
 .sys-card{margin-top:auto;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);border-radius:11px;padding:11px 12px;font-size:12px}
@@ -322,6 +332,7 @@ details.tool summary .chev{margin-left:auto;color:var(--muted);font-size:11px}
 .chip2.beat{background:var(--green-soft);color:var(--green)}.chip2.beat i{background:var(--green)}
 .chip2.here{background:var(--navy);color:#fff}.chip2.here i{background:#fff}
 .chip2.next{background:var(--amber-soft);color:var(--amber)}.chip2.next i{background:var(--amber)}
+.chip2.lv{background:#EEF2F7;color:var(--muted)}.chip2.lv i{background:var(--muted)}
 .tiny2{font-size:11.5px;color:var(--muted);margin-top:10px;line-height:1.55}
 /* ---- My Progress, prototype layout (Nick, 2026-08-26) ---- */
 .pg-score{display:inline-flex;flex-direction:column;align-items:center;border:1px solid var(--line);border-radius:12px;padding:14px 22px;margin:10px 0 6px}
@@ -5238,6 +5249,20 @@ function agentFreshLine(){
   var rl=reachLabel();
   return '<div class="fresh-line">'+(rl?'Figures to '+esc(rl)+' · ':'')+'updated '+esc(sastWhen(D.updatedAt))+'</div>';
 }
+/* LEAVE IS NOT A SHIFT (decision D1, sprint 2026-09-29). PULSE excuses AL/SL/FRL/Suspended days
+   (HDAL half) from the employed shifts and carries the count as me.leave (omitted when 0) and lv
+   (1 or 0.5) on each excused days[] entry. The page PAINTS those two fields and never works leave
+   out for itself: one line on Today and My Progress (the leader's drill-down reads the same), and
+   isLeaveDay() so no leave day is judged as a short or missed session. Not a data-assurance card. */
+function isLeaveDay(f){ return !!(f&&f.lv>0); }
+function leaveLine(){
+  var lv=ME&&ME.leave;
+  if(!(lv>0)) return '';
+  var amt=lv===0.5?'half a day':num(lv,lv%1?1:0)+' day'+(lv===1?'':'s');
+  var they=!!D.__back;
+  return '<div class="leave-line"><b>Leave: '+esc(amt)+'</b> — not counted as '+(lv>1?'shifts':'a shift')+', '
+    +(they?'their':'your')+' target is set on the days '+(they?'they were':'you were')+' in.</div>';
+}
 function calcNow(){
   var f=function(id,dflt){ var el=$(id); return el?el.value:dflt; };
   var plan=($('cPlan')&&$('cPlan').value)||ME.plan;   // the figures card's tenure select — sandbox only, never saved
@@ -5268,6 +5293,8 @@ function show(a){
            projection of how your month is going thus far"). */
         : 'A projection of how your month is going so far, from your '+esc(prettyPeriod())+' figures. Today’s sales land with tonight’s upload.'),
     agentFreshLine()
+    +((VIEW==='month'||VIEW==='progress')?leaveLine():'')
+    +((VIEW==='month'||VIEW==='progress')?campaignSplitHTML(a):'')
     +(VIEW==='links' ? linksPage()
       : VIEW==='coaching' ? coachPageAgent()
       /* COMMISSION IS ITS OWN TAB. It used to sit collapsed at the bottom of My
@@ -5300,6 +5327,7 @@ function show(a){
   if($('backTop')) $('backTop').onclick=back;
   if(VIEW==="calc"){ wireWhatIf(); wireTool(); }
   if(VIEW==="nik") wireNikola();
+  wireDrill();                                   // the Today tiles that need attention open the drill-down (item 3)
   if(VIEW==="progress"&&!D.__back){
     if(!MYHELP) myHelpLoad();
     else { wireMyHelp(); if(Date.now()-MYHELP_AT>45000) myHelpLoad(); }
@@ -5320,12 +5348,68 @@ function show(a){
        management tile — the layout, the pill, the amber watch state.
    Every threshold below is the one the digest already implies (target, QA target,
    attendance target); nothing new is invented here. */
-function tileState(v,pass,watch){ return v==null?'none':(v>=pass?'pass':(v>=watch?'watch':'focus')); }
-function acTile(label,val,sub,state){
+/* A TILE PAINTS THE ENGINE'S VERDICT (sprint 2026-09-29, item 3). The ON TRACK / WATCH / FOCUS bands used
+   to be literals here (tileState); they are decided by the Worker now (worker/src/drill.mjs → me.drill,
+   rule book specs/kpi_drilldown_rules.json) and a tile that needs attention opens the drill-down. */
+function drillOf(a,k){ return (a&&a.drill&&a.drill[k])||null; }
+function drillState(a,k){ var d=drillOf(a,k); return d?d.status:'none'; }
+function acTile(label,val,sub,state,drillKey){
   var pill={pass:['g','ON TRACK'],watch:['a','WATCH'],focus:['r','FOCUS'],none:['n','NO DATA']}[state]||['n','NO DATA'];
-  return '<div class="ac-tile '+state+'"><div class="ac-big">'+val+'</div>'
+  var tap=drillKey&&(state==='watch'||state==='focus');
+  return '<div class="ac-tile '+state+'"'+(tap?' data-drill="'+esc(drillKey)+'" role="button" tabindex="0" title="What is behind this, and what to do"':'')+'>'
+    +'<div class="ac-big">'+val+'</div>'
     +'<div class="ac-lab">'+esc(label)+'</div><div class="ac-sub">'+esc(sub)+'</div>'
-    +'<span class="pill '+pill[0]+'">'+pill[1]+'</span></div>';
+    +'<span class="pill '+pill[0]+'">'+pill[1]+'</span>'+(tap?'<div class="ac-tap">Tap for what to do &rsaquo;</div>':'')+'</div>';
+}
+/* THE DRILL-DOWN (Nick, 29 Sep: "what KPI is below target, their current result, the target, what is
+   driving the issue, what action the agent should take, and whether TL assistance is recommended").
+   Every judgement is the engine's; this only words it. */
+function drillFmt(k,v){
+  if(v==null) return '—';
+  return k==='aveG'?R(v):pct(v,0);
+}
+function drillPanelHTML(k){
+  var a=ME||{}, d=drillOf(a,k);
+  if(!d) return '';
+  var tl=firstName(a.tl||'')||'your team leader';
+  /* a team leader's drilldown reads about the agent, not to them (review, 2026-09-29) */
+  var your=D.__back?'their':'your', You=D.__back?esc(firstName(a.name||''))+'’s':'Your';
+  var drivers=[];
+  if(d.below>0&&d.of) drivers.push((k==='att'?'Absent':'Below target')+' in '+num(d.below)+' of '+your+' last '+num(d.of)+' session'+(d.of===1?'':'s')+'.');
+  if(d.why&&d.why.rule==='pace') drivers.push('Closing the gap needs well above '+your+' current daily pace.');
+  if(d.why&&d.why.rule==='qa') drivers.push(You+' QA average is in the lowest band.');
+  if(k==='ta'&&!D.__back) drivers.push(pgAdviceText('ta'));
+  if(!drivers.length) drivers.push('Below target month to date.');
+  var ask=D.__back?''
+    :'<button class="btn2 '+(d.tlHelp?'primary':'')+'" onclick="document.getElementById(\'drillOv\').remove();openHelp(\''+esc(d.topic||'Something else')+'\')">'
+      +(d.tlHelp?'Ask '+esc(tl)+' for help with this':'Ask '+esc(tl)+' anyway')+'</button>';
+  return '<div class="help-box drill-box">'
+    +'<div class="help-h"><b>'+esc(d.label)+' — '+(d.status==='focus'?'below target':'needs watching')+'</b><button class="help-x" id="drillX">✕</button></div>'
+    +'<div class="drill-row"><span>'+(D.__back?'Result':'Your result')+'</span><b>'+esc(drillFmt(k,d.result))+'</b></div>'
+    +'<div class="drill-row"><span>Target</span><b>'+esc(drillFmt(k,d.target))+'</b></div>'
+    +'<div class="drill-sec"><div class="t">What is driving it</div>'+drivers.map(function(x){return '<p>'+esc(x)+'</p>';}).join('')+'</div>'
+    +(d.action?'<div class="drill-sec"><div class="t">What to do</div><p>'+esc(d.action)+'</p></div>':'')
+    +'<div class="drill-sec"><div class="t">Team leader help: '+(d.tlHelp?'recommended':'not needed yet')+'</div>'
+    +'<p>'+(d.tlHelp?(d.why&&d.why.rule==='sessions'?'It has been below target in most of your recent sessions — a conversation will move it faster.'
+        :d.why&&d.why.rule==='pace'?'The gap is bigger than your current pace can close on its own.'
+        :'Quality this low is best fixed with a call review together.')
+      :'Try the step above first; you can still ask at any time.')+'</p>'
+    +'<div class="help-foot">'+ask+'</div></div></div>';
+}
+function openDrill(k){
+  var old=document.getElementById('drillOv'); if(old) old.remove();
+  var h=drillPanelHTML(k); if(!h) return;
+  var ov=document.createElement('div'); ov.className='help-ov'; ov.id='drillOv'; ov.innerHTML=h;
+  document.body.appendChild(ov);
+  var close=function(){ ov.remove(); };
+  var x=document.getElementById('drillX'); if(x) x.onclick=close;
+  ov.onclick=function(e){ if(e.target===ov) close(); };
+}
+function wireDrill(){
+  Array.prototype.forEach.call(document.querySelectorAll('.ac-tile[data-drill]'),function(t){
+    t.onclick=function(){ openDrill(t.getAttribute('data-drill')); };
+    t.onkeydown=function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openDrill(t.getAttribute('data-drill')); } };
+  });
 }
 /* WHO YOU ARE, WHERE YOU STAND — the strip at the top of Today, and since 2026-09-21 of Projected
    Commission too (Nick: "add this to comms calculator as well"). One renderer, so the two never
@@ -5353,15 +5437,15 @@ function agentKpis(a,c){
   var tiles='<div class="ac-tiles">'
     +acTile('TARGET ACHIEVED', a.pctT==null?'—':pct(a.pctT,0),
         num(a.spd,2)+' sales a day'+(perDayTarget?' · target '+num(perDayTarget,1)+'/day':''),
-        tileState(a.pctT,1,0.75))
+        drillState(a,'ta'),'ta')
     +acTile('PREMIUM WRITTEN (EX VAT)', R(a.gwpEx), 'What your commission is worked out on — ex VAT', a.gwpEx>0?'pass':'none')
     +acTile('AVERAGE SALE (EX VAT)', a.aveG==null?'—':R(a.aveG), 'What a typical sale of yours is worth, ex VAT',
-        tileState(a.aveG,gwpFloorEx(),0.9*gwpFloorEx()))
+        drillState(a,'aveG'),'aveG')
     +acTile('QA SCORE', a.qa==null?'—':pct(a.qa,0), 'Your average call quality this month',
-        tileState(a.qa,0.9,0.8))
+        drillState(a,'qa'),'qa')
     +acTile('ATTENDANCE', a.att==null?'—':pct(a.att,0),
         num(a.act,a.act%1?1:0)+' of '+num(a.emp,a.emp%1?1:0)+' days attended',
-        tileState(a.att,0.95,0.85))
+        drillState(a,'att'),'att')
     +acTile('REFERRALS', num(a.ref), 'People you sent through to the team', a.ref>0?'pass':'none')
     +'</div>';
   return head+tiles;
@@ -6058,7 +6142,7 @@ function pgChecks(){
     +'The rating above is your last five worked sessions, so the percentages differ — both are your real figures, over different stretches of time.</p></div>';
 }
 function pgRun(){
-  var days=(ME.days||[]).slice(-5);
+  var days=(ME.days||[]).filter(function(f){ return !(isLeaveDay(f)&&!((f.act||0)>0)); }).slice(-5);   // D1: leave is not a missed session
   if(!days.length) return '';
   var dots=days.map(function(f){
     var on=(f.act||0)>0;
@@ -6085,6 +6169,7 @@ function pgSessions(){
     +'<div class="scroller"><table class="tbl"><thead><tr><th>Session</th><th>Sales that counted</th><th>Premium written</th><th>Hit target</th></tr></thead><tbody>'
     +days.map(function(f){
       var hit=(f.t>0)?((f.s||0)>=f.t):null;
+      var lvChip=isLeaveDay(f)?'<span class="chip2 lv"><i></i>'+(f.lv<1?'Half-day leave':'Leave')+'</span>':'';   // D1: excused, never Yes/No
       /* SAY WHY A SALE DID NOT COUNT. Sales are net of cancellation, so a cancelled sale
          simply vanished from this column and the day read as one the agent wrote nothing on.
          The count stays net — that is the rule — but the cancellation is now named beside it
@@ -6093,7 +6178,7 @@ function pgSessions(){
       return '<tr><td class="num">'+esc(f.d)+(f.p?' <span class="sub2" style="display:inline">provisional</span>':'')+'</td>'
         +'<td class="num">'+num(f.s||0)
         +(canc?' <span class="sub2" style="display:inline">'+num(canc)+' cancelled</span>':'')+'</td><td class="num">'+R(f.x||0,2)+'</td>'
-        +'<td>'+(hit==null?'—':(hit?'<span class="chip2 beat"><i></i>Yes</span>':'<span class="chip2 next"><i></i>No</span>'))+'</td></tr>';
+        +'<td>'+(lvChip||(hit==null?'—':(hit?'<span class="chip2 beat"><i></i>Yes</span>':'<span class="chip2 next"><i></i>No</span>')))+'</td></tr>';
     }).join('')+'</tbody></table></div></div>';
 }
 /* My Progress's help panel state. Declared beside the loader that owns it. */
@@ -6280,7 +6365,9 @@ function todayHTML(c){
   var worked=WORKED();
   var rem=LEFT();
   var perDayTarget=(ME.target&&ME.emp)?ME.target/ME.emp:((ME.target&&DAYS())?ME.target/DAYS():null);
-  var monthTarget=perDayTarget?Math.round(perDayTarget*DAYS()):null;
+  /* leave days are not shifts (D1, 2026-09-29): the month target the statement quotes is the daily target
+     over the working days LESS the leave the engine counted — never a leave day's sales */
+  var monthTarget=perDayTarget?Math.round(perDayTarget*Math.max(0,DAYS()-((ME.target&&ME.emp)?(+ME.leave||0):0))):null;   // the fallback per-day target already spreads a leave-adjusted target — never subtract leave twice
   var h='<div class="card"><h2>Your number for today</h2>';
   if(monthTarget==null){
     h+='<p class="why">We need a target on file before we can work out your number. Ask your team leader.</p>';
@@ -6311,9 +6398,11 @@ function todayHTML(c){
      built beside it. Both now read the last WORKED session (a shift and a target),
      and a newer provisional row is named as still landing, not scored. */
   var cells=[];
-  var workedRows=days.filter(function(f){ return f.act>0&&f.t>0&&!f.p; });
+  /* a leave day (D1) is neither a session to judge nor a day still landing — skipped by both cards */
+  var sessionRows=days.filter(function(f){ return !isLeaveDay(f); });
+  var workedRows=sessionRows.filter(function(f){ return f.act>0&&f.t>0&&!f.p; });
   var ld=workedRows.length?workedRows[workedRows.length-1]:null;
-  var newest=days.length?days[days.length-1]:null;
+  var newest=sessionRows.length?sessionRows[sessionRows.length-1]:null;
   var pending=(newest&&ld&&newest.d>ld.d)?newest:(newest&&!ld?newest:null);
   if(ld){
     var hit=(ld.s||0)>=ld.t;
@@ -7049,12 +7138,78 @@ function toolBody(c){
     +'</tbody></table></div>'
     +'<div class="tiny2">Bracket table for '+esc(PLAN_LAB[c.plan]||c.plan)+' — the official one from Agent OS. If it looks out of date, tell your team leader.</div>';
 }
+/* ===================== A MOVER'S MONTH BY CAMPAIGN (sprint 2026-09-29, item 2; D4) =====================
+   Nick: "If an agent worked Download/Upsell for part of the month and another campaign thereafter, AgentOS
+   must not blend those results together without clearly showing the campaign split." PULSE publishes a
+   mover's `segments` (one per campaign, with its own dates, figures and plan); the row's own figures are the
+   whole month. This paints both — it computes no performance figure itself. */
+function segmentsOf(a){ return (a&&Array.isArray(a.segments)&&a.segments.length>=2)?a.segments:null; }
+function dayMonth(iso){
+  try{ return new Date(iso+'T00:00:00Z').toLocaleDateString('en-ZA',{day:'numeric',month:'short',timeZone:'UTC'}); }catch(e){ return iso; }
+}
+function campaignSplitHTML(a){
+  var segs=segmentsOf(a); if(!segs) return '';
+  var cur=segs[segs.length-1];
+  return '<div class="card"><h2>Your month by campaign</h2>'
+    +'<p class="why">'+(D.__back?esc(firstName(a.name))+' moved':'You moved')+' to <b>'+esc(cur.campaign)+'</b> on '+esc(dayMonth(cur.from))
+    +'. Each campaign’s days are shown on their own; the last row is the whole month.</p>'
+    +'<div class="scroller"><table class="tbl"><thead><tr><th>Campaign</th><th>Days</th><th class="num">Sales</th><th class="num">Premium (ex VAT)</th><th class="num">Target</th></tr></thead><tbody>'
+    +segs.map(function(s){
+      return '<tr><td>'+esc(s.campaign)+'</td><td>'+esc(dayMonth(s.from))+' – '+esc(dayMonth(s.to||s.from))+'</td>'
+        +'<td class="num">'+num(s.sales||0)+'</td><td class="num">'+R(s.gwpEx||0)+'</td><td class="num">'+(s.pctT==null?'—':pct(s.pctT,0))+'</td></tr>';
+    }).join('')
+    +'<tr><td><b>Whole month</b></td><td></td><td class="num"><b>'+num(a.sales||0)+'</b></td><td class="num"><b>'+R(a.gwpEx||0)+'</b></td><td class="num"><b>'+(a.pctT==null?'—':pct(a.pctT,0))+'</b></td></tr>'
+    +'</tbody></table></div></div>';
+}
+/* Commission for a split month — EACH CAMPAIGN'S DAYS ON ITS OWN PLAN, the bracket steps pro-rated by that
+   campaign's share of the month's working days (the rate of each bracket is unchanged). A PROJECTION until
+   Nick and finance confirm how a split month is paid (D4). The earlier campaign is closed; the current one
+   projects over the working days left. */
+function segCommission(a){
+  var segs=segmentsOf(a); if(!segs||!D.comm) return null;
+  var rows=[], total=0, any=false;
+  var ends=segs.map(function(s,i){ if(i===segs.length-1) return D.period.to;
+    var d=new Date(segs[i+1].from+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()-1); return d.toISOString().slice(0,10); });
+  /* shares from ONE calendar, summing to 1 (review, 2026-09-29): each campaign's working days over the sum */
+  var wds=segs.map(function(s,i){ return workingDaysFrom(s.from,ends[i]); });
+  var wdSum=wds.reduce(function(m,x){return m+x;},0)||1;
+  var earlierAct=segs.slice(0,-1).reduce(function(m,s){return m+(+s.act||0);},0);
+  segs.forEach(function(s,i){
+    var end=ends[i], share=wds[i]/wdSum;
+    var br=s.plan&&D.comm.brackets&&D.comm.brackets[s.plan];
+    var rules={saleValue:D.comm.saleValue,saleValues:D.comm.saleValues,brackets:{}};
+    if(br) rules.brackets[s.plan]=br.map(function(b){ return Object.assign({},b,{gwp:b.gwp*share,comm:b.comm*share}); });
+    /* the current campaign counts only days whose files have landed (WORKED() is capped at the data) — a
+       register day with no sales yet must not dilute the average (review, 2026-09-29) */
+    var last=i===segs.length-1;
+    var cDays=last?Math.max(0,Math.min(+s.act||0,WORKED()-earlierAct)):(+s.act||0), tDays=last?cDays+LEFT():cDays;
+    var r=s.plan?commCalc(s.plan,cDays,tDays,+s.gwpEx||0,0,rules):null;
+    var comm=r?r.projection:null;
+    if(comm!=null){ total+=comm; any=true; }
+    rows.push({campaign:s.campaign,plan:s.plan,from:s.from,to:end,comm:comm,share:share});
+  });
+  return {rows:rows,total:any?total:null};
+}
+function commissionSplitHTML(a){
+  var sc=segCommission(a); if(!sc) return '';
+  return '<div class="card" style="border-style:dashed"><h2>Commission by campaign — a projection</h2>'
+    +'<p class="why">You changed campaign this month, so each campaign’s days are worked out on its own plan, with the bracket steps scaled to that campaign’s share of the month. '
+    +'<b>This is a projection</b> — how a month split across two campaigns is paid is still to be confirmed by management.</p>'
+    +'<div class="scroller"><table class="tbl"><thead><tr><th>Campaign</th><th>Plan</th><th>Days</th><th class="num">Projected commission</th></tr></thead><tbody>'
+    +sc.rows.map(function(r){
+      return '<tr><td>'+esc(r.campaign)+'</td><td>'+esc(PLAN_LAB[r.plan]||r.plan||'not set up')+'</td><td>'+esc(dayMonth(r.from))+' – '+esc(dayMonth(r.to))+'</td>'
+        +'<td class="num">'+(r.comm==null?'—':R(r.comm))+'</td></tr>';
+    }).join('')
+    +'<tr><td><b>Split total</b></td><td></td><td></td><td class="num"><b>'+(sc.total==null?'—':R(sc.total))+'</b></td></tr>'
+    +'</tbody></table></div>'
+    +'<p class="tiny2">The calculator below still uses your current plan for the whole month.</p></div>';
+}
 function comsPage(c){
   /* TOP PERFORMERS LIVE HERE (Nick, 2026-09-15: "the top performers must be on the commission
      calculator and they must only see the top 10 performers, not in their team") — the floor's
      ten, under the earnings, where the "what would it take" question is already being asked. */
-  if(!ME.plan) return agentHead(ME)+comsTop()+heroHTML(c)+topHTML();   // heroHTML's "not set up yet" card says why, without guessing
-  return agentHead(ME)+comsTop()+comsExplain(c)+comsHero(c)+comsFigures(c)+whatIfHTML(c)+topHTML()+comsTableCard(c);
+  if(!ME.plan) return agentHead(ME)+comsTop()+commissionSplitHTML(ME)+heroHTML(c)+topHTML();   // heroHTML's "not set up yet" card says why, without guessing
+  return agentHead(ME)+comsTop()+commissionSplitHTML(ME)+comsExplain(c)+comsHero(c)+comsFigures(c)+whatIfHTML(c)+topHTML()+comsTableCard(c);
 }
 function refreshTool(c){
   if($('comsHero')) $('comsHero').innerHTML=comsHeroInner(c);
