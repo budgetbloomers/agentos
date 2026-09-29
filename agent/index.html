@@ -5134,9 +5134,28 @@ function WORKED(){
   var a=(ME&&ME.act)||0, cap=DATA_DAYS();
   return cap==null?a:Math.min(a,cap);
 }
-/* What the projection divides by. A month can never have fewer working days than
-   the agent has already worked; if the data says otherwise, believe the agent. */
-function TDAYS(){ return Math.max(DAYS(), WORKED()); }
+/* WORKING DAYS LEFT IS A CALENDAR FACT (Nick, 2026-09-28: "there's only 3 shifts left but agent os
+   display 4"). It was the month's working days less the AGENT'S OWN shifts, so every shift an agent
+   missed read as a day still to come — 17 of 18 shifts showed "4 working days left" on Monday 28 Sep
+   (Mon, Tue, Wed = 3), and the per-day ask was divided by the wrong number. Now: the working days
+   after the last day with data (Saturdays and public holidays excluded), never more than the working
+   days from today to the period's end — a morning before the day's files land cannot read one high. */
+function workingDaysFrom(fromIso,toIso){
+  var n=0,d=new Date(fromIso+'T00:00:00Z'),e=new Date(toIso+'T00:00:00Z');
+  while(d<=e){ var w=d.getUTCDay(); if(w>0&&w<6&&!isPublicHoliday(d.toISOString().slice(0,10)))n++; d.setUTCDate(d.getUTCDate()+1); }
+  return n;
+}
+/* today (SAST) for the days-left cap; a guard may pin it (window.__agentToday) to replay a given morning */
+function nowDay(){ return (typeof window!=='undefined'&&window.__agentToday)||todayISO(); }
+function LEFT(){
+  var dd=DATA_DAYS();
+  var left=Math.max(0,DAYS()-(dd==null?WORKED():dd));
+  try{ var t=nowDay(); if(D&&D.period&&t>=D.period.from&&t<=D.period.to) left=Math.min(left,workingDaysFrom(t,D.period.to)); }catch(e){}
+  return left;
+}
+/* What the projection divides by: the shifts already worked plus the working days left — so the
+   calculator's tDays − cDays IS LEFT(). A missed shift is gone; it is not still to come. */
+function TDAYS(){ return WORKED()+LEFT(); }
 /* "September" — the period's month, for headings that must name their scope. */
 function monthLabel(){
   try{ return new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',month:'long'}).format(new Date(D.period.from+'T00:00:00Z')); }
@@ -5148,8 +5167,12 @@ function remainingLabel(){
   try{
     var last=(D.dates&&D.dates.length)?D.dates[D.dates.length-1]:D.period.from;
     var f=new Date(last+'T00:00:00Z'); f.setUTCDate(f.getUTCDate()+1);
+    /* from the first day LEFT() counts: never before today, and never a Saturday, Sunday or public
+       holiday — data to Sat 26 Sep printed "27 – 30 September", starting on a Sunday (2026-09-28) */
+    try{ var td=nowDay(); if(td>=D.period.from&&td<=D.period.to&&new Date(td+'T00:00:00Z')>f) f=new Date(td+'T00:00:00Z'); }catch(e){}
     var t=new Date(D.period.to+'T00:00:00Z');
-    if(f>t) return '';
+    while(f<=t&&(f.getUTCDay()===0||f.getUTCDay()===6||isPublicHoliday(f.toISOString().slice(0,10)))) f.setUTCDate(f.getUTCDate()+1);
+    if(f>t||!LEFT()) return '';
     var mf=new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',month:'long'});
     var df=new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',day:'numeric'});
     return df.format(f)+' – '+df.format(t)+' '+mf.format(t);
@@ -5532,7 +5555,7 @@ function pgDrivers(){
 function pgAdviceText(key){
   var th=(D.nba&&D.nba.thresholds)||{};
   var drv=pgDrivers(), by={}; drv.forEach(function(d){by[d.k]=d;});
-  var rem=Math.max(0,DAYS()-WORKED());
+  var rem=LEFT();
   if(key==='ta'){ var shortS=(ME.target&&ME.sales!=null)?Math.max(0,Math.ceil(ME.target-ME.sales)):null;
     if(shortS===0) return 'You are at your sales target — hold it there to month end.';
     return shortS!=null?('You are '+num(shortS)+' sale'+(shortS===1?'':'s')+' from your target this month'
@@ -6174,7 +6197,7 @@ function stat(lab,val,sub){
 function todayHTML(c){
   var days=ME.days||[];
   var worked=WORKED();
-  var rem=Math.max(0,DAYS()-worked);
+  var rem=LEFT();
   var perDayTarget=(ME.target&&ME.emp)?ME.target/ME.emp:((ME.target&&DAYS())?ME.target/DAYS():null);
   var monthTarget=perDayTarget?Math.round(perDayTarget*DAYS()):null;
   var h='<div class="card"><h2>Your number for today</h2>';
@@ -6772,7 +6795,7 @@ function comsTop(){
     +'<div><h1>Projected Commission Calculator</h1>'
     +'<div class="meta"><span>'+esc(ME.name||'')+'</span>'+(ME.code?'<span>'+esc(ME.code)+'</span>':'')
     +(ME.campaign?'<span>'+esc(ME.campaign)+'</span>':'')
-    +'<span>'+esc(prettyPeriod())+' — '+num(TDAYS())+' working days</span></div></div></div>';
+    +'<span>'+esc(prettyPeriod())+' — '+num(DAYS())+' working days</span></div></div></div>';
 }
 function comsExplain(c){
   return '<div class="card" style="border-style:dashed">'
@@ -6838,7 +6861,7 @@ function comsFigures(c){
     +'<div class="coms-rows">'
     +'<div><span>Plan</span><b>'+esc(PLAN_LAB[ME.plan]||ME.plan||'—')+'</b></div>'
     +'<div><span>Working days worked (days whose files have landed)</span><b class="num">'+num(w,w%1?1:0)+'</b></div>'
-    +'<div><span>Working days in '+esc(monthLabel())+'</span><b class="num">'+num(TDAYS())+'</b></div>'
+    +'<div><span>Working days in '+esc(monthLabel())+'</span><b class="num">'+num(DAYS())+'</b></div>'
     +'<div><span>Premium written, excluding VAT</span><b class="num">'+R(ME.gwpEx,2)+'</b></div>'
     +'</div>'
     +'<div id="figRows">'+figRowsInner(c)+'</div>'

@@ -792,10 +792,11 @@ function loadPage(fetchImpl) {
     api: fn(doc, win, win.localStorage, win.location, fetchImpl || (() => Promise.reject(new Error('no network in test'))),
       URLSearchParams, (f) => f, Intl, { log() {}, error() {} }),
     nodes,
+    win,          // the page's window — a fixture pins window.__agentToday through it (see "Today precision")
   };
 }
 
-const { api: P, nodes: N } = loadPage();
+const { api: P, nodes: N, win: W } = loadPage();
 
 const DIGEST = {
   v: 1, updatedAt: new Date().toISOString(),
@@ -1159,6 +1160,9 @@ try {
     dates: ['2026-09-01', '2026-09-02'], role: 'agent', updatedAt: new Date().toISOString(),
     coaching: { stale: true, agents: [] } };
   delete SEP.daysWithData;                                   // an older publisher: the page must count for itself
+  /* the morning of 3 Sep, pinned: working days left is a CALENDAR fact since 2026-09-28 (LEFT() caps at
+     today), so an unpinned fixture read the real date and printed "3 working days left (28 – 30 Sep)" */
+  W.__agentToday = '2026-09-03';
   const ENOCH = { code: 'CB70', name: 'Enoch Pillay', campaign: 'Cuddle', tenure: 'Exp', plan: 'EXP_CUDDLE',
     gwpEx: 1800, sales: 20, target: 24, pctT: 0.83, spd: 6.7, att: 1, qa: 0.98, aveG: 90, ref: 2,
     act: 3, emp: 3, rankCo: 1, nCo: 62, rankTeam: 1, nTeam: 15, trend: 'up', trendPct: 0.1, badges: [], spark: [8, 12],
@@ -1195,6 +1199,7 @@ try {
   ok('team leaders keep the data-assurance chrome');
   P.setTeam(null);
 } catch (e) { bad('Today precision (2026-09-03 round)', e.message); }
+delete W.__agentToday;
 
 /* A STALE DIGEST MUST NOT COST AN AGENT MONEY.
    A PULSE tab running the old build publishes no workingDays, so the page fell
@@ -1290,7 +1295,9 @@ try {
   const D21 = { ...DIGEST, workingDays: 21, diallingDays: 21, daysWithData: 21, comm: { saleValue: ORIG_SALE_VALUE, brackets: ORIG_BRACKETS } };
 
   const mid = mk(16);
-  P.setD({ ...D21, agents: [mid] }); P.setMe(mid); P.setView('calc'); P.show(mid);
+  /* 16 days of data, not 21: since 2026-09-28 the days left are the working days after the last day with
+     data — 21 of 21 with data means none are left, whatever the agent's own shift count */
+  P.setD({ ...D21, daysWithData: 16, agents: [mid] }); P.setMe(mid); P.setView('calc'); P.show(mid);
   let html = N.root.innerHTML;
   let text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   if (!/What if you improve/.test(html)) throw new Error('the what-if card is missing while days remain');
