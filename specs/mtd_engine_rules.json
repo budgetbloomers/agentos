@@ -358,6 +358,22 @@
    "source": "Nick, 2026-09-07: 'for the month to date add the data but do not add to the numerator for saturday only' — numerator of Attendance and denominator of SPD are both Actual Shifts.",
    "note": "Effective-dated so the August reference period, verified row-for-row, is untouched. Mirror: MTD_RULES.saturdayShiftsFrom."
   },
+  "attendance_classes": {
+   "leave_not_shift_from": "2026-09-01",
+   "leave": [
+    "AL",
+    "SL",
+    "FRL",
+    "CA",
+    "CASAT"
+   ],
+   "unavailable": [
+    "SUSPENDED"
+   ],
+   "rule": "On/after leave_not_shift_from, an employed day whose register Status Code is in leave or unavailable, and on which the agent neither talked nor sold, is NOT an Employed Shift, NOT an Actual Shift and carries no target; it is recorded as a leave / unavailable day. Any other zero-weight code (UCA, and every code not named here) stays an ABSENCE: an Employed Shift with no Actual Shift. Activity wins: a leave code on a day with talk or sales is a working day. Codes are compared upper-case; an export without a Status Code column classifies long-form statuses by the word leave / suspended.",
+   "source": "POC floor feedback, 2026-09-29: 'Ryan to investigate why agents who were on annual leave were not reflected correctly. AgentOS must understand whether an agent was working, on leave, absent or otherwise unavailable before calculating performance or recommending actions.'",
+   "note": "Effective-dated so the August reference period, verified row-for-row against the hand-built tracker (which counts leave as an employed, unworked shift), is untouched. Class meanings follow the Ops rules presentCodes/leaveCodes (CA = Committed Absence, authorised). L is deliberately unclassified: Ops reads it as Running Late, the register weight table as 0 — confirm before classing it. Mirror: MTD_RULES.leaveNotShiftFrom / MTD_RULES.attClasses."
+  },
   "departures": {
    "keep_days_until_left": false,
    "since": "2026-09-15",
@@ -1850,6 +1866,14 @@
    "from": "a leaver keeps their days up to the list that dropped them",
    "to": "a leaver is off every report; the current Agent List is the whole roster (keep_days_until_left = false)",
    "why": "\"redo the leavers must be removed from the reports, only focus on the new agent list\""
+  },
+  {
+   "date": "2026-09-29",
+   "by": "Nick",
+   "key": "reference_data.attendance_classes",
+   "from": "every zero-weight register code (AL, SL, FRL, CA, UCA, Suspended …) is an Employed Shift with no Actual Shift — leave read as absence",
+   "to": "leave (AL, SL, FRL, CA, CASAT) and unavailable (Suspended) days with no activity are not shifts and carry no target, from 2026-09-01; UCA and unknown codes stay absences",
+   "why": "\"AgentOS must understand whether an agent was working, on leave, absent or otherwise unavailable before calculating performance or recommending actions\" — agents on annual leave were not reflected correctly"
   }
  ]
 }

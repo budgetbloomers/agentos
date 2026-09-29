@@ -3942,7 +3942,14 @@ function acCtxBuild(win){
        agent's QA down by the share of blank Score % cells in the export. */
     if(r.score_percent!=null){o.s+=r.score_percent;o.sn++;o.sd++;o.s0+=isC?0:r.score_percent}
     else if(isC){o.sd++}});
-  rowsNF('ATTENDANCE',win).forEach(r=>{const cb=normCB(r.employee_code);if(!cb||r.excluded_flag)return;const o=C.att[cb]=C.att[cb]||{sched:0,p:0};o.sched++;if(r.present_flag)o.p++});
+  /* LEAVE IS NOT A MISSED SHIFT (POC feedback, 2026-09-29: "AgentOS must understand whether an
+     agent was working, on leave, absent or otherwise unavailable before calculating performance
+     or recommending actions"). A $leaveCodes day used to sit in `sched` with no `p`, so a week of
+     annual leave read as a week of no-shows: the Attendance driver fell, the composite fell, and
+     the ladder could recommend an attendance intervention for someone on approved leave. Leave
+     now leaves the denominator and is counted apart (`leave`); an unplanned absence (a code in no
+     rule, e.g. UCA) still counts against attendance — that is the thing the driver measures. */
+  rowsNF('ATTENDANCE',win).forEach(r=>{const cb=normCB(r.employee_code);if(!cb||r.excluded_flag)return;const o=C.att[cb]=C.att[cb]||{sched:0,p:0,leave:0};if(r.leave_flag&&!r.present_flag){o.leave++;return}o.sched++;if(r.present_flag)o.p++});
   rowsNF('CALLX_CALL_RECORDS',win).forEach(r=>{const cb=cbOf(r.agent);if(!cb)return;const o=C.call[cb]=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};o.n++;o.sec+=r.billable_seconds||0;o.bands[r.call_band]=(o.bands[r.call_band]||0)+1;if(r._d)o.days.add(r._d);const d=String(r.destination_number||'').trim();if(d&&d!=='s')o.uniq.add(d)});
   /* THE FLOOR DIALS ON VICIDIAL from CALLX_RETIRED (2026-09-01) — without this union the
      talk driver, R8 and calls/day read only CallX and every Courtesy agent's September
@@ -3975,7 +3982,7 @@ function acCtxBuild(win){
 function acStats(cb,win,C){
   const i=state.cbInfo[cb]||{};const T=k=>nbaVal(k,0);
   const sale=C.sale[cb]||{n:0,gwp:0},cl=C.closed[cb]||{tc:0},op=C.open[cb]||{n:0,aSum:0,aN:0};
-  const qa=C.qa[cb]||{n:0,s:0,s0:0,sn:0,sd:0,crit:0},at=C.att[cb]||{sched:0,p:0},ca=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};
+  const qa=C.qa[cb]||{n:0,s:0,s0:0,sn:0,sd:0,crit:0},at=C.att[cb]||{sched:0,p:0,leave:0},ca=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};
   const canc=(C.canc[cb]||{n:0}).n;const refs=(C.ref[cb]||{n:0}).n;
   const p=at.p, sched=at.sched;
   const target=i.target??null;
@@ -4026,7 +4033,7 @@ function acStats(cb,win,C){
   sc['Attendance']=att==null?null:Math.min(100,att/T('attTarget')*100);
   return{cb,name:i.name||cb,code:i.code||cb,tl:i.tl||'—',queue:i.queue||'—',tenure:i.tenure||'—',group:groupOf(cb),
     target,sales:sale.n,gwp:sale.gwp,gwpSale,spd,ta,leads,conv,qaN:qa.n,qaS,crit:qa.crit,
-    calls:ca.n,uniqCalls,uniqPerDay,closedCases,closedPerSale,bands:ca.bands,talkMin,talkDay,dialDays:ca.days.size,p,sched,att,canc,cancPct,attempts,attLead,refs,sc};
+    calls:ca.n,uniqCalls,uniqPerDay,closedCases,closedPerSale,bands:ca.bands,talkMin,talkDay,dialDays:ca.days.size,p,sched,leaveDays:at.leave||0,att,canc,cancPct,attempts,attLead,refs,sc};
 }
 /* ---------- coaching layer v1.0 (Chatterbox_Coaching_Rules.json) ----------
    The composite formula is  adjusted = composite − min(combined_cap, r2a + coaching).
@@ -4234,6 +4241,14 @@ function acNBA(st,coach){
      on R10 "Strong / Elite Performer" with a composite of 0: a green Level-4 bar of length
      zero. If the composite has an empty denominator, there is nothing to judge. */
   const __noDrivers=compWeights().every(([n])=>n==='GWP %ile'||st.sc[n]==null);
+  /* ON LEAVE FOR THE WHOLE WINDOW (2026-09-29) — no scheduled shift, no activity, and the
+     register says leave. Said as what it is, never "no data" (which asks someone to chase an
+     upload that is not missing) and never R1 "Zero Attendance — escalate to HR", which is what
+     a leave week used to trigger while leave sat in the attendance denominator. */
+  if(!(st.sched>0)&&st.leaveDays>0&&!(st.sales>0)&&!(st.calls>0))
+    return R('R0',4,'Develop & Recognise','On leave this period',
+      'On authorised leave for '+st.leaveDays+' day'+(st.leaveDays===1?'':'s')+' in this window, with no scheduled shift to judge.',
+      'No performance action. Hold a short welcome-back check-in on return; leave is never scored against attendance.');
   if(__noDrivers||(!(st.sched>0)&&!(st.qaN>0)&&!(st.sales>0)&&!(st.calls>0)))
     return R('R0',4,'Develop & Recognise','No data this period',
       'Nothing was measured for this agent in this window — no shifts, no evaluations, no sales and no calls.',

@@ -1289,8 +1289,11 @@ try {
     act, emp: act, rankCo: 5, nCo: 84, rankTeam: 2, nTeam: 9, trend: 'flat', trendPct: 0, badges: [], spark: [2, 3] });
   const D21 = { ...DIGEST, workingDays: 21, diallingDays: 21, daysWithData: 21, comm: { saleValue: ORIG_SALE_VALUE, brackets: ORIG_BRACKETS } };
 
+  /* mid-month is where the FIGURES stop, not where the agent's worked days stop (2026-09-29):
+     16 worked of 21 with all 21 days landed means five days of leave or absence — no days left.
+     Days remain here because the files reach day 16. */
   const mid = mk(16);
-  P.setD({ ...D21, agents: [mid] }); P.setMe(mid); P.setView('calc'); P.show(mid);
+  P.setD({ ...D21, daysWithData: 16, agents: [mid] }); P.setMe(mid); P.setView('calc'); P.show(mid);
   let html = N.root.innerHTML;
   let text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   if (!/What if you improve/.test(html)) throw new Error('the what-if card is missing while days remain');
@@ -1310,6 +1313,44 @@ try {
   if (!/no remaining days left to add sales to/i.test(text)) throw new Error('the figures card does not explain why the what-if is gone');
   ok('with no days left the what-if card is dropped and the always-visible figures card says why');
 } catch (e) { bad('no-days-left routing', e.message); }
+
+/* WORKING, ON LEAVE, ABSENT (POC feedback, 2026-09-28/29: "there's only 3 shifts left but AgentOS
+   displays 4"; "agents who were on annual leave were not reflected correctly"). Figures reach Fri
+   25 Sep (18 working days landed of September's 21 — Heritage Day is not one); the agent worked 13
+   and was on annual leave for 5, which PULSE no longer counts as shifts (rule leaveNotShiftFrom).
+   Old page: 21 − 13 = 8 "days left", a projection over all 21 days, a 105-sale month target.
+   Right: 3 days left (28 – 30 Sep), a projection over 13 + 3 = 16 days, a target of 5 × 16 = 80. */
+try {
+  const SEPL = { ...DIGEST, period: { from: '2026-09-01', to: '2026-09-30' }, workingDays: 21, daysWithData: 18,
+    dates: ['2026-09-23', '2026-09-25'], role: 'agent', comm: { saleValue: ORIG_SALE_VALUE, brackets: ORIG_BRACKETS } };
+  const LEAVER = { code: 'CB77', name: 'Lindiwe Dube', campaign: 'Courtesy', tenure: 'M1', plan: 'M1',
+    gwpEx: 6500, sales: 60, target: 65, pctT: 60 / 65, spd: 60 / 13, att: 1, qa: 0.9, aveG: 108.33, ref: 0,
+    act: 13, emp: 13, leave: 5, unavail: 0, absent: 0, off: [{ d: '2026-09-14', k: 'leave' }],
+    rankCo: 9, nCo: 84, rankTeam: 3, nTeam: 9, trend: 'flat', trendPct: 0, badges: [], spark: [3, 4] };
+  P.setTeam(null); P.setD({ ...SEPL, agents: [LEAVER] }); P.setMe(LEAVER); P.setView('month'); P.show(LEAVER);
+  let text = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/over the 3 working days left \(28 – 30 September\)/.test(text))
+    throw new Error('days left is not the calendar\'s 3 (28 – 30 Sep): ' + ((text.match(/over the .{0,60}left.{0,30}/) || ['not found'])[0]));
+  if (!/target of 80 sales/.test(text)) throw new Error('the month target still charges the leave week: ' + ((text.match(/target of \d+ sales/) || ['not found'])[0]));
+  if (!/13 of 21 working days worked \(5 on leave\)/.test(text)) throw new Error('the header does not explain the short month as leave');
+  if (!/5 on leave, not counted/.test(text)) throw new Error('the attendance tile does not say the leave days are not counted');
+  if (/undefined|NaN/.test(text)) throw new Error('a placeholder value rendered');
+  P.setView('calc'); P.show(LEAVER);
+  text = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/Days the projection covers \(worked \+ still to come\) 16\b/.test(text)) throw new Error('the projection does not run over 13 worked + 3 to come');
+  if (!/Premium projected, excluding VAT R\s?8\s?000/.test(text)) throw new Error('projected premium is not 6,500 ÷ 13 × 16 = R8,000: ' + ((text.match(/Premium projected.{0,40}/) || ['not found'])[0]));
+  if (!/Remaining days 3\b/.test(text)) throw new Error('remaining days is not 3');
+  P.setView('month');
+  ok('leave is not a day still to come: 3 days left (28 – 30 Sep), projection over 16 days, target 80, leave named on the page');
+
+  /* an agent whose every day so far is leave is told so — not "no activity yet" */
+  const entry = { code: 'CB78', name: 'Sipho Leave', tl: 'Lead', campaign: 'Courtesy', why: 'leave' };
+  P.setD({ ...SEPL, role: 'agent', name: entry.name, cb: entry.code, notReported: entry, coaching: {} }); P.notReported();
+  const t2 = N.root.innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/You have been on leave so far this month/.test(t2) || /not recorded any activity/.test(t2))
+    throw new Error('an agent on leave all month is told there is no activity');
+  ok('an agent on leave all month is told they are on leave, and that leave is never counted against them');
+} catch (e) { bad('leave-aware days and projection', e.message); }
 
 {
   /* The projection must divide by the month's WORKING days, not the days we have

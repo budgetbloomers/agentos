@@ -45,6 +45,12 @@ ok('GWP rate per sale matches', inlined.gwpPerSale === SPEC.reference_data.gwp_r
 ok('VAT multiplier matches', inlined.vat === SPEC.reference_data.vat_multiplier.value);
 ok('Saturday shift rule matches (data only, from)', inlined.saturdayShiftsFrom === (SPEC.reference_data.saturday_shifts || {}).data_only_from,
   inlined.saturdayShiftsFrom + ' vs ' + JSON.stringify((SPEC.reference_data.saturday_shifts || {}).data_only_from));
+/* LEAVE IS NOT A SHIFT (2026-09-29): the effective date and both code lists, both copies. */
+{ const c = SPEC.reference_data.attendance_classes || {}, i = inlined.attClasses || {};
+  ok('leave rule matches (not a shift from)', inlined.leaveNotShiftFrom === c.leave_not_shift_from,
+    inlined.leaveNotShiftFrom + ' vs ' + JSON.stringify(c.leave_not_shift_from));
+  ok('leave / unavailable code lists match', JSON.stringify(i.leave) === JSON.stringify(c.leave) && JSON.stringify(i.unavailable) === JSON.stringify(c.unavailable),
+    JSON.stringify(i) + ' vs ' + JSON.stringify({ leave: c.leave, unavailable: c.unavailable })); }
 /* DEPARTURES (Nick, 2026-09-15): a leaver keeps their days until the list that dropped them. */
 { const d = SPEC.reference_data.departures || {}, i = inlined.departures || {};
   ok('departures rule matches (keep days until left, since)', i.keepDaysUntilLeft === d.keep_days_until_left && i.since === d.since,

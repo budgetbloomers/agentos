@@ -569,6 +569,21 @@ const MTD_RULES = {
      Mirror of specs/mtd_engine_rules.json reference_data.saturday_shifts. */
   saturdayShiftsFrom: '2026-09-01',
 
+  /* LEAVE IS NOT A SHIFT (POC feedback, 2026-09-29: "AgentOS must understand whether an agent
+     was working, on leave, absent or otherwise unavailable before calculating performance or
+     recommending actions"). Every register code weighed 0 used to stay an EMPLOYED shift, so a
+     week of annual leave read exactly like a week of no-shows: attendance fell, the target grew
+     by the leave days, and Agent Analytics counted them as days still to come. On/after
+     leaveNotShiftFrom a day whose register code is in attClasses.leave or .unavailable, and on
+     which the agent neither talked nor sold, is not an Employed Shift, not an Actual Shift and
+     carries no target — recorded instead as a leave / unavailable day (M.offBy). A code in
+     neither list (UCA, and anything unknown) is still an ABSENCE: employed, not worked. Activity
+     wins: a leave code on a day the agent dialled or sold is a working day. Effective-dated so
+     August, verified row-for-row against the workbook, stays exactly as it was.
+     Mirror of specs/mtd_engine_rules.json reference_data.attendance_classes. */
+  leaveNotShiftFrom: '2026-09-01',
+  attClasses: { leave:['AL','SL','FRL','CA','CASAT'], unavailable:['SUSPENDED'] },
+
   /* AVERAGE TALK TIME IS MINUTES PER EMPLOYED SHIFT (Nick, 2026-09-08: "total talk time divided
      by shifts, and must be in minutes"). The denominator was already employed shifts (spec §6.4);
      the unit was h:mm:ss. One value, read by fmtTalk() for every average-talk figure on screen
@@ -1898,6 +1913,24 @@ function attWeight(status){
   if(s.includes('half')) return 0.5;
   if(s==='terminated'||s==='resigned') return -1;   // ends employment
   return 0;
+}
+/* WORKING, ON LEAVE, ABSENT OR UNAVAILABLE — the register code's class (rule attClasses). ''
+   means "not an off-shift code": a working weight, a termination, or an ABSENCE (UCA and every
+   code the rule does not name — unknown is never quietly forgiven). Long-form statuses from an
+   export without a Status Code column ("Annual Leave", "Suspended") classify by their words.
+   A code the Settings override gives a working weight is a working day whatever its class. */
+function attClass(status){
+  const raw=String(status||'').trim(), up=raw.toUpperCase(), C=MTD_RULES.attClasses||{};
+  if((C.leave||[]).includes(up)) return 'leave';
+  if((C.unavailable||[]).includes(up)) return 'unavailable';
+  if(/\bleave\b/i.test(raw)) return 'leave';
+  if(/suspen/i.test(raw)) return 'unavailable';
+  return '';
+}
+function offShiftClass(status,d){
+  const from=MTD_RULES.leaveNotShiftFrom; if(!from||d<from||status==null) return '';
+  const w=attWeight(status); if(w>0||w===-1) return '';
+  return attClass(status);
 }
 function isOptIn(disp){
   const s=(disp||'').toLowerCase();
@@ -4055,6 +4088,9 @@ function buildModel(range, periodKey){
      exactly what is not in the totals. A campaign leaving the report silently is the bug the
      spec spent a whole section on; leaving it out LOUDLY is a decision. */
   const offCampaign={};
+  /* code -> [{d,k:'leave'|'unavailable',campaign}] — employed days the register says the agent
+     was not available to work (rule leaveNotShiftFrom). Not facts: they carry no shift. */
+  const offBy={};
   const attCovered=d=>!!S.att[d]&&Object.keys(S.att[d]).length>0;
   const metaOf={}; S.roster.forEach(a=>{ metaOf[a.code]=a; });
   /* LEAVERS (rule departures, 2026-09-15): on the floor for every day before `left`, and on any
@@ -4149,6 +4185,12 @@ function buildModel(range, periodKey){
          Employed Shifts, Actual Shifts and every target derived from them. With no register,
          only agents who actually did something that day count. */
       if(!attCovered(d)&&!active&&!tr){ emp=0; act=0; }
+      /* ON LEAVE / UNAVAILABLE IS NOT A SHIFT (rule leaveNotShiftFrom, 2026-09-29). No employed
+         shift, no actual shift, no target — the row then falls to the no-data guard below and
+         the day is kept in offBy instead, so every view can say "on leave" rather than read a
+         zero. Activity wins: a day they dialled or sold on is a working day whatever the code. */
+      const off=active?'':offShiftClass(st,d);
+      if(off&&emp){ (offBy[code]=offBy[code]||[]).push({d,k:off,campaign:camp}); emp=0; act=0; }
       const trackerIsSource=tr&&!cd&&!sd&&st==null;
       if(trackerIsSource){ emp=tr.emp; act=tr.act; }
       if(!emp&&(active)) emp=1;                    // has activity → must be employed
@@ -4520,7 +4562,7 @@ function buildModel(range, periodKey){
   const talkDays=new Set(), workedDays=new Set();
   for(const f of facts){ if(f.talk>0) talkDays.add(f.date); if(f.act>0||f.sales>0) workedDays.add(f.date); }
   const noDialler=[...workedDays].filter(d=>!talkDays.has(d)).sort();
-  return {range,newCampaigns,dates,weeks,facts,agents,byAgentDay,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
+  return {range,newCampaigns,dates,weeks,facts,agents,byAgentDay,offBy,mtdCC,wtdCC,tlAgg,campAgg,grand,unmatched,term,primaryCamp,qaFor,
     near:IDX.near,ambig:IDX.ambig,           // identities resolved by near spelling / left unresolved as ambiguous (2026-09-21), for the Data tab and V24
     viciSkipped,viciPartial,talkDays,noDialler,attDates,diallingDays,refsAreTotals:M_refsAreTotals,
     /* the same aggregator the grand total used, for a page that must total a FILTERED set of
@@ -9062,6 +9104,15 @@ function agentDigestPayload(){
       calls:(callsBy[a.code]||{}).calls||0, ans:(callsBy[a.code]||{}).ans||0,
       leads:leadsBy?(leadsBy[a.code]||0):null,
       act:r2(g.act)||0, emp:r2(g.emp)||0,
+      /* WORKING, ON LEAVE, ABSENT OR UNAVAILABLE (2026-09-29). Leave and unavailable days are
+         not shifts (rule leaveNotShiftFrom) — published so the page can say how many there were
+         and never treat them as missed or as days still to come. absent = employed shifts with
+         nothing worked (UCA or an unexplained no-show), in the same campaign as the row. The
+         register CODE never travels — "leave" is all a page needs, and sick leave is HR's. */
+      leave:(M.offBy&&M.offBy[a.code]||[]).filter(o=>o.k==='leave').length,
+      unavail:(M.offBy&&M.offBy[a.code]||[]).filter(o=>o.k!=='leave').length,
+      absent:(M.byAgentDay[a.code]||[]).filter(f=>f.campaign===camp&&f.emp>0&&!(f.act>0)).length,
+      off:(M.offBy&&M.offBy[a.code]||[]).map(o=>({d:o.d,k:o.k==='leave'?'leave':'unavailable'})),
       rankCo:rankCo[a.code]||null, nCo:rankAll.length,
       rankTeam:rankTeam[a.code]||null, nTeam:teamSize[teamOf[a.code]]||0,
       trend:t.dir, trendPct:(t.pct==null?null:Math.round(t.pct*1000)/1000),
@@ -9145,9 +9196,12 @@ function agentDigestPayload(){
   for(const a of (S.roster||[])){
     if(covered[a.code]) continue;
     if(MTD_RULES.excludeAgents&&MTD_RULES.excludeAgents[a.code]) continue;   // deliberately off the books
+    /* an agent whose only days this period are leave / unavailable has no facts, but is not
+       "no activity yet" — say so rather than tell them we have nothing */
+    const offN=(M.offBy&&M.offBy[a.code]||[]).length;
     notCovered.push({code:a.code,name:a.name||a.code,tl:a.tl||'',
-      why:CAMPS.includes(campOf(a.campaign))?'nodata':'campaign',
-      campaign:a.campaign||''});
+      why:CAMPS.includes(campOf(a.campaign))?(offN?'leave':'nodata'):'campaign',
+      campaign:a.campaign||''});                    // no count travels: this list carries no figures
   }
 
   return {

@@ -2462,7 +2462,7 @@ function drawerHTML(P){
     +drawerTile('SPD',a.spd==null?'—':num(a.spd,2),'Sales a day')
     +drawerTile('QA',a.qa==null?'—':pct(a.qa,1),'Call quality',
         a.qa==null?'':(a.qa>=0.9?'good':(a.qa>=0.8?'warn':'bad')))
-    +drawerTile('ATTENDANCE',a.att==null?'—':pct(a.att,1),num(a.act,a.act%1?1:0)+' of '+num(a.emp,a.emp%1?1:0)+' days',
+    +drawerTile('ATTENDANCE',a.att==null?'—':pct(a.att,1),num(a.act,a.act%1?1:0)+' of '+num(a.emp,a.emp%1?1:0)+' days'+(offDaysNote(a)?' · '+offDaysNote(a):''),
         a.att==null?'':(a.att>=0.95?'good':(a.att>=0.85?'warn':'bad')))
     +drawerTile('CANCELLATIONS',a.canc==null?'—':num(a.canc),
         (a.canc!=null&&a.sales)?pct(a.canc/a.sales,1)+' of sales':'Not supplied')
@@ -4032,6 +4032,11 @@ function notReported(){
     ? 'This page covers the Matrix VAS campaigns — Courtesy, Cuddle and Nesting. Your work sits on '
       +(n.campaign||'another campaign')+', which runs on a different scheme, so your numbers and '
       +'commission are not worked out here. Your team leader has them.'
+    : n.why==='leave'
+    /* every day on record this month is leave or otherwise unavailable (2026-09-29) — that is
+       not "no activity yet", and it is never counted against them */
+    ? 'You have been on leave so far this month, so there is nothing to '
+      +'score yet — and leave is never counted against your attendance or your target. Your figures start with your first day back.'
     : 'We have not recorded any activity for you yet this month, so there is nothing to show. Once your '
       +'first day is captured this page fills in on its own — check back tomorrow.';
   shell(esc(greeting())+', '+esc(firstName(D.name)),
@@ -5108,9 +5113,49 @@ function WORKED(){
   var a=(ME&&ME.act)||0, cap=DATA_DAYS();
   return cap==null?a:Math.min(a,cap);
 }
-/* What the projection divides by. A month can never have fewer working days than
-   the agent has already worked; if the data says otherwise, believe the agent. */
-function TDAYS(){ return Math.max(DAYS(), WORKED()); }
+/* THE WORKING DAYS STILL TO COME — counted on the calendar, never as "the month's working
+   days minus the days you worked" (POC feedback, 2026-09-28/29: "there's only 3 shifts left
+   but AgentOS displays 4", and agents on annual leave were not reflected correctly). The
+   subtraction called every day NOT worked — a day on leave, an absence, a day on another
+   campaign — a day still to come, so the remaining-day count, the per-day asks and the
+   month-end projection all inflated. This is the weekdays (less public holidays) after the
+   last day the figures reach, to the end of the period: exactly the dates remainingLabel()
+   prints, so the count and the dates can no longer disagree. Days that have passed but whose
+   files have not landed are in it on purpose — their sales are not in the figures yet. */
+function REMAINING(){
+  /* the same count from the publisher's own figure when it has one: the month's working days
+     less the working days the figures reach (daysWithData) — so remaining and days-with-data
+     are one partition of the month and can never overlap or leave a gap */
+  var dd=DATA_DAYS(); if(dd!=null&&DAYS()>0) return Math.max(0,DAYS()-dd);
+  try{
+    var last=(D.dates&&D.dates.length)?D.dates[D.dates.length-1]:null;
+    var d=last?new Date(last+'T00:00:00Z'):new Date(D.period.from+'T00:00:00Z');
+    if(last) d.setUTCDate(d.getUTCDate()+1);
+    var e=new Date(D.period.to+'T00:00:00Z'), n=0;
+    while(d<=e){ var w=d.getUTCDay();
+      if(w>0&&w<6&&!SA_HOLIDAYS[d.toISOString().slice(0,10)])n++;
+      d.setUTCDate(d.getUTCDate()+1); }
+    return n;
+  }catch(e){ return Math.max(0,DAYS()-WORKED()); }
+}
+/* What the projection runs over: the days worked plus the working days still to come. Leave,
+   unavailable and absent days are neither — the average is per day WORKED, so projecting it
+   over a day nobody could work (or did not work) promised money that could not be earned. */
+function TDAYS(){ return WORKED()+REMAINING(); }
+/* Days the register says the agent was on leave / otherwise unavailable, and days they were
+   employed and did not work — published by PULSE (2026-09-29); 0 on an older digest. */
+function LEAVE_DAYS(){ return (ME&&((ME.leave||0)+(ME.unavail||0)))||0; }
+function ABSENT_DAYS(){ return (ME&&ME.absent)||0; }
+/* "· 2 on leave · 1 absent" — said beside every days-worked figure, so a short month explains
+   itself instead of reading as a poor one. '' when there is nothing to say. */
+function offDaysNote(a){
+  a=a||ME; if(!a) return '';
+  var lv=(a.leave||0), un=(a.unavail||0), ab=(a.absent||0), out=[];
+  if(lv) out.push(num(lv)+' on leave');
+  if(un) out.push(num(un)+' unavailable');
+  if(ab) out.push(num(ab)+' absent');
+  return out.join(' · ');
+}
 /* "September" — the period's month, for headings that must name their scope. */
 function monthLabel(){
   try{ return new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',month:'long'}).format(new Date(D.period.from+'T00:00:00Z')); }
@@ -5122,6 +5167,9 @@ function remainingLabel(){
   try{
     var last=(D.dates&&D.dates.length)?D.dates[D.dates.length-1]:D.period.from;
     var f=new Date(last+'T00:00:00Z'); f.setUTCDate(f.getUTCDate()+1);
+    /* from the next WORKING day — "26 – 30 September" beside "3 days left" named a Saturday
+       nobody dials as the first of them */
+    while(f.getUTCDay()===0||f.getUTCDay()===6||SA_HOLIDAYS[f.toISOString().slice(0,10)]) f.setUTCDate(f.getUTCDate()+1);
     var t=new Date(D.period.to+'T00:00:00Z');
     if(f>t) return '';
     var mf=new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',month:'long'});
@@ -5234,7 +5282,8 @@ function agentHead(a){
     +'<div style="flex:1;min-width:220px">'
     +'<div class="ac-nm">'+esc(a.name)+' <span class="ac-cd">'+esc(a.code)+'</span></div>'
     +'<div class="ac-meta">'+esc(a.campaign||'')+(a.tenure?' · '+esc(a.tenure):'')
-    +(a.tl?' · Team leader: '+esc(a.tl):'')+' · '+esc(prettyPeriod())+' · '+num(WORKED(),WORKED()%1?1:0)+' of '+num(DAYS())+' working days worked</div></div>'
+    +(a.tl?' · Team leader: '+esc(a.tl):'')+' · '+esc(prettyPeriod())+' · '+num(WORKED(),WORKED()%1?1:0)+' of '+num(DAYS())+' working days worked'
+    +(offDaysNote(a)?' ('+esc(offDaysNote(a))+')':'')+'</div></div>'
     +(a.rankTeam?'<div class="ac-box"><div class="v">#'+num(a.rankTeam)+'</div><div class="k">OF '+num(a.nTeam)+' IN TEAM · BY GWP</div></div>':'')
     +(a.rankCo?'<div class="ac-box"><div class="v">#'+num(a.rankCo)+'</div><div class="k">OF '+num(a.nCo)+' ON FLOOR · BY GWP</div></div>':'')
     +'</div>';
@@ -5258,7 +5307,8 @@ function agentKpis(a,c){
     +acTile('QA SCORE', a.qa==null?'—':pct(a.qa,0), 'Your average call quality this month',
         tileState(a.qa,0.9,0.8))
     +acTile('ATTENDANCE', a.att==null?'—':pct(a.att,0),
-        num(a.act,a.act%1?1:0)+' of '+num(a.emp,a.emp%1?1:0)+' days attended',
+        num(a.act,a.act%1?1:0)+' of '+num(a.emp,a.emp%1?1:0)+' days attended'
+          +((a.leave||0)+(a.unavail||0)?' · '+num((a.leave||0)+(a.unavail||0))+' on leave, not counted':''),
         tileState(a.att,0.95,0.85))
     +acTile('REFERRALS', num(a.ref), 'People you sent through to the team', a.ref>0?'pass':'none')
     +'</div>';
@@ -5358,7 +5408,8 @@ function heroHTML(c){
     +'<div class="amt num">'+R(c.projection)+'</div>'
     +'<div class="note">'+line+'</div>'
     +'<div class="tiny">A projection: based on the '+R(ME.gwpEx)+' of business you have written over '
-    +num(WORKED(),WORKED()%1?1:0)+' day'+(WORKED()===1?'':'s')+', spread across the '+num(DAYS())+' working days this month. '
+    +num(WORKED(),WORKED()%1?1:0)+' day'+(WORKED()===1?'':'s')+', carried over your '+num(REMAINING())+' working day'+(REMAINING()===1?'':'s')+' still to come'
+    +(LEAVE_DAYS()?' (your '+num(LEAVE_DAYS())+' leave day'+(LEAVE_DAYS()===1?'':'s')+' are not counted against you)':'')+'. '
     +'It moves every time you sell.</div></div>';
 }
 
@@ -5506,7 +5557,7 @@ function pgDrivers(){
 function pgAdviceText(key){
   var th=(D.nba&&D.nba.thresholds)||{};
   var drv=pgDrivers(), by={}; drv.forEach(function(d){by[d.k]=d;});
-  var rem=Math.max(0,DAYS()-WORKED());
+  var rem=REMAINING();
   if(key==='ta'){ var shortS=(ME.target&&ME.sales!=null)?Math.max(0,Math.ceil(ME.target-ME.sales)):null;
     if(shortS===0) return 'You are at your sales target — hold it there to month end.';
     return shortS!=null?('You are '+num(shortS)+' sale'+(shortS===1?'':'s')+' from your target this month'
@@ -6078,7 +6129,8 @@ function breakdownHTML(c){
   add('Premium written (ex VAT)',R(ME.gwpEx),'This is what commission is worked out on — ex VAT','ok');
   if(ME.aveG!=null) add('Average sale (ex VAT)',R(ME.aveG),'What a typical sale of yours is worth, ex VAT','ok');
   if(ME.spd!=null) add('Sales a day',num(ME.spd,2),'On the days you work','ok');
-  add('Days worked',num(WORKED(),WORKED()%1?1:0),'Of '+num(DAYS())+' working days in '+monthLabel()+' — days whose files have landed','ok');
+  add('Days worked',num(WORKED(),WORKED()%1?1:0),'Of '+num(DAYS())+' working days in '+monthLabel()+' — days whose files have landed'
+    +(offDaysNote()?' · '+offDaysNote():''),'ok');
 
   if(ME.att!=null) add('Attendance',pct(ME.att,0),
     ME.att>=.95?'Excellent':(ME.att>=.85?'Solid':'Worth lifting'),
@@ -6148,9 +6200,16 @@ function stat(lab,val,sub){
 function todayHTML(c){
   var days=ME.days||[];
   var worked=WORKED();
-  var rem=Math.max(0,DAYS()-worked);
+  var rem=REMAINING();
   var perDayTarget=(ME.target&&ME.emp)?ME.target/ME.emp:((ME.target&&DAYS())?ME.target/DAYS():null);
-  var monthTarget=perDayTarget?Math.round(perDayTarget*DAYS()):null;
+  /* the target already carried (daily target × the agent's own employed shifts — leave days
+     are not shifts, so they carry none) plus the daily target on each day still to come.
+     perDayTarget × every working day of the month charged a leave week as if it were worked. */
+  /* employed shifts are capped at the days whose files have landed, like days worked: the
+     register runs ahead of the sales files, and today must not be charged twice (as an employed
+     shift AND as a day still to come) */
+  var dd=DATA_DAYS(), empDays=ME.emp?(dd!=null?Math.min(ME.emp,dd):ME.emp):0;
+  var monthTarget=perDayTarget?Math.round(perDayTarget*(empDays+rem)):null;
   var h='<div class="card"><h2>Your number for today</h2>';
   if(monthTarget==null){
     h+='<p class="why">We need a target on file before we can work out your number. Ask your team leader.</p>';
@@ -6746,7 +6805,7 @@ function comsTop(){
     +'<div><h1>Projected Commission Calculator</h1>'
     +'<div class="meta"><span>'+esc(ME.name||'')+'</span>'+(ME.code?'<span>'+esc(ME.code)+'</span>':'')
     +(ME.campaign?'<span>'+esc(ME.campaign)+'</span>':'')
-    +'<span>'+esc(prettyPeriod())+' — '+num(TDAYS())+' working days</span></div></div></div>';
+    +'<span>'+esc(prettyPeriod())+' — '+num(DAYS())+' working days</span></div></div></div>';
 }
 function comsExplain(c){
   return '<div class="card" style="border-style:dashed">'
@@ -6812,7 +6871,8 @@ function comsFigures(c){
     +'<div class="coms-rows">'
     +'<div><span>Plan</span><b>'+esc(PLAN_LAB[ME.plan]||ME.plan||'—')+'</b></div>'
     +'<div><span>Working days worked (days whose files have landed)</span><b class="num">'+num(w,w%1?1:0)+'</b></div>'
-    +'<div><span>Working days in '+esc(monthLabel())+'</span><b class="num">'+num(TDAYS())+'</b></div>'
+    +'<div><span>Days the projection covers (worked + still to come)</span><b class="num">'+num(TDAYS())+'</b></div>'
+    +(offDaysNote()?'<div><span>Not counted (on leave or absent, of '+num(DAYS())+' working days in '+esc(monthLabel())+')</span><b class="num">'+esc(offDaysNote())+'</b></div>':'')
     +'<div><span>Premium written, excluding VAT</span><b class="num">'+R(ME.gwpEx,2)+'</b></div>'
     +'</div>'
     +'<div id="figRows">'+figRowsInner(c)+'</div>'
