@@ -73,6 +73,10 @@ export const PORTAL_ALLOWED = new Set([
   /* An agent's own requests: see where each stands, close their own off. */
   '/api/portal/help/mine',
   '/api/portal/help/close',
+  /* Nick's six steps + the leader's icon (sprint 2026-09-29): confirm = the agent's own request only
+     ("Yes, I was helped" / "Not yet"); pulse = the Help Center icon's count, team leaders only. */
+  '/api/portal/help/confirm',
+  '/api/portal/help/pulse',
   /* CAMPAIGN ASSISTANCE (assist.mjs) — the team-leader → campaign-manager
      pipeline. request = team leaders only; the register, actions and EOD pack
      are role-gated in the handlers, exactly as the help routes are. */

@@ -49,7 +49,7 @@ function fakeDB() {
 
 /* a HighLevel Help location: one pipeline, contacts, opportunities, notes */
 function fakeHL(o) {
-  const st = { opps: [], notes: {}, calls: [], n: 0, allowDup: !!o.allowDup, hide: new Set(), failPut: false, failCreate: null };
+  const st = { opps: [], notes: {}, calls: [], n: 0, allowDup: !!o.allowDup, hide: new Set(), failPut: false, failCreate: null, stages: o.stages || STAGES };
   const stamp = () => new Date(Date.now() + (st.n++)).toISOString();
   globalThis.__helpPipe = null;
   globalThis.fetch = async (url, opts) => {
@@ -57,7 +57,7 @@ function fakeHL(o) {
     const body = opts && opts.body ? JSON.parse(opts.body) : null;
     st.calls.push({ method, path: p, body });
     const res = (status, b) => ({ ok: status < 400, status, text: async () => JSON.stringify(b) });
-    if (p === '/opportunities/pipelines') return res(200, { pipelines: [{ id: 'pipe1', name: 'Agent Help Center', stages: STAGES }] });
+    if (p === '/opportunities/pipelines') return res(200, { pipelines: [{ id: 'pipe1', name: 'Agent Help Center', stages: st.stages }] });
     if (p === '/opportunities/search') {
       const ops = st.opps.filter((x) => !st.hide.has(x.id)).slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
       return res(200, { opportunities: ops, meta: { total: ops.length } });
@@ -207,6 +207,138 @@ console.log('\n7 · an archived request id never reaches HighLevel');
   const d = await H.helpDetail(env, DB, tl, digest, aid);
   ok('close / stage / detail answer 404', c.status === 404 && s.status === 404 && d.status === 404, [c.status, s.status, d.status].join(','));
   ok('no HighLevel opportunity was fetched for it', !hl.calls.slice(before).some((x) => x.path.includes(aid))); }
+
+/* ─── NICK'S SIX STEPS + THE TEAM LEADER'S ICON (sprint 2026-09-29, D5) ───────────────────────
+   agent requests → request created → TL notified (the Help Center icon) → TL acknowledges (their
+   opening it stamps "seen") → action completed (moved to "Waiting on agent") → agent confirms. */
+const DIG2 = { agents: [...digest.agents, { code: 'CB200', name: 'Far Agent', tl: 'Other Leader', campaign: 'Cuddle' }] };
+const tl2 = { role: 'team_leader', cb: 'CB300', team: 'Other Leader', full_name: 'Other Leader' };
+const admin = { role: 'admin', cb: '', full_name: 'Admin Person', username: 'admin' };
+const agent2 = { role: 'agent', cb: 'CB163', full_name: 'Other Agent', username: 'cb163' };
+const ask2 = (cat, note) => H.helpRequest(env, globalThis.__DB, agent, DIG2, { category: cat, note });
+const pulse = (u) => H.helpPulse(env, globalThis.__DB, u, DIG2);
+const cardOf = (id) => globalThis.__DB.rows['kv:help-card:' + id];
+
+console.log('\n8 · a first-ever ask writes the record the icon reads');
+{ globalThis.__DB = fakeDB(); const hl = fakeHL({});
+  const r = await ask2('Review my call', 'FIRST EVER');
+  ok('the ask lands', r.status === 200 && !!r.body.id, JSON.stringify(r.body));
+  const c = cardOf(r.body.id);
+  ok('a card record exists for a brand-new card', !!c && c.cb === 'CB162' && !!c.asked_at && !c.acknowledged_at, JSON.stringify(c));
+  const pd = await pulse(tl), po = await pulse(tl2), pa = await pulse(agent);
+  ok('the agent\'s own team leader sees 1 on the icon', pd.status === 200 && pd.body.unread === 1, JSON.stringify(pd));
+  ok('another team\'s leader sees 0', po.status === 200 && po.body.unread === 0, JSON.stringify(po));
+  ok('an agent cannot read the icon (403)', pa.status === 403);
+
+  console.log('\n9 · opening it: the own team leader\'s look clears the icon; an admin\'s does not');
+  const da = await H.helpDetail(env, globalThis.__DB, admin, DIG2, r.body.id);
+  ok('an admin can read it', da.status === 200);
+  ok('…without stamping "seen"', !cardOf(r.body.id).acknowledged_at);
+  ok('…so the team leader\'s icon still shows 1', (await pulse(tl)).body.unread === 1);
+  const dt = await H.helpDetail(env, globalThis.__DB, tl, DIG2, r.body.id);
+  ok('the team leader opens it', dt.status === 200 && /FIRST EVER/.test(dt.body.note || ''), JSON.stringify(dt.body).slice(0, 200));
+  ok('"seen" is stamped with who and when', !!cardOf(r.body.id).acknowledged_at && cardOf(r.body.id).acknowledged_by === 'Denise Haripersad', JSON.stringify(cardOf(r.body.id)));
+  ok('the icon clears', (await pulse(tl)).body.unread === 0);
+  const m = await H.helpMine(env, globalThis.__DB, agent, DIG2);
+  const mr = (m.body.requests || []).find((x) => x.id === r.body.id);
+  ok('the agent sees who saw it', mr && mr.seenBy === 'Denise Haripersad' && !!mr.seenAt, JSON.stringify(mr));
+
+  console.log('\n10 · a repeat ask on a card already seen lights the icon again');
+  const r2 = await ask2('Explain the product', 'SECOND ON SEEN CARD');
+  ok('the repeat joins the card', r2.status === 200 && r2.body.id === r.body.id && r2.body.merged === true, JSON.stringify(r2.body));
+  ok('"seen" is reset', !cardOf(r.body.id).acknowledged_at, JSON.stringify(cardOf(r.body.id)));
+  ok('the icon shows 1 again', (await pulse(tl)).body.unread === 1);
+  await H.helpDetail(env, globalThis.__DB, tl, DIG2, r.body.id);
+
+  console.log('\n11 · action completed → the agent confirms (or says not yet)');
+  const s2 = await H.helpStage(env, globalThis.__DB, tl, DIG2, { id: r.body.id, stageId: 's2' });
+  ok('the team leader marks it done (Waiting on agent)', s2.status === 200 && !!cardOf(r.body.id).completed_at, JSON.stringify(cardOf(r.body.id)));
+  const m2 = await H.helpMine(env, globalThis.__DB, agent, DIG2);
+  const r2row = (m2.body.requests || []).find((x) => x.id === r.body.id);
+  ok('the agent\'s row says it is waiting for them', r2row && r2row.awaitingAgent === true, JSON.stringify(r2row));
+  const no = await H.helpConfirm(env, globalThis.__DB, agent, DIG2, { id: r.body.id, helped: false });
+  ok('"Not yet" goes back to the team leader', no.status === 200 && hl.opps.find((o) => o.id === r.body.id).pipelineStageId === 's1', JSON.stringify(no));
+  ok('…counted as a reopen, done-stamp cleared', cardOf(r.body.id).reopens === 1 && !cardOf(r.body.id).completed_at, JSON.stringify(cardOf(r.body.id)));
+  ok('…and the icon lights again', (await pulse(tl)).body.unread === 1);
+  await H.helpDetail(env, globalThis.__DB, tl, DIG2, r.body.id);
+  await H.helpStage(env, globalThis.__DB, tl, DIG2, { id: r.body.id, stageId: 's2' });
+  const yes = await H.helpConfirm(env, globalThis.__DB, agent, DIG2, { id: r.body.id, helped: true });
+  const op = hl.opps.find((o) => o.id === r.body.id);
+  ok('"Yes, I was helped" closes it', yes.status === 200 && op.pipelineStageId === 's3' && op.status === 'won', JSON.stringify(yes));
+  ok('…with the confirmation stamped', !!cardOf(r.body.id).agent_confirmed_at && !!cardOf(r.body.id).closed_at);
+  ok('…and nothing left on the icon', (await pulse(tl)).body.unread === 0);
+  const again = await H.helpConfirm(env, globalThis.__DB, agent, DIG2, { id: r.body.id, helped: true });
+  ok('confirming a closed request is refused (409)', again.status === 409, JSON.stringify(again));
+
+  console.log('\n12 · confirm guards');
+  const r3 = await ask2('Something else', 'GUARDS');
+  const g1 = await H.helpConfirm(env, globalThis.__DB, agent2, DIG2, { id: r3.body.id, helped: true });
+  const g2 = await H.helpConfirm(env, globalThis.__DB, tl, DIG2, { id: r3.body.id, helped: true });
+  const g3 = await H.helpConfirm(env, globalThis.__DB, agent, DIG2, { id: r3.body.id + ':20260101000000', helped: true });
+  const g4 = await H.helpConfirm(env, globalThis.__DB, agent, DIG2, {});
+  ok('another agent → 403', g1.status === 403, JSON.stringify(g1));
+  ok('a team leader → 403 (the agent confirms, not the leader)', g2.status === 403, JSON.stringify(g2));
+  ok('an archived id → 404', g3.status === 404, JSON.stringify(g3));
+  ok('no id → 400', g4.status === 400, JSON.stringify(g4)); }
+
+console.log('\n13 · a card closed straight in HighLevel stops counting — nobody has to open the list');
+{ globalThis.__DB = fakeDB(); const hl = fakeHL({});
+  const r = await ask2('Review my call', 'CLOSED IN HL');
+  hl.opps.find((o) => o.id === r.body.id).status = 'won';
+  hl.opps.find((o) => o.id === r.body.id).pipelineStageId = 's3';
+  ok('the next pulse checks HighLevel and drops it', (await pulse(tl)).body.unread === 0, JSON.stringify(cardOf(r.body.id)));
+  ok('…and records it closed', !!cardOf(r.body.id).closed_at);
+  const r2 = await ask2('Review my call', 'DELETED IN HL');
+  hl.opps.splice(hl.opps.findIndex((o) => o.id === r2.body.id), 1);
+  ok('a card deleted in HighLevel stops counting too', (await pulse(tl)).body.unread === 0, JSON.stringify(cardOf(r2.body.id))); }
+
+console.log('\n13b · the list never closes a card from a STALE search row after a fresh ask');
+{ globalThis.__DB = fakeDB(); const hl = fakeHL({}); seed(globalThis.__DB, hl, { closed: true });
+  /* HighLevel's search still shows the card closed on 2 Sep; the agent has asked again since */
+  globalThis.__DB.rows['kv:help-card:old1'] = { cb: 'CB162', asked_at: new Date().toISOString(), asks: 1, acknowledged_at: null, closed_at: null };
+  await H.helpList(env, globalThis.__DB, tl, DIG2);
+  ok('the fresh ask is not marked closed', !cardOf('old1').closed_at, JSON.stringify(cardOf('old1'))); }
+
+console.log('\n16 · "Not yet" only once the leader has marked it done; lost cards are closed');
+{ globalThis.__DB = fakeDB(); const hl = fakeHL({});
+  const r = await ask2('Review my call', 'NOT DONE YET');
+  const n1 = await H.helpConfirm(env, globalThis.__DB, agent, DIG2, { id: r.body.id, helped: false });
+  ok('"Not yet" on a request still with the leader is refused (409)', n1.status === 409, JSON.stringify(n1));
+  ok('…and the card has not moved', hl.opps.find((o) => o.id === r.body.id).pipelineStageId === 's0');
+  hl.opps.find((o) => o.id === r.body.id).status = 'lost';
+  const n2 = await H.helpConfirm(env, globalThis.__DB, agent, DIG2, { id: r.body.id, helped: true });
+  ok('a lost card cannot be confirmed (409)', n2.status === 409, JSON.stringify(n2)); }
+
+console.log('\n17 · short pipelines: the "waiting on agent" stage is always the one before Closed');
+{ const S3 = [{ id: 't0', name: 'New', position: 0 }, { id: 't1', name: 'Waiting on agent', position: 1 }, { id: 't2', name: 'Closed', position: 2 }];
+  globalThis.__DB = fakeDB(); const hl = fakeHL({ stages: S3 });
+  const r = await ask2('Review my call', 'THREE STAGES');
+  await H.helpStage(env, globalThis.__DB, tl, DIG2, { id: r.body.id, stageId: 't1' });
+  const m = await H.helpMine(env, globalThis.__DB, agent, DIG2);
+  ok('3 stages: the middle stage waits on the agent', ((m.body.requests || []).find((x) => x.id === r.body.id) || {}).awaitingAgent === true);
+  const no = await H.helpConfirm(env, globalThis.__DB, agent, DIG2, { id: r.body.id, helped: false });
+  const op = hl.opps.find((o) => o.id === r.body.id);
+  ok('"Not yet" goes back to New — not left on the waiting stage', no.status === 200 && op.pipelineStageId === 't0' && op.status === 'open', JSON.stringify(op));
+  const S2 = [{ id: 'u0', name: 'Open', position: 0 }, { id: 'u1', name: 'Closed', position: 1 }];
+  globalThis.__DB = fakeDB(); const hl2 = fakeHL({ stages: S2 });
+  const r2 = await ask2('Review my call', 'TWO STAGES');
+  const no2 = await H.helpConfirm(env, globalThis.__DB, agent, DIG2, { id: r2.body.id, helped: false });
+  ok('2 stages: there is no waiting stage, so "Not yet" is refused rather than closing it', no2.status === 409 && hl2.opps.find((o) => o.id === r2.body.id).status === 'open', JSON.stringify(no2)); }
+
+console.log('\n14 · the list shows a brand-new card HighLevel\'s search has not indexed yet');
+{ globalThis.__DB = fakeDB(); const hl = fakeHL({});
+  const r = await ask2('Review my call', 'NOT INDEXED');
+  hl.hide.add(r.body.id);
+  const L = await H.helpList(env, globalThis.__DB, tl, DIG2);
+  ok('the new request is on the team leader\'s list', (L.body.requests || []).some((x) => x.id === r.body.id && !x.closed), JSON.stringify(L.body.requests)); }
+
+console.log('\n15 · an agent closing their own request clears the icon');
+{ globalThis.__DB = fakeDB(); const hl = fakeHL({});
+  const r = await ask2('Review my call', 'CLOSE OWN');
+  ok('1 on the icon', (await pulse(tl)).body.unread === 1);
+  const c = await H.helpCloseOwn(env, globalThis.__DB, agent, DIG2, { id: r.body.id });
+  ok('closed', c.status === 200);
+  ok('0 on the icon', (await pulse(tl)).body.unread === 0, JSON.stringify(cardOf(r.body.id))); }
 
 console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====');
 process.exitCode = fail ? 1 : 0;

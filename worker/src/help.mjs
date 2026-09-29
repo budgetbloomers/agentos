@@ -173,6 +173,23 @@ const isNoDup = (e) => !!e && e.status === 400
 /* an archived request's id is <cardId>:<stamp>; HighLevel ids never carry a colon */
 const isArchivedId = (id) => String(id).includes(':');
 
+/* ONE RECORD SHAPE for Nick's six steps (sprint 2026-09-29, items 4 + 5):
+   {cb, asked_at, round_from, asks, reopens, acknowledged_at, acknowledged_by, completed_at,
+    agent_confirmed_at, closed_at}. EVERY ask writes it — a brand-new card too, or the team leader's
+   icon never sees a first ask — and every ask RESETS the workflow stamps, or a repeat ask on a card the
+   leader has already seen would hide behind the old "seen" (architect review, 2026-09-29). */
+const RESET = { acknowledged_at: null, acknowledged_by: null, completed_at: null, agent_confirmed_at: null, closed_at: null };
+/* "Waiting on agent" is the stage BEFORE the last (Closed), whatever HighLevel names it — and only when
+   there is a stage between New and it. ONE helper for parseRow, helpStage and helpConfirm: a pipeline
+   of 2–3 stages must never put "Not yet" on the waiting stage, or close it (review, 2026-09-29). */
+const awaitIdx = (stages) => (stages.length >= 3 ? stages.length - 2 : -1);
+async function stampCard(DB, id, cb, patch) {
+  const cur = (await cardOne(DB, id)) || {};
+  const next = { ...cur, cb: cur.cb || cb, ...(typeof patch === 'function' ? patch(cur) : patch) };
+  await cardWrite(DB, id, next);
+  return next;
+}
+
 async function cardOne(DB, id) {
   const rows = await DB.select('rules?key=eq.' + encodeURIComponent(CARD + id) + '&select=value');
   return (rows && rows[0] && rows[0].value) || null;
@@ -213,13 +230,13 @@ async function reuseCard(env, DB, p, contactId, cb, oppName, now) {
   const id = hit.o.id;
   const old = await cardOne(DB, id);
   let archKey = null, next;
-  if (!hit.r.closed) next = { ...(old || {}), asked_at: now, asks: ((old && old.asks) || 1) + 1 };
+  if (!hit.r.closed) next = { ...(old || {}), ...RESET, cb: hit.r.cb || cb, asked_at: now, asks: ((old && old.asks) || 1) + 1 };
   else {
     archKey = ARCH + id + ':' + now.replace(/[^0-9]/g, '').slice(0, 14);
     await DB.insert('rules', [{ key: archKey, value: { cb: hit.r.cb || cb, agent: hit.r.agent, category: hit.r.category,
       contactId, created: (old && old.asked_at) || hit.r.created, closed_at: hit.o.lastStatusChangeAt || hit.o.updatedAt || '',
       archived_at: now }, updated_by: 'help-center', updated_at: now }], true);
-    next = { asked_at: now, round_from: now, asks: 1 };
+    next = { ...RESET, cb: hit.r.cb || cb, asked_at: now, round_from: now, asks: 1, reopens: 0 };
   }
   /* the records first, the card last — a failed move puts both records back exactly as they were */
   try {
@@ -249,12 +266,16 @@ export async function helpRequest(env, DB, user, digest, body) {
   const contactId = await contactFor(env, DB, cb, name);
   const oppName = '[' + cat + '] ' + cb + ' ' + name;
   const now = new Date().toISOString();
-  let oppId = '', merged = false, reopened = false;
+  let oppId = '', merged = false, reopened = false, notifyFailed = false;
   try {
     const opp = await hl(env, '/opportunities/', { method: 'POST', body: JSON.stringify({
       locationId: env.HL_HELP_LOCATION_ID, pipelineId: p.id, pipelineStageId: p.stages[0].id,
       name: oppName, status: 'open', contactId }) });
     oppId = (opp.opportunity && opp.opportunity.id) || '';
+    /* the record the team leader's icon reads — a failed write must not undo a request that
+       landed (it still shows in the Help Center); it is reported in the answer instead */
+    try { await cardWrite(DB, oppId, { ...RESET, cb, asked_at: now, round_from: now, asks: 1, reopens: 0 }); }
+    catch (e) { notifyFailed = true; }
   } catch (e) {
     if (!isNoDup(e)) throw e;
     const r = await reuseCard(env, DB, p, contactId, cb, oppName, now);
@@ -274,7 +295,7 @@ export async function helpRequest(env, DB, user, digest, body) {
     return { status: 502, body: { error: 'Your request reached your team leader\'s Help Center, but your note did not save — press Send again; it joins the same request.',
       id: oppId, note_failed: true } };
   }
-  return { status: 200, body: { ok: true, id: oppId, merged, reopened } };
+  return { status: 200, body: { ok: true, id: oppId, merged, reopened, ...(notifyFailed ? { notify_failed: true } : {}) } };
 }
 
 /* The agent's own requests — so they can see where each one stands and close one
@@ -288,7 +309,8 @@ export async function helpMine(env, DB, user, digest) {
   const p = await pipeline(env);
   if (!p) return { status: 200, body: { stages: [], requests: [] } };
   const [__sr, meta] = await Promise.all([searchAll(env, p.id), helpMeta(DB)]);
-  const rows = __sr.ops.map((o) => parseRow(o, p.stages, {}, meta.cards[o.id]))
+  const ops = await withUnindexed(env, p, __sr.ops, meta.cards, (c) => c === cb);
+  const rows = ops.map((o) => parseRow(o, p.stages, {}, meta.cards[o.id]))
     .concat(meta.archived.map((a) => archivedRow(a, p.stages, {})))
     .filter((r) => r.cb === cb)
     .sort((a, b) => String(b.created).localeCompare(String(a.created)));
@@ -311,10 +333,106 @@ export async function helpCloseOwn(env, DB, user, digest, body) {
   if (row.cb !== cb) return { status: 403, body: { error: 'That request is not yours.' } };
   await hl(env, '/opportunities/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify({
     pipelineStageId: p.stages[p.stages.length - 1].id, status: 'won' }) });
-  return { status: 200, body: { ok: true } };
+  let stampFailed = false;
+  try { await stampCard(DB, id, cb, { closed_at: new Date().toISOString() }); } catch (e) { stampFailed = true; }
+  return { status: 200, body: { ok: true, ...(stampFailed ? { stamp_failed: true } : {}) } };
 }
 
-/* `card` (optional) is the kv:help-card record: a reused card is dated by its latest ask */
+/* THE AGENT CONFIRMS (Nick's step 6, 2026-09-29): "Yes, I was helped" closes the request and records
+   it; "Not yet" hands it back to the team leader — back to the second stage, the icon lit again, one
+   more reopen on the record. Only the agent who asked; never on a closed or archived request. */
+export async function helpConfirm(env, DB, user, digest, body) {
+  if (user.role !== 'agent') return { status: 403, body: { error: 'Only the agent who asked confirms whether it was sorted.' } };
+  const auth = authorise(user, digest);
+  if (auth.error) return { status: auth.status, body: { error: auth.error } };
+  const cb = normCb(user.cb);
+  const id = String((body && body.id) || '');
+  if (!id) return { status: 400, body: { error: 'id required.' } };
+  if (isArchivedId(id)) return { status: 404, body: { error: 'That request is already closed.' } };
+  const p = await pipeline(env);
+  if (!p || !p.stages.length) return { status: 503, body: { error: 'Pipeline missing.' } };
+  const cur = await hl(env, '/opportunities/' + encodeURIComponent(id));
+  const opp = cur.opportunity || cur;
+  if (String(opp.pipelineId || '') !== p.id) return { status: 404, body: { error: 'That is not a request in this pipeline.' } };
+  const row = parseRow(opp, p.stages, {});
+  if (row.cb !== cb) return { status: 403, body: { error: 'That request is not yours.' } };
+  if (row.closed || String(opp.status || '') === 'lost') return { status: 409, body: { error: 'That request is already closed.' } };
+  const now = new Date().toISOString();
+  const helped = !!(body && body.helped === true);
+  /* "Not yet" answers the leader's "done" — before that it would only relight the icon and inflate the
+     reopen count (security review, 2026-09-29) */
+  if (!helped && !row.awaitingAgent) return { status: 409, body: { error: 'Your team leader has not marked this done yet — it is still with them.' } };
+  const to = helped ? p.stages[p.stages.length - 1] : p.stages[Math.max(0, awaitIdx(p.stages) - 1)];
+  await hl(env, '/opportunities/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify({
+    pipelineStageId: to.id, status: helped ? 'won' : 'open' }) });
+  let stampFailed = false;
+  try {
+    await stampCard(DB, id, cb, helped ? { agent_confirmed_at: now, closed_at: now }
+      : (c) => ({ completed_at: null, acknowledged_at: null, acknowledged_by: null, reopens: (c.reopens || 0) + 1 }));
+  } catch (e) { stampFailed = true; }
+  return { status: 200, body: { ok: true, closed: helped, stage: to.name, ...(stampFailed ? { stamp_failed: true } : {}) } };
+}
+
+/* THE TEAM LEADER'S ICON (D5, 2026-09-29): how many requests from their own team nobody has opened
+   yet. One prefix read of the card records, scoped by the same authorise() as the list — never a
+   HighLevel call (free-plan budget), never a stored team name (goes stale for movers). */
+export async function helpPulse(env, DB, user, digest) {
+  const auth = authorise(user, digest);
+  if (auth.error) return { status: auth.status, body: { error: auth.error } };
+  const deny = tlOnly(auth); if (deny) return deny;
+  /* only records still open — the closed ones never count and are the ones that pile up */
+  const rows = await DB.select('rules?key=like.' + encodeURIComponent(CARD + '*') + '&value->>closed_at=is.null&select=key,value');
+  const open = [];
+  for (const r of rows || []) {
+    const v = r.value || {}, c = normCb(v.cb || '');
+    if (!c || (auth.scope !== 'all' && !auth.codes.has(c))) continue;
+    if (!v.asked_at || v.acknowledged_at || v.closed_at) continue;
+    open.push({ id: r.key.slice(CARD.length), v, cb: c });
+  }
+  /* SELF-HEALING (review, 2026-09-29): a request closed or deleted straight in HighLevel would light
+     the icon for ever if the leader never opened the list. Each pulse checks the OLDEST unread card not
+     checked in the last 5 minutes — at most one HighLevel call per pulse — and drops it if it is gone. */
+  const now = new Date().toISOString(), stale = new Date(Date.now() - 5 * 60000).toISOString();
+  const due = open.filter((x) => !x.v.checked_at || String(x.v.checked_at) < stale)
+    .sort((a, b) => String(a.v.asked_at).localeCompare(String(b.v.asked_at)))[0];
+  if (due) {
+    try {
+      let gone = false;
+      try {
+        const j = await hl(env, '/opportunities/' + encodeURIComponent(due.id));
+        const o = j.opportunity || j, p = await pipeline(env);
+        const si = p ? p.stages.findIndex((s) => s.id === o.pipelineStageId) : -1;
+        gone = o.status === 'won' || o.status === 'lost' || (p && si === p.stages.length - 1);
+      } catch (e) { if (e && e.status === 404) gone = true; else throw e; }
+      await stampCard(DB, due.id, due.cb, (cur) => (cur.closed_at || cur.acknowledged_at || cur.asked_at !== due.v.asked_at ? {}
+        : gone ? { closed_at: now } : { checked_at: now }));
+      if (gone) open.splice(open.indexOf(due), 1);
+    } catch (e) { /* HighLevel unreachable — count what the records say; the next pulse checks again */ }
+  }
+  const latest = open.reduce((m, x) => (String(x.v.asked_at) > m ? String(x.v.asked_at) : m), '');
+  return { status: 200, body: { unread: open.length, latest } };
+}
+
+/* A request asked seconds ago may not be in HighLevel's search index yet (it lags writes) — the icon
+   would light and the list would not show it. Cards asked in the last 15 minutes that the search did
+   not return are fetched by id, at most 5; one still unreachable simply shows on the next load. */
+async function withUnindexed(env, p, ops, cards, inScope) {
+  const seen = new Set(ops.map((o) => o.id));
+  const recent = Object.entries(cards || {}).filter(([id, c]) => !seen.has(id) && c && c.cb && !c.closed_at && c.asked_at
+    && Date.now() - Date.parse(c.asked_at) < 15 * 60000 && inScope(normCb(c.cb))).slice(0, 5);
+  const extra = [];
+  for (const [id] of recent) {
+    try {
+      const j = await hl(env, '/opportunities/' + encodeURIComponent(id));
+      const o = j.opportunity || j;
+      if (String(o.pipelineId || '') === p.id) extra.push(o);
+    } catch (e) { /* not reachable yet — the next load asks again */ }
+  }
+  return ops.concat(extra);
+}
+
+/* `card` (optional) is the kv:help-card record: a reused card is dated by its latest ask, and carries
+   the workflow stamps the agent and the team leader see (seen by, done, confirmed) */
 function parseRow(o, stages, byCb, card) {
   const m = String(o.name || '').match(/^\[([^\]]+)\]\s+(CB\d+)\s*(.*)$/i);
   /* Identity comes from the [cat] CBnn name; the fallback for a hand-made/renamed record
@@ -326,13 +444,20 @@ function parseRow(o, stages, byCb, card) {
   if (m) cb = normCb(m[2]);
   else { const cm = String((o.contact && o.contact.name) || '').match(/\bCB[-\s]?(\d+)\b/i); if (cm) cb = normCb('cb' + cm[1]); }
   const si = stages.findIndex((s) => s.id === o.pipelineStageId);
+  const closed = (stages.length && si === stages.length - 1) || o.status === 'won';
+  const c = card || {};
   return { id: o.id, cb,
     agent: (byCb[cb] && byCb[cb].name) || (m && m[3] ? m[3] : '') || cb,
     category: m ? m[1] : 'Something else',
     contactId: o.contactId || (o.contact && o.contact.id) || '',
     stageId: o.pipelineStageId, stage: si >= 0 ? stages[si].name : '?', stageIdx: si,
-    closed: (stages.length && si === stages.length - 1) || o.status === 'won',
-    created: (card && card.asked_at) || o.createdAt || o.dateAdded || '', updated: o.updatedAt || '' };
+    closed,
+    created: c.asked_at || o.createdAt || o.dateAdded || '', updated: o.updatedAt || '',
+    /* the workflow as the two people see it: who opened it, and whether it now waits on the agent
+       (the second-to-last stage — "Waiting on agent" — whatever HighLevel names it) */
+    seenAt: c.acknowledged_at || null, seenBy: c.acknowledged_by || null,
+    awaitingAgent: !closed && si >= 0 && si === awaitIdx(stages),
+    confirmedAt: c.agent_confirmed_at || null, reopens: c.reopens || 0 };
 }
 
 const tlOnly = (auth) => (auth.scope !== 'team' && auth.scope !== 'all')
@@ -346,7 +471,25 @@ export async function helpList(env, DB, user, digest) {
   if (!p) return { status: 200, body: { setup: 'Create a pipeline named "' + PIPE_NAME + '" in HighLevel and requests will land here.', stages: [], requests: [] } };
   const [__sr, meta] = await Promise.all([searchAll(env, p.id), helpMeta(DB)]);
   const byCb = {}; for (const a of auth.rows || []) byCb[a.code] = a;
-  const rows = __sr.ops.map((o) => parseRow(o, p.stages, byCb, meta.cards[o.id]))
+  const inScope = (c) => auth.scope === 'all' || auth.codes.has(c);
+  const ops = await withUnindexed(env, p, __sr.ops, meta.cards, inScope);
+  /* A card closed straight in HighLevel (the leader used the CRM, not this page) must stop lighting the
+     icon: opening the list is when we see it, so the record is closed here — at most 10 per load. */
+  let fixes = 0;
+  for (const o of ops) {
+    const c = meta.cards[o.id];
+    if (!c || c.closed_at || fixes >= 5) continue;
+    const r = parseRow(o, p.stages, {}, c);
+    if (!r.closed || !inScope(r.cb)) continue;
+    /* HighLevel's search lags writes: a row that still shows a card closed BEFORE the latest ask is a
+       stale copy, not a close — writing it would hide a fresh ask from the icon (review, 2026-09-29) */
+    const closedAt = o.lastStatusChangeAt || o.updatedAt || '';
+    if (c.asked_at && (!closedAt || String(closedAt) < String(c.asked_at))) continue;
+    fixes++;
+    await stampCard(DB, o.id, r.cb, (cur) => (cur.closed_at || cur.asked_at !== c.asked_at ? {} : { closed_at: closedAt }))
+      .catch(() => { /* the pulse's own HighLevel check closes it next */ });
+  }
+  const rows = ops.map((o) => parseRow(o, p.stages, byCb, meta.cards[o.id]))
     .concat(meta.archived.map((a) => archivedRow(a, p.stages, byCb)))
     .filter((r) => auth.scope === 'all' || auth.codes.has(r.cb))
     .sort((a, b) => String(b.created).localeCompare(String(a.created)));
@@ -367,9 +510,23 @@ export async function helpDetail(env, DB, user, digest, id) {
   const j = await hl(env, '/opportunities/' + encodeURIComponent(id));
   const __oppD = j.opportunity || j;
   if (String(__oppD.pipelineId || '') !== p.id) return { status: 404, body: { error: 'That is not a request in this pipeline.' } };
-  const card = await cardOne(DB, id);
+  let card = await cardOne(DB, id);
   const row = parseRow(__oppD, (p && p.stages) || [], {}, card);
   if (auth.scope !== 'all' && !auth.codes.has(row.cb)) return { status: 403, body: { error: 'That request is not from your team.' } };
+  /* NICK'S STEP 4 — THE TEAM LEADER ACKNOWLEDGES by opening the request: "seen" is stamped with who and
+     when, the agent sees it, and the icon clears. Only the agent's OWN leader (scope 'team'); an admin or
+     exec previewing the queue must not mark it seen for them. */
+  let ackFailed = false;
+  if (auth.scope === 'team' && !row.closed && !(card && card.acknowledged_at)) {
+    try {
+      /* stamp only the ask this leader is looking at — if the agent asked again in the meantime, that
+         newer ask stays unread (review, 2026-09-29) */
+      const opened = (card && card.asked_at) || null;
+      card = await stampCard(DB, id, row.cb, (cur) => ((cur.asked_at || null) !== opened ? {}
+        : { acknowledged_at: new Date().toISOString(), acknowledged_by: user.full_name || user.username || '' }));
+      row.seenAt = card.acknowledged_at || null; row.seenBy = card.acknowledged_by || null;
+    } catch (e) { ackFailed = true; }
+  }
   let note = '';
   try {
     const n = await hl(env, '/contacts/' + row.contactId + '/notes');
@@ -387,7 +544,7 @@ export async function helpDetail(env, DB, user, digest, id) {
       .sort((a, b) => String(askedOf(b.body) || b.dateAdded || '').localeCompare(String(askedOf(a.body) || a.dateAdded || '')))
       .map((x) => String(x.body || '')).join('\n\n— — —\n\n');
   } catch {}
-  return { status: 200, body: { ...row, note } };
+  return { status: 200, body: { ...row, note, ...(ackFailed ? { ack_failed: true } : {}) } };
 }
 
 /* ---- COACHING ACTIONS (Nick, 2026-08-26: "for the coaching like this I need a way
@@ -782,5 +939,17 @@ export async function helpStage(env, DB, user, digest, body) {
   const last = stage.id === p.stages[p.stages.length - 1].id;
   await hl(env, '/opportunities/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify({
     pipelineStageId: stage.id, status: last ? 'won' : 'open' }) });
-  return { status: 200, body: { ok: true, stage: stage.name, closed: last } };
+  /* NICK'S STEP 5 — ACTION COMPLETED: the second-to-last stage ("Waiting on agent") stamps completed_at
+     and puts the confirm buttons in front of the agent; moving back clears it; the last stage closes.
+     A move by the agent's own leader also counts as having seen it (step 4). */
+  const si = p.stages.findIndex((s) => s.id === stage.id), now = new Date().toISOString();
+  let stampFailed = false;
+  try {
+    await stampCard(DB, id, row.cb, (c) => ({
+      closed_at: last ? now : null,
+      completed_at: last ? (c.completed_at || null) : (si === awaitIdx(p.stages) ? now : null),
+      ...(auth.scope === 'team' && !c.acknowledged_at ? { acknowledged_at: now, acknowledged_by: user.full_name || user.username || '' } : {}),
+    }));
+  } catch (e) { stampFailed = true; }
+  return { status: 200, body: { ok: true, stage: stage.name, closed: last, ...(stampFailed ? { stamp_failed: true } : {}) } };
 }

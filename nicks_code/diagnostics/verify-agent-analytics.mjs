@@ -387,6 +387,9 @@ const CODE = PAGE
     '/api/portal/help/stage', '/api/portal/help/actions', '/api/portal/help/action',
     '/api/portal/help/fails', '/api/portal/help/fail', '/api/portal/help/fail-detail',
     '/api/portal/help/sync-coaching', '/api/portal/help/mine', '/api/portal/help/close',
+    /* Nick's six steps + the leader's icon (sprint 2026-09-29): the agent confirms (agents only, their
+       own request); the pulse feeds the Help Center icon (team leaders, scoped like the list). */
+    '/api/portal/help/confirm', '/api/portal/help/pulse',
     /* Campaign Assistance (2026-08-30) — the team-leader → campaign-manager
        pipeline (assist.mjs). Same posture as the Help Center: HighLevel-backed
        via the Worker, request = team leaders only, the register and actions
@@ -687,7 +690,9 @@ const CODE = PAGE
   })();
   (function(){
     const lp = PAGE.slice(PAGE.indexOf('function loadPortal('), PAGE.indexOf('function notReported('));
-    /startLiveRefresh\(\); return teamView\(\);/.test(lp) ? ok('a team payload starts the live re-ask the moment it loads') : bad('the live refresh is never started');
+    /startLiveRefresh\(\);[^\n]*return teamView\(\);/.test(lp) ? ok('a team payload starts the live re-ask the moment it loads') : bad('the live refresh is never started');
+    /* the Help Center icon's pulse starts with the team view too (D5, sprint 2026-09-29) */
+    /startHelpPulse\(\);[^\n]*return teamView\(\);/.test(lp) ? ok('a team payload starts the Help Center icon\'s pulse') : bad('the Help Center icon is never fed');
     /setInterval\(function\(\)\{ if\(!document\.hidden\)\{ refreshPortal\(false\); repTick\(\); \} \},LIVE_EVERY_MS\)/.test(lp)
       && /addEventListener\('visibilitychange'/.test(lp) && /addEventListener\('focus'/.test(lp)
       ? ok('the page re-asks on a timer while visible, when the tab comes back, and on focus')
@@ -786,7 +791,8 @@ function loadPage(fetchImpl) {
   const fn = new Function(
     'document', 'window', 'localStorage', 'location', 'fetch', 'URLSearchParams', 'setTimeout', 'Intl', 'console',
     src + '\nreturn {show,notReported,commCalc,heroHTML,doneHTML,trackHTML,standHTML,whatIfHTML,comsPage,coachHTML,coachTeamHTML,teamView,loginScreen,greeting,sastHour,prettyPeriod,setD:function(d){D=d},setMe:function(m){ME=m},setTeam:function(t){TEAM=t},setView:function(v){VIEW=v},'
-    + 'getD:function(){return D},getView:function(){return VIEW},cellOf,reportMTD,reportWeekly,reportDaily,reportTLSummary,exportReports,refreshPortal,liveFiguresChanged,setDayFilter:function(d){DAY_FILTER=d},setForm:function(f){FORM=f},render};'
+    + 'getD:function(){return D},getView:function(){return VIEW},cellOf,reportMTD,reportWeekly,reportDaily,reportTLSummary,exportReports,refreshPortal,liveFiguresChanged,setDayFilter:function(d){DAY_FILTER=d},setForm:function(f){FORM=f},render,'
+    + 'sidebarHTML,pgMyHelp,helpPage,setHelpUnread:function(n){HELP_UNREAD=n},setMyHelp:function(m){MYHELP=m},setHelpD:function(h){HELPD=h}};'
   );
   return {
     api: fn(doc, win, win.localStorage, win.location, fetchImpl || (() => Promise.reject(new Error('no network in test'))),
@@ -1317,6 +1323,48 @@ try {
   if (!/no remaining days left to add sales to/i.test(text)) throw new Error('the figures card does not explain why the what-if is gone');
   ok('with no days left the what-if card is dropped and the always-visible figures card says why');
 } catch (e) { bad('no-days-left routing', e.message); }
+
+/* THE HELP CENTER ICON + NICK'S SIX STEPS ON SCREEN (sprint 2026-09-29, D5) */
+try {
+  P.setTeam({ name: 'Denise Haripersad', role: 'team_leader' }); P.setD({ ...DIGEST, role: 'team_leader' });
+  P.setHelpUnread(0);
+  if (/nav-badge/.test(P.sidebarHTML('team'))) throw new Error('an icon shows with nothing unread');
+  P.setHelpUnread(2);
+  const side = P.sidebarHTML('team');
+  const helpBtn = (side.match(/<button[^>]*data-view="help"[^>]*>[\s\S]*?<\/button>/) || [''])[0];
+  if (!/class="nav-badge"[^>]*>[^<]*2<\/span>/.test(helpBtn)) throw new Error('the Help Center tab does not carry the count: ' + helpBtn.slice(0, 200));
+  if (/nav-badge/.test(side.replace(helpBtn, ''))) throw new Error('the icon sits on a tab other than the Help Center');
+  P.setHelpUnread(0);
+  ok('the Help Center tab carries an icon with the unread count, and nothing when there is none');
+
+  P.setHelpD({ stages: [{ id: 's0', name: 'New' }, { id: 's1', name: 'In progress' }, { id: 's2', name: 'Waiting on agent' }, { id: 's3', name: 'Closed' }],
+    requests: [
+      { id: 'a', cb: 'CB9', agent: 'New Asker', category: 'Review my call', stageId: 's0', stageIdx: 0, closed: false, created: '2026-09-29T08:00:00Z' },
+      { id: 'b', cb: 'CB8', agent: 'Seen Asker', category: 'Explain the product', stageId: 's1', stageIdx: 1, closed: false, created: '2026-09-29T07:00:00Z', seenAt: '2026-09-29T07:30:00Z', seenBy: 'Denise Haripersad' },
+      { id: 'c', cb: 'CB7', agent: 'Done Asker', category: 'Something else', stageId: 's2', stageIdx: 2, closed: false, awaitingAgent: true, created: '2026-09-29T06:00:00Z', seenAt: '2026-09-29T06:10:00Z' }] });
+  const hp = P.helpPage().replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/Review my call .{0,40}new — not opened yet/.test(hp)) throw new Error('an unopened request is not marked new');
+  if (!/Explain the product .{0,40}seen 29 Sep/.test(hp)) throw new Error('a seen request does not say when it was seen');
+  if (!/waiting for the agent to confirm/.test(hp)) throw new Error('a done request does not say it waits on the agent');
+  P.setHelpD(null);
+  ok('the team leader\'s rows read new → seen → waiting for the agent to confirm');
+
+  P.setTeam(null);
+  const me = { code: 'CB9', name: 'Agent Nine', tl: 'Denise Haripersad', campaign: 'Courtesy', tenure: 'M1', plan: 'M1', days: [] };
+  P.setD({ ...DIGEST, role: 'agent', agents: [me] }); P.setMe(me);
+  P.setMyHelp({ requests: [
+    { id: 'x', category: 'Review my call', stage: 'Waiting on agent', closed: false, awaitingAgent: true, created: '2026-09-29T06:00:00Z', seenAt: '2026-09-29T06:10:00Z', seenBy: 'Denise Haripersad' },
+    { id: 'y', category: 'Explain the product', stage: 'New', closed: false, created: '2026-09-29T08:00:00Z' }] });
+  const mh = P.pgMyHelp();
+  const mt = mh.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  if (!/seen by Denise Haripersad 29 Sep/.test(mt)) throw new Error('the agent does not see who opened their request');
+  if (!/not opened yet/.test(mt)) throw new Error('an unopened request does not say so to the agent');
+  if (!/Did Denise sort it out\?/.test(mt) || !/myhelp-yes/.test(mh) || !/myhelp-no/.test(mh)) throw new Error('a done request does not ask the agent to confirm');
+  if ((mh.match(/myhelp-close/g) || []).length !== 1) throw new Error('"Close it off" should remain only on the request not yet done');
+  P.setMyHelp(null);
+  ok('the agent sees who opened their request and confirms a done one (Yes, I was helped / Not yet)');
+} catch (e) { bad('Help Center icon + six steps on screen', e.message); }
+P.setTeam(null);
 
 {
   /* The projection must divide by the month's WORKING days, not the days we have

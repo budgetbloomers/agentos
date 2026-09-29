@@ -9,7 +9,7 @@ import { login, logout, session, hashPassword, changePassword, signinByCb } from
 import { retrieveKB } from './kb.mjs';
 import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWave } from './coaching.mjs';
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, loadReports, tlReports, listDigestMonths, overview, agentDetail, normCb } from './portal.mjs';
-import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn } from './help.mjs';
+import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn, helpConfirm, helpPulse } from './help.mjs';
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, effPerDay } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
@@ -840,6 +840,8 @@ export default {
           else if (path === '/api/portal/help/sync-coaching' && req.method === 'POST') r = await syncCoaching(env, DB, user, digest, await req.json().catch(() => ({})));
           else if (path === '/api/portal/help/mine' && req.method === 'GET') r = await helpMine(env, DB, user, digest);
           else if (path === '/api/portal/help/close' && req.method === 'POST') r = await helpCloseOwn(env, DB, user, digest, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/help/confirm' && req.method === 'POST') r = await helpConfirm(env, DB, user, digest, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/help/pulse' && req.method === 'GET') r = await helpPulse(env, DB, user, digest);
           else r = { status: 404, body: { error: 'Unknown help route.' } };
         } catch (e) { r = { status: 502, body: { error: 'HighLevel did not answer: ' + String(e.message || e).slice(0, 160) } }; }
         return json(r.body, r.status);

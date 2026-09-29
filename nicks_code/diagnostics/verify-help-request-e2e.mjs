@@ -72,7 +72,9 @@ async function mint(username) {
   const w = await fetch(REST + 'app_sessions', { method: 'POST', headers: { ...H, Prefer: 'return=minimal' },
     body: JSON.stringify([{ token_hash: hash, user_id: u.id, expires_at: new Date(Date.now() + 5 * 60000).toISOString(), user_agent: 'verify-help-request-e2e' }]) });
   if (!w.ok) throw new Error('could not mint a session for ' + username + ' (' + w.status + ')');
-  const call = async (p) => { const r = await fetch(API + p, { headers: { Authorization: 'Bearer ' + token, 'X-Cbx-Client': 'v5' } });
+  const call = async (p, body) => { const r = await fetch(API + p, { method: body ? 'POST' : 'GET',
+      headers: { Authorization: 'Bearer ' + token, 'X-Cbx-Client': 'v5', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined });
     let j = null; try { j = await r.json(); } catch { j = null; } return { status: r.status, j }; };
   return { call, drop: () => fetch(REST + 'app_sessions?token_hash=eq.' + hash, { method: 'DELETE', headers: H }) };
 }
@@ -151,14 +153,34 @@ try {
     console.log('  SKIPPED — no usable team-leader account found for ' + agentCb + '\'s team (' + (au.team || '?') + ')');
   } else {
     tl = await mint(tlUsername);
+    const card = ids[ids.length - 1];
+    /* NICK'S SIX STEPS (sprint 2026-09-29): 1–2 above; 3 the leader is notified (the Help Center icon),
+       4 acknowledges (opening it), 5 marks it done, 6 the agent confirms */
+    const p1 = await tl.call('/api/portal/help/pulse');
+    ok('step 3 — the leader\'s Help Center icon counts the new request (' + (p1.j && p1.j.unread) + ')', p1.status === 200 && (p1.j && p1.j.unread) >= 1, JSON.stringify(p1.j));
     const list = await tl.call('/api/portal/help/list');
     ok('the team leader\'s queue loads (' + list.status + ')', list.status === 200, JSON.stringify(list.j).slice(0, 200));
     const listRows = (list.j && list.j.requests) || [];
     ok('the requests are on the team leader\'s queue, open', ids.length > 0 && ids.every((id) => listRows.some((r) => r.id === id && !r.closed)),
       'ids: ' + ids.join(',') + ' | list: ' + listRows.map((r) => r.id + (r.closed ? '(closed)' : '')).join(','));
-    const d = ids.length ? await tl.call('/api/portal/help/detail?id=' + encodeURIComponent(ids[ids.length - 1])) : null;
+    const d = card ? await tl.call('/api/portal/help/detail?id=' + encodeURIComponent(card)) : null;
     const dn = String((d && d.j && (d.j.note || d.j.error)) || '');
     ok('the team leader can read the second ask\'s note', d && d.status === 200 && /AUTOMATED TEST 2 of 2/.test(dn), dn.slice(0, 200));
+    ok('step 4 — opening it stamps "seen" (by ' + (d && d.j && d.j.seenBy) + ')', !!(d && d.j && d.j.seenAt), JSON.stringify(d && d.j && { seenAt: d.j.seenAt, seenBy: d.j.seenBy }));
+    const p2 = await tl.call('/api/portal/help/pulse');
+    ok('…and the icon drops it (' + (p1.j && p1.j.unread) + ' → ' + (p2.j && p2.j.unread) + ')', p2.status === 200 && (p2.j.unread | 0) <= (p1.j.unread | 0) - 1, JSON.stringify(p2.j));
+    const stages = (list.j && list.j.stages) || [];
+    const waiting = stages.length >= 3 ? stages[stages.length - 2] : null;
+    ok('the pipeline has a "waiting on agent" stage (' + (waiting && waiting.name) + ')', !!waiting, JSON.stringify(stages));
+    if (waiting && card) {
+      const s = await tl.call('/api/portal/help/stage', { id: card, stageId: waiting.id });
+      ok('step 5 — the leader marks it done (' + s.status + ')', s.status === 200, JSON.stringify(s.j));
+      const m1 = await agent.call('/api/portal/help/mine');
+      const row = ((m1.j && m1.j.requests) || []).find((r) => r.id === card) || {};
+      ok('the agent sees it waiting for them, seen by their leader', row.awaitingAgent === true && !!row.seenAt, JSON.stringify(row));
+      const c = await agent.call('/api/portal/help/confirm', { id: card, helped: true });
+      ok('step 6 — the agent confirms "Yes, I was helped" and it closes (' + c.status + ')', c.status === 200 && c.j && c.j.closed === true, JSON.stringify(c.j));
+    }
   }
 } catch (e) {
   fail++; console.log('  FAIL threw: ' + (e && e.message || e));

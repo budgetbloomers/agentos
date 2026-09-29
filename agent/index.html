@@ -114,6 +114,8 @@ a{color:var(--blue)}
 .nav-item.sub{padding:6px 12px 6px 40px;font-size:12.5px;font-weight:500;color:#B4C3DD}
 .nav-item.sub.active{background:rgba(255,255,255,.14);color:#fff}
 .nav-item.parent.open{background:rgba(255,255,255,.07)}
+/* the Help Center icon (D5, 2026-09-29): how many requests from the leader's team nobody has opened yet */
+.nav-badge{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;gap:3px;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:#EF4444;color:#fff;font-size:11px;font-weight:800;line-height:1}
 .sys-card{margin-top:auto;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);border-radius:11px;padding:11px 12px;font-size:12px}
 .sys-card .t{font-weight:700;color:#E7EEFA;margin-bottom:5px;font-size:12px}
 .sys-card .l{color:#9FB0CC;font-size:11.5px;line-height:1.5}
@@ -1110,6 +1112,7 @@ function signOut(){
   api('/api/logout',{}).then(function(){},function(){});
   try{ sessionStorage.removeItem(TKEY); }catch(e){}
   U=null; D=null; ME=null; TEAM=null;
+  HELP_UNREAD=0;                                         // the next person to sign in must not see this leader's count
   loginScreen();
 }
 
@@ -3743,7 +3746,8 @@ function sidebarHTML(active){
          passes 'reports' as active for every report page, which lights the parent. */
       var open=kids.length&&(n[0]===active||kids.some(function(k){return k[0]===VIEW||k[0]===active;}));
       var btn='<button class="nav-item'+(kids.length?' parent':'')+(open?' open':'')+(n[0]===active&&!kids.length?' active':'')+'" data-view="'+n[0]+'">'
-        +'<span class="ic">'+n[2]+'</span>'+esc(n[1])+(kids.length?'<span class="caret">'+(open?'&#9662;':'&#9656;')+'</span>':'')+'</button>';
+        +'<span class="ic">'+n[2]+'</span>'+esc(n[1])+(kids.length?'<span class="caret">'+(open?'&#9662;':'&#9656;')+'</span>':'')
+        +(n[0]==='help'?helpBadgeHTML():'')+'</button>';
       if(!open) return btn;
       return btn+kids.map(function(k){
         return '<button class="nav-item sub'+(k[0]===VIEW?' active':'')+'" data-view="'+k[0]+'">'+esc(k[1])+'</button>';
@@ -3950,7 +3954,7 @@ function loadPortal(){
     if(!r.ok) return fatal('We could not open your page', r.json.error||'Please try again in a minute.', r.status>=500);
     D=r.json;
     if(D.scope==='campaign') return cmView();
-    if(D.role==='team_leader'||D.scope==='team'||D.scope==='all'){ startLiveRefresh(); return teamView(); }
+    if(D.role==='team_leader'||D.scope==='team'||D.scope==='all'){ startLiveRefresh(); startHelpPulse(); return teamView(); }
     if(D.notReported) return notReported();
     if(!D.me) return fatal('Nothing to show yet','No figures have been published for you this month.');
     show(D.me);
@@ -5048,6 +5052,13 @@ function prettyPeriod(){
     return df.format(f)+' '+mf.format(f)+' – '+df.format(t)+' '+mf.format(t);
   }catch(e){ return D.period.from+' to '+D.period.to; }
 }
+/* "29 Sep 10:42" in SAST — when a help request was seen or asked */
+function sastWhen(iso){
+  try{
+    return new Intl.DateTimeFormat('en-ZA',{timeZone:'Africa/Johannesburg',day:'numeric',month:'short',
+      hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
+  }catch(e){ return String(iso||'').slice(0,16).replace('T',' '); }
+}
 function stamp(){
   try{
     return new Intl.DateTimeFormat('en-ZA',{timeZone:'Africa/Johannesburg',day:'numeric',month:'short',
@@ -6063,9 +6074,17 @@ function pgMyHelp(){
   return '<div class="card"><h2>Your help requests</h2>'
     +'<p class="why">What you have asked for and where it stands. If it is sorted, close it off — it stays on the record.</p>'
     +open.map(function(r){
+      var tl=firstName(ME&&ME.tl||'')||'your team leader';
       return '<div class="hc-row"><div class="hc-main"><b>'+esc(r.category)+'</b>'
-        +'<div class="sub2">sent '+esc(String(r.created||'').slice(0,10))+' · with your team leader: <b>'+esc(r.stage||'')+'</b></div></div>'
-        +'<button class="btn2 myhelp-close" data-mid="'+esc(r.id)+'">Close it off</button></div>';
+        +'<div class="sub2">sent '+esc(String(r.created||'').slice(0,10))+' · with your team leader: <b>'+esc(r.stage||'')+'</b>'
+        /* step 4 as the agent sees it: who opened it, and when */
+        +(r.seenAt?' · seen by '+esc(r.seenBy||tl)+' '+esc(sastWhen(r.seenAt)):' · not opened yet')+'</div></div>'
+        /* step 6: once the leader marks it done, the agent says whether it was sorted */
+        +(r.awaitingAgent
+          ?'<div class="myhelp-ask"><div class="sub2">Did '+esc(tl)+' sort it out?</div>'
+            +'<button class="btn2 primary myhelp-yes" data-mid="'+esc(r.id)+'">Yes, I was helped</button> '
+            +'<button class="btn2 myhelp-no" data-mid="'+esc(r.id)+'">Not yet</button></div>'
+          :'<button class="btn2 myhelp-close" data-mid="'+esc(r.id)+'">Close it off</button>')+'</div>';
     }).join('')
     +'</div>';
 }
@@ -6081,6 +6100,26 @@ function wireMyHelp(){
           render();
         } else { b.disabled=false; b.textContent='Close it off';
           toast((r.json&&r.json.error)||'Could not close it — try again.'); }
+      });
+    };
+  });
+  /* STEP 6 — the agent confirms (sprint 2026-09-29): "Yes" closes it on the record; "Not yet" hands it
+     back to the team leader, whose Help Center icon lights again */
+  Array.prototype.forEach.call(document.querySelectorAll('.myhelp-yes,.myhelp-no'),function(b){
+    b.onclick=function(){
+      var id=b.getAttribute('data-mid'), helped=b.classList.contains('myhelp-yes'), label=b.textContent;
+      b.disabled=true; b.textContent=helped?'Saving…':'Sending back…';
+      api('/api/portal/help/confirm',{id:id,helped:helped}).then(function(r){
+        if(r.ok){
+          (MYHELP.requests||[]).forEach(function(q){ if(q.id===id){
+            if(helped) q.closed=true; else { q.awaitingAgent=false; q.seenAt=null; q.stage=(r.json&&r.json.stage)||q.stage; } } });
+          MYHELP_AT=Date.now();   // HighLevel's search lags — keep this copy rather than refetch the old stage
+          toast(helped?'Thanks — marked as sorted. The record stays saved.'
+            :'Sent back to '+(firstName(ME&&ME.tl||'')||'your team leader')+' — they will see it in their Help Center.'
+            +(r.json&&r.json.stamp_failed?' (Their Help Center may take a few minutes to show it.)':''),6000);
+          render();
+        } else { b.disabled=false; b.textContent=label;
+          toast((r.json&&r.json.error)||'Could not save that — try again.'); }
       });
     };
   });
@@ -6324,6 +6363,14 @@ function openHelp(topic){
     document.getElementById('helpStep2').style.display='none';
     document.getElementById('helpCats').style.display='';
   };
+  /* openHelp(topic) HONOURS ITS TOPIC (sprint 2026-09-29): it used to ignore it and the agent re-picked.
+     A known topic opens straight on the note; anything else starts at the six choices. */
+  if(topic&&HELP_CATS.indexOf(topic)>=0){
+    chosen=topic;
+    document.getElementById('helpTopic').textContent=chosen;
+    document.getElementById('helpStep2').style.display='';
+    document.getElementById('helpCats').style.display='none';
+  }
   document.getElementById('helpSend').onclick=function(){
     var note=(document.getElementById('helpNote').value||'').trim();
     if(!note){ toast('Say a little about what you need — that note is what '+tl+' reads.'); return; }
@@ -6401,6 +6448,55 @@ function wireActs(){
   });
 }
 /* ---- TL side ---- */
+/* ===================== THE HELP CENTER ICON (D5, sprint 2026-09-29) =====================
+   Nick: "A TL should not have to continuously check the Help Centre to know whether somebody needs
+   assistance." Decided: ONE icon on the Help Center tab with the number of requests from the leader's
+   own team that nobody has opened yet — no pop-up, no browser notification, no email. The Worker's
+   /api/portal/help/pulse is one database read (never HighLevel), asked every 20 s while the tab is on
+   screen and at once when it comes back; opening a request stamps "seen" and the count drops. */
+var HELP_UNREAD=0, HELP_PULSE={timer:null,busy:false,again:false};
+var HELP_PULSE_MS=20000;
+function helpBadgeHTML(){
+  if(!HELP_UNREAD) return '';
+  return '<span class="nav-badge" title="'+HELP_UNREAD+' new help request'+(HELP_UNREAD===1?'':'s')
+    +'" aria-label="'+HELP_UNREAD+' new help request'+(HELP_UNREAD===1?'':'s')+'">&#128276;'+num(HELP_UNREAD)+'</span>';
+}
+/* team leaders only (D5) — an admin preview could never clear it, since only the agent's own leader's
+   opening counts as "seen" */
+function helpPulseScope(){ var t=TEAM||D; return !!(U&&t&&(t.role==='team_leader'||t.scope==='team')); }
+/* repaint only the badge — a full render would disturb whatever the leader is typing */
+function paintHelpBadge(){
+  Array.prototype.forEach.call(document.querySelectorAll('.nav-item[data-view="help"]'),function(n){
+    var old=n.querySelector&&n.querySelector('.nav-badge'); if(old) old.remove();
+    if(HELP_UNREAD) n.insertAdjacentHTML('beforeend',helpBadgeHTML());
+  });
+}
+function helpPulse(){
+  if(!helpPulseScope()) return;
+  /* one in flight; a call that arrives meanwhile (e.g. right after opening a request) is QUEUED, not
+     dropped — else the reply carries the pre-open count for another 20 s (review, 2026-09-29) */
+  if(HELP_PULSE.busy){ HELP_PULSE.again=true; return; }
+  HELP_PULSE.busy=true;
+  api('/api/portal/help/pulse').then(function(r){
+    HELP_PULSE.busy=false;
+    if(r.status===401&&HELP_PULSE.timer){ clearInterval(HELP_PULSE.timer); HELP_PULSE.timer=null; return; }   // signed out elsewhere
+    if(HELP_PULSE.again){ HELP_PULSE.again=false; helpPulse(); }
+    if(!r.ok||!r.json) return;                           // a missed beat — the next one asks again
+    var n=r.json.unread|0, grew=n>HELP_UNREAD;
+    if(n===HELP_UNREAD) return;
+    HELP_UNREAD=n; paintHelpBadge();
+    if(grew&&VIEW==='help'&&!HELP_BUSY){ HELPD_AT=0; helpLoad(); }   // a new ask while the leader is on the page: show it
+  });
+}
+function startHelpPulse(){
+  if(HELP_PULSE.timer){ helpPulse(); return; }          // a second sign-in on the same page: count now, not in 20 s
+  if(typeof document.addEventListener!=='function') return;
+  helpPulse();
+  HELP_PULSE.timer=setInterval(function(){ if(!document.hidden) helpPulse(); },HELP_PULSE_MS);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden) helpPulse(); });
+  window.addEventListener('focus',helpPulse);
+}
+
 var HELPD=null, FAILS=null, SYNCS=null, HELPD_AT=0, HELP_BUSY=false;
 function helpLoad(){
   /* IN-FLIGHT GUARD (review, 2026-08-26): the fails/sync callbacks call render(),
@@ -6561,7 +6657,12 @@ function helpPage(){
     return '<div class="hc-row'+(r.closed?' closed':'')+'">'
       +'<div class="hc-main"><a href="#" class="hc-name" data-hid="'+esc(r.id)+'">'+esc(r.agent||r.cb)+'</a>'
       +' <span class="sub2" style="display:inline">'+esc(r.cb)+'</span>'
-      +'<div class="sub2">'+esc(r.category)+(when?' · '+when:'')+'</div>'
+      +'<div class="sub2">'+esc(r.category)+(when?' · '+when:'')
+      /* Nick's steps 4–6 at a glance: not opened yet → seen → waiting for the agent to confirm */
+      +(r.awaitingAgent?' · waiting for the agent to confirm'
+        :r.seenAt?' · seen '+esc(sastWhen(r.seenAt))
+        :' · <b style="color:#DC2626">new — not opened yet</b>')
+      +(r.reopens?' · reopened '+num(r.reopens)+'×':'')+'</div>'
       +'<div class="hc-note" id="hcn-'+esc(r.id)+'"></div></div>'
       +'<div class="hc-stages">'+stages.map(function(s,i){
         return '<button class="hc-st'+(s.id===r.stageId?' on':(i<r.stageIdx?' done':''))+'" data-hid="'+esc(r.id)+'" data-sid="'+esc(s.id)+'" title="Move to '+esc(s.name)+'">'+esc(s.name)+'</button>';
@@ -6615,6 +6716,9 @@ function wireHelp(){
         api('/api/portal/help/detail?id='+encodeURIComponent(id)).then(function(r){
           box.textContent=r.ok?((r.json&&r.json.note)||'No note found for this request.')
             :((r.json&&r.json.error)||'Could not fetch the note.');
+          /* opening it is the acknowledgement (step 4): the row reads "seen" and the icon re-counts */
+          if(r.ok&&r.json&&r.json.seenAt) (HELPD.requests||[]).forEach(function(q){ if(q.id===id){ q.seenAt=r.json.seenAt; q.seenBy=r.json.seenBy; } });
+          helpPulse();
         });
       } else box.classList.add('on');
     };
