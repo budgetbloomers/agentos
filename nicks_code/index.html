@@ -9321,7 +9321,33 @@ window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
    the commission model, a separate thing with its own review cycle.
    gwp values are ex-VAT month totals; comm is the payout at that bracket. */
 const COMM_RULES={
+  version:'2026-10',            // Matrix Vas Comm Model_October26.xlsx (reference/docs) — 22 dialling days
+  dd:22,                        // the dialling days the thresholds were built on (the workbook's DD)
+  saleValue:89/1.15,            // index.tsx:143 — ex-VAT value of one sale
+  saleValues:{ EXP_DOWNUP:40/1.15 },
+  /* October 2026 (2026-10-01): thresholds rebased 21 → 22 dialling days; the Courtesy plans' SPD steps
+     rise one notch (M1 3/3.5/4…, M2 4/4.5/5…, Exp 5/5.5/6…) with the same commission amounts; Cuddle and
+     Download/Upsell keep their SPD steps. Generated from the workbook, never retyped —
+     nicks_code/diagnostics/verify-comm-model.mjs reproduces every row to the cent. */
+  brackets:{
+    EXP_DOWNUP:[{gwp:4591.3,comm:1250},{gwp:5356.52,comm:1750},{gwp:6121.74,comm:2500},{gwp:6886.96,comm:3500},
+        {gwp:7652.17,comm:5000},{gwp:9182.61,comm:6250},{gwp:10713.04,comm:7500},{gwp:12243.48,comm:9000}],
+    M1:[{gwp:5107.83,comm:1250},{gwp:5959.13,comm:1833.33},{gwp:6810.43,comm:3000},{gwp:7661.74,comm:4136.36},
+        {gwp:8513.04,comm:5000},{gwp:9364.35,comm:5785.71},{gwp:10215.65,comm:6875},{gwp:11066.96,comm:8087.39}],
+    M2:[{gwp:6810.43,comm:1500},{gwp:7661.74,comm:2333.33},{gwp:8513.04,comm:4000},{gwp:9364.35,comm:5318.18},
+        {gwp:10215.65,comm:6250},{gwp:11066.96,comm:7071.43},{gwp:11918.26,comm:8250},{gwp:12769.57,comm:10293.04}],
+    EXP_COURTESY:[{gwp:8513.04,comm:2000},{gwp:9364.35,comm:3000},{gwp:10215.65,comm:5000},{gwp:11066.96,comm:6500},
+        {gwp:11918.26,comm:7500},{gwp:13620.87,comm:9000},{gwp:15323.48,comm:11000},{gwp:17026.09,comm:17026.09}],
+    EXP_CUDDLE:[{gwp:10215.65,comm:4000},{gwp:11918.26,comm:6000},{gwp:13620.87,comm:7500},{gwp:15323.48,comm:10000},
+        {gwp:17026.09,comm:11500},{gwp:18728.7,comm:14000},{gwp:20431.3,comm:17500},{gwp:22133.91,comm:22133.91},
+        {gwp:23836.52,comm:23836.52},{gwp:25539.13,comm:25539.13}]
+  }
+};
+/* SEPTEMBER KEEPS SEPTEMBER'S MODEL (2026-10-01) — the model that paid September, pinned under its month
+   in COMM_RULES_BY_MONTH so the October workbook never re-prices it. */
+const COMM_RULES_2026_09={
   version:'2026-09',            // Matrix Vas Comm Model_September26.xlsx — thresholds rebased 20→21 dial days
+  dd:21,
   saleValue:89/1.15,            // index.tsx:143 — ex-VAT value of one sale
   /* per-plan sale values where a plan's average premium is not R89 (2026-09-03): the
      Download & Test campaign sells a R40 product, so its what-if adds R40 ÷ 1.15 a sale */
@@ -9365,7 +9391,7 @@ const COMM_RULES_2026_08={
         {gwp:15478.26,comm:11500},{gwp:17026.09,comm:14000},{gwp:18573.91,comm:17500},{gwp:20121.74,comm:20121.74}]
   }
 };
-const COMM_RULES_BY_MONTH={'2026-07':COMM_RULES_2026_08,'2026-08':COMM_RULES_2026_08};
+const COMM_RULES_BY_MONTH={'2026-07':COMM_RULES_2026_08,'2026-08':COMM_RULES_2026_08,'2026-09':COMM_RULES_2026_09};
 /* SA PUBLIC HOLIDAYS used to be a hand-typed table here that had to be extended every December.
    They are computed now — isPublicHoliday() / saHolidaysFor(), beside dataOnlyDay() — and the
    agent page carries the same function (verify-public-holidays.mjs fails if the two differ). */

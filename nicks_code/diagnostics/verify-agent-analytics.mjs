@@ -1306,10 +1306,12 @@ try {
   /* Figures recomputed for the September 2026 brackets (thresholds rebased 20→21
      dial days) AND holiday-aware working days: August 2026's fallback counts 20
      (21 weekdays − Women's Day observed Mon 10 Aug), so this fixture projects
-     18,090.00 into the 17,877.39 bracket → R14,166.19. The elapsed-days bug
-     would show ~R6,678. The August-model pair was R7,670 wrong / R17,896 right. */
-  if (/R\s?6\s?67\d/.test(text)) throw new Error('still showing the elapsed-days commission (~R6,678)');
-  if (!/R\s?14\s?16\d/.test(text)) throw new Error('the corrected commission (R14,166) is not shown');
+     18,090.00 — recomputed 2026-10-01 for the OCTOBER brackets (Matrix Vas Comm Model_October26.xlsx,
+     22 dial days): 18,090.00 lands in the 17,026.09 bracket → R12,218.60; the elapsed-days bug
+     (14 days → 12,663.00, the 11,918.26 bracket) would show ~R6,374.92. September's pair was
+     R6,678 wrong / R14,166 right; August's R7,670 / R17,896. */
+  if (/R\s?6\s?37\d/.test(text)) throw new Error('still showing the elapsed-days commission (~R6,375)');
+  if (!/R\s?12\s?21\d/.test(text)) throw new Error('the corrected commission (R12,219) is not shown');
   if (/R\s?0\b.{0,24}away/i.test(text)) throw new Error('"R 0 away from the next bracket" is back');
   if (/first bracket/i.test(text)) throw new Error('an agent mid-ladder is told he cannot clear the FIRST bracket');
   ok('a stale digest self-corrects: weekdays counted from the period, commission right, no false messages');

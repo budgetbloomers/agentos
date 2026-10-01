@@ -30,66 +30,61 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-// September 2026 model (Matrix Vas Comm Model_September26.xlsx): gwp thresholds are
-// ex-VAT totals (SPD × R89 avg premium × 21 dial days ÷ 1.15). The comm amounts are
-// August's unchanged — only the thresholds rebased from 20 to 21 dialling days —
-// except EXP_CUDDLE, which grew from 8 brackets (SPD 6–13) to 10 (SPD 6–15); its top
-// three pay their own ex-VAT premium, the same self-paying pattern as before.
+// October 2026 model (Matrix Vas Comm Model_October26.xlsx): gwp thresholds are ex-VAT totals
+// (SPD × average premium × 22 dial days ÷ 1.15). Courtesy SPD steps rise one notch with the same
+// comm amounts; Cuddle and Download/Upsell keep their steps. Generated from the workbook (2026-10-01).
 const BRACKETS: Record<string, { gwp: number; comm: number }[]> = {
   M1: [
-    { gwp: 4063.04, comm: 1250 },
-    { gwp: 4469.35, comm: 1833.33 },
-    { gwp: 4875.65, comm: 3000 },
-    { gwp: 5688.26, comm: 4136.36 },
-    { gwp: 6500.87, comm: 5000 },
-    { gwp: 7313.48, comm: 5785.71 },
-    { gwp: 8126.09, comm: 6875 },
-    { gwp: 9751.3, comm: 8087.39 },
+    { gwp: 5107.83, comm: 1250 },
+    { gwp: 5959.13, comm: 1833.33 },
+    { gwp: 6810.43, comm: 3000 },
+    { gwp: 7661.74, comm: 4136.36 },
+    { gwp: 8513.04, comm: 5000 },
+    { gwp: 9364.35, comm: 5785.71 },
+    { gwp: 10215.65, comm: 6875 },
+    { gwp: 11066.96, comm: 8087.39 },
   ],
   M2: [
-    { gwp: 4875.65, comm: 1500 },
-    { gwp: 5688.26, comm: 2333.33 },
-    { gwp: 6500.87, comm: 4000 },
-    { gwp: 7313.48, comm: 5318.18 },
-    { gwp: 8126.09, comm: 6250 },
-    { gwp: 8938.7, comm: 7071.43 },
-    { gwp: 9751.3, comm: 8250 },
-    { gwp: 11376.52, comm: 10293.04 },
+    { gwp: 6810.43, comm: 1500 },
+    { gwp: 7661.74, comm: 2333.33 },
+    { gwp: 8513.04, comm: 4000 },
+    { gwp: 9364.35, comm: 5318.18 },
+    { gwp: 10215.65, comm: 6250 },
+    { gwp: 11066.96, comm: 7071.43 },
+    { gwp: 11918.26, comm: 8250 },
+    { gwp: 12769.57, comm: 10293.04 },
   ],
   EXP_COURTESY: [
-    { gwp: 6500.87, comm: 2000 },
-    { gwp: 7313.48, comm: 3000 },
-    { gwp: 8126.09, comm: 5000 },
-    { gwp: 8938.7, comm: 6500 },
-    { gwp: 9751.3, comm: 7500 },
-    { gwp: 11376.52, comm: 9000 },
-    { gwp: 13001.74, comm: 11000 },
-    { gwp: 14626.96, comm: 14626.96 },
+    { gwp: 8513.04, comm: 2000 },
+    { gwp: 9364.35, comm: 3000 },
+    { gwp: 10215.65, comm: 5000 },
+    { gwp: 11066.96, comm: 6500 },
+    { gwp: 11918.26, comm: 7500 },
+    { gwp: 13620.87, comm: 9000 },
+    { gwp: 15323.48, comm: 11000 },
+    { gwp: 17026.09, comm: 17026.09 },
   ],
   EXP_CUDDLE: [
-    { gwp: 9751.3, comm: 4000 },
-    { gwp: 11376.52, comm: 6000 },
-    { gwp: 13001.74, comm: 7500 },
-    { gwp: 14626.96, comm: 10000 },
-    { gwp: 16252.17, comm: 11500 },
-    { gwp: 17877.39, comm: 14000 },
-    { gwp: 19502.61, comm: 17500 },
-    { gwp: 21127.83, comm: 21127.83 },
-    { gwp: 22753.04, comm: 22753.04 },
-    { gwp: 24378.26, comm: 24378.26 },
+    { gwp: 10215.65, comm: 4000 },
+    { gwp: 11918.26, comm: 6000 },
+    { gwp: 13620.87, comm: 7500 },
+    { gwp: 15323.48, comm: 10000 },
+    { gwp: 17026.09, comm: 11500 },
+    { gwp: 18728.7, comm: 14000 },
+    { gwp: 20431.3, comm: 17500 },
+    { gwp: 22133.91, comm: 22133.91 },
+    { gwp: 23836.52, comm: 23836.52 },
+    { gwp: 25539.13, comm: 25539.13 },
   ],
-  // "Exp Agents Only - Download / Upsell" (workbook sheet "Exp DownUp"): the Agent List's
-  // "Download & Test" campaign. Average premium R40 (not R89), 21 dial days:
-  // thresholds = SPD × 40 × 21 ÷ 1.15. Added 2026-09-03 when the campaign first landed.
   EXP_DOWNUP: [
-    { gwp: 4382.61, comm: 1250 },
-    { gwp: 5113.04, comm: 1750 },
-    { gwp: 5843.48, comm: 2500 },
-    { gwp: 6573.91, comm: 3500 },
-    { gwp: 7304.35, comm: 5000 },
-    { gwp: 8765.22, comm: 6250 },
-    { gwp: 10226.09, comm: 7500 },
-    { gwp: 11686.96, comm: 9000 },
+    { gwp: 4591.3, comm: 1250 },
+    { gwp: 5356.52, comm: 1750 },
+    { gwp: 6121.74, comm: 2500 },
+    { gwp: 6886.96, comm: 3500 },
+    { gwp: 7652.17, comm: 5000 },
+    { gwp: 9182.61, comm: 6250 },
+    { gwp: 10713.04, comm: 7500 },
+    { gwp: 12243.48, comm: 9000 },
   ],
 };
 // One sale is worth R89 ÷ 1.15 on every plan except Download & Test, whose average premium
