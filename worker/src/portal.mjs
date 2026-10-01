@@ -388,6 +388,9 @@ const envelope = (digest) => ({
      the same way, so "152,0" on one screen is never "2h 32m" on the other (2026-09-10) */
   talkUnit: digest.talkUnit || 'minutes',
   comm: digest.comm,
+  /* the model in force for the CURRENT month while the digest is still the closed one (2026-10-01) — the
+     calculator projects the new month from it. This envelope hand-picks its fields, so it must be named. */
+  commNow: digest.commNow || null,
   /* THE COMPOSITE'S DRIVER LABELS. They travel once per digest rather than once per
      agent, so they live out here — and this envelope hand-picks its fields, so leaving
      them out meant the page had no names for the rows and printed the raw keys

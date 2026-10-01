@@ -45,7 +45,7 @@ jobs:
                    verify-tbc-backdate verify-variance verify-save-acks verify-login-lockout \
                    verify-help-repeat verify-help-contact \
                    verify-drill verify-campaign-moves verify-campaign-split verify-comm-model \
-                   verify-attendance-format verify-upload-station-layout; do
+                   verify-attendance-format verify-upload-station-layout verify-digest-fence; do
             echo "== $t =="; node nicks_code/diagnostics/$t.mjs
           done
 

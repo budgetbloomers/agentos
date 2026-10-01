@@ -796,7 +796,7 @@ function loadPage(fetchImpl) {
     src + '\nreturn {show,notReported,commCalc,heroHTML,doneHTML,trackHTML,standHTML,whatIfHTML,comsPage,coachHTML,coachTeamHTML,teamView,loginScreen,greeting,sastHour,prettyPeriod,setD:function(d){D=d},setMe:function(m){ME=m},setTeam:function(t){TEAM=t},setView:function(v){VIEW=v},'
     + 'getD:function(){return D},getView:function(){return VIEW},cellOf,reportMTD,reportWeekly,reportDaily,reportTLSummary,exportReports,refreshPortal,liveFiguresChanged,setDayFilter:function(d){DAY_FILTER=d},setForm:function(f){FORM=f},render,'
     + 'sidebarHTML,pgMyHelp,helpPage,setHelpUnread:function(n){HELP_UNREAD=n},setMyHelp:function(m){MYHELP=m},setHelpD:function(h){HELPD=h},'
-    + 'agentKpis,drillPanelHTML,todayHTML,campaignSplitHTML,commissionSplitHTML};'
+    + 'agentKpis,drillPanelHTML,todayHTML,campaignSplitHTML,commissionSplitHTML,calcNow,calcNowInitial};'
   );
   return {
     api: fn(doc, win, win.localStorage, win.location, fetchImpl || (() => Promise.reject(new Error('no network in test'))),
@@ -1194,7 +1194,14 @@ try {
   if (!/class="fresh-line"[^>]*>Figures to [^<·]+ · updated [^<]*\d\d:\d\d</.test(html)) throw new Error('the agent has no quiet "Figures to … · updated …" line: ' + ((html.match(/fresh-line[^<]*<?[^<]*/) || ['none'])[0]));
   if (/>Nikola</.test(html) || /data-view="nik"/.test(html)) throw new Error('Nikola is still on the agent nav');
   if (!/Projected Commission</.test(html)) throw new Error('the nav tab is not "Projected Commission"');
+  if (/\(final\)/.test(html)) throw new Error('a running month is called final');
   ok('Today is precise: 2 of 21 days, 168 target, 8 a day over 19 days (3 – 30 Sep), same last session in both cards, no chrome, no Nikola');
+  /* ROLLOVER GRACE (2026-10-01): on 1 October the live digest is still September — the line names it final */
+  W.__agentToday = '2026-10-01'; P.show(ENOCH);
+  const htmlF = N.root.innerHTML;
+  if (!/class="fresh-line"[^>]*>September \(final\) · figures to [^<·]+ · updated [^<]*\d\d:\d\d</.test(htmlF)) throw new Error('the closed month is not named final: ' + ((htmlF.match(/fresh-line[^<]*<?[^<]*/) || ['none'])[0]));
+  W.__agentToday = '2026-09-03';
+  ok('a closed month reads "September (final) · figures to … · updated …"');
 
   /* the contradiction Nick saw: a short last session must read as short in BOTH cards */
   const SHORT = { ...ENOCH, days: [ { d: '2026-09-01', s: 8, x: 600, t: 8, act: 1 }, { d: '2026-09-02', s: 3, x: 220, t: 8, act: 1 } ] };
@@ -1212,6 +1219,106 @@ try {
   ok('team leaders keep the data-assurance chrome');
   P.setTeam(null);
 } catch (e) { bad('Today precision (2026-09-03 round)', e.message); }
+delete W.__agentToday;
+
+/* ═══ THE CALCULATOR IS FOR THE NEW MONTH (Nick, 2026-10-01: "its october first the projected comms calc
+   works for the new month not old, so it differs from the uploaded data") ═══
+   On 1 Oct the live digest is still September (the rollover grace). Today / My Progress keep September
+   final; the Projected Commission calculator prices OCTOBER — the digest's commNow, 22 working days, no
+   October premium yet. Before the month closes, or with an older digest that carries no commNow, the
+   calculator is the old September behaviour exactly. */
+head('Projected Commission is for the new month on 1 October (commNow)');
+try {
+  const nf2 = new Intl.NumberFormat('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const flat = (h) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const money = (v) => ('R ' + nf2.format(v)).replace(/\s+/g, ' ');
+  const OCT_FIRST = pulseComm.brackets.EXP_CUDDLE[0];                       // read from COMM_RULES, never retyped
+  const SEP_FIRST = { gwp: 9751.30, comm: 4000 };
+  if (Math.abs(OCT_FIRST.gwp - 10215.65) > 1e-9) throw new Error('fixture assumption: October EXP_CUDDLE first bracket is 10215.65, source says ' + OCT_FIRST.gwp);
+  const SEP_COMM = { saleValue: ORIG_SALE_VALUE, brackets: { EXP_CUDDLE: [SEP_FIRST, { gwp: 11000, comm: 6000 }] } };
+  const OCT_COMM = { month: '2026-10', ...pulseComm };
+  const SEPD = { ...DIGEST, period: { from: '2026-09-01', to: '2026-09-30' }, workingDays: 21, diallingDays: 2,
+    dates: ['2026-09-01', '2026-09-02'], daysWithData: 2, role: 'agent', updatedAt: new Date().toISOString(),
+    comm: SEP_COMM, coaching: { stale: true, agents: [] } };
+  const ENOCH = { code: 'CB70', name: 'Enoch Pillay', campaign: 'Cuddle', tenure: 'Exp', plan: 'EXP_CUDDLE',
+    gwpEx: 1800, sales: 20, target: 24, pctT: 0.83, spd: 6.7, att: 1, qa: 0.98, aveG: 90, ref: 2,
+    act: 2, emp: 2, rankCo: 1, nCo: 62, rankTeam: 1, nTeam: 15, trend: 'up', trendPct: 0.1, badges: [], spark: [8, 12],
+    days: [ { d: '2026-09-01', s: 8, x: 600, t: 8, act: 1 }, { d: '2026-09-02', s: 12, x: 900, t: 8, act: 1 } ] };
+  P.setTeam(null);
+
+  /* 1 Oct, September digest WITH commNow: the calculator is October's */
+  W.__agentToday = '2026-10-01';
+  P.setD({ ...SEPD, commNow: OCT_COMM, agents: [ENOCH] }); P.setMe(ENOCH); P.setView('calc'); P.show(ENOCH);
+  let text = flat(N.root.innerHTML);
+  if (!/Projected commission — October/.test(text)) throw new Error('the calculator does not name October');
+  if (!/October has just started/.test(text)) throw new Error('no plain "October has just started" line');
+  if (!/22 working days/.test(text)) throw new Error('October\'s 22 working days are not shown: ' + (text.match(/\d+ working days/g) || ['none']).join(' | '));
+  if (text.indexOf(money(OCT_FIRST.gwp)) < 0) throw new Error('October\'s first bracket premium ' + money(OCT_FIRST.gwp) + ' is not on the page');
+  if (text.indexOf(money(SEP_FIRST.gwp)) >= 0) throw new Error('September\'s first bracket premium is still on the calculator');
+  /* the quiet "September (final) · figures to …" line and the footer legitimately name the data's month */
+  const body = flat(N.root.innerHTML.replace(/<div class="fresh-line">[\s\S]*?<\/div>/, '').replace(/<div class="foot">[\s\S]*$/, ''));
+  const sepHit = (body.match(/.{0,30}September.{0,30}/) || [''])[0];
+  if (text.indexOf(money(1800)) >= 0 || /September/.test(body)) throw new Error('the calculator still prices or names September: ' + sepHit);
+  if (/undefined|NaN/.test(text)) throw new Error('placeholder value on the October calculator');
+  if (/Your month by campaign|Commission by campaign/.test(text)) throw new Error('September\'s campaign split leaked into October');
+  ok('1 Oct: the calculator is October — 22 working days, October\'s first bracket, no September premium priced');
+
+  /* the hero AS THE CALCULATOR PAGE RENDERS IT (#comsHero) — review 2026-10-01: the first version tested
+     heroHTML(), which that page never calls, while agents saw "R 0.00 · below the first bracket" */
+  const heroEl = (N.root.innerHTML.match(/<div class="coms-hero" id="comsHero">[\s\S]*?<\/div><\/div>(?=\s*<|$)/) || [''])[0];
+  const hero = flat(heroEl || N.root.innerHTML);
+  if (!heroEl) throw new Error('the calculator page has no #comsHero');
+  if (!/Projected commission — October/.test(hero) || hero.indexOf('R 4 000') < 0) throw new Error('first-payout hero is wrong: ' + hero.slice(0, 200));
+  if (!/132 sales/.test(hero)) throw new Error('first payout is not priced in sales (ceil(10215.65 ÷ sale value) = 132): ' + hero);
+  if (!/about 6 a day/.test(hero)) throw new Error('first payout has no per-day ask over 22 days: ' + hero);
+  if (/Once you have worked a day|below the first bracket/.test(hero)) throw new Error('the zero-day dead end is on the page: ' + hero.slice(0, 200));
+  P.setMe({ ...ENOCH, plan: 'M0' }); P.show({ ...ENOCH, plan: 'M0' });
+  const heroM0 = flat(N.root.innerHTML);
+  if (!/full premium/i.test(heroM0)) throw new Error('M0 lost its full-premium wording on the page');
+  P.setMe(ENOCH); P.show(ENOCH);
+  ok('1 Oct, on the rendered page: first payout under the October model — R4 000, 132 sales, about 6 a day; M0 keeps "full premium"');
+  /* the September HISTORY copy carries commNow '2026-10' too — opened in December it must stay September */
+  W.__agentToday = '2026-12-01';
+  P.setD({ ...SEPD, commNow: OCT_COMM, agents: [ENOCH] }); P.setMe(ENOCH); P.show(ENOCH);
+  if (/Projected commission — October|new month/.test(flat(N.root.innerHTML))) throw new Error('a September copy read in December projects "October — the new month"');
+  W.__agentToday = '2026-10-01';
+  P.setD({ ...SEPD, commNow: OCT_COMM, agents: [ENOCH] }); P.setMe(ENOCH); P.show(ENOCH);
+  ok('commNow counts only in the month it names (a September copy opened in December stays September)');
+
+  /* what-if inputs still work and use October's brackets */
+  for (const [id, v] of [['cDays', '2'], ['tDays', '22'], ['cGwp', '1000'], ['cPlan', 'EXP_CUDDLE']]) N[id] = Object.assign(N[id] || {}, { value: v });
+  const typed = P.calcNow();
+  const want = P.commCalc('EXP_CUDDLE', 2, 22, 1000, 1, OCT_COMM);
+  for (const id of ['cDays', 'tDays', 'cGwp', 'cPlan']) N[id].value = '';
+  if (!typed || Math.abs(typed.projection - want.projection) > 1e-6 || !(typed.projection > 0)) throw new Error('typed what-if is not priced on October\'s brackets: ' + (typed && typed.projection) + ' vs ' + (want && want.projection));
+  const wrong = P.commCalc('EXP_CUDDLE', 2, 22, 1000, 1, SEP_COMM);
+  if (Math.abs(typed.projection - wrong.projection) < 1e-6) throw new Error('fixture cannot tell October from September');
+  ok('a typed what-if (2 days, R1 000, 22 days) uses October\'s brackets');
+
+  /* Today keeps September final — nothing on it moves */
+  P.setView('month'); P.show(ENOCH);
+  const today = flat(N.root.innerHTML);
+  if (!/September \(final\)/.test(today) || !/How you are tracking — September to date/.test(today)) throw new Error('Today stopped saying September');
+  ok('Today still reads September final');
+
+  /* 20 Sep, same digest: the month is not closed — the calculator is September's, as before */
+  W.__agentToday = '2026-09-20';
+  P.setView('calc'); P.show(ENOCH);
+  text = flat(N.root.innerHTML);
+  if (/Projected commission — October|October has just started/.test(text)) throw new Error('October leaked into a running September');
+  if (text.indexOf(money(SEP_FIRST.gwp)) < 0 || text.indexOf(money(OCT_FIRST.gwp)) >= 0) throw new Error('a running September is not on September\'s brackets');
+  if (!/21 working days/.test(text)) throw new Error('a running September lost its 21 working days');
+  ok('20 Sep with the same digest: September\'s calculator, unchanged');
+
+  /* an older publisher (no commNow) on 1 Oct: no throw, today's behaviour */
+  W.__agentToday = '2026-10-01';
+  P.setD({ ...SEPD, agents: [ENOCH] }); P.setMe(ENOCH); P.setView('calc'); P.show(ENOCH);
+  text = flat(N.root.innerHTML);
+  if (/Projected commission — October/.test(text)) throw new Error('October invented from a digest with no commNow');
+  if (text.indexOf(money(SEP_FIRST.gwp)) < 0) throw new Error('a digest with no commNow lost September\'s calculator');
+  ok('a digest without commNow on 1 Oct keeps today\'s behaviour and does not throw');
+} catch (e) { bad('new-month calculator (commNow)', e.message); }
+P.setView('month'); P.setTeam(null);
 delete W.__agentToday;
 
 /* ═══ LEAVE IS NOT A SHIFT (decision D1, sprint 2026-09-29) — the display half ═══

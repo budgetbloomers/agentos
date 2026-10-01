@@ -6,8 +6,8 @@
  * themselves (reference/docs/) and proves, for every plan and every row:
  *   1 the published bracket = the workbook's "Total Premium ex vat" and "Comm", to the cent
  *   2 the plan has exactly the workbook's number of rows
- *   3 each month is published under its own workbook: September → COMM_RULES_BY_MONTH['2026-09'],
- *     October (current) → COMM_RULES
+ *   3 October (current) → COMM_RULES; September's model was RETIRED on 2026-10-01 ("we just removing
+ *     september commission model and updating to october now"), so September rides COMM_RULES too
  *   4 the dialling days the thresholds were built on match the workbook's DD
  *   5 the per-plan sale value (Download / Upsell R40 ÷ 1.15) matches its sheet's average premium
  *
@@ -75,11 +75,15 @@ function compare(label, wbModel, published) {
   }
 }
 
-console.log('\n1–2 · September (Matrix Vas Comm Model_September26.xlsx) is pinned to September');
-const sep = readModel('Matrix Vas Comm Model_September26.xlsx');
-ok('the September model is kept as COMM_RULES_2026_09', !!SEPT && SEPT.version === '2026-09', SEPT && SEPT.version);
-ok('COMM_RULES_BY_MONTH pins 2026-09 to it', /'2026-09'\s*:\s*COMM_RULES_2026_09/.test(BY_MONTH_SRC), BY_MONTH_SRC);
-compare('Sept', sep, SEPT);
+console.log('\n1–2 · September\'s model is RETIRED — September rides the October model (2026-10-01)');
+ok('no COMM_RULES_2026_09 object is left in PULSE', !SEPT_SRC);
+ok('COMM_RULES_BY_MONTH has no 2026-09 entry (so a September digest publishes COMM_RULES)', !/'2026-09'\s*:/.test(BY_MONTH_SRC), BY_MONTH_SRC);
+ok('July and August still keep August\'s model', /'2026-07'\s*:\s*COMM_RULES_2026_08/.test(BY_MONTH_SRC) && /'2026-08'\s*:\s*COMM_RULES_2026_08/.test(BY_MONTH_SRC), BY_MONTH_SRC);
+{
+  // eslint-disable-next-line no-new-func
+  const BY = new Function('COMM_RULES_2026_08', 'return {' + BY_MONTH_SRC + '};')({ version: '2026-08' });
+  ok('a September period\'s comm resolves to the October model', (BY['2026-09'] || CURRENT).version === '2026-10');
+}
 
 console.log('\n3 · October (Matrix Vas Comm Model_October26.xlsx) is the current model');
 const oct = readModel('Matrix Vas Comm Model_October26.xlsx');
@@ -88,12 +92,30 @@ compare('Oct', oct, CURRENT);
 
 console.log('\n4 · dialling days');
 ok('October sheets are built on 22 dialling days', Object.values(oct.dd).every((d) => d === 22), JSON.stringify(oct.dd));
-ok('September sheets on 21', Object.values(sep.dd).every((d) => d === 21), JSON.stringify(sep.dd));
 ok('COMM_RULES records its dialling days', CURRENT && CURRENT.dd === 22, CURRENT && CURRENT.dd);
 
 console.log('\n5 · sale values');
 ok('R89 plans: saleValue = 89 ÷ 1.15', CURRENT && Math.abs(CURRENT.saleValue - 89 / 1.15) < 1e-9 && oct.avg.M1 === 89);
 ok('Download / Upsell: 40 ÷ 1.15, as its sheet', CURRENT && CURRENT.saleValues && Math.abs(CURRENT.saleValues.EXP_DOWNUP - oct.avg.EXP_DOWNUP / 1.15) < 1e-9, JSON.stringify(oct.avg));
+
+console.log('\n6 · commNow — the calculator is for the NEW month while the digest is still the closed one (2026-10-01)');
+{
+  const fm = PULSE.match(/function commNowFor\([^)]*\)\{[\s\S]*?\n\}/);
+  ok('PULSE carries commNowFor(periodFrom, nowMs)', !!fm);
+  ok('agentDigestPayload publishes commNow through it', /commNow\s*:\s*[^,\n]*commNowFor\(|\.\.\.\s*\(?\s*commNowFor\(|commNowFor\([^)]*\)[\s\S]{0,80}commNow/.test(PULSE));
+  if (fm) {
+    // eslint-disable-next-line no-new-func
+    const commNowFor = new Function('COMM_RULES', 'COMM_RULES_BY_MONTH', fm[0] + '\nreturn commNowFor;')(CURRENT, {});
+    const OCT1 = Date.parse('2026-10-01T06:00:00Z'), SEP20 = Date.parse('2026-09-20T10:00:00Z');
+    const a = commNowFor('2026-09-01', OCT1);
+    ok('a September period built in October carries commNow for 2026-10', a && a.month === '2026-10', JSON.stringify(a && a.month));
+    ok('…with the October model (version 2026-10, 22 dialling days, the whole bracket table)', a && a.version === '2026-10' && a.dd === 22 && a.brackets && a.brackets.EXP_CUDDLE.length === CURRENT.brackets.EXP_CUDDLE.length, a && a.version);
+    ok('an October period built in October carries NO commNow (normal months stay byte-identical)', commNowFor('2026-10-01', OCT1) === undefined);
+    ok('a September period built in September carries none', commNowFor('2026-09-01', SEP20) === undefined);
+    ok('the month is SAST, not UTC (23:30 UTC on 30 Sep is already 1 Oct)', (commNowFor('2026-09-01', Date.parse('2026-09-30T23:30:00Z')) || {}).month === '2026-10');
+    ok('a month with a pinned model publishes the pinned one (November has none → the current model)', (commNowFor('2026-10-01', Date.parse('2026-11-02T08:00:00Z')) || {}).version === '2026-10');
+  }
+}
 
 console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====');
 process.exitCode = fail ? 1 : 0;

@@ -2284,7 +2284,7 @@ function pageTeamResults(){
 function nikBrief(){
   var out=[];
   if(ME&&!TEAM){
-    var c=calcNowInitial();
+    var c=calcPeriodNow();
     out.push('Today: <b>'+num(ME.sales)+' of '+num(ME.target)+'</b> sales that count.'
       +(c&&c.projection?' Commission so far <b>'+R(c.projection)+'</b> — estimated.':''));
     if(ME.pctT!=null) out.push('You are at <b>'+pct(ME.pctT,0)+'</b> of your target for the days you have worked.');
@@ -5247,7 +5247,10 @@ function reachLabel(){ try{ var r=(D&&D.dataReach&&D.dataReach.sales)||(D&&D.dat
 function agentFreshLine(){
   if(!isAgentUser()||D.__back||!D.updatedAt) return '';
   var rl=reachLabel();
-  return '<div class="fresh-line">'+(rl?'Figures to '+esc(rl)+' · ':'')+'updated '+esc(sastWhen(D.updatedAt))+'</div>';
+  /* ROLLOVER GRACE (2026-10-01): until the new month publishes, the live digest is the month just closed —
+     the line says so ("September (final)") instead of reading like a month still running */
+  var closed=!!(D.period&&D.period.to&&D.period.to<nowDay());
+  return '<div class="fresh-line">'+(closed?esc(monthLabel())+' (final) · ':'')+(rl?(closed?'figures':'Figures')+' to '+esc(rl)+' · ':'')+'updated '+esc(sastWhen(D.updatedAt))+'</div>';
 }
 /* LEAVE IS NOT A SHIFT (decision D1, sprint 2026-09-29). PULSE excuses AL/SL/FRL/Suspended days
    (HDAL half) from the employed shifts and carries the count as me.leave (omitted when 0) and lv
@@ -5263,18 +5266,53 @@ function leaveLine(){
   return '<div class="leave-line"><b>Leave: '+esc(amt)+'</b> — not counted as '+(lv>1?'shifts':'a shift')+', '
     +(they?'their':'your')+' target is set on the days '+(they?'they were':'you were')+' in.</div>';
 }
+/* WHICH MONTH THE CALCULATOR IS FOR (Nick, 2026-10-01: "its october first the projected comms calc works for
+   the new month not old, so it differs from the uploaded data"). ONE decision, used by every calculator path.
+   Once the digest's month has closed (rollover grace: the live digest is still September on 1 October) AND
+   the digest carries commNow — the model in force for the CURRENT month — the calculator projects the NEW
+   month: its rules, its working days, no premium yet. Today / My Progress / Nikola never call this; they
+   keep the digest's own month. A digest without commNow (older publisher) is the old behaviour exactly. */
+function calcMonth(){
+  var cn=D&&D.commNow, closed=!!(D&&D.period&&D.period.to&&D.period.to<nowDay());
+  /* …and commNow must be the month we are IN: the September history copy carries commNow '2026-10' too, and
+     opened in December it must stay September, never "October — the new month" (review, 2026-10-01) */
+  if(closed&&cn&&/^\d{4}-\d{2}$/.test(cn.month||'')&&cn.month>String(D.period.to).slice(0,7)&&cn.month===String(nowDay()).slice(0,7)){
+    var y=+cn.month.slice(0,4), mo=+cn.month.slice(5,7);
+    var last=new Date(Date.UTC(y,mo,0)).toISOString().slice(0,10), label='the new month';
+    try{ label=new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',month:'long'}).format(new Date(cn.month+'-01T00:00:00Z')); }catch(e){}
+    return {fresh:true,rules:cn,month:cn.month,label:label,worked:0,total:workingDaysFrom(cn.month+'-01',last),gwp:0};
+  }
+  return {fresh:false,rules:D&&D.comm,label:monthLabel(),worked:WORKED(),total:TDAYS(),gwp:ME.gwpEx};
+}
+/* ex-VAT value of one sale on the agent's plan, from the rules in force for the month being projected */
+function saleFor(rules){
+  return (rules&&((rules.saleValues&&rules.saleValues[ME.plan])||rules.saleValue))||(89/1.15);
+}
+/* commCalc for the month being projected. A new month has no worked day, which commCalc refuses (cDays<=0),
+   so the baseline is ONE virtual day with no premium over the month's days + 1: average 0, projection 0,
+   remaining days = the month's working days, every bracket's gap = its full premium. */
+function calcRun(m,plan,cDays,tDays,gwp){
+  if(m.fresh&&!(parseFloat(cDays)>0)){
+    var t=parseFloat(tDays); if(!(t>0)) t=m.total;
+    var b=commCalc(plan,1,t+1,0,EXTRA,m.rules);
+    if(b) b.newMonth=m.label;
+    return b;
+  }
+  return commCalc(plan,cDays,tDays,gwp,EXTRA,m.rules);
+}
 function calcNow(){
   var f=function(id,dflt){ var el=$(id); return el?el.value:dflt; };
+  var m=calcMonth();
   var plan=($('cPlan')&&$('cPlan').value)||ME.plan;   // the figures card's tenure select — sandbox only, never saved
-  return commCalc(plan,
-    f('cDays',WORKED()), f('tDays',TDAYS()), f('cGwp',ME.gwpEx),
-    EXTRA, D.comm);
+  return calcRun(m,plan,f('cDays',m.worked), f('tDays',m.total), f('cGwp',m.gwp));
 }
 function show(a){
   ME=a;
   if(['month','calc','progress','coaching','links'].indexOf(VIEW)<0) VIEW='month';
   var g=greeting();
-  var c=calcNowInitial();
+  /* only the calculator tab projects the NEW month; Today, My Progress and the rest keep the digest's own */
+  var c=VIEW==='calc'?calcNowInitial():calcPeriodNow();
+  var cm=VIEW==='calc'?calcMonth():null;
   /* On a drilldown the page still belongs to the team leader — greet THEM and
      put the agent's name in the line underneath, rather than saying "Good
      morning, Bradley" to Bradley's manager. */
@@ -5283,7 +5321,8 @@ function show(a){
   shell(
     esc(g)+', '+esc(who),
     (VIEW==='coaching' ? (D.__back?'Coaching recorded for '+esc(firstName(a.name))+'.':'Every coaching session recorded for you.')
-      : VIEW==='calc' ? (D.__back?esc(firstName(a.name))+'&rsquo;s projected commission this month.':'What you can potentially earn, and what can change it.')
+      : VIEW==='calc' ? (cm.fresh?(D.__back?esc(firstName(a.name))+'&rsquo;s':'Your')+' projected commission for '+esc(cm.label)+' — the new month.'
+          : D.__back?esc(firstName(a.name))+'&rsquo;s projected commission this month.':'What you can potentially earn, and what can change it.')
       : VIEW==='links' ? 'The systems you use every day — each opens in a new tab.'
       : VIEW==='progress' ? (D.__back?esc(firstName(a.name))+'&rsquo;s figures in full.':'Your last five sessions, what has improved, and what happened after support.')
       : VIEW==='nik' ? 'One fact, one explanation, one next action.'
@@ -5450,7 +5489,13 @@ function agentKpis(a,c){
     +'</div>';
   return head+tiles;
 }
+/* the calculator's own figure — the NEW month when the digest's has closed (see calcMonth) */
 function calcNowInitial(){
+  var m=calcMonth();
+  return calcRun(m, ME.plan, m.worked, m.total, m.gwp);
+}
+/* the digest's OWN month, always — what Today, My Progress and Nikola quote */
+function calcPeriodNow(){
   return commCalc(ME.plan, WORKED(), TDAYS(), ME.gwpEx, EXTRA, D.comm);
 }
 
@@ -5473,6 +5518,25 @@ function climbLine(c,sale){
   return '<div class="climb">Then it climbs fast — <b>'+num(extraSales)+' more sales</b> after that takes you to '
     +'<b>'+R(up.comm)+'</b>. The first one is the hard one.</div>';
 }
+/* The calculator's hero on a new month's first day — the inside of #comsHero, which is what the Projected
+   Commission page renders (review 2026-10-01: it first lived in heroHTML, which that page never calls, so
+   agents saw "R 0.00 · below the first bracket"). No worked day exists, so it shows the first payout of the
+   agent's plan under the NEW month's model: the commission, the premium it needs, the sales that takes and
+   about how many a day over the month. */
+function freshHeroInner(c){
+  var m=calcMonth(), L=esc(m.label);
+  var lab='<div class="lab">Projected commission — '+L+'</div>';
+  var started='<div class="s" style="font-size:12px;color:#9FB2CE;margin-top:8px">'+L+' has just started — no '+L+' sales are in yet. This updates as '+L+'’s uploads land.</div>';
+  if(c.plan==='M0') return lab+'<div class="amt">Full premium</div>'
+    +'<div class="line">On M0 your commission is the full premium you write, so every sale lands straight in your pocket.</div>'+started;
+  if(!c.nextMove) return lab+'<div class="amt">—</div><div class="line">No bracket table is on file for your plan under the '+L+' model yet.</div>'+started;
+  var sale=saleFor(m.rules), gap=Math.max(0,c.nextMove.gap), needSales=Math.ceil(gap/sale);
+  var rem=Math.max(0,c.metrics.remainingDays), aDay=rem>0?Math.ceil(needSales/rem):null;
+  return lab+'<div class="amt num">'+R(c.nextMove.nextComm)+'<small>your first payout in '+L+'</small></div>'
+    +'<div class="line">It needs <b>'+R(gap)+'</b> of premium, excluding VAT — about <b>'+num(needSales)+' sales</b>'
+    +(aDay!=null?', about <b>'+num(aDay)+' a day</b> across the '+num(rem)+' working days of '+L+'.':'.')+'</div>'
+    +climbLine(c,sale)+started;
+}
 function heroHTML(c){
   if(!ME.plan){
     return '<div class="card hero"><div class="lab">Your commission</div>'
@@ -5485,7 +5549,7 @@ function heroHTML(c){
     /* null has TWO causes and they need different words (adversarial review, 2026-08-27):
        no worked days yet, or the comm rules missing from the digest — telling an agent
        with ten worked days "once you have worked a day" is false and unfixable by them. */
-    var noRules=!D.comm||D.comm.saleValue==null;
+    var nr=calcMonth().rules, noRules=!nr||nr.saleValue==null;
     return '<div class="card hero"><div class="lab">Your commission</div>'
       +'<div class="amt dim">—</div>'
       +'<div class="note">'+(noRules
@@ -5499,7 +5563,7 @@ function heroHTML(c){
      PAYOUT they can still reach and exactly what it takes to get there, in
      sales, because sales are the unit an agent controls. The honest projection
      never disappears; it moves to the footnote. */
-  var sale=(D.comm&&((D.comm.saleValues&&D.comm.saleValues[ME.plan])||D.comm.saleValue))||(89/1.15);
+  var sale=saleFor(D.comm);
   var perDaySales=function(rand){ return rand/sale; };
 
   if(ME.plan!=='M0'&&!(c.projection>0)&&c.nextMove){
@@ -6960,7 +7024,7 @@ function whatIfHTML(c){
 }
 function whatIfBody(c){
   if(!c||!c.whatIf) return '';
-  var sale=(D.comm&&((D.comm.saleValues&&D.comm.saleValues[ME.plan])||D.comm.saleValue))||(89/1.15);
+  var sale=saleFor(calcMonth().rules);
   var rem=Math.max(0,c.metrics.remainingDays);
   var reached=null;
   if(c.plan!=='M0'&&c.brackets)for(var i=c.brackets.length-1;i>=0;i--){ if(c.whatIf.newPremium>=c.brackets[i].gwp){reached=c.brackets[i];break;} }
@@ -7020,23 +7084,32 @@ function wireWhatIf(){
    page hero (heroHTML) keeps the first-payout framing. */
 var PLAN_LAB={M1:'M1',M2:'M2',EXP_COURTESY:'Experienced — Courtesy',EXP_CUDDLE:'Experienced — Cuddle',EXP_DOWNUP:'Experienced — Download & Test',M0:'M0'};
 function comsDaysNow(){
-  var w=$('cDays'),t=$('tDays'),g=$('cGwp');
-  return { worked:parseFloat(w?w.value:WORKED())||0,
-           dial:parseFloat(t?t.value:TDAYS())||0,
-           gwp:parseFloat(g?g.value:ME.gwpEx)||0 };
+  var w=$('cDays'),t=$('tDays'),g=$('cGwp'), m=calcMonth();
+  return { worked:parseFloat(w?w.value:m.worked)||0,
+           dial:parseFloat(t?t.value:m.total)||0,
+           gwp:parseFloat(g?g.value:m.gwp)||0 };
 }
 function comsTop(){
+  var m=calcMonth();
   return '<div class="coms-top"><div class="coms-av" style="background:hsl('+hue(ME.code)+',58%,42%)">'+esc(initials(ME.name))+'</div>'
     +'<div><h1>Projected Commission Calculator</h1>'
     +'<div class="meta"><span>'+esc(ME.name||'')+'</span>'+(ME.code?'<span>'+esc(ME.code)+'</span>':'')
     +(ME.campaign?'<span>'+esc(ME.campaign)+'</span>':'')
-    +'<span>'+esc(prettyPeriod())+' — '+num(DAYS())+' working days</span></div></div></div>';
+    +'<span>'+(m.fresh?esc(m.label):esc(prettyPeriod()))+' — '+num(m.fresh?m.total:DAYS())+' working days</span></div></div></div>';
+}
+/* new-month mode only: say plainly WHICH month this page projects and why it differs from the uploaded data */
+function freshNoticeHTML(){
+  var m=calcMonth(); if(!m.fresh) return '';
+  return '<div class="card"><h2>Projected commission — '+esc(m.label)+'</h2>'
+    +'<p class="why">'+esc(m.label)+' has just started. No '+esc(m.label)+' sales are in yet, so this page projects '+esc(m.label)
+    +' from the start, on '+esc(m.label)+'’s commission table and its '+num(m.total)+' working days. '
+    +'The figures update as '+esc(m.label)+'’s uploads land.</p></div>';
 }
 function comsExplain(c){
   return '<div class="card" style="border-style:dashed">'
     +'<h2>Two different things, both called commission</h2>'
     +'<p class="why" style="margin-top:8px"><b>Today</b> shows what your current pace is worth'
-    +(c&&c.projection>0?': <b>'+R(c.projection)+'</b> so far this month':'')+'. That number comes from this table.</p>'
+    +(c&&c.projection>0&&!c.newMonth?': <b>'+R(c.projection)+'</b> so far this month':'')+'. That number comes from this table.</p>'
     +'<p class="why" style="margin-top:8px">This page is the campaign bracket table. It works on the <b>value</b> of what you sell over the whole month, not on how many sales you make. Nothing on this page is earned yet.</p>'
     +'<div class="tiny2"><b>Premium</b> is the monthly amount a customer pays for what you sold. '
     +'<b>GWP</b> is all of your premium added up for the month, before VAT. '
@@ -7045,10 +7118,14 @@ function comsExplain(c){
 }
 function comsHero(c){ return '<div class="coms-hero" id="comsHero">'+comsHeroInner(c)+'</div>'; }
 function comsHeroInner(c){
+  var cm=calcMonth();
   if(!c) return '<div class="lab">Bracket you are on pace for</div><div class="amt">—</div>'
-    +'<div class="line">'+((!D.comm||D.comm.saleValue==null)
+    +'<div class="line">'+((!cm.rules||cm.rules.saleValue==null)
       ?'The bracket table for your plan has not reached this page yet — nothing here is lost, and your figures are unaffected.'
+      :cm.fresh
+      ?'No bracket table is on file for your plan under the '+esc(cm.label)+' model yet — your figures are unaffected.'
       :'Once you have worked a day this month, we can show what this pace secures. You can also type numbers into the figures below to explore.')+'</div>';
+  if(c.newMonth) return freshHeroInner(c);
   var dd=comsDaysNow(), pctFill=dd.dial>0?Math.min(100,(dd.worked/dd.dial)*100):0;   /* pctFill, never "pct" — shadowing the global formatter has blanked pages before */
   if(c.plan==='M0'){
     return '<div class="lab">On pace to earn</div>'
@@ -7088,16 +7165,19 @@ function comsHeroInner(c){
    real inputs the calculator works from. The what-if control below it stays — one
    more sale a day is the one lever that is genuinely the agent's. */
 function comsFigures(c){
+  var m=calcMonth();
   var done=c&&!(c.metrics.remainingDays>0);
-  var w=WORKED();
-  return '<div class="card figures"><h2>Your figures for '+esc(prettyPeriod())+'</h2>'
-    +'<p class="why">Your real figures from Agent OS — this is what the calculator works from.'
-    +(done?' '+esc(monthLabel())+'\'s working days are counted, so there are no remaining days left to add sales to.':'')+'</p>'
+  var w=m.fresh?0:WORKED();
+  return '<div class="card figures"><h2>Your figures for '+(m.fresh?esc(m.label):esc(prettyPeriod()))+'</h2>'
+    +'<p class="why">'+(m.fresh
+      ?'Nothing is counted yet — '+esc(m.label)+' has just started, so no days are worked and no premium is written. This is what the calculator works from, and it fills in as '+esc(m.label)+'’s uploads land.'
+      :'Your real figures from Agent OS — this is what the calculator works from.')
+    +(done?' '+esc(m.label)+'\'s working days are counted, so there are no remaining days left to add sales to.':'')+'</p>'
     +'<div class="coms-rows">'
     +'<div><span>Plan</span><b>'+esc(PLAN_LAB[ME.plan]||ME.plan||'—')+'</b></div>'
     +'<div><span>Working days worked (days whose files have landed)</span><b class="num">'+num(w,w%1?1:0)+'</b></div>'
-    +'<div><span>Working days in '+esc(monthLabel())+'</span><b class="num">'+num(DAYS())+'</b></div>'
-    +'<div><span>Premium written, excluding VAT</span><b class="num">'+R(ME.gwpEx,2)+'</b></div>'
+    +'<div><span>Working days in '+esc(m.label)+'</span><b class="num">'+num(m.fresh?m.total:DAYS())+'</b></div>'
+    +'<div><span>Premium written, excluding VAT</span><b class="num">'+R(m.gwp,2)+'</b></div>'
     +'</div>'
     +'<div id="figRows">'+figRowsInner(c)+'</div>'
     +'</div>';
@@ -7111,8 +7191,10 @@ function figRowsInner(c){
     +'<div><span>Remaining days</span><b class="num">'+num(Math.max(0,c.metrics.remainingDays))+'</b></div>'
     +'</div>'
     +'<div class="pace"><i style="width:'+pctFill+'%"></i></div>'
-    +'<div class="tiny2">Working day pace — '+num(dd.worked)+' of '+num(dd.dial)+' days complete ('+Math.round(pctFill)+'% of the period). '
-    +'Figures come from your current period in Agent OS.</div>';
+    +(calcMonth().fresh
+      ?'<div class="tiny2">Working day pace — '+num(dd.worked)+' of '+num(dd.dial)+' days complete. '+esc(calcMonth().label)+' has just started; its figures start from zero.</div>'
+      :'<div class="tiny2">Working day pace — '+num(dd.worked)+' of '+num(dd.dial)+' days complete ('+Math.round(pctFill)+'% of the period). '
+        +'Figures come from your current period in Agent OS.</div>');
 }
 function comsTableCard(c){
   return '<div class="card"><h2>Bracket gap analysis</h2>'
@@ -7167,6 +7249,7 @@ function campaignSplitHTML(a){
    projects over the working days left. */
 function segCommission(a){
   var segs=segmentsOf(a); if(!segs||!D.comm) return null;
+  if(calcMonth().fresh) return null;       // the previous month's campaign segments do not belong to the new month
   var rows=[], total=0, any=false;
   var ends=segs.map(function(s,i){ if(i===segs.length-1) return D.period.to;
     var d=new Date(segs[i+1].from+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()-1); return d.toISOString().slice(0,10); });
@@ -7208,8 +7291,9 @@ function comsPage(c){
   /* TOP PERFORMERS LIVE HERE (Nick, 2026-09-15: "the top performers must be on the commission
      calculator and they must only see the top 10 performers, not in their team") — the floor's
      ten, under the earnings, where the "what would it take" question is already being asked. */
-  if(!ME.plan) return agentHead(ME)+comsTop()+commissionSplitHTML(ME)+heroHTML(c)+topHTML();   // heroHTML's "not set up yet" card says why, without guessing
-  return agentHead(ME)+comsTop()+commissionSplitHTML(ME)+comsExplain(c)+comsHero(c)+comsFigures(c)+whatIfHTML(c)+topHTML()+comsTableCard(c);
+  var ah=calcMonth().fresh?'':agentHead(ME);   // the identity bar quotes the digest's month (days worked, period) — not the new month
+  if(!ME.plan) return ah+comsTop()+commissionSplitHTML(ME)+heroHTML(c)+topHTML();   // heroHTML's "not set up yet" card says why, without guessing
+  return ah+comsTop()+freshNoticeHTML()+commissionSplitHTML(ME)+comsExplain(c)+comsHero(c)+comsFigures(c)+whatIfHTML(c)+topHTML()+comsTableCard(c);
 }
 function refreshTool(c){
   if($('comsHero')) $('comsHero').innerHTML=comsHeroInner(c);
@@ -7229,10 +7313,11 @@ function wireTool(){
   });
   var r=$('reset');
   if(r) r.onclick=function(){
+    var m=calcMonth();   // the month being projected — never September's figures on October's table
     if($('cPlan')) $('cPlan').value=ME.plan;
-    if($('cDays')) $('cDays').value=ME.act;
-    if($('tDays')) $('tDays').value=TDAYS();
-    if($('cGwp')) $('cGwp').value=Math.round(ME.gwpEx*100)/100;
+    if($('cDays')) $('cDays').value=m.fresh?0:ME.act;
+    if($('tDays')) $('tDays').value=m.total;
+    if($('cGwp')) $('cGwp').value=Math.round(m.gwp*100)/100;
     var c=calcNow(); refreshTool(c);
     if($('wout')) $('wout').innerHTML=whatIfBody(c);
   };

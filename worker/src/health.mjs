@@ -113,7 +113,13 @@ export function evaluateFreshness(t) {
      it; and the digest only moves while a VAS tab is open at all. Both are now visible:
      the wrong month is critical, a digest older than a day with staff signed in is a
      warning. `digestMonth` is the payload's own period month, `curMonth` the SAST month. */
-  if (t.digestMonth && t.curMonth && t.digestMonth !== t.curMonth) {
+  /* ROLLOVER GRACE (2026-10-01, rules.mjs liveDigestAllowed): the month just closed IS the right live digest
+     until the new month has a day of data to show — until the day sources should have reached
+     (expectedReachFor) falls inside the current month. Before that it is the correct state, not an alert. */
+  const prevOf = (m) => { const d = new Date(m + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 7); };
+  const closedMonthInGrace = !!(t.digestMonth && t.curMonth && /^\d{4}-\d{2}$/.test(t.curMonth)
+    && t.digestMonth === prevOf(t.curMonth) && expectedReachFor(now).slice(0, 7) !== t.curMonth);
+  if (t.digestMonth && t.curMonth && t.digestMonth !== t.curMonth && !closedMonthInGrace) {
     alerts.push({
       id: 'agent-digest-wrong-month', severity: 'critical',
       message: 'The live agent digest is for ' + t.digestMonth + ' but the month is ' + t.curMonth

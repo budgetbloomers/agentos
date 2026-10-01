@@ -135,6 +135,17 @@ head('A · THE SENTINEL, AGAINST FIXTURES');
 }
 
 {
+  /* ROLLOVER GRACE (2026-10-01): September live on the 1st of October is the right answer until October has a day to show */
+  const wm = (now, digestMonth) => evaluateFreshness({ manifestAt: null, vasAt: null, opsAt: null, staffLoginRecent: false, opened: {},
+    now: at(now), digestMonth, curMonth: '2026-10', digestAt: null }).some((x) => x.id === 'agent-digest-wrong-month');
+  ok(!wm('2026-10-01T06:00:00Z', '2026-09'), '1 Oct 08:00, September live: quiet (no October day is due yet)');
+  ok(!wm('2026-10-02T09:00:00Z', '2026-09'), '2 Oct 11:00, September live: still quiet (1 Oct is due after 13:00)');
+  ok(wm('2026-10-02T12:00:00Z', '2026-09'), '2 Oct 14:00, September live: critical (1 Oct should have landed and published)');
+  ok(wm('2026-10-01T06:00:00Z', '2026-08'), '1 Oct, AUGUST live: critical at once (older than the month just closed)');
+  ok(!wm('2026-10-01T06:00:00Z', '2026-10'), 'October live: quiet');
+}
+
+{
   /* never-stale plan, Phases 1 & 2 (2026-09-07): the runner and the sources */
   const base = { manifestAt: '2026-09-07T08:00:00Z', vasAt: '2026-09-07T08:05:00Z', opsAt: '2026-09-07T08:06:00Z', opsFactsAt: '2026-09-07T08:06:00Z',
     staffLoginRecent: true, opened: {}, digestMonth: '2026-09', curMonth: '2026-09', digestAt: '2026-09-07T08:10:00Z', now: at('2026-09-07T09:00:00Z') };

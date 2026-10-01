@@ -11,6 +11,7 @@ import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWa
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, loadReports, tlReports, listDigestMonths, overview, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn, helpConfirm, helpPulse } from './help.mjs';
 import { campaignMoves, setCampaignMove } from './moves.mjs';
+import { liveDigestAllowed } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, effPerDay } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
@@ -1658,13 +1659,36 @@ export default {
            write too: a live-key payload whose period is not the current SAST month is
            409'd. History keys (agent-digest-YYYY-MM) are untouched; the republish tool
            writes Storage directly and is unaffected. */
+        let digestFrom = null;   // the live digest's period, stamped on its pointer row below (rollover grace)
         if (qk === 'agent-digest' || /^agent-reports-(variance|leads)$/.test(qk)) {   // the report keys are fenced to the live month too (2026-09-21)
-          try {
-            const from = String((JSON.parse(body).period || {}).from || '');
-            const cur = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
-            if (from.slice(0, 7) !== cur)
-              return json({ error: 'stale_month: the live agent digest must be the current month (' + cur + '), got ' + (from || 'no period') + '. Publish it under its own agent-digest-YYYY-MM key instead.' }, 409);
-          } catch (e) { return json({ error: 'agent-digest body is not JSON with a period' }, 400); }
+          let from = '';
+          try { from = String((JSON.parse(body).period || {}).from || ''); }
+          catch (e) { return json({ error: 'agent-digest body is not JSON with a period' }, 400); }
+          const cur = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
+          /* ROLLOVER GRACE (2026-10-01, rules.mjs liveDigestAllowed): the closed month may stay live until the
+             current month publishes. What the live key holds is read only when it matters, FRESH (never a
+             60 s-old cached copy), cheaply (the period stamped on the pointer row; the whole digest only for a
+             row written before the stamp existed) — and a failed read REFUSES: "could not tell" must never
+             read as "nothing is live", or a September tab lands over October on one Storage blip (review). */
+          let liveFrom = '';
+          if (from.slice(0, 7) !== cur) {
+            try {
+              const row = ((await DB.select('rules?key=eq.' + encodeURIComponent('kv:agent-digest') + '&select=value')) || [])[0];
+              const v = (row && row.value) || null;
+              if (v && typeof v.period === 'string') liveFrom = v.period;
+              else if (v) {
+                if (globalThis.__digestCaches) delete globalThis.__digestCaches['kv:agent-digest'];
+                const live = await loadDigest(DB);   // storageGet answers null on ANY failure — a row with no readable digest is "could not tell"
+                if (!live) throw new Error('the live digest has a row but its object did not read');
+                liveFrom = String((live.period || {}).from || '');
+              }
+            } catch (e) {
+              return json({ error: 'live digest not readable — a ' + (from.slice(0, 7) || 'dateless') + ' digest is refused until it is (' + String(e && e.message || e).slice(0, 120) + ')' }, 503);
+            }
+          }
+          if (!liveDigestAllowed(from, liveFrom, Date.now()))
+            return json({ error: 'stale_month: the live agent digest must be the current month (' + cur + ') — or the month just closed until ' + cur + ' publishes; got ' + (from || 'no period') + '. Publish it under its own agent-digest-YYYY-MM key instead.' }, 409);
+          if (qk === 'agent-digest') digestFrom = from;
         }
         if (qk === 'vas-state' && body.length < 120000 && !url.searchParams.get('force')) {
           const head = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {
@@ -1726,7 +1750,7 @@ export default {
           return json({ error: 'store failed: ' + sr.status + ' ' + (await sr.text()).slice(0, 150) }, 500);
         }
         const newAt = new Date().toISOString();
-        await DB.insert('rules', [{ key: 'kv:' + qk, value: { store: objPath }, updated_by: user.username, updated_at: newAt }], true);
+        await DB.insert('rules', [{ key: 'kv:' + qk, value: digestFrom ? { store: objPath, period: digestFrom } : { store: objPath }, updated_by: user.username, updated_at: newAt }], true);
         /* the version the client should hold from now on — as the database renders it, which is
            what every later compare is made against */
         let newVer = newAt;

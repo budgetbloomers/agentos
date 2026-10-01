@@ -37,6 +37,22 @@ export function checksFor(row, th) {
   };
 }
 
+/* THE LIVE DIGEST AT MONTH ROLLOVER (2026-10-01). The live key is the current SAST month (3 Sep: an
+   August browser overwrote September) — but on the 1st the new month has no data, and the fence froze
+   agents on the last copy of the closed month ("1–29 September" on 1 October, the final day never shown).
+   So the PREVIOUS month may write the live key while the key does not already hold the current month;
+   nothing older ever; the current month always wins. periodFrom / liveFrom: 'YYYY-MM-DD' (liveFrom '' when
+   nothing is live). Used by the Worker's 409, the republish tool, and mirrored in PULSE (liveDigestMonthOk). */
+export function liveDigestAllowed(periodFrom, liveFrom, nowMs) {
+  const m = String(periodFrom || '').slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(m)) return false;
+  const cur = new Date(nowMs + 2 * 3600000).toISOString().slice(0, 7);
+  if (m === cur) return true;
+  const d = new Date(cur + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() - 1);
+  const prev = d.toISOString().slice(0, 7);
+  return m === prev && String(liveFrom || '').slice(0, 7) !== cur;
+}
+
 const HOUR = 3600000;
 /** The day each source should reach right now (SAST): yesterday after 13:00, no Sunday; Saturday only for sources that dial. Mirror of expectedReach() in PULSE. */
 export function expectedReachFor(nowMs, saturday = true) {

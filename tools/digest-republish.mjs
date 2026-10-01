@@ -104,8 +104,9 @@ if (rc.ok) {
   const live = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
   /* --history republishes past months too — they need their own moves or they revert to blended (review, 2026-09-29) */
   const back = (n) => { const d = new Date(live + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() - n); return d.toISOString().slice(0, 7); };
-  const want = [...new Set([live, (process.argv.find((a) => /^--month=\d{4}-\d{2}$/.test(a)) || '').slice(8),
-    ...(process.argv.includes('--history') ? [back(1), back(2), back(3)] : [])].filter(Boolean))];
+  /* back(1) always: on the 1st the live month is empty and the month just closed is what publishes (rollover grace, 2026-10-01) */
+  const want = [...new Set([live, back(1), (process.argv.find((a) => /^--month=\d{4}-\d{2}$/.test(a)) || '').slice(8),
+    ...(process.argv.includes('--history') ? [back(2), back(3)] : [])].filter(Boolean))];
   for (const m of want) {
     try {
       const mv = await campaignMoves(DBr, m);
@@ -140,11 +141,21 @@ if (argMonth) {
   for (const m of monthsAvailable) jobs.push([m, await buildFor(m)]);
   jobs.push([null, await buildFor(monthsAvailable[monthsAvailable.length - 1])]);
 } else {
-  const payload0 = await page.evaluate(() => JSON.stringify(agentDigestPayload()));
+  let payload0 = await page.evaluate(() => JSON.stringify(agentDigestPayload()));
+  /* ROLLOVER GRACE (2026-10-01): on the 1st the new month has no rows, and the tool used to refuse the empty
+     digest — so the month just closed never got its final day live ("1–29 September" on 1 October). An empty
+     live month publishes the previous month instead; whether it may take the LIVE key is decided below
+     against what the key holds (liveDigestAllowed). */
+  if (!((JSON.parse(payload0) || {}).agents || []).length) {   // the engine returns null for a month with no rows (and both months empty → refused below)
+    const d = new Date(new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7) + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() - 1);
+    const prev = d.toISOString().slice(0, 7);
+    console.log('the live month has no rows yet — building the month just closed (' + prev + ')');
+    payload0 = await buildFor(prev);
+  }
   /* --dump=<file> writes the live payload locally for inspection (dry run or not) — nothing else */
   const dumpTo = (process.argv.find((a) => a.startsWith('--dump=')) || '').slice(7);
   if (dumpTo) { fs.writeFileSync(dumpTo, payload0); console.log('payload written to ' + dumpTo); }
-  const m0 = (JSON.parse(payload0).period?.from || '').slice(0, 7);
+  const m0 = ((JSON.parse(payload0) || {}).period?.from || '').slice(0, 7);
   jobs.push([null, payload0]);
   if (/^\d{4}-\d{2}$/.test(m0)) jobs.push([m0, payload0]);   // the live month IS its own history key
 }
@@ -159,7 +170,7 @@ if (!argMonth && !HISTORY) {
     const body = await page.evaluate((k) => { const r = window.__mtd.reports && window.__mtd.reports(k); return r ? JSON.stringify(r) : ''; }, kind);
     if (!body) { console.log('report ' + kind + ': nothing to publish (no board/BI, or no case books in the state)'); continue; }
     const rj = JSON.parse(body);
-    { const dp = JSON.parse(payload).period || {}; if ((rj.period?.from || '') !== (dp.from || '') || (rj.period?.to || '') !== (dp.to || '')) { console.log('report ' + kind + ' is not the digest window — skipped'); continue; } }
+    { const dp = (JSON.parse(payload) || {}).period || {}; if ((rj.period?.from || '') !== (dp.from || '') || (rj.period?.to || '') !== (dp.to || '')) { console.log('report ' + kind + ' is not the digest window — skipped'); continue; } }
     reportJobs.push([kind, body]);
     console.log('report ' + kind + ' built — ' + Object.keys(rj.agents || {}).length + ' agents, ' + Object.keys(rj.teams || {}).length + ' teams, ' + Math.round(body.length / 1024) + ' KB');
   }
@@ -167,7 +178,7 @@ if (!argMonth && !HISTORY) {
 await b.close(); server.close();
 if (errs.length) { console.error('page errors: ' + errs.slice(0, 3).join(' | ')); process.exit(1); }
 
-const p = JSON.parse(payload);
+const p = JSON.parse(payload) || { agents: [] };   // null = both the live month and the month just closed are empty → refused below
 const withDays = p.agents.filter(a => a.days && a.days.length).length;
 const withScore = p.agents.filter(a => a.score != null).length;
 console.log(`digest built by the deployed engine: ${p.agents.length} agents · ${withScore} with a score · ${withDays} with day rows · ${(p.weeks || []).length} weeks · ${Math.round(payload.length / 1024)} KB`);
@@ -179,8 +190,36 @@ if (!withDays || !withScore) { console.error('the new fields are missing — is 
 { const i = process.argv.indexOf('--out'); if (i > 0 && process.argv[i + 1]) { fs.writeFileSync(process.argv[i + 1], payload); console.log('digest written to ' + process.argv[i + 1]); } }
 if (!APPLY) { console.log('\ndry run — nothing written. Re-run with --apply to publish.'); process.exit(0); }
 
+/* ---- THE LIVE KEY'S MONTH RULE (2026-10-01) ---- This tool writes Storage directly, so the Worker's 409 never
+   sees it — it asks the SAME rule itself (worker/src/rules.mjs, imported): the current month always; the month
+   just closed only while the live key does not already hold the current month; nothing older. A refused live
+   write still files the month's own history key; the report keys follow the live key. */
+const { liveDigestAllowed } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'rules.mjs')).href);
+const liveFromNow = async () => {
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?key=eq.kv:agent-digest&select=value`, { headers: H });
+  if (!r.ok) throw new Error('live digest not read (HTTP ' + r.status + ')');
+  const row = (await r.json())[0];
+  if (!row) return '';                                            // nothing has ever been live
+  let v = row.value || {}; if (typeof v === 'string') { try { v = JSON.parse(v); } catch { v = {}; } }
+  if (typeof v.period === 'string') return v.period;             // stamped on the pointer since 2026-10-01
+  let t = String(v.data || '');
+  if (!t && v.store) { const s = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${v.store}`, { headers: H }); if (s.ok) t = await s.text(); }
+  /* a row whose digest will not read is "could not tell", never "nothing live" — fail closed (review, 2026-10-01) */
+  if (!t) throw new Error('the live digest has a row but its object did not read');
+  return String((JSON.parse(t).period || {}).from || '');
+};
+let liveWritten = false;
 /* ---- publish exactly where the Worker reads (the backfill tool's write, verbatim) ---- */
 for (const [mk, body] of jobs) {
+  if (!mk) {
+    const from = String((JSON.parse(body).period || {}).from || '');
+    const liveFrom = await liveFromNow();
+    if (!liveDigestAllowed(from, liveFrom, Date.now())) {
+      console.log('live key NOT written — ' + (from || 'no period') + ' may not replace the live ' + (liveFrom || 'nothing') + ' (current month always wins; the month just closed only until it publishes)');
+      continue;
+    }
+    liveWritten = true;
+  }
   const keyName = mk ? 'agent-digest-' + mk : 'agent-digest';
   const store = 'raw/kv/' + keyName;
   const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, {
@@ -189,12 +228,14 @@ for (const [mk, body] of jobs) {
   /* upsert, not PATCH: a month never published before has no row to patch. */
   const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?on_conflict=key`, {
     method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
-    body: JSON.stringify([{ key: 'kv:' + keyName, value: { store, updated_at: new Date().toISOString() } }]) });
+    body: JSON.stringify([{ key: 'kv:' + keyName, value: mk ? { store, updated_at: new Date().toISOString() }
+      : { store, period: String((JSON.parse(body).period || {}).from || ''), updated_at: new Date().toISOString() } }]) });   // the live pointer carries its period — the Worker's fence reads it cheaply
   if (!r.ok) { console.error(keyName + ' rules write failed: ' + r.status + ' ' + (await r.text()).slice(0, 200)); process.exit(1); }
   const pj = JSON.parse(body);
   console.log('published ' + keyName + ' — ' + pj.agents.length + ' agents, ' + (pj.period ? pj.period.from + '..' + pj.period.to : '?'));
 }
 for (const [kind, body] of reportJobs) {
+  if (!liveWritten) { console.log('agent-reports-' + kind + ' not written — the live digest was not'); continue; }
   const keyName = 'agent-reports-' + kind, store = 'raw/kv/' + keyName;
   const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json', 'x-upsert': 'true' }, body });
   if (!put.ok) { console.error(keyName + ' storage write failed: ' + put.status + ' ' + (await put.text()).slice(0, 200)); process.exit(1); }
