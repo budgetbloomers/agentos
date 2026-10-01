@@ -18,7 +18,7 @@
  * calculation is written twice.
  */
 
-import { getCoaching, rollUp, sessionsForAgent, withinWindow, CX_RULES, coachAnalysis, sessionThemes, STALE_HOURS } from './coaching.mjs';
+import { getCoaching, rollUp, sessionsForAgent, withinWindow, CX_RULES, coachAnalysis, sessionThemes, STALE_HOURS, LM_TYPE_LABEL } from './coaching.mjs';
 import { campKey, cmOverviewBody, effectiveCamps, blockPanelFor, rowInTenure, TENURE_KEYS } from './campaign.mjs';
 import { cycleRange, cyclesNow } from './cycle.mjs';   // the billing month (26th–25th), spec 001-cm-view-signoff
 import { withFloorEx, checksFor, VAT } from './rules.mjs';
@@ -490,12 +490,58 @@ const envelope = (digest) => ({
   /* the model in force for the CURRENT month while the digest is still the closed one (2026-10-01) — the
      calculator projects the new month from it. This envelope hand-picks its fields, so it must be named. */
   commNow: digest.commNow || null,
+  /* THE MONTH BEFORE ITS FIRST DATA (spec 002 C1, 2026-10-01): an empty-month payload says so, and every page shows
+     "No <Month> figures yet" from this flag — the live check found it missing here, so pages painted blanks. */
+  empty: digest.empty === true || undefined,
   /* THE COMPOSITE'S DRIVER LABELS. They travel once per digest rather than once per
      agent, so they live out here — and this envelope hand-picks its fields, so leaving
      them out meant the page had no names for the rows and printed the raw keys
      ("gwpSale", "targetAch") to every agent. */
   compositeDrivers: digest.compositeDrivers || null,
 });
+
+/* ---------------------------------------------------------------------------
+   COACHING ATTRIBUTION (spec 002-live-month-sync-coaching, contract C4, 2026-10-01).
+   A session with an agent CB belongs to that agent's CURRENT team leader (the digest row / Agent List), whoever
+   logged it — on the live Hub all 28 lead-management sessions sit under Dalwin's Hub profile, a campaign manager
+   who is not on the list, and a profile-keyed view dropped every one. A session without a CB (a group session)
+   stays with the logging profile. Every session shown to a view says who coached (`coach`, the Hub leader's name)
+   and whether that person is a list team leader or has a team-leader account (`coachIsTl`), beside the
+   type / typeLabel / collection the Hub gave it. Pure helpers; nothing here reads the Hub.
+   --------------------------------------------------------------------------- */
+const LM_LABEL = LM_TYPE_LABEL;
+const LM_COLLECTION = 'leadManagementCoaching';
+const isLmSession = (s) => !!s && (s.collection === LM_COLLECTION || s.typeLabel === LM_LABEL || s.type === LM_LABEL);
+const nrm = (v) => String(v == null ? '' : v).toLowerCase().replace(/\s+/g, ' ').trim();
+
+/** Who counts as a team leader: every `tl` the digest names, plus the team-leader accounts the request already loaded. */
+export function tlContext(digest) {
+  const names = new Set(), ids = new Set();
+  for (const r of [...((digest && digest.agents) || []), ...((digest && digest.notCovered) || [])]) { const t = nrm(r && r.tl); if (t) names.add(t); }
+  const accts = (globalThis.__cmCtx && globalThis.__cmCtx.leaders) || {};
+  for (const team of Object.keys(accts)) {
+    const a = accts[team]; if (!a) continue;
+    if (a.hubId) ids.add(a.hubId);
+    for (const n of [team, a.name]) if (n) names.add(nrm(n));
+  }
+  return { names, ids };
+}
+
+/** A session as the views receive it: the Hub's own fields plus who coached and whether they lead a team. */
+export function withCoach(s, tctx) {
+  const coach = String((s && s.hubTeamLeader) || '').trim();
+  const isTl = !!(tctx && s && ((s.hubTeamLeaderId && tctx.ids.has(s.hubTeamLeaderId)) || (coach && tctx.names.has(nrm(coach)))));
+  return { ...s, coach, coachIsTl: isTl };
+}
+
+/** {from, to} of a digest period, its end stretched to the month's last day (a session logged today is this month's). */
+function coachPeriod(period) {
+  const from = (period && period.from) || '';
+  if (!from) return null;
+  const monthEnd = lastDayOf(from.slice(0, 7));
+  return { from, to: period.to && period.to > monthEnd ? period.to : monthEnd, label: monthLabelOf(from.slice(0, 7)) };   // the label names the month lmCount is over ("October 2026")
+}
+const inRange = (s, w) => !w || (s.date && s.date >= w.from && s.date <= w.to);
 
 /**
  * Coaching for an authorised scope. Never throws the request away on a Hub
@@ -514,7 +560,9 @@ export async function coachingFor(env, DB, rows, opts = {}) {
     /* The coaching layer's own thresholds travel with the payload — the escalation window
        (30 days), the repeat and persistent bands, and the staleness line (14 days) — so the
        pages read the rule book instead of each keeping a copy of the numbers. */
-    const out = { fetchedAt: hub.fetchedAt, stale: !!hub.stale, windowDays: WINDOW_DAYS, cx: CX_RULES };
+    const out = { fetchedAt: hub.fetchedAt, coachingAt: hub.fetchedAt || null, stale: !!hub.stale, windowDays: WINDOW_DAYS, cx: CX_RULES };
+    const tctx = tlContext(opts.digest), lmWin = coachPeriod(opts.period);
+    if (lmWin) out.lmPeriod = lmWin;   // lmCount counts inside this period; byType stays the 90-day window
     const windowed = withinWindow(hub.sessions, WINDOW_DAYS);
     if (hub.stale) out.staleSince = hub.staleSince;
     /* A PARTIAL PULL MUST NOT READ AS A QUIET MONTH. If some of the Hub's
@@ -525,8 +573,11 @@ export async function coachingFor(env, DB, rows, opts = {}) {
 
     const per = [];
     let unmatchedByName = 0;
+    const lmIds = new Set();
     for (const r of rows) {
-      const { sessions, matchedBy } = sessionsForAgent(windowed, r.code, r.name);
+      const found = sessionsForAgent(windowed, r.code, r.name);
+      const matchedBy = found.matchedBy;
+      const sessions = found.sessions.map((x) => withCoach(x, tctx));
       if (matchedBy === 'name' && sessions.length) unmatchedByName++;
       /* Per PRODUCT, not just a total. The Coaching Hub keeps six separate
          coaching products and counts them separately on its own dashboard;
@@ -534,8 +585,10 @@ export async function coachingFor(env, DB, rows, opts = {}) {
          asked — whether the FORMAL coaching happened, not whether some coaching
          did. Cheap to send (six integers) and it means the page never has to
          hold every session just to count them. */
-      const byType = {};
+      const byType = { [LM_LABEL]: 0 };   // always present: "no lead-management coaching" is a 0, never a missing key
       for (const s of sessions) byType[s.type] = (byType[s.type] || 0) + 1;
+      const lmHere = sessions.filter((s) => isLmSession(s) && inRange(s, lmWin || { from: '', to: '9999-12-31' }));
+      for (const s of lmHere) lmIds.add(s.id || (s.date + '|' + s.cb));
 
       /* A GROUP SESSION NAMES EVERYONE WHO WAS THERE — and those names must not travel
          (audit, 2026-08-28). Unioning group coaching in was right, but the raw record
@@ -554,6 +607,7 @@ export async function coachingFor(env, DB, rows, opts = {}) {
         sessions: opts.withSessions ? safe : undefined,
         count: sessions.length,
         byType,
+        lmCount: lmHere.length,
         last: sessions.length ? sessions[0].date : '',
         themes: rollUp(sessions),
         matchedBy,
@@ -562,7 +616,8 @@ export async function coachingFor(env, DB, rows, opts = {}) {
     out.agents = per;
     /* The same product split across the whole scope, so a team leader's coaching
        page can lead with it without adding up six columns by hand. */
-    out.byType = {};
+    out.byType = { [LM_LABEL]: 0 };
+    out.lmCount = lmIds.size;
     for (const a of per) for (const k of Object.keys(a.byType)) out.byType[k] = (out.byType[k] || 0) + a.byType[k];
     /* DISTINCT sessions, not the sum of per-agent counts (audit, 2026-08-28). One group
        session attended by five people was counted five times in the team total, so a leader
@@ -676,10 +731,19 @@ export async function cmCoaching(env, DB, user, digest, q, nowMs = Date.now()) {
     const nm = normName(s.agentName);
     return { name: String(s.agentName || ''), keys: nm ? [scopeByName.get(nm) || nm] : [] };
   };
+  /* OWNER = THE AGENT'S CURRENT TEAM LEADER BY CB FIRST, THEN THE HUB LEADER (spec 002 C4, 2026-10-01). A session with an
+     agent CB belongs to whoever leads that agent now on the Agent List, whichever Hub profile logged it — Dalwin's 28
+     lead-management sessions sit under a profile that is no list team leader, and were dropped here before. A session
+     with no CB (a group one) stays with the logging profile. The scope filter below (CB in the manager's codes) is
+     untouched, and so are the incomplete flags. */
+  const leaderByName = new Map(leaders.map((l) => [normName(l.name), l.name]));
+  const tlByCb = new Map();
+  for (const r of [...(digest.agents || []), ...(digest.notCovered || [])]) if (r && r.code && r.tl) tlByCb.set(normCb(r.code), normName(r.tl));
+  const tctx = tlContext(digest);
   const slots = new Map(leaders.map((l) => [l.name, { sessions: [], agents: new Set(), last: null }]));
   for (const s of hub.sessions || []) {
     if (!s.date || s.date < from || s.date > to) continue;
-    const owner = byId.get(s.hubTeamLeaderId) || byNm.get(normName(s.hubTeamLeader));
+    const owner = (s.cb && leaderByName.get(tlByCb.get(normCb(s.cb)))) || byId.get(s.hubTeamLeaderId) || byNm.get(normName(s.hubTeamLeader));
     if (!owner) continue;
     const who = attribute(s, owner);
     if (!who) continue;
@@ -701,18 +765,65 @@ export async function cmCoaching(env, DB, user, digest, q, nowMs = Date.now()) {
   const onList = new Set([...(digest.agents || []), ...(digest.notCovered || [])].map((a) => normCb(a.code)));
   const sessions = !chosen ? [] : slots.get(chosen.name).sessions.slice()
     .sort((a, b) => String(b.s.date).localeCompare(String(a.s.date))).slice(0, CM_COACH_MAX)
-    .map(({ s, name }) => ({ date: s.date,
+    .map(({ s, name }) => { const w = withCoach(s, tctx); return { date: s.date,
       agentName: name,
       cb: s.cb || null, onList: !!s.cb && onList.has(normCb(s.cb)), type: s.type || s.typeLabel || '',
-      themes: sessionThemes(s), supportProvided: s.supportProvided ? String(s.supportProvided) : null }));
+      typeLabel: s.typeLabel || s.type || '', collection: s.collection || '', coach: w.coach, coachIsTl: w.coachIsTl,
+      themes: sessionThemes(s), supportProvided: s.supportProvided ? String(s.supportProvided) : null }; });
 
   const ageHours = hub.fetchedAt ? Math.round(((nowMs - Date.parse(hub.fetchedAt)) / 3600000) * 10) / 10 : null;
   const behind = chosen ? incompleteSet.has(chosen.name) : incompleteSet.size > 0;
-  return { status: 200, body: { fetchedAt: hub.fetchedAt || null, stale: ageHours == null || ageHours > STALE_HOURS || behind, ageHours,
+  /* type counts per leader and for the whole scope — the period's (this payload only ever holds the period's sessions);
+     'Lead Management Coaching' is always a key, 0 when none, and lmCount is the same number for the headline */
+  const typesOf = (list) => { const t = { [LM_LABEL]: 0 }; for (const { s } of list) { const k = s.type || s.typeLabel || ''; if (k) t[k] = (t[k] || 0) + 1; } return t; };
+  const lmOf = (list) => list.filter(({ s }) => isLmSession(s)).length;
+  const scopeTypes = { [LM_LABEL]: 0 }; let scopeLm = 0;
+  for (const sl of slots.values()) { for (const [k, n] of Object.entries(typesOf(sl.sessions))) scopeTypes[k] = (scopeTypes[k] || 0) + n; scopeLm += lmOf(sl.sessions); }
+  return { status: 200, body: { fetchedAt: hub.fetchedAt || null, coachingAt: hub.fetchedAt || null, byType: scopeTypes, lmCount: scopeLm, stale: ageHours == null || ageHours > STALE_HOURS || behind, ageHours,
     incomplete: [...incompleteSet].sort(),
     hubUrl: COACHING_HUB_URL, period: { from, to, label: pd.label },
-    leaders: leaders.map((l) => { const sl = slots.get(l.name); return { name: l.name, campaign: l.campaign, sessions: sl.sessions.length, agentsCoached: sl.agents.size, last: sl.last, incomplete: incompleteSet.has(l.name) }; }),
+    leaders: leaders.map((l) => { const sl = slots.get(l.name); return { name: l.name, campaign: l.campaign, sessions: sl.sessions.length, agentsCoached: sl.agents.size, last: sl.last, incomplete: incompleteSet.has(l.name), byType: typesOf(sl.sessions), lmCount: lmOf(sl.sessions) }; }),
     tl: chosen ? chosen.name : null, sessions } };
+}
+
+/* ---------------------------------------------------------------------------
+   THE TL HUB TAB'S "COACHING ON YOUR AGENTS BY OTHERS" (spec 002 C4, 2026-10-01). The tab's own list is read LIVE from
+   Convex under the TL's own Hub profile only (hubs.mjs coachingList), so a session another profile logged on this
+   leader's agents — Dalwin's lead-management coaching above all — never appeared. `others` is that list, from the
+   kv:coaching snapshot: sessions in the requested window (?days=N, default 90, or ?from=&to=) whose agent CB is one of
+   the leader's own agents (the digest's team, the same set authorise() scoped) and that were logged under ANOTHER Hub
+   profile, newest first, at most 300, each with `coach` / `coachIsTl`. A leader with no Coaching Hub id of their own
+   has no live list to avoid duplicating: their own name is the only thing excluded. `coachingAt` is the snapshot's
+   age stamp. A missing copy or a refused scope is `others: null` plus `othersError` — never an empty list that would
+   read as "nobody else coached your people". Pure of the Hub: one getCoaching read (the isolate cache).
+   --------------------------------------------------------------------------- */
+const OTHERS_MAX = 300, OTHERS_DAYS_DEFAULT = 90, OTHERS_DAYS_MAX = 366;
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+export async function coachingOthers(env, DB, user, digest, q, nowMs = Date.now()) {
+  const none = (why, at = null) => ({ others: null, coachingAt: at, othersError: why });
+  if (!user || user.role !== 'team_leader') return none('Only a team leader has a Hub tab.');
+  const auth = authorise(user, digest);
+  if (auth.error) return none(auth.error);
+  let hub;
+  try { hub = await getCoaching(env, DB); }
+  catch (e) { return none('The Coaching Hub copy is not available: ' + String((e && e.message) || e).slice(0, 160)); }
+  q = q || {};
+  const days = Math.min(OTHERS_DAYS_MAX, Math.max(1, parseInt(q.days, 10) || OTHERS_DAYS_DEFAULT));
+  const from = ISO_DAY.test(String(q.from || '')) ? String(q.from) : new Date(nowMs - days * 86400000).toISOString().slice(0, 10);
+  const to = ISO_DAY.test(String(q.to || '')) ? String(q.to) : '9999-12-31';
+  const mine = new Set([...auth.codes].map(normCb));
+  const ownId = user.hub_ids && user.hub_ids.coaching ? String(user.hub_ids.coaching) : '';
+  const ownName = normName(user.full_name || user.team);
+  const tctx = tlContext(digest);
+  const others = (hub.sessions || [])
+    .filter((s) => s.cb && mine.has(normCb(s.cb)) && s.date && s.date >= from && s.date <= to
+      && (ownId ? s.hubTeamLeaderId !== ownId : normName(s.hubTeamLeader) !== ownName))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    .slice(0, OTHERS_MAX)
+    .map((s) => { const w = withCoach(s, tctx); return { id: s.id || null, date: s.date, cb: s.cb, agentName: String(s.agentName || ''),
+      type: s.type || s.typeLabel || '', typeLabel: s.typeLabel || s.type || '', collection: s.collection || '',
+      coach: w.coach, coachIsTl: w.coachIsTl, themes: sessionThemes(s), supportProvided: s.supportProvided ? String(s.supportProvided) : null }; });
+  return { others, coachingAt: hub.fetchedAt || null, othersWindow: { from, to: to === '9999-12-31' ? null : to } };
 }
 
 /** Team totals — summed from the same per-agent figures the digest publishes. */
@@ -787,7 +898,7 @@ export async function overview(env, DB, user, digest, months, extra) {
        address and a JPEG data-URI screenshot. Agents only — the team and campaign bodies do not carry it. */
     let links = [];
     try { const lr = await DB.select('rules?key=eq.' + encodeURIComponent('kv:agent-links') + '&select=value'); links = (lr && lr[0] && lr[0].value && lr[0].value.items) || []; } catch (e) { links = []; }
-    const coaching = await coachingFor(env, DB, me ? [me] : [{ code: auth.cb, name: base.name }], { withSessions: true });
+    const coaching = await coachingFor(env, DB, me ? [me] : [{ code: auth.cb, name: base.name }], { withSessions: true, digest, period: digest.period });
     /* THE AGENT'S OWN LADDER ROW (Nick, 2026-08-26: the My Progress redesign shows an
        agent their rating, next best action and the two checks — the same things a team
        leader reads to them in a one-to-one). This DELIBERATELY narrows the earlier
@@ -859,7 +970,7 @@ export async function overview(env, DB, user, digest, months, extra) {
   }
 
   const rows = auth.rows.slice().sort((a, b) => (b.gwpEx || 0) - (a.gwpEx || 0));
-  const coaching = await coachingFor(env, DB, rows);
+  const coaching = await coachingFor(env, DB, rows, { digest, period: digest.period });
 
   /* THE NBA LAYER — team scope only. Sliced to the codes this session already
      authorised, so a leader gets the ladder for their own people and nobody
@@ -929,7 +1040,7 @@ export async function agentDetail(env, DB, user, digest, wantCb) {
     const whole = (digest.agents || []).find((r) => r && normCb(r.code) === cb) || null;
     if (whole && Array.isArray(whole.segments) && (auth.campaigns || []).includes(campKey(whole.campaign))) row = whole;
   }
-  const coaching = await coachingFor(env, DB, [row || { code: cb, name: cb }], { withSessions: true });
+  const coaching = await coachingFor(env, DB, [row || { code: cb, name: cb }], { withSessions: true, digest, period: digest.period });
 
   /* THE LADDER TRAVELS WITH THE DRILL-DOWN, for a team scope only. Clicking a
      name in Team Results must open everything that name was listed for — the rule

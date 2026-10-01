@@ -53,6 +53,7 @@ export async function probeHelpCenter(env) {
 const SAST_WORKING = (nowMs) => { const s = new Date(nowMs + 2 * HOUR); const h = s.getUTCHours(), w = s.getUTCDay(); return w >= 1 && w <= 5 && h >= 6 && h < 20; };
 const REACH_LABEL = { sales: 'Sales (BI Active cases)', calls: 'Calls (ViciDial)', attendance: 'Attendance register', qa: 'QA evaluations' };
 export const ALERTS_KEY = 'kv:health-alerts';
+const REFERRAL_SLOTS = [8, 14];                          // SAST hours the local tick pulls referrals (spec 002 C3)
 
 /**
  * The sentinel itself. Pure: timestamps in, alerts out.
@@ -378,6 +379,29 @@ export function evaluateFreshness(t) {
       since: ca2 ? new Date(ca2).toISOString() : 'coaching',
     });
   }
+  /* THE REFERRALS SYNC RUNS TWICE A DAY (spec 002-live-month-sync-coaching, contract C3, 2026-10-01). The local tick pulls
+     HighLevel at 08:00 and 14:00 SAST every day and logs each attempt in kv:referrals-sync-log (entries {at, slot, ok, ...}).
+     A slot is MISSED when it is more than two hours past and no ok entry exists at or after it (one late success satisfies
+     every earlier slot of the day). `referralsLog` = those entries; absent/null/undefined = the log was never written
+     (the feature is not live yet): no opinion. The earlier missed slot is the one named; the message is fixed text and
+     `since` is the slot, so a persisting miss is written once and the alert clears itself the tick a run succeeds. */
+  if (Array.isArray(t.referralsLog)) {
+    const sastDay = new Date(now + 2 * HOUR);
+    const dayStart = Date.UTC(sastDay.getUTCFullYear(), sastDay.getUTCMonth(), sastDay.getUTCDate()) - 2 * HOUR;   // 00:00 SAST today, as UTC ms
+    const okAts = t.referralsLog.filter((e) => e && e.ok).map((e) => ms(e.at)).filter(Boolean);
+    for (const hh of REFERRAL_SLOTS) {
+      const slotMs = dayStart + hh * HOUR;
+      if (now - slotMs <= 2 * HOUR || okAts.some((a) => a >= slotMs)) continue;
+      const label = String(hh).padStart(2, '0') + ':00';
+      alerts.push({
+        id: 'referrals-slot-missed', severity: 'warning',
+        message: 'The ' + label + ' SAST referrals refresh did not run or did not succeed — the referral counts agents and team leaders see are from an earlier pull. '
+          + 'Read kv:referrals-sync-log for the failing step; run node tools/sync-referrals.mjs to refresh by hand.',
+        since: new Date(slotMs).toISOString(),
+      });
+      break;
+    }
+  }
   /* No alert about the start password: keeping it is allowed (Nick, 2026-09-08 — "only if they want
      to"). accounts_on_default_password remains the audit view for whoever asks. */
   return alerts;
@@ -391,12 +415,14 @@ export function evaluateFreshness(t) {
  */
 export async function runHealthChecks(DB, opts = {}) {
   const rows = await DB.select(
-    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching')})&select=key,updated_at,value`);
+    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching,kv:referrals-sync-log')})&select=key,updated_at,value`);
   const at = {}; let opened = null;
   /* kv:coaching rides the same select (its value is the small pointer {store,bytes,sessions,fetchedAt}) — no extra subrequest;
      coachingAt is null when the row is missing (the copy was never taken) */
   let coachingAt = null, coachingIncomplete = [];
-  for (const r of rows || []) { at[r.key] = r.updated_at; if (r.key === 'kv:app-opened') opened = (r.value && typeof r.value === 'object') ? r.value : {};
+  let referralsLog = null;   // null = kv:referrals-sync-log was never written: no opinion (spec 002 C3); rides this select, no extra subrequest
+  for (const r of rows || []) { at[r.key] = r.updated_at;
+    if (r.key === 'kv:referrals-sync-log') { try { const v = r.value && r.value.data ? JSON.parse(r.value.data) : r.value; referralsLog = Array.isArray(v && v.entries) ? v.entries : null; } catch (e) { referralsLog = null; } } if (r.key === 'kv:app-opened') opened = (r.value && typeof r.value === 'object') ? r.value : {};
     if (r.key === 'kv:coaching') { coachingAt = (r.value && r.value.fetchedAt) || null; coachingIncomplete = (r.value && Array.isArray(r.value.failedLeaders)) ? r.value.failedLeaders : []; } }
 
   /* Staff = a username that is not an agent's CB number. Filtered here rather
@@ -469,7 +495,7 @@ export async function runHealthChecks(DB, opts = {}) {
      (freshness, list refusal, integrity) was silent for a day. verify-roster-propagation caught it. */
   const helpCenter = await probeHelpCenter(opts.env);
   const alerts = evaluateFreshness({
-    helpCenter, coachingAt, coachingIncomplete,
+    helpCenter, coachingAt, coachingIncomplete, referralsLog,
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
     staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster, db: dbh, runnerExpected: !!opts.runnerExpected,
   });

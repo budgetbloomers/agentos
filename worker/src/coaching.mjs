@@ -272,6 +272,18 @@ const cmpDateDesc = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
 const MAX_TRIES = 2;
 const INCOMPLETE_REFRESH_HOURS = 1;
 
+/* THE DAILY GUARANTEE (spec 002-live-month-sync-coaching, contract C4, 2026-10-01). Whatever REFRESH_HOURS says, a copy
+   that predates TODAY's 05:30 SAST is refreshed as soon as it is 05:30 SAST or later (the four waves land by ~06:45), so
+   every morning's coaching pages read a copy taken since the previous evening's sessions were logged. Pure: the line is
+   today's 05:30 SAST (03:30Z) as UTC ms; true = a pull is due. A copy taken at or after the line is today's. */
+export const DAILY_PULL_SAST = { hour: 5, minute: 30 };
+export function dailyPullDue(fetchedAt, nowMs) {
+  const sast = new Date(nowMs + 2 * 3600000);
+  const line = Date.UTC(sast.getUTCFullYear(), sast.getUTCMonth(), sast.getUTCDate(), DAILY_PULL_SAST.hour - 2, DAILY_PULL_SAST.minute);
+  const fetched = Date.parse(fetchedAt || '');
+  return nowMs >= line && !(fetched >= line);
+}
+
 export async function snapshotCoachingWave(env, DB, nowMs = Date.now()) {
   const keys = Object.values(COACH_WAVE_KEYS).map(encodeURIComponent).join(',');
   let rows;
@@ -288,7 +300,7 @@ export async function snapshotCoachingWave(env, DB, nowMs = Date.now()) {
   if (w && (w.v !== WAVE_V || !Array.isArray(w.leaders) || !Array.isArray(w.parts))) w = null;                  // the old three-wave pointer
   if (w && w.startedAt && nowMs - Date.parse(w.startedAt) > PULL_RESTART_HOURS * 3600000) w = null;            // a pull that never finished: start over
   const refreshH = snapRow && snapRow.incomplete ? INCOMPLETE_REFRESH_HOURS : REFRESH_HOURS;
-  if (!w && fetchedAt && nowMs - Date.parse(fetchedAt) < refreshH * 3600000) return { skipped: 'fresh' };
+  if (!w && fetchedAt && nowMs - Date.parse(fetchedAt) < refreshH * 3600000 && !dailyPullDue(fetchedAt, nowMs)) return { skipped: 'fresh' };
 
   let entries = [];
   try { entries = JSON.parse((byKey[COACH_WAVE_KEYS.log] && byKey[COACH_WAVE_KEYS.log].data) || '{}').entries || []; } catch { entries = []; }
@@ -515,6 +527,14 @@ export function themeLabel(key) {
   return String(key || '').replace(/^[a-z]+\./, '').replace(/_/g, ' ').replace(/\b[a-z]/g, (c) => c.toUpperCase());
 }
 
+/* LEAD MANAGEMENT (spec 002, contract C4). A cluster key ending in `.lead_management` is the Hub's lead-management theme
+   (whatever family prefix the form field gave it). The coaching summaries were gap-only, so lead-management coaching —
+   28 rows on the live Hub on 2026-10-01 — never showed in a theme list; every list the Worker builds now carries it
+   alongside the gap themes. The collection / type label a session of that kind carries: */
+export const LM_THEME_RE = /[.]lead_management$/;
+export const LM_TYPE_LABEL = 'Lead Management Coaching';
+export const isLmKey = (key) => LM_THEME_RE.test(String(key || ''));
+
 /** The unique theme labels of one session, in the order the Hub wrote them. */
 export const sessionThemes = (s) => {
   const out = [];
@@ -546,13 +566,17 @@ export function coachAnalysis(sessions, days, period) {
   if (!mine.length) return { n: 0, last: null, themes: [], after: null };
   const last = String(mine[0].date);
 
-  const count = {};
+  const count = {}, lmCount = {};
   const tally = (onlyGap) => { for (const s of mine) for (const c of s.clusters || []) {
+    if (isLmKey(c.clusterKey)) continue;                                  // lead-management themes are listed on their own below
     if (onlyGap && c.family !== 'gap') continue;
     const l = themeLabel(c.clusterKey); if (l) count[l] = (count[l] || 0) + 1; } };
   tally(true);
   if (!Object.keys(count).length) tally(false);
-  const themes = Object.keys(count).sort((a, b) => count[b] - count[a] || a.localeCompare(b)).slice(0, MAX_COACH_THEMES);
+  /* the cap bounds the GAP themes; a lead-management theme is added beside them, never squeezed out by them (spec 002 C4) */
+  for (const s of mine) for (const c of s.clusters || []) if (isLmKey(c.clusterKey)) { const l = themeLabel(c.clusterKey); if (l) lmCount[l] = (lmCount[l] || 0) + 1; }
+  const byCount = (m) => (a, b) => m[b] - m[a] || a.localeCompare(b);
+  const themes = [...Object.keys(count).sort(byCount(count)).slice(0, MAX_COACH_THEMES), ...Object.keys(lmCount).sort(byCount(lmCount))];
 
   const side = (pick) => {
     let sales = 0, n = 0;

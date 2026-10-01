@@ -22,6 +22,7 @@
  */
 import fs from 'node:fs'; import path from 'node:path'; import os from 'node:os';
 import { spawnSync } from 'node:child_process'; import { fileURLToPath } from 'node:url';
+import { referralsSlotDue } from './sync-referrals.mjs';   // the ONE definition of "which referrals slot is due" (spec 002, C3)
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8').split(/\r?\n/).filter((l) => l.includes('=') && !l.startsWith('#'))
   .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim().replace(/^"|"$/g, '')]));
@@ -52,8 +53,16 @@ try { const v = (cur && cur.value) || {}; doc = v.steps ? v : (v.data ? JSON.par
 const TICK = ['agent-digest', 'ops-relay', 'lake-load', 'nba-digest'];
 const newest = TICK.map((k) => Date.parse((doc.steps[k] || {}).ranAt || 0) || 0).reduce((a, b) => Math.max(a, b), 0);
 const silentMin = newest ? Math.round((Date.now() - newest) / 60000) : null;
-const due = FORCE || (working && (PRIMARY || silentMin == null || silentMin > SILENT_MIN));
-say('tick newest ' + (newest ? new Date(newest).toISOString() : 'never') + ' · silent ' + silentMin + ' min · working ' + working + ' · ' + (due ? 'RUN' : 'nothing to do'));
+/* THE REFERRALS SLOTS (spec 002, C3): 08:00 and 14:00 SAST, EVERY day — weekends included, so this is decided apart from
+   the Mon-Fri working gate. A due, unserved slot runs the referrals step + the agent digest even on a Sunday or when
+   GitHub's tick is healthy; the rest of the tick (rake, relay, lake, NBA) stays on the working-hours rule. */
+let refLog = [];
+try { const lr = (await (await fetch(REST + 'rules?key=eq.kv:referrals-sync-log&select=value', { headers: H })).json())[0];
+  const d = JSON.parse(String(((lr && lr.value) || {}).data || '{}')); refLog = Array.isArray(d.entries) ? d.entries : []; } catch {}
+const slot = referralsSlotDue(Date.now(), refLog);
+const full = FORCE || (working && (PRIMARY || silentMin == null || silentMin > SILENT_MIN));
+const due = FORCE || full || !!slot;
+say('tick newest ' + (newest ? new Date(newest).toISOString() : 'never') + ' · silent ' + silentMin + ' min · working ' + working + ' · referrals slot ' + (slot || 'none due') + ' · ' + (full ? 'RUN' : slot ? 'RUN (referrals + digest only)' : 'nothing to do'));
 if (CHECK || !due) return;
 
 /* one at a time: a second Task Scheduler firing while a tick is still running must not overlap it */
@@ -83,13 +92,18 @@ try {
   const build = run('prepare-site', ['tools/prepare-site.js']);
   if (!build.ok) { say('cannot build site/ — the digests would run the wrong engine; stopping'); process.exitCode = 1; return; }
   /* the same order as the workflow: the rake first so a file that just landed is in the lake */
-  const rake = run('rake', ['tools/rake.mjs']); await stamp('rake', rake.ok, rake.tail);
+  if (full) { const rake = run('rake', ['tools/rake.mjs']); await stamp('rake', rake.ok, rake.tail); }
+  /* referrals BEFORE the digest: the digest ingests kv:referrals-latest into its headless engine. A failed pull is logged
+     by the tool and never stops the digest (the last good copy stands). */
+  if (slot) { const ref = run('referrals', ['tools/sync-referrals.mjs', '--apply', '--slot=' + slot]); await stamp('referrals', ref.ok, ref.tail); }
   const dig = run('agent-digest', ['tools/digest-republish.mjs', '--apply']); await stamp('agent-digest', dig.ok, dig.tail);
-  const rel = run('ops-relay', ['tools/ops-relay.mjs', '--wait', '600']); await stamp('ops-relay', rel.ok, rel.tail);   // 600: the relay now waits for the page's busy flag, and a BI workbook + attendance can take minutes (2026-09-21)
-  /* THE LAKE FOLLOWS THE RELAY (plan: "after every relay"). lake-load only ever ran from the GitHub
-     workflow, so with Actions off the lake froze on 14 Sep while files arrived daily (2026-09-21). */
-  const lake = run('lake-load', ['tools/lake-load.mjs']); await stamp('lake-load', lake.ok, lake.tail);
-  const nba = run('nba-republish', ['tools/nba-republish.mjs', '--apply']); await stamp('nba-digest', nba.ok, nba.tail);
+  if (full) {
+    const rel = run('ops-relay', ['tools/ops-relay.mjs', '--wait', '600']); await stamp('ops-relay', rel.ok, rel.tail);   // 600: the relay now waits for the page's busy flag, and a BI workbook + attendance can take minutes (2026-09-21)
+    /* THE LAKE FOLLOWS THE RELAY (plan: "after every relay"). lake-load only ever ran from the GitHub
+       workflow, so with Actions off the lake froze on 14 Sep while files arrived daily (2026-09-21). */
+    const lake = run('lake-load', ['tools/lake-load.mjs']); await stamp('lake-load', lake.ok, lake.tail);
+    const nba = run('nba-republish', ['tools/nba-republish.mjs', '--apply']); await stamp('nba-digest', nba.ok, nba.tail);
+  }
   say('local tick done');
 } finally { try { fs.unlinkSync(LOCK); } catch {} }
 }

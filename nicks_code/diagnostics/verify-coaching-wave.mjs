@@ -299,5 +299,43 @@ head('6 · health: coaching-stale (warning, > 26 h, working day) — and it clea
   } finally { Date.now = realNow; }
 }
 
+/* ------------------------------------------------------------------ 9 daily guarantee (spec 002, contract C4) */
+head('9 · the daily guarantee: a pull starts when the copy predates TODAY 05:30 SAST (03:30Z), whatever REFRESH_HOURS says');
+{
+  const snapRow = (iso, extra = {}) => ({ value: { store: 'raw/kv/coaching', bytes: 1, sessions: 1, fetchedAt: iso, ...extra }, updated_at: iso });
+  const D = (hhmmZ) => Date.parse('2026-10-02T' + hhmmZ + ':00Z');
+  reset(); RULES['kv:coaching'] = snapRow('2026-10-02T03:20:00Z');                    // 05:20 SAST: 20 minutes old
+  let x = await run(D('03:40'));                                                      // 05:40 SAST
+  ok('a copy from 05:20 SAST at 05:40 SAST (20 min old, inside REFRESH_HOURS) is REFRESHED — it predates 05:30', x.r && x.r.wave === 1 && !x.r.skipped, JSON.stringify(x.r));
+  reset(); RULES['kv:coaching'] = snapRow('2026-10-02T03:35:00Z');                    // 05:35 SAST
+  x = await run(D('03:50'));
+  ok('a copy from 05:35 SAST (after the line) at 05:50 SAST is fresh: skipped', x.r && x.r.skipped === 'fresh', JSON.stringify(x.r));
+  reset(); RULES['kv:coaching'] = snapRow('2026-10-02T02:30:00Z');                    // 04:30 SAST, 50 min old
+  x = await run(D('03:20'));                                                          // 05:20 SAST: before the line
+  ok('before 05:30 SAST nothing is forced (a 50-minute-old copy at 05:20 is fresh)', x.r && x.r.skipped === 'fresh', JSON.stringify(x.r));
+  reset(); RULES['kv:coaching'] = snapRow('2026-10-02T03:30:00Z');                    // exactly 05:30 SAST
+  x = await run(D('05:00'));
+  ok('a copy taken exactly at 05:30 SAST counts as today\'s (not predating): skipped', x.r && x.r.skipped === 'fresh', JSON.stringify(x.r));
+  reset(); RULES['kv:coaching'] = snapRow('2026-10-01T15:00:00Z');                    // yesterday 17:00 SAST
+  x = await run(D('03:30'));                                                          // exactly 05:30 SAST
+  ok('yesterday\'s copy at 05:30 SAST sharp: the pull starts', x.r && x.r.wave === 1, JSON.stringify(x.r));
+  reset(); RULES['kv:coaching'] = snapRow('2026-10-02T03:20:00Z');
+  let t = D('03:40'), last = null;
+  for (let i = 0; i < 9 && !(last && last.r && last.r.written); i++, t += STEP) last = await run(t);
+  ok('the forced pull runs to completion through the same budgeted waves (written once, every wave within the cap)', last && last.r && last.r.written && STORAGE_PUTS === 1 && last.convex <= 35 && last.sub <= 45, JSON.stringify(last && last.r));
+  const again = await run(t);
+  ok('and once it lands (after 05:30) the next invocation is a no-op again — the force is not a loop', again.r && again.r.skipped === 'fresh', JSON.stringify(again.r));
+  reset(); RULES['kv:coaching'] = snapRow('2026-10-02T03:20:00Z');
+  await run(D('03:40'));
+  const mid = await run(D('04:00'));
+  ok('a pull already in progress (started after 05:30) simply continues: wave 2, same start', mid.r && mid.r.wave === 2, JSON.stringify(mid.r));
+  reset(); RULES['kv:coaching'] = snapRow('2026-10-02T03:20:00Z', { incomplete: true, failedLeaders: [{ id: 'L1', name: 'Leader 1' }] });
+  x = await run(D('03:40'));
+  ok('an incomplete copy that predates 05:30 is refreshed too (the existing hourly rule still applies)', x.r && x.r.wave === 1, JSON.stringify(x.r));
+  reset();
+  x = await run(D('03:40'));
+  ok('no copy at all still pulls (unchanged)', x.r && x.r.wave === 1, JSON.stringify(x.r));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

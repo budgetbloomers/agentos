@@ -137,8 +137,10 @@ ok("D4b the day-level rows ride only on the team's own agents",
 {
   const inTeam = tOv.body.agents.reduce((n, a) => n + ((a.days || []).length), 0);
   const covered = tOv.body.agents.filter(a => a.covered).length;
-  ok('D4c the scoped payload actually carries day rows (Weekly/Daily have data to draw)',
-    covered === 0 || inTeam > 0, covered + ' covered agents, ' + inTeam + ' day rows');
+  /* spec 002 (2026-10-01): before a month's first data the live digest is an honest EMPTY month — no day rows by
+     design; the two data-shape checks below do not apply then, and say so instead of failing */
+  ok('D4c the scoped payload actually carries day rows (Weekly/Daily have data to draw)' + (digest.empty === true ? ' — n/a: the live month is empty (spec 002)' : ''),
+    digest.empty === true || covered === 0 || inTeam > 0, covered + ' covered agents, ' + inTeam + ' day rows');
   ok('D4d and the scores are per team member, no stray floor list',
     tOv.body.agents.every(a => a.score == null || a.tl === team));
 }
@@ -154,8 +156,8 @@ const wantPct = cov.reduce((n, a) => n + (a.sales || 0), 0) / cov.reduce((n, a) 
 const avgOfAvgs = cov.reduce((n, a) => n + (a.pctT || 0), 0) / cov.length;
 ok('D6 team %-to-target is weighted, not an average of averages',
   Math.abs(tOv.body.totals.pctT - wantPct) <= 1e-4, `${tOv.body.totals.pctT} vs ${wantPct.toFixed(6)}`);
-ok('D6b and the two are actually distinguishable on this team',
-  Math.abs(wantPct - avgOfAvgs) > 1e-4, `weighted ${wantPct.toFixed(4)} vs mean-of-means ${avgOfAvgs.toFixed(4)}`);
+ok('D6b and the two are actually distinguishable on this team' + (digest.empty === true ? ' — n/a: the live month is empty (spec 002)' : ''),
+  digest.empty === true || Math.abs(wantPct - avgOfAvgs) > 1e-4, `weighted ${wantPct.toFixed(4)} vs mean-of-means ${avgOfAvgs.toFixed(4)}`);
 const tOwn = await agentDetail({}, DB, tlUser, digest, tOv.body.agents[0].code);
 ok('D7 drilldown into their own agent works', tOwn.status === 200, String(tOwn.status));
 const notMine = all.find(a => a.tl && a.tl !== team);

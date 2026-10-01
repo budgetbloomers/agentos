@@ -1,5 +1,8 @@
 <!--
 Sync Impact Report
+- 1.1.0 → 1.2.0 (MINOR, 2026-10-01, feature 002-live-month-sync-coaching): the live-digest constraint redefined —
+  always the current month (empty payload before its first data), empty never over data. CLAUDE.md NN12 amended
+  in the same change.
 - 1.0.0 → 1.1.0 (MINOR, 2026-10-01, feature 001-cm-view-signoff): Platform Constraints expanded — published
   period keys (months, billing cycles) and the explicit Worker subrequest budget for fan-out work. CLAUDE.md
   NN12 amended in the same change.
@@ -68,8 +71,9 @@ error-severity rule-check FAIL; a deployed change is verified against live data 
 - Zero-local: compute, cron and login on Cloudflare (Worker, Pages, Cron Triggers); data in Supabase
   (Postgres + Storage). The Cloudflare plan is FREE (10 ms CPU per request): engines MUST NOT run in the
   Worker — heavy computation happens in PULSE or a tool and is published as a payload the Worker serves.
-- The live agent digest is a whole calendar month (the current SAST month, or the month just closed during
-  the rollover grace); other periods are published under their own keys — past months as
+- The live agent digest is ALWAYS the current SAST calendar month — an honest empty-month payload (null
+  figures) before its first data, never zeros, and never replacing a same-month payload that has data; an older
+  month never takes the live key. Other periods are published under their own keys — past months as
   `kv:agent-digest-YYYY-MM`, billing cycles (26th→25th, `worker/src/cycle.mjs`) as `kv:agent-digest-cycle-YYYY-MM`,
   both built by the engine, never re-aggregated by the Worker.
 - Every Worker invocation stays inside the FREE plan's 50 subrequests: fan-out work (the Coaching Hub refresh)
@@ -92,4 +96,4 @@ Constitution Check against Principles I–VII; any justified deviation is record
 Tracking table. Versioning: MAJOR = a principle removed or redefined; MINOR = a principle or section added or
 materially expanded; PATCH = wording.
 
-**Version**: 1.1.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-01
+**Version**: 1.2.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-01

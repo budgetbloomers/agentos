@@ -9613,8 +9613,63 @@ function isCycleRange(r){
    26 Aug – 25 Sep) and the commission model in force at the end of it is the one that paid it. */
 function digestPricingMonth(r){ return String((isCycleRange(r)?r.to:r&&r.from)||'').slice(0,7); }
 
+/* Working days in a range: weekdays that are not SA public holidays (the one count the digest, the empty-month
+   payload and the model's projection all use). */
+function calendarWorkingDays(from,to){
+  let n=0,d=from;
+  while(d<=to){const w=new Date(d+'T00:00:00Z').getUTCDay();if(w>0&&w<6&&!isPublicHoliday(d))n++;d=addDays(d,1);}
+  return n;
+}
+
+/* THE LIVE MONTH BEFORE ITS FIRST DATA (spec 002-live-month-sync-coaching, contract C1). On the 1st the new month
+   has no fact rows, so the model has no agents and agentDigestPayload() used to return null — the portal stayed on
+   the month just closed. For the CURRENT SAST calendar month only, this answers instead with an honest EMPTY
+   payload: the Agent List's reported-campaign agents, each with its month target and EVERY figure null
+   (absence is not a nought), `empty:true`, no days, no weeks. Never for a past month, a billing cycle, or without
+   an Agent List (null, as before). `nowMs` is a test seam. */
+function emptyMonthPayload(nowMs){
+  nowMs=nowMs||Date.now();
+  if(!M||!M.range||!Array.isArray(M.agents)||M.agents.length) return null;
+  const cur=new Date(nowMs+2*3600000).toISOString().slice(0,7);
+  const end=new Date(Date.UTC(+cur.slice(0,4),+cur.slice(5,7),0)).toISOString().slice(0,10);
+  if(isCycleRange(M.range)||M.range.from!==cur+'-01'||M.range.to!==end) return null;
+  const wd=calendarWorkingDays(M.range.from,M.range.to);
+  const tm=MTD_RULES.salesTargetMatrix, ovm=(S.cmTargets&&S.cmTargets.matrix)||{};
+  const rows=[];
+  for(const a of (S.roster||[])){
+    if(!a||!a.code) continue;
+    if(MTD_RULES.excludeAgents&&MTD_RULES.excludeAgents[a.code]) continue;     // deliberately off the books
+    const camp=campOf(a.campaign);
+    if(!CAMPS.includes(camp)) continue;                                         // not a reported campaign (VT)
+    const tenure=a.tenure||'';
+    /* the month target the engine would use: the SAME per-day chain buildModel applies (CM override, then the rule
+       book, then the list's own cell) over the month's working days */
+    const perDay=ovm[camp+'|'+tenure]??ovm[camp+'|*']??tm[camp+'|'+tenure]??tm[camp+'|*']??(a.target||0);
+    rows.push({code:a.code,name:a.name||a.code,campaign:camp,tenure:tenure,left:'',tl:a.tl||'',
+      plan:commPlanOf(camp,tenure),target:Math.round(perDay*wd*100)/100,covered:false,
+      sales:null,gwpEx:null,pctT:null,spd:null,att:null,qa:null,aveG:null,ref:null,closed:null,leads:null,calls:null,ans:null,
+      talk:null,aveTalk:null,talkPerWorked:null,canc:null,gwpT:null,act:null,emp:null,score:null,scoreParts:null,composite:null,
+      rankCo:null,nCo:null,rankTeam:null,nTeam:null,trend:'flat',trendPct:null,badges:[],spark:[],days:[],wk:[]});
+  }
+  if(!rows.length) return null;
+  return {
+    v:1,empty:true,
+    updatedAt:new Date(nowMs).toISOString(),
+    dataReach:dataReach(),expectedReach:expectedReach(nowMs),
+    cmTargetsStamp:(S.cmTargets&&S.cmTargets.stamp)||'',
+    period:{from:M.range.from,to:M.range.to},
+    weeks:[],diallingDays:0,
+    extraHolidays:(MTD_RULES.extraHolidays||[]).slice(),
+    workingDays:wd,daysWithData:0,dates:[],
+    comm:COMM_RULES_BY_MONTH[cur]||COMM_RULES,           // the current month's model; commNow is absent (this IS the current month)
+    compositeDrivers:COMPOSITE_RULES.drivers.map(d=>({k:d.k,label:d.label,note:d.note,w:d.w})),
+    groups:{},onTarget:S.settings.onTarget,talkUnit:MTD_RULES.aveTalkUnit,
+    tlAgg:[],campAgg:{},agents:rows,notCovered:[]
+  };
+}
+
 function agentDigestPayload(){
-  if(!M||!Array.isArray(M.agents)||!M.agents.length) return null;
+  if(!M||!Array.isArray(M.agents)||!M.agents.length) return emptyMonthPayload();
 
   /* Ranks: the drawer's ordering (5927-5930), computed once for the whole floor
      instead of once per agent. Same sort, same tie behaviour, O(n log n). */
@@ -9876,9 +9931,7 @@ function agentDigestPayload(){
     diallingDays:M.diallingDays||M.dates.length||0,
     /* one-off holidays from the rule book, so the agent page's own working-day fallback agrees */
     extraHolidays:(MTD_RULES.extraHolidays||[]).slice(),
-    workingDays:(function(){let n=0,d=M.range.from;
-      while(d<=M.range.to){const w=new Date(d+'T00:00:00Z').getUTCDay();if(w>0&&w<6&&!isPublicHoliday(d))n++;d=addDays(d,1);}
-      return n||M.diallingDays||M.dates.length||0;})(),
+    workingDays:(function(){return calendarWorkingDays(M.range.from,M.range.to)||M.diallingDays||M.dates.length||0;})(),
     /* DAYS WITH DATA (Nick, 2026-09-03: "1st to 2nd is not 3 working days — do not
        include today, today's stats are not included"). The agent page's "days worked"
        came from the attendance register, which lands before the day's sales files —
@@ -10115,7 +10168,9 @@ function agentReportsLeadsPayload(){
       /* THE MONTH'S HISTORY COPY (Nick 2026-08-26): the same payload filed under its own
          month, so the portal can offer past months. Any month may refresh its own key;
          only the live key above is fenced to the current month. */
-      if(/^\d{4}-\d{2}$/.test(__dm))
+      /* …but an EMPTY current month (spec 002, C1) files no history key: it carries no figures to keep, and a stale
+         tab must never be able to put it over a month that has data */
+      if(!p.empty&&/^\d{4}-\d{2}$/.test(__dm))
         fetch(API+'/api/kv?key=agent-digest-'+__dm,{method:'POST',
           headers:{'Content-Type':'text/plain','Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'},
           body:body}).catch(function(){});
@@ -10225,7 +10280,39 @@ var SRC=[
   ["coaching","Coaching Hub",function(){return false}]
 ];var open=false;function daysSince(at){if(!at)return null;var d=new Date(at.replace(" ","T"));if(isNaN(d))return null;return Math.floor((Date.now()-d.getTime())/864e5)}function fresh(days){if(days==null)return["n","var(--muted)"];if(days<=7)return["g","var(--good)"];if(days<=14)return["a","var(--warn)"];return["r","var(--crit)"]}function build(){var host=document.getElementById("vasTrust");var view=document.getElementById("view");if(!view)return;if(!host){host=document.createElement("div");host.id="vasTrust";view.parentNode.insertBefore(host,view)}var S=(window.__mtd&&window.__mtd.state)?window.__mtd.state():null;var files=(S&&S.files)||[];var latest={};if(S&&S.refs&&S.refs.by&&Object.keys(S.refs.by).length){var ra=S.refs.at?daysSince(S.refs.at):0;if(latest.referrals==null||ra<latest.referrals)latest.referrals=ra}if(window.__coachMetaAt!==undefined&&window.__coachMetaAt!==null)latest.coaching=daysSince(String(window.__coachMetaAt).slice(0,16).replace("T"," "));files.forEach(function(f){var t=String(f.type||"");SRC.forEach(function(s){if(s[2](t)){var d=daysSince(f.at);if(latest[s[0]]==null||(d!=null&&d<latest[s[0]]))latest[s[0]]=d}})});var worst="g";SRC.forEach(function(s){var st=fresh(latest[s[0]])[0];if(st==="r"||st==="n"){if(worst!=="r")worst=(st==="r"?"r":"a")}else if(st==="a"&&worst==="g")worst="a"});var rw=(function(){try{var R=dataReach(),w="g";["sales","calls","attendance","qa"].forEach(function(k){var r=R[k];if(!r)return;var late=Math.round((Date.parse(expectedReach(null,REACH_SATURDAY[k]))-Date.parse(r))/864e5);if(late>=2)w="r";else if(late===1&&w==="g")w="a"});return w}catch(e){return "g"}})();if(rw==="r")worst="r";else if(rw==="a"&&worst==="g")worst="a";var have=SRC.filter(function(s){return latest[s[0]]!=null}).length;var wc=worst==="g"?"var(--good)":worst==="a"?"var(--warn)":"var(--crit)";var wl=worst==="g"?"All sources fresh":worst==="a"?"Sources need attention":"Stale or missing sources";function chip(color,label){return "<span style='display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:var(--glass3);color:"+color+"'><span style='width:7px;height:7px;border-radius:50%;background:"+color+"'></span>"+label+"</span>"}function reachChips(){try{var R=dataReach();return "<span style='font-size:10px;font-weight:800;letter-spacing:.8px;color:var(--muted);margin-left:6px'>REACH</span>"+[["sales","Sales"],["calls","Calls"],["attendance","Attendance"],["qa","QA"]].map(function(p){var r=R[p[0]];var late=r?Math.round((Date.parse(expectedReach(null,REACH_SATURDAY[p[0]]))-Date.parse(r))/864e5):null;var col=r==null?"var(--muted)":late<=0?"var(--good)":late===1?"var(--warn)":"var(--crit)";return chip(col,p[1]+" to "+(r?r.slice(8)+"/"+r.slice(5,7):"—")+(late>0?" · "+late+"d late":""))}).join("")}catch(e){return ""}}var chips=(open?SRC.map(function(s){var d=latest[s[0]];var fr=fresh(d);var lbl=s[1]+" · "+(d==null?"none":d===0?"today":d+"d");return chip(fr[1],lbl)}).join(""):"")+reachChips();var html="<div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--card-bg);border:1px solid var(--stroke);border-radius:16px;padding:10px 14px;margin:0 0 16px'>"+"<span style='font-size:11px;font-weight:800;letter-spacing:.8px;color:var(--muted)'>DATA TRUST</span>"+"<span onclick='window.__vasTrustToggle()' style='cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:20px;background:var(--glass3);color:"+wc+"'><span style='width:7px;height:7px;border-radius:50%;background:"+wc+"'></span>"+wl+" · "+have+"/"+SRC.length+" sources "+(open?"▾":"▸")+"</span>"+chips+"<button onclick='go(&quot;data&quot;)' style='margin-left:auto;border:1px solid var(--stroke2);background:var(--glass2);color:var(--ink2);border-radius:9px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer'>Manage uploads →</button>"+"</div>";if(html!==window.__vtLast){window.__vtLast=html;host.innerHTML=html}}window.__vasTrustToggle=function(){open=!open;build()};function coachMeta(){try{var t=sessionStorage.getItem("cbx_token");if(!t)return;fetch("https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=coaching&meta=1",{headers:{"Authorization":"Bearer "+t}}).then(function(r){return r.ok?r.json():null}).then(function(j){window.__coachMetaAt=(j&&j.updated_at)||null}).catch(function(){})}catch(e){}}setInterval(coachMeta,60000);setTimeout(coachMeta,1500);var t=setInterval(build,10000);setTimeout(build,300);})();</script>
 
-<script>(function(){/* Referrals auto-sync — pull the referral book from HighLevel through the
+<script>/* THE REFERRALS RECORD, ONE MAPPING (spec 002, contract C3). The Worker's /api/referrals rows
+   ({id,created,agent,referrer,count}) become the ingest's records in exactly one place — the manual "Sync now"
+   below AND the adoption of the scheduled pull (kv:referrals-latest, written by tools/sync-referrals.mjs)
+   both go through it, and so does the headless digest tool (tools/digest-republish.mjs). */
+function referralRecsFromRows(rows){
+  return (rows||[]).map(function(x){return {'Agent Name':x.agent||'','Referral Count':x.count,'Employee Code':'','Created':x.created||'','Contact Id':x.id}});
+}
+/* Is a pull stamped `pulledAt` NEWER than the snapshot already held? S.refs.at is minute-grained ("YYYY-MM-DD HH:MM",
+   UTC), so it is read as the END of that minute — a manual sync in the same minute is never overwritten by an older
+   scheduled pull. A snapshot adopted from a scheduled pull also carries its own pulled_at (S.refs.pulledAt). */
+function refsRecordNewer(refs,pulledAt){
+  var p=Date.parse(pulledAt); if(isNaN(p)) return false;
+  if(!refs) return true;
+  var have=0;
+  if(refs.at){ var a=Date.parse(String(refs.at).replace(' ','T')+':00Z'); if(!isNaN(a)) have=a+59999; }
+  if(refs.pulledAt){ var q=Date.parse(refs.pulledAt); if(!isNaN(q)&&q>have) have=q; }
+  return p>have;
+}
+/* Ingest a scheduled pull ({rows, contacts, pulled_at, slot}) into S.refs — only when it is newer than what is
+   held. No save, no render: the caller decides (the browser saves + rebuilds; the headless tool never saves). */
+function refsAdoptRecord(rec){
+  if(!rec||!Array.isArray(rec.rows)||!rec.rows.length) return {adopted:false,reason:'no rows'};
+  if(typeof INGEST==='undefined'||!INGEST.referrals) return {adopted:false,reason:'app not ready'};
+  var St=window.__mtd.state();
+  if(!refsRecordNewer(St.refs,rec.pulled_at)) return {adopted:false,reason:'not newer'};
+  var before=St.refs, label='HighLevel API (scheduled '+String(rec.slot||'manual')+')';
+  INGEST.referrals(referralRecsFromRows(rec.rows),label);   // toasts its own summary; defers (no change) without an Agent List
+  if(!St.refs||St.refs===before) return {adopted:false,reason:'deferred — no Agent List'};
+  St.refs.pulledAt=rec.pulled_at;
+  St.files=St.files.filter(function(f){return !(f.type==='referrals'&&f.name!==label&&/^HighLevel API/.test(f.name))});   // one registry entry, not one per slot
+  return {adopted:true,slot:rec.slot||'manual',total:St.refs.total,agents:Object.keys(St.refs.by||{}).length,pulled_at:rec.pulled_at};
+}
+(function(){/* Referrals auto-sync — pull the referral book from HighLevel through the
    API Worker (the HL key is a Worker secret; the browser never sees it) and feed it into
    the SAME ingest as a CSV drop: Agent-List matching, snapshot replace, registry entry.
    Runs on sign-in and via the slot's "Sync now" button. */
@@ -10244,7 +10331,7 @@ window.__hlSyncVAS=function(quiet){
       return r.json();
     }).then(function(d){
       if(!d.rows||!d.rows.length)throw new Error('HighLevel returned no referral rows');
-      var recs=d.rows.map(function(x){return {'Agent Name':x.agent||'','Referral Count':x.count,'Employee Code':'','Created':x.created||'','Contact Id':x.id,'Created':x.created||''}});
+      var recs=referralRecsFromRows(d.rows);
       if(typeof INGEST==='undefined'||!INGEST.referrals)throw new Error('app not ready');
       INGEST.referrals(recs,'HighLevel API');   // toasts its own summary
       if(typeof save==='function')save();if(typeof rebuild==='function')rebuild();if(typeof renderAll==='function')renderAll();
@@ -10253,6 +10340,35 @@ window.__hlSyncVAS=function(quiet){
     }).catch(function(e){if(!quiet)say('Referrals sync failed: '+(e.message||e));done()});
   }catch(e){done()}
 };
+/* THE SCHEDULED PULL (tools/sync-referrals.mjs, 08:00 + 14:00 SAST every day) lands in kv:referrals-latest. Every
+   open tab adopts it — on boot (once hydrated, with the roster), on window focus, every 10 minutes — only when
+   it is newer than the snapshot held (a newer manual sync wins), through the normal save() so the
+   compare-and-set replay applies, then rebuilds and kicks the digest. */
+var KV_REFS='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=referrals-latest';
+var adopting=false;
+window.__refsAdoptLatest=function(){
+  try{
+    var t=sessionStorage.getItem('cbx_token');
+    if(!t||!window.__vasHydrated||!window.__mtd||adopting||running) return Promise.resolve(false);
+    var S_=window.__mtd.state(); if(!S_||!S_.roster||!S_.roster.length) return Promise.resolve(false);
+    adopting=true;
+    return fetch(KV_REFS,{headers:{'Authorization':'Bearer '+t,'X-Cbx-Client':'v5'}}).then(function(r){return r.ok?r.text():null}).then(function(txt){
+      if(!txt) return false;
+      var rec; try{rec=JSON.parse(txt)}catch(e){return false}
+      var res=refsAdoptRecord(rec); if(!res.adopted) return false;
+      if(typeof save==='function')save();if(typeof rebuild==='function')rebuild();if(typeof renderAll==='function')renderAll();
+      if(typeof kickAgentDigest==='function')kickAgentDigest();
+      return true;
+    }).catch(function(){return false}).then(function(v){adopting=false;return v});
+  }catch(e){adopting=false;return Promise.resolve(false)}
+};
+(function(){var bootT=setInterval(function(){try{   // boot: wait for sign-in + hydration + the roster, adopt once, then the poll takes over
+  var S_=window.__mtd&&window.__mtd.state();
+  if(!sessionStorage.getItem('cbx_token')||!window.__vasHydrated||!S_||!S_.roster||!S_.roster.length) return;
+  clearInterval(bootT); window.__refsAdoptLatest();
+}catch(e){}},5000);})();
+window.addEventListener('focus',function(){try{window.__refsAdoptLatest()}catch(e){}});
+setInterval(function(){try{window.__refsAdoptLatest()}catch(e){}},600000);
 /* Sync WATCHDOG — a one-shot timer raced the cloud hydrate: it could fire before the
    roster existed (everything unmatched → an all-zero snapshot) or be wiped when hydrate
    adopted the cloud blob wholesale. Instead: every 5s, once signed in AND hydrated AND

@@ -597,12 +597,21 @@ const CODE = PAGE
   (!/monthQS/.test(PAGE) && !/monthPick/.test(PAGE) && !/var MONTH=/.test(PAGE))
     ? ok('no month filter: no picker, no month state, no month parameter')
     : bad('a remnant of the month filter is still in the page');
-  /api\('\/api\/portal\/overview'\)/.test(PAGE)
-    ? ok('the overview is always requested plain - the live month')
+  /* SPEC 002 (2026-10-01) changes ONE thing here: the overview is still requested plain — the live month — except in
+     the empty month, where "<Month> (final)" asks ?month=YYYY-MM. Every call goes through ovPath(), which is plain
+     unless askMonth() pinned a month, and askMonth is wired to nothing but the empty-state card and its way back. */
+  (/function ovPath\(\)\{ return '\/api\/portal\/overview'\+\(VIEWMONTH\?'\?month='\+encodeURIComponent\(VIEWMONTH\):''\); \}/.test(PAGE)
+    && (PAGE.match(/api\(ovPath\(\)\)/g) || []).length >= 4
+    && !/api\('\/api\/portal\/overview'\)/.test(PAGE)
+    && (PAGE.match(/data-askmonth=/g) || []).length === 2)
+    ? ok('the overview is requested plain - the live month - unless the empty-state "(final)" button pinned a month (ovPath)')
     : bad('the overview request is not plain');
-  (PAGE.match(/portal\/agent\?cb='\+encodeURIComponent\(cb\)\)/g) || []).length === 2
-    ? ok('both drilldown call sites are plain too')
-    : bad('a drilldown call site still carries something extra');
+  /* SPEC 002 review (2026-10-01): a team leader viewing "<Month> (final)" must drill into that month, so openAgent
+     adds &month= ONLY when the empty-state button pinned one; the drawer call stays plain. */
+  ((PAGE.match(/portal\/agent\?cb='\+encodeURIComponent\(cb\)\)/g) || []).length === 1
+    && (PAGE.match(/portal\/agent\?cb='\+encodeURIComponent\(cb\)\+\(VIEWMONTH\?'&month='\+encodeURIComponent\(VIEWMONTH\):''\)\)/g) || []).length === 1)
+    ? ok('drilldown call sites are plain, except openAgent which follows a pinned "(final)" month')
+    : bad('a drilldown call site carries something extra');
   /* ---- 2026-08-26 (Nick): the period label ends where the DATA ends ----
      "1 - 31 August" over 25 days of data reads as a promise the page cannot keep; every
      daily upload must visibly move the label forward. prettyPeriod reads the engine's own

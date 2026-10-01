@@ -1126,7 +1126,7 @@ function signOut(){
   PW_OPEN=false;
   api('/api/logout',{}).then(function(){},function(){});
   try{ sessionStorage.removeItem(TKEY); }catch(e){}
-  U=null; D=null; ME=null; TEAM=null;
+  U=null; D=null; ME=null; TEAM=null; VIEWMONTH=''; LIVE_MONTH_NAME='';
   HELP_UNREAD=0;                                         // the next person to sign in must not see this leader's count
   cmReset();
   loginScreen();
@@ -1405,6 +1405,7 @@ function coachingAnalysisCard(rows){
   if(!rows.some(function(a){return a.drill||a.coach;})) return '';
   return '<div class="card"><h3>Coaching analysis <span class="cnt">'+esc(prettyPeriod())+'</span></h3>'
     +'<p class="why">Each agent\'s six KPI states — the same verdicts the agent sees on their own page — and what coaching has been logged. A dash means there is nothing to judge yet.</p>'
+    +coachCopyLine((D.coaching&&D.coaching.coachingAt)||D.coachingAt)
     +'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Agent</th>'
     +KPI_CHIPS.map(function(k){return '<th>'+esc(k[1])+'</th>';}).join('')
     +'<th class="l">Coaching analysis</th></tr></thead><tbody>'
@@ -1750,7 +1751,7 @@ function repLoad(kind,manual){
     if(manual&&r.status!==401) toast((r.json&&r.json.error)||'Could not load the report.',5000);
   }).catch(function(){ st.busy=false; st.err='error: network'; if(repKind(VIEW)===kind&&liveSafeToRender()) render(); });
 }
-function repTick(){ var k=repKind(VIEW); if(k&&!REP[k].busy&&Date.now()-REP[k].at>LIVE_MIN_GAP_MS) repLoad(k,false); }
+function repTick(){ if(D&&D.empty) return; var k=repKind(VIEW); if(k&&!REP[k].busy&&Date.now()-REP[k].at>LIVE_MIN_GAP_MS) repLoad(k,false); }
 function repStateCard(kind,title){
   var st=REP[kind];
   if(st.d&&D&&D.scope==='campaign'&&st.d.campBlocks&&st.d.campBlocks!=='ok'){
@@ -2095,7 +2096,8 @@ function coachPageTeam(){
     +'The Coaching Hub could not be reached just now. Everything else on this page is unaffected.</p></div>';
   var t=c.totals||{};
   if(!t.sessions) return '<div class="card"><h3>Coaching</h3><p class="why" style="margin:0">'
-    +'No coaching sessions are recorded for your team in the last '+(c.windowDays||90)+' days.</p></div>';
+    +'No coaching sessions are recorded for your team in the last '+(c.windowDays||90)+' days.</p>'
+    +lmLine(c,c.byType)+coachCopyLine(c.coachingAt)+'</div>';
 
   /* Start from the full product list so a product with NO sessions still shows a
      zero. A missing tile reads as 'not offered'; a zero reads as 'not done', which
@@ -2134,6 +2136,7 @@ function coachPageTeam(){
     +' of your '+num((D.agents||[]).length)+' people in the last '+(c.windowDays||90)+' days'
     +(c.stale?' · Hub last reachable '+esc(String(c.staleSince||'').slice(0,10)):'')+'.</p></div>'   /* hub link lives once, in the page footer */
     +productGrid(counts,t.sessions)
+    +'<div class="card">'+lmLine(c,counts)+'</div>'
     +'<div class="card"><h3>Who has had what</h3>'
     +'<p class="why">Sorted by who has had the least. A dash is a real gap, not a missing figure.</p>'
     +'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Agent</th>'
@@ -2676,9 +2679,10 @@ function drawerHTML(P){
     cSec='<div class="dk-sec"><h4>Coaching history</h4><p class="dk-empty">The Coaching Hub could not be reached just now.</p></div>';
   } else if(co&&co.agents&&co.agents[0]){
     var m=co.agents[0], sess=m.sessions||[];
-    var themes=(m.themes||[]).filter(function(t){return t.family==='gap';});
+    var themes=(m.themes||[]).filter(isLmTheme);
     cSec='<div class="dk-sec"><h4>Coaching history</h4>'
       +'<p class="dk-sub">last '+(co.windowDays||90)+' days · from the Coaching Hub · only development themes escalate</p>'
+      +(co.coachingAt?'<p class="dk-sub">Coaching Hub copy from '+esc(sastWhen(co.coachingAt))+'</p>':'')
       +(themes.length?themes.map(function(t){
           var comp=/compliance|verification/i.test(t.key);
           return '<div class="dk-th"><div><b>'+esc(coachLabel(t.key))+'</b>'
@@ -2695,6 +2699,11 @@ function drawerHTML(P){
       +'</div>';
   }
 
+  /* an empty month has no figure to put in a tile, a rank or a ladder (spec 002) — the coaching history below still reads */
+  if(D&&D.empty){
+    tiles='<p class="dk-empty">No '+esc(monthLabel())+' figures yet — the first day lands after tomorrow morning\'s uploads.</p>';
+    rank=''; nba=''; ring='';
+  }
   return '<div class="dk-body">'+ring
     +'<div class="dk-id"><div class="dk-av" style="background:hsl('+hue(a.code)+',58%,52%)">'+esc(initials(a.name))+'</div>'
     +'<div><div class="dk-trend '+trend[0]+'">'+trend[1]+'</div>'
@@ -3284,7 +3293,7 @@ function coachHubPage(){
   var list=(h.sessions||[]).slice(0,40).map(function(s){
     var d=s.date||s.dateOfCoaching||'';
     return '<tr><td class="l"><b>'+esc(s.agentName||'(group)')+'</b>'
-      +(s.employeeCode?'<div class="sub2">'+esc(s.employeeCode)+'</div>':'')+'</td>'
+      +(s.employeeCode?'<div class="sub2">'+esc(s.employeeCode)+'</div>':'')+(coachByLine(s)?'<div class="sub2">'+coachByLine(s)+'</div>':'')+'</td>'
       +'<td class="l">'+esc(s._label||'')+'</td>'
       +'<td class="num">'+esc(coachDate(d))+'</td>'
       +'<td class="l sml">'+esc(String(s.developmentAreas||s.teamLeaderFeedback||s.coachingDetails||'').slice(0,120))+'</td>'
@@ -3299,11 +3308,14 @@ function coachHubPage(){
   return coachPageTeam()+pick
     +'<div class="card"><h3>Your sessions <span class="cnt">'+num((h.sessions||[]).length)+'</span></h3>'
     +'<p class="why">Everything you have recorded in the Hub, most recent first.</p>'
+    +'<p class="why coach-copy">Your own sessions are live from the Coaching Hub'
+    +((h.coachingAt||(D&&D.coaching&&D.coaching.coachingAt))?'; others\' sessions on your agents are from the copy of '+esc(sastWhen(h.coachingAt||(D&&D.coaching&&D.coaching.coachingAt))):'')+'.</p>'
     +((h.sessions||[]).length
       ? '<div class="scroller"><table class="tbl"><thead><tr><th class="l">Agent</th><th class="l">Type</th><th>Date</th><th class="l">Notes</th><th></th></tr></thead><tbody>'+list+'</tbody></table></div>'
       : '<p class="why" style="margin:0">Nothing recorded yet.</p>')
     +(h.errors?'<p class="why" style="color:var(--amber)">Some products could not be read: '+esc(h.errors.join(' · '))+'</p>':'')
     +'</div>'
+    +othersBlock(h.others,h.coachingAt||(D&&D.coaching&&D.coaching.coachingAt))
     +'<div class="card"><p class="why" style="margin:0">These are the Hub\'s own documents — what you save here is what it holds. '
     +'To edit a session you already saved, or to print one, '
     +'<a href="https://coaching-hub-psi.vercel.app/" target="_blank" rel="noopener noreferrer">Open the Coaching Hub ↗</a></p></div>';
@@ -3967,10 +3979,10 @@ function wireReports(){
   var df=$('dayFilter'); if(df) df.onchange=function(){ DAY_FILTER=df.value; render(); };
   var vdf=$('varDayFilter'); if(vdf) vdf.onchange=function(){ VAR_DAY=vdf.value; render(); };
   /* the two report keys load when their tab is opened, and on Refresh with the overview */
-  { var rk=repKind(VIEW); if(rk&&!REP[rk].d&&!REP[rk].busy&&!REP[rk].err) repLoad(rk,false); }
+  { var rk=repKind(VIEW); if(rk&&!(D&&D.empty)&&!REP[rk].d&&!REP[rk].busy&&!REP[rk].err) repLoad(rk,false); }
   /* a team leader's Lead management tab depends on which campaigns the report excludes, which only the report says —
      so any Reports page asks for it once, in the background (spec 001, US5) */
-  if(liveTeamScope()&&isReport(VIEW)&&!REP.leads.d&&!REP.leads.busy&&!REP.leads.err) repLoad('leads',false);
+  if(liveTeamScope()&&!D.empty&&isReport(VIEW)&&!REP.leads.d&&!REP.leads.busy&&!REP.leads.err) repLoad('leads',false);
   /* the Reports toolbar (2026-09-11): Refresh asks the Worker now; Export builds the workbook */
   var rr=$('repRefresh'); if(rr) rr.onclick=function(){ refreshPortal(true); var rk2=repKind(VIEW); if(rk2){ REP[rk2].err=''; repLoad(rk2,true); } };
   Array.prototype.forEach.call(document.querySelectorAll('[data-export]'),function(b){
@@ -3979,6 +3991,14 @@ function wireReports(){
 }
 function wireShell(){
   var b=$('signOutBtn'); if(b) b.onclick=signOut;
+  /* the live-month buttons (spec 002): "<Month> (final)" and "Back to <Month>" for agents and team leaders; the
+     manager's offers ride the existing period picker */
+  Array.prototype.forEach.call(document.querySelectorAll('[data-askmonth]'),function(x){
+    x.onclick=function(){ askMonth(x.getAttribute('data-askmonth')); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-cmask]'),function(x){
+    x.onclick=function(){ cmAsk(x.getAttribute('data-cmask'),CMTEN); };
+  });
   var pb=$('pwBtn'); if(pb) pb.onclick=function(){ changePassword(true); };   // every role: agent, team leader, campaign manager, admin
   var m=$('menuBtn'), s=$('side'), sc=$('scrim');
   var close=function(){ if(s)s.classList.remove('open'); if(sc)sc.classList.remove('on'); };
@@ -4016,6 +4036,7 @@ function render(){
     if(CM_VIEWS.indexOf(VIEW)<0) VIEW='cm';
     return cmView();
   }
+  ensureEmptyMe(D);
   var isTeam=(D.role==='team_leader'||D.scope==='team'||D.scope==='all')&&!D.__back&&!D.me;
   /* A drilldown is an AGENT page even though the account is a team leader, so the
      view has to be decided by what is loaded, not by the role. */
@@ -4044,6 +4065,7 @@ function kpi(icon,tint,name,val,unit,sub,delta){
 }
 
 function loginScreen(msg){
+  VIEWMONTH=''; LIVE_MONTH_NAME='';   // a 401 (or any sign-in screen) must never hand a pinned closed month to the next person
   preShell('<div class="greet">'+esc(greeting())+'</div>'
     +'<div class="greet-sub">Sign in with your CB number to see how your month is going.</div>'
     +'<div class="card">'
@@ -4132,13 +4154,15 @@ function fatal(title,body,retry){
    so if a look-back is ever wanted again it is a UI change only; nothing here sends it. */
 function loadPortal(){
   $('root').innerHTML='<div class="msg"><div class="spin"></div><div class="d">Loading your numbers…</div></div>';
-  api('/api/portal/overview').then(function(r){
+  api(ovPath()).then(function(r){
     if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} return loginScreen('Your session has expired. Please sign in again.'); }
     if(!r.ok) return fatal('We could not open your page', r.json.error||'Please try again in a minute.', r.status>=500);
     D=r.json;
     if(D.scope==='campaign') return cmOpen();
     if(D.role==='team_leader'||D.scope==='team'||D.scope==='all'){ startLiveRefresh(); startHelpPulse(); return teamView(); }
     if(D.notReported) return notReported();
+    /* the empty month (spec 002): an agent with nothing yet still gets their page — the month, and the way to the closed one */
+    ensureEmptyMe(D);
     if(!D.me) return fatal('Nothing to show yet','No figures have been published for you this month.');
     startAgentRefresh();
     show(D.me);
@@ -4189,7 +4213,7 @@ function agentLiveScope(){ return !!(D&&D.me&&!D.__back&&isAgentUser()); }
 function refreshAgent(){
   if(AGENT_LIVE.busy||!agentLiveScope()) return;
   AGENT_LIVE.busy=true; AGENT_LIVE.at=Date.now();
-  api('/api/portal/overview').then(function(r){
+  api(ovPath()).then(function(r){
     AGENT_LIVE.busy=false;
     if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} return loginScreen('Your session has expired. Please sign in again.'); }
     if(!r.ok||!r.json||!r.json.me||!agentLiveScope()) return;   // a missed beat, or the page changed hands meanwhile
@@ -4220,7 +4244,7 @@ function refreshPortal(manual){
   LIVE.busy=true; LIVE.at=Date.now();
   var b=$('repRefresh'); if(b){ b.disabled=true; b.textContent='Refreshing…'; }
   var restore=function(){ var x=$('repRefresh'); if(x){ x.disabled=false; x.innerHTML='&#8635; Refresh'; } };
-  return api('/api/portal/overview').then(function(r){
+  return api(ovPath()).then(function(r){
     LIVE.busy=false;
     if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} return loginScreen('Your session has expired. Please sign in again.'); }
     if(!r.ok){ restore(); if(manual) toast('Could not refresh — '+(r.json.error||'please try again in a minute.'),5000); return; }
@@ -4810,6 +4834,12 @@ function cmSelectionLine(c){
   var per=(CMNOPUB&&CMNOPUB.period&&CMNOPUB.period.label)||prettyPeriod();
   return c.label+' · '+cmTenLabel(CMTEN)+' · '+per;
 }
+var CM_EMPTY_VIEWS=['cm','cm_teams','cm_mtd','cm_daily','cm_weekly','cm_variance','cm_leads'];
+function cmEmptyView(){ return !!(D&&D.empty&&CM_EMPTY_VIEWS.indexOf(VIEW)>=0); }
+function cmEmptyBody(){
+  var tabs=CM_REPORT_TABS.some(function(t){return t[0]===VIEW;})?reportsTabs(VIEW,CM_REPORT_TABS):'';
+  return tabs+emptyMonthCard('cm');
+}
 function cmSliceEmpty(c){
   return CMTEN!=='all'&&(!(c.agents>0)||!c.teams||!c.teams.length);
 }
@@ -4821,6 +4851,9 @@ function cmGateCard(c){
     return '<div class="card"><h3>'+esc(lab)+' is not published yet</h3><p class="why">'
       +esc(CMNOPUB.message||'It has not been built yet — the 15-minute refresh builds it. Choose another period, or check back shortly.')+'</p></div>';
   }
+  /* the current month has no data yet (spec 002, FR-004): the month's empty card, with the closed month and the billing
+     month in progress one click away through the period picker */
+  if(cmEmptyView()) return cmEmptyBody();
   if(cmSliceEmpty(c))
     return '<div class="card"><p class="why">No '+(CMTEN==='unset'?'agents without a tenure set':esc(CMTEN)+' agents')+' on '
       +(c.key==='all'?'your campaigns':esc(c.label))+' in this period.</p></div>';
@@ -4900,7 +4933,7 @@ function cmCoachPage(){
           return '<tr><td class="l">'+esc(String(x.date||'').slice(0,10))+'</td>'
             +'<td class="l"><b>'+esc(x.agentName)+'</b>'+(x.cb?' <span class="sub2">'+esc(x.cb)+'</span>':'')
             +(x.onList===false?' <span class="mini n">agent not on the list</span>':'')+'</td>'
-            +'<td class="l">'+esc(x.type||'—')+'</td>'
+            +'<td class="l">'+esc(x.type||'—')+(coachByLine(x)?'<div class="sub2">'+coachByLine(x)+'</div>':'')+'</td>'
             +'<td class="l">'+((x.themes&&x.themes.length)?x.themes.map(esc).join(', '):'—')+'</td>'
             +'<td class="l">'+(x.supportProvided?esc(x.supportProvided):'—')+'</td></tr>';
         }).join('')+'</tbody></table></div>'
@@ -4918,7 +4951,7 @@ function cmView(){
   var c=cmCamp();
   if(!c){
     shell('Campaign Manager','',
-      '<div class="card"><p class="why">No campaigns are assigned to this account yet, or nothing has been published for them. Ask Nick to check cm:assignments.</p></div>','cm');
+      cmEmptyView()?cmEmptyBody():'<div class="card"><p class="why">No campaigns are assigned to this account yet, or nothing has been published for them. Ask Nick to check cm:assignments.</p></div>',VIEW==='cm_set'?'cm_set':'cm');
     return wireShell();
   }
   CMSEL=c.key;
@@ -5344,6 +5377,7 @@ function teamView(){
       : VIEW==='forms' ? 'Every document you have created, across both hubs.'
       : VIEW==='results' ? 'Agents on target, the next best action for each, and what is coming off the score.'
       : 'Who needs you next — '+esc(prettyPeriod())+'.'),
+    finalBarHTML()+(tlEmptyView()?tlEmptyBody():
     (VIEW==='mtd_team' ? pageMTD()
       : VIEW==='weekly_team' ? pageWeeklyTeam()
       : VIEW==='daily_team' ? pageDailyTeam()
@@ -5359,7 +5393,7 @@ function teamView(){
           +'<p class="why">Click a name to open their month and their coaching.</p>'+rows+'</div>'
       /* My Team is the ladder screen only — who needs you next. The full agents
          table lives on Team Results, which is where the management view keeps it. */
-      : pageMyTeam()+tlAssistHTML()+daily)
+      : pageMyTeam()+tlAssistHTML()+daily))
     +'<div class="foot">Numbers updated '+esc(stamp())+'<br><button id="out">Sign out</button></div>',
     VIEW==='team'?'team':(isReport(VIEW)?'reports':VIEW));
 
@@ -5389,6 +5423,15 @@ function teamView(){
   });
   $('out').onclick=signOut;
 }
+/* AN EMPTY MONTH ON THE TEAM LEADER'S DATA PAGES (spec 002, US1): My Team, Team Results and the five Reports show the
+   month's empty card — never a table of empty rows that reads as "nobody sold". The Coaching Hub, Help Center, KPI
+   Hub and Nikola do not depend on the month's figures and stay as they are. */
+var TL_DATA_VIEWS=['team','results','mtd_team','daily_team','weekly_team','variance_team','leads_team'];
+function tlEmptyView(){ return !!(D&&D.empty&&!D.__back&&TL_DATA_VIEWS.indexOf(VIEW)>=0); }
+function tlEmptyBody(){
+  /* the Reports keep their sub-tab row so the five reports stay reachable; My Team keeps the leader's own help requests */
+  return (isReport(VIEW)?reportsTabs(VIEW):'')+emptyMonthCard('team')+(VIEW==='team'?tlAssistHTML():'');
+}
 function pct1(v){ return v==null||isNaN(v)?'—':(v*100).toFixed(0)+'%'; }
 function coachCount(code){
   var c=(TEAM&&TEAM.coaching)||{}; if(c.error||!c.agents) return 0;
@@ -5400,10 +5443,11 @@ function coachCount(code){
    have it. A CB number typed into the address bar reaches the same check. */
 function openAgent(cb){
   $('root').innerHTML='<div class="msg"><div class="spin"></div><div class="d">Loading…</div></div>';
-  api('/api/portal/agent?cb='+encodeURIComponent(cb)).then(function(r){
+  api('/api/portal/agent?cb='+encodeURIComponent(cb)+(VIEWMONTH?'&month='+encodeURIComponent(VIEWMONTH):'')).then(function(r){
     if(r.status===403) return fatal('Not your team','That agent is not on your team, so their figures are not available here.');
     if(!r.ok) return fatal('We could not open that agent', r.json.error||'Please try again.');
     var keep=TEAM; D=r.json; D.__back=keep;
+    if(keep&&keep.empty&&D.empty==null) D.empty=true;   // the leader's month is empty, so is the agent's (spec 002)
     if(!D.me) return fatal('Nothing to show yet','No figures have been published for this agent this month.');
     show(D.me);
   });
@@ -5421,6 +5465,42 @@ function coachLabel(k){
   return String(k||'').replace(/^[a-z]+\./,'').replace(/_/g,' ')
     .replace(/\b[a-z]/g,function(c){return c.toUpperCase();});
 }
+/* ===== COACHING, COMPLETE AND DATED (spec 002, US3 + US4) =====
+   Lead-management themes sit beside the development (gap) themes — the lead-management PURPOSE theme is not a gap,
+   and a filter on gap alone is what hid it. Every coaching surface says how old its Hub copy is, and a session logged
+   by someone other than the team leader names who coached. Compliance badges are unchanged. */
+function isLmTheme(t){ return !!t&&(t.family==='gap'||/lead_management$/.test(String(t.key||''))); }
+function coachCopyLine(at){ return at?'<p class="why coach-copy">Coaching Hub copy from '+esc(sastWhen(at))+'</p>':''; }
+function coachByLine(s){ return (s&&s.coachIsTl===false&&s.coach)?'coached by '+esc(s.coach):''; }
+/* the period lmCount covers: lmPeriod.label (team coaching blocks), period.label (cm-coaching); "the last N days" ONLY
+   when the count is the 90-day byType figure (no lmCount published) — never a 90-day label on a different window */
+function lmPeriodLabel(c){
+  var l=(c&&c.lmPeriod&&c.lmPeriod.label)||(c&&c.period&&c.period.label);
+  if(l) return l;
+  return (c&&c.lmCount!=null)?'this period':('the last '+((c&&c.windowDays)||90)+' days');
+}
+/* Lead Management Coaching is counted on its own: how many, or plainly that none was logged */
+function lmLine(c,counts){
+  var n=(c&&c.lmCount!=null)?c.lmCount:((counts&&counts['Lead Management Coaching'])||0), per=lmPeriodLabel(c);
+  return n>0?'<p class="why lm-count"><b>Lead Management Coaching:</b> '+num(n)+' session'+(n===1?'':'s')+' in '+esc(per)+'.</p>'
+    :'<p class="why lm-none">No lead-management coaching logged in '+esc(per)+'.</p>';
+}
+function themeText(t){ return (typeof t==='string')?t:((t&&(t.label||(t.key?pgTheme(t.key):'')))||''); }
+/* "Coaching on your agents by others" — sessions on the leader's agents logged under another Hub profile (hidden when none) */
+function othersBlock(list,at){
+  if(!list||!list.length) return '';
+  return '<div class="card"><h3>Coaching on your agents by others <span class="cnt">'+num(list.length)+'</span></h3>'
+    +'<p class="why">Sessions logged under another Coaching Hub profile for agents on your team, most recent first.</p>'
+    +'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Date</th><th class="l">Agent</th><th class="l">Type</th><th class="l">Coached by</th><th class="l">Themes</th></tr></thead><tbody>'
+    +list.map(function(x){
+      var th=(x.themes||[]).map(themeText).filter(Boolean).map(esc).join(', ');
+      return '<tr><td class="l">'+esc(coachDate(String(x.date||'').slice(0,10)))+'</td>'
+        +'<td class="l"><b>'+esc(x.agentName||'(group)')+'</b>'+(x.cb?' <span class="sub2">'+esc(x.cb)+'</span>':'')+'</td>'
+        +'<td class="l">'+esc(x.typeLabel||x.type||'—')+'</td>'
+        +'<td class="l">'+esc(x.coach||'—')+'</td>'
+        +'<td class="l">'+(th||'—')+'</td></tr>';
+    }).join('')+'</tbody></table></div>'+coachCopyLine(at)+'</div>';
+}
 function coachDate(d){
   if(!d) return '';
   try{ return new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',day:'numeric',month:'short'}).format(new Date(d+'T00:00:00Z')); }
@@ -5434,9 +5514,9 @@ function coachHTML(c,quiet){
   var mine=(c.agents||[])[0]; if(!mine) return '';
   var sess=mine.sessions||[];
   if(!sess.length) return quiet?'':'<div class="card"><h3>Coaching</h3>'
-    +'<p class="why" style="margin:0">No coaching sessions are recorded for you in the last '+(c.windowDays||90)+' days.</p></div>';
+    +'<p class="why" style="margin:0">No coaching sessions are recorded for you in the last '+(c.windowDays||90)+' days.</p>'+coachCopyLine(c.coachingAt)+'</div>';
 
-  var gaps=(mine.themes||[]).filter(function(t){return t.family==='gap';});
+  var gaps=(mine.themes||[]).filter(isLmTheme);
   var themeHTML=gaps.length
     ? '<div class="themes">'+gaps.slice(0,6).map(function(t){
         return '<span class="theme">'+esc(coachLabel(t.key))+' <i>×'+t.shown+'</i></span>'; }).join('')+'</div>'
@@ -5447,7 +5527,7 @@ function coachHTML(c,quiet){
     var said=s.teamLeaderComments||s.developmentAreas||s.teamLeaderFeedback||'';
     var agreed=s.agentFeedback||s.agreedPlanAgentFeedback||s.wayForward||'';
     return '<details class="sess"><summary><b>'+esc(s.typeLabel)+'</b>'
-      +'<span class="sdate">'+esc(coachDate(s.date))+(s.qaScore?' · QA '+esc(s.qaScore):'')+'</span></summary>'
+      +'<span class="sdate">'+esc(coachDate(s.date))+(s.qaScore?' · QA '+esc(s.qaScore):'')+(coachByLine(s)?' · '+coachByLine(s):'')+'</span></summary>'
       +(said?'<div class="sblk"><label>What was discussed</label><p>'+esc(said)+'</p></div>':'')
       +(agreed?'<div class="sblk"><label>What you agreed</label><p>'+esc(agreed)+'</p></div>':'')
       +'</details>';
@@ -5457,6 +5537,7 @@ function coachHTML(c,quiet){
     +'<p class="why" style="margin-top:0">'+sess.length+' session'+(sess.length===1?'':'s')
     +' in the last '+(c.windowDays||90)+' days, most recent first'
     +(mine.last?' — the latest was '+esc(coachDate(mine.last)):'')+'.</p>'
+    +coachCopyLine(c.coachingAt)
     +themeHTML
     +(gaps.length&&!anyScored?'<p class="why">These themes were read from the notes of your sessions rather than '
       +'chosen on the coaching form, so they are here for context and do not count against you anywhere.</p>':'')
@@ -5470,16 +5551,17 @@ function coachTeamHTML(c){
   var ag=(c.agents||[]).filter(function(a){return a.count;});
   var t=c.totals||{};
   if(!t.sessions) return '<div class="card"><h3>Coaching</h3><p class="why" style="margin:0">'
-    +'No coaching sessions are recorded for your team in the last '+(c.windowDays||90)+' days.</p></div>';
+    +'No coaching sessions are recorded for your team in the last '+(c.windowDays||90)+' days.</p>'+coachCopyLine(c.coachingAt)+'</div>';
   var th={};
   ag.forEach(function(a){ (a.themes||[]).forEach(function(x){
-    if(x.family!=='gap') return; th[x.key]=(th[x.key]||0)+x.shown; }); });
+    if(!isLmTheme(x)) return; th[x.key]=(th[x.key]||0)+x.shown; }); });
   var top=Object.keys(th).map(function(k){return {k:k,n:th[k]};}).sort(function(a,b){return b.n-a.n;}).slice(0,6);
   var max=top.length?top[0].n:1;
   return '<div class="card"><h3>Coaching across the team <span class="cnt">'+num(t.sessions)+'</span></h3>'
     +'<p class="why" style="margin-top:0">'+num(t.sessions)+' session'+(t.sessions===1?'':'s')+' with '
     +num(t.agents)+' of your '+num((D.agents||[]).length)+' people in the last '+(c.windowDays||90)+' days'
     +(c.stale?' (Hub last reachable '+esc(String(c.staleSince||'').slice(0,10))+')':'')+'.</p>'
+    +coachCopyLine(c.coachingAt)
     +top.map(function(x){
       var w=Math.max(3,Math.round(x.n/max*100));
       return '<div class="tbar"><div class="tbl2"><span>'+esc(coachLabel(x.k))+'</span><b>'+x.n+'</b></div>'
@@ -5503,6 +5585,7 @@ function prettyPeriod(){
      label forward. D.dates is the engine's own list of days that carry data; its last
      entry is the honest end. The calendar end stays as the fallback for a digest
      published before dates travelled. */
+  if(D&&D.empty) return monthLabel();   // an empty month has no days yet — name the month, never a range
   try{
     var end=D.period.to;
     if(D.dates&&D.dates.length){
@@ -5636,6 +5719,79 @@ function monthLabel(){
   try{ return new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',month:'long'}).format(new Date(D.period.from+'T00:00:00Z')); }
   catch(e){ return 'this month'; }
 }
+/* ===================== THE LIVE MONTH, EMPTY OR FINAL (spec 002-live-month-sync-coaching) =====================
+   The live view is ALWAYS the current calendar month, even before its first day of data. Until then the engine
+   publishes an honest empty payload (D.empty === true, every figure null) and the page names the month, says what
+   is coming, and offers the closed month as "<Month> (final)". The page paints that; it computes nothing.
+   Agents and team leaders have no month filter — the button exists ONLY here, and while a closed month is on screen
+   a "Back to <Month>" control is the way home. VIEWMONTH is the month being looked at ('' = the live month); every
+   re-ask (sign-in, the live refreshes) goes through ovPath() so a refresh never snaps the person back. */
+var VIEWMONTH='', LIVE_MONTH_NAME='', MONTH_SEQ=0;
+function monthNameOf(key){ var m=/^(\d{4})-(\d{2})$/.exec(String(key||'')); return m?(LONG_MONTHS[+m[2]-1]||''):''; }
+/* 'YYYY-MM' of the month before the one a 'YYYY-MM-DD' falls in */
+function prevMonthKey(fromIso){
+  var y=+String(fromIso||'').slice(0,4), m=+String(fromIso||'').slice(5,7)-1;
+  if(!(y>0)||!(m>=0)||m>12) return '';
+  if(m<1){ m=12; y--; }
+  return y+'-'+(m<10?'0':'')+m;
+}
+/* an agent's empty-month payload may carry no `me`: give the page the identity it needs (never a figure) */
+function ensureEmptyMe(d){
+  if(d&&!d.me&&d.empty&&d.role==='agent') d.me={code:d.code||'',name:d.name||'',campaign:d.campaign||'',tenure:d.tenure||'',tl:d.tl||'',plan:d.plan||null,days:[],wk:[]};
+  return d;
+}
+function ovPath(){ return '/api/portal/overview'+(VIEWMONTH?'?month='+encodeURIComponent(VIEWMONTH):''); }
+/* the billing month in progress that the empty month sits in: 26th of the previous month to the 25th of this one */
+function cmBillingOffer(){
+  var cur=String(D&&D.period&&D.period.from||'').slice(0,7), pk=prevMonthKey(D&&D.period&&D.period.from);
+  if(!/^\d{4}-\d{2}$/.test(cur)||!pk) return null;
+  var key='cycle-'+cur, cy=(D.periods&&D.periods.cycles)||[];
+  for(var i=0;i<cy.length;i++) if(cy[i].key===key&&cy[i].label) return {key:key,label:cy[i].label};
+  return {key:key,label:'26 '+monthNameOf(pk).slice(0,3)+' – 25 '+monthNameOf(cur).slice(0,3)};
+}
+/* ONE empty card for every role. kind: 'agent' | 'team' (month button re-asks ?month=), 'cm' (period picker
+   offers), 'plain' (a drill-down — no way out from here). */
+function emptyMonthCard(kind){
+  var mon=monthLabel(), pk=prevMonthKey(D&&D.period&&D.period.from), pn=monthNameOf(pk);
+  var btns='';
+  if(pk&&kind==='cm'){
+    var bo=cmBillingOffer();
+    btns='<button class="btn2 primary" data-cmask="'+esc(pk)+'">'+esc(pn)+' (final)</button>'
+      +(bo?' <button class="btn2" data-cmask="'+esc(bo.key)+'">Billing month '+esc(bo.label)+' (in progress)</button>':'');
+  } else if(pk&&kind!=='plain'){
+    btns='<button class="btn2 primary" data-askmonth="'+esc(pk)+'">'+esc(pn)+' (final)</button>';
+  }
+  return '<div class="card empty-month"><h3>'+esc(mon)+'</h3>'
+    +'<p class="why">No '+esc(mon)+' figures yet — the first day lands after tomorrow morning\'s uploads.</p>'
+    +(btns?'<p style="margin:10px 0 0">'+btns+'</p>':'')+'</div>';
+}
+/* shown above the page while a closed month is on screen in place of the live one */
+function finalBarHTML(){
+  if(!VIEWMONTH||!D||D.__back) return '';
+  return '<div class="card final-bar" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">'
+    +'<span class="why" style="margin:0"><b>'+esc(monthNameOf(VIEWMONTH))+' (final)</b> — the closed month, as it ended.</span>'
+    +'<button class="btn2 primary" data-askmonth="">Back to '+esc(LIVE_MONTH_NAME||'this month')+'</button></div>';
+}
+/* key = 'YYYY-MM' (a closed month) or '' (back to the live month) */
+function askMonth(key){
+  key=String(key||'');
+  if(key&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) return Promise.resolve();
+  var prev=VIEWMONTH, prevName=LIVE_MONTH_NAME, seq=++MONTH_SEQ;
+  if(key&&!VIEWMONTH) LIVE_MONTH_NAME=monthLabel();   // the live month's name, for the way back — read before D changes
+  VIEWMONTH=key;
+  return api(ovPath()).then(function(r){
+    if(seq!==MONTH_SEQ) return;   // a newer choice is already on its way
+    if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} VIEWMONTH=''; return loginScreen('Your session has expired. Please sign in again.'); }
+    ensureEmptyMe(r.json);
+    if(!r.ok||!r.json||(!r.json.me&&r.json.scope!=='team'&&r.json.role!=='team_leader'&&r.json.scope!=='all')){
+      VIEWMONTH=prev; LIVE_MONTH_NAME=prevName;
+      toast('That month could not be opened — '+((r.json&&r.json.error)||'please try again in a minute.'),5000);
+      return;
+    }
+    D=r.json; if(!D.me) TEAM=D;
+    render();
+  });
+}
 /* "3 – 30 September" — the working days still to come: the day after the last day
    with data, to the end of the period. */
 function remainingLabel(){
@@ -5659,13 +5815,15 @@ function isAgentUser(){ var acct=TEAM||D||{}; return !TEAM&&acct.role==='agent';
 /* "Figures to Friday 5 September" — how far the data behind this page reaches (never-stale
    plan, Phase 2). From the digest's own dataReach stamp, else its last data day. Shown to
    everyone, agents included: it says WHAT the numbers cover, never when they were pushed. */
-function reachLabel(){ try{ var r=(D&&D.dataReach&&D.dataReach.sales)||(D&&D.dates&&D.dates[D.dates.length-1]); if(!r) return '';
+function reachLabel(){ try{ if(D&&D.empty) return ''; var r=(D&&D.dataReach&&D.dataReach.sales)||(D&&D.dates&&D.dates[D.dates.length-1]); if(!r) return '';
   return new Date(r+'T00:00:00Z').toLocaleDateString('en-ZA',{weekday:'long',day:'numeric',month:'long',timeZone:'UTC'}); }catch(e){ return ''; } }
 /* D2 (sprint 2026-09-29, Nick: "AgentOS must also clearly display when the data was last updated").
    The 3 Sep round took the freshness CARD away from agents ("no data-assurance chrome") and that stays:
    an agent gets ONE quiet line — what the figures cover and when they last moved — and nothing else. */
 function agentFreshLine(){
   if(!isAgentUser()||D.__back||!D.updatedAt) return '';
+  /* AN EMPTY MONTH CLAIMS NO REACH (spec 002): no "figures to <day>" — the month is named and the stamp says when it was last checked */
+  if(D.empty) return '<div class="fresh-line">'+esc(monthLabel())+' · no figures yet · updated '+esc(sastWhen(D.updatedAt))+'</div>';
   var rl=reachLabel();
   /* ROLLOVER GRACE (2026-10-01): until the new month publishes, the live digest is the month just closed —
      the line says so ("September (final)") instead of reading like a month still running */
@@ -5701,6 +5859,12 @@ function calcMonth(){
     var last=new Date(Date.UTC(y,mo,0)).toISOString().slice(0,10), label='the new month';
     try{ label=new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',month:'long'}).format(new Date(cn.month+'-01T00:00:00Z')); }catch(e){}
     return {fresh:true,rules:cn,month:cn.month,label:label,worked:0,total:workingDaysFrom(cn.month+'-01',last),gwp:0};
+  }
+  /* NO WORKED DAY IN THE CURRENT MONTH (spec 002, FR-003): the live month is published even before its first
+     data (D.empty), or an agent simply has no worked day yet. Either way commCalc refuses cDays<=0, so the same
+     first-payout baseline applies — under THIS digest's own model (D.comm) and the month's working days. */
+  if(D&&D.comm&&!closed&&(D.empty===true||WORKED()===0)){
+    return {fresh:true,rules:D.comm,month:String(D.period&&D.period.from||'').slice(0,7),label:monthLabel(),worked:0,total:DAYS(),gwp:0};
   }
   return {fresh:false,rules:D&&D.comm,label:monthLabel(),worked:WORKED(),total:TDAYS(),gwp:ME.gwpEx};
 }
@@ -5750,10 +5914,11 @@ function show(a){
         ? 'How '+esc(firstName(a.name))+'&rsquo;s month is going — '+esc(prettyPeriod())+'.'
         /* A PROJECTION, SAID UP FRONT (Nick, 2026-09-03: "at the beginning, this is a
            projection of how your month is going thus far"). */
-        : 'A projection of how your month is going so far, from your '+esc(prettyPeriod())+' figures. Today’s sales land with tonight’s upload.'),
-    agentFreshLine()
-    +((VIEW==='month'||VIEW==='progress')?leaveLine():'')
-    +((VIEW==='month'||VIEW==='progress')?campaignSplitHTML(a):'')
+        : (D.empty?esc(monthLabel())+' — no figures yet.'
+          : 'A projection of how your month is going so far, from your '+esc(prettyPeriod())+' figures. Today’s sales land with tonight’s upload.')),
+    finalBarHTML()+agentFreshLine()
+    +((VIEW==='month'||VIEW==='progress')&&!D.empty?leaveLine():'')
+    +((VIEW==='month'||VIEW==='progress')&&!D.empty?campaignSplitHTML(a):'')
     +(VIEW==='links' ? linksPage()
       : VIEW==='coaching' ? coachPageAgent()
       /* COMMISSION IS ITS OWN TAB. It used to sit collapsed at the bottom of My
@@ -5767,6 +5932,9 @@ function show(a){
          tracking. MY PROGRESS is the detail — every figure, the shape of the month,
          where you stand. The hero shows on Today and Commission deliberately:
          "what am I earning" is the reason an agent opens either. */
+      /* AN EMPTY MONTH (spec 002): Today and My Progress are ONE card — the month, what is coming, the way to the
+         closed month. No target, no tiles, no "0 of N", no rank. */
+      : (D.empty&&(VIEW==='month'||VIEW==='progress')) ? emptyMonthCard(D.__back?'plain':'agent')
       : VIEW==='progress' ? progressPage(c)
       : VIEW==='nik' ? nikolaPage(a,c)
       /* A DRILL-DOWN SHOWS EVERYTHING THE NAME WAS LISTED FOR. Clicking a name in

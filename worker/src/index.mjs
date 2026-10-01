@@ -8,10 +8,10 @@ import { db } from './db.mjs';
 import { login, logout, session, hashPassword, changePassword, signinByCb } from './auth.mjs';
 import { retrieveKB } from './kb.mjs';
 import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWave } from './coaching.mjs';
-import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, loadReports, tlReports, listDigestMonths, overview, overviewRequest, cmCoaching, agentDetail, normCb } from './portal.mjs';
+import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, loadReports, tlReports, listDigestMonths, overview, overviewRequest, cmCoaching, coachingOthers, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn, helpConfirm, helpPulse } from './help.mjs';
 import { campaignMoves, setCampaignMove } from './moves.mjs';
-import { liveDigestAllowed } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
+import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, effPerDay } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
@@ -627,6 +627,10 @@ export default {
          Wimpy page needs to show a name and to sign out. */
       if (user.scope === 'wimpy' && !path.startsWith('/api/wimpy/'))
         return json({ error: 'This sign-in is for Wimpy orders only.' }, 403);
+      /* A REFERRALS-SCOPED SESSION (review L2, spec 002): minted by tools/sync-referrals.mjs for the scheduled pull, it may
+         call GET /api/referrals and NOTHING else — whatever role the account behind it has. Same shape as the wimpy fence. */
+      if (user.scope === 'referrals' && !(path === '/api/referrals' && req.method === 'GET'))
+        return json({ error: 'This sign-in is for the referrals pull only.' }, 403);
 
       /* ---------- AGENT ANALYTICS ROLE LOCKDOWN ----------
          THIS MUST STAY THE FIRST THING AFTER THE SESSION CHECK. Before agents
@@ -803,7 +807,20 @@ export default {
         const h = hubIdsOf(user);
         if (h.error) return json({ error: h.error }, h.status);
         try {
-          if (req.method === 'GET') return json(await coachingList(h.ids));
+          if (req.method === 'GET') {
+            /* THE LIVE LIST IS UNCHANGED (Convex, the leader's own profile). spec 002 C4 adds, from the kv:coaching snapshot,
+               `others` — sessions on THIS leader's agents logged under another Hub profile (Dalwin's lead management) — and
+               `coachingAt`, the copy's age stamp. A snapshot or digest failure is said (others: null + othersError) and never
+               costs the leader their live list. */
+            const live = await coachingList(h.ids);
+            let extra;
+            try {
+              const dg = await loadDigest(DB, null);
+              extra = dg ? await coachingOthers(env, DB, user, dg, { days: url.searchParams.get('days') || '', from: url.searchParams.get('from') || '', to: url.searchParams.get('to') || '' })
+                : { others: null, coachingAt: null, othersError: 'Nothing has been published yet, so the Agent List is not known.' };
+            } catch (e) { extra = { others: null, coachingAt: null, othersError: String((e && e.message) || e).slice(0, 160) }; }
+            return json({ ...live, ...extra });
+          }
           if (req.method === 'POST') {
             const r = await coachingCreate(h.ids, user, await req.json().catch(() => ({})));
             return json(r, r.error ? (r.status || 400) : 200);
@@ -1591,6 +1608,9 @@ export default {
           return new Response(JSON.stringify({ alerts: [], checked_at: at, cadence: cad, recipients_only: true }),
             { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Cbx-Version': (hr && hr[0] && hr[0].updated_at) || '' } });
         }
+        /* THE REFERRALS SNAPSHOT IS STAFF-ONLY (spec 002 C3): every agent's referral counts. PULSE reads it; a portal role never does,
+           even one that also holds a management app (portalOnly() above only closes portal-only logins). */
+        if (key === 'referrals-latest' && !referralsReadAllowed(user)) return json({ error: 'Not permitted.' }, 403);
         if (key === 'vas-state' && !url.searchParams.get('meta')) stampAppOpen(DB, ctx, 'vas');   // the PULSE boot
         else if (key === 'cb-config' && !url.searchParams.get('meta')) stampAppOpen(DB, ctx, 'ops');
         const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:' + key)}&select=value,updated_at`);
@@ -1618,6 +1638,8 @@ export default {
       if (path === '/api/kv' && req.method === 'POST') {
         const qk = url.searchParams.get('key');
         if (!qk) return json({ error: 'key required' }, 400);
+        /* the digest, report and referral keys are staff-written only (review M1) — a team leader or campaign manager that also holds a management app is refused */
+        if (!kvWriteAllowed(qk, user)) return json({ error: 'Not permitted.' }, 403);
         // raw mode: body is the payload itself, streamed into Storage. A Storage
         // refusal (e.g. bucket missing) fails loudly — that is a misconfiguration
         // to fix, not to paper over with an inline-row fallback.
@@ -1664,27 +1686,38 @@ export default {
            409'd. History keys (agent-digest-YYYY-MM) are untouched; the republish tool
            writes Storage directly and is unaffected. */
         let digestFrom = null;   // the live digest's period, stamped on its pointer row below (rollover grace)
+        let digestEmpty = false;   // an `empty:true` payload (spec 002 C2): its pointer row is stamped `empty` beside `period`
         if (qk === 'agent-digest' || /^agent-reports-(variance|leads)$/.test(qk)) {   // the report keys are fenced to the live month too (2026-09-21)
-          let from = '';
-          try { from = String((JSON.parse(body).period || {}).from || ''); }
+          let from = '', payloadEmpty = false;
+          let pj = null;
+          try { pj = JSON.parse(body); from = String((pj.period || {}).from || ''); }
           catch (e) { return json({ error: 'agent-digest body is not JSON with a period' }, 400); }
+          /* EMPTINESS IS DERIVED HERE, never taken from the client's flag (review M1): no agents → 400 empty_digest; flagged empty
+             over figures → 400 bad_empty; unflagged with every figure null → empty all the same. The pointer stamp uses this value. */
+          if (qk === 'agent-digest') {
+            const em = digestEmptiness(pj);
+            if (em.error) return json({ error: em.error }, 400);
+            payloadEmpty = em.empty;
+          }
           const cur = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 7);
           /* ROLLOVER GRACE (2026-10-01, rules.mjs liveDigestAllowed): the closed month may stay live until the
              current month publishes. What the live key holds is read only when it matters, FRESH (never a
              60 s-old cached copy), cheaply (the period stamped on the pointer row; the whole digest only for a
              row written before the stamp existed) — and a failed read REFUSES: "could not tell" must never
              read as "nothing is live", or a September tab lands over October on one Storage blip (review). */
-          let liveFrom = '';
-          if (from.slice(0, 7) !== cur) {
+          /* EMPTY OVER DATA (spec 002 C2, 2026-10-01): an `empty:true` payload for the CURRENT month is allowed — except over
+             a non-empty digest of the same month. So an empty payload reads what is live too, even when it is this month. */
+          let liveFrom = '', liveEmpty = false;
+          if (from.slice(0, 7) !== cur || payloadEmpty) {
             try {
               const row = ((await DB.select('rules?key=eq.' + encodeURIComponent('kv:agent-digest') + '&select=value')) || [])[0];
               const v = (row && row.value) || null;
-              if (v && typeof v.period === 'string') liveFrom = v.period;
+              if (v && typeof v.period === 'string') { liveFrom = v.period; liveEmpty = v.empty === true; }
               else if (v) {
                 if (globalThis.__digestCaches) delete globalThis.__digestCaches['kv:agent-digest'];
                 const live = await loadDigest(DB);   // storageGet answers null on ANY failure — a row with no readable digest is "could not tell"
                 if (!live) throw new Error('the live digest has a row but its object did not read');
-                liveFrom = String((live.period || {}).from || '');
+                liveFrom = String((live.period || {}).from || ''); liveEmpty = live.empty === true;
               }
             } catch (e) {
               return json({ error: 'live digest not readable — a ' + (from.slice(0, 7) || 'dateless') + ' digest is refused until it is (' + String(e && e.message || e).slice(0, 120) + ')' }, 503);
@@ -1692,7 +1725,9 @@ export default {
           }
           if (!liveDigestAllowed(from, liveFrom, Date.now()))
             return json({ error: 'stale_month: the live agent digest must be the current month (' + cur + ') — or the month just closed until ' + cur + ' publishes; got ' + (from || 'no period') + '. Publish it under its own agent-digest-YYYY-MM key instead.' }, 409);
-          if (qk === 'agent-digest') digestFrom = from;
+          if (emptyOverData(payloadEmpty, from, liveFrom, liveEmpty))
+            return json({ error: 'empty_over_data', message: 'The live agent digest already holds ' + liveFrom.slice(0, 7) + ' figures; an empty month payload never replaces them.' }, 409);
+          if (qk === 'agent-digest') { digestFrom = from; digestEmpty = payloadEmpty; }
         }
         if (qk === 'vas-state' && body.length < 120000 && !url.searchParams.get('force')) {
           const head = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {
@@ -1754,7 +1789,7 @@ export default {
           return json({ error: 'store failed: ' + sr.status + ' ' + (await sr.text()).slice(0, 150) }, 500);
         }
         const newAt = new Date().toISOString();
-        await DB.insert('rules', [{ key: 'kv:' + qk, value: digestFrom ? { store: objPath, period: digestFrom } : { store: objPath }, updated_by: user.username, updated_at: newAt }], true);
+        await DB.insert('rules', [{ key: 'kv:' + qk, value: digestFrom ? { store: objPath, period: digestFrom, ...(digestEmpty ? { empty: true } : {}) } : { store: objPath }, updated_by: user.username, updated_at: newAt }], true);
         /* the version the client should hold from now on — as the database renders it, which is
            what every later compare is made against */
         let newVer = newAt;
@@ -1803,6 +1838,7 @@ export default {
       if (path === '/api/kv' && req.method === 'DELETE') {
         const qk = url.searchParams.get('key');
         if (!qk) return json({ error: 'key required' }, 400);
+        if (!kvWriteAllowed(qk, user)) return json({ error: 'Not permitted.' }, 403);   // same fence as the POST (review M1)
         await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/${qk}`, {
           method: 'DELETE', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY },
         }).catch(() => {});                                    // ignore if there was no Storage object

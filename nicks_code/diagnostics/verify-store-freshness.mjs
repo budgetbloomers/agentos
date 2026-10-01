@@ -190,6 +190,55 @@ head('A · THE SENTINEL, AGAINST FIXTURES');
     'sales a day short and QA two: critical, each named with its expected day and owner', ss && ss.message);
 }
 
+{
+  const t = (name, cond, extra) => ok(cond, name, extra);
+  /* spec 002 C3 (2026-10-01): the referrals sync runs at 08:00 and 14:00 SAST every day (SAST = UTC+2: 06:00Z / 12:00Z).
+     referrals-slot-missed (warning) when a slot is > 2 h past with no ok entry at/after it; names the slot; clears itself.
+     `referralsLog` = the entries of kv:referrals-sync-log; absent/null = the feature has never written a log: no opinion. */
+  const quiet = { manifestAt: null, vasAt: null, opsAt: null, staffLoginRecent: false, opened: {} };
+  const miss = (nowIso, entries) => evaluateFreshness({ ...quiet, now: at(nowIso), referralsLog: entries }).find((x) => x.id === 'referrals-slot-missed');
+  const E = (iso, ok2 = true) => ({ at: iso, slot: '08:00', ok: ok2, rows: 100, contacts: 90, total: 1700, error: ok2 ? null : 'HL 500' });
+  t('before the first slot is 2 h past, nothing', !miss('2026-10-02T07:30:00Z', [E('2026-10-01T12:01:00Z')]));   // 09:30 SAST: the 08:00 slot is 1.5 h past
+  const a = miss('2026-10-02T08:30:00Z', [E('2026-10-01T12:01:00Z')]);                                           // 10:30 SAST: 2.5 h past 08:00, last ok yesterday 14:01
+  t('08:00 slot 2.5 h past with only yesterday\'s ok entry: warning', !!a && a.severity === 'warning', JSON.stringify(a));
+  t('...it names the slot (08:00)', !!a && /08:00/.test(a.message) && !/14:00/.test(a.message.replace(/08:00[^.]*/, '')), a && a.message);
+  t('...and stamps `since` as that slot (06:00Z)', !!a && a.since === '2026-10-02T06:00:00.000Z', a && a.since);
+  t('an ok entry at/after the slot satisfies it', !miss('2026-10-02T08:30:00Z', [E('2026-10-02T06:02:00Z')]));
+  t('a FAILED entry after the slot does not satisfy it', !!miss('2026-10-02T08:30:00Z', [E('2026-10-01T12:01:00Z'), E('2026-10-02T06:02:00Z', false)]));
+  t('an ok entry from just before the slot does not satisfy it', !!miss('2026-10-02T08:30:00Z', [E('2026-10-02T05:59:00Z')]));
+  const b = miss('2026-10-02T14:30:00Z', [E('2026-10-02T06:02:00Z')]);                                           // 16:30 SAST: 14:00 is 2.5 h past
+  t('08:00 ran but 14:00 did not: warning naming 14:00', !!b && /14:00/.test(b.message) && !/08:00/.test(b.message), b && b.message);
+  t('14:00 ok at 14:05 SAST clears it', !miss('2026-10-02T14:30:00Z', [E('2026-10-02T06:02:00Z'), E('2026-10-02T12:05:00Z')]));
+  t('one late ok entry (after 14:00) also satisfies the earlier 08:00 slot', !miss('2026-10-02T14:30:00Z', [E('2026-10-02T12:20:00Z')]));
+  t('between slots with both satisfied: quiet (11:00 SAST)', !miss('2026-10-02T09:00:00Z', [E('2026-10-02T06:02:00Z')]));
+  t('the slots are SAST, not UTC (00:30 SAST on the 2nd is still before 08:00 — yesterday\'s slots are not today\'s)', !miss('2026-10-01T22:30:00Z', [E('2026-10-01T12:05:00Z')]));
+  t('no log row ever written: no opinion (the feature is not live yet)', !miss('2026-10-02T08:30:00Z', null) && !miss('2026-10-02T08:30:00Z', undefined));
+  t('an empty log is evaluated (the tool has been run, nothing succeeded)', !!miss('2026-10-02T08:30:00Z', []));
+  t('both slots missed: the earlier one is named, the message stays stable across ticks', (() => { const m1 = miss('2026-10-02T14:30:00Z', []), m2 = miss('2026-10-02T14:40:00Z', []); return !!m1 && /08:00/.test(m1.message) && m1.message === m2.message && m1.since === m2.since; })());
+  t('weekends count (the slots run every day): a Sunday miss alerts', !!miss('2026-10-04T08:30:00Z', [E('2026-10-03T12:01:00Z')]));
+
+  /* the collector rides the EXISTING select (no extra subrequest) */
+  const HLSRC = fs.readFileSync(path.join(ROOT, 'worker', 'src', 'health.mjs'), 'utf8');
+  t('runHealthChecks reads kv:referrals-sync-log in the existing rules select', /kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching,kv:referrals-sync-log/.test(HLSRC));
+  const RULES = {}; let selects = 0;
+  const realNow = Date.now; Date.now = () => at('2026-10-02T08:30:00Z');
+  try {
+    RULES['kv:referrals-sync-log'] = { value: { data: JSON.stringify({ entries: [E('2026-10-01T12:01:00Z')] }) }, updated_at: '2026-10-01T12:01:00Z' };
+    const DB2 = { select: async (q) => { selects++; if (q.startsWith('rules?key=in.')) { const m = /key=in\.\(([^)]*)\)/.exec(q); return decodeURIComponent(m[1]).split(',').filter((k) => RULES[k]).map((k) => ({ key: k, value: RULES[k].value, updated_at: RULES[k].updated_at })); } return []; },
+      insert: async () => {}, update: async () => {}, del: async () => {}, rpc: async () => null, storageGet: async () => null };
+    const { runHealthChecks } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'health.mjs')).href);
+    const out = await runHealthChecks(DB2, { env: {} });
+    const al = out.alerts.find((x) => x.id === 'referrals-slot-missed');
+    t('the collector raises it from the log row', !!al && al.severity === 'warning' && /08:00/.test(al.message), JSON.stringify(out.alerts.map((x) => x.id)));
+    RULES['kv:referrals-sync-log'].value = { data: JSON.stringify({ entries: [E('2026-10-02T06:03:00Z')] }) };
+    const out2 = await runHealthChecks(DB2, { env: {} });
+    t('...and clears itself on the next tick once a run succeeds', !out2.alerts.some((x) => x.id === 'referrals-slot-missed'));
+    delete RULES['kv:referrals-sync-log'];
+    const out3 = await runHealthChecks(DB2, { env: {} });
+    t('a missing log row is no opinion', !out3.alerts.some((x) => x.id === 'referrals-slot-missed'));
+  } finally { Date.now = realNow; }
+}
+
 head('B · THE LIVE VIEW AND THE LIVE KEY');
 {
   const env = {};

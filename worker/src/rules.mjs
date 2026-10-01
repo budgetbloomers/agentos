@@ -53,6 +53,59 @@ export function liveDigestAllowed(periodFrom, liveFrom, nowMs) {
   return m === prev && String(liveFrom || '').slice(0, 7) !== cur;
 }
 
+/* AN EMPTY MONTH NEVER REPLACES A NON-EMPTY ONE (spec 002-live-month-sync-coaching, contract C2, 2026-10-01).
+   The live key now takes the CURRENT month even before its first data (an honest `empty:true` payload). The
+   one thing that must never happen is that payload landing over the same month's real figures (a stale tab,
+   the tool on an old state). payloadEmpty: the incoming payload says `empty:true`; liveFrom / liveEmpty: the
+   period and the `empty` stamp the live pointer row carries ('' / undefined when nothing is live or the row
+   predates the stamp — an unstamped row is treated as NOT empty, the safe side). true = refuse (409
+   empty_over_data). Used by the Worker's POST /api/kv; the republish tool mirrors it. */
+export function emptyOverData(payloadEmpty, periodFrom, liveFrom, liveEmpty) {
+  if (payloadEmpty !== true) return false;
+  const m = String(periodFrom || '').slice(0, 7), l = String(liveFrom || '').slice(0, 7);
+  if (!m || m !== l) return false;
+  return liveEmpty !== true;
+}
+
+/* THE REFERRALS SNAPSHOT IS STAFF MATERIAL (spec 002, contract C3). GET /api/kv?key=referrals-latest carries
+   every agent's referral counts; PULSE (staff) adopts it. Agents, team leaders and campaign managers must
+   never read it — whatever management app a portal login also holds — and a wimpy-scoped session reaches
+   nothing. Pure so the suite can pin it. */
+/* An ALLOW-list (review L4): the staff roles app_users carries (migration-003: admin / exec / tl / qa / viewer — `tl` is the
+   management Ops role, NOT the portal's team_leader). A role added later is closed here until somebody opens it on purpose. */
+export const STAFF_ROLES = new Set(['admin', 'exec', 'tl', 'qa', 'viewer']);
+const PORTAL_ONLY_ROLES = new Set(['agent', 'team_leader', 'campaign_manager']);
+/** A normal password session. Any other scope (wimpy, referrals) is a narrow one and reaches nothing staff-only. */
+const isFullScope = (user) => !!user && (!user.scope || user.scope === 'full');
+export function referralsReadAllowed(user) {
+  return isFullScope(user) && STAFF_ROLES.has(user.role);
+}
+
+/* WHO MAY WRITE THE DIGEST AND REFERRAL KEYS (review M1, 2026-10-01). POST/DELETE /api/kv was open to any session that
+   gets past the portal lockdown — which a team leader or campaign manager who also holds a management app does. The
+   live digest is every agent's page; referrals are every agent's counts. Portal roles and scoped sessions are refused
+   for these keys whatever apps they hold; the staff roles keep writing exactly as before. Other keys are untouched. */
+const GUARDED_KV = /^(agent-digest(-[a-z0-9-]+)?|agent-reports-(variance|leads)|referrals-latest|referrals-sync-log)$/;
+export const isGuardedKvKey = (key) => GUARDED_KV.test(String(key || ''));
+export function kvWriteAllowed(key, user) {
+  if (!user) return false;
+  if (!isGuardedKvKey(key)) return true;
+  return isFullScope(user) && !PORTAL_ONLY_ROLES.has(user.role);
+}
+
+/* EMPTINESS IS DERIVED, NEVER TRUSTED (review M1). The `empty:true` flag decides whether a payload may be refused by the
+   empty_over_data fence and what the pointer is stamped, so it cannot be the client's say-so. An agent-digest body:
+   no agents → 'empty_digest'; flagged empty but an agent carries a figure (sales / gwpEx / pctT / act not null) →
+   'bad_empty'; otherwise empty = every agent's four figures are null, whatever the flag says. A real 0 is a figure. */
+const EMPTY_FIGURES = ['sales', 'gwpEx', 'pctT', 'act'];
+export function digestEmptiness(body) {
+  const agents = body && Array.isArray(body.agents) ? body.agents : [];
+  if (!agents.length) return { error: 'empty_digest' };
+  const hasFigures = agents.some((a) => a && EMPTY_FIGURES.some((k) => a[k] != null));
+  if (body.empty === true && hasFigures) return { error: 'bad_empty' };
+  return { empty: !hasFigures };
+}
+
 const HOUR = 3600000;
 /** The day each source should reach right now (SAST): yesterday after 13:00, no Sunday; Saturday only for sources that dial. Mirror of expectedReach() in PULSE. */
 export function expectedReachFor(nowMs, saturday = true) {
