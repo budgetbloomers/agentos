@@ -341,6 +341,43 @@ export function evaluateFreshness(t) {
     if (bits.length) alerts.push({ id: 'database-size', severity: t.db.db_bytes >= 6 * 1073741824 ? 'critical' : 'warning',
       message: 'The database needs attention: ' + bits.join('; ') + '. The weekly vacuum runs Sunday 03:30 SAST; run VACUUM (ANALYZE) on the named table now if this is red.', since: 'db' });
   }
+  /* THE COACHING HUB COPY IS REFRESHING (spec 001-cm-view-signoff, R7, 2026-10-01). kv:coaching sat on
+     21 September for ten days because every refresh wave died on the Free plan's subrequest cap and the only
+     trace was a console.warn — nobody was told, and the team leaders' coaching page, the campaign manager's and
+     the agents' cards all read old sessions. `coachingAt` is kv:coaching's own fetchedAt, read from the rules ROW
+     (never the 1.3 MB snapshot); null = the copy has never been taken. Absent key = a caller that does not
+     check (the older fixtures) — no opinion. Working days only: the Hub is not touched on a Sunday, and the
+     alert clears itself the tick the copy is fresh. The message carries the copy's timestamp and a coarse age
+     (hours, then whole days) so a persisting alert is written once, not on every tick. */
+  if ('coachingAt' in t && SAST_WORKING(now)) {
+    const ca = ms(t.coachingAt);
+    if (!ca || now - ca > 26 * HOUR) {
+      const days = Math.floor((now - ca) / (24 * HOUR));
+      alerts.push({
+        id: 'coaching-stale', severity: 'warning',
+        message: !ca
+          ? 'The Coaching Hub copy has never been taken — team leaders and campaign managers have no coaching sessions to read. The refresh runs every 20 minutes; read kv:coaching-wave-log for what each attempt did.'
+          : 'The Coaching Hub copy is more than 26 hours old (last refreshed ' + sast(ca) + (days >= 2 ? ', ' + days + ' days ago' : '')
+            + ') — team leaders and campaign managers are reading older coaching sessions. The refresh runs every 20 minutes; read kv:coaching-wave-log for what each attempt did (a step that errors is named there).',
+        since: ca ? new Date(ca).toISOString() : 'coaching',
+      });
+    }
+  }
+  /* A COPY THAT IS FRESH BUT MISSING PEOPLE (review fix, 2026-10-01). When some (collection, leader) pairs could not be
+     read even after their retries, the snapshot is written anyway — with `incomplete` and `failedLeaders` on the
+     kv:coaching ROW — and a fresh fetchedAt would otherwise make it look healthy while those leaders read "0 sessions".
+     Not gated by working day (the data is wrong, not merely old); clears the tick a complete copy lands. The message is
+     fixed text plus the names, so a persisting condition is written once. */
+  const inc = Array.isArray(t.coachingIncomplete) ? t.coachingIncomplete : [];
+  if (inc.length) {
+    const names = inc.map((x) => (x && x.name) || String(x)).sort().join(', ');
+    const ca2 = ms(t.coachingAt);
+    alerts.push({
+      id: 'coaching-incomplete', severity: 'warning',
+      message: 'The Coaching Hub copy is incomplete: the sessions of ' + names + ' could not be read from the Hub, so their coaching reads as fewer sessions than they have (or none). The refresh retries every hour; read kv:coaching-wave-log for the failing step.',
+      since: ca2 ? new Date(ca2).toISOString() : 'coaching',
+    });
+  }
   /* No alert about the start password: keeping it is allowed (Nick, 2026-09-08 — "only if they want
      to"). accounts_on_default_password remains the audit view for whoever asks. */
   return alerts;
@@ -354,9 +391,13 @@ export function evaluateFreshness(t) {
  */
 export async function runHealthChecks(DB, opts = {}) {
   const rows = await DB.select(
-    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened')})&select=key,updated_at,value`);
+    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching')})&select=key,updated_at,value`);
   const at = {}; let opened = null;
-  for (const r of rows || []) { at[r.key] = r.updated_at; if (r.key === 'kv:app-opened') opened = (r.value && typeof r.value === 'object') ? r.value : {}; }
+  /* kv:coaching rides the same select (its value is the small pointer {store,bytes,sessions,fetchedAt}) — no extra subrequest;
+     coachingAt is null when the row is missing (the copy was never taken) */
+  let coachingAt = null, coachingIncomplete = [];
+  for (const r of rows || []) { at[r.key] = r.updated_at; if (r.key === 'kv:app-opened') opened = (r.value && typeof r.value === 'object') ? r.value : {};
+    if (r.key === 'kv:coaching') { coachingAt = (r.value && r.value.fetchedAt) || null; coachingIncomplete = (r.value && Array.isArray(r.value.failedLeaders)) ? r.value.failedLeaders : []; } }
 
   /* Staff = a username that is not an agent's CB number. Filtered here rather
      than in PostgREST regex syntax so the query stays simple and indexable. */
@@ -428,7 +469,7 @@ export async function runHealthChecks(DB, opts = {}) {
      (freshness, list refusal, integrity) was silent for a day. verify-roster-propagation caught it. */
   const helpCenter = await probeHelpCenter(opts.env);
   const alerts = evaluateFreshness({
-    helpCenter,
+    helpCenter, coachingAt, coachingIncomplete,
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
     staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster, db: dbh, runnerExpected: !!opts.runnerExpected,
   });

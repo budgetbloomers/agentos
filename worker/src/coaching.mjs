@@ -233,58 +233,132 @@ export async function fetchCoaching(env) {
    with the data (`fetchedAt`, and `stale` past STALE_HOURS) and the page says so.
    --------------------------------------------------------------------------- */
 const CACHE_MIN = 10;
-const STALE_HOURS = 26;          // a daily sync that missed one run is stale, not broken
+export const STALE_HOURS = 26;          // a daily sync that missed one run is stale, not broken
 
-/* THE SNAPSHOT, TAKEN BY THE CRON IN WAVES (2026-09-15 — Nick: "i am not going to pay for github so
-   make sure it works"). The 84-request pull that the subrequest cap broke inline is split into three
-   waves of two collections (2 × 14 leaders + 1 = 29 requests, under the cap with room for the tick's
-   own reads); one wave per ten-minute tick, so a fresh snapshot lands every ~30 minutes once it is
-   older than REFRESH_HOURS. The parts sit in kv:coaching-waves until all three are in, then the
-   snapshot is written exactly as tools/sync-coaching-hub.mjs wrote it (Storage raw/kv/coaching +
-   the kv:coaching pointer). Two collections failing loses nothing else: each part is settled alone. */
+/* THE SNAPSHOT, TAKEN BY THE CRON IN BUDGETED CHUNKS (rewritten 2026-10-01, spec 001-cm-view-signoff, R7).
+   The 84-request pull that the subrequest cap broke inline was split on 2026-09-15 into three waves of
+   two collections. That held while the Hub had 14 leaders (2 x 14 + 1 = 29); at 23 leaders a wave is
+   46 Convex calls + teamLeaders:list + the Supabase reads/writes + the cron-log write > the Free plan's
+   50 subrequests, so EVERY wave died before saving anything, the only trace a console.warn, and kv:coaching
+   sat on 21 September for ten days.
+
+   The pull is now measured in the unit that is actually capped: (collection, leader) pairs, each one Convex
+   call. One invocation takes at most CHUNK_CALLS (35) Convex calls - teamLeaders:list included - whatever the
+   Hub's size, so it can never again outgrow the cap by the Hub growing. The place is kept in kv:coaching-waves
+   (collection-major order, `next` = the next pair); each chunk's sessions are kept as ONE pre-stringified
+   part so an intermediate invocation never parses the accumulated pile (the Free plan's other cap is 10 ms of
+   CPU); the snapshot is written exactly as tools/sync-coaching-hub.mjs wrote it (Storage raw/kv/coaching + the
+   kv:coaching pointer) ONLY when every pair is in. Every invocation that tried to pull appends
+   {at, step, of, pairs, sessions, error} to kv:coaching-wave-log (last 20) - failures were invisible before.
+   Budget per invocation: 1 select (the three rows at once) + <= 35 Convex + 1 write (pointer + log in one
+   request); the final chunk swaps that write for Storage + one two-row insert + one delete. The cron-log write
+   in index.mjs makes it <= 40. Guarded by diagnostics/verify-coaching-wave.mjs. */
 const REFRESH_HOURS = 2;
-const WAVES = [[0, 1], [2, 3], [4, 5]];
+const CHUNK_CALLS = 35;                    // Convex calls per invocation, teamLeaders:list included
+const PULL_RESTART_HOURS = 3;              // a pull that never finished is abandoned
+const WAVE_LOG_KEEP = 20;
+const WAVE_V = 2;                          // the pointer format; the old {parts:[{sessions}]} pointer is ignored
+export const COACH_WAVE_KEYS = { snapshot: 'kv:coaching', pointer: 'kv:coaching-waves', log: 'kv:coaching-wave-log' };
+const cmpDateDesc = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+
+/* RETRY AND HONESTY (review fixes, 2026-10-01). A pair that fails (a 429, the shared 20 s abort) is NOT stepped past:
+   it stays in the pointer as {i, tries, err} and is retried in the next invocation(s), at most MAX_TRIES attempts in
+   all, taking its place in the 35-call budget ahead of new pairs. If a pair is still unresolved when the last pair is
+   in, the snapshot is written (the rest is worth having) but says so — `incomplete: true` and `failedLeaders`
+   [{id, name}] in the snapshot, in the kv:coaching row (health reads the row, never Storage) and in the wave log —
+   so coaching-incomplete can name them and cm-coaching can refuse to call those leaders "0 sessions, fresh". An
+   incomplete copy is re-pulled after INCOMPLETE_REFRESH_HOURS, not REFRESH_HOURS. A FAILED READ of the pointer is not
+   an absent pointer: it is logged and nothing is written, so a transient PostgREST error cannot restart a pull. */
+const MAX_TRIES = 2;
+const INCOMPLETE_REFRESH_HOURS = 1;
+
 export async function snapshotCoachingWave(env, DB, nowMs = Date.now()) {
-  const cur = await DB.select(`rules?key=eq.${encodeURIComponent('kv:coaching')}&select=value`).catch(() => null);
-  const fetchedAt = cur && cur[0] && cur[0].value && cur[0].value.fetchedAt;
-  const wr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:coaching-waves')}&select=value`).catch(() => null);
-  let w = (wr && wr[0] && wr[0].value) || null;
-  if (w && w.startedAt && nowMs - Date.parse(w.startedAt) > 3 * 3600000) w = null;          // a pull that never finished: start over
-  if (!w && fetchedAt && nowMs - Date.parse(fetchedAt) < REFRESH_HOURS * 3600000) return { skipped: 'fresh' };
+  const keys = Object.values(COACH_WAVE_KEYS).map(encodeURIComponent).join(',');
+  let rows;
+  try { rows = await DB.select(`rules?key=in.(${keys})&select=key,value`); }
+  catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 200);
+    console.warn('[coaching] could not read the wave pointer — doing nothing this invocation: ' + msg);
+    return { skipped: 'read-failed', error: msg };
+  }
+  const byKey = {}; for (const r of rows || []) byKey[r.key] = r.value;
+  const snapRow = byKey[COACH_WAVE_KEYS.snapshot] || null;
+  const fetchedAt = snapRow && snapRow.fetchedAt;
+  let w = byKey[COACH_WAVE_KEYS.pointer] || null;
+  if (w && (w.v !== WAVE_V || !Array.isArray(w.leaders) || !Array.isArray(w.parts))) w = null;                  // the old three-wave pointer
+  if (w && w.startedAt && nowMs - Date.parse(w.startedAt) > PULL_RESTART_HOURS * 3600000) w = null;            // a pull that never finished: start over
+  const refreshH = snapRow && snapRow.incomplete ? INCOMPLETE_REFRESH_HOURS : REFRESH_HOURS;
+  if (!w && fetchedAt && nowMs - Date.parse(fetchedAt) < refreshH * 3600000) return { skipped: 'fresh' };
+
+  let entries = [];
+  try { entries = JSON.parse((byKey[COACH_WAVE_KEYS.log] && byKey[COACH_WAVE_KEYS.log].data) || '{}').entries || []; } catch { entries = []; }
+  const at = new Date(nowMs).toISOString();
+  const logRow = (e) => ({ key: COACH_WAVE_KEYS.log, updated_by: 'coaching-cron', updated_at: at,
+    value: { data: JSON.stringify({ entries: [...entries, { at, ...e }].slice(-WAVE_LOG_KEEP) }) } });
+
   const hub = String(env.COACHING_HUB_URL || DEFAULT_HUB).replace(/\/+$/, '');
   const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 20000);
+  const step = (w ? w.step : 0) + 1;
+  let of = step;
   try {
-    const leaders = w && w.leaders ? w.leaders : await convexQuery(hub, 'teamLeaders:list', {}, ctrl.signal);
+    const listed = !w;
+    const leaders = w ? w.leaders : await convexQuery(hub, 'teamLeaders:list', {}, ctrl.signal);
     if (!Array.isArray(leaders) || !leaders.length) throw new Error('coaching hub returned no team leaders');
-    const idx = w ? w.parts.length : 0;
-    const jobs = [];
-    for (const ci of WAVES[idx]) { const [type, label] = COLLECTIONS[ci];
-      for (const tl of leaders) jobs.push(convexQuery(hub, `${type}:list`, { teamLeaderId: tl._id }, ctrl.signal)
-        .then((rows) => ({ type, label, tl, rows: Array.isArray(rows) ? rows : [] })).catch((e) => ({ type, label, tl, rows: [], error: String(e.message || e) }))); }
-    const settled = await Promise.all(jobs);
-    const sessions = [], errors = [];
-    for (const s of settled) {
-      if (s.error) { errors.push(`${s.type}/${s.tl.name}: ${s.error}`); continue; }
-      for (const rec of s.rows) { const n = normalise(s.type, s.label, rec, s.tl.name); if (n) { n.hubTeamLeaderId = s.tl._id; sessions.push(n); } }
+    const total = COLLECTIONS.length * leaders.length;
+    of = Math.max(step, Math.ceil((total + 1) / CHUNK_CALLS));
+    const from = w ? w.next : 0;
+    const failedBefore = (w && w.failed) || [];
+    const budget = CHUNK_CALLS - (listed ? 1 : 0);
+    const retry = failedBefore.filter((f) => f.tries < MAX_TRIES).slice(0, budget);
+    const newTake = Math.min(total - from, budget - retry.length);
+    const idxs = [...retry.map((f) => f.i), ...Array.from({ length: newTake }, (_, k) => from + k)];
+    const tries = new Map(failedBefore.map((f) => [f.i, f.tries]));
+    const settled = await Promise.all(idxs.map((i) => {
+      const [type, label] = COLLECTIONS[Math.floor(i / leaders.length)], tl = leaders[i % leaders.length];
+      return convexQuery(hub, `${type}:list`, { teamLeaderId: tl._id }, ctrl.signal)
+        .then((r) => ({ i, type, label, tl, rows: Array.isArray(r) ? r : [] }))
+        .catch((e) => ({ i, type, label, tl, rows: [], error: String(e.message || e) }));
+    }));
+    const sessions = [], failedNow = [];
+    for (const r of settled) {
+      if (r.error) { failedNow.push({ i: r.i, tries: (tries.get(r.i) || 0) + 1, err: `${r.type}/${r.tl.name}: ${r.error}`.slice(0, 300) }); continue; }
+      for (const rec of r.rows) { const n = normalise(r.type, r.label, rec, r.tl.name); if (n) { n.hubTeamLeaderId = r.tl._id; sessions.push(n); } }
     }
-    const next = { startedAt: (w && w.startedAt) || new Date(nowMs).toISOString(), leaders, parts: [...((w && w.parts) || []), { sessions, errors }] };
-    if (next.parts.length < WAVES.length) {
-      await DB.insert('rules', [{ key: 'kv:coaching-waves', value: next, updated_by: 'coaching-cron', updated_at: new Date(nowMs).toISOString() }], true);
-      return { wave: next.parts.length, of: WAVES.length, sessions: sessions.length };
+    /* A chunk in which EVERY call failed is the Hub being down, not a quiet Hub: spend no attempts and step past
+       nothing — leave the pointer, log it, say so. */
+    if (settled.length && failedNow.length === settled.length) throw new Error(failedNow[0].err);
+
+    const done = new Set(idxs);
+    const failed = [...failedBefore.filter((f) => !done.has(f.i)), ...failedNow];
+    const nextIdx = from + newTake;
+    const pending = failed.some((f) => f.tries < MAX_TRIES);
+    const next = { v: WAVE_V, step, startedAt: (w && w.startedAt) || at, leaders, total, next: nextIdx, failed,
+      parts: [...(w ? w.parts : []), JSON.stringify(sessions)] };
+    if (nextIdx < total || pending) {
+      await DB.insert('rules', [{ key: COACH_WAVE_KEYS.pointer, value: next, updated_by: 'coaching-cron', updated_at: at },
+        logRow({ step, of, pairs: settled.length, sessions: sessions.length, error: null })], true);
+      return { wave: step, of, pairs: settled.length, sessions: sessions.length };
     }
-    const all = next.parts.flatMap((p) => p.sessions), errs = next.parts.flatMap((p) => p.errors);
+
+    const all = next.parts.flatMap((x) => JSON.parse(x)), errs = failed.map((f) => f.err);
     if (!all.length && errs.length) throw new Error(errs[0]);
-    all.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-    const snap = { fetchedAt: new Date(nowMs).toISOString(), hub, leaders: leaders.map((l) => ({ id: l._id, name: l.name })), sessions: all, errors: errs, by: 'coaching-cron' };
+    all.sort(cmpDateDesc);
+    const failedLeaders = []; for (const f of failed) { const tl = leaders[f.i % leaders.length]; if (!failedLeaders.some((x) => x.id === tl._id)) failedLeaders.push({ id: tl._id, name: tl.name }); }
+    const flag = failedLeaders.length ? { incomplete: true, failedLeaders } : {};
+    const snap = { fetchedAt: at, hub, leaders: leaders.map((l) => ({ id: l._id, name: l.name })), sessions: all, errors: errs, ...flag, by: 'coaching-cron' };
     const payload = JSON.stringify(snap);
     const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/coaching`, { method: 'POST',
       headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json', 'x-upsert': 'true' }, body: payload });
     if (!put.ok) throw new Error('storage write failed: ' + put.status);
-    await DB.insert('rules', [{ key: 'kv:coaching', value: { store: 'raw/kv/coaching', bytes: payload.length, sessions: all.length, fetchedAt: snap.fetchedAt },
-      updated_by: 'coaching-cron', updated_at: snap.fetchedAt }], true);
-    await DB.del('rules?key=eq.' + encodeURIComponent('kv:coaching-waves')).catch(() => {});
+    await DB.insert('rules', [{ key: COACH_WAVE_KEYS.snapshot, value: { store: 'raw/kv/coaching', bytes: payload.length, sessions: all.length, fetchedAt: snap.fetchedAt, ...flag },
+      updated_by: 'coaching-cron', updated_at: snap.fetchedAt },
+      logRow({ step, of, pairs: settled.length, sessions: all.length, error: null, ...flag })], true);
+    await DB.del('rules?key=eq.' + encodeURIComponent(COACH_WAVE_KEYS.pointer)).catch(() => {});
     globalThis.__coachCache = null;
-    return { written: true, sessions: all.length, errors: errs.length };
+    return { written: true, wave: step, of, pairs: settled.length, sessions: all.length, errors: errs.length, ...(failedLeaders.length ? { incomplete: true } : {}) };
+  } catch (e) {
+    await DB.insert('rules', [logRow({ step, of, pairs: 0, sessions: 0, error: String((e && e.message) || e).slice(0, 300) })], true).catch(() => {});
+    throw e;
   } finally { clearTimeout(timer); }
 }
 
@@ -427,4 +501,73 @@ export function sessionsForAgent(all, cb, name) {
   }
   sessions.sort((x, y) => String(y.date || '').localeCompare(String(x.date || '')));   // newest first, as `last` assumes
   return { sessions, matchedBy: byCb.length ? (byName.length ? 'cb+name' : 'cb') : 'name' };
+}
+
+/* ---------------------------------------------------------------------------
+   THE COACHING ANALYSIS (spec 001-cm-view-signoff, US6 + the campaign manager's coaching page).
+   Deterministic and rules-based — the engine decides, Nikola may only explain. Pure: sessions and days in,
+   a plain object out; nothing here reads the Hub or the digest.
+   --------------------------------------------------------------------------- */
+
+/** A cluster key as a person reads it: family dropped, underscores spaced, title-cased — the label the agent
+ *  page prints (agent/index.html coachLabel), so one theme is never two spellings. */
+export function themeLabel(key) {
+  return String(key || '').replace(/^[a-z]+\./, '').replace(/_/g, ' ').replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+
+/** The unique theme labels of one session, in the order the Hub wrote them. */
+export const sessionThemes = (s) => {
+  const out = [];
+  for (const c of (s && s.clusters) || []) { const l = themeLabel(c.clusterKey); if (l && !out.includes(l)) out.push(l); }
+  return out;
+};
+
+/* "after coaching" reads flat when the pace moved by less than this share of the "before" pace (a day's noise is
+   not an improvement). Whole-number sales per day, so 5% of a 4-a-day pace is a fifth of a sale. */
+export const COACH_FLAT_PCT = 0.05;
+const MAX_COACH_THEMES = 3;
+const round2 = (v) => Math.round(v * 100) / 100;
+
+/**
+ * One agent's coaching inside a period.
+ * sessions: that agent's sessions (any order); days: the digest row's days[] ({d, s, act, p, lv}); period: {from, to}.
+ * → {n, last, themes[], after:{basis, before, after, dir} | null}
+ *   n      sessions dated inside the period
+ *   last   the newest of them ('YYYY-MM-DD'), or null
+ *   themes up to three development-area labels (family 'gap'; every family when none carries one), most frequent first
+ *   after  sales per WORKED day after the last session vs before it, inside the period. A worked day is a landed
+ *          (not provisional), non-leave day the agent attended (act > 0); the session day itself is neither side.
+ *          null — never a zero — with no session, or no worked day on either side.
+ */
+export function coachAnalysis(sessions, days, period) {
+  const from = (period && period.from) || '', to = (period && period.to) || '9999-12-31';
+  const mine = (sessions || []).filter((s) => s && s.date && String(s.date) >= from && String(s.date) <= to)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  if (!mine.length) return { n: 0, last: null, themes: [], after: null };
+  const last = String(mine[0].date);
+
+  const count = {};
+  const tally = (onlyGap) => { for (const s of mine) for (const c of s.clusters || []) {
+    if (onlyGap && c.family !== 'gap') continue;
+    const l = themeLabel(c.clusterKey); if (l) count[l] = (count[l] || 0) + 1; } };
+  tally(true);
+  if (!Object.keys(count).length) tally(false);
+  const themes = Object.keys(count).sort((a, b) => count[b] - count[a] || a.localeCompare(b)).slice(0, MAX_COACH_THEMES);
+
+  const side = (pick) => {
+    let sales = 0, n = 0;
+    for (const f of days || []) {
+      if (!f || !f.d || f.d < from || f.d > to || !pick(String(f.d)) || f.p || f.lv || !(f.act > 0)) continue;
+      sales += Number(f.s) || 0; n++;
+    }
+    return n ? sales / n : null;
+  };
+  const before = side((d) => d < last), after = side((d) => d > last);
+  let verdict = null;
+  if (before != null && after != null) {
+    const delta = after - before;
+    verdict = { basis: 'sales per worked day', before: round2(before), after: round2(after),
+      dir: Math.abs(delta) <= COACH_FLAT_PCT * before ? 'flat' : delta > 0 ? 'up' : 'down' };
+  }
+  return { n: mine.length, last, themes, after: verdict };
 }

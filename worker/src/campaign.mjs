@@ -12,12 +12,13 @@
  * team-leader measure summed over the agents on the campaign. A team is one
  * team leader AND one campaign — the intersection, never the whole team.
  *
- * CONVERSION IS sales / UNIQUE LEADS, never sales per call. PULSE publishes the
- * lead denominator (`leads`) and the dialler volume (`calls`, `ans`) since
- * 2026-08-30, so conversion, contact rate, attempts per lead and lead volume are
- * all computed from the real numbers here. `leads: null` means the Salesforce case
- * books are not loaded — which is NOT the same as an agent with no leads, so it
- * stays null and the page says so.
+ * CONVERSION IS sales ÷ CLOSED LEADS since 2026-10-01 (spec 001-cm-view-signoff, the
+ * manager's sign-off list), never sales per call and no longer sales per unique lead.
+ * PULSE publishes `closed` (every case closed in the period, any status) beside
+ * `leads` (unique leads, still the attempts-per-lead and lead-volume basis) and the
+ * dialler volume (`calls`, `ans`). `closed: null` / `leads: null` mean the Salesforce
+ * case books are not loaded — which is NOT the same as an agent with none, so they
+ * stay null, the figure is null with a stated reason (`convWhy`), and the page says so.
  *
  * Two measures remain genuinely unavailable: PITCHES (this suite has no pitch
  * count — answered calls are contacts, not pitches) and BOTH-CHECKS (an Ops
@@ -44,10 +45,35 @@ export const campKey = (v) => norm(v).toLowerCase();
    Defaults are the spec's own values, so the view works before the rows are
    seeded — but a seeded row always wins (a rule must be READ, not copied).
    --------------------------------------------------------------------------- */
+/* THE TALK-TIME TARGETS (spec 001-cm-view-signoff, 2026-10-01 — "average talk time target 5 hours Courtesy, 4.5
+   hours Cuddle"). The RECORD is specs/cm_rules.json; this is the operative copy the Worker reads — change both
+   together, verify-cm-signoff-worker (section G) fails on drift. Minutes of talk per worked day. */
+export const CM_RULES = {
+  talk_target_min_by_campaign: { courtesy: 300, cuddle: 270 },
+  talk_target_min_default: 210,
+};
+/** The talk target one campaign is judged against, and where it came from. Order (review fix 7b, 2026-10-01):
+ *  1. cm:targets per-campaign talk_target (the Settings page)  — source 'settings'
+ *  2. CM_RULES by campaign key (Courtesy 5 h, Cuddle 4.5 h)    — source 'default'
+ *  3. the global cm:sla talk_target (live: 210, the default for every OTHER campaign) — 'settings' only when it
+ *     differs from the rule book's default, else 'default'
+ *  4. CM_RULES default (210).
+ *  The rule book's own targets beat the global row; only an explicit per-campaign setting overrides them. */
+export function talkTargetFor(ctx, key) {
+  const k = String(key == null ? '' : key).trim().toLowerCase();
+  const ov = ctx && ctx.targets && ctx.targets.sla && ctx.targets.sla[k] && Number(ctx.targets.sla[k].talk_target);
+  if (ov > 0) return { targetMin: ov, source: 'settings' };
+  const rule = CM_RULES.talk_target_min_by_campaign[k];
+  if (rule != null) return { targetMin: rule, source: 'default' };
+  const g = ctx && ctx.sla && Number(ctx.sla.talk_target);
+  if (g > 0) return { targetMin: g, source: g === CM_RULES.talk_target_min_default ? 'default' : 'settings' };
+  return { targetMin: CM_RULES.talk_target_min_default, source: 'default' };
+}
+
 export const CM_SLA_DEFAULTS = {
   p1_mins: 15, p2_mins: 30, p3_mins: 240, p4_mins: 1440,
   followup_hours: 48, near_breach_pct: 75, repeat_window_days: 30, repeat_min: 2,
-  qa_target: 90, talk_target: 210, att_target: 95, cancel_watch_pct: 10, gwp_ref: 99,
+  qa_target: 90, talk_target: CM_RULES.talk_target_min_default, att_target: 95, cancel_watch_pct: 10, gwp_ref: 99,
   /* Conversion is sales / UNIQUE LEADS and its target is the Lead Management tab's
      own dial (10%), NOT the tenure-group conversion target. The spec's open decision
      records why that matters: the 40% EXP-Cuddle tenure target made the weighted
@@ -145,7 +171,7 @@ export async function loadCmContext(DB, { force = false } = {}) {
   const keys = ['cm:sla', 'cm:blockages', 'cm:assignments', 'cm:targets'].map(encodeURIComponent).join(',');
   const [rules, tls, camps] = await Promise.all([
     DB.select(`rules?key=in.(${keys})&select=key,value`).catch(() => []),
-    DB.select('app_users?role=eq.team_leader&active=is.true&select=username,full_name,cb,team').catch(() => []),
+    DB.select('app_users?role=eq.team_leader&active=is.true&select=username,full_name,cb,team,hub_ids').catch(() => []),
     /* the campaigns the current Agent List names (migration-019) — the one list of
        "what campaigns exist"; the hardcoded assignment defaults below are only who
        RUNS them, and a campaign created by the list with no owner yet is exactly
@@ -167,7 +193,9 @@ export async function loadCmContext(DB, { force = false } = {}) {
   const leaders = {};
   for (const t of tls || []) {
     const team = norm(t.team); if (!team) continue;
-    leaders[team] = { cb: norm(t.cb).toUpperCase(), name: t.full_name || t.username, username: t.username };
+    /* hubId = the leader's Coaching Hub id (app_users.hub_ids.coaching) — the cm-coaching page matches on it first */
+    leaders[team] = { cb: norm(t.cb).toUpperCase(), name: t.full_name || t.username, username: t.username,
+      hubId: norm(t.hub_ids && t.hub_ids.coaching) };
   }
 
   const ctx = { t: Date.now(), sla, blockages, assign, leaders, targets, campaigns: Array.isArray(camps) ? camps : [] };
@@ -240,8 +268,10 @@ export function cmSettingsBody(digest, user, ctx) {
     const hasTargets = rows.some((r) => r.set != null) || ((t.gwpMonth || {})[c.key] != null) || Object.keys(slaSet).length > 0;
     return { key: c.key, label: c.label, inDigest: digestCamps.has(c.label), isNew: newKeys.has(c.key), hasTargets, rows,
       gwpMonth: { set: (t.gwpMonth || {})[c.key] ?? null },
-      sla: Object.keys(CM_TARGET_BOUNDS.sla).map((k) => ({
-        k, base: (ctx.sla || CM_SLA_DEFAULTS)[k], set: slaSet[k] ?? null, eff: slaC[k] })) };
+      sla: Object.keys(CM_TARGET_BOUNDS.sla).map((k) => {
+        /* the talk dial's inherited value is the rule book's per-campaign target (Courtesy 5 h, Cuddle 4.5 h) */
+        const base = k === 'talk_target' ? CM_RULES.talk_target_min_by_campaign[c.key] ?? (Number((ctx.sla || CM_SLA_DEFAULTS).talk_target) || CM_RULES.talk_target_min_default) : (ctx.sla || CM_SLA_DEFAULTS)[k];
+        return { k, base, set: slaSet[k] ?? null, eff: slaSet[k] ?? base }; }) };
   });
   /* the digest tells us which targets it was built WITH — until PULSE
      republishes, the numbers on the other tabs run on the previous set */
@@ -320,7 +350,7 @@ function agg(rows, digest) {
   const n = (v) => (v == null || isNaN(v) ? 0 : Number(v));
   const o = { agents: rows.length, sales: 0, target: 0, gwp: 0, gwpT: 0, canc: 0,
     talk: 0, act: 0, emp: 0, fails: 0, ref: 0, qaN: 0, qaSum: 0, productive: 0, noGwp: [],
-    calls: 0, ans: 0, leads: 0, leadsKnown: false };
+    calls: 0, ans: 0, leads: 0, leadsKnown: false, closed: 0, closedKnown: false, convSales: 0 };
   for (const r of rows) {
     o.sales += n(r.sales); o.target += n(r.target);
     o.gwp += n(r.gwpEx); o.gwpT += n(r.gwpT); o.canc += n(r.canc);
@@ -332,6 +362,10 @@ function agg(rows, digest) {
        is enough to make the campaign figure meaningful, so track that separately
        rather than letting nulls read as zeros. */
     if (r.leads != null) { o.leads += n(r.leads); o.leadsKnown = true; }
+    /* CLOSED LEADS (contract C1): every case closed in the period, any status. null = no case book was loaded when
+       the digest was built — NOT an agent who closed none. The conversion's numerator is summed over the SAME rows
+       that supply a denominator, so a mover's earlier segment (closed null) cannot inflate it. */
+    if (r.closed != null) { o.closed += n(r.closed); o.closedKnown = true; o.convSales += n(r.sales); }
     if (n(r.act) > 0) o.productive++;
     if (n(r.sales) > 0 && !n(r.gwpEx)) o.noGwp.push(r.name || r.code);
   }
@@ -402,13 +436,78 @@ function ladder(t, as, sla) {
   return { rag: 'g', state: 'On target', next: '' };
 }
 
+/* ---------------------------------------------------------------------------
+   THE KPI SHAPES THE CAMPAIGN TAB PAINTS (contract C2). Conversion is sales ÷ CLOSED leads; null — with a reason
+   in words — when no case book was loaded or nothing closed, never a 0%. Contact rate is answered ÷ dials, with
+   the counts; null with a reason when the dialler gave no dials.
+   --------------------------------------------------------------------------- */
+const CONV_BASIS = 'sales \u00f7 closed leads';
+const convOf = (c, slaC) => (c.closedKnown && c.closed > 0
+  ? { v: c.convSales / c.closed, sales: c.convSales, closed: c.closed, target: (Number(slaC.conv_target) || 10) / 100, basis: CONV_BASIS } : null);
+const CONV_WHY = { unknown: 'Closed leads are not available for this period \u2014 the Salesforce case book was not loaded when it was built.',
+  none: 'No leads were closed in this period, so there is nothing to divide the sales by.' };
+const talkKpi = (c, tt) => ({ v: c.talkPerDay, targetMin: tt.targetMin, targetSec: tt.targetMin * 60, source: tt.source });
+/* the All campaigns entry mixes campaigns that have different targets, so it names none (review fix 7a) */
+const talkMixed = (c) => ({ v: c.talkPerDay, targetMin: null, targetSec: null, source: 'mixed' });
+const contactOf = (c) => (c.calls ? { v: c.ans / c.calls, contacts: c.ans, dials: c.calls } : null);
+const CONTACT_WHY = 'No dialler data for this period \u2014 there are no dials to measure contact against.';
+/* spread into a kpis / team object: the reasons exist only while the figure is null */
+const whyOf = (c, slaC) => ({
+  ...(convOf(c, slaC) ? {} : { convWhy: c.closedKnown ? CONV_WHY.none : CONV_WHY.unknown }),
+  ...(contactOf(c) ? {} : { contactWhy: CONTACT_WHY }) });
+
+/* TENURE (contract C2). The digest spells a tenure as the Agent List does ('M0', 'M1', 'M2', 'Experienced', or
+   blank); the selector speaks M0 | M1 | M2 | Exp | unset. A no-activity agent (covered === false) carries no
+   tenure at all in the digest — such a row belongs to "all" only, never to a tenure slice and never to the
+   picker's counts. */
+export const TENURE_KEYS = ['M0', 'M1', 'M2', 'Exp', 'unset'];
+const TENURE_LABELS = { M0: 'M0', M1: 'M1', M2: 'M2', Exp: 'Experienced', unset: 'Not set' };
+export function tenureKey(raw) {
+  const t = norm(raw);
+  if (!t) return 'unset';
+  if (/^exp/i.test(t)) return 'Exp';
+  const m = /^m\s*([012])$/i.exec(t);
+  return m ? 'M' + m[1] : 'unset';
+}
+const tenureOfRow = (r) => (r && r.covered === false ? null : tenureKey(r && r.tenure));
+/** Is this row inside the chosen tenure slice? 'all' keeps every row (a no-activity agent included). */
+export const rowInTenure = (r, tenure) => !tenure || tenure === 'all' || tenureOfRow(r) === tenure;
+const tenuresOf = (rows) => {
+  const n = {}; for (const r of rows) { const k = tenureOfRow(r); if (k) n[k] = (n[k] || 0) + 1; }
+  return TENURE_KEYS.filter((k) => n[k]).map((k) => ({ key: k, label: TENURE_LABELS[k], agents: n[k] }));
+};
+
+/** The "Where my team leaders need help" panel for ONE campaign's requests — the same sums assist.mjs builds for the
+ *  whole register (open · raised · agents affected · oldest · avg resolution · comes back), over just those rows. */
+export function blockPanelFor(requests, blockages, nowMs = Date.now()) {
+  const rows = requests || [];
+  return (blockages || []).map((b) => {
+    const mineB = rows.filter((r) => r.blockage === b.key);
+    if (!mineB.length) return null;
+    const openB = mineB.filter((r) => !r.closed);
+    const oldest = openB.length ? Math.max(...openB.map((r) => nowMs - (r.requested ? Date.parse(r.requested) : nowMs))) : null;
+    const res = mineB.map((r) => r.resolutionMins).filter((v) => v != null);
+    return { key: b.key, label: b.label, routes_to: b.routes_to,
+      open: openB.length, raised: mineB.length,
+      affected: mineB.reduce((s2, r) => s2 + (r.affected || 0), 0),
+      oldestDays: oldest == null ? null : Math.floor(oldest / 86400000),
+      avgResolution: res.length ? Math.round(res.reduce((a2, v) => a2 + v, 0) / res.length) : null,
+      comesBack: mineB.some((r) => r.repeat) };
+  }).filter(Boolean);
+}
+
 /**
  * The whole campaign-manager overview body. `assist` is assist.mjs's list body
  * ({requests:[...], kpis:{...}} ) or {error} — the sales half must render even
  * when HighLevel is down, with the assistance half saying so plainly.
  */
-export function cmOverviewBody(digest, auth, assist, ctx) {
+export function cmOverviewBody(digest, auth, assist, ctx, opts) {
   const sla = (ctx && ctx.sla) || CM_SLA_DEFAULTS;
+  /* ?tenure= — rows are filtered BEFORE any aggregation, so every figure, team row and the roster are the slice's
+     own (a sum of sums is never taken). "all" is exactly the unfiltered view. The picker's list of tenures is
+     cut from the UNFILTERED rows, so choosing one never empties the choices. */
+  const tenure = (opts && opts.tenure) || 'all';
+  const inSlice = (r) => tenure === 'all' || tenureOfRow(r) === tenure;
   const reqs = (assist && !assist.error && assist.requests) || [];
   const assistErr = assist && assist.error ? String(assist.error) : null;
 
@@ -433,8 +532,9 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
 
   const campaigns = [];
   for (const key of auth.campaigns || []) {
-    const rows = (auth.rows || []).filter((a) => campKey(a.campaign) === key);
-    const label = rows.length ? norm(rows[0].campaign) : key.charAt(0).toUpperCase() + key.slice(1);
+    const allRows = (auth.rows || []).filter((a) => campKey(a.campaign) === key);
+    const rows = allRows.filter(inSlice);
+    const label = allRows.length ? norm(allRows[0].campaign) : key.charAt(0).toUpperCase() + key.slice(1);
     /* Per-campaign dials (cm:targets settings) sit over the global cm:sla row —
        Courtesy and Cuddle can run different QA/talk/attendance/conversion bars. */
     const slaC = slaFor(ctx, key);
@@ -453,7 +553,7 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
       return { tl, cb: leader ? leader.cb : '', team: label + ' · ' + (tl.split(/\s+/)[0] || tl),
         agents: t.agents, sales: t.sales, target: Math.round(t.targetMtd), targetMonth: t.target,
         pct: t.pct, gwp: Math.round(t.gwp), aveG: t.aveG, qa: t.qa, canc: t.canc, cancRate: t.cancRate,
-        conv: t.conv, leads: t.leadsKnown ? t.leads : null, contactRate: t.contactRate,
+        conv: convOf(t, slaC), leads: t.leadsKnown ? t.leads : null, contactRate: contactOf(t), ...whyOf(t, slaC),
         att: t.att, talkPerDay: t.talkPerDay, fails: t.fails,
         open: as.open, top: as.top, outside: as.outside, near: as.near, repeats: as.repeats,
         lastSession: as.last || null,
@@ -480,12 +580,12 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
       /* No pitch count exists anywhere in this suite — answered calls are contacts,
          not pitches — so this stays honestly empty rather than borrowing `ans`. */
       pitches: null,
-      conv: c.conv == null ? null : { v: c.conv, target: (Number(slaC.conv_target) || 10) / 100,
-        leads: c.leads, basis: 'sales \u00f7 unique leads' },
-      talk: { v: c.talkPerDay, targetMin: Number(slaC.talk_target) || 210 },
+      conv: convOf(c, slaC),
+      talk: talkKpi(c, talkTargetFor(ctx, key)),
       attempts: c.attempts == null ? null : { v: c.attempts,
         low: Number(slaC.attempts_low) || 3, high: Number(slaC.attempts_high) || 5 },
-      contactRate: c.contactRate == null ? null : { v: c.contactRate, contacts: c.ans, dials: c.calls },
+      contactRate: contactOf(c),
+      ...whyOf(c, slaC),
       leads: c.leadsKnown ? { v: c.leads, cover: c.leadCover } : null,
       qa: { v: c.qa, target: (Number(slaC.qa_target) || 90) / 100 },
       checks: null,
@@ -505,7 +605,7 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
       notCovered: (digest.notCovered || []).filter((n) => campKey(n.campaign) === key).map((n) => n.name),
     };
 
-    campaigns.push({ key, label, agents: rows.length, teamLeaders: teams.length,
+    campaigns.push({ key, label, agents: rows.length, teamLeaders: teams.length, tenures: tenuresOf(allRows),
       /* the expanded team roster prints NAMES; without this the page fell back
          to printing bare CB codes at a manager who wanted to see people */
       agentIndex: rows.map((a) => ({ code: a.code, name: a.name })),
@@ -528,7 +628,8 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
      here exactly as they are two rows there. Renolan on Cuddle and Renolan on
      Nesting are different teams with different rosters and different numbers. */
   if (campaigns.length > 1) {
-    const rows = auth.rows || [];
+    const allRows = auth.rows || [];
+    const rows = allRows.filter(inSlice);
     const c = agg(rows, digest);
     const teams = campaigns.flatMap((x) => x.teams);
     const tSales = teams.reduce((n, t) => n + t.sales, 0);
@@ -541,6 +642,7 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
       teamLeaders: teams.length,
       /* how many PEOPLE, as distinct from how many team rows */
       leaders: [...new Set(teams.map((t) => t.tl))].length,
+      tenures: tenuresOf(allRows),
       agentIndex: rows.map((a) => ({ code: a.code, name: a.name })),
       teams,
       kpis: {
@@ -548,12 +650,12 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
         gwp: { v: Math.round(c.gwp), target: Math.round(c.gwpT), projected: c.projGwp == null ? null : Math.round(c.projGwp) },
         aveG: aveGKpi(c.aveG, sla),
         pitches: null,
-        conv: c.conv == null ? null : { v: c.conv, target: (Number(sla.conv_target) || 10) / 100,
-          leads: c.leads, basis: 'sales \u00f7 unique leads' },
-        talk: { v: c.talkPerDay, targetMin: Number(sla.talk_target) || 210 },
+        conv: convOf(c, sla),
+        talk: talkMixed(c),   // mixed campaigns: no single target — the page says "targets differ by campaign"
         attempts: c.attempts == null ? null : { v: c.attempts,
           low: Number(sla.attempts_low) || 3, high: Number(sla.attempts_high) || 5 },
-        contactRate: c.contactRate == null ? null : { v: c.contactRate, contacts: c.ans, dials: c.calls },
+        contactRate: contactOf(c),
+        ...whyOf(c, sla),
         leads: c.leadsKnown ? { v: c.leads, cover: c.leadCover } : null,
         qa: { v: c.qa, target: (Number(sla.qa_target) || 90) / 100 },
         checks: null,
@@ -577,16 +679,19 @@ export function cmOverviewBody(digest, auth, assist, ctx) {
 
   /* Freshness — the language rule is absolute: manually uploaded information is
      never described as live. "Latest operational position", never "real time". */
+  /* THE AMBER "OLDER THAN A DAY" BAND IS FOR THE CURRENT PERIOD ONLY (review fix 6): a closed month or billing
+     month is published once and is meant to be old — it must not say "Waiting on new data". */
+  const closedPeriod = !!(opts && opts.periodKind && opts.periodKind !== 'current');
   const age = digest.updatedAt ? (Date.now() - Date.parse(digest.updatedAt)) / 3600000 : null;
   const freshness = {
     updatedAt: digest.updatedAt || null,
     ageHours: age == null ? null : Math.round(age * 10) / 10,
-    label: age == null ? 'No upload loaded'
+    label: age == null ? 'No upload loaded' : closedPeriod ? 'Closed period \u2014 figures as published'
       : age < 6 ? 'Latest operational position' : age < 26 ? 'Last uploaded earlier today' : 'Waiting on new data',
-    stale: age != null && age >= 26,
+    stale: !closedPeriod && age != null && age >= 26,
   };
 
-  return { campaigns, freshness, sla,
+  return { campaigns, freshness, sla, tenure,
     blockages: (ctx && ctx.blockages) || CM_BLOCKAGES_DEFAULTS,
     assistError: assistErr,
     notPublished: ['pitches', 'checks'] };

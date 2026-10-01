@@ -826,7 +826,17 @@ const MTD_RULES = {
      them out of the campaign filter made a whole floor invisible everywhere the filter
      reaches. CAMPS drives the dropdown, the MTD/WTD chips, the exports and gFilter, so one
      entry here is the whole change. VT stays unreported: tracker units, different product. */
-  reportedCampaigns: ['Cuddle','Courtesy','Nesting']
+  reportedCampaigns: ['Cuddle','Courtesy','Nesting'],
+
+  /* LEAD MANAGEMENT IS NO LONGER FOR COURTESY (campaign managers' sign-off list, 2026-10-01; spec
+     001-cm-view-signoff). Applied ONLY at the report layer — the PULSE Lead management page and the
+     published agent-reports-leads payload. leadRoster()/leadBook() are untouched, so the digest's `leads` and
+     `closed` and the composite's conversion still count Courtesy's cases.
+     Mirror of specs/mtd_engine_rules.json reference_data.lead_report_exclude_campaigns. */
+  leadReportExcludeCampaigns: ['Courtesy'],
+  /* …and only for a report whose period ENDS on/after this day (September's report keeps Courtesy). Same value as
+     the spec's reference_data.lead_report_exclude_campaigns.effective; verify-engine-rules fails on drift. */
+  leadReportExcludeFrom: '2026-10-01'
 };
 
 /* ================= utilities ================= */
@@ -1980,13 +1990,33 @@ function monthsOf(range){
    month opening on the 1st and each running to the day before the next (or the month end). Null for
    anyone the feed does not name in any month of the range. */
 function moverSegments(code,range){
-  const out=[]; let any=false;
+  const out=[]; let any=false, gap=false; const cyc=isCycleRange(range);   // the gap-fill is for a billing cycle ONLY — every other range reads exactly what it always read
   for(const mo of monthsOf(range)){
-    const segs=movesFor(code,mo); if(!segs) continue; any=true;
+    const segs=movesFor(code,mo);
+    if(!segs){ if(!cyc) continue; out.push({campaign:'',from:mo+'-01',to:monthEnd(mo),synth:true}); gap=true; continue; }   // filled below, once we know the agent moved in ANOTHER month
+    any=true;
     segs.forEach((s,i)=>{ const next=segs[i+1];
       out.push({campaign:String(s.campaign||''),from:i===0?mo+'-01':String(s.from),to:next?addDays(String(next.from),-1):monthEnd(mo)}); });
   }
-  return any?out:null;
+  if(!any) return null;
+  if(!gap) return out;
+  /* A BILLING CYCLE SPANS TWO MONTHS (spec 001, 2026-10-01): the feed is per month, so a mover named in one
+     month and not the other would leave that month's days in NO segment (the segments would stop summing to
+     the row). A month the feed does not name them in is a single stretch under the campaign the Agent List
+     had for them on the month's first day in the range — what their facts read there (listCampAt, as the fact
+     loop does). Adjacent stretches of one campaign merge. A calendar month never gets here (one month, so
+     either it names them or the agent is not a mover). */
+  const a=(S.roster||[]).find(x=>x.code===code);
+  const res=[];
+  for(const s of out){
+    if(s.synth&&!s.campaign){ const d=s.from<range.from?range.from:s.from;
+      s.campaign=String(listCampAt(code,d)||((orgAt(code,d)||{}).campaign)||(a&&a.campaign)||''); }
+    const p=res[res.length-1];
+    if(p&&p.campaign===s.campaign&&addDays(p.to,1)===s.from&&(p.synth||s.synth)){ p.to=s.to; p.synth=p.synth||s.synth; continue; }
+    res.push(s);
+  }
+  res.forEach(s=>{ delete s.synth; });
+  return res;
 }
 /* THE AGENT LIST WINS THE WHOLE CURRENT MONTH (Nick, 2026-08-27 — the third time: "when
    the agent list is updating, it needs to update all the time"). The list is a CORRECTION
@@ -7039,6 +7069,14 @@ function leadRoster(all){
   }
   return A;
 }
+/* THE LEAD MANAGEMENT REPORT SKIPS THESE CAMPAIGNS (MTD_RULES.leadReportExcludeCampaigns — Courtesy, 2026-10-01).
+   Asked ONLY by the report layer (PAGES.leads, agentReportsLeadsPayload). leadRoster/leadBook never ask it, so
+   the digest's leads/closed and the composite's conversion still count every campaign. */
+function leadReportExcludes(range){   // the campaigns skipped for THIS period: the rule applies only when the period ends on/after its effective date
+  const ex=MTD_RULES.leadReportExcludeCampaigns||[];
+  return (ex.length&&range&&String(range.to||'')>=String(MTD_RULES.leadReportExcludeFrom||'9999'))?ex:[];
+}
+function leadReportExcluded(camp,ex){ return !!ex&&ex.length>0&&ex.includes(campOf(camp)); }
 var __leadsCache=null, __leadsCacheAll=null;   // keyed on the model, so a rebuild clears them
 
 /* THE LEAD MANAGEMENT BOOK, WALKED ONCE PER STATE (perf audit, 2026-08-28).
@@ -7131,7 +7169,8 @@ PAGES.leads=()=>{
   let wd=0;{const c=new Date(range.from+'T00:00:00Z'),e=new Date(range.to+'T00:00:00Z');let g=0;
     while(c<=e&&g++<4000){const dow=c.getUTCDay();if(dow!==0&&dow!==6)wd++;c.setUTCDate(c.getUTCDate()+1)}}
   if(!wd)wd=1;
-  const rows=Object.values(A).sort((x,y)=>y.sales-x.sales||y.open-x.open||String(x.name).localeCompare(String(y.name)));
+  const lrEx=leadReportExcludes(range);
+  const rows=Object.values(A).filter(a=>!leadReportExcluded(a.camp,lrEx)).sort((x,y)=>y.sales-x.sales||y.open-x.open||String(x.name).localeCompare(String(y.name)));
   const stCols=leadStatusCols(rows,10);
   const G={open:0,cl:0,nofb:0,tc:0,sales:0,canc:0,sts:{},leads:new Set()};
   rows.forEach(a=>{G.open+=a.open;G.cl+=a.cl;G.nofb+=a.nofb;G.tc+=a.tc;G.sales+=a.sales;G.canc+=a.canc;
@@ -7191,6 +7230,7 @@ PAGES.leads=()=>{
       ${LEADS_COLS.map(c=>`<th${c.l?' class="l"':''}${c.t?' title="'+esc(c.t)+'"':''}>${esc(c.h)}</th>`).join('')}
     </tr></thead><tbody>${rows.map(a=>cell(a,false)).join('')}${cell({...G,tl:'',name:'',cb:null,dialDays:new Set()},true)}</tbody></table></div>
   ${(unOpen||unClosed)?`<p class="note" style="color:var(--amber)">${unOpen} open and ${unClosed} closed case(s) carry an owner that matches nobody on the Agent List — excluded from every figure above, never guessed onto an agent.</p>`:''}
+  ${lrEx.length?`<p class="note">${esc(lrEx.join(', '))} is not covered by Lead management (campaign managers' sign-off, 1 Oct 2026) — its agents are not listed or totalled here. Their leads still count in each agent's conversion elsewhere.</p>`:''}
   </div>`;
 };
 
@@ -9562,6 +9602,17 @@ function liveDigestMonthOk(dm,nowMs){
   return dm===cur||dm===d.toISOString().slice(0,7);
 }
 
+/* A BILLING CYCLE: the 26th of one month to the 25th of the next (worker/src/cycle.mjs is the shared definition;
+   periodRangeRaw('cycle') builds it). */
+function isCycleRange(r){
+  if(!r||!/^\d{4}-\d{2}-26$/.test(String(r.from||''))||!/^\d{4}-\d{2}-25$/.test(String(r.to||''))) return false;
+  const f=new Date(r.from+'T00:00:00Z'); f.setUTCMonth(f.getUTCMonth()+1,25);
+  return f.toISOString().slice(0,10)===r.to;
+}
+/* THE MONTH A DIGEST IS PRICED IN: a calendar month's own; a cycle is keyed by the month it ENDS in (cycle-2026-09 =
+   26 Aug – 25 Sep) and the commission model in force at the end of it is the one that paid it. */
+function digestPricingMonth(r){ return String((isCycleRange(r)?r.to:r&&r.from)||'').slice(0,7); }
+
 function agentDigestPayload(){
   if(!M||!Array.isArray(M.agents)||!M.agents.length) return null;
 
@@ -9600,9 +9651,13 @@ function agentDigestPayload(){
      person's campaign chip cannot narrow what the whole floor is told.
      Null, never zero, when the case books are not loaded: no leads uploaded and an
      agent worked no leads are different facts. */
-  let leadsBy=null;
+  let leadsBy=null, closedBy=null;
   try{ if(S.opencasesLM||S.closedcases){ const lb=leadBook(true); leadsBy={};
-    for(const cb in lb.A) leadsBy[cb]=lb.A[cb].leads.size; } }catch(e){ leadsBy=null; }
+    for(const cb in lb.A) leadsBy[cb]=lb.A[cb].leads.size;
+    /* CLOSED LEADS, for conversion on closed leads (spec 001-cm-view-signoff, contract C1): the cases the agent
+       closed in the period, ANY status incl. "no feedback" — the lead book's tc. Null when the CLOSED book is
+       not loaded: an open-only book would read 0 for everyone, and "we were not told" is not "closed none". */
+    if(S.closedcases){ closedBy={}; for(const cb in lb.A) closedBy[cb]=lb.A[cb].tc; } } }catch(e){ leadsBy=null; closedBy=null; }
 
   const rows=[];
   for(const a of M.agents){
@@ -9692,6 +9747,7 @@ function agentDigestPayload(){
          books are not loaded, which is not the same as an agent with no leads. */
       calls:(callsBy[a.code]||{}).calls||0, ans:(callsBy[a.code]||{}).ans||0,
       leads:leadsBy?(leadsBy[a.code]||0):null,
+      closed:closedBy?(closedBy[a.code]||0):null,   // C1: closed in the period (any status); null = no closed-case book, never 0 for unknown
       act:r2(g.act)||0, emp:r2(g.emp)||0,
       /* EXCUSED DAYS (D1, 2026-09-29): the period's total leave + unavailability in days (HDAL = 0,5),
          over EVERY day the agent has, so it matches the lv marks below. Omitted at 0 — most agents
@@ -9796,7 +9852,9 @@ function agentDigestPayload(){
        compares this to the live stamp and says 'refreshing' instead of quietly
        showing %-to-target computed on the previous targets */
     cmTargetsStamp:(S.cmTargets&&S.cmTargets.stamp)||'',
-    period:{from:M.range.from,to:M.range.to},
+    /* a BILLING CYCLE (26th to the 25th, spec 001-cm-view-signoff) says so; a calendar month's period is exactly what it was.
+       Only tools/digest-republish.mjs ever publishes one — the browser push below stays calendar-month. */
+    period:Object.assign({from:M.range.from,to:M.range.to},isCycleRange(M.range)?{kind:'cycle'}:{}),
     /* TWO DIFFERENT DAY COUNTS, AND CONFUSING THEM BREAKS THE MONEY.
        diallingDays is days we HAVE DATA FOR — days elapsed. workingDays is every
        weekday in the period, which is what a month-end projection must divide by.
@@ -9834,10 +9892,10 @@ function agentDigestPayload(){
       return n;})(),
     dates:M.dates,
     /* the model that was in force for THIS period's month — see COMM_RULES_BY_MONTH */
-    comm:COMM_RULES_BY_MONTH[String(M.range.from||'').slice(0,7)]||COMM_RULES,
+    comm:COMM_RULES_BY_MONTH[digestPricingMonth(M.range)]||COMM_RULES,
     /* 2026-10-01: while this digest is the month just closed, the model for the CURRENT month — the agent page's
        calculator projects the new month from it. Undefined (so absent from the JSON) in every normal month. */
-    commNow:commNowFor(M.range.from,Date.now()),
+    commNow:commNowFor(digestPricingMonth(M.range)+'-01',Date.now()),
     /* One copy of the seven driver labels, notes and weights for the whole payload —
        see the note in compositeFor. The panel joins them to each agent's numbers. */
     compositeDrivers:COMPOSITE_RULES.drivers.map(d=>({k:d.k,label:d.label,note:d.note,w:d.w})),
@@ -9931,7 +9989,9 @@ function agentReportsLeadsPayload(){
   let wd=0;{const c=new Date(range.from+'T00:00:00Z'),e=new Date(range.to+'T00:00:00Z');let g=0;
     while(c<=e&&g++<4000){const dow=c.getUTCDay();if(dow!==0&&dow!==6)wd++;c.setUTCDate(c.getUTCDate()+1)}}
   if(!wd)wd=1;
-  const rows=Object.values(A); const statuses=leadStatusCols(rows,10);
+  /* COURTESY IS OUT OF THIS REPORT (leadReportExcludeCampaigns): no agent row, no team / campaign contribution */
+  const lrEx=leadReportExcludes(range);
+  const rows=Object.values(A).filter(a=>!leadReportExcluded(a.camp,lrEx)); const statuses=leadStatusCols(rows,10);
   const teamOf={}; M.agents.forEach(a=>{ teamOf[a.code]=a.tl||''; });
   const agents={}, T={}, TC={}, CC={};
   const acc=(t,a)=>{ t.agents++; t.open+=a.open; t.cl+=a.cl; t.nofb+=a.nofb; t.tc+=a.tc; t.sales+=a.sales; t.canc+=a.canc;
@@ -9949,7 +10009,7 @@ function agentReportsLeadsPayload(){
   const teams={}; for(const tl in T) teams[tl]=fin(T[tl]);
   const teamsByCamp={}; for(const k in TC) teamsByCamp[k]=Object.assign(fin(TC[k]),{camp:TC[k].camp,tl:TC[k].tl});   // the block names its campaign + leader (see the variance payload)
   const campaigns={}; for(const k in CC) campaigns[k]=Object.assign(fin(CC[k]),{camp:k});
-  return {v:1,kind:'leads',updatedAt:new Date().toISOString(),period:{from:range.from,to:range.to},wd,
+  return {v:1,kind:'leads',updatedAt:new Date().toISOString(),period:{from:range.from,to:range.to},wd,...(lrEx.length?{excludedCampaigns:lrEx.slice(),excludedFrom:MTD_RULES.leadReportExcludeFrom}:{}),
     book:{snapshot:(oc&&oc.snapshot)||'',lakeAt:(oc&&oc.lakeAt)||'',at:(oc&&oc.at)||'',open:!!oc,closed:!!(S.closedcases&&Object.keys(S.closedcases.rows||{}).length)},
     statuses,rules:{convTarget:LEAD_CONV_RULES.target,convAmber:+(LEAD_CONV_RULES.target*LEAD_CONV_RULES.amberFactor).toFixed(1),convClosed:{good:LEAD_CONV_RULES.closedGood,warn:LEAD_CONV_RULES.closedAmber}},
     unmatched:{open:book.unOpen||0,closed:book.unClosed||0},agents,teams,teamsByCamp,campaigns};

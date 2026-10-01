@@ -248,15 +248,15 @@ console.log('H. THE LEAD MEASURES (Phase 7, 2026-08-30)');
   /* Conversion is sales / UNIQUE LEADS — the Lead Management rule — never sales per
      call. PULSE publishes the denominator; a null denominator must stay null. */
   const withLeads = JSON.parse(JSON.stringify(digest));
-  withLeads.agents.forEach((a, i) => { a.leads = 100; a.calls = 400; a.ans = 200; });
+  withLeads.agents.forEach((a, i) => { a.leads = 100; a.closed = 100; a.calls = 400; a.ans = 200; });   // closed leads (contract C1) = the conversion's denominator since 2026-10-01
   const b4 = cmOverviewBody(withLeads, authorise(cmUser, withLeads), { requests: [] }, globalThis.__cmCtx);
   const cc = b4.campaigns.find((c) => c.key === 'cuddle');
-  ok(cc.kpis.conv && Math.abs(cc.kpis.conv.v - (330 / 300)) < 1e-9,
-    'conversion = sales / unique leads, not sales / calls');
+  ok(cc.kpis.conv && Math.abs(cc.kpis.conv.v - (330 / 300)) < 1e-9 && cc.kpis.conv.basis === 'sales ÷ closed leads',
+    'conversion = sales / CLOSED leads (spec 001-cm-view-signoff: was unique leads), not sales / calls');
   ok(cc.kpis.contactRate && Math.abs(cc.kpis.contactRate.v - 0.5) < 1e-9, 'contact rate = answered / dials');
   ok(cc.kpis.attempts && Math.abs(cc.kpis.attempts.v - 4) < 1e-9, 'attempts per lead = dials / unique leads');
   ok(cc.kpis.leads && cc.kpis.leads.v === 300, 'lead volume is the unique-lead count');
-  ok(cc.teams.every((t) => t.conv != null), 'every team row carries its own conversion');
+  ok(cc.teams.every((t) => t.conv != null && t.conv.basis === 'sales ÷ closed leads'), 'every team row carries its own closed-lead conversion');
   ok(b4.notPublished.join(',') === 'pitches,checks', 'only pitches and both-checks remain unpublished');
 
   /* the books not being loaded is NOT an agent with no leads */

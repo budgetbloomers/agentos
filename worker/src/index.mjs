@@ -8,7 +8,7 @@ import { db } from './db.mjs';
 import { login, logout, session, hashPassword, changePassword, signinByCb } from './auth.mjs';
 import { retrieveKB } from './kb.mjs';
 import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWave } from './coaching.mjs';
-import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, loadReports, tlReports, listDigestMonths, overview, agentDetail, normCb } from './portal.mjs';
+import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, loadReports, tlReports, listDigestMonths, overview, overviewRequest, cmCoaching, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn, helpConfirm, helpPulse } from './help.mjs';
 import { campaignMoves, setCampaignMove } from './moves.mjs';
 import { liveDigestAllowed } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
@@ -648,7 +648,7 @@ export default {
          authorise(). Team leaders need it too: their raise/confirm routes read
          the blockage table and SLA targets. */
       if ((user.role === 'campaign_manager' || user.role === 'team_leader' || user.role === 'admin' || user.role === 'exec')
-          && (path.startsWith('/api/portal/cm/') || path === '/api/portal/overview' || path === '/api/portal/agent')) {
+          && (path.startsWith('/api/portal/cm/') || path === '/api/portal/cm-coaching' || path === '/api/portal/overview' || path === '/api/portal/agent')) {
         try { await loadCmContext(DB); }
         catch (e) { if (user.role === 'campaign_manager') return json({ error: 'Could not load campaign assignments: ' + String(e.message || e).slice(0, 160) }, 503); }
       }
@@ -688,24 +688,28 @@ export default {
           role: user.role, cb: normCb(user.cb), team: user.team || '' } });
       }
       if (path === '/api/portal/overview' && req.method === 'GET') {
-        /* ?month=YYYY-MM opens a published past month; anything else is the live digest. */
-        const mq = url.searchParams.get('month') || '';
-        const month = /^\d{4}-\d{2}$/.test(mq) ? mq : null;
-        const digest = await loadDigest(DB, month);
-        if (!digest) return json({ error: month
-          ? 'No figures were published for ' + month + '.'
-          : 'Nothing has been published yet. Check again a little later.' }, 404);
-        /* For a campaign manager the assistance half is fetched here and handed
-           in — overview() must not import assist.mjs (assist imports authorise
-           from portal.mjs; a cycle fails at parse). HighLevel down → the sales
+        /* ?month=YYYY-MM opens a published past month; anything else is the live digest — for agents and team leaders,
+           exactly as before. For a CAMPAIGN MANAGER the page also sends ?period= (current | YYYY-MM | cycle-YYYY-MM)
+           and ?tenure= (all | M0 | M1 | M2 | Exp | unset); both are validated and applied in portal.mjs
+           overviewRequest and ignored for every other role (spec 001-cm-view-signoff, contract C2). */
+        /* For a campaign manager the assistance half is fetched here and handed in — portal.mjs must not import
+           assist.mjs (assist imports authorise from portal.mjs; a cycle fails at parse). HighLevel down → the sales
            half still renders and the page says the register is unreachable. */
-        let extra;
-        if (user.role === 'campaign_manager') {
-          try { const a = await assistList(env, DB, user, digest, globalThis.__cmCtx || {});
-            extra = { assist: a.status === 200 ? a.body : { error: (a.body && a.body.error) || 'Assistance unreachable.' } }; }
-          catch (e) { extra = { assist: { error: String(e.message || e).slice(0, 200) } }; }
-        }
-        const r = await overview(env, DB, user, digest, await listDigestMonths(DB), extra);
+        const r = await overviewRequest(env, DB, user, {
+          month: url.searchParams.get('month') || '', period: url.searchParams.get('period') || '', tenure: url.searchParams.get('tenure') || '' }, {
+          getAssist: async (digest) => {
+            try { const a = await assistList(env, DB, user, digest, globalThis.__cmCtx || {});
+              return a.status === 200 ? a.body : { error: (a.body && a.body.error) || 'Assistance unreachable.' }; }
+            catch (e) { return { error: String(e.message || e).slice(0, 200) }; }
+          } });
+        return json(r.body, r.status);
+      }
+      /* THE CAMPAIGN MANAGER'S VIEW OF HIS TEAM LEADERS' COACHING (spec 001-cm-view-signoff, contract C3). Manager only
+         (portal.mjs answers 403 to every other role) and scoped to the leaders of the manager's own campaigns. */
+      if (path === '/api/portal/cm-coaching' && req.method === 'GET') {
+        const digest = await loadDigest(DB, null);
+        if (!digest) return json({ error: 'Nothing has been published yet. Check again a little later.' }, 404);
+        const r = await cmCoaching(env, DB, user, digest, { tl: url.searchParams.get('tl') || '', period: url.searchParams.get('period') || '' });
         return json(r.body, r.status);
       }
       /* ---------- NIKOLA — the assistant, scoped to the caller ----------

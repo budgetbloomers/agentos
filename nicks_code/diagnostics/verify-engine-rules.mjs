@@ -61,6 +61,12 @@ ok('one-off (extra) public holidays match the rule book', JSON.stringify(inlined
   ok('excused-status codes and shares match (leave, unavailable)', kinds.length === 2 && !drift.length, drift.join(',') || JSON.stringify(kinds));
   const absent = (e.absence || []).filter(c => kinds.some(k => (i[k] || {})[c] != null));
   ok('no code the rule book calls an absence is excused', !absent.length, absent.join(',')); }
+/* LEAD MANAGEMENT IS NOT FOR COURTESY (2026-10-01, spec 001-cm-view-signoff): the report-layer exclusion list is
+   a rule-book value with an inline mirror — a campaign in one copy only would show or hide a whole team's report. */
+{ const e = (SPEC.reference_data.lead_report_exclude_campaigns || {}).value, i = inlined.leadReportExcludeCampaigns;
+  ok('lead report exclusion list matches (leadReportExcludeCampaigns)', Array.isArray(e) && Array.isArray(i) && JSON.stringify(e) === JSON.stringify(i), JSON.stringify(i) + ' vs ' + JSON.stringify(e));
+  const ed = (SPEC.reference_data.lead_report_exclude_campaigns || {}).effective;
+  ok('lead report exclusion effective date matches (leadReportExcludeFrom)', /^\d{4}-\d{2}-\d{2}$/.test(ed || '') && inlined.leadReportExcludeFrom === ed, inlined.leadReportExcludeFrom + ' vs ' + ed); }
 /* DEPARTURES (Nick, 2026-09-15): a leaver keeps their days until the list that dropped them. */
 { const d = SPEC.reference_data.departures || {}, i = inlined.departures || {};
   ok('departures rule matches (keep days until left, since)', i.keepDaysUntilLeft === d.keep_days_until_left && i.since === d.since,

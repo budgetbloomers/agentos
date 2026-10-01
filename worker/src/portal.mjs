@@ -18,8 +18,9 @@
  * calculation is written twice.
  */
 
-import { getCoaching, rollUp, sessionsForAgent, withinWindow, CX_RULES } from './coaching.mjs';
-import { campKey, cmOverviewBody, effectiveCamps } from './campaign.mjs';
+import { getCoaching, rollUp, sessionsForAgent, withinWindow, CX_RULES, coachAnalysis, sessionThemes, STALE_HOURS } from './coaching.mjs';
+import { campKey, cmOverviewBody, effectiveCamps, blockPanelFor, rowInTenure, TENURE_KEYS } from './campaign.mjs';
+import { cycleRange, cyclesNow } from './cycle.mjs';   // the billing month (26th–25th), spec 001-cm-view-signoff
 import { withFloorEx, checksFor, VAT } from './rules.mjs';
 import { drillFor } from './drill.mjs';   // the KPI drill-down verdicts (sprint 2026-09-29, item 3)
 /* what drillFor needs beyond the agent row: the floor's ex-VAT twin and how far the month has run */
@@ -91,6 +92,9 @@ export const PORTAL_ALLOWED = new Set([
   '/api/portal/cm/detail',
   '/api/portal/cm/act',
   '/api/portal/cm/eod',
+  /* THE CAMPAIGN MANAGER'S VIEW OF HIS TEAM LEADERS' COACHING (spec 001-cm-view-signoff, C3). Manager only — the
+     handler 403s everyone else — and scoped server-side to the leaders of the manager's own campaigns. */
+  '/api/portal/cm-coaching',
   /* Wimpy ordering moved to /api/wimpy/* (listed above) when it became its own app on
      2026-09-10; the old /api/portal/wimpy/* paths answer 410 in index.mjs and are no longer
      declared here — verify-agent-portal F5 fails on a declared route the Worker does not serve. */
@@ -210,6 +214,94 @@ export async function listDigestMonths(DB) {
   return m;
 }
 
+/* The billing-cycle digests that exist (kv:agent-digest-cycle-YYYY-MM, written by tools/digest-republish.mjs): found
+   by key prefix like the months, so publishing one IS listing it. Cached like the digests themselves. */
+export async function listDigestCycles(DB) {
+  const c = globalThis.__digestCycles;
+  if (c && Date.now() - c.t < 60000) return c.s;
+  let s = new Set();
+  try {
+    const rows = await DB.select(`rules?key=like.${encodeURIComponent('kv:agent-digest-cycle-%')}&select=key`);
+    s = new Set((rows || []).map((r) => String(r.key).slice('kv:agent-digest-'.length)).filter((k) => /^cycle-\d{4}-\d{2}$/.test(k)));
+  } catch (e) { s = new Set(); }
+  globalThis.__digestCycles = { t: Date.now(), s };
+  return s;
+}
+
+/* ---------------------------------------------------------------------------
+   THE CAMPAIGN MANAGER'S TWO SELECTORS (spec 001-cm-view-signoff, contract C2): ?period= and ?tenure=. Both are
+   validated here and both apply to role campaign_manager ONLY — agents and team leaders keep the "no month filter"
+   stance (a team leader's page always reads the live digest).
+   --------------------------------------------------------------------------- */
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const monthLabelOf = (ym) => MONTH_NAMES[Number(String(ym).slice(5, 7)) - 1] + ' ' + String(ym).slice(0, 4);
+const lastDayOf = (ym) => new Date(Date.UTC(Number(String(ym).slice(0, 4)), Number(String(ym).slice(5, 7)), 0)).toISOString().slice(0, 10);
+const sastMonth = (nowMs) => new Date(nowMs + 2 * 3600000).toISOString().slice(0, 7);
+
+/** 'all' (also for blank) | M0 | M1 | M2 | Exp | unset; null for anything else (the caller answers 400 bad_tenure). */
+export function parseTenure(v) {
+  if (v == null || v === '') return 'all';
+  const t = String(v);
+  return t === 'all' || TENURE_KEYS.includes(t) ? t : null;
+}
+
+/** ?period= → {kind:'current'|'month'|'cycle', key, from?, to?, label?} | {error:'bad_period'}. 'current' (the default)
+ *  takes its dates from the live digest, so it carries none here. The retired ?month=YYYY-MM is read when no period is given. */
+export function resolvePeriod(q, nowMs = Date.now()) {
+  const given = q && q.period != null && q.period !== '' ? String(q.period) : null;
+  const raw = given != null ? given : (q && /^\d{4}-\d{2}$/.test(String(q.month || '')) ? String(q.month) : 'current');
+  if (raw === 'current') return { kind: 'current', key: 'current' };
+  if (/^\d{4}-(0[1-9]|1[0-2])$/.test(raw)) return { kind: 'month', key: raw, from: raw + '-01', to: lastDayOf(raw), label: monthLabelOf(raw) };
+  const cy = /^cycle-\d{4}-(0[1-9]|1[0-2])$/.test(raw) ? cycleRange(raw) : null;
+  if (cy) return { kind: 'cycle', key: cy.key, from: cy.from, to: cy.to, label: cy.label };
+  return { error: 'bad_period' };
+}
+
+/* the period object the page prints: {kind, key, from, to, label} — 'current' reads the live digest's own dates */
+function periodOf(per, digest, nowMs) {
+  if (per.kind !== 'current') return { kind: per.kind, key: per.key, from: per.from, to: per.to, label: per.label };
+  const dp = (digest && digest.period) || {};
+  const from = dp.from || sastMonth(nowMs) + '-01';
+  return { kind: 'current', key: 'current', from, to: dp.to || lastDayOf(from.slice(0, 7)), label: monthLabelOf(from.slice(0, 7)) };
+}
+
+/**
+ * GET /api/portal/overview, whole: the period/tenure rules for a campaign manager, the unchanged live-or-?month=
+ * behaviour for everyone else. index.mjs hands in `getAssist(digest)` (assist.mjs must not be imported here — it
+ * imports authorise from this file, and a cycle fails at parse); it answers the register body or {error}.
+ */
+export async function overviewRequest(env, DB, user, q, opts) {
+  const { getAssist, nowMs = Date.now() } = opts || {};
+  q = q || {};
+  if (user.role !== 'campaign_manager') {
+    const mq = String(q.month || '');
+    const month = /^\d{4}-\d{2}$/.test(mq) ? mq : null;
+    const digest = await loadDigest(DB, month);
+    if (!digest) return { status: 404, body: { error: month ? 'No figures were published for ' + month + '.' : 'Nothing has been published yet. Check again a little later.' } };
+    return overview(env, DB, user, digest, await listDigestMonths(DB), undefined);
+  }
+  const per = resolvePeriod(q, nowMs);
+  if (per.error) return { status: 400, body: { error: 'bad_period' } };
+  const tenure = parseTenure(q.tenure);
+  if (tenure === null) return { status: 400, body: { error: 'bad_tenure' } };
+
+  const digest = await loadDigest(DB, per.kind === 'current' ? null : per.key);
+  if (!digest) {
+    if (per.kind === 'current') return { status: 404, body: { error: 'Nothing has been published yet. Check again a little later.' } };
+    return { status: 404, body: { error: 'period_not_published', period: { key: per.key, from: per.from, to: per.to, label: per.label },
+      message: 'The figures for ' + per.label + ' have not been published yet. The 15-minute refresh builds them \u2014 check again shortly.' } };
+  }
+  const [months, cycles] = await Promise.all([listDigestMonths(DB), listDigestCycles(DB)]);
+  const assist = getAssist ? await Promise.resolve(getAssist(digest)).catch((e) => ({ error: String((e && e.message) || e).slice(0, 200) }))
+    : { error: 'Assistance data was not loaded.' };
+  const r = await overview(env, DB, user, digest, months, { assist, tenure, periodKind: per.kind });
+  if (r.status !== 200) return r;
+  const cn = cyclesNow(nowMs);
+  r.body.period = periodOf(per, digest, nowMs);
+  r.body.periods = { months, cycles: [cn.current, cn.last].map((c) => ({ key: c.key, from: c.from, to: c.to, label: c.label, complete: c.complete, published: cycles.has(c.key) })) };
+  return r;
+}
+
 /**
  * The NBA digest Ops publishes — decision-ladder answer, composite, R2A tier and
  * two-check status per agent. Read exactly like the agent digest. Absent is a
@@ -249,22 +341,29 @@ export async function loadNba(DB) {
    rows and totals). Figures the digest only has for the whole month (talk, calls, QA, cancellations,
    referrals, ranks, the rating) travel once, on the CURRENT campaign's row — never on the earlier one, and
    never twice — the same attribution tools/verify-cm-numbers.mjs reconciles against. */
-const WHOLE_MONTH_ONLY = ['talk', 'calls', 'ans', 'leads', 'canc', 'ref', 'qa', 'conv', 'gwpT', 'composite', 'score',
-  'scoreParts', 'checks', 'drill', 'wk', 'badges', 'spark', 'trend', 'trendPct', 'rankCo', 'nCo', 'rankTeam', 'nTeam'];
+/* WHAT AN EARLIER-CAMPAIGN SEGMENT ROW MAY CARRY (review fix, 2026-10-01 — an ALLOWLIST; the earlier denylist
+   (WHOLE_MONTH_ONLY) let any field the digest grew later ride along to the manager of the mover's OLD campaign).
+   Identity the report renderers need, plus the figures that PULSE cut by campaign segment (S.moves) and the days of
+   that segment. Everything else — talk, calls, QA, composite, aveTalk, the weekly rows, the rating, closed leads,
+   whatever the engine adds next — exists only on the CURRENT campaign's row, once. */
+export const SEGMENT_ROW_KEYS = ['code', 'name', 'tl', 'tenure', 'covered', 'why',
+  'campaign', 'sales', 'gwpEx', 'target', 'pctT', 'act', 'emp', 'spd', 'aveG', 'plan', 'att', 'gwp', 'days', 'segment'];
 export function bySegment(rows) {
   const out = [];
   for (const r of rows || []) {
     if (!r || !Array.isArray(r.segments) || r.segments.length < 2) { out.push(r); continue; }
     r.segments.forEach((s, i) => {
       const cur = i === r.segments.length - 1, to = s.to || '9999-12-31';
-      const row = { ...r, campaign: s.campaign, sales: s.sales, gwpEx: s.gwpEx, target: s.target, pctT: s.pctT,
+      const cut = { campaign: s.campaign, sales: s.sales, gwpEx: s.gwpEx, target: s.target, pctT: s.pctT,
         act: s.act, emp: s.emp, spd: s.spd, aveG: s.aveG, plan: s.plan,
         att: s.emp ? s.act / s.emp : null,
         gwp: s.gwpEx != null ? Math.round(s.gwpEx * VAT * 100) / 100 : null,
         days: (r.days || []).filter((d) => d && d.d >= s.from && d.d <= to),
-        segment: { from: s.from, to: s.to }, segments: undefined };
-      if (!cur) for (const k of WHOLE_MONTH_ONLY) row[k] = null;
-      out.push(row);
+        segment: { from: s.from, to: s.to } };
+      if (cur) { const { segments: _drop, ...whole } = r; out.push({ ...whole, ...cut }); return; }   // the current campaign: the whole row, its own segment figures over it
+      const row = {};
+      for (const k of SEGMENT_ROW_KEYS) if (k in r) row[k] = r[k];
+      out.push(Object.assign(row, cut));
     });
   }
   return out;
@@ -487,6 +586,135 @@ export async function coachingFor(env, DB, rows, opts = {}) {
   }
 }
 
+/* THE COACHING ANALYSIS PER AGENT (contract C4). One read of the Hub copy (getCoaching's isolate cache — the 1.3 MB
+   snapshot is parsed at most once per ten minutes), the period's sessions cut ONCE, then one pure coachAnalysis per
+   row. Null when the copy cannot be read: the page says so rather than reading "no coaching". The period's end is the
+   month's last day — a session logged today is this month's even though the data lands tomorrow. */
+async function coachByAgent(env, DB, rows, period) {
+  let hub;
+  try { hub = await getCoaching(env, DB); } catch (e) { return null; }
+  const p = period || {};
+  const from = p.from || '';
+  const monthEnd = from ? lastDayOf(from.slice(0, 7)) : '9999-12-31';
+  const to = p.to && p.to > monthEnd ? p.to : monthEnd;
+  const inPeriod = (hub.sessions || []).filter((s) => s.date && s.date >= from && s.date <= to);
+  const out = new Map();
+  for (const r of rows) out.set(r.code, coachAnalysis(sessionsForAgent(inPeriod, r.code, r.code ? '' : r.name).sessions, r.days, { from, to }));   // review L2: a row WITH a CB matches on the CB alone — two agents can share a name
+  return out;
+}
+
+/* ---------------------------------------------------------------------------
+   GET /api/portal/cm-coaching?tl=&period= — THE CAMPAIGN MANAGER'S VIEW OF HIS TEAM LEADERS' COACHING (contract C3).
+
+   Manager only (403 for every other role, admin included — the page is the manager's). SCOPE IS SERVER-SIDE: the
+   leaders offered are the team leaders of the manager's EFFECTIVE campaigns, found from the digest rows (a leader's
+   campaign = the one most of their agents are on), so `?tl=` can only ever pick from that set — anything else is a
+   404 and never says whether such a leader exists. Sessions come from the kv:coaching snapshot, matched to the
+   leader by app_users.hub_ids.coaching first, then by the Hub's team-leader name; only the chosen leader's, inside
+   the period, newest first, at most 300 (the leader table still counts them all). A missing copy is a 503, never an
+   empty list that would read as "nobody was coached". A group session names its attendees instead of one agent.
+   --------------------------------------------------------------------------- */
+const CM_COACH_MAX = 300;
+const COACHING_HUB_URL = 'https://coaching-hub-psi.vercel.app/';
+const normName = (v) => String(v == null ? '' : v).toLowerCase().replace(/\s+/g, ' ').trim();
+
+export async function cmCoaching(env, DB, user, digest, q, nowMs = Date.now()) {
+  if (user.role !== 'campaign_manager') return { status: 403, body: { error: 'Team leaders\u2019 coaching is a campaign manager page.' } };
+  const auth = authorise(user, digest);
+  if (auth.error) return { status: auth.status, body: { error: auth.error } };
+  q = q || {};
+  const per = resolvePeriod(q, nowMs);
+  if (per.error) return { status: 400, body: { error: 'bad_period' } };
+  const pd = periodOf(per, digest, nowMs);
+  const from = pd.from, to = per.kind === 'current' ? lastDayOf(pd.from.slice(0, 7)) : pd.to;
+
+  /* the leaders in scope, and the campaign each leads (the one most of their agents are on) */
+  const seen = new Map();
+  for (const r of auth.rows) {
+    const name = String(r.tl || '').trim(); if (!name) continue;
+    const slot = seen.get(name) || seen.set(name, { name, camps: {} }).get(name);
+    const c = String(r.campaign || '').trim(); slot.camps[c] = (slot.camps[c] || 0) + 1;
+  }
+  const leaders = [...seen.values()].map((l) => ({ name: l.name,
+    campaign: Object.keys(l.camps).sort((a, b) => l.camps[b] - l.camps[a] || a.localeCompare(b))[0] || '' }))
+    .sort((a, b) => campKey(a.campaign).localeCompare(campKey(b.campaign)) || a.name.localeCompare(b.name));
+
+  let hub;
+  try { hub = await getCoaching(env, DB); }
+  catch (e) { return { status: 503, body: { error: 'The Coaching Hub copy is not available: ' + String((e && e.message) || e).slice(0, 160) } }; }
+
+  /* who is whose: hub id from the leader's account, name as the fallback (the account's name and the Agent List's) */
+  const accounts = (globalThis.__cmCtx && globalThis.__cmCtx.leaders) || {};
+  const byId = new Map(), byNm = new Map();
+  for (const l of leaders) {
+    const acct = accounts[l.name] || null;
+    if (acct && acct.hubId) byId.set(acct.hubId, l.name);
+    for (const nm of [l.name, acct && acct.name]) if (nm) byNm.set(normName(nm), l.name);
+  }
+  /* REVIEW L1: a leader is in scope when ANY of their agents is on the manager's campaigns, but their coaching notes
+     about the OTHER campaign's agents are not the manager's to read. A session is kept only when it is about an agent
+     the manager's scope holds: its CB in auth.codes; a group session by its attendees (names — the Hub records no CB for
+     them) matched to the scope's agents, and shown with only those attendees; a session with neither is attributable
+     only to the leader's whole team, so it is kept only when EVERY agent of that leader is on the manager's campaigns.
+     The leader table's counts follow the same filter. */
+  const scopeCodes = new Set([...auth.codes].map(normCb));
+  const scopeByName = new Map();
+  for (const r of auth.rows) if (r.name && r.code) scopeByName.set(normName(r.name), r.code);
+  const mineCamps = new Set((auth.campaigns || []).map(campKey));
+  const wholeTeamIn = new Map();
+  for (const r of [...(digest.agents || []), ...(digest.notCovered || [])]) {
+    const tl = String(r.tl || '').trim(); if (!tl) continue;
+    if (!mineCamps.has(campKey(r.campaign))) wholeTeamIn.set(tl, false); else if (!wholeTeamIn.has(tl)) wholeTeamIn.set(tl, true);
+  }
+  const attribute = (s, owner) => {
+    if (s.cb) { const cb = normCb(s.cb); return scopeCodes.has(cb) ? { name: String(s.agentName || ''), keys: [cb] } : null; }
+    if (s.attendees && s.attendees.length) {
+      const inn = s.attendees.filter((n) => scopeByName.has(normName(n)));
+      return inn.length ? { name: inn.join(', ').slice(0, 200), keys: inn.map((n) => scopeByName.get(normName(n))) } : null;
+    }
+    if (!wholeTeamIn.get(owner)) return null;
+    const nm = normName(s.agentName);
+    return { name: String(s.agentName || ''), keys: nm ? [scopeByName.get(nm) || nm] : [] };
+  };
+  const slots = new Map(leaders.map((l) => [l.name, { sessions: [], agents: new Set(), last: null }]));
+  for (const s of hub.sessions || []) {
+    if (!s.date || s.date < from || s.date > to) continue;
+    const owner = byId.get(s.hubTeamLeaderId) || byNm.get(normName(s.hubTeamLeader));
+    if (!owner) continue;
+    const who = attribute(s, owner);
+    if (!who) continue;
+    const slot = slots.get(owner);
+    slot.sessions.push({ s, name: who.name });
+    for (const k of who.keys) if (k) slot.agents.add(k);
+    if (!slot.last || s.date > slot.last) slot.last = s.date;
+  }
+  /* an incomplete copy (pairs that failed even after their retries): the leaders it names are NOT "0 sessions, fresh" */
+  const incompleteSet = new Set();
+  for (const f of hub.failedLeaders || []) { const n = byId.get(f && f.id) || byNm.get(normName(f && f.name)); if (n) incompleteSet.add(n); }
+
+  const want = normName(q.tl);
+  let chosen = null;
+  if (want) {
+    chosen = leaders.find((l) => normName(l.name) === want) || null;
+    if (!chosen) return { status: 404, body: { error: 'That team leader is not on your campaigns.' } };
+  }
+  const onList = new Set([...(digest.agents || []), ...(digest.notCovered || [])].map((a) => normCb(a.code)));
+  const sessions = !chosen ? [] : slots.get(chosen.name).sessions.slice()
+    .sort((a, b) => String(b.s.date).localeCompare(String(a.s.date))).slice(0, CM_COACH_MAX)
+    .map(({ s, name }) => ({ date: s.date,
+      agentName: name,
+      cb: s.cb || null, onList: !!s.cb && onList.has(normCb(s.cb)), type: s.type || s.typeLabel || '',
+      themes: sessionThemes(s), supportProvided: s.supportProvided ? String(s.supportProvided) : null }));
+
+  const ageHours = hub.fetchedAt ? Math.round(((nowMs - Date.parse(hub.fetchedAt)) / 3600000) * 10) / 10 : null;
+  const behind = chosen ? incompleteSet.has(chosen.name) : incompleteSet.size > 0;
+  return { status: 200, body: { fetchedAt: hub.fetchedAt || null, stale: ageHours == null || ageHours > STALE_HOURS || behind, ageHours,
+    incomplete: [...incompleteSet].sort(),
+    hubUrl: COACHING_HUB_URL, period: { from, to, label: pd.label },
+    leaders: leaders.map((l) => { const sl = slots.get(l.name); return { name: l.name, campaign: l.campaign, sessions: sl.sessions.length, agentsCoached: sl.agents.size, last: sl.last, incomplete: incompleteSet.has(l.name) }; }),
+    tl: chosen ? chosen.name : null, sessions } };
+}
+
 /** Team totals — summed from the same per-agent figures the digest publishes. */
 function teamTotals(rows) {
   const cov = rows.filter((r) => r.covered);
@@ -606,11 +834,28 @@ export async function overview(env, DB, user, digest, months, extra) {
      says so beside numbers that still render. */
   if (auth.scope === 'campaign') {
     const assist = (extra && extra.assist) || { error: 'Assistance data was not loaded.' };
-    const body = cmOverviewBody(digest, auth, assist, globalThis.__cmCtx);
+    const cmCtx = globalThis.__cmCtx;
+    const tenure = (extra && extra.tenure) || 'all';
+    const body = cmOverviewBody(digest, auth, assist, cmCtx, { tenure, periodKind: (extra && extra.periodKind) || 'current' });
+    /* THE CM'S REPORT DATA (contract C2): the SAME agent rows the team overview returns, for the manager's campaigns
+       inside the chosen tenure, plus the engine's own leader and campaign blocks cut to those campaigns — nothing is
+       summed here (the blocks are whole-period aggregates PULSE built, so a tenure slice does not re-cut them).
+       `summary` is the team-scope shape over the same blocks so the team renderers read it unchanged. null when the
+       digest predates the blocks — absent, not empty. */
+    const agents = auth.rows.filter((r) => rowInTenure(r, tenure)).sort((a, b) => (b.gwpEx || 0) - (a.gwpEx || 0));
+    const mine = new Set((auth.campaigns || []).map(campKey));
+    const hasBlocks = Array.isArray(digest.tlAgg) && !!digest.campAgg;
+    const tlAgg = hasBlocks ? digest.tlAgg.filter((t) => mine.has(campKey(t.camp))) : null;
+    const campAgg = hasBlocks ? Object.fromEntries(Object.entries(digest.campAgg).filter(([k]) => mine.has(campKey(k)))) : null;
+    const summary = hasBlocks ? { onTarget: digest.onTarget == null ? 1 : digest.onTarget, talkUnit: digest.talkUnit || 'minutes', teams: tlAgg, campaigns: campAgg } : null;
+    /* the help panel per campaign (assist.blockPanelByCamp): the register's own rows, one campaign at a time */
+    const reqs = assist.error ? [] : (assist.requests || []);
+    const blockPanelByCamp = {};
+    for (const key of auth.campaigns || []) blockPanelByCamp[key] = blockPanelFor(reqs.filter((r) => campKey(r.campaign) === key), (cmCtx && cmCtx.blockages) || [], Date.now());
     return { status: 200, body: { ...base, scope: 'campaign', staff: false,
-      campaigns: auth.campaigns, cm: body,
+      campaigns: auth.campaigns, cm: body, agents, tlAgg, campAgg, summary,
       assist: assist.error ? { error: assist.error } : { stages: assist.stages, requests: assist.requests,
-        kpis: assist.kpis, blockPanel: assist.blockPanel, truncated: assist.truncated } } };
+        kpis: assist.kpis, blockPanel: assist.blockPanel, truncated: assist.truncated, blockPanelByCamp } } };
   }
 
   const rows = auth.rows.slice().sort((a, b) => (b.gwpEx || 0) - (a.gwpEx || 0));
@@ -629,6 +874,18 @@ export async function overview(env, DB, user, digest, months, extra) {
         thresholds: withFloorEx(nd.thresholds), agents: mine, missing: auth.codes.size - mine.length };
     }
   } catch (e) { nba = { error: String(e.message || e).slice(0, 200) }; }
+  /* EVERY AGENT ROW CARRIES ITS VERDICTS (spec 001-cm-view-signoff, US6, contract C4) — a team leader's Month to date
+     reads the same six states an agent reads on their own card. `drill` is the exact object agentDetail publishes as
+     me.drill (the same drillFor, the same ctx); `coach` is the rules-based coaching analysis (coachAnalysis). A team
+     scope only: the staff preview (scope 'all', ~130 rows) does not pay for it. The rows are copies of the digest's. */
+  if (auth.scope === 'team') {
+    const dctx = drillCtx(digest, nba);
+    const coachBy = await coachByAgent(env, DB, rows, digest.period);
+    for (const r of rows) {
+      r.drill = r.covered ? drillFor(r, dctx) : null;                       // a not-covered agent has no figures to judge
+      r.coach = coachBy ? coachBy.get(r.code) || null : null;               // null = the Hub copy could not be read, not "no coaching"
+    }
+  }
   return {
     status: 200,
     body: {

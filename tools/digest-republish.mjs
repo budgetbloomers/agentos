@@ -15,6 +15,11 @@
  *
  *   node tools/digest-republish.mjs           # dry run: build + report, write nothing
  *   node tools/digest-republish.mjs --apply   # build + publish
+ *
+ * Since 2026-10-01 (spec 001-cm-view-signoff) it ALSO publishes the BILLING-MONTH digests the campaign managers
+ * open — kv:agent-digest-cycle-YYYY-MM (26th of the month before to the 25th of YYYY-MM) for the last complete
+ * cycle and the one in progress, built by the same engine through the period switch setPeriod(m,'cycle').
+ * Browsers never publish a cycle, and this never touches the live kv:agent-digest from a cycle build.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,6 +31,27 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
    there so this tool runs from anywhere without its own install. */
 const { chromium } = await import(pathToFileURL(path.join(ROOT, 'nicks_code', 'diagnostics', 'node_modules', 'playwright', 'index.mjs')).href);
 const APPLY = process.argv.includes('--apply');
+/* the billing-cycle definition is the Worker's (one definition, imported — never re-derived here) */
+const { cyclesNow } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'cycle.mjs')).href);
+const movesFailed = new Set();   // months whose campaign-moves read threw — a cycle touching one is refused
+/*CYCLE-JOBS-BEGIN*/
+/* the two cycles a manager can open at nowMs: the last complete one, then the one in progress — each with the
+   Storage name it publishes under and the calendar months whose campaign moves its days need */
+const cycleJobsFor = (nowMs) => { const c = cyclesNow(nowMs);
+  return [c.last, c.current].map((x) => ({ key: x.key, name: 'agent-digest-' + x.key, from: x.from, to: x.to, complete: x.complete,
+    months: [...new Set([x.from.slice(0, 7), x.to.slice(0, 7)])] })); };
+/* a cycle is only published WHOLE: refused (with the reason) when a campaign-moves read failed for either month it
+   touches, or when the engine's data does not reach back to the cycle's start (first covered day more than 3 days
+   after `from` — a weekend or a holiday may open it, a missing week may not). '' = fine. */
+const cycleRefusal = (job, cp) => {
+  const bad = job.months.filter((mo) => movesFailed.has(mo));
+  if (bad.length) return 'the campaign-moves read failed for ' + bad.join(', ') + ' — its movers would be blended';
+  const first = [...((cp && cp.dates) || [])].sort()[0];
+  if (!first) return 'the payload carries no dates';
+  const late = Math.round((Date.parse(first + 'T00:00:00Z') - Date.parse(job.from + 'T00:00:00Z')) / 86400000);
+  return late > 3 ? 'its data starts ' + first + ', ' + late + ' days after the cycle begins (' + job.from + ') — the start is missing' : '';
+};
+/*CYCLE-JOBS-END*/
 const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8')
   .split(/\r?\n/).filter(l => l.includes('=')).map(l => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]));
 const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
@@ -106,14 +132,16 @@ if (rc.ok) {
   const back = (n) => { const d = new Date(live + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() - n); return d.toISOString().slice(0, 7); };
   /* back(1) always: on the 1st the live month is empty and the month just closed is what publishes (rollover grace, 2026-10-01) */
   const want = [...new Set([live, back(1), (process.argv.find((a) => /^--month=\d{4}-\d{2}$/.test(a)) || '').slice(8),
-    ...(process.argv.includes('--history') ? [back(2), back(3)] : [])].filter(Boolean))];
+    ...(process.argv.includes('--history') ? [back(2), back(3)] : []),
+    /* …and both months of each billing cycle: a cycle spans two, and a mover's days in each follow that month's moves */
+    ...cycleJobsFor(Date.now()).flatMap((j) => j.months)].filter(Boolean))];
   for (const m of want) {
     try {
       const mv = await campaignMoves(DBr, m);
       await page.evaluate((x) => { const S = window.__mtd.state(); S.campaignMoves = S.campaignMoves || {};
         S.campaignMoves[x.month] = { agents: x.agents, at: x.updatedAt }; window.__mtd.rebuild(); }, mv);
       console.log('campaign moves ' + m + ': ' + Object.keys(mv.agents).length + ' mover(s)' + (Object.keys(mv.agents).length ? ' — ' + Object.keys(mv.agents).join(', ') : ''));
-    } catch (e) { console.warn('campaign moves ' + m + ' not read (' + String(e && e.message || e) + ') — publishing with the copy already in the state'); }
+    } catch (e) { movesFailed.add(m); console.warn('campaign moves ' + m + ' not read (' + String(e && e.message || e) + ') — publishing with the copy already in the state'); }
   }
 }
 
@@ -175,6 +203,29 @@ if (!argMonth && !HISTORY) {
     console.log('report ' + kind + ' built — ' + Object.keys(rj.agents || {}).length + ' agents, ' + Object.keys(rj.teams || {}).length + ' teams, ' + Math.round(body.length / 1024) + ' KB');
   }
 }
+/* ---- BILLING CYCLES (spec 001-cm-view-signoff) ---- built LAST: the period switch moves the engine off the live
+   month, and the live digest + report keys above are already in hand. A cycle with no rows yet, or a payload that
+   is not that whole cycle, is skipped and said so — never published thin. */
+const cycleBuilt = [];
+const errsBeforeCycles = errs.length;
+if (!argMonth) {
+  for (const job of cycleJobsFor(Date.now())) {
+    /* each cycle is its own island: whatever goes wrong building one is logged and the run goes on — the live digest
+       and the report keys never depend on a cycle succeeding */
+    try {
+      const body = await page.evaluate((mo) => { window.__mtd.setPeriod(mo, 'cycle'); return JSON.stringify(agentDigestPayload()); }, job.key.slice(6));
+      const cp = JSON.parse(body);   // 'null' = the engine has no rows for it
+      if (!cp || !(cp.agents || []).length) { console.log('cycle ' + job.key + ' skipped — no agents with rows in ' + job.from + '..' + job.to); continue; }
+      if ((cp.period || {}).kind !== 'cycle' || cp.period.from !== job.from || cp.period.to !== job.to) {
+        console.log('cycle ' + job.key + ' skipped — the engine built ' + JSON.stringify(cp.period) + ', not the cycle ' + job.from + '..' + job.to); continue; }
+      const why = cycleRefusal(job, cp);
+      if (why) { console.log('cycle ' + job.key + ' skipped — ' + why); continue; }
+      cycleBuilt.push({ job, body, n: cp.agents.length, period: cp.period });
+    } catch (e) { console.warn('cycle ' + job.key + ' skipped — the build failed (' + String(e && e.message || e).slice(0, 160) + ')'); continue; }
+  }
+  /* a page error raised while building a cycle must not abort the live publish below */
+  if (errs.length > errsBeforeCycles) { console.warn('page errors during the cycle builds (ignored for the live digest): ' + errs.slice(errsBeforeCycles, errsBeforeCycles + 3).join(' | ')); errs.length = errsBeforeCycles; }
+}
 await b.close(); server.close();
 if (errs.length) { console.error('page errors: ' + errs.slice(0, 3).join(' | ')); process.exit(1); }
 
@@ -188,6 +239,7 @@ if (!withDays || !withScore) { console.error('the new fields are missing — is 
 /* --out <file>: keep the built digest on disk, so a guard (verify-composite-recompute.mjs <file>) can
    prove a new build's numbers BEFORE anything is published (2026-09-28) */
 { const i = process.argv.indexOf('--out'); if (i > 0 && process.argv[i + 1]) { fs.writeFileSync(process.argv[i + 1], payload); console.log('digest written to ' + process.argv[i + 1]); } }
+for (const c of cycleBuilt) console.log((APPLY ? 'will write ' : 'would write ') + 'kv:' + c.job.name + ' — cycle ' + c.period.from + '..' + c.period.to + ' (' + (c.job.complete ? 'complete' : 'in progress') + '), ' + c.n + ' agents, ' + Math.round(c.body.length / 1024) + ' KB');
 if (!APPLY) { console.log('\ndry run — nothing written. Re-run with --apply to publish.'); process.exit(0); }
 
 /* ---- THE LIVE KEY'S MONTH RULE (2026-10-01) ---- This tool writes Storage directly, so the Worker's 409 never
@@ -243,5 +295,17 @@ for (const [kind, body] of reportJobs) {
     body: JSON.stringify([{ key: 'kv:' + keyName, value: { store, updated_at: new Date().toISOString() } }]) });
   if (!r.ok) { console.error(keyName + ' rules write failed: ' + r.status + ' ' + (await r.text()).slice(0, 200)); process.exit(1); }
   console.log('published ' + keyName);
+}
+/* THE BILLING-CYCLE KEYS — their own names, never the live key; the pointer says what it is */
+for (const c of cycleBuilt) {
+  try {
+  const keyName = c.job.name, store = 'raw/kv/' + keyName;
+  const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json', 'x-upsert': 'true' }, body: c.body });
+  if (!put.ok) throw new Error(keyName + ' storage write failed: ' + put.status + ' ' + (await put.text()).slice(0, 200));
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?on_conflict=key`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify([{ key: 'kv:' + keyName, value: { store, period: c.period.from, kind: 'cycle', updated_at: new Date().toISOString() } }]) });
+  if (!r.ok) throw new Error(keyName + ' rules write failed: ' + r.status + ' ' + (await r.text()).slice(0, 200));
+  console.log('published ' + keyName + ' — ' + c.n + ' agents, ' + c.period.from + '..' + c.period.to);
+  } catch (e) { console.error('cycle ' + c.job.name + ' NOT published — ' + String(e && e.message || e)); }   // the live key is already written; one cycle failing never undoes it
 }
 console.log('done. The Worker edge/memory caches hold old copies for up to 5 minutes.');

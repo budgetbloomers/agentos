@@ -113,6 +113,8 @@ a{color:var(--blue)}
 .nav-item .caret{margin-left:auto;font-size:10px;opacity:.7}
 .nav-item.sub{padding:6px 12px 6px 40px;font-size:12.5px;font-weight:500;color:#B4C3DD}
 .nav-item.sub.active{background:rgba(255,255,255,.14);color:#fff}
+.cm-coach-nav{margin-top:10px}
+.lm-note{margin:0 0 12px}
 .nav-item.parent.open{background:rgba(255,255,255,.07)}
 /* the KPI drill-down (item 3, 2026-09-29): tappable tiles and the panel */
 .ac-tile[data-drill]{cursor:pointer}
@@ -1126,6 +1128,7 @@ function signOut(){
   try{ sessionStorage.removeItem(TKEY); }catch(e){}
   U=null; D=null; ME=null; TEAM=null;
   HELP_UNREAD=0;                                         // the next person to sign in must not see this leader's count
+  cmReset();
   loginScreen();
 }
 
@@ -1269,9 +1272,36 @@ function teamAgg(rows){
 var REPORT_TABS=[['mtd_team','Month to date'],['daily_team','Daily'],['weekly_team','Weekly'],['variance_team','Variance'],['leads_team','Lead management']];
 var LAST_REPORT='mtd_team';
 function isReport(v){ return REPORT_TABS.some(function(t){return t[0]===v;}); }
+/* LEAD MANAGEMENT AND EXCLUDED CAMPAIGNS (spec 001, US5; contract C1 excludedCampaigns). The engine decides which
+   campaigns the Lead management report leaves out (MTD_RULES.leadReportExcludeCampaigns) and says so on the report
+   payload; the page only reads that list. A team leader whose agents all sit in those campaigns is not offered the tab. */
+function lmExcludedList(){
+  var d=REP&&REP.leads&&REP.leads.d;
+  return (d&&Array.isArray(d.excludedCampaigns))?d.excludedCampaigns.map(function(x){return String(x);}):[];
+}
+function lmIsExcluded(camp){
+  var ex=lmExcludedList(), c=String(camp==null?'':camp).trim().toLowerCase();
+  for(var i=0;i<ex.length;i++) if(ex[i].trim().toLowerCase()===c) return true;
+  return false;
+}
+function lmAllExcluded(){
+  if(!D||D.scope==='campaign'||!lmExcludedList().length) return false;
+  var cov=coveredAgents();
+  return cov.length>0&&cov.every(function(a){return lmIsExcluded(a.campaign);});
+}
+function visibleReportTabs(){
+  return lmAllExcluded()?REPORT_TABS.filter(function(t){return t[0]!=='leads_team';}):REPORT_TABS;
+}
+function lmNoteHTML(){
+  var ex=lmExcludedList(); if(!ex.length) return '';
+  /* the date is the payload's (excludedFrom, set by the engine only for periods that end on or after it); without one, no date is printed */
+  var from=REP.leads.d.excludedFrom, m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(from==null?'':from));
+  var when=m?' (from '+(+m[3])+' '+(LONG_MONTHS[+m[2]-1]||m[2])+' '+m[1]+')':'';
+  return '<p class="why lm-note">Lead management does not cover '+ex.map(esc).join(', ')+when+'</p>';
+}
 function reportsTabs(active,tabs){
   if(tabs) LAST_CM_REPORT=active; else LAST_REPORT=active;
-  var list=tabs||REPORT_TABS;
+  var list=tabs||visibleReportTabs();
   /* THE TOOLBAR (Nick, 2026-09-11: the three reports "must be exportable" and must not be
      static). Left, the sub-tabs. Right: when management last published these figures, a
      Refresh that asks the Worker for the latest copy now, and two exports — this report, or
@@ -1295,24 +1325,96 @@ function reportsTabs(active,tabs){
    and exportReports() both walk these, so the workbook can never carry a column, a
    rounding or a sort the screen does not — the rule VAS's own exportReport keeps. */
 function sortBySpd(list){ return list.slice().sort(function(x,y){return (y.spd||0)-(x.spd||0);}); }
-function coveredAgents(){ return (D.agents||[]).filter(function(a){return a.covered;}); }
+function coveredAgents(){
+  var l=(D.agents||[]).filter(function(a){return a.covered;});
+  /* the manager's reports follow the campaign select, like Variance and Lead management always did */
+  if(D.scope==='campaign'&&!D.me){
+    var c=cmCamp();
+    if(c&&c.key!=='all'){ var k=String(c.key).toLowerCase(); l=l.filter(function(a){return String(a.campaign||'').trim().toLowerCase()===k;}); }
+  }
+  return l;
+}
+function isCmReports(){ return !!(D&&D.scope==='campaign'&&!D.me); }
+function noOneMsg(){ return isCmReports()?'Nobody on this campaign has figures published for this period yet.':'Nobody on your team has figures published for this month yet.'; }
+/* MONTH TO DATE, GROUPED AS THE VAS REPORT IS: one table per campaign, each with its own Grand Total. A team leader
+   has one group (sheet 'MTD', unchanged); the manager on "All campaigns" has one per campaign. */
+function mtdGroups(mine){
+  if(!mine.length) return [];
+  if(!isCmReports()) return [{sheet:'MTD',label:'',cols:mtdRows(),rows:sortBySpd(mine),total:teamAgg(mine)}];
+  var by={}, order=[];
+  mine.forEach(function(a){ var k=String(a.campaign||'').trim()||'Campaign not set'; if(!by[k]){by[k]=[];order.push(k);} by[k].push(a); });
+  order.sort();
+  return order.map(function(k){ return {sheet:order.length>1?'MTD - '+k:'MTD',label:k,cols:mtdRows(),rows:sortBySpd(by[k]),total:teamAgg(by[k])}; });
+}
 function reportMTD(){
   var mine=coveredAgents();
-  return {sheet:'MTD', cols:mtdRows(), rows:sortBySpd(mine), total:mine.length?teamAgg(mine):null};
+  return {sheet:'MTD', cols:mtdRows(), rows:sortBySpd(mine), total:mine.length?teamAgg(mine):null, groups:mtdGroups(mine)};
 }
 function pageMTD(){
-  var r=reportMTD();
-  if(!r.rows.length) return reportsTabs('mtd_team')+'<div class="card"><h3>Month to date</h3>'
-    +'<p class="why">Nobody on your team has figures published for this month yet.</p></div>';
-  return reportsTabs('mtd_team')+'<div class="card">'
-    +'<h3>Month to date <span class="cnt">'+esc(prettyPeriod())+'</span></h3>'
-    +'<p class="why">The same table management reads — one row per agent, your team\'s totals on the last row. Nothing here is worked out twice; these are the published figures.</p>'
-    +vasAgentsTable(r.rows,r.total,r.cols)
-    +'<p class="why" style="margin-top:12px">Dialling days this month: <b>'+num(D.diallingDays)+'</b> '
-    +'· working days: <b>'+num(D.workingDays)+'</b>. A dash means that figure has not been supplied for '
-    +'this month — it is not a zero.</p>'
-    +'</div>'
-    +tlSummaryCard();
+  var cm=isCmReports();   // the manager's Month to date is the same page over the campaign's rows
+  var head=cm?reportsTabs('cm_mtd',CM_REPORT_TABS):reportsTabs('mtd_team');
+  var groups=reportMTD().groups;
+  if(!groups.length) return head+'<div class="card"><h3>Month to date</h3><p class="why">'+esc(noOneMsg())+'</p></div>';
+  var allRows=[];
+  var tables=groups.map(function(g){
+    g.rows.forEach(function(r){ allRows.push(r); });
+    return '<div class="card">'
+      +'<h3>Month to date'+(g.label?' — '+esc(g.label):'')+' <span class="cnt">'+esc(prettyPeriod())+'</span></h3>'
+      +'<p class="why">The same table management reads — one row per agent, '+(cm?'the campaign\'s totals':'your team\'s totals')+' on the last row. Nothing here is worked out twice; these are the published figures.</p>'
+      +vasAgentsTable(g.rows,g.total,g.cols)
+      +'<p class="why" style="margin-top:12px">Dialling days this month: <b>'+num(D.diallingDays)+'</b> '
+      +'· working days: <b>'+num(D.workingDays)+'</b>. A dash means that figure has not been supplied for '
+      +'this month — it is not a zero.</p>'
+      +'</div>';
+  }).join('');
+  /* the team-leader summary (tlAgg/campAgg) is whole-period and not cut by tenure — say so when a tenure is selected */
+  var tenNote=(cm&&typeof CMTEN!=='undefined'&&CMTEN!=='all')?'<p class="why lm-note">Team leader summary covers all tenures.</p>':'';
+  return head+tables+coachingAnalysisCard(allRows)+tenNote+tlSummaryCard();
+}
+
+/* THE SIX AGENT-VIEW KPI STATES AS CHIPS (spec 001, US6). The verdicts are the engine's: Target achieved, Average sale,
+   QA and Attendance travel on row.drill and are read through drillState() — the SAME path the agent's own tiles use;
+   Premium written and Referrals keep the agent tiles' presence rule. A team leader therefore reads exactly what the
+   agent sees, chip for tile. */
+var KPI_CHIPS=[['ta','Target achieved'],['gwp','Premium written'],['aveG','Average sale'],['qa','QA'],['att','Attendance'],['ref','Referrals']];
+function agentKpiStates(a){
+  return {ta:drillState(a,'ta'), gwp:a.gwpEx>0?'pass':'none', aveG:drillState(a,'aveG'),
+    qa:drillState(a,'qa'), att:drillState(a,'att'), ref:a.ref>0?'pass':'none'};
+}
+function kpiChip(k,state){
+  var m={pass:['g','On track'],watch:['a','Watch'],focus:['r','Focus']}[state]||['n','—'];
+  return '<span class="mini '+m[0]+'" data-kpi="'+k+'">'+m[1]+'</span>';
+}
+var MON3=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtShort(iso){
+  var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso==null?'':iso)); if(!m) return String(iso==null?'':iso);
+  return (+m[3])+' '+(MON3[+m[2]-1]||m[2]);
+}
+function fix1(v){ return (Math.round(Number(v)*10)/10).toFixed(1); }
+/* The coaching analysis line (contract C4 row.coach). Plain facts only — no AI wording here. */
+function coachLine(c){
+  if(!c) return 'Coaching analysis not published yet';
+  if(!c.n) return 'No coaching logged this month';
+  var parts=[c.n+' session'+(c.n===1?'':'s')];
+  if(c.last) parts.push('last '+fmtShort(c.last));
+  if(c.themes&&c.themes.length) parts.push('themes: '+c.themes.join(', '));
+  if(c.after&&c.after.before!=null&&c.after.after!=null) parts.push('sales/day '+fix1(c.after.before)+' → '+fix1(c.after.after)+' since');
+  return parts.join(' · ');
+}
+function coachingAnalysisCard(rows){
+  if(!rows.some(function(a){return a.drill||a.coach;})) return '';
+  return '<div class="card"><h3>Coaching analysis <span class="cnt">'+esc(prettyPeriod())+'</span></h3>'
+    +'<p class="why">Each agent\'s six KPI states — the same verdicts the agent sees on their own page — and what coaching has been logged. A dash means there is nothing to judge yet.</p>'
+    +'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Agent</th>'
+    +KPI_CHIPS.map(function(k){return '<th>'+esc(k[1])+'</th>';}).join('')
+    +'<th class="l">Coaching analysis</th></tr></thead><tbody>'
+    +rows.map(function(a){
+      var st=agentKpiStates(a);
+      return '<tr data-agent-row="'+esc(a.code)+'"><td class="l"><b>'+esc(a.name)+'</b><div class="sub2">'+esc(a.code)+'</div></td>'
+        +KPI_CHIPS.map(function(k){return '<td>'+kpiChip(k[0],st[k[0]])+'</td>';}).join('')
+        +'<td class="l sub2" style="min-width:260px">'+esc(coachLine(a.coach))+'</td></tr>';
+    }).join('')
+    +'</tbody></table></div></div>';
 }
 
 /* THE "TEAM LEADERS" BLOCK of management's Month to Date (Nick, 2026-09-10: this was the
@@ -1351,7 +1453,7 @@ function tlSummaryRows(){
 /* The block as ONE sheet: Metric, then each team leader's column followed by their
    campaign's total — a single team for a team leader, every team for staff scope. */
 function reportTLSummary(){
-  var s=D.summary;
+  var s=reportSummary();
   if(!s||!s.teams||!s.teams.length) return null;
   var head=['Metric'], cols=[];
   s.teams.forEach(function(t){
@@ -1363,12 +1465,48 @@ function reportTLSummary(){
   });
   return {sheet:'TL MTD', head:head, rows:rows};
 }
+/* The "Team Leaders" block's source: a team leader's own slice (D.summary), or for the manager the digest's tlAgg /
+   campAgg for the selected campaign (contract C2) — shaped like the former so one renderer reads both. */
+function reportSummary(){
+  if(D&&D.summary&&!isCmReports()) return D.summary;
+  /* the manager's: the Worker's D.summary covers ALL their campaigns, so it is cut to the selected one here as well
+     (teams and campaign totals); "All campaigns" keeps everything */
+  var teams, all={}, on, tu;
+  if(D&&D.summary){ teams=D.summary.teams||[]; all=D.summary.campaigns||{}; on=D.summary.onTarget; tu=D.summary.talkUnit; }
+  else if(D&&D.scope==='campaign'&&Array.isArray(D.tlAgg)&&D.campAgg){
+    teams=D.tlAgg; on=D.onTarget; tu=D.talkUnit;
+    if(Array.isArray(D.campAgg)) D.campAgg.forEach(function(r){ if(r&&r.camp!=null) all[r.camp]=r; });
+    else for(var k in D.campAgg) all[k]=D.campAgg[k];
+  } else return null;
+  var c=cmCamp(), key=(c&&c.key!=='all')?String(c.key).toLowerCase():'';
+  teams=teams.filter(function(t){return !key||String(t.camp||'').trim().toLowerCase()===key;});
+  var camps={}; teams.forEach(function(t){ if(all[t.camp]) camps[t.camp]=all[t.camp]; });
+  return {onTarget:on==null?1:on, talkUnit:tu||'minutes', teams:teams, campaigns:camps};
+}
+/* the manager's block: one card per campaign — each team leader's column, then the campaign total */
+function cmSummaryCards(s){
+  var rows=tlSummaryRows(), by={}, order=[];
+  s.teams.forEach(function(t){ if(!by[t.camp]){by[t.camp]=[];order.push(t.camp);} by[t.camp].push(t); });
+  return order.map(function(camp){
+    var teams=by[camp], c=s.campaigns&&s.campaigns[camp];
+    return '<div class="card"><h3>'+esc(TL_CAMP_LABEL[camp]||camp)+' — team leader summary</h3>'
+      +'<p class="why">The "Team Leaders" block of management\'s Month to Date: each team leader beside the campaign total. '
+      +'An agent is on target at or above '+esc(pct(s.onTarget,0))+' of their sales target.</p>'
+      +'<div class="scroller"><table class="tbl vastbl"><thead><tr><th class="l stick">Metric</th>'
+      +teams.map(function(t){return '<th>'+esc(t.tl)+'</th>';}).join('')+'<th>Campaign total</th></tr></thead><tbody>'
+      +rows.map(function(r){ return '<tr><td class="l stick">'+esc(r[0])+'</td>'
+        +teams.map(function(t){return '<td class="num">'+r[1](t)+'</td>';}).join('')
+        +'<td class="num">'+(c?'<b>'+r[1](c)+'</b>':'–')+'</td></tr>'; }).join('')
+      +'</tbody></table></div></div>';
+  }).join('');
+}
 function tlSummaryCard(){
-  var s=D.summary;
+  var s=reportSummary();
   if(!s) return '<div class="card"><h3>Team leader summary</h3><p class="why">The team-leader summary '
     +'(Employed HC, Agents on Target, the campaign total) is not in the published figures yet — it appears '
     +'within a couple of minutes of a signed-in management dashboard session being open. Nothing is missing from the data itself.</p></div>';
   if(!s.teams||!s.teams.length) return '';
+  if(isCmReports()) return cmSummaryCards(s);
   var rows=tlSummaryRows();
   return s.teams.map(function(t){
     var c=s.campaigns&&s.campaigns[t.camp];
@@ -1487,12 +1625,13 @@ function reportWeekly(){
   }).filter(Boolean);
 }
 function pageWeeklyTeam(){
+  var head=isCmReports()?reportsTabs('cm_weekly',CM_REPORT_TABS):reportsTabs('weekly_team');
   var mine=coveredAgents();
-  if(!mine.length) return reportsTabs('weekly_team')+'<div class="card"><h3>Weekly</h3><p class="why">Nobody on your team has figures published for this month yet.</p></div>';
+  if(!mine.length) return head+'<div class="card"><h3>Weekly</h3><p class="why">'+esc(noOneMsg())+'</p></div>';
   var weeks=reportWeekly();
-  if(!weeks) return reportsTabs('weekly_team')+staleDaysCard('Weekly');
-  if(!weeks.length) return reportsTabs('weekly_team')+'<div class="card"><h3>Weekly</h3><p class="why">No week in this month carries figures yet.</p></div>';
-  return reportsTabs('weekly_team')+weeks.map(function(w){
+  if(!weeks) return head+staleDaysCard('Weekly');
+  if(!weeks.length) return head+'<div class="card"><h3>Weekly</h3><p class="why">No week in this period carries figures yet.</p></div>';
+  return head+weeks.map(function(w){
     return '<div class="card" style="margin-bottom:14px">'
       +'<h3>Week '+esc(String(w.num))+' <span class="cnt">'+esc(w.from)+' → '+esc(w.to)+'</span></h3>'
       +vasAgentsTable(w.rows,w.total,w.cols)+'</div>';
@@ -1545,21 +1684,22 @@ function reportDaily(wholeMonth){
   return {sheet:flt?('Daily '+flt):'Daily', cols:dailyCols(), rows:rows, days:days};
 }
 function pageDailyTeam(){
+  var head=isCmReports()?reportsTabs('cm_daily',CM_REPORT_TABS):reportsTabs('daily_team');
   var mine=coveredAgents();
-  if(!mine.length) return reportsTabs('daily_team')+'<div class="card"><h3>Daily</h3><p class="why">Nobody on your team has figures published for this month yet.</p></div>';
-  if(!daysPublished()) return reportsTabs('daily_team')+staleDaysCard('Daily');
+  if(!mine.length) return head+'<div class="card"><h3>Daily</h3><p class="why">'+esc(noOneMsg())+'</p></div>';
+  if(!daysPublished()) return head+staleDaysCard('Daily');
   /* ONE FLAT TABLE, newest day first — the management dashboard's Daily detail, scoped
      to this team. A day the dialler never covered shows a dash (unknown), never a zero,
      and talk with no shift credited keeps its flag: that anomaly is the whole reason a
      daily view exists. */
   var rep=reportDaily();
-  if(!rep.days.length) return reportsTabs('daily_team')+staleDaysCard('Daily');
+  if(!rep.days.length) return head+staleDaysCard('Daily');
   var rows=rep.rows, cols=rep.cols.filter(function(c){return !!c[1];});   // export-only columns stay off the screen
   /* the day picker — the management Daily has one, and a team leader looking for yesterday
      should not scroll past a fortnight to find it */
   var picker='<select id="dayFilter" class="kc" style="max-width:220px"><option value="">All days</option>'
     +rep.days.map(function(d){return '<option value="'+esc(d)+'"'+(d===DAY_FILTER?' selected':'')+'>'+esc(d)+'</option>';}).join('')+'</select>';
-  return reportsTabs('daily_team')+'<div class="card">'
+  return head+'<div class="card">'
     +'<h3>Daily detail <span class="cnt">'+num(rows.length)+' agent-days · '+esc(prettyPeriod())+'</span></h3>'
     +'<div style="margin-top:8px">'+picker+'</div>'
     +'<div class="scroller"><table class="tbl vastbl"><thead><tr>'
@@ -1635,13 +1775,13 @@ function repCmBlocks(kind){
   /* the block names its campaign and leader; the key split only serves a report published before it did */
   return Object.keys(d.teamsByCamp).map(function(k){ var b=d.teamsByCamp[k]||{};
       return {camp:b.camp!=null?String(b.camp):k.split('|')[0], tl:b.tl!=null?String(b.tl):k.split('|').slice(1).join('|'), b:b}; })
-    .filter(function(x){ return key==='all'||!key||x.camp.toLowerCase()===key.toLowerCase(); })
+    .filter(function(x){ return !lmIsExcluded(x.camp)&&(key==='all'||!key||x.camp.toLowerCase()===key.toLowerCase()); })
     .sort(function(x,y){ return x.camp.localeCompare(y.camp)||x.tl.localeCompare(y.tl); });
 }
 function repCmTotal(kind){
   var d=REP[kind].d; if(!d||!d.campaigns) return null;
   var c=(typeof cmCamp==='function')?cmCamp():null; var key=c?String(c.key||''):'';
-  if(key&&key!=='all'){ var k=Object.keys(d.campaigns).filter(function(x){ var b=d.campaigns[x]||{}; return String(b.camp!=null?b.camp:x).toLowerCase()===key.toLowerCase(); })[0]; return k?d.campaigns[k]:null; }
+  if(key&&key!=='all'&&!lmIsExcluded(key)){ var k=Object.keys(d.campaigns).filter(function(x){ var b=d.campaigns[x]||{}; return String(b.camp!=null?b.camp:x).toLowerCase()===key.toLowerCase(); })[0]; return k?d.campaigns[k]:null; }
   return null;   // "All campaigns" has no single published total — the per-campaign rows are the totals
 }
 function repTeamBlock(kind){
@@ -1713,11 +1853,15 @@ function pageCmReport(kind){
   var view=kind==='leads'?'cm_leads':'cm_variance';
   var head=reportsTabs(view,CM_REPORT_TABS);
   var state=repStateCard(kind,kind==='leads'?'Lead management':'Variance'); if(state) return head+state;
+  if(kind==='leads'){
+    var sc=cmCamp();
+    if(sc&&sc.key!=='all'&&lmIsExcluded(sc.key)) return head+'<div class="card"><h3>Lead management</h3>'+lmNoteHTML()+'</div>';
+  }
   var inner;
   if(kind==='variance'){ VIEW='variance_team'; inner=cmVarianceTable()+pageVarianceTeam(true); }
   else { VIEW='leads_team'; inner=cmLeadsTable()+pageLeadsTeam(true); }
   VIEW=view; LAST_CM_REPORT=view;
-  return head+inner;
+  return head+(kind==='leads'?lmNoteHTML():'')+inner;
 }
 function pageVarianceTeam(noHead){
   var head=noHead?'':reportsTabs('variance_team');   // the campaign-manager page paints its own tab strip
@@ -1787,9 +1931,17 @@ function leadsCols(rp){
     ['Canc to sales %', function(a){return pc(a.cancPct);}],
   ]);
 }
+/* an agent's campaign: on the row itself (a team leader's agents) or, for the manager's index, from the CM payload's agents */
+function agentCampOf(a){
+  if(a.campaign!=null) return a.campaign;
+  var l=(D&&D.agents)||[];
+  for(var i=0;i<l.length;i++) if(l[i].code===a.code) return l[i].campaign;
+  return null;
+}
 function reportLeads(){
   var rp=REP.leads.d; if(!rp||!rp.agents) return null;
-  var rows=repAgents().filter(function(a){return rp.agents[a.code];}).map(function(a){ var x=rp.agents[a.code]; return Object.assign({name:a.name,code:a.code},x); });
+  /* a stale payload that still carries an excluded campaign's agents must not paint them (contract C1) */
+  var rows=repAgents().filter(function(a){return rp.agents[a.code]&&!lmIsExcluded(agentCampOf(a));}).map(function(a){ var x=rp.agents[a.code]; return Object.assign({name:a.name,code:a.code},x); });
   rows.sort(function(x,y){ return (y.sales-x.sales)||(y.open-x.open)||String(x.name).localeCompare(String(y.name)); });
   var t=(D&&D.scope==='campaign')?repCmTotal('leads'):repTeamBlock('leads'); var total=t?Object.assign({isTeam:true},t):null;
   return {sheet:'Lead management', cols:leadsCols(rp), rows:rows, total:total, rp:rp};
@@ -1797,6 +1949,9 @@ function reportLeads(){
 function pageLeadsTeam(noHead){
   var head=noHead?'':reportsTabs('leads_team');   // the campaign-manager page paints its own tab strip
   var state=repStateCard('leads','Lead management'); if(state) return head+state;
+  if(!noHead&&lmAllExcluded()) return head+'<div class="card"><h3>Lead management</h3>'+lmNoteHTML()+'</div>';
+  var note=noHead?'':lmNoteHTML();   // the manager's page prints the line once, above both tables (pageCmReport)
+  head+=note;
   var rep=reportLeads(); var rp=rep&&rep.rp;
   if(!rep||!rep.rows.length) return head+'<div class="card"><h3>Lead management</h3><p class="why">No lead rows are published for '+(D&&D.scope==='campaign'?'your campaign':'your team')+' yet. The funnel needs the Salesforce open and closed case exports loaded on the VAS dashboard (the open book arrives through the data lake).</p></div>';
   var t=rep.total||{};
@@ -1846,10 +2001,11 @@ function exportReports(which){
     if(total) out.push(['Grand Total',''].concat(cols.map(function(c){return cellOf(c[1](total));})));
     return out;
   };
-  var parts=which==='all'?['mtd_team','daily_team','weekly_team','variance_team','leads_team']:[which==='cm_variance'?'variance_team':(which==='cm_leads'?'leads_team':which)];
+  var CM_TO_TL={cm_mtd:'mtd_team',cm_daily:'daily_team',cm_weekly:'weekly_team',cm_variance:'variance_team',cm_leads:'leads_team'};
+  var parts=which==='all'?['mtd_team','daily_team','weekly_team','variance_team','leads_team']:[CM_TO_TL[which]||which];
   parts.forEach(function(p){
     if(p==='mtd_team'){
-      var m=reportMTD(); if(m.rows.length) add(m.sheet,table(m.cols,m.rows,m.total));
+      reportMTD().groups.forEach(function(m){ add(m.sheet,table(m.cols,m.rows,m.total)); });
       var s=reportTLSummary(); if(s) add(s.sheet,[s.head].concat(s.rows.map(function(r){return r.map(cellOf);})));
     }
     if(p==='weekly_team') (reportWeekly()||[]).forEach(function(w){ add(w.sheet,table(w.cols,w.rows,w.total)); });
@@ -3684,9 +3840,12 @@ var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:
 var TL_VIEWS=['team','help','kpihub','coach_team','forms','results','reports','mtd_team','weekly_team','daily_team','variance_team','leads_team','nik_team'];
 /* The third view. Campaign · Team Leaders · Assistance · Nikola — the spec's
    four pages, nothing else. */
-var CM_VIEWS=['cm','cm_teams','cm_assist','cm_reports','cm_variance','cm_leads','cm_nik','cm_set'];
-var CM_REPORT_TABS=[['cm_variance','Variance'],['cm_leads','Lead management']];
-var LAST_CM_REPORT='cm_variance';
+var CM_VIEWS=['cm','cm_teams','cm_assist','cm_reports','cm_mtd','cm_daily','cm_weekly','cm_variance','cm_leads','cm_coach','cm_nik','cm_set'];
+/* THE MANAGER'S REPORTS = THE TEAM LEADER'S FIVE (spec 001-cm-view-signoff, US5). Month to date, Daily and
+   Weekly reuse the team-leader renderers over the CM payload's agents/tlAgg/campAgg; Variance and Lead
+   management are the published report keys, as before. */
+var CM_REPORT_TABS=[['cm_mtd','Month to date'],['cm_daily','Daily'],['cm_weekly','Weekly'],['cm_variance','Variance'],['cm_leads','Lead management']];
+var LAST_CM_REPORT='cm_mtd';
 function navFor(active){
   if(CM_VIEWS.indexOf(active)>=0)
     return [['cm','Campaign',ICON.results],['cm_teams','Team Leaders',ICON.team],
@@ -3736,6 +3895,13 @@ function freshHTML(){
     +(D.coaching&&D.coaching.stale?'<br>Coaching is showing an older copy.':'')+'</div></div>';
 }
 
+/* "Team leaders' coaching" — the manager's own entry, directly above the user card / Sign out at the bottom
+   of the sidebar (spec 001, US4). A real button, so the keyboard reaches it; the label is a constant, not data. */
+function cmCoachNavHTML(active){
+  if(CM_VIEWS.indexOf(active)<0) return '';
+  return '<div class="nav cm-coach-nav"><button class="nav-item'+(VIEW==='cm_coach'?' active':'')+'" data-view="cm_coach">'
+    +'<span class="ic">'+ICON.coaching+'</span>Team leaders\' coaching</button></div>';
+}
 function sidebarHTML(active){
   var nm=(TEAM&&TEAM.name)||(D&&D.name)||(U&&(U.name||U.full_name))||'';
   /* Label the ACCOUNT, not the screen. On a drilldown the payload is one agent's
@@ -3753,7 +3919,7 @@ function sidebarHTML(active){
     +'<div class="nav"><div class="nav-label">'
     +(CM_VIEWS.indexOf(active)>=0?'My campaign':active==='team'?'My team':'My performance')+'</div>'
     +navFor(active).map(function(n){
-      var kids=n[3]||[];
+      var kids=n[0]==='reports'?visibleReportTabs():(n[3]||[]);   // a Courtesy-only leader is not offered Lead management
       /* an entry with sub-tabs (Reports) is OPEN while it or one of its sub-tabs is the current view;
          the sub-tabs then sit indented under it, the open one lit. VIEW is the real view — the shell
          passes 'reports' as active for every report page, which lights the parent. */
@@ -3768,6 +3934,7 @@ function sidebarHTML(active){
     }).join('')
     +'</div>'
     +freshHTML()
+    +cmCoachNavHTML(active)
     +'<div class="user-card"><div class="user-av" style="background:hsl('+hue(nm)+',58%,52%)">'+esc(initials(nm))+'</div>'
     +'<div><div class="user-nm">'+esc(nm)+'</div><div class="user-rl">'+esc(role)+'</div></div>'
     +'<button class="signout" id="pwBtn" title="Change my password" aria-label="Change my password">🔑</button>'
@@ -3801,6 +3968,9 @@ function wireReports(){
   var vdf=$('varDayFilter'); if(vdf) vdf.onchange=function(){ VAR_DAY=vdf.value; render(); };
   /* the two report keys load when their tab is opened, and on Refresh with the overview */
   { var rk=repKind(VIEW); if(rk&&!REP[rk].d&&!REP[rk].busy&&!REP[rk].err) repLoad(rk,false); }
+  /* a team leader's Lead management tab depends on which campaigns the report excludes, which only the report says —
+     so any Reports page asks for it once, in the background (spec 001, US5) */
+  if(liveTeamScope()&&isReport(VIEW)&&!REP.leads.d&&!REP.leads.busy&&!REP.leads.err) repLoad('leads',false);
   /* the Reports toolbar (2026-09-11): Refresh asks the Worker now; Export builds the workbook */
   var rr=$('repRefresh'); if(rr) rr.onclick=function(){ refreshPortal(true); var rk2=repKind(VIEW); if(rk2){ REP[rk2].err=''; repLoad(rk2,true); } };
   Array.prototype.forEach.call(document.querySelectorAll('[data-export]'),function(b){
@@ -3966,7 +4136,7 @@ function loadPortal(){
     if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} return loginScreen('Your session has expired. Please sign in again.'); }
     if(!r.ok) return fatal('We could not open your page', r.json.error||'Please try again in a minute.', r.status>=500);
     D=r.json;
-    if(D.scope==='campaign') return cmView();
+    if(D.scope==='campaign') return cmOpen();
     if(D.role==='team_leader'||D.scope==='team'||D.scope==='all'){ startLiveRefresh(); startHelpPulse(); return teamView(); }
     if(D.notReported) return notReported();
     if(!D.me) return fatal('Nothing to show yet','No figures have been published for you this month.');
@@ -4157,6 +4327,33 @@ function cmBandHTML(){
 
 /* ---------- the four pages ---------- */
 
+/* "4 h 32 m", "5 h", "45 m" — minutes in, the way a manager reads a talk target (spec 001, US1) */
+function cmHM(min){
+  if(min==null||isNaN(min)) return '—';
+  var m=Math.round(min), h=Math.floor(m/60), r=m%60;
+  if(!h) return m+' m';
+  return r?h+' h '+r+' m':h+' h';
+}
+/* Conversion and contact rate arrive computed (contract C2); an absence prints "—" and the Worker's own reason, never 0% */
+function cmConvTile(k){
+  var cv=k.conv;
+  if(cv==null) return kpi('🔁','var(--bg)','Conversion Rate','—','',k.convWhy||'Not available for this period.');
+  return kpi('🔁','var(--blue-soft)','Conversion Rate',pct(cv.v,1),'','sales ÷ '+num(cv.closed)+' closed leads · target '+pct(cv.target,0));
+}
+function cmContactTile(k){
+  var cr=k.contactRate;
+  if(cr==null) return kpi('📶','var(--bg)','Contact Rate','—','',k.contactWhy||'Not available for this period.');
+  return kpi('📶','var(--blue-soft)','Contact Rate',pct(cr.v,1),'',num(cr.contacts)+' people reached from '+num(cr.dials)+' dials');
+}
+/* the help card's rows: the selected campaign's own (blockPanelByCamp); the old unfiltered list only for a payload without it */
+function cmHelpRows(c){
+  var by=D.assist&&D.assist.blockPanelByCamp, all=(D.assist&&D.assist.blockPanel)||[];
+  var rows=all;
+  if(by&&typeof by==='object'){
+    rows=c.key==='all'?all:(by[c.key]||by[String(c.key).toLowerCase()]||[]);   // no 'all' key exists in blockPanelByCamp: the unfiltered list IS all campaigns
+  }
+  return rows.slice().sort(function(x,y){ return (y.oldestDays==null?-1:y.oldestDays)-(x.oldestDays==null?-1:x.oldestDays); });   // oldest first
+}
 function cmCmdPage(c){
   var k=c.kpis, a=(D.assist&&!D.assist.error&&D.assist.kpis)||null;
   var reqs=cmReqs(c.key), open=reqs.filter(function(r){return !r.closed;});
@@ -4210,19 +4407,17 @@ function cmCmdPage(c){
          like for like; refIncl (R99) is only the label's second figure */
       'floor '+R(k.aveG.ref,2)+' ex VAT'+(k.aveG.refIncl?' (R'+num(k.aveG.refIncl)+' incl)':'')+' a sale',
       k.aveG.v!=null?'<span class="delta '+(k.aveG.v>=k.aveG.ref?'up':'down')+'">'+(k.aveG.v>=k.aveG.ref?'+':'−')+R(Math.abs(k.aveG.v-k.aveG.ref),2)+'</span>':'')
-    +(k.conv==null?'':kpi('🔁',(k.conv.v>=k.conv.target?'var(--green-soft)':'var(--amber-soft)'),'Conversion Rate',
-      pct(k.conv.v,1),'','sales ÷ '+num(k.conv.leads)+' unique leads · target '+pct(k.conv.target,0),
-      '<span class="delta '+(k.conv.v>=k.conv.target?'up':'down')+'">'+pct(k.conv.v,1)+' of '+pct(k.conv.target,0)+'</span>'))
-    +kpi('📞','var(--blue-soft)','Average Talk Time',(k.talk.v==null?'—':num(Math.round(k.talk.v/60))),'min a day',
-      'target '+num(k.talk.targetMin)+' min a day per productive agent')
+    +cmConvTile(k)
+    +kpi('📞','var(--blue-soft)','Average Talk Time',(k.talk.v==null?'—':cmHM(k.talk.v/60)),(k.talk.v==null?'':' a day'),
+      /* the target is the Worker's (cm:targets, then specs/cm_rules.json, then the default) — never a literal here */
+      (k.talk.targetMin==null?'targets differ by campaign':'target '+cmHM(k.talk.targetMin)+' a day per productive agent'))
     +(k.attempts==null?'':kpi('🎛️',((k.attempts.v>=k.attempts.low&&k.attempts.v<=k.attempts.high)?'var(--green-soft)':'var(--amber-soft)'),
       'Attempts per Lead',num(k.attempts.v,2),'','healthy band '+k.attempts.low+' to '+k.attempts.high,
       (k.attempts.v<k.attempts.low
         ?'<span class="delta down">under-dialling — leads are not being worked</span>'
         :k.attempts.v>k.attempts.high?'<span class="delta down">over-dialling — the same leads are being re-hit</span>'
         :'<span class="delta up">inside the band</span>')))
-    +(k.contactRate==null?'':kpi('📶','var(--blue-soft)','Contact Rate',pct(k.contactRate.v,1),'',
-      num(k.contactRate.contacts)+' productive contacts from '+num(k.contactRate.dials)+' dials'))
+    +cmContactTile(k)
     +(k.leads==null?'':kpi('📥','var(--blue-soft)','Lead Volume',num(k.leads.v),'',
       'unique leads'+(k.leads.cover==null?'':' · '+num(k.leads.cover,1)+' workable leads for every sale')))
     +kpi('⭐',(k.qa.v!=null&&k.qa.v<k.qa.target)?'var(--amber-soft)':'var(--green-soft)','Average QA Score',
@@ -4237,7 +4432,7 @@ function cmCmdPage(c){
     /* ONE line, not four dead tiles. A measure with no source is removed; a measure
        whose source simply has not been uploaded is worth naming ONCE, because that
        is a thing somebody can go and fix. */
-    +(k.conv==null?'<p class="why">Conversion, attempts per lead and lead volume need the Lead Management <b>Open Cases</b> and <b>Closed Cases</b> exports — they are not loaded, so those figures are left out rather than guessed.</p>':'')
+    +(k.conv==null&&!k.convWhy?'<p class="why">Conversion, attempts per lead and lead volume need the Lead Management <b>Open Cases</b> and <b>Closed Cases</b> exports — they are not loaded, so those figures are left out rather than guessed.</p>':'')
     +(proj?'<p class="why"><b>How the projection is worked out.</b> '+R(proj.perDay)+' average GWP per completed dialling day × '
       +num(proj.workingDays)+' planned dialling days = '+R(proj.result)+'. '+num(proj.diallingDays)
       +' dialling days completed. It assumes the remaining days run at the same rate as the days already worked.</p>':'');
@@ -4290,11 +4485,13 @@ function cmCmdPage(c){
   }
 
   /* what is blocking the campaign */
-  var bp=(D.assist&&!D.assist.error&&D.assist.blockPanel)||[];
+  var bp=(D.assist&&!D.assist.error)?cmHelpRows(c):[];
   var block='';
-  if(bp.length){
-    block='<div class="card"><h3>⊙ What is blocking the campaign</h3>'
-      +'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Blockage</th><th class="l">Goes to</th>'
+  if(D.assist&&!D.assist.error){
+    block='<div class="card"><h3>Where my team leaders need help</h3>'
+      +'<p class="why">Open help requests from your team leaders, grouped by what is holding them up — oldest first.</p>'
+      +(!bp.length?'<p class="why">No open help requests from your team leaders on '+(c.key==='all'?'your campaigns':esc(c.label))+'.</p>':'')
+      +(!bp.length?'</div>':'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Blockage</th><th class="l">Goes to</th>'
       +'<th>Open</th><th>Raised</th><th>Agents affected</th><th>Oldest open</th><th>Average resolution</th><th>Comes back</th></tr></thead><tbody>'
       +bp.map(function(x){
         return '<tr><td class="l"><b>'+esc(x.label)+'</b></td><td class="l">'+esc(x.routes_to)+'</td>'
@@ -4303,13 +4500,22 @@ function cmCmdPage(c){
           +'<td class="num">'+(x.oldestDays==null?'—':x.oldestDays+'d')+'</td>'
           +'<td class="num">'+(x.avgResolution==null?'—':cmMins(x.avgResolution))+'</td>'
           +'<td>'+(x.comesBack?'<span class="mini a">Yes</span>':'<span class="mini g">No</span>')+'</td></tr>';
-      }).join('')+'</tbody></table></div></div>';
+      }).join('')+'</tbody></table></div></div>');
   }
 
   return cmBandHTML()+tiles+brief+sales+unHtml+unblock+block
     +(c.reconciled?'':'<div class="cm-band warn">The campaign total does not equal the sum of the teams shown — the digest is inconsistent. Treat these figures with care and re-publish from PULSE.</div>');
 }
 
+function cmTeamConv(t){
+  var cv=t.conv, v=(cv&&typeof cv==='object')?cv.v:cv;   // closed-lead basis {v,sales,closed,…} (C2); a bare number from an older Worker
+  if(v==null) return '—';
+  return (cv&&typeof cv==='object'&&cv.closed!=null)?'<span title="'+esc('sales ÷ '+num(cv.closed)+' closed leads')+'">'+pct(v,1)+'</span>':pct(v,1);
+}
+function cmTeamContact(t){
+  var cr=t.contactRate; if(cr==null||cr.v==null) return '—';
+  return '<span title="'+esc(num(cr.contacts)+' people reached from '+num(cr.dials)+' dials')+'">'+pct(cr.v,1)+'</span>';
+}
 function cmTeamsPage(c){
   var rows=c.teams.map(function(t,i){
     var exp=CMEXP[t.tl];
@@ -4320,7 +4526,8 @@ function cmTeamsPage(c){
       +'<td class="num">'+num(t.sales)+' / '+num(t.target)+'</td>'
       +'<td class="num">'+R(t.gwp)+'</td>'
       +'<td class="num">'+(t.aveG==null?'—':R(t.aveG))+'</td>'
-      +'<td class="num">'+(t.conv==null?'—':pct(t.conv,1))+'</td>'
+      +'<td class="num">'+cmTeamConv(t)+'</td>'
+      +'<td class="num">'+cmTeamContact(t)+'</td>'
       +'<td class="num">'+(t.qa==null?'—':pct(t.qa,1))+'</td>'
       +'<td class="num">'+(t.cancRate==null?'—':pct(t.cancRate,1))+'</td>'
       +'<td class="num">'+(t.att==null?'—':pct(t.att,0))+'</td>'
@@ -4334,7 +4541,7 @@ function cmTeamsPage(c){
       +'<td class="l sub2" style="min-width:220px">'+esc(t.next||'—')+'</td>'
       +'</tr>';
     if(!exp) return main;
-    return main+'<tr><td colspan="17" style="background:var(--bg);padding:10px 14px">'
+    return main+'<tr><td colspan="18" style="background:var(--bg);padding:10px 14px">'
       +'<b style="font-size:12px">'+esc(t.tl)+'\u2019s agents on '+esc(c.label)+'</b> — click a name for their month and coaching<br>'
       +t.codes.map(function(code){
         var ag=null; (c.agentIndex||[]).some(function(x){ if(x.code===code){ag=x;return true;} return false;});
@@ -4347,13 +4554,13 @@ function cmTeamsPage(c){
   return cmBandHTML()
     +'<div class="card"><h3>Sales performance and assistance <span class="cnt">'+num(c.teams.length)+'</span></h3>'
     +'<p class="why">One row per team leader '+(c.key==='all'?'across every campaign you hold — a leader running two campaigns is two rows, because a team is one leader AND one campaign':'on this campaign')+'. The point of putting the two halves side by side is to tell a leadership problem from a blockage — the last column says which one this row is. The stripe is the row\u2019s status: red needs you today, amber this week, green is holding.</p>'
-    +'<div class="scroller"><table class="tbl cmtbl" style="min-width:1500px"><thead><tr>'
+    +'<div class="scroller"><table class="tbl cmtbl" style="min-width:1600px"><thead><tr>'
     +'<th class="l">Team leader</th><th>Agents</th><th>Sales / target</th><th>GWP</th><th>Avg GWP a sale</th>'
-    +'<th>Conversion</th><th>QA</th><th>Cancellations</th><th>Attendance</th>'
+    +'<th>Conversion</th><th>Contact rate</th><th>QA</th><th>Cancellations</th><th>Attendance</th>'
     +'<th>Open</th><th>Top priority</th><th>Within SLA</th><th>Repeats</th><th>Last session</th>'
     +'<th>After assistance</th><th>Status</th><th class="l">Next action</th>'
     +'</tr></thead><tbody>'+rows+'</tbody></table></div>'
-    +'<p class="why" style="margin-top:8px">Clicking a team leader opens their people; clicking a person opens the same drill-down a team leader sees of them. There is no second version of that screen. Conversion is sales \u00f7 unique leads, the Lead Management rule \u2014 it reads \u2014 only when the case books have not been uploaded.</p></div>';
+    +'<p class="why" style="margin-top:8px">Clicking a team leader opens their people; clicking a person opens the same drill-down a team leader sees of them. There is no second version of that screen. Conversion is sales \u00f7 closed leads (the Lead Management rule) and contact rate is people reached \u00f7 dials; each reads \u2014 only when its source has not been loaded.</p></div>';
 }
 
 function cmAssistPage(){
@@ -4516,6 +4723,193 @@ function cmOpenReq(id){
   });
 }
 
+/* ---------- campaign, tenure and period (spec 001-cm-view-signoff, US2 + US3) ----------
+   The manager's slice is campaign x tenure x period. The campaign switch stays client-side (every campaign is already
+   in the payload); a tenure or period change re-asks the Worker, which answers for the campaign manager only
+   (contract C2): GET /api/portal/overview?period=<p>&tenure=<t>. A team leader's and an agent's request never carries
+   either parameter. The choice is kept for the session in sessionStorage, validated before it can reach a URL. */
+var CMKEY='cbx_cm_view';
+var CMPER='current', CMTEN='all', CMBUSY=false, CMNOPUB=null, CMSEQ=0;
+var CM_TENURES=['all','M0','M1','M2','Exp','unset'];
+var LONG_MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+function cmValidPeriod(p){ return /^(current|\d{4}-(0[1-9]|1[0-2])|cycle-\d{4}-(0[1-9]|1[0-2]))$/.test(String(p)); }
+function cmValidTenure(t){ return CM_TENURES.indexOf(t)>=0; }
+function cmSave(){ try{ sessionStorage.setItem(CMKEY,JSON.stringify({period:CMPER,tenure:CMTEN})); }catch(e){} }
+function cmStored(){
+  try{
+    var j=JSON.parse(sessionStorage.getItem(CMKEY)||'null');
+    if(j&&cmValidPeriod(j.period)&&cmValidTenure(j.tenure)) return j;
+  }catch(e){}
+  return null;
+}
+function cmReset(){
+  CMPER='current'; CMTEN='all'; CMBUSY=false; CMNOPUB=null; CMSEQ++; CMC={d:null,busy:false,err:null,tl:'',key:'',seq:CMC.seq+1};
+  try{ sessionStorage.removeItem(CMKEY); }catch(e){}
+}
+/* the first paint after sign-in: the plain overview is already in D; a remembered period or tenure is asked for now */
+function cmOpen(){
+  CMPER='current'; CMTEN='all'; CMBUSY=false; CMNOPUB=null;
+  var s=cmStored();
+  if(s&&(s.period!=='current'||s.tenure!=='all')) return cmAsk(s.period,s.tenure);
+  return cmView();
+}
+function cmAsk(period,tenure){
+  if(!cmValidPeriod(period)||!cmValidTenure(tenure)) return Promise.resolve();
+  var prevP=CMPER, prevT=CMTEN, seq=++CMSEQ;
+  CMPER=period; CMTEN=tenure; CMBUSY=true; cmSave();
+  render();
+  return api('/api/portal/overview?period='+encodeURIComponent(period)+'&tenure='+encodeURIComponent(tenure)).then(function(r){
+    if(seq!==CMSEQ) return;   // a newer choice is already on its way
+    CMBUSY=false;
+    if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} cmReset(); return loginScreen('Your session has expired. Please sign in again.'); }
+    if(r.status===404&&r.json&&r.json.error==='period_not_published'){ CMNOPUB=r.json; render(); return; }
+    if(!r.ok||!r.json||r.json.scope!=='campaign'){
+      CMPER=prevP; CMTEN=prevT; cmSave(); CMNOPUB=null;
+      toast('That selection could not be opened — '+((r.json&&r.json.error)||'please try again in a minute.'),5000);
+      render(); return;
+    }
+    CMNOPUB=null; D=r.json; TEAM=D; render();
+  });
+}
+function cmMonthLabel(key){
+  var m=/^(\d{4})-(\d{2})$/.exec(String(key));
+  return m?(LONG_MONTHS[+m[2]-1]||m[2])+' '+m[1]:String(key);
+}
+function cmPeriodOptions(){
+  var ps=D&&D.periods; if(!ps) return null;
+  var opts=[['current','Current month']];
+  var cy=(ps.cycles||[]);
+  var done=cy.filter(function(x){return x.complete;}).sort(function(x,y){return x.key<y.key?1:(x.key>y.key?-1:0);});
+  var prog=cy.filter(function(x){return !x.complete;});
+  done.concat(prog).forEach(function(x){ opts.push([x.key,'Billing month '+x.label+(x.complete?'':' (in progress)')]); });
+  (ps.months||[]).forEach(function(m){ opts.push([m,cmMonthLabel(m)]); });
+  if(!opts.some(function(o){return o[0]===CMPER;})) opts.push([CMPER,CMPER]);
+  return opts;
+}
+function cmTenLabel(key){ return key==='all'?'All tenures':(key==='unset'?'Tenure not set':String(key)); }
+/* the tenures present on the selected campaign (or on any, for "All campaigns") — null for a payload that predates them */
+function cmTenureKeys(c){
+  var cs=(c.key==='all')?((D.cm&&D.cm.campaigns)||[]):[c], seen={}, out=[], any=false;
+  cs.forEach(function(x){ if(x.tenures){ any=true; x.tenures.forEach(function(t){ if(!seen[t.key]){ seen[t.key]=1; out.push(t.key); } }); } });
+  if(!any) return null;
+  if(!seen[CMTEN]&&CMTEN!=='all') out.push(CMTEN);
+  return out;
+}
+function cmSelect(id,label,opts,cur){
+  return '<select class="ctrl" id="'+id+'" aria-label="'+esc(label)+'">'+opts.map(function(o){
+    return '<option value="'+esc(o[0])+'"'+(o[0]===cur?' selected':'')+'>'+esc(o[1])+'</option>';
+  }).join('')+'</select>';
+}
+function cmPeriodSelect(){ var o=cmPeriodOptions(); return o?cmSelect('cmPeriod','Period',o,CMPER):''; }
+function cmTenureSelect(c){
+  var keys=cmTenureKeys(c); if(!keys) return '';
+  return cmSelect('cmTenure','Tenure',[['all',cmTenLabel('all')]].concat(keys.map(function(k){return [k,cmTenLabel(k)];})),CMTEN);
+}
+/* "Courtesy · M1 · 26 Aug – 25 Sep 2026" — what the numbers on screen are, stated */
+function cmSelectionLine(c){
+  var per=(CMNOPUB&&CMNOPUB.period&&CMNOPUB.period.label)||prettyPeriod();
+  return c.label+' · '+cmTenLabel(CMTEN)+' · '+per;
+}
+function cmSliceEmpty(c){
+  return CMTEN!=='all'&&(!(c.agents>0)||!c.teams||!c.teams.length);
+}
+/* a card in place of the numbers: loading, a period nobody has built yet, or a slice with no agents */
+function cmGateCard(c){
+  if(CMBUSY) return '<div class="card"><p class="why">Loading '+esc(cmSelectionLine(c))+'…</p></div>';
+  if(CMNOPUB){
+    var lab=(CMNOPUB.period&&CMNOPUB.period.label)||'That period';
+    return '<div class="card"><h3>'+esc(lab)+' is not published yet</h3><p class="why">'
+      +esc(CMNOPUB.message||'It has not been built yet — the 15-minute refresh builds it. Choose another period, or check back shortly.')+'</p></div>';
+  }
+  if(cmSliceEmpty(c))
+    return '<div class="card"><p class="why">No '+(CMTEN==='unset'?'agents without a tenure set':esc(CMTEN)+' agents')+' on '
+      +(c.key==='all'?'your campaigns':esc(c.label))+' in this period.</p></div>';
+  return '';
+}
+
+/* ---------- Team leaders' coaching (spec 001, US4; contract C3) ----------
+   The manager's own page: every team leader of their campaigns with the coaching the Hub holds for them, and the
+   sessions of the one picked. The Worker serves a stored copy (kv:coaching), so the page states the copy's age. */
+var COACH_HUB_URL='https://coaching-hub-psi.vercel.app/';
+var CMC={d:null,busy:false,err:null,tl:'',key:'',seq:0};
+function cmCoachLoad(force){
+  var key=CMPER+'|'+CMC.tl;
+  if(!force&&CMC.key===key&&(CMC.d||CMC.err||CMC.busy)) return Promise.resolve();
+  var seq=++CMC.seq; CMC.key=key; CMC.busy=true; CMC.err=null;
+  var path='/api/portal/cm-coaching?period='+encodeURIComponent(CMPER)+(CMC.tl?'&tl='+encodeURIComponent(CMC.tl):'');
+  var tlAsked=CMC.tl;
+  return api(path).then(function(r){
+    if(seq!==CMC.seq) return;
+    CMC.busy=false;
+    if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} cmReset(); return loginScreen('Your session has expired. Please sign in again.'); }
+    if(r.ok&&r.json&&Array.isArray(r.json.leaders)){ CMC.d=r.json; CMC.err=null; }
+    else {
+      CMC.d=null;
+      CMC.err=r.status===403?'This page is only for campaign managers.'
+        :r.status===404?(tlAsked?'That team leader is not on your campaigns, or has no coaching copy yet.'
+                              :'The Coaching Hub copy has not been published yet — it refreshes overnight, so please check back later.')
+        :r.status===0?((r.json&&r.json.error)||'We could not reach the server. Check your connection and try again.')
+        :'We could not load the coaching just now'+((r.json&&r.json.error)?' ('+r.json.error+')':'')+'. Please try again in a minute.';
+    }
+    if(VIEW==='cm_coach') render();
+  });
+}
+function cmCoachPick(name){
+  CMC.tl=String(name||'');
+  var p=cmCoachLoad(true);    // a user action always asks again
+  if(VIEW==='cm_coach'&&D&&D.scope==='campaign') render();
+  return p;
+}
+function cmCoachPage(){
+  var title='<h3>'+esc('Team leaders\' coaching')+'</h3>';
+  var hub=CMC.d&&/^https:\/\//.test(String(CMC.d.hubUrl||''))?CMC.d.hubUrl:COACH_HUB_URL;
+  var link='<p class="why"><a href="'+esc(hub)+'" target="_blank" rel="noopener noreferrer">Open the Coaching Hub ↗</a></p>';
+  if(CMC.err) return '<div class="card">'+title+'<p class="why">'+esc(CMC.err)+'</p>'
+    +'<p><button class="btn" id="cmCoachRetry">Try again</button></p>'+link+'</div>';
+  var d=CMC.d;
+  if(!d) return '<div class="card">'+title+'<p class="why">Loading the coaching…</p>'+link+'</div>';
+  var band='<div class="cm-band'+(d.stale?' warn':'')+'">Coaching Hub copy from '+esc(cmDate(d.fetchedAt))+', '+num(Math.round(d.ageHours||0))+' h old'
+    +(d.stale?' — older than expected, so the newest sessions may be missing':'')+'</div>';
+  var per=(d.period&&d.period.label)?d.period.label:'this period';
+  /* some Hub pulls failed on the last refresh: say so for the leader on screen (leaders[i].incomplete / .stale, or the top-level incomplete[]) */
+  var warn='';
+  if(d.tl&&!(CMC.busy&&d.tl!==CMC.tl)){
+    var lead=null; (d.leaders||[]).forEach(function(l){ if(l.name===d.tl) lead=l; });
+    var top=Array.isArray(d.incomplete)&&d.incomplete.indexOf(d.tl)>=0;
+    if(top||(lead&&(lead.incomplete||lead.stale)))
+      warn='<div class="cm-band warn">Some of '+esc(d.tl)+'\'s sessions could not be fetched from the Coaching Hub on the last refresh.</div>';
+  }
+  var leaders='<div class="card">'+title
+    +'<p class="why">Each team leader on your campaigns and the coaching recorded for them in '+esc(per)+'. Pick a leader to see the sessions.</p>'
+    +'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Team leader</th><th class="l">Campaign</th><th>Sessions</th><th>Agents coached</th><th>Last session</th></tr></thead><tbody>'
+    +(d.leaders||[]).map(function(l){
+      return '<tr><td class="l"><button class="lnk" data-cmtl="'+esc(l.name)+'"><b>'+esc(l.name)+'</b></button>'
+        +(d.tl&&d.tl===l.name?' <span class="mini b">selected</span>':'')+'</td>'
+        +'<td class="l">'+esc(l.campaign||'—')+'</td><td class="num">'+num(l.sessions)+'</td><td class="num">'+num(l.agentsCoached)+'</td>'
+        +'<td class="num sub2">'+(l.last?esc(String(l.last).slice(0,10)):'—')+'</td></tr>';
+    }).join('')+'</tbody></table></div>'
+    +(d.tl?'<p><button class="btn" id="cmCoachAll">Show all leaders</button></p>':'')+link+'</div>';
+  var sessions='';
+  if(CMC.busy&&CMC.tl&&d.tl!==CMC.tl){
+    sessions='<div class="card"><p class="why">Loading '+esc(CMC.tl)+'\'s sessions…</p></div>';
+  } else if(d.tl){
+    var ss=(d.sessions||[]).slice().sort(function(x,y){ return String(x.date)<String(y.date)?1:(String(x.date)>String(y.date)?-1:0); });
+    sessions='<div class="card"><h3>'+esc(d.tl)+' — sessions <span class="cnt">'+num(ss.length)+'</span></h3>'
+      +(ss.length?'<div class="scroller"><table class="tbl"><thead><tr><th class="l">Date</th><th class="l">Agent</th><th class="l">Type</th><th class="l">Themes</th><th class="l">Support provided</th></tr></thead><tbody>'
+        +ss.map(function(x){
+          return '<tr><td class="l">'+esc(String(x.date||'').slice(0,10))+'</td>'
+            +'<td class="l"><b>'+esc(x.agentName)+'</b>'+(x.cb?' <span class="sub2">'+esc(x.cb)+'</span>':'')
+            +(x.onList===false?' <span class="mini n">agent not on the list</span>':'')+'</td>'
+            +'<td class="l">'+esc(x.type||'—')+'</td>'
+            +'<td class="l">'+((x.themes&&x.themes.length)?x.themes.map(esc).join(', '):'—')+'</td>'
+            +'<td class="l">'+(x.supportProvided?esc(x.supportProvided):'—')+'</td></tr>';
+        }).join('')+'</tbody></table></div>'
+       :'<p class="why">No coaching sessions logged for '+esc(d.tl)+' in '+esc(per)+'.</p>')
+      +'</div>';
+  }
+  return band+warn+leaders+sessions;
+}
+
 /* ---------- the shell for the four pages ---------- */
 function cmView(){
   TEAM=D;
@@ -4535,19 +4929,32 @@ function cmView(){
     +(cs.length>1?'<select class="ctrl" id="cmSel">'+cs.map(function(x){
         return '<option value="'+esc(x.key)+'"'+(x.key===c.key?' selected':'')+'>'+esc(x.label)+'</option>';
       }).join('')+'</select>':'')
-    /* The period comes from the digest, never from a hardcoded string: the payload
-       states what it covers, and printing "this month so far" over a payload that
-       covered something else is how a wrong number becomes an unnoticed one. */
-    +'<span class="ctrl">'+esc(prettyPeriod())+'</span>'
+    +cmTenureSelect(c)+cmPeriodSelect()
+    /* The selection is stated from the payload, never from a hardcoded string: it says which campaign, tenure and
+       period the numbers are, and printing "this month so far" over a payload that covered something else is how a
+       wrong number becomes an unnoticed one. */
+    +'<span class="ctrl" id="cmSelection">'+esc(cmSelectionLine(c))+'</span>'
     +'<button class="btn" id="cmEod">EOD report</button>';
-  var subs={cm:'Sales, team leaders and what is blocking them',
+  var subs={cm:'Sales, team leaders and where they need help',
+    cm_mtd:'Month to date for your campaigns — the table management reads, one table per campaign',
+    cm_daily:'Day-by-day detail for your campaigns — the daily table management reads',
+    cm_weekly:'Your campaigns, week by week — the same weeks management reports on',
+    cm_coach:'Each team leader\'s coaching, from the Coaching Hub',
     cm_teams:'One row per team leader — the number, the blockage and the next action',
     cm_assist:'Every request, its clock, its owner and its evidence',
     cm_nik:'One fact, one explanation, one next action',
     cm_variance:'Salesforce against the agent-logged board, per agent per day — your campaigns only',
     cm_leads:'The lead funnel per team leader and per agent — your campaigns only',
     cm_set:'The targets each campaign is measured against — set here, applied everywhere'};
-  var body=VIEW==='cm_teams'?cmTeamsPage(c)
+  /* a loading / not-published / empty-slice card replaces every figure (never a stale number under a new label);
+     the target settings and the coaching page do not depend on the slice */
+  var gate=(VIEW==='cm_set'||VIEW==='cm_coach')?'':cmGateCard(c);
+  var body=gate?gate
+    :VIEW==='cm_teams'?cmTeamsPage(c)
+    :VIEW==='cm_mtd'?pageMTD()
+    :VIEW==='cm_daily'?pageDailyTeam()
+    :VIEW==='cm_weekly'?pageWeeklyTeam()
+    :VIEW==='cm_coach'?cmCoachPage()
     :VIEW==='cm_variance'?pageCmReport('variance')
     :VIEW==='cm_leads'?pageCmReport('leads')
     :VIEW==='cm_assist'?cmAssistPage()
@@ -4566,6 +4973,17 @@ function cmView(){
     VIEW,right);
   var out=$('out'); if(out) out.onclick=signOut;
   var selEl=$('cmSel'); if(selEl) selEl.onchange=function(){ CMSEL=selEl.value; CMEXP={}; render(); };
+  var tenEl=$('cmTenure'); if(tenEl) tenEl.onchange=function(){ cmAsk(CMPER,tenEl.value); };
+  var perEl=$('cmPeriod'); if(perEl) perEl.onchange=function(){ cmAsk(perEl.value,CMTEN); };
+  /* Team leaders' coaching: the page asks for its own copy the first time it is opened (and again on a new period) */
+  if(VIEW==='cm_coach'){
+    cmCoachLoad(false);
+    Array.prototype.forEach.call(document.querySelectorAll('[data-cmtl]'),function(b){
+      b.onclick=function(){ cmCoachPick(b.getAttribute('data-cmtl')); };
+    });
+    var cAll=$('cmCoachAll'); if(cAll) cAll.onclick=function(){ cmCoachPick(''); };
+    var cRt=$('cmCoachRetry'); if(cRt) cRt.onclick=function(){ cmCoachLoad(true); render(); };
+  }
   var eod=$('cmEod'); if(eod) eod.onclick=function(){
     eod.disabled=true; eod.textContent='Building…';
     api('/api/portal/cm/eod').then(function(r){
@@ -5076,6 +5494,8 @@ function coachTeamHTML(c){
 /* "1 – 31 August" rather than "2026-08-01 to 2026-08-31". The ISO form is how
    the data is stored; it is not how anyone reads a month. */
 function prettyPeriod(){
+  /* the manager can look at a billing month or a past month; the Worker names the period it served */
+  if(D&&D.scope==='campaign'&&D.period&&D.period.label) return D.period.label;
   /* THE RANGE ENDS WHERE THE DATA ENDS, not where the calendar month does (Nick,
      2026-08-26). The digest's period is the whole month (1–31 August), but figures only
      exist up to the last uploaded day — printing "31 August" over 25 days of data reads
@@ -5473,19 +5893,20 @@ function agentKpis(a,c){
      period target as the daily target summed over the agent's own employed shifts, so those
      shifts are what turns it back into a daily figure. */
   var perDayTarget=(a.target&&a.emp)?a.target/a.emp:((a.target&&DAYS())?a.target/DAYS():null);
+  var st=agentKpiStates(a);   // the SAME six states the team leader's Month to date chips read
   var tiles='<div class="ac-tiles">'
     +acTile('TARGET ACHIEVED', a.pctT==null?'—':pct(a.pctT,0),
         num(a.spd,2)+' sales a day'+(perDayTarget?' · target '+num(perDayTarget,1)+'/day':''),
-        drillState(a,'ta'),'ta')
-    +acTile('PREMIUM WRITTEN (EX VAT)', R(a.gwpEx), 'What your commission is worked out on — ex VAT', a.gwpEx>0?'pass':'none')
+        st.ta,'ta')
+    +acTile('PREMIUM WRITTEN (EX VAT)', R(a.gwpEx), 'What your commission is worked out on — ex VAT', st.gwp)
     +acTile('AVERAGE SALE (EX VAT)', a.aveG==null?'—':R(a.aveG), 'What a typical sale of yours is worth, ex VAT',
-        drillState(a,'aveG'),'aveG')
+        st.aveG,'aveG')
     +acTile('QA SCORE', a.qa==null?'—':pct(a.qa,0), 'Your average call quality this month',
-        drillState(a,'qa'),'qa')
+        st.qa,'qa')
     +acTile('ATTENDANCE', a.att==null?'—':pct(a.att,0),
         num(a.act,a.act%1?1:0)+' of '+num(a.emp,a.emp%1?1:0)+' days attended',
-        drillState(a,'att'),'att')
-    +acTile('REFERRALS', num(a.ref), 'People you sent through to the team', a.ref>0?'pass':'none')
+        st.att,'att')
+    +acTile('REFERRALS', num(a.ref), 'People you sent through to the team', st.ref)
     +'</div>';
   return head+tiles;
 }

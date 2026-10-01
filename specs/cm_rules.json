@@ -1,0 +1,12 @@
+{
+  "_comment": "Campaign-manager rule book (spec 001-cm-view-signoff). The RECORD for the talk-time targets the Campaign tab judges against. The operative copy is CM_RULES in worker/src/campaign.mjs — change both together; nicks_code/diagnostics/verify-cm-signoff-worker.mjs (section G) fails on drift. A live per-campaign override in the cm:targets row (sla.<campaign>.talk_target, the Settings page) still wins over these. Units: minutes of talk time per worked day.",
+  "talk_target_min_by_campaign": { "courtesy": 300, "cuddle": 270 },
+  "talk_target_min_default": 210,
+  "_changes": [
+    {
+      "date": "2026-10-01",
+      "what": "talk_target_min_by_campaign added: Courtesy 300 minutes, Cuddle 270 minutes; every other campaign stays on talk_target_min_default (210 minutes, the previous single target for all campaigns).",
+      "why": "CM sign-off list: average talk time target 5 hours Courtesy, 4.5 hours Cuddle"
+    }
+  ]
+}
