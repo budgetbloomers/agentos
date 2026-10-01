@@ -1334,7 +1334,7 @@ async function confirmLoad(){
   // sitting open and the confirmation silent for seconds on a big export. The cloud work
   // continues below in the background and reports its own outcome when it lands.
   closeModal();
-  toast(loadMsg(srcKey,res),res.rejects&&!res.loaded?'err':'ok');
+  toast(loadMsg(srcKey,res),(res.rejects&&!res.loaded)||res.batch.register_note?'err':'ok',res.batch.register_note?20000:0);
   // Kick off persistence BEFORE re-rendering: a throw anywhere in render() must never be
   // able to skip the cloud save. Order inside matters — pushBI stamps batch.storage_path,
   // so it has to finish before saveAudit writes the batch record.
@@ -1354,6 +1354,34 @@ async function confirmLoad(){
    the source's supersede rule. Called once from applyLoad and again by saveFacts when a
    compare-and-set save loses — every rule here is keyed, so applying a batch twice is the same
    as applying it once. Returns the (possibly deduped) loaded rows and the batch counters. */
+/* THE ATTENDANCE REGISTER'S OWN DAYS (2026-10-01) — the same test PULSE applies (attDayIsRegister):
+   a day is a register day when somebody on it carries a $presentCodes code, or the register lists a
+   real share of the floor (≥ max(3, 10% of the roster)). From 21 Sep the HR export filed one agent's
+   maternity leave on every day to the month's end while nobody else was captured; "the newest row"
+   then anchored Workforce's This week / Last week on weeks holding nothing but that leave. */
+function attRegisterDays(rows){
+  const P=new Set((resolveRule('$presentCodes')||[]).map(x=>String(x).trim().toUpperCase()));
+  const floor=Math.max(3,Math.ceil(0.1*(Object.keys(state.cbInfo||{}).length||0)));
+  const by={};
+  (rows||[]).forEach(r=>{const d=r._d;if(!d)return;const o=by[d]=by[d]||{n:0,p:false};o.n++;if(P.has(String(r.status_code||'').trim().toUpperCase()))o.p=true});
+  return Object.keys(by).filter(d=>by[d].p||by[d].n>=floor).sort();
+}
+function attAnchorDay(){const ds=attRegisterDays(state.facts.ATTENDANCE||[]);return ds.length?ds[ds.length-1]:null}
+/* NEVER SILENT (2026-10-01): where an attendance file's register ends against the end it claims (the
+   last date in its name, else its last row; never past today). Rows after the register end are leave
+   filed ahead — read and kept, but not a register — and the load message says so, naming the dates. */
+function attRegisterNote(file,loaded){
+  const reg=attRegisterDays(loaded),regEnd=reg.length?reg[reg.length-1]:null;
+  const rowEnd=loaded.reduce((m,r)=>r._d&&r._d>m?r._d:m,'');
+  let bound=(String(file&&file.name||'').match(/\d{4}-\d{2}-\d{2}/g)||[]).pop()||rowEnd;
+  const today=isoDay(new Date());if(bound&&bound>today)bound=today;
+  if(!loaded.length)return '';
+  if(!regEnd)return '⚠ no day in this file is a register day (nobody marked present on any day)';
+  if(!bound||bound<=regEnd)return '';
+  const after=loaded.filter(r=>r._d&&r._d>regEnd&&r._d<=bound).length;
+  return '⚠ the register stops at '+regEnd+' although the file runs to '+bound+': its '+after.toLocaleString()+' row(s) after '+regEnd
+    +' are leave or absence filed ahead (nobody marked present), so HR has not captured those days yet — Workforce weeks anchor on '+regEnd;
+}
 function mergeIntoStore(srcKey,file,loaded,batch){
   const spec=SOURCES[srcKey];
   let replaced=0,fullerDays=0;
@@ -1366,6 +1394,7 @@ function mergeIntoStore(srcKey,file,loaded,batch){
   }
   else{let prev=state.facts[srcKey]||[];
     if(srcKey==='ATTENDANCE'&&loaded.length){
+      const rn=attRegisterNote(file,loaded);if(rn)batch.register_note=rn;   // said on the load message (loadMsg), kept on the batch
       // Monthly register uploads: append across months, but the NEW file wins per
       // employee-day — a corrected or overlapping export (e.g. month-to-date then
       // full month) must never double-count days in the attendance denominators.
@@ -1531,7 +1560,8 @@ function loadMsg(srcKey,r){
    +(r.refreshed?' · same file re-uploaded — refreshed its '+r.refreshed.toLocaleString()+' previous row(s) in place':'')
    +(r.replaced?' · '+r.replaced.toLocaleString()+(srcKey==='BI_ACTIVE_CASES'?' row(s) replaced for '+(r.batch.superseded_range||'this period')+' — other months kept':' overlapping row(s) superseded by this file — nothing double-counted'):'')
    +(r.fullerDays?' · '+r.fullerDays.toLocaleString()+' row(s) skipped — an earlier file already covers those day(s) more fully':'')
-   +(r.rejects?' · '+r.rejects+' rejected → exceptions':'');
+   +(r.rejects?' · '+r.rejects+' rejected → exceptions':'')
+   +(r.batch.register_note?' · '+r.batch.register_note:'');
 }
 
 /* ---------------- BULK INTAKE — drop a whole day's exports at once ----------------
@@ -3769,7 +3799,8 @@ function pageWF(win){
   if(!hasData())return emptyState('Workforce needs the attendance export');
   const att=rowsFor('ATTENDANCE',win);
   /* ---- WoW / MoM movement + attrition (calendar windows off the latest data day; roster filters apply, date filter does not) ---- */
-  const A0=(()=>{let m=null;(state.facts.ATTENDANCE||[]).forEach(r=>{if(r._d&&(!m||r._d>m))m=r._d});return m||isoDay(anchorDate())})();
+  /* anchored on the last REGISTER day (attAnchorDay, 2026-10-01) — never on a leave row filed ahead */
+  const A0=attAnchorDay()||(()=>{let m=null;(state.facts.ATTENDANCE||[]).forEach(r=>{if(r._d&&(!m||r._d>m))m=r._d});return m||isoDay(anchorDate())})();
   const monOf=k=>{const d=new Date(k+'T00:00:00');d.setDate(d.getDate()-((d.getDay()+6)%7));return isoDay(d)};
   const addD=(k,n)=>{const d=new Date(k+'T00:00:00');d.setDate(d.getDate()+n);return isoDay(d)};
   const mStart=k=>k.slice(0,8)+'01';

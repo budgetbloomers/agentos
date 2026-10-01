@@ -127,6 +127,13 @@
     box-shadow:0 8px 24px rgba(2,8,20,.45);
   }
   @supports not (backdrop-filter: blur(1px)){ header.top{ background:var(--bg1); } }
+  /* NO FILTER BAR ON THE UPLOAD STATION (2026-10-01, Nick's screenshot: the sticky bar sat over the
+     first lines of every slot card). Period, as-at, campaign, team, search and Export report filter
+     REPORTS; none of them touches an upload. renderPage sets .filters-off on the Upload Station only.
+     Desktop drops the bar (the sidebar foot keeps its Collapse arrow); a phone keeps the bar for its
+     menu button alone, unstuck, because that button is the only way to open the off-canvas sidebar. */
+  header.top.filters-off{display:none}
+  header.top.filters-off+#vasTrust{padding:14px 22px 0}
   .search{
     display:flex;align-items:center;gap:8px;background:var(--glass);border:1px solid var(--stroke);
     /* shrinks BEFORE the filters do — a search box that is 60px narrower still works,
@@ -362,18 +369,35 @@
   .covday .dots{display:flex;gap:2.5px;justify-content:center;margin-top:3px}
   .covday .dots i{width:5px;height:5px;border-radius:99px;background:var(--stroke)}
   .covday .dots i.s{background:var(--accent)} .covday .dots i.c{background:var(--cuddle)} .covday .dots i.a{background:var(--amber)} .covday .dots i.q{background:var(--courtesy)}
-  .slots{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(285px,1fr));margin-bottom:14px}
-  .slot{border:1.5px dashed var(--stroke2);border-radius:var(--r);background:var(--glass);padding:15px 16px;
-    cursor:pointer;transition:border-color .15s,background .15s,transform .13s;display:flex;flex-direction:column;gap:7px}
+  /* UPLOAD STATION CARDS (tidied 2026-10-01 from Nick's screenshot of the live page: uneven cards,
+     long help paragraphs, "Choose file" wrapping onto two lines, footers in a different order on
+     every card). Each row of the grid is one height (stretch). The header is one row — icon, title,
+     Choose file on the right and never wrapped. The help text is clamped to two lines behind a
+     More/Less button (wireSlotDescs hides the button where the text already fits). Every card ends
+     in ONE footer, in one order: count chip + what the files cover, the last upload, any warning,
+     and the status chip on the BOTTOM line — the bottoms of equal-height cards line up, so the
+     statuses of a row sit side by side. */
+  .slots{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(285px,1fr));align-items:stretch;margin-bottom:14px}
+  .slot{border:1.5px dashed var(--stroke2);border-radius:var(--r);background:var(--glass);padding:14px 16px;min-width:0;
+    cursor:pointer;transition:border-color .15s,background .15s,transform .13s;display:flex;flex-direction:column;gap:8px}
   .slot:hover,.slot.over{border-color:var(--accent);background:var(--glass2);transform:translateY(-2px)}
-  .slot .shead{display:flex;align-items:center;gap:10px}
-  .slot .shead .kic{width:30px;height:30px}
-  .slot .shead b{font-size:13.5px}
-  .slot .sdesc{font-size:12px;color:var(--muted);line-height:1.45}
-  .slot .sstat{font-size:11.5px;margin-top:auto;padding-top:6px;border-top:1px solid var(--grid-line);color:var(--ink2);display:flex;gap:4px 6px;align-items:center;flex-wrap:wrap;min-height:30px}
-/* the last-upload stamp sits at the far right of the slot footer: it answers "did my file go in?", which the coverage span cannot, and must not compete with it for attention */
-.sstat .smuted{flex-basis:100%;color:var(--muted);opacity:.85;font-size:11px}  /* own line — nowrap+auto-margin overflowed the card when the middle span was long (Agent List, 1 Sep) */
-  .slot .sstat .pill{font-size:10.5px}
+  .slot .shead{display:flex;align-items:center;gap:10px;min-height:38px}
+  .slot .shead .kic{width:30px;height:30px;flex:none}
+  .slot .shead b{font-size:13.5px;line-height:1.3;flex:1;min-width:0}
+  .slot .shead .spick{flex:none;white-space:nowrap}
+  .slot .sdesc{font-size:12px;color:var(--muted);line-height:1.45;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}
+  .slot .sdesc.open{display:block;-webkit-line-clamp:none;line-clamp:none;overflow:visible}
+  .slot .sdesc-more{align-self:flex-start;margin-top:-5px;border:none;background:none;padding:1px 3px;border-radius:5px;color:var(--accent);font-size:11.5px;font-weight:650;cursor:pointer}
+  .slot .sdesc-more:hover{text-decoration:underline}
+  .slot .sdesc-more[hidden]{display:none}
+  .slot .sfoot{margin-top:auto;padding-top:8px;border-top:1px solid var(--grid-line);display:flex;flex-direction:column;gap:5px;font-size:11.5px;color:var(--ink2);min-width:0}
+  .slot .sfoot>div{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;min-width:0}
+  .slot .sfoot .pill{font-size:10.5px}
+  /* the last-upload stamp answers "did my file go in?", which the coverage span cannot — its own muted line, never squeezed beside it (Agent List, 1 Sep) */
+  .slot .sf-last,.slot .sfoot .smuted{color:var(--muted);font-size:11px}
+  .slot .sf-status .pill{white-space:normal;text-align:left;line-height:1.3;border-radius:9px}
+  .slot .att-upload-warn{display:block;flex:1 1 100%;white-space:normal;text-align:left;line-height:1.35;border-radius:8px;padding:6px 9px}
+  #largePick{white-space:nowrap}   /* the full-width Large files card: its button on one line, like the slots' */
   .slot.builtin{border-style:solid;cursor:default}
   .slot.builtin:hover{transform:none;border-color:var(--stroke);background:var(--glass)}
   .formrow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--grid-line)}
@@ -392,6 +416,7 @@
   .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(8px);background:var(--accent-grad);color:#fff;
     border-radius:12px;padding:11px 20px;font-weight:650;z-index:99;box-shadow:var(--shadow-lift);opacity:0;transition:all .22s;max-width:80vw}
   .toast.show{opacity:1;transform:translateX(-50%)}
+  .toast.err{background:var(--crit)}
 
   /* dashboard v2 (reference layout) */
   .greet{margin:2px 0 16px}
@@ -447,6 +472,9 @@
     .app.sideopen aside.side{transform:none}
     main#view{padding:14px}
     header.top{padding:10px 14px}
+    header.top.filters-off{display:flex;position:static;box-shadow:none}
+    header.top.filters-off>:not(#burger){display:none}
+    header.top.filters-off+#vasTrust{padding:0}
   }
 
 /* ===== SUITE UNIFY — one design system across both tabs (matches Ops Analytics) ===== */
@@ -2023,7 +2051,12 @@ function rosterAsOf(name){
 }
 
 let toastTimer=null;
-function toast(msg,ms){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+/* toast(msg, ms) or toast(msg, 'err', ms). The second form was already used by the warnings that
+   matter most (a thin dialler day, a file sent to the lake, a digest that will not publish) while the
+   function only knew the first — 'err' became the duration, and the warning vanished within a
+   millisecond (found 2026-10-01). A warning is red and stays for the time it asked for. */
+function toast(msg,a,b){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  const ms=typeof a==='number'?a:(typeof b==='number'?b:0); t.classList.toggle('err',a==='err');
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),ms||2600); }
 
 /* ================= classification rules ================= */
@@ -2054,13 +2087,61 @@ function attWeight(status){
    somebody on it is marked as working (weight ≥ 0.5) — OR when the register lists a real share of
    the floor even if nobody worked (Heritage Day: everyone marked PH is still a register day, and
    V25a must see it). One or two leave rows filed ahead are neither. */
-function attDayCovered(d){
-  const day=S.att&&S.att[d]; if(!day) return false;
+function attDayIsRegister(day){   // one day's {code: status} — the store's, or one file's own (attUploadReport)
+  if(!day) return false;
   let n=0;
   for(const c in day){ if(attWeight(day[c])>=0.5) return true; n++; }
   return n>=Math.max(3,Math.ceil(0.1*((S.roster||[]).length||0)));
 }
+function attDayCovered(d){ return attDayIsRegister(S.att&&S.att[d]); }
 function attLastDay(){ const ks=Object.keys(S.att||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).sort(); for(let i=ks.length-1;i>=0;i--) if(attDayCovered(ks[i])) return ks[i]; return null; }
+/* WHAT AN ATTENDANCE UPLOAD DID — SAID, NEVER SILENT (2026-10-01). From 21 Sep the daily HR export
+   ("attendance_2025-10-01_to_<date>.csv") was dropped every morning and the slot read "behind —
+   covers 2026-09-18" with no reason: the export had not changed shape — the REGISTER had stopped.
+   After the 18th it carried one or two leave rows a day filed ahead and nobody marked at work, which
+   the 28 Sep rule rightly refuses to call a register day. Nothing said so, so it looked like PULSE
+   had stopped reading the file. Called BEFORE the rows merge: counts the employee-days this file adds
+   and corrects, finds where its OWN register ends (attDayIsRegister on the file's rows alone), and
+   compares that with the end the file claims (the last date in its name, else its last row; never
+   past today). Warns when the upload adds nothing, when the register stops short of the file's own
+   end (naming the working days and the rows filed ahead), or when it carries far fewer rows than
+   the file before it over the same dates (a partial pull). The receipt keeps it (S.files[].warn),
+   the slot shows it, the upload toast carries it, and rule check V27 asks the same of the store. */
+function attUploadReport(byDate,name,rows){
+  const prevLast=attLastDay();
+  let added=0, changed=0;
+  for(const d in byDate){ const old=(S.att&&S.att[d])||{};
+    for(const c in byDate[d]){ if(!(c in old)) added++; else if(String(old[c])!==String(byDate[d][c])) changed++; } }
+  const days=Object.keys(byDate).sort();
+  let regEnd=null; for(let i=days.length-1;i>=0;i--) if(attDayIsRegister(byDate[days[i]])){ regEnd=days[i]; break; }
+  const rowEnd=days.length?days[days.length-1]:null;
+  const named=(String(name||'').match(/\d{4}-\d{2}-\d{2}/g)||[]).pop()||null;
+  let bound=named||rowEnd; const today=dkey(new Date()); if(bound&&bound>today) bound=today;
+  const gap=[]; let gapRows=0;
+  if(regEnd&&bound&&bound>regEnd)
+    for(let d=addDays(regEnd,1); d<=bound; d=addDays(d,1)){
+      if(byDate[d]) gapRows+=Object.keys(byDate[d]).length;
+      const wd=new Date(d+'T00:00:00Z').getUTCDay();
+      if(wd!==0&&wd!==6&&!dataOnlyDay(d)) gap.push(d);   // a working day the register should carry
+    }
+  const advanced=!!regEnd&&(!prevLast||regEnd>prevLast);
+  /* the file before this one: newest by upload time, a same-minute tie goes to the later entry */
+  const prev=(S.files||[]).filter(f=>f.type==='attendance'&&f.name!==name).reduce((a,f)=>!a||String(f.at||'')>=String(a.at||'')?f:a,null);
+  const pd=(prev&&prev.dates)||[];
+  const fewer=!!(prev&&prev.rows>0&&rows<0.5*prev.rows&&days.length&&pd.length&&days[0]<=pd[0]&&rowEnd>=pd[pd.length-1]);
+  const parts=[]; let sev=null;
+  if(!added&&!changed){ parts.push('added no new employee-day — every row in it was already stored, unchanged'); sev='crit'; }
+  if(fewer){ parts.push(fmtNum(rows)+' rows against '+fmtNum(prev.rows)+' in "'+prev.name+'" over the same dates — far fewer rows: a partial or filtered pull? Re-export the full range'); sev='crit'; }
+  if(!regEnd){ parts.push('no day in it is a register day (nobody marked at work on any day)'); sev='crit'; }
+  else if(gap.length){
+    parts.push('it runs to '+bound+' but the register stops at '+regEnd+': the '+gap.length+' working day'+(gap.length>1?'s':'')+' after it carr'+(gap.length>1?'y':'ies')+' only '+fmtNum(gapRows)+' row'+(gapRows===1?'':'s')+' filed ahead (leave or absence — nobody marked at work), so '+(gap.length>1?'they are':'it is')+' not register day'+(gap.length>1?'s':'')
+      +'. HR has not captured '+gap[0]+(gap.length>1?' → '+gap[gap.length-1]:'')+' yet — ask for the register to be completed and re-export'
+      +(advanced?'':'. This upload did not move the register (it still ends '+(prevLast||regEnd)+')'));
+    if(!sev) sev=advanced?'warn':'crit';
+  }
+  return { att:{added,changed,regEnd,bound,gapDays:gap.length,gapRows,advanced}, warn:parts.length?'"'+name+'": '+parts.join('; ')+'.':null, warnSev:sev };
+}
+let __uploadWarns=[];   // this batch's per-file warnings — the batch's closing toast must carry them, not paint over them
 function isOptIn(disp){
   const s=(disp||'').toLowerCase();
   return s.includes('insurance opt') && !s.includes('no insurance');
@@ -2571,7 +2652,8 @@ const INGEST={
     const thin=[]; { const ns=Object.keys(S.callsMeta).filter(d=>!stored.includes(d)).sort().slice(-12).map(d=>S.callsMeta[d].n||0).filter(n=>n>0).sort((a,b)=>a-b);
       const med=ns.length?ns[Math.floor(ns.length/2)]:0;
       if(med>=1000) for(const d of stored){ const n=(S.callsMeta[d]||{}).n||0; if(n<med*0.2) thin.push(d+' ('+fmtNum(n)+' calls)'); }
-      if(thin.length) toast('ViciDial day'+(thin.length>1?'s':'')+' '+thin.join(', ')+' in "'+name+'" '+(thin.length>1?'are':'is')+' far below the floor’s usual '+fmtNum(med)+' calls a day. Agents with no dialler time read as NOT WORKED — if this is a partial pull, re-export the whole day with every user group ticked and drop it here; the fuller file replaces this one.','err',20000); }
+      if(thin.length){ const tm='ViciDial day'+(thin.length>1?'s':'')+' '+thin.join(', ')+' in "'+name+'" '+(thin.length>1?'are':'is')+' far below the floor’s usual '+fmtNum(med)+' calls a day. Agents with no dialler time read as NOT WORKED — if this is a partial pull, re-export the whole day with every user group ticked and drop it here; the fuller file replaces this one.';
+        __uploadWarns.push(tm); toast(tm,'err',20000); } }
     if(retired) toast('Call Records (CallX) are retired — '+fmtNum(retired)+' row(s) in "'+name
       +'" were not loaded. The whole floor dials on ViciDial: pull EXPORT_CALL_REPORT '
       +'with every user group ticked and drop it on the ViciDial slot.',12000);
@@ -2598,10 +2680,13 @@ const INGEST={
          so store that and keep the text only as a fallback for exports without the column. */
       (byDate[d]=byDate[d]||{})[code]=r['Status Code']||r['Status']||'';
     }
-    for(const d of dates) S.att[d]=Object.assign(S.att[d]||{}, byDate[d]);
     if(!dates.size) return null;              // stored nothing -> not a load; fail loudly
-    if(nonAgent) toast(nonAgent+' non-agent row(s) excluded from "'+name+'" (Employee Type is not "'+MTD_RULES.attendanceEmployeeType+'")');
-    return regFile(name,'attendance',dates,recs.length,{skip,nonAgent});
+    const rep=attUploadReport(byDate,name,recs.length);   // before the merge: what is NEW is judged against the store as it was
+    for(const d of dates) S.att[d]=Object.assign(S.att[d]||{}, byDate[d]);
+    const na=nonAgent?nonAgent+' non-agent row(s) excluded from "'+name+'" (Employee Type is not "'+MTD_RULES.attendanceEmployeeType+'")':'';
+    if(rep.warn){ __uploadWarns.push('Attendance '+rep.warn); toast('Attendance '+rep.warn+(na?' · '+na:''),'err',20000); }
+    else if(na) toast(na);
+    return regFile(name,'attendance',dates,recs.length,{skip,nonAgent,att:rep.att,...(rep.warn?{warn:rep.warn,warnSev:rep.warnSev}:{})});
   },
   evals(recs,name){
     const dates=new Set(); const byDate={};
@@ -4104,6 +4189,24 @@ function validateMTD(m){
   { const hit=F.filter(f=>f.leaveActive);
     add('V26','warn',!hit.length, hit.length?hit.length+' leave-marked agent-day(s) carry talk or sales, so each kept its shift — correct the register if they worked: '+hit.slice(0,4).map(f=>f.code+' '+f.date+' ('+f.leaveActive+')').join(', ')+(hit.length>4?' +'+(hit.length-4)+' more':'')
       :'no leave-marked day carries talk or sales'); }
+
+  /* V27 — THE REGISTER STOPS SHORT OF THE OTHER SOURCES (2026-10-01). From 21 Sep the daily HR export
+     carried one or two leave rows a day filed ahead and nobody marked at work; the register ended on
+     the 18th while the dialler and BI ran to the 30th, and only the slot's "behind" pill hinted at it.
+     A working day (no Saturday, Sunday or dataOnlyDay) inside the period that the dialler or BI
+     reached and the register does not cover is named here: Cuddle's Actual Shifts on it come from
+     who talked or sold, not from the register the rule book names. A warning — the figures are the
+     safe answer; the register is what is missing (attUploadReport says the same on the upload). */
+  { const last=attLastDay();
+    const ds=[...new Set([...Object.keys(S.calls||{}),...Object.keys(S.sales||{})])]
+      .filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d)&&d>=R.from&&d<=R.to&&(!last||d>last)).sort();
+    const gap=Object.keys(S.att||{}).length?ds.filter(d=>{ const wd=new Date(d+'T00:00:00Z').getUTCDay(); return wd!==0&&wd!==6&&!dataOnlyDay(d); }):[];
+    let filed=0; for(const d of gap) filed+=Object.keys((S.att||{})[d]||{}).length;
+    const nf=(S.files||[]).filter(f=>f.type==='attendance').reduce((a,f)=>!a||String(f.at||'')>=String(a.at||'')?f:a,null);
+    add('V27','warn',!gap.length, gap.length?'the attendance register ends '+last+' while the dialler/BI reach '+gap[gap.length-1]+': '+gap.length+' working day(s) have no register ('
+      +gap.slice(0,4).join(', ')+(gap.length>4?' +'+(gap.length-4)+' more':'')+')'+(filed?' — the '+fmtNum(filed)+' row(s) on them are leave or absence filed ahead, not a register':'')
+      +(nf?'; newest attendance file "'+nf.name+'"':'')+'. Cuddle Actual Shifts on those days come from who talked or sold — ask HR to complete the register and re-export.'
+      :(Object.keys(S.att||{}).length?'the attendance register covers every working day the dialler and BI reach':'no attendance register loaded')); }
 
   /* Campaigns deliberately left out of this dashboard. Reported every build, with the sales
      and GWP they take with them, so "the totals look light" always has an answer on screen. */
@@ -6173,6 +6276,8 @@ const PAGES={};
 function renderPage(){
   const el=$('#view');
   const fn=PAGES[S.ui.tab]||PAGES.dashboard;
+  /* the header's report filters stand down on the Upload Station (see header.top.filters-off) */
+  const tb=$('#topbar'); if(tb) tb.classList.toggle('filters-off',S.ui.tab==='data');
   // skeleton flash for perceived smoothness
   el.innerHTML=`<div class="grid kpis">${Array(4).fill('<div class="skel" style="height:118px"></div>').join('')}</div>
     <div class="grid cols2 mt"><div class="skel" style="height:300px"></div><div class="skel" style="height:300px"></div></div>`;
@@ -7419,6 +7524,8 @@ function exportVariance(){
   toast('Variance workbook exported — values match the screen');
 }
 
+/* which slot cards have their help text opened (More) — kept across the re-renders a data refresh causes */
+const SLOT_DESC_OPEN=new Set();
 PAGES.data=()=>{
   const typeLabel={bi:'Power BI - Active Cases',calls:'Call records — CallX (retired; August history only)',attendance:'Attendance',evals:'QA evaluations',
     roster:'Agent list','open cases':'Open cases — Lead Allocation (removed)','open cases (lead mgmt)':'Open cases — Lead Management','closed cases':'Closed cases (lead funnel)','tracker daily':'Tracker workbook',cancellations:'Cancellations (BI Inactive)','calls (ViciDial)':'ViciDial','vici range':'ViciDial - multi-day aggregate',referrals:'Referrals (HighLevel)',board:'Manual Stats (daily board)'};
@@ -7440,17 +7547,18 @@ PAGES.data=()=>{
     if(d.toDateString()===yday.toDateString()) return 'yesterday '+t;
     return d.toLocaleDateString([],{day:'2-digit',month:'short'})+' '+t;
   };
+  /* a slot's footer parts: `facts` (count chip + what the files cover) and `last` (the newest upload) */
   const statFor=prefixes=>{
     const fs=S.files.filter(f=>prefixes.some(p=>f.type.startsWith(p)));
-    if(!fs.length) return '<span class="pill pmuted">Nothing yet</span>';
+    if(!fs.length) return {facts:'<span class="pill pmuted">Nothing yet</span>'};
     const dates=[...new Set(fs.flatMap(f=>f.dates))].sort();
     const last=fs[fs.length-1];
     /* Newest by upload time, not by registry position — a re-upload rewrites its entry in
        place further up the list, and "last in the array" would then name the wrong file. */
     const newest=fs.reduce((a,b)=>String(b.at||'')>String(a.at||'')?b:a,fs[0]);
-    return `<span class="pill pgood">${fs.length} file${fs.length>1?'s':''}</span>
-      <span title="The days these files cover — not how old they are; the line below says when the newest landed">${dates.length?'covers '+dates[0].slice(5)+' → '+dates[dates.length-1].slice(5)+' ('+dates.length+' day'+(dates.length>1?'s':'')+' of data)':esc(last.name.slice(0,26))}</span>`
-      +(newest&&newest.at?`<span class="smuted" title="${esc(newest.name)} — ${esc(String(newest.rows||0))} rows${(newest.dates||[]).length?', covering '+(newest.dates||[]).length+' day(s) of calls':''}">last upload ${upStamp(newest.at)}</span>`:'');
+    return {facts:`<span class="pill pgood">${fs.length} file${fs.length>1?'s':''}</span>
+      <span class="sf-cov" title="The days these files cover — not how old they are; the line below says when the newest landed">${dates.length?'covers '+dates[0].slice(5)+' → '+dates[dates.length-1].slice(5)+' ('+dates.length+' day'+(dates.length>1?'s':'')+' of data)':esc(last.name.slice(0,26))}</span>`,
+      last:(newest&&newest.at?`<span title="${esc(newest.name)} — ${esc(String(newest.rows||0))} rows${(newest.dates||[]).length?', covering '+(newest.dates||[]).length+' day(s) of calls':''}">last upload ${upStamp(newest.at)}</span>`:'')};
   };
   /* EXPECTED BY (never-stale, 2026-09-15). Each source's slot says the day it should cover right
      now — the same rule the health cron and the digest use (expectedReach: 13:00 SAST carries
@@ -7463,8 +7571,17 @@ PAGES.data=()=>{
     const exp=expectedReach(Date.now(),sat), reach=dataReach()[k];
     const behind=!reach||reach<exp;
     const days=reach?Math.round((Date.parse(exp)-Date.parse(reach))/86400000):null;
-    return `<div class="sstat" style="margin-top:4px"><span class="pill ${behind?'pcrit':'pgood'}" title="The day this source should cover by now: by 13:00 SAST it carries yesterday; there is no Sunday data">${behind?'behind — covers '+(reach||'nothing')+', expected '+exp+(days!=null&&days>0?' ('+days+'d short)':''):'up to date — covers '+exp}</span>${cad.owner?`<span class="smuted">owner ${esc(String(cad.owner))}${cad.grace_hours?' · grace '+esc(String(cad.grace_hours))+'h':''}</span>`:''}</div>`;
+    return `<span class="pill ${behind?'pcrit':'pgood'}" title="The day this source should cover by now: by 13:00 SAST it carries yesterday; there is no Sunday data">${behind?'behind — covers '+(reach||'nothing')+', expected '+exp+(days!=null&&days>0?' ('+days+'d short)':''):'up to date — covers '+exp}</span>${cad.owner?`<span class="smuted">owner ${esc(String(cad.owner))}${cad.grace_hours?' · grace '+esc(String(cad.grace_hours))+'h':''}</span>`:''}`;
   }catch(e){ return ''; } };
+  /* WHY IT IS BEHIND (2026-10-01). The pill above says how far the register reaches; this says what
+     the newest attendance upload actually did, naming the file (attUploadReport) — "behind" with no
+     reason read as PULSE not reading the file for 11 days while the register itself had stopped.
+     It clears the moment a newer upload is clean. */
+  const attSlotWarn=()=>{
+    const n=S.files.filter(f=>f.type==='attendance').reduce((a,f)=>!a||String(f.at||'')>=String(a.at||'')?f:a,null);
+    if(!n||!n.warn) return '';
+    return `<div class="sf-note"><span class="pill ${n.warnSev==='crit'?'pcrit':'pwarn'} att-upload-warn" title="Newest attendance upload — ${esc(String(n.at||''))}">${esc(n.warn)}</span></div>`;
+  };
   const SLOTS=[
     {t:'bi',reach:'sales',icon:I.money,color:'var(--accent)',name:'Power BI - Active Cases',desc:'THE money source. GWP = Σ Charge Amount per account × VAT (charges are ex-VAT); sales are unique accounts, dated by Contract Create Date, agent from Owner. Upload monthly — months accumulate and you can filter to any month.',stat:statFor(['bi','sales'])},
     /* CALL RECORDS (CallX) RETIRED 2026-09-01 (Nick: "there is no longer a need for call
@@ -7472,14 +7589,14 @@ PAGES.data=()=>{
        still loads pre-cutover days (history corrections) and refuses anything on or after
        the cutover with a pointer at the ViciDial slot — same doctrine as Lead Allocation:
        a retired pull must not silently land anywhere. */
-    {t:'attendance',reach:'attendance',icon:I.users,color:'var(--amber)',name:'Attendance',desc:'Attendance register export — shifts, leave, terminations. Exports cap at 1,000 rows, so pull short ranges.',stat:statFor(['attendance'])},
+    {t:'attendance',reach:'attendance',icon:I.users,color:'var(--amber)',name:'Attendance',desc:'Attendance register export — shifts, leave, terminations. Exports cap at 1,000 rows, so pull short ranges.',stat:statFor(['attendance']),warn:attSlotWarn()},
     {t:'evals',reach:'qa',icon:I.shield,color:'var(--good)',name:'QA Evaluations',desc:'CallBi full evaluations export — scores, decisions and coaching categories per call.',stat:statFor(['evals'])},
     {t:'roster',icon:I.grid,color:'var(--violet)',name:'Agent List',desc:'Matrix agent list — team leaders, campaigns, tenure, daily targets, start dates. Replaces the current roster, and the assignments apply to the WHOLE current month the moment it lands.',
       stat:(()=>{const fe=S.rosterEffect;
         const lv=Object.values(S.leavers||{}).filter(a=>a&&a.left&&a.left>=dkey(new Date()).slice(0,7)+'-01').length;
-        return `<span class="pill pgood">${S.roster.length} agents</span>`+(lv?`<span class="pill pmuted" title="Not on the latest Agent List — off every report (Nick, 15 Sep: only the current list counts)">${lv} left this month · off the reports</span>`:'')
-          +(fe?`<span>as of ${esc(String(fe.asOf||''))} · applied to whole of ${esc(String(fe.asOf||'').slice(0,7))}</span>
-            <span class="smuted" title="${esc(String(fe.file||''))}">${fmtNum(fe.moved)} moved · ${fmtNum(fe.fresh)} new · ${fmtNum(fe.left)} left · last upload ${esc(String(fe.at||''))}</span>`:'');})()},
+        return {facts:`<span class="pill pgood">${S.roster.length} agents</span>`+(lv?`<span class="pill pmuted" title="Not on the latest Agent List — off every report (Nick, 15 Sep: only the current list counts)">${lv} left this month · off the reports</span>`:'')
+          +(fe?`<span class="sf-cov">as of ${esc(String(fe.asOf||''))} · applied to whole of ${esc(String(fe.asOf||'').slice(0,7))}</span>`:''),
+          last:fe?`<span title="${esc(String(fe.file||''))}">${fmtNum(fe.moved)} moved · ${fmtNum(fe.fresh)} new · ${fmtNum(fe.left)} left · last upload ${esc(String(fe.at||''))}</span>`:''};})()},
     {t:'inactive',icon:I.alert,color:'var(--rose)',name:'Cancellations (BI Inactive)',desc:'Power BI Inactive export — cancelled contracts, counted per agent by Contract Deactivate Date. This is where the MTD Cancellations and % of Cancellations columns come from. Upload daily; each upload replaces the days it covers, so overlapping pulls never double-count.',stat:statFor(['cancellations'])},
     {t:'vici',reach:'calls',icon:I.phone,color:'var(--cuddle)',name:'ViciDial — all agents',desc:'<b>The one dialler source for the whole floor since 1 Sep 2026</b> — Courtesy and Nesting included, CallX retired. Pull <b>EXPORT_CALL_REPORT</b> (tab-separated .txt) with <b>every user group ticked</b>: an unticked group doesn\'t error, its agents just read as never having dialled. One row per call, dated per call, so any date range splits across its days correctly. Talk time is every call\'s length on the agent\'s CB number; the upload says how much of it is ringing rather than talking. The older <b>Agent Performance Detail</b> is one row per agent for the range in its own "Time range:" line — export that ONE DAY AT A TIME, because a multi-day pull is a single total per agent and cannot be split across days.',stat:statFor(['calls (ViciDial)','vici range'])},
     {t:'board',icon:I.scale,color:'var(--courtesy)',name:'Manual Stats',desc:'The agent-logged daily board that feeds <b>VAS Analytics → Variance Report</b>: Agent Name + Sale 1..Sale 27 (cell value = GWP) + Total Sales / Total GWP / Referrals. <b>One day per sheet, named DD.MM</b> (e.g. 13.08) — re-uploading a day replaces exactly that day, and a workbook of historical DD.MM tabs loads each day separately. Agents match through the Agent List; unmatched names are reported on the Variance page, never guessed.',stat:statFor(['board'])},
@@ -7489,22 +7606,30 @@ PAGES.data=()=>{
        because a point-in-time position cannot be merged); Closed Cases accumulates. */
     {t:'opencasesLM',icon:I.db,color:'var(--accent)',name:'Lead Management — Open Cases',desc:'The open half of the <b>Lead Management</b> funnel — the Salesforce <b>Open Cases</b> export named for Lead Management. A <b>snapshot</b>, so each upload replaces the whole book rather than merging; one row per Case Number, owners matched through the Agent List on the CB number. Open attempts, the attempt-stage pivot and the unique-lead conversion denominator all come from here; closures come from the slot below. <b>Over 30 MB</b> (the export has been ~94 MB since 8 Sep) the drop goes to the <b>Large files</b> card instead and this book follows the newest data-lake snapshot by itself — within ten minutes of the runner loading it, or on the next open of this app.',stat:statFor(['open cases (lead mgmt)'])},
     {t:'closedcases',icon:I.db,color:'var(--good)',name:'Lead Management — Closed Cases',desc:'Feeds <b>Lead Management</b>, together with the Open Cases book above (open attempts come from there, closures from here — one snapshot, two views, which is what keeps Total Allocated equal to Total Open). Salesforce <b>Closed Cases</b> export: total closed, no-feedback, wasted leads and conversion. Keyed on Case Number and dated on Date/Time Closed, so pulls <b>accumulate</b> instead of replacing. Note: a Salesforce .xls that is a frameset shell carries no rows and is refused rather than counted as zero.',stat:statFor(['closed cases'])},
-    {t:'referrals',icon:I.grid,color:'var(--violet)',name:'Referrals (HighLevel)',desc:'Referrals pull themselves from HighLevel through the API Worker — automatically on sign-in, or <button class="btn small" onclick="event.stopPropagation();window.__hlSyncVAS&&__hlSyncVAS()" style="vertical-align:1px">⟳ Sync now</button> — and a CSV drop still works. Agents are matched THROUGH THE AGENT LIST (employee code, then the roster name index); unmatched names are counted and reported, never invented. Counts are referral blocks per contact (one referrer can carry up to five), so totals can exceed rows. While loaded, keyed referral adjustments are ignored — one source, never both.',
+    {t:'referrals',icon:I.grid,color:'var(--violet)',name:'Referrals (HighLevel)',desc:'Referrals pull themselves from HighLevel through the API Worker — automatically on sign-in, or with <b>Sync now</b> below — and a CSV drop still works. Agents are matched THROUGH THE AGENT LIST (employee code, then the roster name index); unmatched names are counted and reported, never invented. Counts are referral blocks per contact (one referrer can carry up to five), so totals can exceed rows. While loaded, keyed referral adjustments are ignored — one source, never both.',
       /* The stat reads S.refs, the store itself — not the file registry. The API sync's
          registry entry was observed missing while the snapshot sat loaded (60 agents,
          1 Sep), and a card claiming "Nothing yet" over live data is the same lie as a
          save toast over a failed save. Registry is the fallback, never the authority. */
       stat:(()=>{const rf=S.refs,n=rf&&rf.by?Object.keys(rf.by).length:0;
         if(!n) return statFor(['referrals']);
-        return `<span class="pill pgood">${fmtNum(rf.total||0)} referrals</span><span>${n} agents · ${esc(rf.f||'HighLevel')}</span>`
-          +((rf.un&&Object.keys(rf.un).length)?`<span class="smuted">${Object.keys(rf.un).length} name(s) match no one on the Agent List</span>`:'');})()},
+        const un=(rf.un&&Object.keys(rf.un).length)||0;
+        return {facts:`<span class="pill pgood">${fmtNum(rf.total||0)} referrals</span><span class="sf-cov">${n} agents · ${esc(rf.f||'HighLevel')}</span>`,
+          last:un?`<span>${un} name(s) match no one on the Agent List</span>`:''};})(),
+      /* the sync button lives in the footer's status place: the help text above is clamped, and a button hidden inside it would be a control nobody can reach */
+      status:`<button type="button" class="btn small sf-sync" onclick="event.stopPropagation();window.__hlSyncVAS&&__hlSyncVAS()">⟳ Sync now</button>`},
   ];
-  const slotCards=SLOTS.map(s=>`
+  /* ONE CARD SHAPE: header (icon · title · Choose file), help text clamped behind More/Less, then the
+     footer — facts, last upload, any warning, status on the bottom line (CSS: UPLOAD STATION CARDS) */
+  const slotCards=SLOTS.map(s=>{ const open=SLOT_DESC_OPEN.has(s.t), st=s.stat||{};
+    const status=s.status||(s.reach?expectedLine(s.reach):'');
+    return `
     <div class="slot" data-slot="${s.t}" tabindex="0" role="button" aria-label="Upload ${s.name}">
-      <div class="shead"><span class="kic" style="--c:${s.color}">${s.icon}</span><b>${s.name}</b><span class="spacer" style="flex:1"></span><button class="btn small">Choose file</button></div>
-      <div class="sdesc">${s.desc}</div>
-      <div class="sstat">${s.stat}</div>${s.reach?expectedLine(s.reach):''}
-    </div>`).join('');
+      <div class="shead"><span class="kic" style="--c:${s.color}">${s.icon}</span><b>${s.name}</b><button type="button" class="btn small spick">Choose file</button></div>
+      <div class="sdesc${open?' open':''}" id="sdesc-${s.t}">${s.desc}</div>
+      <button type="button" class="sdesc-more" aria-expanded="${open}" aria-controls="sdesc-${s.t}">${open?'Less':'More'}</button>
+      <div class="sfoot"><div class="sf-facts">${st.facts||''}</div>${st.last?`<div class="sf-last">${st.last}</div>`:''}${s.warn||''}${status?`<div class="sf-status">${status}</div>`:''}</div>
+    </div>`; }).join('');
 
   const reg=S.files.length?`<div class="tablewrap" style="max-height:340px"><table class="data"><thead><tr>
       <th class="l">File</th><th class="l">Detected as</th><th class="l">Dates covered</th><th>Rows</th><th class="l">Uploaded</th><th></th></tr></thead><tbody>
@@ -7754,12 +7879,32 @@ PAGES['_wire_data']=()=>{
     const t=el.dataset.slot;
     const pick=()=>{ window.__slotExpected=t; $('#fileInput').click(); };
     el.onclick=pick;
-    el.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pick(); } };
+    /* Enter/Space on the card or its Choose file button picks a file; on the card's OTHER buttons
+       (More/Less, Sync now) the key belongs to that button — it used to open the picker instead */
+    el.onkeydown=e=>{ if(e.target!==el&&e.target.closest&&e.target.closest('button:not(.spick)')) return;
+      if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pick(); } };
     el.ondragover=e=>{ e.preventDefault(); el.classList.add('over'); };
     el.ondragleave=()=>el.classList.remove('over');
     el.ondrop=e=>{ e.preventDefault(); el.classList.remove('over'); handleFiles(e.dataTransfer.files,t); };
+    const more=el.querySelector('.sdesc-more'), desc=el.querySelector('.sdesc');
+    if(more&&desc) more.onclick=e=>{ e.stopPropagation();
+      const open=!desc.classList.contains('open');
+      desc.classList.toggle('open',open); more.setAttribute('aria-expanded',String(open)); more.textContent=open?'Less':'More';
+      if(open) SLOT_DESC_OPEN.add(t); else SLOT_DESC_OPEN.delete(t); };
   });
+  fitSlotDescs();
 };
+/* "More" only where the clamp actually hides text — a button that reveals nothing is a control
+   that does nothing. Re-measured when the window resizes, because the card width decides it. */
+function fitSlotDescs(){
+  document.querySelectorAll('.slot .sdesc').forEach(d=>{
+    const b=d.parentNode.querySelector('.sdesc-more'); if(!b) return;
+    b.hidden=!d.classList.contains('open')&&d.scrollHeight<=d.clientHeight+1;
+  });
+}
+{ let t=0; const refit=()=>{ if(S.ui&&S.ui.tab==='data') fitSlotDescs(); };
+  window.addEventListener('resize',()=>{ clearTimeout(t); t=setTimeout(refit,150); });
+  if(document.fonts&&document.fonts.ready) document.fonts.ready.then(refit).catch(()=>{}); }   // Inter lands after first paint and is wider
 /* FILL A "MAP TO" DROPDOWN ONLY WHEN IT IS OPENED (perf, 2026-08-28). Every unmatched row
    used to render the WHOLE roster as options up front: ~92 rows x 125 agents = ~11,500
    option nodes, 640 KB of markup, and the Upload Station took over five seconds to open on
@@ -9180,6 +9325,7 @@ document.addEventListener('cbx-authed',function(){ setTimeout(syncCampaignMoves,
 const LARGE_MIN=30*1048576;
 async function handleFiles(list, expected){
   let ok=0, skipped=0;
+  __uploadWarns=[];
   for(const f of Array.from(list)){
     if(f.size>LARGE_MIN){
       toast(f.name+' is '+Math.round(f.size/1048576)+' MB — too big to read in the page, so it is going straight to storage for the runner. Watch it on the Large files card.',9000);
@@ -9223,7 +9369,9 @@ async function handleFiles(list, expected){
     if(r&&!ds.some(d=>d>=r.from&&d<=r.to)&&ds.length){ S.ui.preset=''; S.ui.month=latestMonth(); }  // a sticky 'today/7d' preset outside the data's range would show "No data yet" right after a successful upload
     save(); rebuild(); renderAll();
     if(typeof kickAgentDigest==='function') kickAgentDigest();   // the team leader view follows within seconds, not at the next 90 s tick (2026-09-11)
-    toast(ok+' file'+(ok>1?'s':'')+' loaded'+(skipped?' · '+skipped+' skipped (already uploaded)':''));
+    /* the closing toast used to paint over every per-file warning raised a moment earlier */
+    const done=ok+' file'+(ok>1?'s':'')+' loaded'+(skipped?' · '+skipped+' skipped (already uploaded)':'');
+    if(__uploadWarns.length) toast(done+' — '+__uploadWarns.join(' · '),'err',30000); else toast(done);
   }else if(skipped){
     toast(skipped+' file'+(skipped>1?'s':'')+' skipped — already uploaded, nothing new to add');
   }

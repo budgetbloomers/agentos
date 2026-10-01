@@ -71,7 +71,10 @@ const ident = await page.evaluate(() => {
     if (!(f.code in roster)) { if (noRoster.length < 5) noRoster.push(f.code); continue; }
     // campaign on a fact must be the roster's campaign for that agent (via orgAt history)
     const hist = window.__mtd.orgAt(f.code, f.date);
-    const want = (hist && hist.campaign) || roster[f.code];
+    /* D4 (2026-09-29): a Worker-named MOVER's campaign is the segment in force that day (moveCampAt);
+       everyone else follows the effective-dated list history as before */
+    const moved = typeof moveCampAt === 'function' ? moveCampAt(f.code, f.date) : null;
+    const want = moved || (hist && hist.campaign) || roster[f.code];
     /* campOf's vocabulary — an unknown campaign keeps its own label (Download & Test, 2026-09-03); it used to fold to Courtesy here and flagged five correct facts */
     const norm = c => { const t = String(c || '').trim().replace(/\s+/g, ' '); return !t ? 'Courtesy' : /nest/i.test(t) ? 'Nesting' : /cuddle/i.test(t) ? 'Cuddle' : /track|vehicle|vision|^vt$/i.test(t) ? 'VT' : /courtesy/i.test(t) ? 'Courtesy' : t; };
     if (norm(want) !== f.campaign && bad.length < 5) bad.push(`${f.code} ${f.date}: fact=${f.campaign} roster=${norm(want)}`);
