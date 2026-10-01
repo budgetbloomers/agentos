@@ -1,0 +1,21 @@
+{
+  "onlyPulse": [],
+  "onlyOps": [],
+  "tlDiff": [],
+  "campDiff": [],
+  "tenDiff": [],
+  "opsKeys": [
+    "cb_code",
+    "cb_norm",
+    "agent_name",
+    "team_leader",
+    "queue",
+    "tenure",
+    "callx_alias",
+    "sf_name",
+    "target",
+    "start_date",
+    "_d",
+    "_batch"
+  ]
+}
