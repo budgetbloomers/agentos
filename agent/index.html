@@ -5203,16 +5203,25 @@ function cmView(){
   var cs=(D.cm&&D.cm.campaigns)||[];
   var reqs=cmReqs(c.key);
   var p1=reqs.filter(function(r){return !r.closed&&r.priority==='P1';}).length;
+  /* THE FILTERS LIVE ON THE CAMPAIGN TAB ONLY (spec 012, Nick 2026-10-07: "I want these filters to only be on the
+     campaign tab"). Every other tab keeps FOLLOWING the choice made there and still SAYS which choice it is — the
+     read-only selection line and a way back — so no figure is ever shown unlabelled. Settings (targets) does not
+     depend on the selection, so it carries neither. The P1 marker is a warning, not a filter: every tab keeps it. */
+  var onCampaign=VIEW==='cm';
   var right=(p1?'<span class="pill r" style="align-self:center">● P1 open</span>':'')
-    +(cs.length>1?'<select class="ctrl" id="cmSel">'+cs.map(function(x){
-        return '<option value="'+esc(x.key)+'"'+(x.key===c.key?' selected':'')+'>'+esc(x.label)+'</option>';
-      }).join('')+'</select>':'')
-    +cmTenureSelect(c)+cmPeriodSelect()
-    /* The selection is stated from the payload, never from a hardcoded string: it says which campaign, tenure and
-       period the numbers are, and printing "this month so far" over a payload that covered something else is how a
-       wrong number becomes an unnoticed one. */
-    +'<span class="ctrl" id="cmSelection">'+esc(cmSelectionLine(c))+'</span>'
-    +'<button class="btn" id="cmEod">EOD report</button>';
+    +(onCampaign
+      ?(cs.length>1?'<select class="ctrl" id="cmSel">'+cs.map(function(x){
+          return '<option value="'+esc(x.key)+'"'+(x.key===c.key?' selected':'')+'>'+esc(x.label)+'</option>';
+        }).join('')+'</select>':'')
+       +cmTenureSelect(c)+cmPeriodSelect()
+       /* The selection is stated from the payload, never from a hardcoded string: it says which campaign, tenure and
+          period the numbers are, and printing "this month so far" over a payload that covered something else is how a
+          wrong number becomes an unnoticed one. */
+       +'<span class="ctrl" id="cmSelection">'+esc(cmSelectionLine(c))+'</span>'
+       +'<button class="btn" id="cmEod">EOD report</button>'
+      :VIEW==='cm_set'?''
+      :'<span class="ctrl" id="cmSelection" title="Campaign, tenure and period are chosen on the Campaign tab">'+esc(cmSelectionLine(c))+'</span>'
+       +'<button class="btn" id="cmToCampaign">Change on the Campaign tab</button>');
   var subs={cm:'Sales, team leaders and where they need help',
     cm_mtd:'Month to date for your campaigns — the table management reads, one table per campaign',
     cm_daily:'Day-by-day detail for your campaigns — the daily table management reads',
@@ -5248,9 +5257,10 @@ function cmView(){
   cmRangeKeep();   // the old form's typed dates, read before the new markup replaces it
   shell(esc(c.label),
     esc(D.name||'')+' · Campaign Manager · '+who+' · '+num(c.agents)+' agents · '+esc(subs[VIEW]||''),
-    cmRangeForm()+body+'<div class="foot">Numbers updated '+esc(stamp())+'<br><button id="out">Sign out</button></div>',
+    (onCampaign?cmRangeForm():'')+body+'<div class="foot">Numbers updated '+esc(stamp())+'<br><button id="out">Sign out</button></div>',
     VIEW,right);
   var out=$('out'); if(out) out.onclick=signOut;
+  var toCm=$('cmToCampaign'); if(toCm) toCm.onclick=function(){ VIEW='cm'; render(); };
   var selEl=$('cmSel'); if(selEl) selEl.onchange=function(){ CMSEL=selEl.value; CMEXP={}; render(); };
   var tenEl=$('cmTenure'); if(tenEl) tenEl.onchange=function(){ cmAsk(CMPER,tenEl.value); };
   /* "Custom range…" opens the from/to form and asks nothing; every other option asks for that period (spec 006) */

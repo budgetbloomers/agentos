@@ -839,5 +839,46 @@ head('H · Review fixes — summary scope, mixed targets, tenure note, 401 reset
   });
 }
 
+/* ═════════════════════════ S · Filters only on the Campaign tab (spec 012) ═════════════════════════ */
+head('S · The filters live on the Campaign tab only (spec 012-cm-filters-campaign-tab)');
+{
+  /* Nick, 2026-10-07 (screenshot of the header bar): "I want these filters to only be on the campaign tab". The other
+     tabs keep following the choice made there — and still SAY which choice it is, so no figure goes unlabelled. */
+  const { P, N } = loadPage({});
+  const p = cmPayload();
+  p.assist = { requests: [{ id: 'r1', priority: 'P1', closed: false, campaign: 'courtesy', category: 'crm', tl: 'Denise Haripersad', sla: { state: 'near' } }] };
+  P.setD(p); P.setSel('courtesy'); P.setView('cm'); P.render();
+  const onCm = N.root.innerHTML;
+  const p1OnCm = /P1 open/.test(onCm);
+  check('the Campaign tab keeps every filter: campaign, tenure, period, the selection chip and EOD report', () => {
+    must(onCm, 'id="cmSel"'); must(onCm, 'id="cmTenure"'); must(onCm, 'id="cmPeriod"'); must(onCm, 'id="cmSelection"'); must(onCm, 'id="cmEod"');
+    mustNot(onCm, 'id="cmToCampaign"', 'no "change on the Campaign tab" button on the Campaign tab itself');
+  });
+  for (const v of ['cm_teams', 'cm_assist', 'cm_mtd', 'cm_daily', 'cm_weekly', 'cm_variance', 'cm_leads', 'cm_coach', 'cm_nik']) {
+    P.setView(v); P.render(); const h = N.root.innerHTML;
+    check(v + ': no campaign/tenure/period picker, no range form, no EOD report', () => {
+      for (const id of ['cmSel', 'cmTenure', 'cmPeriod', 'cmEod', 'cmRangeCard']) mustNot(h, 'id="' + id + '"', id + ' on ' + v);
+    });
+    check(v + ': still says what it shows — the read-only selection line and a way back to the Campaign tab', () => {
+      must(h, 'id="cmSelection"'); mustText(h, 'Courtesy · All tenures'); must(h, 'id="cmToCampaign"'); mustText(h, 'Change on the Campaign tab');
+    });
+    if (p1OnCm) check(v + ': the "P1 open" warning is not a filter — it stays', () => { mustText(h, 'P1 open'); });
+  }
+  check('cm_set (targets do not depend on the selection): no filters and no selection line', () => {
+    P.setView('cm_set'); P.render(); const h = N.root.innerHTML;
+    for (const id of ['cmSel', 'cmTenure', 'cmPeriod', 'cmEod', 'cmSelection', 'cmToCampaign']) mustNot(h, 'id="' + id + '"', id + ' on cm_set');
+  });
+  check('"Change on the Campaign tab" opens the Campaign tab with its filters', () => {
+    P.setView('cm_mtd'); P.render(); if (!N.cmToCampaign || typeof N.cmToCampaign.onclick !== 'function') throw new Error('button not wired');
+    N.cmToCampaign.onclick(); const h = N.root.innerHTML; must(h, 'id="cmPeriod"'); must(h, 'id="cmTenure"');
+  });
+  check('an open custom-range form is drawn on the Campaign tab only, and comes back with it', () => {
+    P.setView('cm'); P.render(); N.cmPeriod.value = 'custom'; N.cmPeriod.onchange(); must(N.root.innerHTML, 'id="cmRangeCard"');
+    P.setView('cm_variance'); P.render(); mustNot(N.root.innerHTML, 'id="cmRangeCard"', 'range form on Variance');
+    P.setView('cm'); P.render(); must(N.root.innerHTML, 'id="cmRangeCard"');
+    if (N.cmRangeCancel) N.cmRangeCancel.onclick();
+  });
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);
