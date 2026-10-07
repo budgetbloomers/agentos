@@ -38,7 +38,7 @@ Every route the Worker actually serves. Anything not listed here does not exist.
 | /api/kv?key= | DELETE | session | Real delete: Storage object **and** pointer row |
 | /api/eod | GET | session | Tracker daily_eod rows. **503 = table missing** → client falls back to kv |
 | /api/eod | POST | session | Upsert/delete one date (`{date,…}` or `{date,delete:true}`) |
-| /api/bi | GET | session | BI money rows, `?from=&to=&limit=` (max 50k) |
+| /api/bi | GET | session | BI money rows, `?from=&to=&limit=&offset=` — at most 5,000 rows a request; `truncated` + `next_offset` say where to carry on |
 | /api/bi | POST | session | Load a month: idempotent by `file_hash`, replaces its own date span only |
 | /api/bi | DELETE | session | Drop all BI rows + their batch records (raw archive kept) |
 | /api/bi/raw?name= | POST | session | Archive the exact export bytes → `bi-reports/` (R-FMT-06) |

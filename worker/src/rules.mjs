@@ -76,7 +76,15 @@ export function emptyOverData(payloadEmpty, periodFrom, liveFrom, liveEmpty) {
 export const STAFF_ROLES = new Set(['admin', 'exec', 'tl', 'qa', 'viewer']);
 const PORTAL_ONLY_ROLES = new Set(['agent', 'team_leader', 'campaign_manager']);
 /** A normal password session. Any other scope (wimpy, referrals) is a narrow one and reaches nothing staff-only. */
-const isFullScope = (user) => !!user && (!user.scope || user.scope === 'full');
+export const isFullScope = (user) => !!user && (!user.scope || user.scope === 'full');
+
+/* A /api/kv KEY IS A PLAIN NAME (Spec Kit 014, W1, 2026-10-07). The key becomes a Storage path (`raw/kv/<key>`) and the
+   runtime normalises that URL: `zzz/../agent-digest` slipped past the digest guards (the guard pattern never matched it)
+   and wrote the LIVE digest blob; a DELETE could remove objects outside raw/kv. So GET, POST and DELETE refuse anything
+   but letters, digits and . _ : - (starting with a letter or digit, ≤ 200 long) and any '..' — before the key is used.
+   Every key the apps, tools and probes use passes (agent-digest-range-…, cb-facts-*, help-contact:CB12 …). */
+const KV_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+export const kvKeyValid = (key) => typeof key === 'string' && KV_KEY.test(key) && !key.includes('..');
 export function referralsReadAllowed(user) {
   return isFullScope(user) && STAFF_ROLES.has(user.role);
 }

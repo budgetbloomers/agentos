@@ -113,6 +113,11 @@ const sig = (v) => (typeof v === 'string' && v.startsWith('data:image/') && v.le
 
 const str = (v) => (v == null ? '' : String(v));
 
+/* THE SAST DAY (Spec Kit 014, W5). A Worker's clock reads UTC, so a session saved between 00:00 and 02:00 in Durban was
+   dated the day before — and a KPI form opened then on the 1st took the previous month (on 1 January, the previous
+   year). Africa/Johannesburg has no DST: now + 2 h, read with the UTC getters, is the SAST calendar. */
+const sastNow = () => new Date(Date.now() + 2 * 3600000);
+
 /* WHO SIGNS WHAT (spec 003, 2026-10-05). The signatories of a product are the signature fields its create declares —
    derived, so a product that gains one is covered without a second list. Group coaching is signed per attendee row
    (employeeSignoffs) and the scorecard by nobody. */
@@ -241,7 +246,7 @@ export async function coachingCreate(ids, user, body) {
   if (table !== 'groupCoaching' && !args.agentName)
     return { error: 'Choose the agent this session is for.', status: 400 };
   const dateField = table === 'qualityAssuranceCoaching' ? 'dateOfCoaching' : 'date';
-  if (!args[dateField]) args[dateField] = new Date().toISOString().slice(0, 10);
+  if (!args[dateField]) args[dateField] = sastNow().toISOString().slice(0, 10);   // the SAST day (W5), not UTC's
 
   /* Three calls per formal session; each is a contact number and what came out
      of listening to it. Shaped here so a malformed array cannot reach Convex. */
@@ -313,12 +318,12 @@ export async function kpiWrite(ids, body) {
   if (act === 'create') {
     const title = String(body.title || '');
     if (!KPI_TITLES.includes(title)) return { error: 'Choose one of the KPI form types.', status: 400 };
-    const now = new Date();
+    const now = sastNow();   // read with the UTC getters below: the Worker's zone is UTC (W5)
     const id = await m(KPI, 'forms:createForm', {
       leaderId: ids.kpi, title,
       weekLabel: String(body.weekLabel || 'Week 1 / 5'),
-      month: String(body.month || now.toLocaleString('en-ZA', { month: 'long' })),
-      year: Number(body.year) || now.getFullYear(),
+      month: String(body.month || now.toLocaleString('en-ZA', { month: 'long', timeZone: 'UTC' })),
+      year: Number(body.year) || now.getUTCFullYear(),
     });
     /* An agent name is a separate patch in their model — do it here so the form
        arrives complete rather than as an untitled draft somebody must reopen. */

@@ -19,22 +19,24 @@
  *   BI_ACTIVE_CASES — already populated by its own path (27 377 rows) and now protected by
  *                bi_active_cases_natural_uq (migration-017). Loading it again from a blob
  *                that holds only the current month would add nothing and risk the money.
+ *
+ * ONE KEY, ONE ROW PER STATEMENT (Spec Kit 014, T2, 2026-10-07). Every run since 6 Oct died on
+ * SF_INACTIVE: the export carried one line twice (account 10496996 / contract 16342608 / deactivated
+ * 2026-10-05, identical, batch B0473), both landed in one 500-row upsert, and Postgres refuses
+ * "ON CONFLICT DO UPDATE command cannot affect row a second time" (21000). The throw ended the run,
+ * so ViciDial, referrals and CallX — loaded after SF_INACTIVE — stopped with it, and agent_day was
+ * never refreshed. Rows sharing a conflict key now collapse BEFORE the upsert (the last one wins,
+ * exactly what a sequential upsert would have kept) and are counted in the report; a source that
+ * fails is reported FAILED and the rest still load; the pg client has an 'error' listener, so a
+ * dropped connection is a reported failure instead of an "Unhandled 'error' event" crash.
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import pg from '../nicks_code/diagnostics/node_modules/pg/lib/index.js';
 import { storeText } from './kv-store.mjs';   // a store may be kept gzipped at rest (spec 013)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const env = {};
-for (const l of fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8').split(/\r?\n/)) {
-  const m = /^([A-Z_]+)=(.*)$/.exec(l.trim()); if (m) env[m[1]] = m[2];
-}
-const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
-const DRY = process.argv.includes('--dry');
-const sFlag = process.argv.indexOf('--source');
-const ONLY = sFlag > 0 && process.argv[sFlag + 1] && !process.argv[sFlag + 1].startsWith('--') ? process.argv[sFlag + 1] : '';
 
 /* ---- helpers: the blobs are parsed spreadsheets, so every value arrives as text ---- */
 const s = (v) => { const t = v == null ? '' : String(v).trim(); return t === '' ? null : t; };
@@ -75,7 +77,7 @@ const hash = (parts) => {
 /* ---- one entry per source: the table, its conflict target, and the row mapping ----
    The conflict target IS the identity rule in specs/source_keys.json and the table's own
    primary key. They are the same rule written for two audiences. */
-const MAP = {
+export const MAP = {
   ATTENDANCE: {
     table: 'attendance', conflict: '(attendance_date, employee_code)',
     row: (r) => ({ attendance_date: day(r._d), employee_code: s(r.employee_code), employee_name: s(r.employee_name),
@@ -146,65 +148,165 @@ const MAP = {
   },
 };
 
-const client = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false }, statement_timeout: 300000 });
-await client.connect();
-console.log((DRY ? 'DRY RUN — nothing will be written' : 'LOADING') + '\n');
-
 const CHUNK = 500;
-let grandIn = 0, grandOut = 0;
+const swallow = () => null;
 
-for (const [src, m] of Object.entries(MAP)) {
-  if (ONLY && src !== ONLY) continue;
-  const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/cb-facts-${src}`, { headers: H });
-  if (!r.ok) { console.log('  ' + src.padEnd(22) + 'no blob (' + r.status + ')'); continue; }
-  let rows; try { rows = JSON.parse(storeText(Buffer.from(await r.arrayBuffer()))); } catch {   /* plain or kept-compressed (spec 013) */ console.log('  ' + src.padEnd(22) + 'not JSON'); continue; }
+/** the conflict target's columns — the identity rule */
+export const keyColsOf = (m) => m.conflict.replace(/[()]/g, '').split(',').map((x) => x.trim());
 
-  /* Rows the table cannot accept are REPORTED, never silently dropped: a not-null column
-     with nothing to put in it is a mapping problem or a bad export, and both need naming. */
-  const mapped = []; let unusable = 0;
-  const keyCols = m.conflict.replace(/[()]/g, '').split(',').map((x) => x.trim());
-  for (const row of rows) {
-    const o = m.row(row);
-    if (keyCols.some((k) => o[k] == null || o[k] === '')) { unusable++; continue; }
-    mapped.push(o);
-  }
-  grandIn += rows.length;
-
-  const before = (await client.query(`select count(*)::int n from ${m.table}`)).rows[0].n;
-  if (!DRY && mapped.length) {
-    const cols = Object.keys(mapped[0]);
-    const upd = cols.filter((c) => !keyCols.includes(c)).map((c) => `${c}=excluded.${c}`).join(', ');
-    for (let i = 0; i < mapped.length; i += CHUNK) {
-      const slice = mapped.slice(i, i + CHUNK);
-      const params = []; const tuples = [];
-      slice.forEach((o, n) => {
-        tuples.push('(' + cols.map((_, ci) => '$' + (n * cols.length + ci + 1)).join(',') + ')');
-        cols.forEach((c) => params.push(o[c]));
-      });
-      await client.query(
-        `insert into ${m.table} (${cols.join(',')}) values ${tuples.join(',')}
-         on conflict ${m.conflict} do update set ${upd}`, params);
-    }
-  }
-  const after = (await client.query(`select count(*)::int n from ${m.table}`)).rows[0].n;
-  grandOut += after - before;
-
-  console.log('  ' + src.padEnd(22) + String(rows.length).padStart(7) + ' blob rows → '
-    + String(mapped.length).padStart(7) + ' mapped   table ' + String(before).padStart(6) + ' → ' + String(after).padStart(6)
-    + '   new ' + String(after - before).padStart(6)
-    + (unusable ? '   unusable (no key): ' + unusable : ''));
+/**
+ * Rows sharing one conflict key → one row, the LAST (what a sequential upsert would have kept). Postgres
+ * refuses a single INSERT … ON CONFLICT DO UPDATE that touches one key twice, so this must hold for every
+ * statement. Returns { rows, dropped }; the input is never changed.
+ */
+export function dedupeByKey(rows, keyCols) {
+  const at = new Map();
+  rows.forEach((o, i) => at.set(JSON.stringify(keyCols.map((k) => o[k])), i));
+  if (at.size === rows.length) return { rows, dropped: 0 };
+  const keep = new Set(at.values());
+  return { rows: rows.filter((_, i) => keep.has(i)), dropped: rows.length - at.size };
 }
 
-/* The contract, straight from the database. */
-const audit = await client.query('select * from lake_duplicates order by source');
-console.log('\n  ' + 'source'.padEnd(20) + 'rows'.padStart(9) + 'distinct'.padStart(11) + '   one row, one fact?');
-for (const r of audit.rows)
-  console.log('  ' + r.source.padEnd(20) + String(r.rows).padStart(9) + String(r.distinct_keys).padStart(11)
-    + '   ' + (String(r.rows) === String(r.distinct_keys) ? 'yes' : 'NO — ' + (r.rows - r.distinct_keys) + ' extra'));
+/** mapped rows → the upsert statements, `chunk` rows each, never one key twice in a statement */
+export function upsertStatements(m, mapped, chunk = CHUNK) {
+  const keyCols = keyColsOf(m);
+  const rows = dedupeByKey(mapped, keyCols).rows;
+  if (!rows.length) return [];
+  const cols = Object.keys(rows[0]);
+  const upd = cols.filter((c) => !keyCols.includes(c)).map((c) => `${c}=excluded.${c}`).join(', ');
+  const out = [];
+  for (let i = 0; i < rows.length; i += chunk) {
+    const slice = rows.slice(i, i + chunk);
+    const params = []; const tuples = [];
+    slice.forEach((o, n) => {
+      tuples.push('(' + cols.map((_, ci) => '$' + (n * cols.length + ci + 1)).join(',') + ')');
+      cols.forEach((c) => params.push(o[c]));
+    });
+    out.push({ rows: slice, params, text: `insert into ${m.table} (${cols.join(',')}) values ${tuples.join(',')}
+         on conflict ${m.conflict} do ${upd ? 'update set ' + upd : 'nothing'}` });
+  }
+  return out;
+}
 
-console.log('\n' + (DRY ? 'dry run. ' : '') + grandIn.toLocaleString('en-ZA') + ' blob rows considered, '
-  + grandOut.toLocaleString('en-ZA') + ' new row(s) in the lake.');
-/* agent_day is built from these tables and was only ever refreshed by the rake after ITS loads —
-   so when this tool was the one adding days (Vici, closed cases) the view sat behind (14–21 Sep 2026). */
-if (!DRY && grandOut > 0) { console.log('refreshing agent_day…'); await client.query('refresh materialized view concurrently agent_day'); }
-await client.end();
+/** a pg error as one line: message [code] — detail (hint) */
+const pgLine = (e) => String((e && e.message) || e) + (e && e.code ? ' [' + e.code + ']' : '')
+  + (e && e.detail ? ' — ' + e.detail : '') + (e && e.hint ? ' (hint: ' + e.hint + ')' : '');
+
+/* A CLIENT-SIDE TIMEOUT LEAVES THE CONNECTION BUSY (014 review T-R2). pg's query_timeout rejects the call, but the
+   server is still running the statement on this connection, and every later query queues behind it — each source after
+   it waited out its own ~330 s. So a timeout stops the run: the rest are reported "not attempted", and main() skips the
+   audit and the refresh (they would queue too). A statement_timeout is different: the server cancelled it and the
+   connection is free again, so the next source loads as before. */
+const isClientTimeout = (e) => /Query read timeout/i.test(String((e && e.message) || e));
+
+/**
+ * Load every mapped source. readRows(src) → the blob's rows, or null when there is none (it says why).
+ * A source that fails is logged FAILED and the next one still loads — unless it failed on a client-side query timeout:
+ * then the remaining sources are FAILED "not attempted" and `aborted` says why.
+ * Returns { grandIn, grandOut, failed, reasons, aborted }.
+ */
+export async function loadAll({ client, map = MAP, readRows, log = console.log, only = '', dry = false, chunk = CHUNK }) {
+  let grandIn = 0, grandOut = 0, aborted = ''; const failed = [], reasons = {};
+  const todo = Object.keys(map).filter((src) => !only || src === only);
+  for (let i = 0; i < todo.length; i++) {
+    const src = todo[i], m = map[src];
+    try {
+      const rows = await readRows(src);
+      if (rows == null) continue;
+      /* Rows the table cannot accept are REPORTED, never silently dropped: a not-null column
+         with nothing to put in it is a mapping problem or a bad export, and both need naming. */
+      const mapped = []; let unusable = 0;
+      const keyCols = keyColsOf(m);
+      for (const row of rows) {
+        const o = m.row(row);
+        if (keyCols.some((k) => o[k] == null || o[k] === '')) { unusable++; continue; }
+        mapped.push(o);
+      }
+      const twins = dedupeByKey(mapped, keyCols).dropped;
+      grandIn += rows.length;
+
+      const before = (await client.query(`select count(*)::int n from ${m.table}`)).rows[0].n;
+      if (!dry && mapped.length) {
+        const stm = upsertStatements(m, mapped, chunk);
+        for (let k = 0; k < stm.length; k++) {
+          try { await client.query(stm[k].text, stm[k].params); }
+          catch (e) { throw Object.assign(new Error('chunk ' + (k + 1) + '/' + stm.length + ': ' + ((e && e.message) || e)), { code: e && e.code, detail: e && e.detail, hint: e && e.hint }); }
+        }
+      }
+      const after = (await client.query(`select count(*)::int n from ${m.table}`)).rows[0].n;
+      grandOut += after - before;
+
+      log('  ' + src.padEnd(22) + String(rows.length).padStart(7) + ' blob rows → '
+        + String(mapped.length).padStart(7) + ' mapped   table ' + String(before).padStart(6) + ' → ' + String(after).padStart(6)
+        + '   new ' + String(after - before).padStart(6)
+        + (unusable ? '   unusable (no key): ' + unusable : '')
+        + (twins ? '   twin rows collapsed (same key, last kept): ' + twins : ''));
+    } catch (e) {
+      failed.push(src); reasons[src] = pgLine(e);
+      log('  ' + src.padEnd(22) + 'FAILED — ' + reasons[src]);
+      if (isClientTimeout(e)) {
+        aborted = src + ' — ' + reasons[src];
+        for (const rest of todo.slice(i + 1)) {
+          failed.push(rest); reasons[rest] = 'not attempted — the connection is still busy with ' + src + "'s timed-out query";
+          log('  ' + rest.padEnd(22) + 'FAILED — ' + reasons[rest]);
+        }
+        break;
+      }
+    }
+  }
+  return { grandIn, grandOut, failed, reasons, aborted };
+}
+
+async function main() {
+  const env = {};
+  for (const l of fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8').split(/\r?\n/)) {
+    const m = /^([A-Z_]+)=(.*)$/.exec(l.trim()); if (m) env[m[1]] = m[2];
+  }
+  const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
+  const DRY = process.argv.includes('--dry');
+  const sFlag = process.argv.indexOf('--source');
+  const ONLY = sFlag > 0 && process.argv[sFlag + 1] && !process.argv[sFlag + 1].startsWith('--') ? process.argv[sFlag + 1] : '';
+
+  /* query_timeout is the client-side bound (a dead socket never answers a statement_timeout);
+     connectionTimeoutMillis bounds the connect itself */
+  const client = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false }, statement_timeout: 300000,
+    query_timeout: 330000, connectionTimeoutMillis: 60000, keepAlive: true });
+  /* WITHOUT THIS LISTENER a dropped connection is an "Unhandled 'error' event" crash — the run dies with
+     no source named. With it, the in-flight query rejects and its source is reported FAILED. */
+  client.on('error', (e) => { console.error('FAILED: the database connection dropped — ' + pgLine(e)); process.exitCode = 1; });
+  await client.connect();
+  try {
+    console.log((DRY ? 'DRY RUN — nothing will be written' : 'LOADING') + '\n');
+    const readRows = async (src) => {
+      const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/cb-facts-${src}`, { headers: H });
+      if (!r.ok) { console.log('  ' + src.padEnd(22) + 'no blob (' + r.status + ')'); return null; }
+      try { return JSON.parse(storeText(Buffer.from(await r.arrayBuffer()))); }   // plain or kept-compressed (spec 013)
+      catch { console.log('  ' + src.padEnd(22) + 'not JSON'); return null; }
+    };
+    const { grandIn, grandOut, failed, reasons, aborted } = await loadAll({ client, readRows, dry: DRY, only: ONLY });
+
+    /* after a client-side timeout the audit and the refresh would queue behind the server's statement (T-R2) */
+    if (aborted) {
+      console.log('\nSTOPPED after a query timeout (' + aborted + ') — the lake audit and the agent_day refresh are skipped.');
+    } else {
+      /* The contract, straight from the database. */
+      const audit = await client.query('select * from lake_duplicates order by source');
+      console.log('\n  ' + 'source'.padEnd(20) + 'rows'.padStart(9) + 'distinct'.padStart(11) + '   one row, one fact?');
+      for (const r of audit.rows)
+        console.log('  ' + r.source.padEnd(20) + String(r.rows).padStart(9) + String(r.distinct_keys).padStart(11)
+          + '   ' + (String(r.rows) === String(r.distinct_keys) ? 'yes' : 'NO — ' + (r.rows - r.distinct_keys) + ' extra'));
+    }
+
+    console.log('\n' + (DRY ? 'dry run. ' : '') + grandIn.toLocaleString('en-ZA') + ' blob rows considered, '
+      + grandOut.toLocaleString('en-ZA') + ' new row(s) in the lake.');
+    /* agent_day is built from these tables and was only ever refreshed by the rake after ITS loads —
+       so when this tool was the one adding days (Vici, closed cases) the view sat behind (14–21 Sep 2026). */
+    if (!DRY && grandOut > 0 && !aborted) { console.log('refreshing agent_day…'); await client.query('refresh materialized view concurrently agent_day'); }
+    if (failed.length) { console.error('FAILED: ' + failed.map((s) => s + ' — ' + reasons[s]).join(' · ')); process.exitCode = 1; }
+  } finally { await client.end().catch(swallow); }
+}
+
+/* main only as the entry point — verify-tick-014 imports the loader without connecting to anything */
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  await main().catch((e) => { console.error('FAILED: ' + pgLine(e)); process.exitCode = 1; });
+}

@@ -745,6 +745,11 @@ function parseDT(v){
   const d2=new Date(s); return isNaN(d2)?null:d2;
 }
 function isoDay(d){if(!d)return null;const p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())}
+/* THE FLOOR'S CALENDAR DAY, whatever clock runs this page (spec 014, 2026-10-07): an ISO stamp's first ten
+   characters are the UTC day, which is yesterday from 00:00 to 02:00 in Durban, and the headless relay can run
+   on a UTC machine. South Africa keeps UTC+2 all year (no daylight saving), so the offset is a constant. */
+const SAST_OFFSET_MS=2*3600000;
+function sastDay(t){const ms=t==null?Date.now():(typeof t==='number'?t:Date.parse(t));return new Date((isNaN(ms)?Date.now():ms)+SAST_OFFSET_MS).toISOString().slice(0,10)}
 function normCB(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
 /* Campaign filter buckets — the three Matrix campaigns. Any raw queue/dialler
    spelling folds to one of these; anything unrecognised returns '' (shows under All only). */
@@ -754,6 +759,11 @@ function campBucket(v){v=String(v||'').toLowerCase();
   if(/track|vehicle|vision|\bvt\b/.test(v))return'VT';
   return''}
 const CAMP_OPTS=[['Courtesy','Matrix Courtesy'],['Cuddle','Matrix Cuddle'],['VT','Matrix Tracker']];
+/* THE CAMPAIGN FILTER'S KEY FOR A ROSTER QUEUE (spec 014 O10, 2026-10-07): the bucket when it folds to one, else
+   the queue's own name — the value the filter bar offers. The bar used to read cbInfo.campaign (the roster keeps
+   `queue`), so a campaign outside the three buckets (Download & Test) was never offered, and every filter compared
+   campBucket alone, so it could not have matched one anyway. */
+function campFilterKey(q){return campBucket(q)||String(q||'').trim()}
 /* MEMOISED — it is a pure function of a string and the hottest one in the app. A CPU
    profile of Sales Production put 441 ms of a 1 550 ms build inside this line alone:
    three regex passes per call, run once per fact row, over hundreds of thousands of rows
@@ -879,10 +889,19 @@ function idbPut(k,v){
   })).catch(()=>false);
   __idbPutP[k]=p; return p;
 }
+/* HOW LONG A REFUSED SAVE HOLDS THE FRESH-RELOAD (spec 014 O6, review R1). The shim re-queues a refused save for
+   good — a 400 "Memory limit" or a 413 never clears — and its queue keeps only the payload: no time, no status. So
+   the page keeps the time itself: when it first saw each fact/audit key refused, restarted by every NEW refusal of
+   its own (a new load is new unsaved work). Past FAILED_SAVE_HOLD_MS a queued save no longer counts as pending. */
+const FAILED_SAVE_HOLD_MS=10*60000;
+const FACT_SAVE_KEY=/^cb-(facts-|audit$)/;
+const __failedSaveSeen={};
 async function store(key,val,opts){
   idbPut(key,val);   // local mirror first — what the user sees survives a cloud hiccup
   if(!window.storage){state.persistOk=false;return {failed:true}}
-  try{const r=await window.storage.set(key,JSON.stringify(val),opts);return r||{ok:true}}
+  try{const r=await window.storage.set(key,JSON.stringify(val),opts);
+    if(FACT_SAVE_KEY.test(key)){ if(r&&r.failed)__failedSaveSeen[key]=Date.now(); else if(r&&r.ok)delete __failedSaveSeen[key]; }
+    return r||{ok:true}}
   catch(e){state.persistOk=false;toast('Could not persist "'+key+'" — data kept for this session only.','err');return {failed:true}}
 }
 async function load(key){
@@ -904,22 +923,40 @@ async function load(key){
 /* NO PERSON'S NAME IN THE SHARED CONFIG (Spec Kit 011, 2026-10-07: "I logged in with aarav … its showing nick").
    cb-config is one row everybody shares; it used to carry `user`, and every load and every save conflict adopted it,
    so the header and every upload's "uploaded by" read whoever saved last. Who is signed in comes from the session. */
-const cfgPayload=()=>({kpis:state.kpis,rules:state.rules,agentMap:state.agentMap,sfOwnerMap:state.sfOwnerMap,cbInfo:state.cbInfo,syncedUploads:state.syncedUploads||{}});
+const cfgPayload=()=>({kpis:state.kpis,rules:state.rules,agentMap:state.agentMap,sfOwnerMap:state.sfOwnerMap,cbInfo:state.cbInfo,identityAt:state.identityAt||'',syncedUploads:state.syncedUploads||{}});
 function whoAmI(){ const U=(typeof window!=='undefined'&&window.CBX_USER)||{}; return String(U.full_name||U.username||'').trim(); }
 function paintUser(){ const n=whoAmI(), nm=$('#userNm'), av=$('#userAv'); if(nm)nm.textContent=n||'Signed in'; if(av)av.textContent=(n[0]||'·').toUpperCase(); }
 document.addEventListener('cbx-authed',function(){ try{ paintUser(); }catch(e){} });   // the gate knows the session after the page has painted
 const SAVE_TRIES=4;
+/* THE IDENTITY MAPS ARE BUILT, NEVER MERGED (spec 014 O1, 2026-10-07). cbInfo / agentMap / sfOwnerMap are
+   derived whole from one Agent List by buildIdentity, and a dropped agent is OFF every report. A save
+   conflict used to union them with the other session's copy, so whichever side still held a dropped agent
+   — the other session's older copy, or this stale tab's — put them back. Now the NEWER build wins whole
+   (identityAt is stamped by buildIdentity), and the only thing carried across is a dialler alias somebody
+   mapped by hand in this tab (mapAgent), which is intent on screen like a rule edit. */
+let __aliasEdits={};
+function adoptIdentity(fresh){
+  if(!fresh)return;
+  const mine=String(state.identityAt||''), theirs=String(fresh.identityAt||'');
+  if(mine&&mine>theirs)return;                       // this session built from the newer list: its maps stand
+  state.cbInfo=Object.assign({},fresh.cbInfo||{});
+  state.sfOwnerMap=Object.assign({},fresh.sfOwnerMap||{});
+  state.agentMap=Object.assign({},fresh.agentMap||{});
+  for(const n in __aliasEdits){ if(__aliasEdits[n])state.agentMap[n]=__aliasEdits[n]; else delete state.agentMap[n]; }
+  state.identityAt=theirs;
+  bumpDataVer();                                      // identity changed under every cached read
+}
 async function saveConfig(){
   bumpDataVer();
   for(let a=0;a<SAVE_TRIES;a++){
     const r=await store('cb-config',cfgPayload(),{cas:true});
     if(!r||!r.conflict) return r;
-    /* the other session's decisions are kept; this session's are added; a rule or KPI edit made
-       here wins (the editor on screen is the intent), which is the only field that cannot merge */
+    /* the other session's relay decisions are kept and this session's added; a rule or KPI edit made
+       here wins (the editor on screen is the intent); the identity maps follow the newer build */
     const fresh=await load('cb-config');
     if(fresh){
       state.syncedUploads=Object.assign({},fresh.syncedUploads||{},state.syncedUploads||{});
-      for(const k of ['cbInfo','agentMap','sfOwnerMap']) state[k]=Object.assign({},fresh[k]||{},state[k]||{});
+      adoptIdentity(fresh);
     }
   }
   toast('Settings could not be saved — another session kept changing them. Try again.','err');return {failed:true};
@@ -939,7 +976,41 @@ async function saveAudit(){
   }
   toast('The batch audit could not be saved — another session kept changing it.','err');return {failed:true};
 }
+/* A LOAD IS PENDING UNTIL ITS STORE SAVE IS ANSWERED (spec 014 O6, 2026-10-07). The cbx-fresh poller re-inits
+   from the cloud when another user's upload moves the audit; doing that between applyLoad and the end of the
+   save replaced this tab's in-memory store with a copy that lacks the file, so the rows never reached the
+   cloud. A load is pending while it has not reached saveFacts, while a save is in flight, and while the
+   shim holds a refused save in its retry queue — for FAILED_SAVE_HOLD_MS (review R1): the shim retries a refused
+   save for ever, and a hold for ever meant this tab never loaded anyone else's upload again until reloaded. */
+let __factSavesInFlight=0;
+/* the fact/audit keys in the shim's retry queue; stamps the ones seen for the first time, forgets the ones gone */
+function opsQueuedFactSaves(){
+  const q=(typeof window!=='undefined'&&window.__cbxFailedSaves)||{};
+  const keys=Object.keys(q).filter(k=>FACT_SAVE_KEY.test(k)), now=Date.now();
+  for(const k of Object.keys(__failedSaveSeen)) if(!keys.includes(k)) delete __failedSaveSeen[k];   // saved since
+  for(const k of keys) if(!__failedSaveSeen[k]) __failedSaveSeen[k]=now;
+  return keys;
+}
+function opsSavePending(){
+  if(__factSavesInFlight>0)return true;
+  const now=Date.now();
+  if(opsQueuedFactSaves().some(k=>now-__failedSaveSeen[k]<=FAILED_SAVE_HOLD_MS))return true;
+  const P=state.pending||{};
+  return Object.keys(P).some(k=>(P[k]||[]).some(p=>!p.tried));
+}
+/* the shim stamps __cbxLastWrite at the START of every set() — its own retries of a refused save included — and
+   __cbxSaveOk only when one is acknowledged. While a refused fact/audit save is queued and nothing has been
+   acknowledged since the last write began, that write was a failed retry: it moved no store, so the cbx-fresh
+   poller must not take it for "this tab just wrote" and silently adopt another user's upload (review R1). */
+function opsLastWriteRefused(){
+  return opsQueuedFactSaves().length>0&&(window.__cbxSaveOk||0)<(window.__cbxLastWrite||0);
+}
 async function saveFacts(src){
+  __factSavesInFlight++;
+  try{ ((state.pending&&state.pending[src])||[]).forEach(p=>{p.tried=true}); return await saveFactsCas(src); }
+  finally{ __factSavesInFlight--; }
+}
+async function saveFactsCas(src){
   const key='cb-facts-'+src;
   for(let a=0;a<SAVE_TRIES;a++){
     const r=await store(key,state.facts[src]||[],{cas:true});
@@ -952,12 +1023,19 @@ async function saveFacts(src){
     const mine=(state.pending&&state.pending[src])||[];
     let audit=null; try{ audit=await load('cb-audit'); }catch(e){}
     const theirs=new Map(((audit&&audit.batches)||[]).map(b=>[b.batch_id,b]));
+    /* THE STORE CAN NAME AN ID BEFORE THE AUDIT DOES (spec 014 O8, 2026-10-07): every session saves its facts
+       first and its audit after, so in between their rows carry a batch id their audit has not recorded. An
+       id their rows carry and their audit does not explain is theirs, not ours — re-mint past it, or the
+       replay's "drop my previous rows" drops their file. (Re-applying under a new id is safe: every source
+       supersedes by record key, span or snapshot, so a same-file case cannot double.) */
+    const inRows=new Set(fresh.map(r=>r&&r._batch).filter(Boolean));
+    const idNum=id=>{const v=parseInt(String(id||'').replace(/^B/,''),10);return isFinite(v)?v:0};
     let rows=fresh, remint=0;
     for(const p of mine){
       const clash=theirs.get(p.batch.batch_id);
-      if(clash&&clash.file_hash!==p.batch.file_hash){
-        const used=new Set([...theirs.keys(),...(state.batches||[]).map(b=>b.batch_id)]);
-        let n=(state.batches||[]).concat([...theirs.values()]).reduce((m,b)=>{const v=parseInt(String(b.batch_id||'').replace(/^B/,''),10);return isFinite(v)&&v>m?v:m},0);
+      if(clash?clash.file_hash!==p.batch.file_hash:inRows.has(p.batch.batch_id)){
+        const used=new Set([...theirs.keys(),...inRows,...(state.batches||[]).map(b=>b.batch_id)]);
+        let n=Math.max(0,...[...used].map(idNum));
         let id; do{ id='B'+String(++n).padStart(4,'0'); }while(used.has(id));
         p.loaded.forEach(r=>{r._batch=id}); p.batch.batch_id=id; remint++;
       }
@@ -1744,6 +1822,7 @@ function buildIdentity(){
   state.sfOwnerMap={};state.ownerAmbig={};
   for(const k in claims){const s=claims[k];
     if(s.size===1)state.sfOwnerMap[k]=[...s][0];else state.ownerAmbig[k]=[...s]}
+  state.identityAt=new Date().toISOString();__aliasEdits={};   // this build is the newest — see adoptIdentity (spec 014 O1)
   saveConfig();
 }
 /* AGENT LIST SELF-SYNC (VAS → here). The Agent List arrives through the VAS Upload
@@ -1772,7 +1851,7 @@ function publishRoster(fileName){
         target:a.target,start:a.start_date}));
       if(!rows.length)return;                                   // never publish nothing
       const b=state.batches.find(x=>x.source_type==='AGENT_LIST'&&x.validation_status!=='failed');
-      const asOf=String((b&&b.uploaded_at)||new Date().toISOString()).slice(0,10);
+      const asOf=sastDay(b&&b.uploaded_at);          // the SAST day — a 01:30 upload is today's list, not yesterday's (spec 014 O12)
       const r=await fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/roster',
         {method:'POST',headers:{'Authorization':'Bearer '+t,'Content-Type':'application/json'},
          body:JSON.stringify({source:'ops',file:fileName||'',as_of:asOf,rows:rows,roster:rows})});   // rows = the file's rows; the server derives the roster
@@ -1976,11 +2055,18 @@ async function syncUploadsFromVAS(){
        overlap, so a decided file none of whose rows are in the store is a lost save, not history:
        its mark is lifted here and the file is fetched and applied again. Other sources supersede by
        key across files and cannot be judged this way. */
+    /* THE BATCH CARRIES original_file_name (spec 014 O2, 2026-10-07). This looked the batch up by
+       `file_name`, which no batch has ever carried — so it never found one: a lost file older than three
+       days was never healed, and every ViciDial file of the last three days was re-downloaded on every
+       cycle. The newest batch of that name decides (a same-day re-pull supersedes the older file's rows,
+       which is not a loss), and ANY record of the name — a failed parse included — counts as having
+       reached the audit, so a file that loads nothing is not fetched again every fifteen minutes. */
     { const vici=state.facts.VICI_CALL_REPORT||[]; const batchesIn=new Set(vici.map(r=>r._batch));
       for(const f of (man.files||[])){ if(!f||!f.h||!seen[f.h]||!/EXPORT_CALL_REPORT|vici/i.test(f.n||'')) continue;
-        const b=(state.batches||[]).find(x=>x.file_name===f.n&&x.source_type==='VICI_CALL_REPORT'&&x.validation_status!=='failed');
-        if(b&&b.loaded_row_count>0&&!batchesIn.has(b.batch_id)){ delete seen[f.h]; }
-        else if(!b&&String(f.at||'')>new Date(Date.now()-3*86400000).toISOString()){ delete seen[f.h]; }   // decided in the last 3 days with no batch at all: the parse never reached the audit
+        const named=(state.batches||[]).filter(x=>x.original_file_name===f.n&&x.source_type==='VICI_CALL_REPORT');
+        const b=named.find(x=>x.validation_status!=='failed');
+        if(b&&(b.save_failed||(b.loaded_row_count>0&&!batchesIn.has(b.batch_id)))){ delete seen[f.h]; }
+        else if(!named.length&&String(f.at||'')>new Date(Date.now()-3*86400000).toISOString()){ delete seen[f.h]; }   // decided in the last 3 days with no batch at all: the parse never reached the audit
       } }
     const fresh=(man.files||[]).filter(f=>f&&f.h&&!seen[f.h]).slice(0,40).reverse();   // oldest first, so overlapping exports supersede in the right order
     if(!fresh.length)return;
@@ -1990,7 +2076,7 @@ async function syncUploadsFromVAS(){
        exactly like nothing happening, and the figures on screen were the pre-upload ones
        with nothing saying so. The completion toast below replaces this one. */
     toast(fresh.length+' new file(s) uploaded in VAS — loading them now. The figures on screen are not updated yet…','',60000);
-    const touched=new Set(),lines=[];let dirty=false,dlFailed=0;
+    const touched=new Set(),lines=[],appliedBySrc={};let dirty=false,dlFailed=0;
     for(const fm of fresh){
       let file=null;
       try{ // download in its OWN try: a network blip must retry next cycle, never mark decided
@@ -2042,11 +2128,21 @@ async function syncUploadsFromVAS(){
              batch with no rows left is normal, and re-applying it would put old rows over new. The
              file is re-applied under its own batch id (applyLoad's same-file path). */
           const lost=src==='VICI_CALL_REPORT'&&had.loaded_row_count>0&&!(state.facts[src]||[]).some(r=>r._batch===had.batch_id);
-          if(!lost)continue;
-          toast('Relayed "'+esc(fm.n)+'" was loaded before but none of its rows are in the store — re-applying it.','',9000);
+          /* …and a batch whose store save FAILED is not loaded either (spec 014 O3) — re-applied through the same
+             idempotent same-file path: ViciDial always (its files never overlap), any other source only while it
+             is still that source's newest file, because re-applying an older QA or BI export would put its old
+             rows over a newer file's. A newer file that has landed and saved since carried the store with it. */
+          let retry=false;
+          if(had.save_failed){
+            const newest=state.batches.find(b=>b.source_type===src&&b.validation_status!=='failed');
+            if(src==='VICI_CALL_REPORT'||newest===had)retry=true; else delete had.save_failed;
+          }
+          if(!lost&&!retry)continue;
+          toast('Relayed "'+esc(fm.n)+'" was loaded before but '+(retry?'its rows were never saved':'none of its rows are in the store')+' — re-applying it.','',9000);
         }
         const res=applyLoad(src,file,parsed,'auto-relayed from the VAS Upload Station');
         if(res&&res.batch&&fm.at) res.batch.relay_at=fm.at;   // what the guard above compares against
+        (appliedBySrc[src]=appliedBySrc[src]||[]).push({h:fm.h,batch:res&&res.batch});
         touched.add(src);
         if(src==='BI_ACTIVE_CASES'){try{await pushBI(res.batch,file)}catch(e){toast('BI rows not written to the database: '+esc(e.message||e)+' — on-screen figures are unaffected.','err')}}
         lines.push(SOURCES[src].label);
@@ -2075,8 +2171,15 @@ async function syncUploadsFromVAS(){
     }
     if(touched.size){
       window.__cbxLastWrite=Date.now();                 // this tab wrote — cbx-fresh adopts, doesn't re-init
-      try{await Promise.all([...touched].map(k=>saveFacts(k)));await saveAudit()}
-      catch(e){toast('Relayed uploads loaded on screen, but the cloud save failed: '+esc(e.message||e),'err')}
+      /* DECIDED ONLY ONCE SAVED (spec 014 O3, 2026-10-07). A file was marked decided whether or not the store
+         carrying its rows saved, so a refused save (the 400 "Memory limit" of 7 Oct) lost the file for good:
+         the mark persisted in the config and nothing asked for it again. A source whose save fails has this
+         cycle's files un-decided and their batches flagged, so the next cycle fetches and re-applies them. */
+      const undecide=k=>{ for(const x of appliedBySrc[k]||[]){ delete seen[x.h]; if(x.batch)x.batch.save_failed=true; } };
+      try{const keys=[...touched];const rs=await Promise.all(keys.map(k=>saveFacts(k)));
+        keys.forEach((k,i)=>{ if(rs[i]&&rs[i].failed)undecide(k); });
+        await saveAudit()}
+      catch(e){[...touched].forEach(undecide);toast('Relayed uploads loaded on screen, but the cloud save failed: '+esc(e.message||e),'err')}
       autoMapAgents();bumpDataVer();render();
       toast(lines.length+' file(s) relayed from the VAS Upload Station — '+lines.slice(0,3).map(esc).join(' · ')+(lines.length>3?' +'+(lines.length-3)+' more':''));
     }
@@ -2224,9 +2327,13 @@ async function clearAll(){
 /* =====================================================================
    KPI ENGINE — periods, filters, $rule resolution, deltas, sparklines
    ===================================================================== */
+/* NOTHING DATED AFTER TODAY ANCHORS THE PERIOD (spec 014 O5, 2026-10-07). The attendance register carries leave
+   filed ahead (AL booked for next month), and taking the max date of every source moved "today" — and with it
+   every MTD, 7/30-day window and the published review month — into the future. The anchor is the last day with
+   facts up to today (SAST). */
 function anchorDate(){
-  let mx=null;
-  SRC_KEYS.forEach(k=>(state.facts[k]||[]).forEach(r=>{if(r._d&&(!mx||r._d>mx))mx=r._d}));
+  const today=sastDay();let mx=null;
+  SRC_KEYS.forEach(k=>(state.facts[k]||[]).forEach(r=>{if(r._d&&r._d<=today&&(!mx||r._d>mx))mx=r._d}));
   return mx?new Date(mx+'T12:00:00'):new Date();
 }
 function periodWindow(){
@@ -2405,7 +2512,7 @@ function rowsForRaw(src,win,sc){
      campaign/tenure/team/dept reuse it (no per-row alias re-walk = no filter lag), and every
      source attributes to the AGENT's roster queue — so filtering a campaign returns ALL that
      agent's rows (QA, calls, attendance, money), regardless of how the individual row was tagged. */
-  const cbRow=r=>{ if(r._cbcV!==_dataVer){ r._cbc=resolveCB(r); r._campB=r._cbc?campBucket(state.cbInfo[r._cbc]?.queue):''; r._cbcV=_dataVer; } return r._cbc; };
+  const cbRow=r=>{ if(r._cbcV!==_dataVer){ r._cbc=resolveCB(r); r._campB=r._cbc?campFilterKey(state.cbInfo[r._cbc]?.queue):''; r._cbcV=_dataVer; } return r._cbc; };
   if(!noGF)for(const gf in state.filters){const v=state.filters[gf];if(!v)continue;
     const field=GFMAP[gf]?.[src];
     if(gf==='agent'){rows=rows.filter(r=>{const c=field?normCB(r[field]):cbRow(r);return c===normCB(v)});continue}
@@ -2673,7 +2780,7 @@ function drawFilters(){
      the Agent List names that folds to none of them — offered under its own label, the
      same label campBucket's callers already keep for it. */
   const knownCamps=new Set(CAMP_OPTS.map(o=>o[0]));
-  const extraCamps=[...new Set(rosterVals('campaign').map(v=>campBucket(v)||String(v).trim()))].filter(c=>c&&!knownCamps.has(c)).sort().map(c=>[c,c]);
+  const extraCamps=[...new Set(rosterVals('queue').map(campFilterKey))].filter(c=>c&&!knownCamps.has(c)).sort().map(c=>[c,c]);
   const camps=CAMP_OPTS.concat(extraCamps);
   let teams=[...new Set([...distinct('QA_EVALUATIONS','team_leader'),...distinct('ATTENDANCE','reports_to'),...rosterVals('tl')])].sort();
   const tenures=[...new Set(rosterVals('tenure'))].sort();
@@ -3127,7 +3234,16 @@ function gwpFloorEx(){return Math.floor(nbaVal('gwpFloor',99)/(1+vatPct())*100)/
 function gwpFloorIncl(){return gwpFloorEx()*(1+vatPct())-1e-9}
 function zarStack(v){return fmtVal(v,'zar')+'<div class="exv">'+fmtVal(exVat(v),'zar')+' ex VAT</div>'}
 function zar2Stack(v){return zar2(v)+'<div class="exv">'+zar2(exVat(v))+' ex VAT</div>'}
+/* THE CYCLE PANELS ARE THE WHOLE FLOOR (spec 014 O11, 2026-10-07): every campaign's money against its own target,
+   every team leader's projection. Their reads (accountPremiums, diallerRows, the BI week rollup) go through rowsFor,
+   which applies the filter bar — so under a Cuddle filter Courtesy's cycle read R0 against a live target. The old
+   save-and-restore around accountPremiums never cleared anything. The filter bar is set aside for the calculation
+   and put back exactly as it was; the team leader permission scope is not a filter and still applies. */
 function cycleCalc(mode){
+  const f=state.filters;state.filters={campaign:'',team:'',agent:'',dept:'',tenure:''};
+  try{return cycleCalcFloor(mode)}finally{state.filters=f}
+}
+function cycleCalcFloor(mode){
   /* mode: 'cycle' (default, 26th-anchored VAS cycle) · 'month' (calendar-month backup
      view, client 2026-07-20) · 'win' (linked to the main dashboard range filter). All
      three share one maths path — only the window and day-count denominator change. */
@@ -3147,7 +3263,7 @@ function cycleCalc(mode){
     totD=parseFloat((state.rules.cycleDialingDays?.vals||[])[0])||21;
     cw={from:start,to:'2099-12-31'};
   }
-  const prem=(function(){const f=state.filters;try{return accountPremiums(cw)}finally{state.filters=f}})();
+  const prem=accountPremiums(cw);
   const dial=diallerRows(cw);   // both diallers across the 2026-09-01 cutover
   /* Fold the raw roster queue to the campaign key the targets are written in, exactly as every
      other campaign view in the app does. This was the one place that keyed on the RAW queue, so
@@ -4534,7 +4650,7 @@ async function agentOpen(cb){
     ctx+="\nComposite (Adj): "+Math.round(comp.adj)+"/100. Current NBA: "+nba.code+" "+nba.label+".";
     var ep=(state.rules.askEndpoint&&state.rules.askEndpoint.vals[0])||"/api/ask";
     fetch(ep,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+(sessionStorage.getItem("cbx_token")||"")},body:JSON.stringify({question:"Coach this agent. In 2 short bullets say what is working, then 3 bullets on what could be better and the specific action, using the NBA v3.0 framework. Keep it under 90 words.",context:ctx})})
-      .then(function(r){return r.json()}).then(function(j){var el=document.getElementById("acAI");if(el)el.innerHTML=(j.answer?String(j.answer):"(AI unavailable)").replace(/\n/g,"<br>")})
+      .then(function(r){return r.json()}).then(function(j){var el=document.getElementById("acAI");if(el)el.innerHTML=esc(j.answer?String(j.answer):"(AI unavailable)").replace(/\n/g,"<br>")})   // model text escaped before its line breaks become <br> (spec 014 O7)
       .catch(function(){var el=document.getElementById("acAI");if(el)el.textContent="AI analysis unavailable right now."});
   },50);
   $('#modalBox').classList.add('xl');
@@ -4558,7 +4674,7 @@ function pageTL(win){
   const cbsBase=Object.keys(state.cbInfo).filter(cb=>{const i=state.cbInfo[cb];
     if(GF.tenure&&i.tenure!==GF.tenure)return false;
     if(GF.team&&i.tl!==GF.team)return false;
-    if(GF.campaign&&campBucket(i.queue)!==GF.campaign)return false;
+    if(GF.campaign&&campFilterKey(i.queue)!==GF.campaign)return false;
     if(GF.agent&&cb!==normCB(GF.agent))return false;
     return true});
   if(!cbsBase.length)return emptyState('No roster agents match the current filters');
@@ -4707,7 +4823,7 @@ function pageBrain(win){
   const cbsBase=Object.keys(state.cbInfo).filter(cb=>{const i=state.cbInfo[cb];
     if(GF.tenure&&i.tenure!==GF.tenure)return false;
     if(GF.team&&i.tl!==GF.team)return false;
-    if(GF.campaign&&campBucket(i.queue)!==GF.campaign)return false;
+    if(GF.campaign&&campFilterKey(i.queue)!==GF.campaign)return false;
     if(GF.agent&&cb!==normCB(GF.agent))return false;
     return true});
   if(!cbsBase.length)return emptyState('No roster agents match the current filters');
@@ -5310,6 +5426,7 @@ function ruleDel(key,i){state.rules[key].vals.splice(i,1);saveConfig();render();
    something else happened to invalidate them. */
 function mapAgent(name,code){
   if(code)state.agentMap[name]=normCB(code);else delete state.agentMap[name];
+  __aliasEdits[name]=code?normCB(code):null;          // carried across a save conflict — see adoptIdentity
   saveConfig();
   bumpDataVer();                      // identity changed: every cached read must be re-taken
   toast('Mapping saved');
@@ -5514,7 +5631,7 @@ function healRetiredRules(rules){const out=Object.assign({},rules);
   return out}
 function applyCfg(cfg){if(!cfg)return;
   if(cfg.kpis?.length)state.kpis=migrateKpis(cfg.kpis);if(cfg.rules)state.rules=healRetiredRules(Object.assign({},structuredClone(DEFAULT_RULES),cfg.rules));
-  if(cfg.agentMap)state.agentMap=cfg.agentMap;if(cfg.sfOwnerMap)state.sfOwnerMap=cfg.sfOwnerMap;if(cfg.cbInfo)state.cbInfo=cfg.cbInfo;if(cfg.syncedUploads)state.syncedUploads=cfg.syncedUploads}   // cfg.user (an old config's) is ignored — see cfgPayload
+  if(cfg.agentMap)state.agentMap=cfg.agentMap;if(cfg.sfOwnerMap)state.sfOwnerMap=cfg.sfOwnerMap;if(cfg.cbInfo)state.cbInfo=cfg.cbInfo;state.identityAt=cfg.identityAt||'';if(cfg.syncedUploads)state.syncedUploads=cfg.syncedUploads}   // cfg.user (an old config's) is ignored — see cfgPayload
 /* PHASE A — paint from the local IndexedDB snapshot before any network happens. The auth
    gate still covers the screen until the session validates; this only removes the blank
    wait AFTER login while the cloud blobs download. Aborts the moment the cloud init has
@@ -5788,6 +5905,11 @@ setTimeout(function(){
     try{
       if(!sessionStorage.getItem('cbx_token'))return;
       if(typeof periodWindow!=='function'||typeof acStats!=='function'||!window.storage)return;
+      /* A SCOPED TAB NEVER PUBLISHES A SHARED DIGEST (spec 014 O4, 2026-10-07): build() keeps only the agents
+         cbInScope lets this user see, so a team leader's open tab overwrote the floor's review with their own team
+         alone and every other agent dropped out of it until an unscoped tab republished. Only unscoped tabs (and
+         the relay) publish. */
+      if(typeof userScopeTeam==='function'&&userScopeTeam())return;
       if(!Object.keys(state.cbInfo||{}).length)return;   // an empty session must never overwrite
       var p=build(); if(!p||!p.agents.length)return;
       var cmp=JSON.stringify(p.agents)+p.period.from+p.period.to;   // ignore updatedAt churn
@@ -5795,7 +5917,8 @@ setTimeout(function(){
          minutes from main's code; a copy without `rules` came from an engine that still deducted
          R2A points, and this tab republishes over it even though its own payload is unchanged. */
       if(cmp===last){
-        try{ Promise.resolve(window.storage.get('nba-digest')).then(function(t){ var d=null; try{ d=JSON.parse(t||''); }catch(e){}
+        /* the shim's get() answers {value: string} — parsing the object itself threw, so this never fired (spec 014 O9) */
+        try{ Promise.resolve(window.storage.get('nba-digest')).then(function(t){ var d=null; try{ d=JSON.parse((t&&typeof t==='object')?(t.value||''):(t||'')); }catch(e){}
           if(d&&!d.rules) window.storage.set('nba-digest', JSON.stringify(p)); }).catch(function(){}); }catch(e){}
         return; }
       last=cmp;
@@ -5816,6 +5939,7 @@ setTimeout(function(){
       if(!sessionStorage.getItem('cbx_token'))return;
       if(typeof cbxContext!=='function'||!window.storage)return;
       if(window.__pushedVer===_dataVer)return; // PERF: digest recompute only when data changed
+      if(typeof userScopeTeam==='function'&&userScopeTeam())return;   // a team leader's context is one team — never the shared digest (spec 014 O4)
       var t=cbxContext(); if(!t||t.indexOf('CTX_ERROR')===0)return;
       if(!Object.keys(state.cbInfo||{}).length)return; // empty session must never overwrite a rich digest
       if(t===last)return; last=t;
@@ -5834,11 +5958,15 @@ setTimeout(function(){
 (function(){
   var API='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv';
   var seen=null;
+  var held=false, told=null;   // another user's upload seen while a save here held the reload (spec 014 O6, review R1)
   function check(){
     try{
       var t=sessionStorage.getItem('cbx_token'); if(!t)return;
       if(typeof __initDone==='undefined'||!__initDone)return;               // boot not finished yet
-      if(Date.now()-(window.__cbxLastWrite||0)<240000){seenAdopt();return}  // this tab just wrote — adopt, don't re-init
+      var wrote=Date.now()-(window.__cbxLastWrite||0)<240000
+        &&!(typeof opsLastWriteRefused==='function'&&opsLastWriteRefused()); // a refused retry moved no store (review R1)
+      if(wrote&&!held){seenAdopt();return}                                 // this tab just wrote — adopt, don't re-init
+      if(typeof opsSavePending==='function'&&opsSavePending()){heldNotice();return}   // a load here is not saved yet — a re-init would drop it (spec 014 O6)
       var ae=document.activeElement;
       if(ae&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName))return;               // never clobber mid-edit
       fetch(API+'?key=cb-audit&meta=1',{headers:{'Authorization':'Bearer '+t}})
@@ -5846,7 +5974,7 @@ setTimeout(function(){
         .then(function(j){
           if(!j||!j.updated_at)return;
           if(seen===null){seen=j.updated_at;return}                          // first sighting = current state
-          if(j.updated_at!==seen){seen=j.updated_at;init();}                 // someone else uploaded → re-pull
+          if(j.updated_at!==seen){seen=j.updated_at;held=false;init();}      // someone else uploaded → re-pull
         }).catch(function(){});
     }catch(e){}
   }
@@ -5855,6 +5983,21 @@ setTimeout(function(){
     fetch(API+'?key=cb-audit&meta=1',{headers:{'Authorization':'Bearer '+t}})
       .then(function(r){return r.ok?r.json():null})
       .then(function(j){ if(j&&j.updated_at)seen=j.updated_at; }).catch(function(){});
+  }
+  /* WHILE A SAVE HOLDS THE RELOAD, STILL LOOK (review R1): the same one small meta read. Another user's upload is said
+     once, and `seen` is NOT moved — so the reload follows as soon as the hold ends, and `held` keeps this tab's own
+     next write from adopting that upload away unseen. */
+  function heldNotice(){
+    var t=sessionStorage.getItem('cbx_token'); if(!t)return;
+    fetch(API+'?key=cb-audit&meta=1',{headers:{'Authorization':'Bearer '+t}})
+      .then(function(r){return r.ok?r.json():null})
+      .then(function(j){
+        if(!j||!j.updated_at)return;
+        if(seen===null){seen=j.updated_at;return}                            // first sighting = current state
+        if(j.updated_at===seen||j.updated_at===told)return;
+        held=true; told=j.updated_at;
+        if(typeof toast==='function')toast('Another user uploaded new data. This tab loads it as soon as its own upload is saved (or in about ten minutes if that save keeps failing).','',9000);
+      }).catch(function(){});
   }
   setInterval(check,240000);
   document.addEventListener('visibilitychange',function(){ if(!document.hidden)check(); });

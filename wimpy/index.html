@@ -167,12 +167,17 @@ var API='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
 var TKEY='cbx_wimpy_token';                     // never cbx_token — a lunch session is not a management one
 var U=null;                                     // {username, full_name, cb, role, scope}
 var WMENU=null, WCART=[], WCAT='breakfast', WDAY=null, WOPEN=false, WSTATE='order', WERR='', WBUSY=false, WDONE=null;
-var WHO={cb:'',first:'',last:'',phone:'',notes:''};      // the order form, typed by the person
+var WNOTE='';                                   // said once: a cart line dropped because its item left the menu (spec 014, A3)
+function whoBlank(){ return {cb:'',first:'',last:'',phone:'',notes:''}; }
+var WHO=whoBlank();                             // the order form, typed by the person
+var WHO_FOR='';                                 // whose account WHO was filled for — another person never inherits it (A4)
 var MAX_QTY=10;                                 // quantity is the one thing a person may change
+var API_EPOCH=0;                                // bumped by wReset: a reply asked for before a sign-out is never let in
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function api(path, body){
+  var ep=API_EPOCH;
   var o={method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-Cbx-Client':'v5'}};
   var t=null; try{ t=sessionStorage.getItem(TKEY); }catch(e){}
   if(t) o.headers.Authorization='Bearer '+t;
@@ -180,7 +185,16 @@ function api(path, body){
   return fetch(API+path,o).then(function(r){
     return r.json().then(function(j){ return {ok:r.ok,status:r.status,json:j}; },
                          function(){ return {ok:false,status:r.status,json:{}}; });
-  },function(){ return {ok:false,status:0,json:{error:'We could not reach the server. Check your connection and try again.'}}; });
+  },function(){ return {ok:false,status:0,json:{error:'We could not reach the server. Check your connection and try again.'}}; })
+  .then(function(res){ return ep===API_EPOCH?res:new Promise(function(){}); });
+}
+/* EVERY WAY OUT EMPTIES THE PAGE (spec 014, A4): the next person at a shared desk starts from nothing — never the last
+   one's name, surname, phone, kitchen notes, cart or order slip (their order would reach the kitchen under the old name). */
+function wReset(){
+  API_EPOCH++;
+  try{ sessionStorage.removeItem(TKEY); }catch(e){}
+  U=null; WMENU=null; WCART=[]; WCAT='breakfast'; WDAY=null; WOPEN=false; WSTATE='order'; WERR=''; WBUSY=false; WDONE=null; WNOTE='';
+  WHO=whoBlank(); WHO_FOR='';
 }
 
 /* ---------- money: display only, the Worker re-prices ---------- */
@@ -206,6 +220,7 @@ setInterval(function(){
 /* ---------- sign-in: CB number + the person's own password (Spec Kit 009) ---------- */
 /* keepCb: after a refusal the CB number stays typed and only the password is asked again */
 function loginScreen(msg, bad, keepCb){
+  wReset();   // a sign-in screen never holds a previous person's order (A4)
   $('root').innerHTML='<div class="login"><div class="box">'
     +'<div class="top"><div class="logo">🍔</div><h1>Wimpy Order</h1><p>Chatterbox × Wimpy · Weekday Value Menu</p></div>'
     +'<form id="lf" autocomplete="off">'
@@ -237,10 +252,8 @@ function loginScreen(msg, bad, keepCb){
   };
 }
 function signOut(){
-  api('/api/logout',{}).then(function(){},function(){});
-  try{ sessionStorage.removeItem(TKEY); }catch(e){}
-  U=null; WMENU=null; WCART=[]; WSTATE='order'; WERR='';
-  loginScreen('Signed out. See you tomorrow.');
+  api('/api/logout',{}).then(function(){},function(){});   // sent with this person's token, before the reset drops it
+  loginScreen('Signed out. See you tomorrow.');            // resets everything (wReset)
 }
 
 /* ---------- boot ---------- */
@@ -248,9 +261,11 @@ function boot(){
   var t=null; try{ t=sessionStorage.getItem(TKEY); }catch(e){}
   if(!t){ loginScreen(); return; }
   api('/api/me').then(function(r){
-    if(!r.ok||!r.json||!r.json.user){ try{ sessionStorage.removeItem(TKEY); }catch(e){} loginScreen(r.status===426?'This page is an outdated copy — press Ctrl+Shift+R.':''); return; }
+    if(!r.ok||!r.json||!r.json.user){ loginScreen(r.status===426?'This page is an outdated copy — press Ctrl+Shift+R.':''); return; }
     U=r.json.user;
-    WHO.cb=String(U.cb||U.username||'').toUpperCase();
+    var acct=String(U.cb||U.username||'').toUpperCase();
+    if(WHO_FOR!==acct){ WHO=whoBlank(); WHO_FOR=acct; }   // another CB signed in: none of the last person's details (A4)
+    WHO.cb=acct;
     var parts=String(U.full_name||'').trim().split(/\s+/);
     WHO.first=WHO.first||parts[0]||''; WHO.last=WHO.last||parts.slice(1).join(' ')||'';
     wLoadMenu(); render();
@@ -260,9 +275,23 @@ function wLoadMenu(){
   api('/api/wimpy/menu').then(function(r){
     if(r.status===401||r.status===403){ signOut(); return; }
     WMENU = r.ok ? r.json : {error:(r.json&&r.json.error)||'The menu could not be loaded.'};
+    wPruneCart();
     render();
   });
 }
+/* A LINE WHOSE ITEM LEFT THE MENU (spec 014, A3): yesterday's Big One after the day flips is no longer in the payload, so
+   its line could not be drawn — invisible, impossible to remove, and refused at the order step. It is taken out of the
+   cart and said, by the name it was added under. */
+function wPruneCart(){
+  if(!WMENU||WMENU.error) return;
+  var gone=[];
+  WCART=WCART.filter(function(l){ if(wItemDef(l.id)) return true; gone.push(l.name||'An item'); return false; });
+  if(gone.length) WNOTE=gone.join(', ')+(gone.length===1?' is':' are')+' no longer on the menu, so '+(gone.length===1?'it was':'they were')+' taken out of your order.';
+  /* …and when that took EVERY line, the Confirm (or form) step would offer to send an empty R0.00 order: back to the
+     menu, with the note above saying why (review R1). What was typed on the form stays in WHO for the way back. */
+  if(gone.length&&!WCART.length&&(WSTATE==='confirm'||WSTATE==='form')){ WSTATE='order'; WERR=''; }
+}
+function wNoteHTML(){ return WNOTE?'<div class="msg info">'+esc(WNOTE)+'</div>':''; }
 
 /* ---------- render ---------- */
 function shell(inner){
@@ -272,8 +301,25 @@ function shell(inner){
     +'<div class="wrap">'+inner+'</div>';
   var o=$('out'); if(o) o.onclick=signOut;
 }
+/* the order form as typed, read into WHO — on Review, and before ANY re-render (spec 014, A5: the 08:00/17:00 window
+   flip re-asks for the menu and re-renders; it used to put back what WHO held before the person started typing) */
+var WFORM_IDS=['fcb','ffn','fln','fph','fnt'];
+function wReadForm(){
+  if(!$('of')) return;
+  WHO.cb=String(($('fcb')||{}).value||'').trim().toUpperCase(); WHO.first=String(($('ffn')||{}).value||'').trim(); WHO.last=String(($('fln')||{}).value||'').trim();
+  WHO.phone=String(($('fph')||{}).value||'').trim(); WHO.notes=String(($('fnt')||{}).value||'').trim();
+}
 function render(){
   if(!U){ loginScreen(); return; }
+  wReadForm();
+  /* …and the cursor stays in the field it was in */
+  var ae=document.activeElement, foc=(ae&&WFORM_IDS.indexOf(ae.id)>=0)?ae.id:'', sel=null;
+  if(foc){ try{ sel=[ae.selectionStart,ae.selectionEnd]; }catch(e){ sel=null; } }
+  wPaint();
+  var el=foc?$(foc):null;
+  if(el){ try{ el.focus(); var n=el.value.length; if(sel&&sel[0]!=null) el.setSelectionRange(Math.min(sel[0],n),Math.min(sel[1],n)); }catch(e){} }
+}
+function wPaint(){
   if(!WMENU){ shell('<div class="card"><p class="why">Loading the menu…</p></div>'); return; }
   if(WMENU.error){ shell('<div class="card"><p class="why">'+esc(WMENU.error)+'</p><button type="button" class="btn" id="retry">Try again</button></div>'); var rt=$('retry'); if(rt) rt.onclick=wLoadMenu; return; }
   if(WSTATE==='done'){ shell(wDonePage()); wire(); return; }
@@ -341,7 +387,7 @@ function wMenuPage(){
         :'<button type="button" class="btn" disabled title="This item has no price configured">Unavailable</button>')
       +'</div>';
   }).join('')+'</div>';
-  return wWindowBar()+header+hero+week+'<div class="wp-wrap"><div>'+cats+grid+'</div>'+(open?wCartHTML():'')+'</div>';
+  return wWindowBar()+wNoteHTML()+header+hero+week+'<div class="wp-wrap"><div>'+cats+grid+'</div>'+(open?wCartHTML():'')+'</div>';
 }
 
 function wCartHTML(){
@@ -365,8 +411,8 @@ function wCartHTML(){
 function wAdd(id){
   var d=wItemDef(id); if(!d||d.basePrice==null||!wimpyOpenNow()) return;
   var line=null; WCART.forEach(function(l){ if(l.id===id) line=l; });
-  if(line) line.quantity=Math.min(MAX_QTY,line.quantity+1); else WCART.push({id:id,quantity:1});
-  WOPEN=true; render();
+  if(line) line.quantity=Math.min(MAX_QTY,line.quantity+1); else WCART.push({id:id,quantity:1,name:d.name});   // the name only says so if the item later leaves the menu (A3) — an order line is still an id and a quantity
+  WOPEN=true; WNOTE=''; render();
 }
 
 /* ---------- the order form: CB number, name, surname (Nick, 2026-09-10) ---------- */
@@ -374,7 +420,7 @@ function wFormPage(){
   return '<div class="card" style="max-width:640px">'
     +'<h3>Who is this order for?</h3>'
     +'<p class="why">Type your CB number, name, surname and phone number. The CB number must be the one you signed in with — an order can only be placed in your own name.</p>'
-    +(WERR?'<div class="msg bad">'+esc(WERR)+'</div>':'')
+    +(WERR?'<div class="msg bad">'+esc(WERR)+'</div>':'')+wNoteHTML()
     +'<form id="of" autocomplete="off">'
     +'<div class="f"><label class="lab" for="fcb">CB number</label><input class="inp" id="fcb" value="'+esc(WHO.cb)+'" autocapitalize="characters"></div>'
     +'<div class="frow"><div class="f"><label class="lab" for="ffn">Name</label><input class="inp" id="ffn" value="'+esc(WHO.first)+'" autocapitalize="words"></div>'
@@ -404,7 +450,7 @@ function wValidate(){
 
 function wConfirmPage(){
   return '<div class="card" style="max-width:640px"><h3>Confirm your order</h3>'
-    +(WERR?'<div class="msg bad">'+esc(WERR)+'</div>':'')
+    +(WERR?'<div class="msg bad">'+esc(WERR)+'</div>':'')+wNoteHTML()
     +'<p class="why"><b>'+esc(WHO.first+' '+WHO.last)+'</b> · CB number <b>'+esc(WHO.cb)+'</b>'+(WHO.notes?' · “'+esc(WHO.notes)+'”':'')+'</p>'
     +WCART.map(function(l){ var d=wItemDef(l.id); if(!d) return '';
       return '<div class="wp-line"><div class="t"><span class="n">'+l.quantity+' × '+esc(d.name)+'</span><span class="m">'+wZar(wLineCents(l)/100)+'</span></div></div>'; }).join('')
@@ -432,7 +478,7 @@ function wSubmit(){
   }).then(function(r){
     WBUSY=false;
     if(r.ok&&r.json&&r.json.ok){
-      WDONE={total:r.json.total_price, slip:r.json.order_formatted||''}; WCART=[]; WHO.notes=''; WSTATE='done'; WERR='';
+      WDONE={total:r.json.total_price, slip:r.json.order_formatted||''}; WCART=[]; WHO.notes=''; WSTATE='done'; WERR=''; WNOTE='';
     } else if(r.status===401){ signOut(); return; }
     else { WERR=(r.json&&r.json.error)||'Unable to send the order. Please try again.'; if(r.status===400&&/CB number|name|surname|phone/i.test(WERR)) WSTATE='form'; }
     render();
@@ -450,7 +496,7 @@ function wire(){
   var rev=$('wpReview'); if(rev) rev.onclick=function(){ WERR=''; WSTATE='form'; render(); };
   var back=$('wpBack'); if(back) back.onclick=function(){ WSTATE='order'; WERR=''; render(); };
   var of=$('of'); if(of) of.onsubmit=function(e){ e.preventDefault();
-    WHO.cb=String($('fcb').value||'').trim().toUpperCase(); WHO.first=String($('ffn').value||'').trim(); WHO.last=String($('fln').value||'').trim(); WHO.phone=String(($('fph')||{}).value||'').trim(); WHO.notes=String($('fnt').value||'').trim();
+    wReadForm();
     var bad=wValidate(); if(bad){ WERR=bad; return render(); }
     WERR=''; WSTATE='confirm'; render(); };
   var ed=$('wpEdit'); if(ed) ed.onclick=function(){ WSTATE='form'; WERR=''; render(); };

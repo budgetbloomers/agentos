@@ -1114,7 +1114,22 @@ function boot(){
    An agent's response contains one agent and a group average; a team leader's
    contains their team. Nothing else is filtered out on screen, because nothing
    else was ever sent. Editing this file cannot widen anybody's access. */
+/* THE SESSION EPOCH (spec 014, A1): bumped by resetClientState. A reply to a request asked BEFORE a sign-out (or a 401)
+   arrives after it — the help list, a hub copy, a report — and would write the previous person's data back into memory
+   for the next person at this browser. Such a reply is never let in: its promise simply never settles. */
+var API_EPOCH=0;
+/* A 401 ENDS THE SESSION, WHOEVER ASKED (spec 014, review R2). The hubs, the Help Center and the reports painted an error
+   on a 401 and stayed signed in, so the previous person's data stayed on screen until someone pressed Sign out. api()
+   now ends the session on every 401 of the CURRENT session (after the epoch check, so a late 401 from before a sign-out
+   never ends the next person's). ORDER MATTERS: the caller is answered first, exactly as before, and the session ends on
+   the next task (setTimeout 0, not a microtask: two 401s answered together — the hub and its drafts — would otherwise let
+   the second caller write its error card into the state the first one's reset had just emptied). So whatever a caller
+   writes on a 401 (an error card in HUB, MYHELP…) is wiped by the reset, and a reply after it is dropped by the epoch; a
+   caller that already called sessionExpired() is not handled twice (the epoch has moved, and sessionExpired is once).
+   Not sign-in (a 401 there is a wrong password) and not sign-out (fire-and-forget). */
+var API_NO_EXPIRE=/^\/api\/(login|logout)(\?|$)/;
 function api(path, body){
+  var ep=API_EPOCH;
   var o={method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-Cbx-Client':'v5'}};
   var t=null; try{ t=sessionStorage.getItem(TKEY); }catch(e){}
   if(t) o.headers.Authorization='Bearer '+t;
@@ -1122,16 +1137,60 @@ function api(path, body){
   return fetch(API+path,o).then(function(r){
     return r.json().then(function(j){ return {ok:r.ok,status:r.status,json:j}; },
                          function(){ return {ok:false,status:r.status,json:{}}; });
-  },function(){ return {ok:false,status:0,json:{error:'We could not reach the server. Check your connection and try again.'}}; });
+  },function(){ return {ok:false,status:0,json:{error:'We could not reach the server. Check your connection and try again.'}}; })
+  .then(function(res){
+    if(ep!==API_EPOCH) return new Promise(function(){});
+    if(res.status===401&&!API_NO_EXPIRE.test(path)) setTimeout(function(){ if(ep===API_EPOCH) sessionExpired(); },0);
+    return res;
+  });
+}
+/* ONE RESET FOR EVERY WAY OUT (spec 014, A1 — a shared browser showed the next person the last one's data).
+   Sign-out and every 401 land on loginScreen(), which calls this first: every store this page keeps for the
+   signed-in person goes back to its first value, the overlays that live outside #root are closed and emptied, and the
+   epoch above drops every reply still on its way. The live timers keep running — each beat checks who is signed in. */
+function resetClientState(){
+  API_EPOCH++;
+  try{ sessionStorage.removeItem(TKEY); }catch(e){}
+  cmReset();                                             // the CM period/tenure/range, its coaching copy, its session memory and the 60 s re-ask
+  U=null; D=null; ME=null; TEAM=null; VIEW='month'; EXTRA=1; PW_OPEN=false;
+  LAST_REPORT='mtd_team'; LAST_CM_REPORT='cm_mtd'; DAY_FILTER=''; VAR_DAY='';
+  REP={variance:repBlank(''),leads:repBlank('')};
+  HUB={coaching:null,kpi:null,drafts:null,flash:null,busy:false}; HUB_INFLIGHT={}; HUB_AGAIN={};
+  CFORM=cformBlank(); FORM=formBlank(); FILT={q:'',kind:'all'};
+  LIVE.pending=null; LIVE.busy=false; LIVE.at=0; AGENT_LIVE.busy=false; AGENT_LIVE.at=0;
+  CMSEL=null; CMEXP={}; CMF={team:'',pri:'',blk:'',sla:'',st:''}; TLA=null; TLA_AT=0;
+  VIEWMONTH=''; LIVE_MONTH_NAME=''; MONTH_SEQ++;        // a pinned closed month is never handed to the next person
+  DRAWER_CB=null; DRAWER_ME=null;
+  MYHELP=null; MYHELP_AT=0; MYHELP_BUSY=false; ACTS=null; ACTS_BUSY=false; EXPANDED={};
+  HELP_UNREAD=0; HELP_PULSE.busy=false; HELP_PULSE.again=false;
+  HELPD=null; FAILS=null; SYNCS=null; HELPD_AT=0; HELP_BUSY=false;
+  clearOverlays();
+}
+/* the drawer, the score journey, the help / drill-down overlays, the CM request panels and the toast are appended to
+   <body>, so the sign-in screen (painted into #root) would sit underneath them */
+function clearOverlays(){
+  try{
+    var dr=document.getElementById('cbxDrawer'); if(dr){ dr.classList.remove('open'); dr.innerHTML=''; }
+    var sc=document.getElementById('cbxScrim'); if(sc) sc.classList.remove('open');
+    var jm=document.getElementById('cbxJourney'); if(jm){ jm.classList.remove('open'); jm.innerHTML=''; }
+    ['helpOv','drillOv'].forEach(function(id){ var x=document.getElementById(id); if(x) x.remove(); });
+    Array.prototype.forEach.call(document.querySelectorAll('.cmov'),function(x){ x.remove(); });
+    var t=document.getElementById('toast'); if(t){ t.classList.remove('show'); t.textContent=''; }
+    if(document.body) document.body.classList.remove('dk-locked');
+    if(typeof document.removeEventListener==='function'){ document.removeEventListener('keydown',dkEsc); document.removeEventListener('keydown',jEsc); }
+  }catch(e){}
 }
 function signOut(){
-  PW_OPEN=false;
-  api('/api/logout',{}).then(function(){},function(){});
-  try{ sessionStorage.removeItem(TKEY); }catch(e){}
-  U=null; D=null; ME=null; TEAM=null; VIEWMONTH=''; LIVE_MONTH_NAME='';
-  HELP_UNREAD=0;                                         // the next person to sign in must not see this leader's count
-  cmReset();
-  loginScreen();
+  api('/api/logout',{}).then(function(){},function(){});   // sent with this person's token, before the reset drops it
+  loginScreen();                                          // resets everything (resetClientState)
+}
+/* every 401 that means "this session is over" — once (review R2): when it is already over (the reset state: no page, no
+   person, no token), another 401 (a timer's beat, a second request that was out at the same time) must not repaint the
+   sign-in screen under the next person's typing */
+function sessionExpired(){
+  var t=null; try{ t=sessionStorage.getItem(TKEY); }catch(e){}
+  if(!D&&!U&&!t) return;
+  return loginScreen('Your session has expired. Please sign in again.');
 }
 
 function preShell(inner){
@@ -1727,25 +1786,47 @@ function pageDailyTeam(){
    verdict). Each report keeps its OWN publish stamp (it can lag the digest when a book is not loaded),
    is fetched on its own on the LIVE timer, on focus and on Refresh (never static), and treats 403/404
    as "not for this account / not published yet" — never as a sign-out. */
-var REP={variance:{d:null,at:0,busy:false,err:'',per:'',msg:''},leads:{d:null,at:0,busy:false,err:'',per:'',msg:''}};
+function repBlank(per){ return {d:null,at:0,busy:false,err:'',per:per,msg:''}; }
+var REP={variance:repBlank(''),leads:repBlank('')};
 var VAR_DAY='';
 function repKind(v){ return (v==='variance_team'||v==='cm_variance')?'variance':((v==='leads_team'||v==='cm_leads')?'leads':''); }
 function repScopeOk(){ return liveTeamScope()||!!(D&&!D.me&&D.scope==='campaign'); }
 /* THE PERIOD THE REPORTS FOLLOW (spec 006): a campaign manager's custom range is sent to tl/reports and the Worker serves
    that range's own report keys; everything else reads the live report keys, as before ('' = live). */
 function repPeriod(){ return (D&&D.scope==='campaign'&&/^range-/.test(String(CMPER)))?CMPER:''; }
+/* LIVE MONTH ONLY (spec 014, A2). The engine publishes these two reports for the LIVE month (kv:agent-reports-<kind>) and
+   for a custom range (…-range-…) — never for a closed month or a billing month (tools/digest-republish.mjs: "beside the
+   LIVE digest only, never for a history month"). So on a campaign manager's past month / billing month, and on a team
+   leader's "<Month> (final)", the live report would sit under the other period's label: it is not asked for, not painted
+   and not exported there — the page says so instead. */
+function repLiveOnly(){
+  if(!D) return false;
+  if(D.scope==='campaign') return CMPER!=='current'&&!/^range-/.test(String(CMPER));
+  return !!VIEWMONTH;
+}
+function repLiveOnlyCard(kind){
+  var title=kind==='leads'?'Lead management':'Variance';
+  var label=(D&&D.period&&D.period.label)||prettyPeriod();
+  var cm=!!(D&&D.scope==='campaign');
+  return '<div class="card"><h3>'+esc(title)+' <span class="cnt">'+esc(label)+'</span></h3><p class="why">'+esc(title)
+    +' is published for the live month only'+(cm?' (and for a custom range)':'')+' — there is no '+esc(title)+' report for '+esc(label)
+    +', so the live month\'s is not shown under it. '
+    +(cm?'Choose Current month or a custom range on the Campaign tab to see it.':'Go back to '+esc(LIVE_MONTH_NAME||'this month')+' to see it.')
+    +'</p></div>';
+}
 /* new figures on screen (cmAsk): a report held for another period — or a "not built yet" answer, which a range that has
    just been built has outgrown — is dropped, so the open tab asks again for the right one */
 function repSync(){
   var p=repPeriod();
-  ['variance','leads'].forEach(function(k){ var st=REP[k]; if(st.per!==p||(!st.d&&!st.busy)) REP[k]={d:null,at:0,busy:false,err:'',per:p,msg:''}; });
+  ['variance','leads'].forEach(function(k){ var st=REP[k]; if(st.per!==p||(!st.d&&!st.busy)) REP[k]=repBlank(p); });
 }
 function repStamp(kind){
+  if(repLiveOnly()) return '—';
   var d=REP[kind]&&REP[kind].d; if(!d||!d.updatedAt) return 'not yet';
   try{ return new Date(d.updatedAt).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return String(d.updatedAt).slice(0,16); }
 }
 function repLoad(kind,manual){
-  var st=REP[kind]; if(!st||st.busy||!repScopeOk()) return Promise.resolve();
+  var st=REP[kind]; if(!st||st.busy||!repScopeOk()||repLiveOnly()) return Promise.resolve();
   var per=repPeriod(); st.per=per;
   st.busy=true; st.at=Date.now();
   return api('/api/portal/tl/reports?kind='+kind+(per?'&period='+encodeURIComponent(per):'')).then(function(r){
@@ -1758,7 +1839,7 @@ function repLoad(kind,manual){
       else if(manual) toast('Already on the latest published '+(kind==='leads'?'Lead management':'Variance')+' figures ('+repStamp(kind)+').');
       return;
     }
-    /* 401 is a real sign-out (refreshPortal handles it); 403 = not for this account; 404 = not published yet */
+    /* 401 is a real sign-out (api() ends the session — review R2 — so it no longer gets here); 403 = not for this account; 404 = not published yet */
     st.err=r.status===401?'session':(r.status===404?'unpublished':(r.status===403?'forbidden':('error: '+((r.json&&r.json.error)||r.status))));
     st.msg=String((r.json&&(r.json.message||r.json.error))||'');
     if(repKind(VIEW)===kind&&liveSafeToRender()) render();
@@ -1869,6 +1950,7 @@ function cmLeadsTable(){
 function pageCmReport(kind){
   var view=kind==='leads'?'cm_leads':'cm_variance';
   var head=reportsTabs(view,CM_REPORT_TABS);
+  if(repLiveOnly()) return head+repLiveOnlyCard(kind);
   var state=repStateCard(kind,kind==='leads'?'Lead management':'Variance'); if(state) return head+state;
   if(kind==='leads'){
     var sc=cmCamp();
@@ -1882,6 +1964,7 @@ function pageCmReport(kind){
 }
 function pageVarianceTeam(noHead){
   var head=noHead?'':reportsTabs('variance_team');   // the campaign-manager page paints its own tab strip
+  if(repLiveOnly()) return head+repLiveOnlyCard('variance');
   var state=repStateCard('variance','Variance'); if(state) return head+state;
   var rep=reportVariance(); var rp=rep.rp;
   if(!rep.rows.length&&!VAR_DAY) return head+'<div class="card"><h3>Variance</h3><p class="why">No variance rows have been published for '+(D&&D.scope==='campaign'?'your campaign':'your team')+' this month. The report compares Salesforce against the agent-logged board per agent per day — it needs the BI exports and the Manual Stats board uploaded on the VAS dashboard.</p></div>';
@@ -1965,6 +2048,7 @@ function reportLeads(){
 }
 function pageLeadsTeam(noHead){
   var head=noHead?'':reportsTabs('leads_team');   // the campaign-manager page paints its own tab strip
+  if(repLiveOnly()) return head+repLiveOnlyCard('leads');
   var state=repStateCard('leads','Lead management'); if(state) return head+state;
   if(!noHead&&lmAllExcluded()) return head+'<div class="card"><h3>Lead management</h3>'+lmNoteHTML()+'</div>';
   var note=noHead?'':lmNoteHTML();   // the manager's page prints the line once, above both tables (pageCmReport)
@@ -2002,6 +2086,11 @@ function cellOf(html){
 }
 function exportReports(which){
   if(!D){ toast('Nothing to export yet.'); return; }
+  var CM_TO_TL={cm_mtd:'mtd_team',cm_daily:'daily_team',cm_weekly:'weekly_team',cm_variance:'variance_team',cm_leads:'leads_team'};
+  var parts=which==='all'?['mtd_team','daily_team','weekly_team','variance_team','leads_team']:[CM_TO_TL[which]||which];
+  /* the live month's Variance / Lead management never go into a workbook named after another period (spec 014, A2) */
+  if(repLiveOnly()) parts=parts.filter(function(p){ return p!=='variance_team'&&p!=='leads_team'; });
+  if(!parts.length){ toast('Variance and Lead management are published for the live month only — there is none for '+((D.period&&D.period.label)||prettyPeriod())+' to export.',6000); return; }
   if(typeof XLSX==='undefined'||!XLSX.writeFile){ toast('The spreadsheet library has not finished loading — give it a second and try again.',5000); return; }
   var wb=XLSX.utils.book_new(), used={}, n=0;
   var add=function(name,aoa){
@@ -2018,8 +2107,6 @@ function exportReports(which){
     if(total) out.push(['Grand Total',''].concat(cols.map(function(c){return cellOf(c[1](total));})));
     return out;
   };
-  var CM_TO_TL={cm_mtd:'mtd_team',cm_daily:'daily_team',cm_weekly:'weekly_team',cm_variance:'variance_team',cm_leads:'leads_team'};
-  var parts=which==='all'?['mtd_team','daily_team','weekly_team','variance_team','leads_team']:[CM_TO_TL[which]||which];
   parts.forEach(function(p){
     if(p==='mtd_team'){
       reportMTD().groups.forEach(function(m){ add(m.sheet,table(m.cols,m.rows,m.total)); });
@@ -2815,6 +2902,14 @@ function todayISO(){
   try{ return new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Johannesburg'}).format(new Date()); }
   catch(e){ return new Date().toISOString().slice(0,10); }
 }
+/* THE SAST DAY of a stored instant (spec 014, A6): a KPI form created at 00:15 on the 1st is the 1st, not the UTC day
+   before it. '' for a missing or unreadable stamp, never a throw. */
+function sastDay(t){
+  if(t==null||t==='') return '';
+  var d=new Date(t); if(isNaN(d.getTime())) return '';
+  try{ return new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Johannesburg'}).format(d); }
+  catch(e){ return new Date(d.getTime()+2*3600000).toISOString().slice(0,10); }
+}
 
 /* The coaching cluster taxonomy, from Chatterbox_Coaching_Rules.json (schema 1.0).
    These are the fields AgentOS scores on, so they are dropdowns rather than free text —
@@ -3266,14 +3361,14 @@ function allFormsRows(){
   ((HUB.drafts&&HUB.drafts.drafts)||[]).forEach(function(x){
     out.push({src:'draft',id:x.id,kind:x.label||'Coaching',stuck:x.state==='submitting',
       who:x.agentName||'(no agent yet)',cb:x.employeeNumber||'',
-      date:x.date||String(x.updatedAt||'').slice(0,10),status:'draft',
+      date:x.date||sastDay(x.updatedAt),status:'draft',
       note:x.state==='submitting'?'Submitting — check your sessions before trying again':'Last saved '+sastWhen(x.updatedAt)});
   });
   ((HUB.kpi&&HUB.kpi.forms)||[]).forEach(function(f){
     out.push({src:'kpi',id:f._id,kind:f.title||'KPI form',
       who:f.agentName||'—',cb:'',
       /* A KPI form has no session date — it is stamped when it is created. */
-      date:f.createdAt?new Date(f.createdAt).toISOString().slice(0,10):'',
+      date:sastDay(f.createdAt),
       status:f.status||'draft',
       note:[f.weekLabel,f.month,f.year].filter(Boolean).join(' · ')});
   });
@@ -3449,7 +3544,8 @@ function kpiHubPage(){
   var forms=h.forms||[];
   var sub=forms.filter(function(f){return f.status==='submitted';}).length;
   var titles=(h.titles||[]).map(function(t){return '<option value="'+esc(t)+'">'+esc(t)+'</option>';}).join('');
-  var now=new Date(), months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var today=todayISO(), nowY=+today.slice(0,4), nowM=+today.slice(5,7)-1;   // the SAST month and year (spec 014, A6), not the browser's
+  var months=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
   var head='<div class="kpi-grid three">'
     +'<div class="kpi"><div class="kpi-name">Forms</div><div class="kpi-val num">'+num(forms.length)+'</div>'
@@ -3469,8 +3565,8 @@ function kpiHubPage(){
     +'<div class="hf"><label for="hkWeek">Week</label><select id="hkWeek">'
       +[1,2,3,4,5].map(function(n){return '<option>Week '+n+' / 5</option>';}).join('')+'</select></div>'
     +'<div class="hf"><label for="hkMonth">Month</label><select id="hkMonth">'
-      +months.map(function(mn,i){return '<option'+(i===now.getMonth()?' selected':'')+'>'+mn+'</option>';}).join('')+'</select></div>'
-    +'<div class="hf"><label for="hkYear">Year</label><input id="hkYear" type="number" value="'+now.getFullYear()+'"></div>'
+      +months.map(function(mn,i){return '<option'+(i===nowM?' selected':'')+'>'+mn+'</option>';}).join('')+'</select></div>'
+    +'<div class="hf"><label for="hkYear">Year</label><input id="hkYear" type="number" value="'+nowY+'"></div>'
     +'</div><div class="hrow"><button class="btn primary" id="hkSave">Create form</button>'
     +'<span class="hmsg" id="hkMsg"></span></div></div>';
 
@@ -3479,7 +3575,7 @@ function kpiHubPage(){
       +'<div class="sub2">'+esc(f.weekLabel||'')+' · '+esc(f.month||'')+' '+esc(f.year||'')+'</div></td>'
       +'<td class="l">'+esc(f.agentName||'—')+'</td>'
       +'<td class="num"><span class="pill '+(f.status==='submitted'?'g':'n')+'">'+esc(String(f.status||'draft').toUpperCase())+'</span></td>'
-      +'<td class="num">'+esc(String(f.createdAt?new Date(f.createdAt).toISOString().slice(0,10):''))+'</td>'
+      +'<td class="num">'+esc(sastDay(f.createdAt))+'</td>'
       +'<td class="num"><button class="btn small" data-kpi-open="'+esc(f._id)+'">Open</button> '+(f.status!=='submitted'
         ?'<button class="btn small" data-kpi-submit="'+esc(f._id)+'">Submit</button> ':'')
       +'<button class="btn small" data-kpi-del="'+esc(f._id)+'">Delete</button></td></tr>';
@@ -3685,7 +3781,8 @@ function kpiDefault(kind){
   return d;
 }
 
-var FORM={id:null,kind:'monthly',meta:null,data:null,page:1,dirty:false,saving:false};
+function formBlank(){ return {id:null,kind:'monthly',meta:null,data:null,page:1,dirty:false,saving:false}; }
+var FORM=formBlank();
 
 function kpiOpen(id){
   var f=(HUB.kpi&&HUB.kpi.forms||[]).filter(function(x){return x._id===id;})[0];
@@ -3723,7 +3820,7 @@ function kpiOpen(id){
 }
 function kpiClose(){
   if(FORM.dirty&&!window.confirm('Close without saving? Your changes to this form will be lost.')) return;
-  FORM={id:null,kind:'monthly',meta:null,data:null,page:1,dirty:false,saving:false};
+  FORM=formBlank();
   render();
 }
 
@@ -4213,7 +4310,7 @@ function kpi(icon,tint,name,val,unit,sub,delta){
 }
 
 function loginScreen(msg){
-  VIEWMONTH=''; LIVE_MONTH_NAME='';   // a 401 (or any sign-in screen) must never hand a pinned closed month to the next person
+  resetClientState();   // a sign-in screen (sign-out, any 401) never holds the previous person's data — nor a pinned closed month
   preShell('<div class="greet">'+esc(greeting())+'</div>'
     +'<div class="greet-sub">Sign in with your CB number to see how your month is going.</div>'
     +'<div class="card">'
@@ -4303,7 +4400,7 @@ function fatal(title,body,retry){
 function loadPortal(){
   $('root').innerHTML='<div class="msg"><div class="spin"></div><div class="d">Loading your numbers…</div></div>';
   api(ovPath()).then(function(r){
-    if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} return loginScreen('Your session has expired. Please sign in again.'); }
+    if(r.status===401) return sessionExpired();
     if(!r.ok) return fatal('We could not open your page', r.json.error||'Please try again in a minute.', r.status>=500);
     D=r.json;
     if(D.scope==='campaign') return cmOpen();
@@ -4363,7 +4460,7 @@ function refreshAgent(){
   AGENT_LIVE.busy=true; AGENT_LIVE.at=Date.now();
   api(ovPath()).then(function(r){
     AGENT_LIVE.busy=false;
-    if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} return loginScreen('Your session has expired. Please sign in again.'); }
+    if(r.status===401) return sessionExpired();
     if(!r.ok||!r.json||!r.json.me||!agentLiveScope()) return;   // a missed beat, or the page changed hands meanwhile
     var fresh=r.json;
     if(fresh.updatedAt===D.updatedAt&&JSON.stringify(fresh.me)===JSON.stringify(D.me)) return;
@@ -4394,7 +4491,7 @@ function refreshPortal(manual){
   var restore=function(){ var x=$('repRefresh'); if(x){ x.disabled=false; x.innerHTML='&#8635; Refresh'; } };
   return api(ovPath()).then(function(r){
     LIVE.busy=false;
-    if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} return loginScreen('Your session has expired. Please sign in again.'); }
+    if(r.status===401) return sessionExpired();
     if(!r.ok){ restore(); if(manual) toast('Could not refresh — '+(r.json.error||'please try again in a minute.'),5000); return; }
     var fresh=r.json;
     if(!liveTeamScope()){ restore(); return; }                 // the leader drilled into an agent meanwhile
@@ -4976,7 +5073,7 @@ function cmAsk(period,tenure,quiet){
   return api('/api/portal/overview?period='+encodeURIComponent(period)+'&tenure='+encodeURIComponent(tenure)).then(function(r){
     if(seq!==CMSEQ) return;   // a newer choice is already on its way
     CMBUSY=false;
-    if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} cmReset(); return loginScreen('Your session has expired. Please sign in again.'); }
+    if(r.status===401) return sessionExpired();
     var err=r.json&&r.json.error;
     if(r.status===404&&(err==='period_not_published'||err==='range_building'||err==='range_refused')){
       /* the minute's re-ask with the SAME "being built" answer changes nothing on screen — no re-render, so a custom-range
@@ -5119,7 +5216,7 @@ function cmCoachLoad(force){
   return api(path).then(function(r){
     if(seq!==CMC.seq) return;
     CMC.busy=false;
-    if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} cmReset(); return loginScreen('Your session has expired. Please sign in again.'); }
+    if(r.status===401) return sessionExpired();
     if(r.ok&&r.json&&Array.isArray(r.json.leaders)){ CMC.d=r.json; CMC.err=null; }
     else {
       CMC.d=null;
@@ -6066,7 +6163,7 @@ function askMonth(key){
   VIEWMONTH=key;
   return api(ovPath()).then(function(r){
     if(seq!==MONTH_SEQ) return;   // a newer choice is already on its way
-    if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} VIEWMONTH=''; return loginScreen('Your session has expired. Please sign in again.'); }
+    if(r.status===401) return sessionExpired();
     ensureEmptyMe(r.json);
     if(!r.ok||!r.json||(!r.json.me&&r.json.scope!=='team'&&r.json.role!=='team_leader'&&r.json.scope!=='all')){
       VIEWMONTH=prev; LIVE_MONTH_NAME=prevName;

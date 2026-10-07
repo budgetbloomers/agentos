@@ -46,7 +46,8 @@ jobs:
           # the main sign-in's lock; a CB number alone signs nobody in
           # verify-session-name (2026-10-07, spec 011): Ops shows and stamps the signed-in person, never the last saver
           # verify-kv-large-store (2026-10-07, spec 013): a store too big for the Worker to unpack is kept compressed, read back intact
-          for t in verify-agent-analytics verify-wimpy verify-wimpy-signin verify-session-name verify-kv-large-store verify-engine-rules verify-rule-constants verify-public-holidays verify-saturday-rule verify-leave-days verify-ops-leave \
+          # spec 014 (2026-10-07) system sweep: one suite per area — VAS, Ops, Agent Analytics+Wimpy, Worker, tick+tools
+          for t in verify-agent-analytics verify-wimpy verify-wimpy-signin verify-session-name verify-kv-large-store verify-vas-sweep-014 verify-ops-sweep-014 verify-agent-sweep-014 verify-worker-sweep-014 verify-tick-014 verify-engine-rules verify-rule-constants verify-public-holidays verify-saturday-rule verify-leave-days verify-ops-leave \
                    verify-coaching-signature verify-coaching-drafts \
                    verify-cm-targets verify-campaign-manager verify-perf-score verify-history \
                    verify-tbc-backdate verify-variance verify-save-acks verify-login-lockout \

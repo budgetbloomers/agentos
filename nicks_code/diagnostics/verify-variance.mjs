@@ -99,6 +99,14 @@ await page.evaluate(() => { localStorage.clear(); });
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__mtd && window.__mtd.state(), null, { timeout: 30000 });
 
+/* THE CALLX CUTOVER IS SWITCHED OFF FOR THIS FIXTURE (spec 014 V10, 2026-10-07). Since fe21aff (15 Sep,
+   Nick: "remove all records because it all comes from vici dial now not call x") the intake refuses a
+   Call Records file WHOLE, whatever its dates (MTD_RULES.callxRetired, nicks_code/index.html; spec
+   sources[call_x_call].retired_note) — so this August CallX fixture stored nothing and every DV03 check
+   read "Dialler coverage missing". This suite proves the Variance ENGINE on August-shaped data, not the
+   cutover (verify-vici-cutover does that), so it loads the CallX file as August loaded it — the same
+   switch verify-mtd-values and verify-dialler-warning already make. */
+await page.evaluate(() => { MTD_RULES.callxRetired = null; });
 console.log('Ingesting synthetic fixtures…');
 const loaded = await page.evaluate(async fx => {
   const r = [];

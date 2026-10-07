@@ -1043,6 +1043,11 @@ const fmtNum = (x,d=0) => (x==null||!isFinite(x))?'–':__nf(d).format(Number(x)
 /* average talk per shift — minutes to one decimal (MTD_RULES.aveTalkUnit); h:mm:ss only if the rule book ever says so */
 const fmtTalk = s => MTD_RULES.aveTalkUnit==='minutes' ? fmtNum((s||0)/60,1) : fmtDur(s);
 const dkey = d => d instanceof Date ? d.toISOString().slice(0,10) : String(d).slice(0,10);
+/* TODAY IS THE SAST DAY (spec 014 V7, 2026-10-07). dkey(new Date()) is the UTC day, so from 00:00 to 02:00 SAST
+   "Today" showed yesterday, and on the 1st "Month to date" was still last month — and an Agent List uploaded in
+   those two hours was dated the previous day, landing (on the 1st) in the previous MONTH, which recordOrgList then
+   rewrote. The floor works in SAST (no DST), the same +2 h the digest month and expectedReach already use. */
+const sastToday = () => new Date(Date.now()+2*3600000).toISOString().slice(0,10);
 function parseDateLoose(s){
   if(!s) return null;
   s=s.trim();
@@ -1520,7 +1525,10 @@ function __saveFail(msg,why){
   /* retry with backoff — a failed save must never wait for the user's next edit */
   window.__saveFailN=(window.__saveFailN||0)+1;
   var d=window.__saveRetryMs||[30000,120000,300000][Math.min(window.__saveFailN-1,2)];   // override = test hook
-  clearTimeout(__cloudT); __cloudT=setTimeout(function(){ if(window.__vasDirtySince) __cloudPush(false); },d);
+  /* THE RETRY STARTS THE CONFLICT COUNT AFRESH (spec 014, 2026-10-07). After four conflicts in a row the tab stopped
+     reloading and only re-pushed — with a base the server would never accept again — so it stayed "NOT SAVED" until the
+     page was reloaded. A backoff tick is a new attempt: its conflict, if any, reloads and merges like the first. */
+  clearTimeout(__cloudT); __cloudT=setTimeout(function(){ if(window.__vasDirtySince){ window.__vasCasTries=0; window.__pushWipN=0; __cloudPush(false); } },d);
   __unsavedBanner();
 }
 function __unsavedBanner(){
@@ -1593,7 +1601,16 @@ function __cloudReplay(kl){
   var t=sessionStorage.getItem('cbx_token'); if(!t) return;
   fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=vas-state',{headers:{'Authorization':'Bearer '+t}})
     .then(function(r){
-      if(r.status===404){ window.__vasBase='none'; __cloudPush(kl); return; }
+      if(r.status===404){ window.__replayWaitN=0; window.__vasBase='none'; __cloudPush(kl); return; }
+      /* ANOTHER TAB IS WRITING RIGHT NOW (spec 014, 2026-10-07: 6 × "replay 425" in a day). The Worker answers 425 with
+         retry_in_ms while a compare-and-set write is in flight — that is "come back in a moment", not a failure. Wait
+         what it asks (0.2–5 s) and read again, up to eight times; only then is it reported. */
+      if(r.status===425&&(window.__replayWaitN=(window.__replayWaitN||0)+1)<=8){
+        var ra=1500; try{ var h=parseFloat(r.headers.get('Retry-After')); if(h>0) ra=h*1000; }catch(e){}
+        return r.json().catch(function(){ return {}; }).then(function(j){
+          var ms=(j&&+j.retry_in_ms)||ra; setTimeout(function(){ __cloudReplay(kl); },Math.min(Math.max(ms,200),5000)); });
+      }
+      window.__replayWaitN=0;
       if(!r.ok){ __saveFail('⚠ Cloud save failed — another session saved first and the reload failed ('+r.status+'). Keep this tab open; it is retrying.','replay '+r.status); return; }
       var ver=r.headers.get('X-Cbx-Version')||null;
       return r.text().then(function(x){
@@ -1654,10 +1671,14 @@ var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_tok
          function(){ return fetch(url,{method:'POST',headers:hdr,body:b}); });
    }
    return fetch(url,{method:'POST',headers:hdr,body:b,keepalive:keep});
- })().then(function(r){if(r&&r.ok){ try{ var nv=r.headers.get('X-Cbx-Version'); if(nv) window.__vasBase=nv; }catch(e){} window.__vasCasTries=0; __saveAck(); return }
+ })().then(function(r){if(r&&r.ok){ try{ var nv=r.headers.get('X-Cbx-Version'); if(nv) window.__vasBase=nv; }catch(e){} window.__vasCasTries=0; window.__pushWipN=0; __saveAck(); return }
      var why=(r?r.status:'?')+'';
      var say=function(){
-       if(r&&r.status===409&&/version_conflict/.test(why)&&window.__vasBase!=null&&(window.__vasCasTries=(window.__vasCasTries||0)+1)<=4){ __cloudReplay(kl); return; }
+       /* a conflict because another tab is MID-WRITE is not one of the four tries: wait a moment, then reload (spec 014) */
+       /* its OWN counter (review 014): the replay's counter resets on every good reload, so sharing it never capped this loop.
+          Cleared only by a save that lands or by the backoff retry; after eight waits the failure is reported. */
+       if(r&&r.status===409&&/write_in_progress/.test(why)&&window.__vasBase!=null&&(window.__pushWipN=(window.__pushWipN||0)+1)<=8){ setTimeout(function(){ __cloudReplay(kl); },window.__wipWaitMs||1500); return; }
+       if(r&&r.status===409&&/version_conflict/.test(why)&&!/write_in_progress/.test(why)&&window.__vasBase!=null&&(window.__vasCasTries=(window.__vasCasTries||0)+1)<=4){ __cloudReplay(kl); return; }
        __saveFail('⚠ Cloud save failed ('+(r?r.status:'?')+') — your upload is NOT in the database yet. Keep this tab open; it is retrying.',why)};
      if(r&&r.text) r.text().then(function(t){why+=' '+String(t||'').slice(0,160)}).catch(function(){}).then(say); else say();})
    .catch(function(e){__saveFail('⚠ Cloud save failed (network) — your upload is NOT in the database yet. Keep this tab open; it is retrying.','network '+String(e&&e.message||e).slice(0,120))})}
@@ -2077,7 +2098,7 @@ function rosterAsOf(name){
   if(__rosterAsOf) return __rosterAsOf;
   const ov=(S.settings&&S.settings.rosterAsOf)||'';
   if(/^\d{4}-\d{2}-\d{2}$/.test(ov)){ S.settings.rosterAsOf=''; return (__rosterAsOf=ov); }
-  return (__rosterAsOf=dateFromFilename(name)||dkey(new Date()));
+  return (__rosterAsOf=dateFromFilename(name)||sastToday());   // the SAST day, never the UTC one (spec 014 V7)
 }
 
 let toastTimer=null;
@@ -2248,6 +2269,23 @@ let rosterFileCodes=null, rosterFileLoaded=false;
    server derives the roster from these (publish_agent_list); this app's own classification
    is a preview it then replaces with the record. */
 let rosterRaw=null;
+/* THE PUBLISH CARRIES ITS OWN FILE (spec 014 V2, 2026-10-07). The Agent List publish fires 3 s after the ingest and
+   used to read rosterRaw and S.roster at THAT moment: the next file of the same drop resets rosterRaw (ingestText,
+   per file), so the leader rows of the VAS TL sheet never reached the server, and a second Agent List dropped
+   straight after put ITS roster into the first one's publish. The job holds a snapshot instead — taken after every
+   roster sheet and once more when ingestText has read the whole workbook (the leader sheet and the prune come
+   later) — and a multi-sheet workbook publishes once. */
+let __listPub=null;
+function listPublishJob(name,asOf){
+  const key=(__curFileHash||'')+'|'+name;
+  if(!__listPub||__listPub.key!==key||__listPub.sent) __listPub={key,name,asOf,scheduled:false,sent:false,rows:undefined,roster:[]};
+  snapListPublish(__listPub);
+  return __listPub;
+}
+function snapListPublish(job){
+  job.rows=(rosterRaw&&rosterRaw.name===job.name)?rosterRaw.rows.slice():undefined;   // the whole file; the server derives the roster
+  job.roster=(S.roster||[]).map(a=>({code:a.code,name:a.name,tl:a.tl,campaign:a.campaign,tenure:a.tenure,callx:a.callx,sf:a.sf,target:a.target,start:a.start}));
+}
 /* …and how good the sheet that replaced them was. The Agent List workbook still carries
    legacy tabs ('May' — a Que-column snapshot frozen at 83 rows) ALONGSIDE the live 'VAS'
    tab, and the legacy one sorts FIRST. Sheet order therefore cannot decide which wins: on
@@ -2326,6 +2364,9 @@ async function ingestText(name, text, expected, hash){
         +Object.entries(by).map(([k,v])=>k+' ('+v+')').join(', '),12000);
     }
   }
+  /* the whole workbook is read: the Agent List publish takes its final snapshot — leader rows from the VAS TL
+     sheet and the prune above included — before the next file can touch rosterRaw or S.roster (spec 014 V2) */
+  if(__listPub&&!__listPub.sent&&__listPub.key===(__curFileHash||'')+'|'+name) snapListPublish(__listPub);
   if(!ingested.length && expected && INGEST[expected]){
     // slot upload with unrecognised headers: try the slot's own parser as a last resort
     const first=Object.values(sheets)[0]||'';
@@ -2990,8 +3031,9 @@ const INGEST={
        The synthetic name the adoption ingests under is the structural guard: nothing ingested
        under it may publish, whatever the fingerprint says. */
     const adopted=/^Agent List — published/.test(String(name||''));
-    setTimeout(function(){ try{
-      if(adopted) return;                                  // the record does not publish itself
+    const job=adopted?null:listPublishJob(name,asOf);      // the record does not publish itself; a hand upload snapshots its file (V2)
+    if(job&&!job.scheduled){ job.scheduled=true; setTimeout(function(){ try{
+      job.sent=true;                                       // later sheets / files start a job of their own
       var t=sessionStorage.getItem('cbx_token'); if(!t) return;
       if(S.rosterFp) return;                               // this list came FROM the record
       /* SAY WHAT THE UPLOAD DID TO PEOPLE'S ACCOUNTS (Nick, 2026-08-30: the list is the
@@ -2999,10 +3041,9 @@ const INGEST={
          here waiting; "published, 123 agents" told them the file landed but not that eleven
          people can now sign in and three no longer can. A REFUSED or FAILED sync is the one
          that matters most and is shown as an error, never swallowed. */
-      var listBody=JSON.stringify({source:'vas',file:name,as_of:asOf||'',
-           rows:(rosterRaw&&rosterRaw.name===name)?rosterRaw.rows:undefined,   // the whole file; the server derives the roster
-           roster:(S.roster||[]).map(function(a){return {code:a.code,name:a.name,tl:a.tl,
-             campaign:a.campaign,tenure:a.tenure,callx:a.callx,sf:a.sf,target:a.target,start:a.start};})});
+      var listBody=JSON.stringify({source:'vas',file:name,as_of:job.asOf||'',
+           rows:job.rows,                                  // THIS file's rows and roster, as ingested (V2)
+           roster:job.roster});
       /* A PUBLISH THAT GETS NO ANSWER IS TRIED AGAIN (spec 010, 2026-10-07). Ashton's 7 Oct upload got an error
          status ONCE, was written off as "no reply" in his tab only, and four minutes later the routine re-sync put
          the 6 Oct list back over it — Hezron's team, Training Gr 17 and 35 moves undone. The same request goes again
@@ -3036,7 +3077,7 @@ const INGEST={
         }).catch(function(){ reportListRefused({file:name,reason:'the publish request failed',detail:''}); });
       };
       publishList(1);
-    }catch(e){} },3000);
+    }catch(e){} },3000); }
     // the agent list is a LIVE SNAPSHOT, not history — a new upload supersedes any earlier
     // agent-list file in the registry (kept per-file, so a multi-sheet workbook's own roster
     // sheets don't wipe each other). Upload a fresh list as often as agents join/leave/move.
@@ -3622,10 +3663,19 @@ function removeFile(idx){
   const claimedElsewhere=d=>S.files.some(x=>x!==f&&x.type.split(' ')[0]===t0&&(x.dates||[]).includes(d));
 
   const st=STORE_OF[t0];   // the shared registry - never a second copy
+  const isVici=String(f.type).startsWith('calls (ViciDial)');
   if(st && f.dates) for(const d of f.dates){
     if(st==='calls'){
+      /* A DIALLER FILE OWNS ONLY ITS OWN DIALLER'S ROWS (spec 014 V4, 2026-10-07). This branch deleted the whole
+         day — ViciDial never sets callsMeta (and a reload seeds it with f:''), so removing ONE ViciDial pull wiped
+         a day another registered pull still covered, and removing an August CallX file wiped that day's ViciDial
+         rows with it. A ViciDial file is handled below, entry by entry; a CallX file takes only the CallX rows. */
+      if(isVici) continue;
       if(S.callsMeta&&S.callsMeta[d]&&S.callsMeta[d].f&&S.callsMeta[d].f!==f.name) continue; // a fuller file owns this day now
-      delete S.calls[d]; if(S.callsMeta) delete S.callsMeta[d];
+      const bk=S.calls[d];
+      if(bk) for(const k in bk) if(!(bk[k]&&bk[k].v)) delete bk[k];
+      if(!bk||!Object.keys(bk).length) delete S.calls[d];
+      if(S.callsMeta) delete S.callsMeta[d];   // the CallX provenance of the day went with its rows
     }else if(st==='evals'){
       /* QA days MERGE across files now, so a day can hold two exports' evaluations and
          deleting it would take the other file's with it. Each evaluation remembers the file
@@ -3645,11 +3695,16 @@ function removeFile(idx){
   // A ViciDial DAY file owns only its own v-tagged entries on that day - CallX rows for the
   // same day belong to another file and must survive. Removing it also releases the day, so
   // a multi-day range covering it can count again.
-  if(f.type.startsWith('calls (ViciDial)')) for(const d of f.dates||[]){
-    const bk=S.calls[d]; if(!bk) continue;
-    for(const k in bk) if(bk[k]&&bk[k].v) delete bk[k];
-    if(!Object.keys(bk).length){ delete S.calls[d]; if(S.callsMeta) delete S.callsMeta[d]; }
-    if(S.viciDays) delete S.viciDays[d];
+  /* …AND ONLY WHILE NO OTHER VICIDIAL FILE COVERS THE DAY (spec 014 V4). ViciDial rows carry no file of origin —
+     two pulls of one day merge per agent, the fuller record wins — so they cannot be split back by file. While
+     another registered ViciDial file still claims the day, its rows stay; the last file to go releases it. */
+  const viciElsewhere=d=>S.files.some(x=>x!==f&&String(x.type).startsWith('calls (ViciDial)')&&(x.dates||[]).includes(d));
+  if(isVici) for(const d of f.dates||[]){
+    if(viciElsewhere(d)) continue;
+    const bk=S.calls[d];
+    if(bk){ for(const k in bk) if(bk[k]&&bk[k].v) delete bk[k];
+      if(!Object.keys(bk).length){ delete S.calls[d]; if(S.callsMeta) delete S.callsMeta[d]; } }
+    if(S.viciDays) delete S.viciDays[d];   // released even when the day's bucket is already gone
   }
   // A ViciDial RANGE file carries its own key in the registry type - drop the stored range.
   if(f.type.startsWith('vici range')&&S.vici) delete S.vici[f.type.replace('vici range ','').trim()];
@@ -3872,7 +3927,7 @@ function periodRange(){
   return applyAsAt(periodRangeRaw(p),p);
 }
 function periodRangeRaw(p){
-  const today=dkey(new Date());
+  const today=sastToday();   // every preset counts from the SAST day (spec 014 V7)
   const mk=(from,to)=>({from,to});
   if(p==='today') return mk(today,today);
   if(p==='yesterday'){ const y=addDays(today,-1); return mk(y,y); }
@@ -3892,7 +3947,7 @@ function allDataDates(){
 }
 function latestMonth(){
   const ds=[...allDataDates()].sort();
-  return ds.length?ds[ds.length-1].slice(0,7):new Date().toISOString().slice(0,7);
+  return ds.length?ds[ds.length-1].slice(0,7):sastToday().slice(0,7);
 }
 
 let M=null, MP=null; // current & previous-period models
@@ -4003,7 +4058,7 @@ function rebuild(){
          an "effective from" in July rewrites July, and comparing August facts to it painted
          the red banner telling the user to re-upload, which could not help. With no receipt
          yet, fall back to the calendar month. */
-      const __lm=(S.rosterEffect&&S.rosterEffect.asOf)?String(S.rosterEffect.asOf).slice(0,7):dkey(new Date()).slice(0,7);
+      const __lm=(S.rosterEffect&&S.rosterEffect.asOf)?String(S.rosterEffect.asOf).slice(0,7):sastToday().slice(0,7);   // the month rosterAsOf would stamp (spec 014 V7)
       if(String(r.from).slice(0,7)!==__lm) return null;
       const by={}; (M.agents||[]).forEach(a=>by[a.code]=a);
       const bad=[];
@@ -6208,7 +6263,10 @@ function renderTop(){
     <button class="btn primary" id="btnExportAll" style="margin-left:auto">${I.download}<span>Export report</span></button>`;
   $('#pPreset').onchange=e=>{ S.ui.preset=e.target.value;
     if(e.target.value==='custom'&&!S.ui.from&&M){ S.ui.from=M.range.from; S.ui.to=M.range.to; }
-    save(); rebuild(); renderAll(); };
+    /* A VIEW CHANGE, NOT A DATA CHANGE (spec 014 V8, 2026-10-07): save() re-stamped _rev and pushed the whole
+       multi-MB state to the cloud to remember a preset that lives only in the per-person view (S.ui never
+       travels in the shared blob). saveUI, like every other control on this bar. */
+    saveUI(); rebuild(); renderAll(); };
   const pm=$('#pMonth'); if(pm) pm.onchange=e=>{ S.ui.month=e.target.value; saveUI(); rebuild(); renderAll(); };
   const pf=$('#pFrom'), pt=$('#pTo');
   if(pf) pf.onchange=e=>{ S.ui.from=e.target.value; saveUI(); rebuild(); renderAll(); };
@@ -6322,14 +6380,41 @@ function renderPage(){
   const fn=PAGES[S.ui.tab]||PAGES.dashboard;
   /* the header's report filters stand down on the Upload Station (see header.top.filters-off) */
   const tb=$('#topbar'); if(tb) tb.classList.toggle('filters-off',S.ui.tab==='data');
-  // skeleton flash for perceived smoothness
-  el.innerHTML=`<div class="grid kpis">${Array(4).fill('<div class="skel" style="height:118px"></div>').join('')}</div>
+  /* A SEARCH BOX KEEPS ITS FOCUS (spec 014 V9, 2026-10-07). Each search box re-renders the page after a 320 ms
+     pause; the skeleton below replaces it at once and the real page only lands two frames later, so the old
+     re-focus (run straight after renderPage) found no input and the next keystrokes went nowhere. The box is
+     remembered by its own handler and focused again AFTER the real paint — and only if nobody has clicked
+     elsewhere meanwhile. Any re-render (an upload, a sync) now keeps the box too. */
+  const ae=document.activeElement;
+  let keepSearch=(ae&&ae.tagName==='INPUT'&&ae.type==='search'&&el.contains(ae)&&ae.getAttribute('oninput'))
+    ?{h:ae.getAttribute('oninput'),pos:ae.selectionEnd}:null;
+  /* skeleton flash for perceived smoothness — but NOT while someone is typing in a search box: the skeleton took the
+     box away until the real paint, so a key pressed in that window (a pause mid-word, a busy machine) went nowhere
+     ("Nos" for "Nosi"). The box stays put instead, and whatever was typed meanwhile is carried onto the new box. */
+  if(!keepSearch) el.innerHTML=`<div class="grid kpis">${Array(4).fill('<div class="skel" style="height:118px"></div>').join('')}</div>
     <div class="grid cols2 mt"><div class="skel" style="height:300px"></div><div class="skel" style="height:300px"></div></div>`;
   requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    if(keepSearch){
+      const live=document.activeElement;
+      if(live&&live.tagName==='INPUT'&&el.contains(live)&&live.getAttribute('oninput')===keepSearch.h){ keepSearch.v=live.value; keepSearch.pos=live.selectionEnd; }
+      else keepSearch=null;   // the user moved on — leave them there
+    }
     el.style.animation='none'; el.offsetHeight; el.style.animation='';
     el.innerHTML=fn();
     if(PAGES['_wire_'+S.ui.tab]) PAGES['_wire_'+S.ui.tab]();
+    if(keepSearch) refocusSearch(el,keepSearch);
   }));
+}
+function refocusSearch(el,keep){
+  const cur=document.activeElement;
+  if(cur&&cur!==document.body&&cur!==document.documentElement) return;   // the user moved on — leave them there
+  const inp=[...el.querySelectorAll('input[type=search]')].find(x=>x.getAttribute('oninput')===keep.h);
+  if(!inp) return;
+  /* keys typed while the page re-rendered: their own debounced re-render is already queued, so only the box needs them */
+  if(keep.v!=null&&inp.value!==keep.v) inp.value=keep.v;
+  inp.focus();
+  const n=Math.min(keep.pos==null?inp.value.length:keep.pos,inp.value.length);
+  try{ inp.setSelectionRange(n,n); }catch(e){}
 }
 /* "No data" and "not loaded yet" are different answers and must never share a screen.
    Supabase is the store; localStorage is a cache that a month of uploads overflows, so on a
@@ -6519,7 +6604,7 @@ PAGES.dashboard=()=>{
       <div class="spacer"></div><button class="btn small ghost" onclick="go('leaderboard')">View all</button></div>${topList}</div>
   </div>
   <div class="kpirow">${row2.map(k=>kpiCard(k,true)).join('')}</div>
-  ${ins.length?`<div class="insights">${ins.map(x=>`<div class="insight tone-${x.tone}"><span class="ic">${x.icon}</span><span><b>${esc(x.title)}</b><p>${x.text}</p></span></div>`).join('')}</div>`:''}
+  ${/* the text carries agent and team-leader names from the Agent List — text, never markup (spec 014 V5) */''}${ins.length?`<div class="insights">${ins.map(x=>`<div class="insight tone-${x.tone}"><span class="ic">${x.icon}</span><span><b>${esc(x.title)}</b><p>${esc(x.text)}</p></span></div>`).join('')}</div>`:''}
   <div class="cols3d">
     <div class="card"><div class="cardhead"><div><h3>Daily sales by campaign</h3><div class="sub">stacked activations</div></div></div>${stackChart()}</div>
     <div class="card"><div class="cardhead"><div><h3>Teams — % to sales target</h3></div></div>${hbarChart(tlEntries,{target:1})}</div>
@@ -6570,8 +6655,7 @@ function dashTable(ranked){
 }
 window.dashGo=p=>{ S.ui.dashPage=p; saveUI(); renderPage(); };
 let dashQT=null;
-window.dashQ=v=>{ clearTimeout(dashQT); dashQT=setTimeout(()=>{ S.ui.dashQ=v; S.ui.dashPage=1; saveUI(); renderPage();
-  const inp=document.querySelector('.cardhead input[type=search]'); if(inp){ inp.focus(); inp.setSelectionRange(v.length,v.length);} },320); };
+window.dashQ=v=>{ clearTimeout(dashQT); dashQT=setTimeout(()=>{ S.ui.dashQ=v; S.ui.dashPage=1; saveUI(); renderPage(); },320); };   // renderPage re-focuses the box after its real paint (spec 014 V9)
 
 /* ---------- agents table ---------- */
 let agentSort={key:'gwp',dir:-1};
@@ -6630,8 +6714,7 @@ PAGES.agents=()=>{
 };
 window.setSort=k=>{ agentSort=agentSort.key===k?{key:k,dir:-agentSort.dir}:{key:k,dir:k==='name'||k==='team'?1:-1}; renderPage(); };
 let agentQT=null;
-window.agentQ=v=>{ clearTimeout(agentQT); agentQT=setTimeout(()=>{ S.ui.agentQ=v; saveUI(); renderPage();
-  const inp=$('#view input[type=search]'); if(inp){ inp.focus(); inp.setSelectionRange(v.length,v.length);} },320); };
+window.agentQ=v=>{ clearTimeout(agentQT); agentQT=setTimeout(()=>{ S.ui.agentQ=v; saveUI(); renderPage(); },320); };   // renderPage re-focuses the box after its real paint (spec 014 V9)
 
 /* ---------- leaderboard ---------- */
 PAGES.leaderboard=()=>{
@@ -6690,8 +6773,8 @@ PAGES.coaching=()=>{
       </div>
       ${x.recs.map(r=>`<div class="coachcard p${r.pri}">
         <h4>${esc(r.area)} <span class="pill ${r.pri===1?'pcrit':r.pri===2?'pwarn':'pmuted'}">Priority ${r.pri}</span></h4>
-        <p><b>Why:</b> ${r.why}</p><p><b>Expected impact:</b> ${r.impact}</p>
-        <div class="ev">Evidence: ${r.ev}</div></div>`).join('')}
+        <p><b>Why:</b> ${esc(r.why)}</p><p><b>Expected impact:</b> ${esc(r.impact)}</p>
+        <div class="ev">Evidence: ${esc(r.ev)}</div></div>`).join('')}
       <div id="qct_${x.a.code}" class="coachcard p3"><h4>Development themes</h4><p class="sub">Loading from the Coaching Hub…</p></div>
       <textarea class="notes" placeholder="Manager notes / action plan…" onchange="setCoach('${x.a.code}','notes',this.value)">${esc(c.notes||'')}</textarea>
     </div>`;}).join('')}`;
@@ -7006,7 +7089,7 @@ window.dailyStep=dir=>{
   if(!f.date) i=dir<0?M.dates.length-1:0;   // from "All days": ‹ jumps to the latest day, › to the first
   else i=Math.max(0,Math.min(M.dates.length-1,M.dates.indexOf(f.date)+dir));
   f.date=M.dates[i];
-  save(); renderPage();
+  saveUI(); renderPage();   // the pinned day is the view, not the data — never a whole-state cloud save (spec 014 V8)
 };
 let dfT=null; window.dailyFQ=v=>{ clearTimeout(dfT); dfT=setTimeout(()=>dailyF('q',v),320); };
 
@@ -8161,7 +8244,8 @@ window.__vasCoach=function(code){try{
   var kpis=[]; dr.querySelectorAll(".minikpi").forEach(function(m){var l=(m.querySelector(".lab")||{}).textContent||"";var v=(m.querySelector(".val")||{}).textContent||"";if(l)kpis.push(l+": "+v)});
   var ctx="VAS agent "+name.trim()+" — "+sub.trim()+".\nMetrics this period: "+kpis.join(", ")+".";
   fetch("https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/ask",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+(sessionStorage.getItem("cbx_token")||"")},body:JSON.stringify({question:"Coach this VAS sales agent. 2 short bullets on what is working, then 3 bullets on what could be better with specific actions. Under 90 words.",context:ctx})})
-    .then(function(r){return r.json()}).then(function(j){if(drawerCode!==__askFor)return;var e2=document.getElementById("vasAI");if(e2)e2.innerHTML=(j.answer?String(j.answer):"(AI unavailable)").replace(/\n/g,"<br>")})
+    /* the model's reply is TEXT — escaped first, then its line breaks become <br> (spec 014 V5: it was painted raw) */
+    .then(function(r){return r.json()}).then(function(j){if(drawerCode!==__askFor)return;var e2=document.getElementById("vasAI");if(e2)e2.innerHTML=esc(j.answer?String(j.answer):"(AI unavailable)").replace(/\n/g,"<br>")})
     .catch(function(){if(drawerCode!==__askFor)return;var e2=document.getElementById("vasAI");if(e2)e2.textContent="AI analysis unavailable right now."});
 }catch(e){}};
 
@@ -8184,10 +8268,14 @@ window.__coachRow=function(id){
   if(!d) return; var open=d.style.display!=='none';
   d.style.display=open?'none':'block'; if(x)x.textContent=open?'▸':'▾';
 };
+/* Returns HTML-SAFE text (spec 014 V5, 2026-10-07): every caller pastes it into innerHTML, and the key comes from
+   the Coaching Hub — a store with no sign-in, so a hostile theme key was markup on every coaching card. */
 window.__coachLabel=function(k){
   var s=String(k||"").replace(/^[a-z]+\./,"").replace(/_/g," ");
-  return s.replace(/\b[a-z]/g,function(c){return c.toUpperCase()});
+  return esc(s.replace(/\b[a-z]/g,function(c){return c.toUpperCase()}));
 };
+/* a code that goes into an onclick="openDrawer('…')" string: CB codes are letters and digits, anything else is dropped */
+window.__coachCode=function(c){ return String(c||"").replace(/[^A-Za-z0-9_-]/g,""); };
 /* Org-wide coaching, from the Hub, with the rules applied here rather than in
    the Worker — the thresholds live beside the rest of the framework so there is
    one place to change them. Same two rules as the drawer: only the gap family
@@ -8236,11 +8324,13 @@ window.__coachHubFill=function(){try{
     var kpi=function(lab,val,sub){return '<div class="minikpi"><span class="lab">'+lab+'</span><div class="val num">'+val+'</div><div class="sub" style="font-size:11px">'+(sub||'')+'</div></div>'};
     var pctCoach=T.sessions?Math.round((T.scored/T.sessions)*100):0;
 
-    var esc=r2b.length
+    /* r2bBlock, not `esc` (spec 014 V5): the local var shadowed the page's esc() for this whole function, so
+       nothing in it could be escaped — the Hub's agent name went into innerHTML raw. */
+    var r2bBlock=r2b.length
       ? '<div style="margin-top:12px;padding:10px 12px;border:1px solid #f87171;border-radius:10px">'
         +'<div style="font-weight:700;color:#f87171">R2B · Repeat Compliance Coaching · Level 1</div>'
         +'<div class="sub" style="font-size:11.5px;margin:2px 0 6px">The same compliance theme coached '+TH.persistentMin+'+ times. Compliance review with QA within 48 hours.</div>'
-        +r2b.map(function(a){return '<div style="font-size:12.5px"><a class="linky" onclick="openDrawer(\''+a.code+'\')">'+(a.name||a.code)+'</a> · '+window.__coachLabel(a._t.worst.key)+' ×'+a._t.worst.scored+'</div>'}).join('')
+        +r2b.map(function(a){return '<div style="font-size:12.5px"><a class="linky" onclick="openDrawer(\''+window.__coachCode(a.code)+'\')">'+esc(a.name||a.code)+'</a> · '+window.__coachLabel(a._t.worst.key)+' ×'+a._t.worst.scored+'</div>'}).join('')
         +'</div>'
       : '<div class="sub" style="margin-top:12px;font-size:12px">No compliance theme has reached '+TH.persistentMin+' coach-chosen sessions, so R2B is not firing for anyone.</div>';
 
@@ -8264,7 +8354,7 @@ window.__coachHubFill=function(){try{
         +kpi('COACH-CHOSEN',pctCoach+'%',(T.scored||0)+' of '+(T.sessions||0)+' · rest inferred, not scored')
         +kpi('ESCALATING',(repeat.length+persistent.length),persistent.length+' persistent · '+repeat.length+' repeat')
       +'</div>'
-      +esc
+      +r2bBlock
       /* A HEADING OVER NOTHING IS WORSE THAN NO HEADING (2026-08-31). When no session in
          the window carries a gap-family theme, `rows` is an empty string and this printed
          "MOST COACHED DEVELOPMENT THEMES" above blank space — the reader is told a list
@@ -8285,7 +8375,7 @@ window.__coachHubFill=function(){try{
        before deciding what the next session is about. */
     var byCode={}; agents.forEach(function(a){byCode[a.code]=a});
     document.querySelectorAll('[id^="qct_"]').forEach(function(box){
-      var code=box.id.slice(4), a=byCode[code];
+      var code=window.__coachCode(box.id.slice(4)), a=byCode[code];   // goes into onclick strings below (spec 014 V5)
       var gaps=a?a.themes.filter(function(t){return t.family==="gap"}).sort(function(x,y){return y.shown-x.shown}):[];
       if(!gaps.length){
         /* Three different situations, and they need different answers. Saying
@@ -8369,7 +8459,7 @@ window.__vasCoachHist=function(code){try{
     var MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     var shortDate=function(d){
       if(!d) return "—";
-      var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(d); if(!m) return d;
+      var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(d); if(!m) return esc(d);   // a Hub string that is not a date is still text (spec 014 V5)
       // every date here is inside the 90-day window, so the year is noise
       return (+m[3])+" "+MON[(+m[2])-1];
     };
@@ -8390,7 +8480,7 @@ window.__vasCoachHist=function(code){try{
       var det=t.sessions.slice().sort(function(x,y){return x.date<y.date?1:-1}).map(function(s){
         return '<div style="display:flex;gap:8px;font-size:11.5px;padding:3px 0">'
           +'<span style="width:58px;flex:none;color:var(--ink3,#94a3b8)">'+shortDate(s.date)+'</span>'
-          +'<span style="flex:1;text-transform:capitalize">'+s.type+'</span>'
+          +'<span style="flex:1;text-transform:capitalize">'+esc(s.type)+'</span>'
           +'<span style="flex:none;color:'+(s.scored?"#34d399":"var(--ink3,#94a3b8)")+'">'
             +(s.scored?'counted':'inferred'+(s.conf!=null?' ('+Math.round(s.conf*100)+'%)':''))+'</span>'
         +'</div>';
@@ -8546,7 +8636,7 @@ function drawerHTML(code){
     ${chartDefs[view]()}</div>
   <div class="card mt"><div class="cardhead"><span class="ic" style="width:28px;height:28px;border-radius:8px;background:var(--glass2);display:grid;place-items:center;color:var(--accent)">${I.spark}</span>
     <div><h3>Performance analysis</h3><div class="sub">generated from this period's data</div></div></div>
-    <p class="note" style="max-width:none">${narrativeFor(code)}</p></div>
+    <p class="note" style="max-width:none">${esc(narrativeFor(code))}</p></div>
   <div class="card mt"><div class="cardhead"><div><h3>Coaching plan</h3><div class="sub">${recs.length?recs.length+' recommendation'+(recs.length>1?'s':''):'no flags this period'}</div></div>
     <div class="spacer"></div>
     <select class="btn small" onchange="setCoach('${code}','status',this.value);openDrawer('${code}')">
@@ -8555,7 +8645,7 @@ function drawerHTML(code){
       <option value="done" ${c.status==='done'?'selected':''}>Complete</option></select></div>
     ${recs.map(x=>`<div class="coachcard p${x.pri}">
       <h4>${esc(x.area)} <span class="pill ${x.pri===1?'pcrit':x.pri===2?'pwarn':'pmuted'}">Priority ${x.pri}</span></h4>
-      <p><b>Why:</b> ${x.why}</p><p><b>Expected impact:</b> ${x.impact}</p><div class="ev">Evidence: ${x.ev}</div></div>`).join('')||
+      <p><b>Why:</b> ${esc(x.why)}</p><p><b>Expected impact:</b> ${esc(x.impact)}</p><div class="ev">Evidence: ${esc(x.ev)}</div></div>`).join('')||
       '<p class="note">Nothing urgent — reinforce current behaviours and consider mentoring duties.</p>'}
     <div style="display:flex;gap:8px;align-items:center;margin:8px 0 6px"><span class="lab">Follow-up</span>
       <input type="date" class="btn small" style="padding:4px 8px" value="${c.due||''}" onchange="setCoach('${code}','due',this.value)"></div>
@@ -9143,6 +9233,10 @@ async function adoptRosterFromRecord(given){
       if(!r.ok)return; j=await r.json();
     }catch(e){return}
     if(!j||!Array.isArray(j.roster)||!j.roster.length)return;
+    /* NEVER BETWEEN TWO SHEETS OF SOMEBODY ELSE'S FILE (spec 014 V3, 2026-10-07). Everything below is synchronous
+       and writes the per-file ingest globals (__curFileHash, rosterRaw, rosterCovered, __rosterAsOf): run in the gap
+       while a dropped file awaited its next sheet, it stripped that file's hash and reset its roster bookkeeping. */
+    await ingestIdle();
     /* THE LEADERS' CB NUMBERS (2026-09-15): the list names a leader, the Worker serves their
        code from team_leader_cbs, and the dialler notice uses it to class a leader dialling
        under their CB as a leader rather than a missing agent. Kept even when the roster
@@ -9302,8 +9396,11 @@ async function syncLeadBookFromLake(){
     const d=new Date(lakeMs), p2=n=>String(n).padStart(2,'0');
     const at=d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes());
     S.opencasesLM={rows,f:name,at,total:rows.length,lake:true,lakeAt:meta.loaded_at,snapshot:book.snapshot_date||'',queues:+book.queue_rows||0};
-    __curFileHash=null;                                     // a lake adoption has no file bytes to fingerprint
-    regFile(name,'open cases (lead mgmt)',[],+book.total||rows.length,{cases:rows.length,queues:+book.queue_rows||0,lake:true,snapshot:book.snapshot_date||''});
+    /* a lake adoption has no file bytes to fingerprint — and it can land between two sheets of a dropped file, so
+       the in-flight file's hash is handed back afterwards rather than lost (spec 014 V3, 2026-10-07) */
+    const __heldHash=__curFileHash; __curFileHash=null;
+    try{ regFile(name,'open cases (lead mgmt)',[],+book.total||rows.length,{cases:rows.length,queues:+book.queue_rows||0,lake:true,snapshot:book.snapshot_date||''}); }
+    finally{ __curFileHash=__heldHash; }
     try{ save(); rebuild(); if(S.ui.tab==='leads'||S.ui.tab==='data') renderPage(); }catch(e){}
     if(typeof kickAgentDigest==='function') kickAgentDigest();     // the team leaders' Lead management tab follows the lake
     toast('Lead Management open cases updated from the data lake — "'+name+'": '+fmtNum(rows.length)+' agent-held cases (snapshot '+(book.snapshot_date||'?')+').',9000);
@@ -9386,14 +9483,36 @@ document.addEventListener('cbx-authed',function(){ setTimeout(syncCampaignMoves,
    LARGE_MIN the file goes straight to storage and the runner loads it. One drop zone, no choosing.
    Threshold is the archive relay cap: under it the in-page parse is proven, over it it is not. */
 const LARGE_MIN=30*1048576;
-async function handleFiles(list, expected){
+/* ONE INGEST AT A TIME (spec 014 V3, 2026-10-07). ingestText keeps its per-file state in globals — __curFileHash,
+   rosterRaw / rosterCovered / rosterFileCodes, __rosterAsOf, __uploadWarns — and awaits between sheets. The station
+   relay (syncUploadsFromStation) and a person's drop both call handleFiles and nothing stopped them running at once:
+   the second file's ingest reset the first's globals mid-file, so a file was registered under the OTHER file's hash
+   (the relay then fetched it again, and "already uploaded" stopped recognising it) and a roster sheet could be
+   judged already covered. Calls now queue and each runs whole. A file too big to read here goes straight to storage
+   (largeUpload + the in-page Rake, minutes long, none of these globals) and never waits in the queue. The roster
+   adopter, which writes the same globals, waits for the queue to drain (ingestIdle). */
+let __ingestChain=Promise.resolve(), __ingestQueued=0;
+function handleFiles(list, expected){
+  const files=Array.from(list||[]);       // copied NOW: the file input is cleared, and a drop's list emptied, straight after this call
+  const large=files.filter(f=>f.size>LARGE_MIN), small=files.filter(f=>!(f.size>LARGE_MIN));
+  const sent=large.length?routeLargeFiles(large):null;
+  if(!small.length) return sent||Promise.resolve();
+  __ingestQueued++;
+  const run=__ingestChain.then(()=>handleFilesNow(small,expected));
+  __ingestChain=run.then(()=>{},()=>{}).then(()=>{ __ingestQueued--; });
+  return sent?Promise.all([sent,run]).then(()=>{}):run;
+}
+async function ingestIdle(){ while(__ingestQueued) await __ingestChain; }
+async function routeLargeFiles(files){
+  for(const f of files){
+    toast(f.name+' is '+Math.round(f.size/1048576)+' MB — too big to read in the page, so it is going straight to storage for the runner. Watch it on the Large files card.',9000);
+    try{ await largeUpload(f); }catch(e){ toast('Could not hand '+f.name+' to the runner — '+((e&&e.message)||e)); }
+  }
+}
+async function handleFilesNow(list, expected){
   let ok=0, skipped=0;
   __uploadWarns=[];
-  for(const f of Array.from(list)){
-    if(f.size>LARGE_MIN){
-      toast(f.name+' is '+Math.round(f.size/1048576)+' MB — too big to read in the page, so it is going straight to storage for the runner. Watch it on the Large files card.',9000);
-      try{ await largeUpload(f); }catch(e){ toast('Could not hand '+f.name+' to the runner — '+((e&&e.message)||e)); }
-      continue; }
+  for(const f of list){
     let buf=null;
     try{ buf=await f.arrayBuffer(); }catch(e){ toast('Could not read '+f.name+' — '+(e.message||e)); continue; }
     const hash=await hashBuf(buf);
@@ -10098,6 +10217,17 @@ function agentReportsLeadsPayload(){
   var API='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
   var last='';
   var lastRep={variance:'',leads:''};
+  /* AN ANSWER — NOT A SEND — SETTLES A PAYLOAD (spec 014 V6, 2026-10-07). The fingerprint was recorded BEFORE the
+     POST and the response never read, so a 500, a lapsed session or a dropped connection left the key on the old
+     payload until the figures moved again: every 90 s tick saw "unchanged" and stayed quiet. The fingerprint is now
+     recorded only when the server ANSWERS — a 2xx, or a deliberate 4xx refusal (stale_month, empty_over_data,
+     wipe_blocked…) that would be refused identically every tick. A 401/408/425/429, a 5xx or no answer at all
+     leaves it unrecorded and the next push sends it again. One send per payload at a time — bounded, so a request
+     that never settles cannot hold the retry off for ever. No fetch option or header changes (rule 14a). */
+  var INFLIGHT_MS=120000;
+  var sending={cmp:'',at:0}, sendingRep={variance:{cmp:'',at:0},leads:{cmp:'',at:0}};
+  function answered(r){ return !!r&&(r.ok||(r.status>=400&&r.status<500&&[401,408,425,429].indexOf(r.status)<0)); }
+  function inFlight(f,cmp){ return f.cmp===cmp&&Date.now()-f.at<INFLIGHT_MS; }
   /* gzip the body when the browser can (the Worker sniffs the magic bytes — no header, rule 14a) */
   function postKv(tk,key,body){
     var url=API+'/api/kv?key='+key, hdr={'Content-Type':'text/plain','Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'};
@@ -10118,12 +10248,18 @@ function agentReportsLeadsPayload(){
       try{ rp=kv[1](); }catch(e){ try{console.warn('report '+kind+' not built',e)}catch(_){} return; }
       if(!rp||!rp.period||rp.period.from!==p.period.from||rp.period.to!==p.period.to) return;   // never a different window than the digest (both ends)
       var cmp=JSON.stringify(rp.agents)+JSON.stringify(rp.teams)+rp.period.to;
-      if(cmp===lastRep[kind]) return;
-      lastRep[kind]=cmp;
-      postKv(tk,'agent-reports-'+kind,JSON.stringify(rp));
+      var f=sendingRep[kind];
+      if(cmp===lastRep[kind]||inFlight(f,cmp)) return;
+      f.cmp=cmp; f.at=Date.now();
+      Promise.resolve(postKv(tk,'agent-reports-'+kind,JSON.stringify(rp))).then(function(r){
+        if(f.cmp!==cmp) return;                               // a newer payload went out since — its answer decides
+        f.cmp='';
+        if(answered(r)) lastRep[kind]=cmp;                    // spec 014 V6: recorded on the answer, not the send
+      });
     });
   }
-  window.__agentReportsPush=function(){ try{ var tk=sessionStorage.getItem('cbx_token'); var p=agentDigestPayload(); if(tk&&p) { lastRep={variance:'',leads:''}; pushReports(tk,p,true); } }catch(e){} };
+  window.__agentReportsPush=function(){ try{ var tk=sessionStorage.getItem('cbx_token'); var p=agentDigestPayload(); if(tk&&p) { lastRep={variance:'',leads:''};
+    sendingRep.variance.cmp=''; sendingRep.leads.cmp=''; pushReports(tk,p,true); } }catch(e){} };
   function push(){
     try{
       var tk=sessionStorage.getItem('cbx_token'); if(!tk) return;
@@ -10173,7 +10309,14 @@ function agentReportsLeadsPayload(){
          older engine, and this tab's is republished over it. A copy that has it is left alone —
          two current tabs never ping-pong. */
       if(cmp===last){ healStaleDigest(body,tk); return; }
-      last=cmp;
+      if(inFlight(sending,cmp)) return;                       // this payload is on its way — its answer decides (V6)
+      sending.cmp=cmp; sending.at=Date.now();
+      /* each request below counts itself as it is SENT (sent() runs while .then's arguments are evaluated) and its
+         reply is collected; once every one has answered, the payload is published — or goes again next push (V6) */
+      var replies=[], issued=0;
+      var settle=function(){ if(sending.cmp!==cmp) return; sending.cmp=''; if(replies.every(answered)) last=cmp; };
+      var sent=function(){ issued++; return function(r){ replies.push(r); if(replies.length===issued) settle(); }; };
+      var lost=function(){ replies.push(null); if(replies.length===issued) settle(); };
       /* THE LIVE DIGEST IS THE CURRENT MONTH — NOTHING ELSE (Nick, 2026-09-03: "for
          agents, their past months data keeps on showing"). The guard above only
          asked for a period starting on the 1st, so a VAS browser reviewing AUGUST
@@ -10187,7 +10330,7 @@ function agentReportsLeadsPayload(){
       if(liveDigestMonthOk(__dm,Date.now()))
         fetch(API+'/api/kv?key=agent-digest',{method:'POST',
           headers:{'Content-Type':'text/plain','Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'},
-          body:body}).catch(function(){});
+          body:body}).then(sent(),lost);
       /* THE MONTH'S HISTORY COPY (Nick 2026-08-26): the same payload filed under its own
          month, so the portal can offer past months. Any month may refresh its own key;
          only the live key above is fenced to the current month. */
@@ -10196,7 +10339,8 @@ function agentReportsLeadsPayload(){
       if(!p.empty&&/^\d{4}-\d{2}$/.test(__dm))
         fetch(API+'/api/kv?key=agent-digest-'+__dm,{method:'POST',
           headers:{'Content-Type':'text/plain','Authorization':'Bearer '+tk,'X-Cbx-Client':'v5'},
-          body:body}).catch(function(){});
+          body:body}).then(sent(),lost);
+      if(!issued) settle();                                   // nothing to send for this payload: it is settled as it stands
     }catch(e){}
   }
   function healStaleDigest(body,tk){

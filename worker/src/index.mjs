@@ -11,7 +11,7 @@ import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWa
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, reportsRequest, listDigestMonths, overview, overviewRequest, cmCoaching, coachingOthers, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn, helpConfirm, helpPulse } from './help.mjs';
 import { campaignMoves, setCampaignMove } from './moves.mjs';
-import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
+import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness, kvKeyValid, isFullScope } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { draftsGet, draftsPost } from './drafts.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, effPerDay } from './campaign.mjs';
@@ -91,6 +91,49 @@ async function gzipStart(buf) {
     rd.cancel().catch(() => {});
     return { text };
   } catch (e) { return { error: String((e && e.message) || e) }; }
+}
+/* POSTGREST ANSWERS AT MOST 1000 ROWS (Supabase max-rows) — a single `limit=20000` read silently returned the first 1000,
+   so /api/agent-signins read "signed in on no days" for every later day (Spec Kit 014, W2). Pages of 1000 (moves.mjs does
+   the same) ordered on a unique tiebreak, until a short page, the caller's `limit`, or the page budget (maxPages).
+   `more` = the budget ran out before the rows did — the caller must SAY so, never pass a partial count off as whole.
+   THE PAGE BUDGET (014 review W-R1). The 50-subrequest cap is not the binding limit on the FREE plan — its 10 ms of CPU
+   is: every page is JSON the isolate parses. 12 pages of sign-ins (12,000 rows) is four times a real month (~3,000);
+   select=* BI rows are wide, so GET /api/bi reads 5 pages (5,000 rows) per request and the caller carries on from
+   next_offset. */
+const PG_PAGE = 1000;
+const PG_MAX_PAGES = 12;
+const BI_GET_MAX_PAGES = 5;
+async function selectPaged(DB, q, { limit = Infinity, maxPages = PG_MAX_PAGES, offset = 0 } = {}) {
+  const rows = [];
+  for (let p = 0; p < maxPages && rows.length < limit; p++) {
+    const take = Math.min(PG_PAGE, limit - rows.length);
+    const got = (await DB.select(q + '&limit=' + take + '&offset=' + (offset + rows.length))) || [];
+    for (const r of got) rows.push(r);
+    if (got.length < take) return { rows, more: false };
+  }
+  return { rows, more: rows.length < limit };
+}
+/* POST /api/bi writes in 800-row chunks after three calls (session, batch row, span delete), keeps two for removing a
+   failed batch (W3) and one spare (014 review W-R2: the old 50 − 4 − 2 used all 50 when the last chunk failed):
+   44 chunks = 35,200 rows; the largest real month-end file is 32,924 (42 chunks). The duplicate check is not in that
+   count: when the body carries a batch row with a file hash, the batch insert IS the check (unique index
+   batches_source_filehash_uq, migration-007) and the lookup runs only after a conflict, to name the earlier batch.
+   A body needing more chunks cannot finish inside 50 subrequests — the cap would kill the cleanup with it — so it is
+   refused before anything is written. */
+const BI_CHUNK = 800;
+const BI_MAX_CHUNKS = 50 - 3 - 2 - 1;
+/** Remove a failed load's batch row so the same file can be uploaded again (W3). Its partial rows go first — they
+    reference the batch (bi_active_cases_batch_id_fkey) — and the answer says what happened, including when it could not. */
+async function removeFailedBiBatch(DB, batchId, span) {
+  const id = encodeURIComponent(batchId);
+  try { await DB.del('bi_active_cases?batch_id=eq.' + id); }
+  catch (e) { /* e.g. the table is missing (no_table): the batch delete below says whether it mattered */ }
+  try {
+    await DB.del('batches?batch_id=eq.' + id);
+    return { batch_removed: true, message: 'The load failed part-way, so its batch record (' + batchId + ') was removed — upload the same file again; until then ' + span + ' is incomplete.' };
+  } catch (e) {
+    return { batch_removed: false, message: 'The load failed part-way and its batch record (' + batchId + ') could NOT be removed (' + String((e && e.message) || e).slice(0, 120) + ') — a re-upload of this file will be skipped as already loaded until it is deleted.' };
+  }
 }
 const REVIEW_REMOVALS = 5;
 const COACHING_CRON = "3,23,43 * * * *";                 // the coaching-wave trigger (wrangler.toml crons) — its own invocation, its own subrequest budget
@@ -614,6 +657,9 @@ export default {
            verify-agent-portal.mjs, which is exactly why that section exists.
            Any future route placed above the gate needs this same line. */
         if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        /* …AND THE SCOPE FENCES, for the same reason (Spec Kit 014, W4): the wimpy and referrals fences below never see
+           this route, so a Wimpy sign-in on a staff account read the whole digest. Only a full session reads it. */
+        if (!isFullScope(user)) return json({ error: 'Not permitted.' }, 403);
 
         // Edge-cached: hundreds of agents share one 5-minute copy, so Supabase sees
         // ~1 read per 5 minutes however many people open the link at once.
@@ -1605,9 +1651,9 @@ export default {
         const TZ = 2;                                        // Africa/Johannesburg, no DST
         const shift = (iso, days) => new Date(Date.parse(iso + 'T00:00:00Z') + days * 86400000)
           .toISOString().slice(0, 10);
-        const rows = await DB.select(
+        const { rows, more } = await selectPaged(DB,
           `auth_log?event=eq.login_ok&at=gte.${shift(from, -1)}T00:00:00Z&at=lte.${shift(to, 1)}T23:59:59Z` +
-          `&select=username,at&order=at.asc&limit=20000`);
+          `&select=username,at&order=at.asc,id.asc`);   // paged past the 1000-row cap (W2)
         const days = {}, seen = new Set();
         for (const r of rows || []) {
           const u = String(r.username || '').trim().toUpperCase();
@@ -1626,13 +1672,14 @@ export default {
            have never provisioned — Hezron today — has to read as UNMEASURED, not as
            five points lost for our own backlog. Only app_users can answer that, so it
            travels with the counts. */
-        const users = await DB.select(`app_users?select=username&limit=2000`);
+        const users = (await selectPaged(DB, `app_users?select=username&order=id.asc`, { maxPages: 3 })).rows;   // ≤ 3 pages: 1 + 12 + 3 subrequests
         const provisioned = [];
         for (const u of users || []) {
           const n = String(u.username || '').trim().toUpperCase();
           if (/^CB\d{1,5}$/.test(n)) provisioned.push(n);
         }
-        return json({ from, to, tz: 'Africa/Johannesburg', weekdaysOnly: true, days, provisioned });
+        /* truncated: the window held more sign-ins than one request may read — the days above are a floor, not the count */
+        return json({ from, to, tz: 'Africa/Johannesburg', weekdaysOnly: true, days, provisioned, ...(more ? { truncated: true } : {}) });
       }
       /* A REFUSED SAVE REPORTS ITSELF (2026-09-07). Nick's Ops tab said "2 items NOT saved"
          all morning and the server had no trace: a refused or failed request is not a write,
@@ -1650,6 +1697,7 @@ export default {
       }
       if (path === '/api/kv' && req.method === 'GET') {
         const key = url.searchParams.get('key') || '';
+        if (!kvKeyValid(key)) return json({ error: key ? 'invalid key: a plain name only (letters, digits . _ : -)' : 'key required' }, 400);   // W1, spec 014
         /* THE HEALTH BANNER HAS THREE READERS (Nick, 2026-09-15: "all these notifications must only be
            sent to aarav, nicholas and barry"). Every open PULSE and Ops tab polls this key; anyone else
            now receives an empty alert list — the cadence still travels, since the Upload Station's
@@ -1702,7 +1750,7 @@ export default {
       }
       if (path === '/api/kv' && req.method === 'POST') {
         const qk = url.searchParams.get('key');
-        if (!qk) return json({ error: 'key required' }, 400);
+        if (!kvKeyValid(qk)) return json({ error: qk ? 'invalid key: a plain name only (letters, digits . _ : -)' : 'key required' }, 400);   // W1: never a path
         /* the digest, report and referral keys are staff-written only (review M1) — a team leader or campaign manager that also holds a management app is refused */
         if (!kvWriteAllowed(qk, user)) return json({ error: 'Not permitted.' }, 403);
         // raw mode: body is the payload itself, streamed into Storage. A Storage
@@ -1920,7 +1968,7 @@ export default {
       // pointer row, so the source is gone from the database — not just cleared to empty.
       if (path === '/api/kv' && req.method === 'DELETE') {
         const qk = url.searchParams.get('key');
-        if (!qk) return json({ error: 'key required' }, 400);
+        if (!kvKeyValid(qk)) return json({ error: qk ? 'invalid key: a plain name only (letters, digits . _ : -)' : 'key required' }, 400);   // W1: never a path
         if (!kvWriteAllowed(qk, user)) return json({ error: 'Not permitted.' }, 403);   // same fence as the POST (review M1)
         await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/${qk}`, {
           method: 'DELETE', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY },
@@ -1961,11 +2009,14 @@ export default {
       if (path === '/api/bi' && req.method === 'GET') {
         const from = url.searchParams.get('from'), to = url.searchParams.get('to');
         const lim = Math.min(Number(url.searchParams.get('limit')) || 20000, 50000);
+        const off = Math.max(0, Math.floor(Number(url.searchParams.get('offset')) || 0));
         let q = 'bi_active_cases?select=*';
         if (/^\d{4}-\d{2}-\d{2}$/.test(from || '')) q += `&contract_create_date=gte.${from}`;
         if (/^\d{4}-\d{2}-\d{2}$/.test(to || '')) q += `&contract_create_date=lte.${to}`;
-        q += `&order=contract_create_date.asc&limit=${lim}`;
-        return json({ rows: (await DB.select(q)) || [] });
+        q += '&order=contract_create_date.asc,id.asc';
+        /* paged past the 1000-row cap (W2), 5 pages a request (W-R1); past that the answer says where to carry on (offset=next_offset) */
+        const { rows, more } = await selectPaged(DB, q, { limit: lim, offset: off, maxPages: BI_GET_MAX_PAGES });
+        return json({ rows, ...(more ? { truncated: true, next_offset: off + rows.length } : {}) });
       }
       // Deleting the Power BI source also clears its queryable rows (the kv blob is
       // removed separately via DELETE /api/kv). The raw monthly archive in the
@@ -1989,10 +2040,19 @@ export default {
         // This fast check catches the common case; the unique-index catch below closes
         // the race. Months still ACCUMULATE — a genuinely new file (different hash, e.g.
         // next month or a correction) is not skipped; it loads and replaces its own span.
+        // W-R2 (014 review): when a batch row WILL be written, its insert is the check (the unique index refuses a second
+        // row with this hash) — the up-front select ran only to save work and cost the subrequest the cleanup needs.
         const fileHash = String(b.batch?.file_hash ?? '').trim();
-        if (fileHash) {
+        const batchId = b.batch?.batch_id ? String(b.batch.batch_id) : '';
+        const ALREADY = 'This exact file is already loaded — skipped to avoid duplication.';
+        const loadedAs = async () => {                    // the batch already holding this file, '' when none
+          if (!fileHash) return '';
           const dup = await DB.select(`batches?source_type=eq.BI_ACTIVE_CASES&file_hash=eq.${encodeURIComponent(fileHash)}&select=batch_id&limit=1`);
-          if (dup && dup.length) return json({ ok: true, skipped: true, reason: 'This exact file is already loaded — skipped to avoid duplication.', batch_id: dup[0].batch_id });
+          return dup && dup.length ? String(dup[0].batch_id) : '';
+        };
+        if (fileHash && !batchId) {
+          const was = await loadedAs();
+          if (was) return json({ ok: true, skipped: true, reason: ALREADY, batch_id: was });
         }
 
         // The file is authoritative ONLY for the span of sale dates it actually
@@ -2006,6 +2066,9 @@ export default {
           if (!mx || d > mx) mx = d;
         }
         if (!mn || !mx) return json({ error: 'no valid contract_create_date in rows' }, 400);
+        const chunks = Math.ceil(rows.length / BI_CHUNK);
+        if (chunks > BI_MAX_CHUNKS)
+          return json({ error: 'too_many_rows', detail: rows.length + ' rows need ' + chunks + ' writes; one request can make ' + BI_MAX_CHUNKS + ' (' + (BI_MAX_CHUNKS * BI_CHUNK) + ' rows). Nothing was written — send the file in smaller parts.' }, 413);
 
         // Whitelist columns: never let a client key reach the table verbatim.
         const COLS = ['account_no', 'contract_create_date', 'owner', 'cb', 'charge_amount',
@@ -2013,12 +2076,14 @@ export default {
           'consultant', 'product_bundle', 'merged_bundle', 'sales_vertical', 'batch_id'];
         const pick = (r) => { const o = {}; for (const c of COLS) if (r[c] !== undefined) o[c] = r[c]; return o; };
 
+        let batchWritten = null;   // set once THIS request's batch row exists — a later failure removes it (W3)
         try {
           // batch first — bi_active_cases.batch_id is a FK into batches. Plain insert
           // (not upsert): if two same-file uploads race past the check above, the
           // (source_type, file_hash) unique index makes the loser's insert conflict —
-          // caught here and skipped, so its rows never insert. That is the race-safe half.
-          if (b.batch?.batch_id) {
+          // caught here and skipped, so its rows never insert. Since W-R2 this is also how
+          // an ordinary re-upload is caught (there is no select before it any more).
+          if (batchId) {
             try {
               await DB.insert('batches', [{
                 batch_id: b.batch.batch_id, source_type: 'BI_ACTIVE_CASES', source_system: 'Power BI',
@@ -2029,28 +2094,34 @@ export default {
                 rejected_rows: b.batch.rejected_row_count ?? null, status: b.batch.validation_status || null,
                 notes: b.batch.notes || null, storage_path: b.batch.storage_path || null,
               }]);
+              batchWritten = batchId;
             } catch (e) {
-              if (/duplicate key|already exists|23505|conflict/i.test(String(e.message || e)))
-                return json({ ok: true, skipped: true, reason: 'This exact file is already loaded (race) — skipped.' });
+              if (/duplicate key|already exists|23505|conflict/i.test(String(e.message || e))) {
+                const was = await loadedAs().catch(() => '');   // '' = the conflict was the batch id, not the file
+                return json({ ok: true, skipped: true, reason: was ? ALREADY : 'Batch ' + batchId + ' is already loaded — skipped.', ...(was ? { batch_id: was } : {}) });
+              }
               throw e;
             }
           }
           // replace this month only, then append
           await DB.del(`bi_active_cases?contract_create_date=gte.${mn}&contract_create_date=lte.${mx}`);
-          const CHUNK = 800;                              // PostgREST payload + Worker CPU headroom
-          let ins = 0;
-          for (let i = 0; i < rows.length; i += CHUNK) {
-            const part = rows.slice(i, i + CHUNK).map(pick);
+          let ins = 0;                                    // BI_CHUNK: PostgREST payload + Worker CPU headroom
+          for (let i = 0; i < rows.length; i += BI_CHUNK) {
+            const part = rows.slice(i, i + BI_CHUNK).map(pick);
             await DB.insert('bi_active_cases', part);
             ins += part.length;
           }
           return json({ ok: true, inserted: ins, replaced_range: mn + ' → ' + mx });
         } catch (e) {
           const m = String(e.message || e);
+          /* A FAILED LOAD LEAVES NO BATCH ROW (Spec Kit 014, W3). The load is delete-then-insert across many calls, and a
+             failure part-way used to keep the batch row — so the re-upload that would repair the span was refused as
+             "already loaded". The row goes (after this batch's partial rows, which reference it), and the answer says so. */
+          const cleanup = batchWritten ? await removeFailedBiBatch(DB, batchWritten, mn + ' → ' + mx) : {};
           if (/bi_active_cases/.test(m) && /does not exist|schema cache|relation/i.test(m)) {
-            return json({ error: 'no_table', detail: m.slice(0, 140) }, 503);
+            return json({ error: 'no_table', detail: m.slice(0, 140), ...cleanup }, 503);
           }
-          return json({ error: 'bi_write_failed', detail: m.slice(0, 200) }, 500);
+          return json({ error: 'bi_write_failed', detail: m.slice(0, 200), ...cleanup }, 500);
         }
       }
       // Immutable archive of the exact monthly export, so any figure can be

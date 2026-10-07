@@ -152,7 +152,9 @@ console.log('\nF · the relay re-applies a ViciDial file the audit says loaded b
   /const lost=src==='VICI_CALL_REPORT'&&had\.loaded_row_count>0&&!\(state\.facts\[src\]\|\|\[\]\)\.some\(r=>r\._batch===had\.batch_id\)/.test(relay)
     ? ok('a ViciDial file with an audit record but no rows in the store is re-applied — the lost-update signature heals itself')
     : bad('the relay still skips a file on its audit record alone');
-  /if\(!lost\)continue;/.test(relay) ? ok('…and only ViciDial is judged that way — key-superseding sources keep their skip') : bad('the re-apply is not restricted to ViciDial');
+  /* spec 014 O3 (2026-10-07): a batch flagged save_failed is the one other exception — its rows never reached the
+     store, whatever the source; verify-ops-sweep-014.mjs drives that path */
+  /if\(!lost&&!retry\)continue;/.test(relay) && /if\(src==='VICI_CALL_REPORT'\|\|newest===had\)retry=true;/.test(relay) ? ok('…and only ViciDial is judged that way — key-superseding sources keep their skip unless their save failed while still the newest file') : bad('the re-apply is not restricted to ViciDial');
 }
 
 console.log('\nG · the Executive page after the CallX cutover reads ViciDial, not zeros');
