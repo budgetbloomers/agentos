@@ -16,7 +16,8 @@
  *   · a failed webhook keeps the cart
  *
  * ITS OWN APP SINCE 2026-09-10: the page half drives wimpy/index.html (WIMPY_HTML=site/wimpy/index.html
- * for the build copy), and the sign-in half proves the CB-only session is SCOPED to the Wimpy routes.
+ * for the build copy), and the sign-in half proves the Wimpy session is SCOPED to the Wimpy routes. Since Spec Kit 009
+ * (2026-10-06) the sign-in takes the CB number AND the person's password; verify-wimpy-signin.mjs drives that check.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -326,11 +327,13 @@ head('L · THE TAB IS GONE FROM AGENT ANALYTICS');
   const portal = fs0.readFileSync(path.resolve(HERE, '..', '..', 'worker', 'src', 'portal.mjs'), 'utf8');
   ok(portal.includes("'/api/wimpy/menu'") && portal.includes("'/api/wimpy/order'"), 'and the two new routes are on the agent allow-list');
   const auth = fs0.readFileSync(path.resolve(HERE, '..', '..', 'worker', 'src', 'auth.mjs'), 'utf8');
-  ok(auth.includes('signinByCb') && auth.includes("scope: 'wimpy'"), 'the CB-only sign-in mints a scoped session');
-  ok(auth.includes('wimpy_signin_fail'), '...and its failures are counted for the rate limit');
+  /* Spec Kit 009: the sign-in takes the person's password; its behaviour is driven in verify-wimpy-signin.mjs */
+  ok(auth.includes('export async function signinWimpy') && auth.includes("scope: 'wimpy'"), 'the Wimpy sign-in mints a scoped session');
+  ok(/export async function signinWimpy[\s\S]*?checkPassword\(DB, u, \w+, password, ip, defer, 'wimpy'\)/.test(auth),
+    '...only after the same password check and lock as the main sign-in');
 }
 
-head('M · THE APP: SIGN IN WITH A CB NUMBER, ORDER, SEND');
+head('M · THE APP: SIGN IN WITH A CB NUMBER AND PASSWORD, ORDER, SEND');
 {
   const fs2 = await import('node:fs');
   const http = await import('node:http');
@@ -345,12 +348,14 @@ head('M · THE APP: SIGN IN WITH A CB NUMBER, ORDER, SEND');
     const errs = [];
     pg.on('pageerror', (e) => errs.push(String(e)));
     /* the Worker is stubbed: sign-in, /api/me and the menu answer; the order is captured */
-    let posted = null, signins = 0, orders = 0;
+    let posted = null, signins = 0, orders = 0, signinBody = null;
     await pg.route('**/chatterbox-agentos-api.chatterbox-agentos.workers.dev/**', async (route) => {
       const u = route.request().url();
       const J = (o, s = 200) => route.fulfill({ status: s, contentType: 'application/json', body: JSON.stringify(o) });
       const ME = { username: 'cb999', full_name: 'Ann Smith', cb: 'CB999', scope: 'wimpy' };
-      if (u.includes('/api/wimpy/signin')) { signins++; return J({ token: 'stub-token', user: ME }); }
+      if (u.includes('/api/wimpy/signin')) { signins++; signinBody = JSON.parse(route.request().postData() || '{}');
+        if (signinBody.password !== 'right-pass-1') return J({ error: 'That CB number and password do not match.' }, 401);
+        return J({ token: 'stub-token', user: ME }); }
       if (u.endsWith('/api/me')) return J({ user: ME });
       if (u.includes('/api/wimpy/menu')) return J(MENU_FIXTURE);
       if (u.includes('/api/wimpy/order')) { orders++; posted = JSON.parse(route.request().postData() || '{}');
@@ -361,17 +366,41 @@ head('M · THE APP: SIGN IN WITH A CB NUMBER, ORDER, SEND');
     await pg.waitForSelector('#cb', { timeout: 20000 });
     const signin = await pg.evaluate(() => ({
       label: (document.querySelector('label[for=cb]') || {}).textContent || '',
+      pwLabel: (document.querySelector('label[for=pw]') || {}).textContent || '',
       text: document.body.innerText,
       pw: document.querySelectorAll('input[type=password]').length,
+      pwId: (document.querySelector('input[type=password]') || {}).id || '',
     }));
     ok(/CB number/i.test(signin.label), 'the sign-in asks for a CB number', signin.label);
     ok(/managers: type your username/i.test(signin.text), '...and tells managers to use their username');
-    ok(signin.pw === 0, 'there is no password field anywhere on it');
+    /* Spec Kit 009 (Nick, 2026-10-06): "users must put this password as well" */
+    ok(signin.pw === 1 && signin.pwId === 'pw', 'it asks for a password too — one hidden field, #pw', signin.pw + ' ' + signin.pwId);
+    ok(/password/i.test(signin.pwLabel), '...labelled Password', signin.pwLabel);
+    ok(/the password you use for Agent Analytics/i.test(signin.text), '...and says which password it means');
+    ok(/forgotten your password\? ask your team leader or manager/i.test(signin.text), 'it tells a person who forgot it what to do');
+    ok(!/no password/i.test(signin.text) && !/no password/i.test(pageSrc), 'nothing on the page or in its source still says "no password"');
     await pg.fill('#cb', 'CB999');
+    await pg.click('#go');
+    await pg.waitForTimeout(300);
+    ok(signins === 0, 'pressing with the password empty sends nothing', String(signins));
+    ok(await pg.evaluate(() => document.querySelector('#pw').classList.contains('err')), '...and marks the password field');
+    await pg.fill('#pw', 'not-it');
+    await pg.click('#go');
+    await pg.waitForSelector('.msg.bad', { timeout: 10000 });
+    const refused = await pg.evaluate(() => ({ msg: document.querySelector('.msg.bad').innerText, cb: document.querySelector('#cb').value, pw: document.querySelector('#pw').value }));
+    ok(/do not match/.test(refused.msg), 'a refusal shows the Worker\'s words', refused.msg);
+    ok(refused.cb === 'CB999' && refused.pw === '', '...keeps the CB number typed and clears the password', JSON.stringify({ cb: refused.cb, pwEmpty: refused.pw === '' }));
+    /* autofocus is ignored on markup put in by innerHTML once the page has focused something (review 2026-10-06) */
+    const focused = await pg.evaluate(() => (document.activeElement || {}).id || '');
+    ok(focused === 'pw', '...and puts the cursor in the password box, ready for the second try', focused);
+    await pg.fill('#pw', 'right-pass-1');
     await pg.click('#go');
     await pg.waitForSelector('.wp-grid', { timeout: 20000 });
     const menu = await pg.evaluate(() => document.body.innerText);
-    ok(signins === 1, 'the CB signs in through /api/wimpy/signin', String(signins));
+    ok(signins === 2, 'the CB number and password sign in through /api/wimpy/signin', String(signins));
+    ok(signinBody && signinBody.cb === 'CB999' && signinBody.password === 'right-pass-1', '...sending both, as typed', JSON.stringify(signinBody && { cb: signinBody.cb, hasPassword: 'password' in signinBody }));
+    ok(await pg.evaluate(() => { try { return sessionStorage.getItem('cbx_wimpy_token') === 'stub-token'; } catch (e) { return false; } }), 'the token is kept under cbx_wimpy_token');
+    ok(!(await pg.evaluate(() => JSON.stringify(sessionStorage) + JSON.stringify(localStorage))).includes('right-pass-1'), 'the password is never stored in the browser');
     ok(/Ordering is open/.test(menu), 'the window state comes from the payload, not the page’s clock');
     ok(/08:00–17:00/.test(menu), '...and reads 08:00–17:00', (menu.match(/\d\d:\d\d–\d\d:\d\d/) || [])[0]);
     /* the header counts what the menu actually carries (Nick, 2026-09-14: "the toasteds still say 3 when there is 2") */

@@ -41,8 +41,8 @@
  * refused in words rather than stripped.
  *
  * ITS OWN APP SINCE 2026-09-10 (specs/wimpy-vas-apps-plan.md): the page is
- * /wimpy/, signed in with a CB number and no password (a session SCOPED to
- * these routes — see auth.mjs signinByCb); the order form asks for the CB
+ * /wimpy/, signed in with a CB number and the person's password since Spec Kit
+ * 009 (a session SCOPED to these routes — see auth.mjs signinWimpy); the order form asks for the CB
  * number, name and surname, which travel to the kitchen beside the account's
  * own name; orders are taken 08:00–17:00 SAST, Monday to Friday; everyone
  * orders, management included.

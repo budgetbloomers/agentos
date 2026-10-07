@@ -1,5 +1,10 @@
 <!--
 Sync Impact Report
+- 1.3.0 → 1.4.0 (MINOR, 2026-10-06, feature 006-cm-custom-range): Platform Constraints expanded — published period keys
+  gain `kv:agent-digest-range-…` (custom ranges for campaign managers, built by the engine on the tick, queued in
+  kv:cm-range-requests). CLAUDE.md NN12 amended in the same change.
+- 1.2.0 → 1.3.0 (MINOR, 2026-10-05, features 003 + 004): Principle V expanded — a submitted coaching document is
+  never delivered to a team leader; drafts are owner-only. CLAUDE.md NN12 amended in the same change.
 - 1.1.0 → 1.2.0 (MINOR, 2026-10-01, feature 002-live-month-sync-coaching): the live-digest constraint redefined —
   always the current month (empty payload before its first data), empty never over data. CLAUDE.md NN12 amended
   in the same change.
@@ -53,7 +58,8 @@ The suite sits behind its own login (PBKDF2, sessions, lockout) on every page; r
 Worker, never by hiding UI. The Worker is the ONLY component that talks to Supabase; the service key is a
 Worker secret, CSP `connect-src` stays `'self'` (the one signed-URL storage exception is documented), PII
 masking defaults on, and all user strings pass through `esc()`. New pages are invisible to scoped users until
-granted. (NN10, conventions)
+granted. A submitted coaching document's written content is never delivered to a team leader on any route; drafts
+are readable only by the session that owns them. (NN10, NN12, conventions)
 
 ### VI. Saves Are Acknowledged, Noticed and Recoverable
 Unsaved data is a STATE (banner, retry with backoff, `beforeunload` challenge), never a toast. Writes that two
@@ -75,7 +81,9 @@ error-severity rule-check FAIL; a deployed change is verified against live data 
   figures) before its first data, never zeros, and never replacing a same-month payload that has data; an older
   month never takes the live key. Other periods are published under their own keys — past months as
   `kv:agent-digest-YYYY-MM`, billing cycles (26th→25th, `worker/src/cycle.mjs`) as `kv:agent-digest-cycle-YYYY-MM`,
-  both built by the engine, never re-aggregated by the Worker.
+  both built by the engine, never re-aggregated by the Worker. Custom ranges for campaign managers
+  (`worker/src/range.mjs`) are published as `kv:agent-digest-range-YYYY-MM-DD-YYYY-MM-DD` with their report keys, built
+  by the engine on the tick from the requests queued in `kv:cm-range-requests`, and only served by the Worker.
 - Every Worker invocation stays inside the FREE plan's 50 subrequests: fan-out work (the Coaching Hub refresh)
   is chunked against an explicit budget, resumes from a pointer, and logs every attempt.
 - Large files take the Rake; duplicates are removed by the database (`dedupe_lake()`). (NN15)
@@ -96,4 +104,4 @@ Constitution Check against Principles I–VII; any justified deviation is record
 Tracking table. Versioning: MAJOR = a principle removed or redefined; MINOR = a principle or section added or
 materially expanded; PATCH = wording.
 
-**Version**: 1.2.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-01
+**Version**: 1.4.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-06

@@ -348,6 +348,12 @@ const CODE = PAGE
   (hubAnchors.length >= 1 && hubAnchors.every(a => /rel=\\?"noopener/.test(a)))
     ? ok('every Coaching Hub anchor carries rel=noopener — the opened page cannot drive this tab')
     : bad('a Coaching Hub anchor is missing rel=noopener (or the link is gone entirely)', hubAnchors.join(' · ') || '(none found)');
+  /* SPEC 004 (2026-10-05): the link stays (decided with the user), but a submitted coaching document is
+     locked for its author, so the Hub tab no longer describes the Hub app as the place to edit or print one. */
+  const tlHub = PAGE.slice(PAGE.indexOf('function coachHubPage()'), PAGE.indexOf('/* ---- KPI Hub ---- */'));
+  (/coaching-hub-psi/.test(tlHub) && !/edit a session you already saved|to print one/.test(tlHub))
+    ? ok('the team leader\'s Hub tab keeps its Coaching Hub link without inviting edits of a submitted document (spec 004)')
+    : bad('the team leader\'s Hub tab lost its Coaching Hub link, or still invites editing/printing a submitted document');
   (PAGE.match(/coaching-hub-psi/g) || []).length <= 2
     ? ok('the Coaching Hub link appears only on team leader pages')
     : bad('the Coaching Hub URL appears more often than expected — check where each one renders');

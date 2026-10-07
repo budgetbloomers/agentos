@@ -5,14 +5,15 @@
  * IRON RULE: the LLM explains numbers, it never computes them.
  */
 import { db } from './db.mjs';
-import { login, logout, session, hashPassword, changePassword, signinByCb } from './auth.mjs';
+import { login, logout, session, hashPassword, changePassword, signinWimpy } from './auth.mjs';
 import { retrieveKB } from './kb.mjs';
 import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWave } from './coaching.mjs';
-import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, loadReports, tlReports, listDigestMonths, overview, overviewRequest, cmCoaching, coachingOthers, agentDetail, normCb } from './portal.mjs';
+import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, reportsRequest, listDigestMonths, overview, overviewRequest, cmCoaching, coachingOthers, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn, helpConfirm, helpPulse } from './help.mjs';
 import { campaignMoves, setCampaignMove } from './moves.mjs';
 import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
+import { draftsGet, draftsPost } from './drafts.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, effPerDay } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
 import { syncAgentLogins, syncTeamLeaders, syncCampaigns, publishAgentList } from './provision.mjs';
@@ -523,10 +524,11 @@ export default {
         // token also in body: cross-origin pages use Bearer (cookie is same-origin only)
         return json({ user: r.user, token: r.token });
       }
-      /* THE WIMPY SIGN-IN (2026-09-10): a CB number, no password, a session scoped to
-         /api/wimpy/* — auth.mjs signinByCb has the rules and the rate limit. */
+      /* THE WIMPY SIGN-IN (2026-09-10; password since Spec Kit 009, 2026-10-06): a CB number and the
+         person's own password, the same check and lock as /api/login, and a session scoped to
+         /api/wimpy/* — auth.mjs signinWimpy has the rules and the per-network limit. */
       if (path === '/api/wimpy/signin' && req.method === 'POST') {
-        const r = await signinByCb(DB, req, await req.json().catch(() => ({})), ctx);
+        const r = await signinWimpy(DB, req, await req.json().catch(() => ({})), ctx);
         if (!r.ok) return json({ error: r.error }, r.status);
         return json({ user: r.user, token: r.token });
       }
@@ -620,7 +622,7 @@ export default {
       if (!user) return json({ error: 'Sign in required.' }, 401);
 
       /* ---------- WIMPY SESSION SCOPE (2026-09-10) ----------
-         A session minted by the CB-only sign-in (scope 'wimpy') buys lunch and reaches
+         A session minted by the Wimpy sign-in (scope 'wimpy') buys lunch and reaches
          NOTHING else — not /api/kv, not the portal, not the roster — whatever the role
          on the account. Above the role lockdown so it applies to every role alike;
          /api/me and /api/logout sit above the gate and still answer, which is what the
@@ -693,7 +695,8 @@ export default {
       }
       if (path === '/api/portal/overview' && req.method === 'GET') {
         /* ?month=YYYY-MM opens a published past month; anything else is the live digest — for agents and team leaders,
-           exactly as before. For a CAMPAIGN MANAGER the page also sends ?period= (current | YYYY-MM | cycle-YYYY-MM)
+           exactly as before. For a CAMPAIGN MANAGER the page also sends ?period= (current | YYYY-MM | cycle-YYYY-MM |
+           range-YYYY-MM-DD-YYYY-MM-DD — spec 006: an unbuilt range is queued in kv:cm-range-requests and answers 404 range_building)
            and ?tenure= (all | M0 | M1 | M2 | Exp | unset); both are validated and applied in portal.mjs
            overviewRequest and ignored for every other role (spec 001-cm-view-signoff, contract C2). */
         /* For a campaign manager the assistance half is fetched here and handed in — portal.mjs must not import
@@ -830,6 +833,19 @@ export default {
         }
         return json({ error: 'Method not allowed.' }, 405);
       }
+      /* COACHING DRAFTS (spec 004, 2026-10-05). A team leader's unfinished coaching documents, kept by the Worker until
+         Submit sends them to the Hub (drafts.mjs). The same gate as the Hub routes; the owner is the session's user id. */
+      if (path === '/api/portal/hub/coaching/drafts') {
+        const h = hubIdsOf(user);
+        if (h.error) return json({ error: h.error }, h.status);
+        try {
+          if (req.method === 'GET') { const r = await draftsGet(DB, user, { id: url.searchParams.get('id') || '' }); return json(r.body, r.status); }
+          if (req.method === 'POST') { const r = await draftsPost(DB, user, h.ids, await req.json().catch(() => ({}))); return json(r.body, r.status); }
+        } catch (e) {
+          return json({ error: 'Your drafts could not be reached: ' + String(e.message || e).slice(0, 200) }, 502);
+        }
+        return json({ error: 'Method not allowed.' }, 405);
+      }
       if (path === '/api/portal/hub/kpi') {
         const h = hubIdsOf(user);
         if (h.error) return json({ error: h.error }, h.status);
@@ -883,7 +899,7 @@ export default {
         return json(r.body, r.status);
       }
       if (path.startsWith('/api/portal/wimpy/'))
-        return json({ error: 'Wimpy ordering has moved to its own app — open Wimpy Order from the VAS Analytics Apps page and sign in with your CB number.' }, 410);
+        return json({ error: 'Wimpy ordering has moved to its own app — open Wimpy Order from the VAS Analytics Apps page and sign in with your CB number and password.' }, 410);
 
       /* ---------- CAMPAIGN ASSISTANCE — team leader → campaign manager ---------- */
       if (path.startsWith('/api/portal/cm/')) {
@@ -931,14 +947,11 @@ export default {
       }
 
       /* THE TEAM LEADER'S VARIANCE / LEAD MANAGEMENT SLICE (2026-09-21). authorise() needs the digest
-         (that is where the team's codes live); the report key is loaded lazily, never on the overview. */
+         (that is where the team's codes live); the report key is loaded lazily, never on the overview.
+         ?period=range-… (spec 006, contract C4): a campaign manager's custom range — that range's digest scopes the
+         slice and its own report key is served (portal.mjs reportsRequest; 403 for any other role). */
       if (path === '/api/portal/tl/reports' && req.method === 'GET') {
-        const kind = String(url.searchParams.get('kind') || '');
-        if (!/^(variance|leads)$/.test(kind)) return json({ error: 'kind must be variance or leads' }, 400);
-        const digest = await loadDigest(DB, null);
-        if (!digest) return json({ error: 'Nothing has been published yet. Check again a little later.' }, 404);
-        const report = await loadReports(DB, kind).catch((e) => { console.error('loadReports ' + kind + ' failed: ' + (e && e.message || e)); return null; });
-        const r = tlReports(user, digest, report, kind);
+        const r = await reportsRequest(DB, user, { kind: url.searchParams.get('kind') || '', period: url.searchParams.get('period') || '' });
         return json(r.body, r.status);
       }
 
@@ -1241,7 +1254,22 @@ export default {
           await DB.insert('rules', [{ key: 'kv:roster-refused', value: { data: JSON.stringify(rec) }, updated_by: actor, updated_at: now }], true).catch(() => {});
           return rec;
         };
-        const plan = await publishAgentList(DB, raw, { asOf, actor, planOnly: true });
+        /* A DATABASE ERROR IS NOT AN ANSWER (spec 010, 2026-10-07). The 7 Oct list's publish THREW — an error
+           status went back, no refusal was stored, nothing retried, and four minutes later the uploader's page
+           re-adopted the 6 Oct record (Hezron's team back, 35 moves undone). publish_agent_list is one
+           all-or-nothing transaction, so running it again is safe: a thrown call is tried once more, and a second
+           throw becomes a refusal like any other — stored, named in the health alert, answered in words. A
+           refusal the database GIVES is returned as it is: retrying cannot change it. */
+        const publishOrFailed = async (opts) => {
+          try { return await publishAgentList(DB, raw, opts); }
+          catch (e1) {
+            await new Promise((r) => setTimeout(r, 1500));
+            try { return await publishAgentList(DB, raw, opts); }
+            catch (e2) { return { status: 'FAILED', stage: 'server', reason: 'the database did not answer the publish (tried twice)',
+              detail: String((e2 && e2.message) || e2).slice(0, 300) }; }
+          }
+        };
+        const plan = await publishOrFailed({ asOf, actor, planOnly: true });
         if (!plan || (plan.status !== 'PLAN' && plan.status !== 'NEEDS_HASHES')) {
           const reason = (plan && (plan.reason || plan.status)) || 'the publish returned nothing';
           const refusal = await recordRefusal(plan, reason);
@@ -1264,7 +1292,7 @@ export default {
           return json({ accepted: false, reason: 'identical list already published', fingerprint: fp, as_of: prev.as_of || '',
             on_file: plan.on_file, dropped: plan.dropped || [] });
         /* APPLY: logins, leader views, campaigns — all or nothing */
-        const out = await publishAgentList(DB, raw, { asOf, actor, fingerprint: fp });
+        const out = await publishOrFailed({ asOf, actor, fingerprint: fp });
         if (!out || out.status !== 'SUCCESS') {
           const reason = (out && (out.reason || out.status)) || 'the publish returned nothing';
           const refusal = await recordRefusal(out, reason);

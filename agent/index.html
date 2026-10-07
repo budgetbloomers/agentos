@@ -470,6 +470,8 @@ details.tool summary .chev{margin-left:auto;color:var(--muted);font-size:11px}
 .sess summary::-webkit-details-marker{display:none}
 .sess summary b{color:var(--ink);font-weight:700}
 .sess .sdate{color:var(--muted);font-size:12px;white-space:nowrap}
+.sess .srow{padding:11px 2px;display:flex;justify-content:space-between;gap:10px;align-items:baseline;font-size:13.5px;color:var(--body)}
+.sess .srow b{color:var(--ink);font-weight:700}
 .sblk{padding:0 2px 12px}
 .sblk label{display:block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
 .sblk p{margin:0 0 10px;font-size:13.5px;line-height:1.6;color:var(--body);white-space:pre-wrap}
@@ -1725,21 +1727,32 @@ function pageDailyTeam(){
    verdict). Each report keeps its OWN publish stamp (it can lag the digest when a book is not loaded),
    is fetched on its own on the LIVE timer, on focus and on Refresh (never static), and treats 403/404
    as "not for this account / not published yet" — never as a sign-out. */
-var REP={variance:{d:null,at:0,busy:false,err:''},leads:{d:null,at:0,busy:false,err:''}};
+var REP={variance:{d:null,at:0,busy:false,err:'',per:'',msg:''},leads:{d:null,at:0,busy:false,err:'',per:'',msg:''}};
 var VAR_DAY='';
 function repKind(v){ return (v==='variance_team'||v==='cm_variance')?'variance':((v==='leads_team'||v==='cm_leads')?'leads':''); }
 function repScopeOk(){ return liveTeamScope()||!!(D&&!D.me&&D.scope==='campaign'); }
+/* THE PERIOD THE REPORTS FOLLOW (spec 006): a campaign manager's custom range is sent to tl/reports and the Worker serves
+   that range's own report keys; everything else reads the live report keys, as before ('' = live). */
+function repPeriod(){ return (D&&D.scope==='campaign'&&/^range-/.test(String(CMPER)))?CMPER:''; }
+/* new figures on screen (cmAsk): a report held for another period — or a "not built yet" answer, which a range that has
+   just been built has outgrown — is dropped, so the open tab asks again for the right one */
+function repSync(){
+  var p=repPeriod();
+  ['variance','leads'].forEach(function(k){ var st=REP[k]; if(st.per!==p||(!st.d&&!st.busy)) REP[k]={d:null,at:0,busy:false,err:'',per:p,msg:''}; });
+}
 function repStamp(kind){
   var d=REP[kind]&&REP[kind].d; if(!d||!d.updatedAt) return 'not yet';
   try{ return new Date(d.updatedAt).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return String(d.updatedAt).slice(0,16); }
 }
 function repLoad(kind,manual){
   var st=REP[kind]; if(!st||st.busy||!repScopeOk()) return Promise.resolve();
+  var per=repPeriod(); st.per=per;
   st.busy=true; st.at=Date.now();
-  return api('/api/portal/tl/reports?kind='+kind).then(function(r){
+  return api('/api/portal/tl/reports?kind='+kind+(per?'&period='+encodeURIComponent(per):'')).then(function(r){
     st.busy=false;
+    if(st!==REP[kind]) return;   // the period changed while this was on its way — repSync has already asked for the new one
     if(r.ok){
-      var prev=st.d; st.d=r.json; st.err='';
+      var prev=st.d; st.d=r.json; st.err=''; st.msg='';
       var changed=!prev||prev.updatedAt!==r.json.updatedAt;
       if(changed){ if(liveSafeToRender()) render(); }
       else if(manual) toast('Already on the latest published '+(kind==='leads'?'Lead management':'Variance')+' figures ('+repStamp(kind)+').');
@@ -1747,9 +1760,10 @@ function repLoad(kind,manual){
     }
     /* 401 is a real sign-out (refreshPortal handles it); 403 = not for this account; 404 = not published yet */
     st.err=r.status===401?'session':(r.status===404?'unpublished':(r.status===403?'forbidden':('error: '+((r.json&&r.json.error)||r.status))));
+    st.msg=String((r.json&&(r.json.message||r.json.error))||'');
     if(repKind(VIEW)===kind&&liveSafeToRender()) render();
-    if(manual&&r.status!==401) toast((r.json&&r.json.error)||'Could not load the report.',5000);
-  }).catch(function(){ st.busy=false; st.err='error: network'; if(repKind(VIEW)===kind&&liveSafeToRender()) render(); });
+    if(manual&&r.status!==401) toast((r.json&&(r.json.message||r.json.error))||'Could not load the report.',5000);
+  }).catch(function(){ st.busy=false; st.err='error: network'; if(st===REP[kind]&&repKind(VIEW)===kind&&liveSafeToRender()) render(); });
 }
 function repTick(){ if(D&&D.empty) return; var k=repKind(VIEW); if(k&&!REP[k].busy&&Date.now()-REP[k].at>LIVE_MIN_GAP_MS) repLoad(k,false); }
 function repStateCard(kind,title){
@@ -1761,6 +1775,8 @@ function repStateCard(kind,title){
   }
   if(st.d) return '';
   if(st.busy||(!st.err&&!st.d)) return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">Loading the published report…</p></div>';
+  /* a custom range's report: the Worker says in words whether it is still being built or the engine built none (spec 006) */
+  if(st.err==='unpublished'&&st.per) return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">'+esc(st.msg||'This report has not been built for that range yet — the 15-minute refresh builds it.')+'</p></div>';
   if(st.err==='unpublished') return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">Management has not published this report yet. It follows the VAS dashboard within a couple of minutes of the next upload — press Refresh in a moment.</p></div>';
   if(st.err==='forbidden') return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">This report is a team leader page and is not available to this account.</p></div>';
   return '<div class="card"><h3>'+esc(title)+'</h3><p class="why">Could not load the report ('+esc(st.err.replace(/^error: /,''))+'). Press Refresh to try again.</p></div>';
@@ -2129,7 +2145,8 @@ function coachPageTeam(){
      opened page can reach back through window.opener and drive this tab. */
   /* The outbound Hub link itself renders ONCE, in coachHubPage's footer card — this
      card stopped carrying its own copy when the two pages merged (2026-08-27). The
-     policy stands: team leaders only, target=_blank, rel=noopener. */
+     policy stands: team leaders only, target=_blank, rel=noopener. Spec 004 (2026-10-05) kept the link (decided with
+     the user) but no longer describes the Hub app as the place to edit or print a submitted document. */
 
   return '<div class="card"><h3>Coaching across the team <span class="cnt">'+num(t.sessions)+'</span></h3>'
     +'<p class="why">'+num(t.sessions)+' session'+(t.sessions===1?'':'s')+' with '+num(t.agents)
@@ -2778,7 +2795,7 @@ function closeDrawer(){
    HUB is the in-memory copy of what the Worker returned, so switching tabs does
    not re-ask. A create refetches, because the list must show what was just
    written or the person will write it twice. */
-var HUB={coaching:null,kpi:null,busy:false};
+var HUB={coaching:null,kpi:null,drafts:null,flash:null,busy:false};
 
 var COACH_TYPES=[
   ['informalCoaching','Informal Coaching'],
@@ -2941,8 +2958,11 @@ var COACH_SPEC={
   ]}
 };
 
-var CFORM={type:null,data:null,dirty:false,saving:false};
-var CVIEW=null;   /* a saved session being read back */
+/* DRAFTS (spec 004, 2026-10-05). A coaching document is a draft until the leader submits it: draftId/base are the
+   Worker's draft row and the version it was opened at (null for a form never saved). Once submitted it is the Hub's,
+   and the leader never opens it again — there is no read-back of a submitted session anywhere on this page. */
+var CFORM={type:null,data:null,dirty:false,saving:false,draftId:null,base:null};
+function cformBlank(){ return {type:null,data:null,dirty:false,saving:false,draftId:null,base:null}; }
 
 function coachBlank(type){
   var d={};
@@ -2966,12 +2986,12 @@ function coachBlank(type){
 }
 function coachOpen(type){
   if(!COACH_SPEC[type]) return;
-  CFORM={type:type,data:coachBlank(type),dirty:false,saving:false};
+  CFORM=cformBlank(); CFORM.type=type; CFORM.data=coachBlank(type);
   render();
 }
 function coachClose(){
-  if(CFORM.dirty&&!window.confirm('Close without saving? This session has not been written to the Hub.')) return;
-  CFORM={type:null,data:null,dirty:false,saving:false};
+  if(CFORM.dirty&&!window.confirm('Close without saving? Your changes are not in a draft yet.')) return;
+  CFORM=cformBlank();
   render();
 }
 
@@ -3038,20 +3058,52 @@ function coachFormPage(){
   }).join('');
   return '<div class="card fhead"><div class="frow">'
     +'<button class="btn" id="cfBack">← All forms</button>'
-    +'<div><b>'+esc(sp.label)+'</b><div class="sub2">Written into the Coaching Hub under your name</div></div>'
+    +'<div><b>'+esc(sp.label)+'</b><div class="sub2">'+(CFORM.draftId?'Draft — only you can see it until you submit'
+      :'Not saved yet — Save draft to come back to it later')+'</div></div>'
     +'<span class="hmsg" id="cfMsg">'+(CFORM.dirty?'Not saved yet':'')+'</span>'
-    +'<button class="btn primary" id="cfSave">Save session</button>'
-    +'</div></div><div class="card">'+body+'</div>';
+    +(CFORM.draftId?'<button class="btn" id="cfDel">Delete draft</button>':'')
+    +'<button class="btn" id="cfDraft">Save draft</button>'
+    +'<button class="btn primary" id="cfSubmit">Submit</button>'
+    +'</div></div><div class="card">'+body+'</div>'
+    +'<div class="card"><p class="why" style="margin:0">Once you submit, the document goes to the Coaching Hub and you can no '
+    +'longer open or change it here. Signatures are kept with the draft — but changing anything after a signature clears '
+    +'the signatures, so the document is always signed as it was finally written.</p></div>';
 }
 
 /* ---- reading and writing the nested paths ---- */
 function cGet(p){ return p.split('.').reduce(function(o,k){return o==null?o:o[k];},CFORM.data); }
-function cSet(p,v){
+function cPut(p,v){
   var ks=p.split('.'), o=CFORM.data;
   for(var i=0;i<ks.length-1;i++) o=o[ks[i]];
   o[ks[ks.length-1]]=v;
+}
+/* A SIGNATURE COVERS THE FINAL WORDING (spec 004, decided with the user 2026-10-05). Signatures may be drawn on a
+   draft, but changing the document after one was drawn clears them all — the Worker drops a stale one too. What is
+   part of SIGNING (the images, the sign dates, a group attendee's own row) never clears anything: otherwise filling
+   in the date beside a signature, or the next attendee's name, would wipe the signatures already there. */
+var SIG_CLEARED='The document changed after it was signed — signatures cleared, please sign again.';
+function inSigning(p){ return /[Ss]ignature$/.test(p)||/SignDate$/.test(p)||p==='signDate'||/^employeeSignoffs\./.test(p); }
+function sigImgPaths(d){
+  var out=[];
+  for(var k in d) if(/[Ss]ignature$/.test(k)) out.push(k);
+  (d.employeeSignoffs||[]).forEach(function(r,i){ out.push('employeeSignoffs.'+i+'.signature'); });
+  return out;
+}
+function resetSigBoxes(paths){
+  Array.prototype.forEach.call(document.querySelectorAll('.sig'),function(box){
+    var p=box.getAttribute('data-sig'); if(paths.indexOf(p)<0) return;
+    box.innerHTML=''; sigPad(box,p,cSet);
+  });
+}
+function cSet(p,v){
+  cPut(p,v);
   CFORM.dirty=true;
-  var e=$('cfMsg'); if(e){ e.textContent='Not saved yet'; e.className='hmsg'; }
+  if(/[Ss]ignature$/.test(p)&&v) CFORM.sigsCleared=false;
+  if(!inSigning(p)){
+    var signed=sigImgPaths(CFORM.data).filter(function(sp){ return !!cGet(sp); });
+    if(signed.length){ signed.forEach(function(sp){ cPut(sp,''); }); resetSigBoxes(signed); CFORM.sigsCleared=true; }
+  }
+  var e=$('cfMsg'); if(e){ e.textContent=CFORM.sigsCleared?SIG_CLEARED:'Not saved yet'; e.className='hmsg'+(CFORM.sigsCleared?' bad':''); }
 }
 function wireCoachForm(){
   if(!CFORM.type) return;
@@ -3067,8 +3119,10 @@ function wireCoachForm(){
     cSet('agentName',ag.value);
     cSet('employeeNumber',o?o.getAttribute('data-cb')||'':'');
   };
+  /* The pad takes ONE writer. It used to be handed (cGet, cSet), so the READER landed in the setter's place and every
+     signature drawn on a coaching form was thrown away before the save (spec 003, 2026-10-05). */
   Array.prototype.forEach.call(document.querySelectorAll('.sig'),function(box){
-    sigPad(box,box.getAttribute('data-sig'),cGet,cSet);
+    sigPad(box,box.getAttribute('data-sig'),cSet);
   });
   Array.prototype.forEach.call(document.querySelectorAll('.sigclr'),function(b){
     b.onclick=function(){ cSet(b.getAttribute('data-clr'),''); render(); };
@@ -3078,91 +3132,118 @@ function wireCoachForm(){
     CFORM.dirty=true; render();
   };
   if($('cfBack')) $('cfBack').onclick=coachClose;
-  if($('cfSave')) $('cfSave').onclick=coachSave;
+  if($('cfDraft')) $('cfDraft').onclick=coachSaveDraft;
+  if($('cfSubmit')) $('cfSubmit').onclick=coachSubmit;
+  if($('cfDel')) $('cfDel').onclick=function(){ coachDeleteDraft(CFORM.draftId); };
 }
-function coachSave(){
+/* ---- drafts, then submit (spec 004) ----
+   Save draft keeps the document in the Worker (only its author can see it); Submit sends it to the Coaching Hub, after
+   which it is a line in "Your sessions" and nothing on this page can open it again. Every draft write carries the
+   version it was opened at, so a second tab can never silently overwrite the first. */
+var DRAFTS_API='/api/portal/hub/coaching/drafts';
+function coachPayload(){ var d=CFORM.data, out={}; for(var k in d) out[k]=d[k]; return out; }
+function coachClearPaths(paths){ (paths||[]).forEach(function(p){ cPut(p,''); }); }
+function coachSaveDraft(){
   if(CFORM.saving) return;
-  var d=CFORM.data, sp=COACH_SPEC[CFORM.type];
-  if(CFORM.type!=='groupCoaching'&&CFORM.type!=='qualityCoaching'&&!d.agentName)
-    return hubMsg('cfMsg','Choose the agent first.',true);
-  CFORM.saving=true; hubMsg('cfMsg','Saving…');
-  var body={type:CFORM.type};
-  for(var k in d) body[k]=d[k];
-  api('/api/portal/hub/coaching',body).then(function(r){
-    CFORM.saving=false;
-    if(!r.ok) return hubMsg('cfMsg',(r.json&&r.json.error)||'Could not save.',true);
-    CFORM={type:null,data:null,dirty:false,saving:false};
-    HUB.coaching=null;
-    api('/api/portal/hub/coaching').then(function(x){ HUB.coaching=x.ok?x.json:null; render(); });
+  var form=CFORM, wasNew=!CFORM.draftId;
+  var body={action:'save',type:CFORM.type,data:coachPayload()};
+  /* what was sent: an edit typed while the save is on the wire is NOT in the draft, so the form stays "not saved" */
+  var sent=JSON.stringify(body.data);
+  if(CFORM.draftId){ body.id=CFORM.draftId; body.base=CFORM.base; }
+  CFORM.saving=true; hubMsg('cfMsg','Saving draft…');
+  api(DRAFTS_API,body).then(function(r){
+    form.saving=false;
+    hubStale('drafts'); draftsLoad();
+    if(CFORM!==form) return;           // the leader left this form while it saved; the draft list is refreshed regardless
+    if(!r.ok){
+      var j=r.json||{};
+      return hubMsg('cfMsg',j.error||(j.conflict?'This draft was changed somewhere else — reopen it from Drafts.':'Could not save the draft.'),true);
+    }
+    var changed=JSON.stringify(CFORM.data)!==sent;
+    CFORM.draftId=r.json.id; CFORM.base=r.json.updatedAt;
+    var cl=r.json.cleared||[];
+    if(cl.length) coachClearPaths(cl);
+    CFORM.dirty=changed;
+    if(wasNew||cl.length) render();
+    hubMsg('cfMsg',cl.length?SIG_CLEARED:(changed?'Draft saved — your latest changes are not in it yet.':'Draft saved.'),!!cl.length||changed);
   });
 }
+/* the signatories still missing, as a person reads them ("team leader", "SOS", an attendee's name) */
+function coachMissingSigs(){
+  var d=CFORM.data, miss=[];
+  COACH_SPEC[CFORM.type].sec.forEach(function(s){ s.f.forEach(function(f){
+    if(f[2]!=='sig'||d[f[0]]) return;
+    var lab=f[1].replace(/ signature$/i,'');
+    miss.push(/^[A-Z]{2,}/.test(lab)?lab:lab.toLowerCase());
+  }); });
+  (d.employeeSignoffs||[]).forEach(function(r){ if(String(r.employeeName||'').trim()&&!r.signature) miss.push(String(r.employeeName).trim()); });
+  return miss;
+}
+function coachSubmit(){
+  if(CFORM.saving) return;
+  var d=CFORM.data, lab=COACH_SPEC[CFORM.type].label;
+  if(CFORM.type!=='groupCoaching'&&CFORM.type!=='qualityCoaching'&&!d.agentName)
+    return hubMsg('cfMsg','Choose the agent first.',true);
+  var miss=coachMissingSigs();
+  if(!window.confirm('Submit this '+lab+(d.agentName?' for '+d.agentName:'')+'?\n\n'
+    +(miss.length?'Not signed by '+miss.join(' or ')+'.\n\n':'')
+    +'Once submitted it goes to the Coaching Hub and you can no longer open, view or change it here.')) return;
+  var req;
+  if(CFORM.draftId) req=api(DRAFTS_API,{action:'submit',id:CFORM.draftId,base:CFORM.base,data:coachPayload()});
+  else { var b=coachPayload(); b.type=CFORM.type; req=api('/api/portal/hub/coaching',b); }
+  var form=CFORM;
+  CFORM.saving=true; hubMsg('cfMsg','Submitting…');
+  req.then(function(r){
+    form.saving=false;
+    if(!r.ok){
+      var j=r.json||{};
+      if(j.updatedAt) form.base=j.updatedAt;
+      if(CFORM===form) hubMsg('cfMsg',j.error||'Could not submit.',true);
+      else { HUB.flash=j.error||'Could not submit.'; hubStale('drafts'); draftsLoad(); }
+      return;
+    }
+    HUB.flash='Submitted — '+lab+(d.agentName?' for '+d.agentName:'')+'. It is in the Coaching Hub now and can no longer be opened here.';
+    if(CFORM===form) CFORM=cformBlank();
+    coachRefresh();
+  });
+}
+function coachOpenDraft(id){
+  api(DRAFTS_API+'?id='+encodeURIComponent(id)).then(function(r){
+    var dr=r.ok&&r.json&&r.json.draft;
+    if(!dr||!COACH_SPEC[dr.type]){ HUB.flash=(r.json&&r.json.error)||'That draft could not be opened.'; hubStale('drafts'); draftsLoad(); render(); return; }
+    /* over a blank form, so a field the form gained since the draft was saved is still there to fill */
+    var data=coachBlank(dr.type); for(var k in (dr.data||{})) data[k]=dr.data[k];
+    CFORM=cformBlank(); CFORM.type=dr.type; CFORM.data=data; CFORM.draftId=dr.id; CFORM.base=dr.updatedAt;
+    VIEW='coach_team';
+    render();
+  });
+}
+function coachDeleteDraft(id){
+  if(!id||!window.confirm('Delete this draft? It cannot be recovered.')) return;
+  api(DRAFTS_API,{action:'delete',id:id}).then(function(r){
+    if(!r.ok){ var m=(r.json&&r.json.error)||'Could not delete the draft.'; if(CFORM.type) hubMsg('cfMsg',m,true); else { HUB.flash=m; render(); } return; }
+    if(CFORM.draftId===id) CFORM=cformBlank();
+    hubStale('drafts'); draftsLoad(); render();
+  });
+}
+function coachReopenDraft(id){
+  api(DRAFTS_API,{action:'reopen',id:id}).then(function(r){
+    HUB.flash=r.ok?'Reopened as a draft — check "Your sessions" first: if it is already there, delete this draft instead of submitting it again.'
+      :((r.json&&r.json.error)||'Could not reopen it.');
+    hubStale('drafts'); draftsLoad(); render();
+  });
+}
+/* after a submit: both lists again (the submitted session appears as a line, the draft is gone) */
+function coachRefresh(){ hubStale('coaching'); hubStale('drafts'); hubLoad('coaching'); render(); }
 
-/* ---- reading one back ---- */
-/* The list arrives WITHOUT signatures — the proxy strips them on the way out,
-   because a base64 image per record is megabytes a browser has no use for. So
-   this shows everything that was written except the drawn signature itself;
-   the signed document lives in the Hub. */
-var CO_HIDE={_id:1,_creationTime:1,_table:1,_label:1,teamLeaderId:1,createdAt:1,
-  webhookStatus:1,webhookAt:1,webhookError:1,webhookAttempts:1,clusterConfidence:1};
-function coachLabelFor(key){
-  var lab=null;
-  Object.keys(COACH_SPEC).forEach(function(t){ COACH_SPEC[t].sec.forEach(function(s){ s.f.forEach(function(f){
-    if(f[0]===key&&f[1]&&!lab) lab=f[1]; }); }); });
-  return lab||key.replace(/([A-Z])/g,' $1').replace(/^./,function(c){return c.toUpperCase();});
-}
-function clusterName(v){
-  var out=null;
-  Object.keys(FAMILIES).forEach(function(f){ FAMILIES[f].options.forEach(function(o){ if(o[0]===v) out=o[1]; }); });
-  return out||v;
-}
-function coachRows(s){
-  return Object.keys(s).filter(function(k){ return !CO_HIDE[k]&&s[k]!==''&&s[k]!=null; })
-    .map(function(k){
-      var v=s[k];
-      if(k==='criteria'&&v&&typeof v==='object'){
-        var scored=[];
-        SCORECARD.forEach(function(g){ g[1].forEach(function(r){
-          var c=v[r[0]]||{};
-          if((c.call1&&c.call1!=='—')||(c.call2&&c.call2!=='—')||(c.call3&&c.call3!=='—'))
-            scored.push(esc(r[1])+' — '+esc(c.call1||'—')+' · '+esc(c.call2||'—')+' · '+esc(c.call3||'—'));
-        }); });
-        if(!scored.length) return '';
-        return '<div class="bd-row"><b>Scorecard</b></div><div class="bd-x">'+scored.join('<br>')+'</div>';
-      }
-      if(Array.isArray(v)){
-        var lines=v.map(function(x){
-          return esc(Object.keys(x).filter(function(kk){ return kk!=='signature'&&x[kk]; })
-            .map(function(kk){ return x[kk]; }).join(' · '));
-        }).filter(Boolean);
-        if(!lines.length) return '';
-        return '<div class="bd-row"><b>'+esc(coachLabelFor(k))+'</b></div><div class="bd-x">'+lines.join('<br>')+'</div>';
-      }
-      if(/^cluster/.test(k)) v=clusterName(v);
-      v=String(v);
-      if(v.length>60) return '<div class="bd-row"><b>'+esc(coachLabelFor(k))+'</b></div><div class="bd-x">'+esc(v)+'</div>';
-      return '<div class="bd-row"><b>'+esc(coachLabelFor(k))+'</b><div>'+esc(v)+'</div></div>';
-    }).join('');
-}
-/* Reuses the agent drawer's shell rather than building a second one — same
-   scrim, same Esc handling, same scroll lock. */
-function coachView(id){
-  var s=((HUB.coaching&&HUB.coaching.sessions)||[]).filter(function(x){return x._id===id;})[0];
-  if(!s) return;
-  var d=$('cbxDrawer'), sc=$('cbxScrim');
-  if(!d){
-    d=document.createElement('aside'); d.id='cbxDrawer'; d.className='cbx-drawer';
-    sc=document.createElement('div'); sc.id='cbxScrim'; sc.className='cbx-dscrim';
-    document.body.appendChild(sc); document.body.appendChild(d);
-    sc.onclick=closeDrawer;
-  }
-  d.innerHTML='<div class="dk-head"><button class="dk-x" id="dkClose">✕</button>'
-    +'<div class="dk-nm">'+esc(s.agentName||'Group session')+'</div>'
-    +'<div class="dk-sub">'+esc(s._label||'')+' · '+esc(coachDate(s.date||s.dateOfCoaching||''))+'</div></div>'
-    +'<div class="dk-body">'+coachRows(s)+'</div>';
-  sc.classList.add('open'); d.classList.add('open');
-  document.body.classList.add('dk-locked');
-  $('dkClose').onclick=closeDrawer;
-  document.addEventListener('keydown',dkEsc);
+/* "Signed by agent and team leader" / "Not signed by team leader" — from the presence facts the Worker sends
+   (_sigs on a session, sigs on a draft); never from an image, which never reaches this page for a submitted one. */
+function coachSigLine(x){
+  var sigs=Array.isArray(x)?x:((x&&(x._sigs||x.sigs))||[]);
+  if(!sigs.length) return '';
+  var name=function(g){ var l=String(g.label||g.field||''); return /^[A-Z]{2,}/.test(l)?l:l.toLowerCase(); };
+  var no=sigs.filter(function(g){return !g.signed;}).map(name);
+  return no.length?'Not signed by '+no.join(' or '):'Signed by '+sigs.map(name).join(' and ');
 }
 
 
@@ -3176,11 +3257,17 @@ var FILT={q:'',kind:'all'};
 
 function allFormsRows(){
   var out=[];
+  /* A submitted coaching document is a line — no note, no way in (spec 004). A draft is the leader's own, to open. */
   ((HUB.coaching&&HUB.coaching.sessions)||[]).forEach(function(x){
     out.push({src:'coaching',id:x._id,kind:x._label||'Coaching',
       who:x.agentName||'(group)',cb:x.employeeCode||'',
-      date:x.date||x.dateOfCoaching||'',status:'',
-      note:String(x.developmentAreas||x.teamLeaderFeedback||x.coachingDetails||'')});
+      date:x.date||x.dateOfCoaching||'',status:'submitted',note:coachSigLine(x)});
+  });
+  ((HUB.drafts&&HUB.drafts.drafts)||[]).forEach(function(x){
+    out.push({src:'draft',id:x.id,kind:x.label||'Coaching',stuck:x.state==='submitting',
+      who:x.agentName||'(no agent yet)',cb:x.employeeNumber||'',
+      date:x.date||String(x.updatedAt||'').slice(0,10),status:'draft',
+      note:x.state==='submitting'?'Submitting — check your sessions before trying again':'Last saved '+sastWhen(x.updatedAt)});
   });
   ((HUB.kpi&&HUB.kpi.forms)||[]).forEach(function(f){
     out.push({src:'kpi',id:f._id,kind:f.title||'KPI form',
@@ -3192,7 +3279,7 @@ function allFormsRows(){
   });
   var q=FILT.q.toLowerCase();
   return out.filter(function(r){
-    if(FILT.kind!=='all'&&r.src!==FILT.kind) return false;
+    if(FILT.kind!=='all'&&(r.src==='draft'?'coaching':r.src)!==FILT.kind) return false;
     if(!q) return true;
     return (r.who+' '+r.cb+' '+r.kind+' '+r.note).toLowerCase().indexOf(q)>=0;
   }).sort(function(a,b){ return String(b.date).localeCompare(String(a.date)); });
@@ -3205,15 +3292,16 @@ function allFormsPage(){
   var rows=allFormsRows();
   var nC=((HUB.coaching&&HUB.coaching.sessions)||[]).length;
   var nK=((HUB.kpi&&HUB.kpi.forms)||[]).length;
-  var nD=((HUB.kpi&&HUB.kpi.forms)||[]).filter(function(f){return f.status!=='submitted';}).length;
+  var nD=((HUB.kpi&&HUB.kpi.forms)||[]).filter(function(f){return f.status!=='submitted';}).length
+    +((HUB.drafts&&HUB.drafts.drafts)||[]).length;
 
   var head='<div class="kpi-grid three">'
     +'<div class="kpi"><div class="kpi-name">Coaching sessions</div><div class="kpi-val num">'+num(nC)+'</div>'
-      +'<div class="kpi-sub">Across all six products.</div></div>'
+      +'<div class="kpi-sub">Submitted, across all six products.</div></div>'
     +'<div class="kpi"><div class="kpi-name">KPI forms</div><div class="kpi-val num">'+num(nK)+'</div>'
       +'<div class="kpi-sub">Monthly, Nesting and PIP.</div></div>'
     +'<div class="kpi"><div class="kpi-name">Still drafts</div><div class="kpi-val num">'+num(nD)+'</div>'
-      +'<div class="kpi-sub">KPI forms not yet submitted.</div></div>'
+      +'<div class="kpi-sub">Coaching and KPI forms not yet submitted.</div></div>'
     +'</div>';
 
   var bar='<div class="card"><div class="hfields">'
@@ -3225,9 +3313,11 @@ function allFormsPage(){
     +'</select></div></div></div>';
 
   var body=rows.map(function(r){
-    var open=r.src==='kpi'
-      ? '<button class="btn small" data-af-kpi="'+esc(r.id)+'">Open</button>'
-      : '<button class="btn small" data-coach-view="'+esc(r.id)+'">View</button>';
+    /* a submitted coaching document has no action at all — it cannot be opened by its author (spec 004) */
+    var open=r.src==='kpi' ? '<button class="btn small" data-af-kpi="'+esc(r.id)+'">Open</button>'
+      : r.src==='draft' ? (r.stuck?'<button class="btn small" data-draft-reopen="'+esc(r.id)+'">Reopen</button>'
+        :'<button class="btn small" data-draft-open="'+esc(r.id)+'">Open</button>')
+      : '';
     return '<tr><td class="l"><b>'+esc(r.kind)+'</b>'
       +(r.note?'<div class="sub2">'+esc(r.note.slice(0,110))+'</div>':'')+'</td>'
       +'<td class="l">'+esc(r.who)+(r.cb?'<div class="sub2">'+esc(r.cb)+'</div>':'')+'</td>'
@@ -3258,9 +3348,7 @@ function wireAllForms(){
   };
   var k=$('afKind');
   if(k) k.onchange=function(){ FILT.kind=k.value; render(); };
-  Array.prototype.forEach.call(document.querySelectorAll('[data-coach-view]'),function(b){
-    b.onclick=function(){ coachView(b.getAttribute('data-coach-view')); };
-  });
+  wireDraftButtons();
   /* Opening a KPI form means going to the tab that owns the editor. */
   Array.prototype.forEach.call(document.querySelectorAll('[data-af-kpi]'),function(b){
     b.onclick=function(){ VIEW='kpihub'; kpiOpen(b.getAttribute('data-af-kpi')); };
@@ -3284,40 +3372,69 @@ function coachHubPage(){
   /* One button per document. The form itself is the Hub's form, field for
      field, so there is no shorter version of it to offer. */
   var pick='<div class="card"><h3>Record a session</h3>'
-    +'<p class="why">The full document, written straight into the Coaching Hub under your name.</p>'
+    +'<p class="why">The full document, field for field. Save it as a draft and come back to it; it goes into the Coaching '
+    +'Hub under your name only when you submit it.</p>'
     +'<div class="picks">'+COACH_TYPES.map(function(x){
       return '<button class="pick" data-coach-new="'+x[0]+'"><b>'+esc(x[1])+'</b>'
-        +'<span>'+num((h.byType&&h.byType[x[1]])||0)+' recorded</span></button>';}).join('')
+        +'<span>'+num((h.byType&&h.byType[x[1]])||0)+' submitted</span></button>';}).join('')
     +'</div></div>';
 
+  /* DRAFTS (spec 004) — the leader's own, kept by the Worker until submitted. A draft whose submit did not finish says
+     so and offers Reopen (after two minutes), never a plain Open that could submit it twice. */
+  var dr=HUB.drafts, drafts=(dr&&dr.drafts)||[];
+  var draftCard='<div class="card"><h3>Drafts <span class="cnt">'+num(drafts.length)+'</span></h3>'
+    +'<p class="why">Only you can see these. Nothing reaches the Coaching Hub until you open one and submit it.</p>'
+    +(!dr ? '<div class="spin" style="margin:12px auto"></div>'
+      : dr.error ? '<p class="why" style="margin:0;color:var(--amber)">'+esc(dr.error)+'</p>'
+      : drafts.length ? '<div class="scroller"><table class="tbl"><thead><tr><th class="l">Agent</th><th class="l">Type</th>'
+        +'<th>Last saved</th><th class="l">Signatures</th><th></th></tr></thead><tbody>'
+        +drafts.map(function(x){
+          var stuck=x.state==='submitting';
+          return '<tr><td class="l"><b>'+esc(x.agentName||'(no agent yet)')+'</b>'
+            +(x.employeeNumber?'<div class="sub2">'+esc(x.employeeNumber)+'</div>':'')+'</td>'
+            +'<td class="l">'+esc(x.label||x.type||'')+'</td>'
+            +'<td class="num">'+esc(sastWhen(x.updatedAt))+'</td>'
+            +'<td class="l sml">'+esc(stuck?'Submitting — check your sessions before trying again':(coachSigLine(x)||'—'))+'</td>'
+            +'<td class="num">'+(stuck
+              ?'<button class="btn small" data-draft-reopen="'+esc(x.id)+'">Reopen</button>'
+              :'<button class="btn small" data-draft-open="'+esc(x.id)+'">Open</button> '
+               +'<button class="btn small" data-draft-del="'+esc(x.id)+'">Delete</button>')+'</td></tr>';
+        }).join('')+'</tbody></table></div>'
+      : '<p class="why" style="margin:0">No drafts. Pick a document above and use Save draft to come back to it.</p>')
+    +'</div>';
+
+  /* SUBMITTED = LOCKED (spec 004 — UAT: "when click submit, he must not be able view"). The Worker sends each session
+     as a line only (date, product, agent, which signatures it holds); there is nothing here to open. */
   var list=(h.sessions||[]).slice(0,40).map(function(s){
-    var d=s.date||s.dateOfCoaching||'';
+    var d=s.date||s.dateOfCoaching||'', sl=coachSigLine(s);
     return '<tr><td class="l"><b>'+esc(s.agentName||'(group)')+'</b>'
-      +(s.employeeCode?'<div class="sub2">'+esc(s.employeeCode)+'</div>':'')+(coachByLine(s)?'<div class="sub2">'+coachByLine(s)+'</div>':'')+'</td>'
-      +'<td class="l">'+esc(s._label||'')+'</td>'
+      +(s.employeeCode?'<div class="sub2">'+esc(s.employeeCode)+'</div>':'')+'</td>'
+      +'<td class="l">'+esc(s._label||'')+(s.attendees?'<div class="sub2">'+num(s.attendees)+' attended</div>':'')+'</td>'
       +'<td class="num">'+esc(coachDate(d))+'</td>'
-      +'<td class="l sml">'+esc(String(s.developmentAreas||s.teamLeaderFeedback||s.coachingDetails||'').slice(0,120))+'</td>'
-      +'<td class="num"><button class="btn small" data-coach-view="'+esc(s._id)+'">View</button></td></tr>';
+      +'<td class="num"><span class="pill g">SUBMITTED</span></td>'
+      +'<td class="l sml">'+(sl?esc(sl):'—')+'</td></tr>';
   }).join('');
+  var flash=HUB.flash?'<div class="card"><p class="why" style="margin:0"><b>'+esc(HUB.flash)+'</b></p></div>':'';
 
   /* WHO HAS HAD WHAT (audit, 2026-08-27): coachPageTeam — the agents × six products
      coverage table with the zeros kept, sorted least-coached first — lost its call site
      in the nav rework and rendered NOWHERE, so a TL had no way to see who on the team
      has had which product. It belongs with the recording hub: see the gap, record the
      session, one tab. */
-  return coachPageTeam()+pick
+  return flash+coachPageTeam()+pick+draftCard
     +'<div class="card"><h3>Your sessions <span class="cnt">'+num((h.sessions||[]).length)+'</span></h3>'
-    +'<p class="why">Everything you have recorded in the Hub, most recent first.</p>'
+    +'<p class="why">Everything you have submitted, most recent first. A submitted document is locked: it is listed here '
+    +'with the signatures it holds, but it can no longer be opened.</p>'
     +'<p class="why coach-copy">Your own sessions are live from the Coaching Hub'
     +((h.coachingAt||(D&&D.coaching&&D.coaching.coachingAt))?'; others\' sessions on your agents are from the copy of '+esc(sastWhen(h.coachingAt||(D&&D.coaching&&D.coaching.coachingAt))):'')+'.</p>'
     +((h.sessions||[]).length
-      ? '<div class="scroller"><table class="tbl"><thead><tr><th class="l">Agent</th><th class="l">Type</th><th>Date</th><th class="l">Notes</th><th></th></tr></thead><tbody>'+list+'</tbody></table></div>'
-      : '<p class="why" style="margin:0">Nothing recorded yet.</p>')
+      ? '<div class="scroller"><table class="tbl"><thead><tr><th class="l">Agent</th><th class="l">Type</th><th>Date</th><th>Status</th><th class="l">Signatures</th></tr></thead><tbody>'+list+'</tbody></table></div>'
+      : '<p class="why" style="margin:0">Nothing submitted yet.</p>')
     +(h.errors?'<p class="why" style="color:var(--amber)">Some products could not be read: '+esc(h.errors.join(' · '))+'</p>':'')
     +'</div>'
     +othersBlock(h.others,h.coachingAt||(D&&D.coaching&&D.coaching.coachingAt))
-    +'<div class="card"><p class="why" style="margin:0">These are the Hub\'s own documents — what you save here is what it holds. '
-    +'To edit a session you already saved, or to print one, '
+    +'<div class="card"><p class="why" style="margin:0">Submitted documents are kept in the Coaching Hub. Here they are '
+    +'locked — you can see that a session was done and whether it was signed, but not open it again. '
     +'<a href="https://coaching-hub-psi.vercel.app/" target="_blank" rel="noopener noreferrer">Open the Coaching Hub ↗</a></p></div>';
 }
 
@@ -3379,23 +3496,54 @@ function kpiHubPage(){
     +'<a href="https://kpi-hub-rho.vercel.app/" target="_blank" rel="noopener noreferrer">Open the KPI Hub ↗</a></p></div>';
 }
 
-/* ---- loading + wiring ---- */
+/* ---- loading + wiring ----
+   One request per list in flight at a time: render() asks for whatever is missing, and a render while a list is still
+   on its way must not ask again. The coaching tab's sessions and the leader's drafts load together. */
+var HUB_INFLIGHT={}, HUB_AGAIN={};
+/* A list a save/delete/submit just changed is STALE: if a fetch of it is already on the wire, that answer predates the
+   change, so it is thrown away and the list fetched again (review, 2026-10-05) — never left as the final word. */
+function hubStale(which){ HUB[which]=null; if(HUB_INFLIGHT[which]) HUB_AGAIN[which]=true; }
 function hubLoad(which){
+  if(which==='coaching'&&!HUB.drafts) draftsLoad();
   if(HUB[which]) { render(); return; }
+  if(HUB_INFLIGHT[which]) return;
+  HUB_INFLIGHT[which]=true;
   api('/api/portal/hub/'+which).then(function(r){
+    HUB_INFLIGHT[which]=false;
+    if(HUB_AGAIN[which]){ HUB_AGAIN[which]=false; hubLoad(which); return; }
     HUB[which]=r.ok?r.json:{error:(r.json&&r.json.error)||'Could not reach the hub.'};
     render();
   });
 }
+function draftsLoad(){
+  if(HUB_INFLIGHT.drafts) return;
+  HUB_INFLIGHT.drafts=true;
+  api(DRAFTS_API).then(function(r){
+    HUB_INFLIGHT.drafts=false;
+    if(HUB_AGAIN.drafts){ HUB_AGAIN.drafts=false; draftsLoad(); return; }
+    HUB.drafts=r.ok?r.json:{error:(r.json&&r.json.error)||'Your drafts could not be read just now.',drafts:[]};
+    if(!CFORM.type) render();          // never under an open form: a render would redraw its signature pads
+  });
+}
 function hubMsg(id,txt,bad){ var e=$(id); if(e){ e.textContent=txt; e.className='hmsg'+(bad?' bad':' ok'); } }
 
+function wireDraftButtons(){
+  Array.prototype.forEach.call(document.querySelectorAll('[data-draft-open]'),function(b){
+    b.onclick=function(){ coachOpenDraft(b.getAttribute('data-draft-open')); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-draft-del]'),function(b){
+    b.onclick=function(){ coachDeleteDraft(b.getAttribute('data-draft-del')); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-draft-reopen]'),function(b){
+    b.onclick=function(){ coachReopenDraft(b.getAttribute('data-draft-reopen')); };
+  });
+}
 function wireCoachHub(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-coach-new]'),function(b){
     b.onclick=function(){ coachOpen(b.getAttribute('data-coach-new')); };
   });
-  Array.prototype.forEach.call(document.querySelectorAll('[data-coach-view]'),function(b){
-    b.onclick=function(){ coachView(b.getAttribute('data-coach-view')); };
-  });
+  wireDraftButtons();
+  HUB.flash=null;                      // shown once
 }
 function wireKpiHub(){
   var b=$('hkSave');
@@ -4756,7 +4904,34 @@ var CMKEY='cbx_cm_view';
 var CMPER='current', CMTEN='all', CMBUSY=false, CMNOPUB=null, CMSEQ=0;
 var CM_TENURES=['all','M0','M1','M2','Exp','unset'];
 var LONG_MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
-function cmValidPeriod(p){ return /^(current|\d{4}-(0[1-9]|1[0-2])|cycle-\d{4}-(0[1-9]|1[0-2]))$/.test(String(p)); }
+/* ---------- the custom range (spec 006-cm-custom-range, contract C6) ----------
+   "For Dalwin, please add custom range for him to filter his reports." The key is range-YYYY-MM-DD-YYYY-MM-DD. The ENGINE
+   builds a range on the 15-minute tick and the Worker serves it; the first time one is asked for, the Worker queues it and
+   answers range_building, and this page says so and asks again every minute while it is on screen. The rules below mirror
+   worker/src/range.mjs (rangeProblem) so the page can say what is wrong before asking — the Worker still decides. */
+var CM_RANGE_MIN='2025-01-01', CM_RANGE_MAX_DAYS=93, CM_RANGE_RETRY_MS=60000;
+var CMCUSTOM=false, CMRANGE={from:'',to:''}, CMRANGEMSG='', CMRETRY=null;
+function cmDayOk(s){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(s))) return false;
+  var d=new Date(s+'T00:00:00Z'); return !isNaN(d.getTime())&&d.toISOString().slice(0,10)===s;
+}
+function cmTodaySast(){ return new Date(Date.now()+2*3600000).toISOString().slice(0,10); }
+function cmRangeDays(f,t){ return Math.round((Date.parse(t+'T00:00:00Z')-Date.parse(f+'T00:00:00Z'))/86400000)+1; }
+/* '' when from..to may be asked for; otherwise what is wrong, in words (same order as the Worker) */
+function cmRangeProblem(f,t){
+  if(!cmDayOk(f)||!cmDayOk(t)) return 'Pick a from date and a to date.';
+  if(f<CM_RANGE_MIN) return 'The earliest date you can pick is 1 January 2025.';
+  if(f>t) return 'The from date is after the to date.';
+  if(t>cmTodaySast()) return 'The to date is after today.';
+  var n=cmRangeDays(f,t);
+  if(n>CM_RANGE_MAX_DAYS) return 'A range can be at most '+CM_RANGE_MAX_DAYS+' days — this one is '+n+' days.';
+  return '';
+}
+function cmRangeKeyOk(p){
+  var m=/^range-(\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})$/.exec(String(p));
+  return !!m&&cmRangeProblem(m[1],m[2])==='';
+}
+function cmValidPeriod(p){ return /^(current|\d{4}-(0[1-9]|1[0-2])|cycle-\d{4}-(0[1-9]|1[0-2]))$/.test(String(p))||cmRangeKeyOk(p); }
 function cmValidTenure(t){ return CM_TENURES.indexOf(t)>=0; }
 function cmSave(){ try{ sessionStorage.setItem(CMKEY,JSON.stringify({period:CMPER,tenure:CMTEN})); }catch(e){} }
 function cmStored(){
@@ -4767,7 +4942,9 @@ function cmStored(){
   return null;
 }
 function cmReset(){
+  cmRetryStop();
   CMPER='current'; CMTEN='all'; CMBUSY=false; CMNOPUB=null; CMSEQ++; CMC={d:null,busy:false,err:null,tl:'',key:'',seq:CMC.seq+1};
+  CMCUSTOM=false; CMRANGE={from:'',to:''}; CMRANGEMSG='';
   try{ sessionStorage.removeItem(CMKEY); }catch(e){}
 }
 /* the first paint after sign-in: the plain overview is already in D; a remembered period or tenure is asked for now */
@@ -4777,23 +4954,75 @@ function cmOpen(){
   if(s&&(s.period!=='current'||s.tenure!=='all')) return cmAsk(s.period,s.tenure);
   return cmView();
 }
-function cmAsk(period,tenure){
+/* the "being built" card asks again every minute while it is on screen; any other choice (or sign-out) stops it */
+function cmRetryStop(){ if(CMRETRY!==null){ try{ clearTimeout(CMRETRY); }catch(e){} CMRETRY=null; } }
+function cmRetryLater(period){
+  cmRetryStop();
+  CMRETRY=setTimeout(function(){
+    CMRETRY=null;
+    if(CMPER!==period||!CMNOPUB||CMNOPUB.error!=='range_building') return;   // the manager moved on, or it is no longer building
+    /* not on screen (a hidden tab, or off the campaign-manager pages): ask nothing, keep the minute ticking */
+    if(document.hidden||!D||D.scope!=='campaign'||String(VIEW).indexOf('cm')!==0){ cmRetryLater(period); return; }
+    cmAsk(period,CMTEN,true);
+  },CM_RANGE_RETRY_MS);
+}
+/* quiet = the minute's re-ask of a range being built: the card stays (no "Loading" flash) and a failed re-ask keeps waiting */
+function cmAsk(period,tenure,quiet){
   if(!cmValidPeriod(period)||!cmValidTenure(tenure)) return Promise.resolve();
   var prevP=CMPER, prevT=CMTEN, seq=++CMSEQ;
-  CMPER=period; CMTEN=tenure; CMBUSY=true; cmSave();
-  render();
+  cmRetryStop();
+  CMPER=period; CMTEN=tenure; cmSave();
+  if(!quiet){ CMBUSY=true; render(); }
   return api('/api/portal/overview?period='+encodeURIComponent(period)+'&tenure='+encodeURIComponent(tenure)).then(function(r){
     if(seq!==CMSEQ) return;   // a newer choice is already on its way
     CMBUSY=false;
     if(r.status===401){ try{sessionStorage.removeItem(TKEY);}catch(e){} cmReset(); return loginScreen('Your session has expired. Please sign in again.'); }
-    if(r.status===404&&r.json&&r.json.error==='period_not_published'){ CMNOPUB=r.json; render(); return; }
+    var err=r.json&&r.json.error;
+    if(r.status===404&&(err==='period_not_published'||err==='range_building'||err==='range_refused')){
+      /* the minute's re-ask with the SAME "being built" answer changes nothing on screen — no re-render, so a custom-range
+         form the manager is typing into is left alone (review 2026-10-06) */
+      var same=quiet&&err==='range_building'&&CMNOPUB&&CMNOPUB.error==='range_building';
+      CMNOPUB=r.json; if(!same) render();
+      if(err==='range_building') cmRetryLater(period);
+      return;
+    }
     if(!r.ok||!r.json||r.json.scope!=='campaign'){
+      if(quiet&&CMNOPUB&&CMNOPUB.error==='range_building'){ cmRetryLater(period); return; }   // the server hiccuped: keep waiting
       CMPER=prevP; CMTEN=prevT; cmSave(); CMNOPUB=null;
-      toast('That selection could not be opened — '+((r.json&&r.json.error)||'please try again in a minute.'),5000);
+      toast('That selection could not be opened — '+((r.json&&(r.json.message||r.json.error))||'please try again in a minute.'),5000);
       render(); return;
     }
-    CMNOPUB=null; D=r.json; TEAM=D; render();
+    CMNOPUB=null; D=r.json; TEAM=D; repSync(); render();
   });
+}
+/* Apply on the custom-range form: checked here first (the same rules as the Worker), so a wrong date is said at once */
+function cmRangeApply(f,t){
+  f=String(f||''); t=String(t||'');
+  CMRANGE={from:f,to:t};
+  var why=cmRangeProblem(f,t);
+  if(why){ CMRANGEMSG=why; render(); return Promise.resolve(); }
+  CMRANGEMSG=''; CMCUSTOM=false;
+  return cmAsk('range-'+f+'-'+t,CMTEN);
+}
+/* before the custom-range form is painted again (a tenure change, a period answer): keep the dates typed into it so far —
+   the form is rebuilt from CMRANGE, which Apply alone used to set */
+function cmRangeKeep(){
+  if(!CMCUSTOM) return;
+  var f=$('cmFrom'), t=$('cmTo');
+  if(f&&typeof f.value==='string') CMRANGE.from=f.value;
+  if(t&&typeof t.value==='string') CMRANGE.to=t.value;
+}
+function cmRangeForm(){
+  if(!CMCUSTOM) return '';
+  var today=cmTodaySast();
+  return '<div class="card" id="cmRangeCard"><h3>Custom range</h3>'
+    +'<p class="why">Pick the first and the last day (at most '+CM_RANGE_MAX_DAYS+' days). A range nobody has asked for before is built by the 15-minute refresh.</p>'
+    +'<div class="cm-actions" style="flex-wrap:wrap;align-items:center;gap:8px">'
+    +'<label class="sub2">From <input class="ctrl" type="date" id="cmFrom" min="'+esc(CM_RANGE_MIN)+'" max="'+esc(today)+'" value="'+esc(CMRANGE.from)+'"></label>'
+    +'<label class="sub2">To <input class="ctrl" type="date" id="cmTo" min="'+esc(CM_RANGE_MIN)+'" max="'+esc(today)+'" value="'+esc(CMRANGE.to)+'"></label>'
+    +'<button class="btn primary" id="cmRangeApply">Apply</button><button class="btn" id="cmRangeCancel">Cancel</button></div>'
+    +(CMRANGEMSG?'<p class="why" role="alert" style="color:var(--crit,#c42d2d)">'+esc(CMRANGEMSG)+'</p>':'')
+    +'</div>';
 }
 function cmMonthLabel(key){
   var m=/^(\d{4})-(\d{2})$/.exec(String(key));
@@ -4807,7 +5036,14 @@ function cmPeriodOptions(){
   var prog=cy.filter(function(x){return !x.complete;});
   done.concat(prog).forEach(function(x){ opts.push([x.key,'Billing month '+x.label+(x.complete?'':' (in progress)')]); });
   (ps.months||[]).forEach(function(m){ opts.push([m,cmMonthLabel(m)]); });
-  if(!opts.some(function(o){return o[0]===CMPER;})) opts.push([CMPER,CMPER]);
+  /* spec 006: the custom ranges already built (the Worker lists them, newest end first), then "Custom range…" */
+  (ps.ranges||[]).forEach(function(x){ if(x&&cmRangeKeyOk(x.key)) opts.push([x.key,(x.label||x.key)+' (custom range)']); });
+  if(!opts.some(function(o){return o[0]===CMPER;})){
+    /* a range being built (or refused) is not in the list yet: name it by the Worker's own label */
+    var lab=(CMNOPUB&&CMNOPUB.period&&CMNOPUB.period.key===CMPER&&CMNOPUB.period.label)||(D&&D.period&&D.period.key===CMPER&&D.period.label)||CMPER;
+    opts.push([CMPER,/^range-/.test(CMPER)?lab+' (custom range)':lab]);
+  }
+  opts.push(['custom','Custom range…']);
   return opts;
 }
 function cmTenLabel(key){ return key==='all'?'All tenures':(key==='unset'?'Tenure not set':String(key)); }
@@ -4824,7 +5060,7 @@ function cmSelect(id,label,opts,cur){
     return '<option value="'+esc(o[0])+'"'+(o[0]===cur?' selected':'')+'>'+esc(o[1])+'</option>';
   }).join('')+'</select>';
 }
-function cmPeriodSelect(){ var o=cmPeriodOptions(); return o?cmSelect('cmPeriod','Period',o,CMPER):''; }
+function cmPeriodSelect(){ var o=cmPeriodOptions(); return o?cmSelect('cmPeriod','Period',o,CMCUSTOM?'custom':CMPER):''; }
 function cmTenureSelect(c){
   var keys=cmTenureKeys(c); if(!keys) return '';
   return cmSelect('cmTenure','Tenure',[['all',cmTenLabel('all')]].concat(keys.map(function(k){return [k,cmTenLabel(k)];})),CMTEN);
@@ -4843,14 +5079,23 @@ function cmEmptyBody(){
 function cmSliceEmpty(c){
   return CMTEN!=='all'&&(!(c.agents>0)||!c.teams||!c.teams.length);
 }
+/* the card for a period with no figures to show: a month or billing month not published yet, a custom range being built
+   (spec 006 — the page asks again every minute), or a custom range the engine refused (its reason, in words) */
+function cmNoPubCard(){
+  var lab=(CMNOPUB.period&&CMNOPUB.period.label)||'That period';
+  if(CMNOPUB.error==='range_building')
+    return '<div class="card"><h3>'+esc(lab)+' is being built</h3><p class="why">'
+      +esc(lab+' is being built — it will be ready within about 15 minutes.')+' This page checks again every minute and fills in on its own.</p></div>';
+  if(CMNOPUB.error==='range_refused')
+    return '<div class="card"><h3>'+esc(lab)+' could not be built</h3><p class="why">'
+      +esc(CMNOPUB.reason||'The engine could not build this range.')+'</p><p class="why">Choose another range or period.</p></div>';
+  return '<div class="card"><h3>'+esc(lab)+' is not published yet</h3><p class="why">'
+    +esc(CMNOPUB.message||'It has not been built yet — the 15-minute refresh builds it. Choose another period, or check back shortly.')+'</p></div>';
+}
 /* a card in place of the numbers: loading, a period nobody has built yet, or a slice with no agents */
 function cmGateCard(c){
   if(CMBUSY) return '<div class="card"><p class="why">Loading '+esc(cmSelectionLine(c))+'…</p></div>';
-  if(CMNOPUB){
-    var lab=(CMNOPUB.period&&CMNOPUB.period.label)||'That period';
-    return '<div class="card"><h3>'+esc(lab)+' is not published yet</h3><p class="why">'
-      +esc(CMNOPUB.message||'It has not been built yet — the 15-minute refresh builds it. Choose another period, or check back shortly.')+'</p></div>';
-  }
+  if(CMNOPUB) return cmNoPubCard();
   /* the current month has no data yet (spec 002, FR-004): the month's empty card, with the closed month and the billing
      month in progress one click away through the period picker */
   if(cmEmptyView()) return cmEmptyBody();
@@ -5000,14 +5245,23 @@ function cmView(){
   var who=(c.leaders&&c.leaders!==c.teamLeaders)
     ? num(c.leaders)+' team leaders · '+num(c.teamLeaders)+' teams'
     : num(c.teamLeaders)+' team leader'+(c.teamLeaders===1?'':'s');
+  cmRangeKeep();   // the old form's typed dates, read before the new markup replaces it
   shell(esc(c.label),
     esc(D.name||'')+' · Campaign Manager · '+who+' · '+num(c.agents)+' agents · '+esc(subs[VIEW]||''),
-    body+'<div class="foot">Numbers updated '+esc(stamp())+'<br><button id="out">Sign out</button></div>',
+    cmRangeForm()+body+'<div class="foot">Numbers updated '+esc(stamp())+'<br><button id="out">Sign out</button></div>',
     VIEW,right);
   var out=$('out'); if(out) out.onclick=signOut;
   var selEl=$('cmSel'); if(selEl) selEl.onchange=function(){ CMSEL=selEl.value; CMEXP={}; render(); };
   var tenEl=$('cmTenure'); if(tenEl) tenEl.onchange=function(){ cmAsk(CMPER,tenEl.value); };
-  var perEl=$('cmPeriod'); if(perEl) perEl.onchange=function(){ cmAsk(perEl.value,CMTEN); };
+  /* "Custom range…" opens the from/to form and asks nothing; every other option asks for that period (spec 006) */
+  var perEl=$('cmPeriod'); if(perEl) perEl.onchange=function(){
+    if(perEl.value==='custom'){ CMCUSTOM=true; CMRANGEMSG=''; render(); return; }
+    CMCUSTOM=false; CMRANGEMSG=''; cmAsk(perEl.value,CMTEN);
+  };
+  if(CMCUSTOM){
+    var rApply=$('cmRangeApply'); if(rApply) rApply.onclick=function(){ var f=$('cmFrom'), t=$('cmTo'); cmRangeApply(f?f.value:'',t?t.value:''); };
+    var rCancel=$('cmRangeCancel'); if(rCancel) rCancel.onclick=function(){ CMCUSTOM=false; CMRANGEMSG=''; render(); };
+  }
   /* Team leaders' coaching: the page asks for its own copy the first time it is opened (and again on a new period) */
   if(VIEW==='cm_coach'){
     cmCoachLoad(false);
@@ -5400,9 +5654,10 @@ function teamView(){
   if(VIEW==='nik_team') wireNikola();
   /* The hubs are fetched the first time their tab is opened, not on sign-in —
      two Convex round trips should not sit in front of every team leader's page. */
-  if(VIEW==='coach_team'){ if(!HUB.coaching) hubLoad('coaching'); else if(CFORM.type) wireCoachForm(); else wireCoachHub(); }
+  if(VIEW==='coach_team'){ if(!HUB.drafts) draftsLoad(); if(!HUB.coaching) hubLoad('coaching'); else if(CFORM.type) wireCoachForm(); else wireCoachHub(); }
   /* The archive reads both hubs, so it asks for whichever it has not got. */
   if(VIEW==='forms'){
+    if(!HUB.drafts) draftsLoad();
     if(!HUB.coaching) hubLoad('coaching');
     else if(!HUB.kpi) hubLoad('kpi');
     else wireAllForms();
@@ -5506,6 +5761,24 @@ function coachDate(d){
   try{ return new Intl.DateTimeFormat('en-ZA',{timeZone:'UTC',day:'numeric',month:'short'}).format(new Date(d+'T00:00:00Z')); }
   catch(e){ return d; }
 }
+/* WHAT A SESSION SAYS, BY PRODUCT (spec 003, 2026-10-05). The old chain read informal/QA field names only, so a Formal
+   Coaching session — whose body is its reviewed calls and the support given — showed nothing under "What was
+   discussed". Both return escaped HTML ('' when there is nothing). */
+function isFormal(s){ return !!s&&(s.collection==='formalCoachingCalls'||s.typeLabel==='Formal Coaching'||s.type==='Formal Coaching'); }
+function coachSaid(s){
+  if(!s) return '';
+  if(isFormal(s)){
+    var parts=(s.callNotes||[]).filter(Boolean).map(function(t){ return '– '+esc(t); });
+    if(s.supportProvided) parts.push('<b>Support given:</b> '+esc(s.supportProvided));
+    return parts.join('<br>');
+  }
+  var t=s.teamLeaderComments||s.developmentAreas||s.teamLeaderFeedback||s.sosComments||s.coachingDetails||'';
+  return t?esc(t):'';
+}
+function coachAgreed(s){
+  var t=(s&&(s.agentFeedback||s.agreedPlanAgentFeedback||s.wayForward))||'';
+  return t?esc(t):'';
+}
 function coachHTML(c,quiet){
   if(!c) return '';
   if(c.error) return '<div class="card"><h3>Coaching</h3><p class="why" style="margin:0">'
@@ -5524,12 +5797,14 @@ function coachHTML(c,quiet){
   var anyScored=(mine.themes||[]).some(function(t){return t.scored>0;});
 
   var list=sess.slice(0,6).map(function(s){
-    var said=s.teamLeaderComments||s.developmentAreas||s.teamLeaderFeedback||'';
-    var agreed=s.agentFeedback||s.agreedPlanAgentFeedback||s.wayForward||'';
-    return '<details class="sess"><summary><b>'+esc(s.typeLabel)+'</b>'
-      +'<span class="sdate">'+esc(coachDate(s.date))+(s.qaScore?' · QA '+esc(s.qaScore):'')+(coachByLine(s)?' · '+coachByLine(s):'')+'</span></summary>'
-      +(said?'<div class="sblk"><label>What was discussed</label><p>'+esc(said)+'</p></div>':'')
-      +(agreed?'<div class="sblk"><label>What you agreed</label><p>'+esc(agreed)+'</p></div>':'')
+    var said=coachSaid(s), agreed=coachAgreed(s);
+    var head='<b>'+esc(s.typeLabel)+'</b>'
+      +'<span class="sdate">'+esc(coachDate(s.date))+(s.qaScore?' · QA '+esc(s.qaScore):'')+(coachByLine(s)?' · '+coachByLine(s):'')+'</span>';
+    /* No written content travels to a team leader (spec 004): their drill-in gets the line, not an expander with nothing in it. */
+    if(!said&&!agreed) return '<div class="sess"><div class="srow">'+head+'</div></div>';
+    return '<details class="sess"><summary>'+head+'</summary>'
+      +(said?'<div class="sblk"><label>What was discussed</label><p>'+said+'</p></div>':'')
+      +(agreed?'<div class="sblk"><label>What you agreed</label><p>'+agreed+'</p></div>':'')
       +'</details>';
   }).join('');
 

@@ -14,6 +14,9 @@
  *   B  Campaign + tenure   selectors, re-ask, selection line, empty slice (US2)
  *   C  Team leaders' coaching   sidebar placement, in-app page, copy age, errors (US4)
  *   D  Period picker       options, re-fetch, period_not_published, session memory, agents/TLs unchanged (US3)
+ *   R  Custom range        spec 006: "Custom range…" + built ranges, from/to + Apply, page-side validation, the
+ *                          "being built" card that re-asks every 60 s, range_refused, Variance/Lead management/coaching
+ *                          follow the range, the remembered range
  *   E  Reports             five tabs on the CM payload, Lead management and Courtesy (US5)
  *   F  TL Month to date    six KPI states + coaching analysis (US6)
  *   G  ES5 + escaping      the inline script is plain ES5; the new copy never prints raw data
@@ -62,6 +65,10 @@ function loadPage(routes) {
   };
   const session = { getItem: (k) => (k in sess ? sess[k] : null), setItem: (k, v) => { sess[k] = String(v); }, removeItem: (k) => { delete sess[k]; } };
   const calls = [];
+  /* timers are RECORDED, never run on their own (spec 006: the "being built" card re-asks after 60 s — a test runs it by hand) */
+  const timers = [];
+  const setT = (f, ms) => { timers.push({ f, ms, id: timers.length + 1, cleared: false }); return timers.length; };
+  const clearT = (id) => { const t = timers[id - 1]; if (t) t.cleared = true; };
   const fetchImpl = (url) => {
     const u = String(url).replace(/^https?:\/\/[^/]+/, '');
     calls.push(u);
@@ -71,18 +78,18 @@ function loadPage(routes) {
     return Promise.resolve({ ok: r.status < 400, status: r.status, json: () => Promise.resolve(r.body) });
   };
   const fn = new Function(
-    'document', 'window', 'localStorage', 'sessionStorage', 'location', 'fetch', 'URLSearchParams', 'setTimeout', 'setInterval', 'clearInterval', 'Intl', 'console',
+    'document', 'window', 'localStorage', 'sessionStorage', 'location', 'fetch', 'URLSearchParams', 'setTimeout', 'setInterval', 'clearInterval', 'Intl', 'console', 'clearTimeout',
     src + '\nvar __o={};'
     + '["render","cmView","loadPortal","sidebarHTML","navFor","pageMTD","pageWeeklyTeam","pageDailyTeam","pageLeadsTeam","pageCmReport","reportsTabs","cmCmdPage","cmTeamsPage",'
-    + '"teamView","agentKpis","drillState","exportReports","reportMTD","reportLeads","cmAsk","cmCoachPick","cmCoachPage","cmHM","fmtShort","coachLine","agentKpiStates"]'
+    + '"teamView","agentKpis","drillState","exportReports","reportMTD","reportLeads","cmAsk","cmCoachPick","cmCoachPage","cmHM","fmtShort","coachLine","agentKpiStates","cmValidPeriod","cmRangeProblem"]'
     + '.forEach(function(n){ try{ __o[n]=eval(n); }catch(e){ __o[n]=function(){ throw new Error("the page has no "+n+"()"); }; } });'
     + '__o.setD=function(d){D=d}; __o.setView=function(v){VIEW=v}; __o.getView=function(){return VIEW}; __o.getD=function(){return D}; __o.setU=function(u){U=u};'
     + '__o.setSel=function(s){CMSEL=s}; __o.getSel=function(){return CMSEL}; __o.setRepLeads=function(d){REP.leads.d=d}; __o.setRepVariance=function(d){REP.variance.d=d};'
     + '__o.CM_REPORT_TABS_GET=function(){return CM_REPORT_TABS}; __o.setMe=function(m){ME=m};'
     + 'return __o;',
   );
-  const api = fn(doc, win, win.localStorage, session, win.location, fetchImpl, URLSearchParams, (f) => 0, () => 0, () => {}, Intl, { log() {}, error() {} });
-  return { P: api, N: nodes, calls, sess, W: win };
+  const api = fn(doc, win, win.localStorage, session, win.location, fetchImpl, URLSearchParams, setT, () => 0, () => {}, Intl, { log() {}, error() {} }, clearT);
+  return { P: api, N: nodes, calls, sess, W: win, timers };
 }
 const tick = () => new Promise((r) => setImmediate(r));
 const settle = async () => { for (let i = 0; i < 4; i++) await tick(); };
@@ -331,7 +338,198 @@ head('D · Period picker (US3) — campaign manager only');
   check('a team leader\'s overview request carries no period or tenure, and the page has no period picker', () => {
     const c = t.calls.filter((x) => x.indexOf('/api/portal/overview') === 0); if (c.length !== 1 || c[0] !== '/api/portal/overview') throw new Error(JSON.stringify(c));
     const h = t.N.root.innerHTML; mustNot(h, 'cmPeriod'); mustNot(h, 'cmTenure'); mustNot(h, 'Billing month'); clean(h);
+    mustNot(h, 'Custom range'); mustNot(h, 'cmFrom');
   });
+}
+
+/* ═════════════════════════ R · Custom range (spec 006) ═════════════════════════ */
+head('R · Custom range (spec 006-cm-custom-range, C6) — campaign manager only');
+{
+  const KEY = 'range-2026-09-01-2026-09-15';
+  const PER_RANGE = { kind: 'range', key: KEY, from: '2026-09-01', to: '2026-09-15', label: '1 – 15 Sep 2026' };
+  const PER_CUR = { kind: 'current', key: 'current', from: '2026-10-01', to: '2026-10-31', label: '1 – 31 October 2026' };
+  const PERIODS_R = Object.assign({}, PERIODS, { ranges: [{ key: 'range-2026-08-03-2026-08-09', from: '2026-08-03', to: '2026-08-09', label: '3 – 9 Aug 2026' }] });
+  let mode = 'building';
+  const REPORT = (kind) => ({ updatedAt: '2026-10-01T06:00:00Z', kind, period: { from: '2026-09-01', to: '2026-09-15' }, campBlocks: 'ok', rules: {}, cols: [], statuses: [], book: {}, wd: 10,
+    agents: {}, teams: {}, teamsByCamp: {}, campaigns: {} });
+  const routes = {
+    '/api/portal/overview': (u) => {
+      const q = new URLSearchParams(u.split('?')[1] || ''); const per = q.get('period') || 'current';
+      if (per === KEY) {
+        if (mode === 'building') return { status: 404, body: { error: 'range_building', period: PER_RANGE, message: '1 – 15 Sep 2026 is being built — it will be ready within about 15 minutes.' } };
+        if (mode === 'refused') return { status: 404, body: { error: 'range_refused', period: PER_RANGE, reason: 'There are no figures for 1 – 15 Sep 2026 — nothing was uploaded for those days.' } };
+        if (mode === 'evil') return { status: 404, body: { error: 'range_refused', period: Object.assign({}, PER_RANGE, { label: '<img src=x onerror=alert(1)>' }), reason: '<script>alert(2)</script>' } };
+        if (mode === 'full') return { status: 429, body: { error: 'range_queue_full', period: PER_RANGE, message: 'Too many ranges are waiting to be built — try again after the next refresh.' } };
+        return { status: 200, body: cmPayload({ period: PER_RANGE, periods: PERIODS_R }) };
+      }
+      return { status: 200, body: cmPayload({ period: PER_CUR, periods: PERIODS_R }) };
+    },
+    '/api/portal/tl/reports': (u) => ({ status: 200, body: REPORT(u.indexOf('kind=leads') >= 0 ? 'leads' : 'variance') }),
+    '/api/portal/cm-coaching': () => ({ status: 200, body: { fetchedAt: '2026-10-01T04:00:00Z', stale: false, ageHours: 1, hubUrl: 'https://coaching-hub-psi.vercel.app/', period: PER_RANGE, leaders: [], tl: null, sessions: [] } }),
+  };
+  const { P, N, calls, sess, timers } = loadPage(routes);
+  const setVal = (id, v) => { N[id] = N[id] || { value: '' }; N[id].value = v; };
+  const overviewCalls = () => calls.filter((x) => x.indexOf('/api/portal/overview') === 0);
+  const retries = () => timers.filter((t) => t.ms === 60000 && !t.cleared && !t.ran);
+  const runRetry = async () => { const t = retries().pop(); if (!t) throw new Error('no 60 s re-ask is scheduled'); t.ran = true; t.f(); await settle(); };
+  P.setD(cmPayload({ period: PER_CUR, periods: PERIODS_R })); P.setView('cm'); P.setSel('courtesy'); P.render();
+  const opts = () => { const h = N.root.innerHTML; const sel = h.slice(h.indexOf('id="cmPeriod"')); return sel.slice(0, sel.indexOf('</select>')); };
+  check('the picker offers the built ranges and "Custom range…" after the months', () => {
+    const o = opts(); must(o, 'value="custom"'); mustText(o, 'Custom range…'); must(o, 'value="range-2026-08-03-2026-08-09"'); mustText(o, '3 – 9 Aug 2026');
+    const t = text(o); if (t.indexOf('July 2026') > t.indexOf('3 – 9 Aug 2026') || t.indexOf('3 – 9 Aug 2026') > t.indexOf('Custom range…')) throw new Error('order: ' + t);
+  });
+  const run = (async () => {
+    const before = calls.length;
+    N.cmPeriod.value = 'custom'; N.cmPeriod.onchange(); await settle();
+    check('choosing "Custom range…" asks nothing yet and shows a from date, a to date and Apply', () => {
+      if (calls.length !== before) throw new Error('asked: ' + calls.slice(before).join(', '));
+      const h = N.root.innerHTML; must(h, 'id="cmFrom"'); must(h, 'id="cmTo"'); must(h, 'type="date"'); must(h, 'id="cmRangeApply"'); mustText(h, 'Apply');
+      must(opts(), 'value="custom" selected', 'the picker shows "Custom range…" while the form is open');
+    });
+    for (const [why, f, t, msg] of [['from after to', '2026-09-15', '2026-09-01', 'after'], ['more than 93 days', '2026-05-01', '2026-09-15', '93'],
+      ['to after today', '2026-09-01', '2099-01-01', 'today'], ['before 2025', '2024-12-01', '2025-01-05', '2025'], ['a missing date', '', '2026-09-15', 'date']]) {
+      const n0 = overviewCalls().length;
+      setVal('cmFrom', f); setVal('cmTo', t); N.cmRangeApply.onclick(); await settle();
+      check('an invalid range (' + why + ') is refused in the page with a message, and nothing is asked', () => {
+        if (overviewCalls().length !== n0) throw new Error('asked the Worker: ' + overviewCalls().slice(n0).join(', '));
+        const h = N.root.innerHTML; must(h, 'id="cmFrom"', 'the form stays open'); if (text(h).toLowerCase().indexOf(msg.toLowerCase()) < 0) throw new Error('no "' + msg + '" message in: ' + text(h).slice(0, 300));
+      });
+    }
+    setVal('cmFrom', '2026-09-01'); setVal('cmTo', '2026-09-15'); N.cmRangeApply.onclick(); await settle();
+    check('Apply asks /api/portal/overview?period=range-2026-09-01-2026-09-15&tenure=all', () => {
+      const c = overviewCalls(); if (c[c.length - 1] !== '/api/portal/overview?period=' + KEY + '&tenure=all') throw new Error('asked: ' + c[c.length - 1]);
+    });
+    check('range_building: "<label> is being built — it will be ready within about 15 minutes", and no numbers', () => {
+      const h = N.root.innerHTML; clean(h); mustText(h, '1 – 15 Sep 2026 is being built — it will be ready within about 15 minutes');
+      mustNotText(h, 'Total Sales'); mustNotText(h, '12.5%'); mustNotText(h, 'Where my team leaders need help'); must(h, 'id="cmPeriod"', 'the picker stays to leave it');
+    });
+    check('the selection line names the range being built', () => { mustText(N.root.innerHTML, 'Courtesy · All tenures · 1 – 15 Sep 2026'); });
+    check('the choice is remembered for the session', () => { must(Object.values(sess).join('|'), KEY); });
+    check('a re-ask is scheduled for 60 s', () => { if (retries().length !== 1) throw new Error(retries().length + ' re-asks scheduled'); });
+    let n0 = overviewCalls().length;
+    await runRetry();
+    check('after 60 s it asks again (same range), quietly — the building card stays, no "Loading" flash', () => {
+      const c = overviewCalls(); if (c.length !== n0 + 1 || c[c.length - 1] !== '/api/portal/overview?period=' + KEY + '&tenure=all') throw new Error(JSON.stringify(c.slice(n0)));
+      mustText(N.root.innerHTML, 'is being built');
+    });
+    check('…and while it is still building, it schedules the next minute', () => { if (retries().length !== 1) throw new Error(retries().length + ' re-asks scheduled'); });
+    mode = 'built'; n0 = overviewCalls().length;
+    await runRetry();
+    check('once built, the next re-ask fills the page in on its own: the figures, labelled "1 – 15 Sep 2026"', () => {
+      const h = N.root.innerHTML; clean(h); mustText(h, 'Where my team leaders need help'); mustText(h, 'Courtesy · All tenures · 1 – 15 Sep 2026'); mustNotText(h, 'is being built');
+    });
+    check('…and stops re-asking', () => { if (retries().length) throw new Error('still scheduled'); });
+    check('the picker now selects the range', () => { must(opts(), 'value="' + KEY + '" selected'); });
+    P.setView('cm_variance'); P.render(); await settle();
+    check('Variance asks tl/reports with the range: ?kind=variance&period=range-…', () => {
+      const c = calls.filter((x) => x.indexOf('/api/portal/tl/reports') === 0); if (c[c.length - 1] !== '/api/portal/tl/reports?kind=variance&period=' + KEY) throw new Error('asked: ' + c[c.length - 1]);
+    });
+    P.setView('cm_leads'); P.render(); await settle();
+    check('Lead management asks tl/reports with the range too', () => {
+      const c = calls.filter((x) => x.indexOf('/api/portal/tl/reports?kind=leads') === 0); if (c[c.length - 1] !== '/api/portal/tl/reports?kind=leads&period=' + KEY) throw new Error('asked: ' + c[c.length - 1]);
+    });
+    P.setView('cm_coach'); P.render(); await settle();
+    check('Team leaders\' coaching asks ?period=range-…', () => {
+      const c = calls.filter((x) => x.indexOf('/api/portal/cm-coaching') === 0); if (c[c.length - 1] !== '/api/portal/cm-coaching?period=' + KEY) throw new Error('asked: ' + c[c.length - 1]);
+    });
+    P.setView('cm_variance'); P.render();
+    N.cmPeriod.value = 'current'; N.cmPeriod.onchange(); await settle(); P.render(); await settle();
+    check('back on the current month, Variance asks the live report again (no period)', () => {
+      const c = calls.filter((x) => x.indexOf('/api/portal/tl/reports?kind=variance') === 0); if (c[c.length - 1] !== '/api/portal/tl/reports?kind=variance') throw new Error('asked: ' + c[c.length - 1]);
+    });
+  })().catch((e) => bad('the custom-range flow ran to its end', e.message));   // a missing control is a failed check, never a crash
+  await run;
+
+  /* a building range left behind: its timer must not drag the page back */
+  {
+    mode = 'building';
+    const q = loadPage(routes); q.P.setD(cmPayload({ period: PER_CUR, periods: PERIODS_R })); q.P.setView('cm'); q.P.setSel('courtesy'); q.P.render();
+    await q.P.cmAsk(KEY, 'all'); await settle();
+    q.N.cmPeriod.value = 'current'; q.N.cmPeriod.onchange(); await settle();
+    const n0 = q.calls.length;
+    const left = q.timers.filter((t) => t.ms === 60000);
+    left.forEach((t) => { if (!t.cleared) t.f(); }); await settle();
+    check('leaving a range that is being built stops its re-ask (no request after the user moved on)', () => {
+      if (q.calls.length !== n0) throw new Error('asked: ' + q.calls.slice(n0).join(', '));
+      mustText(q.N.root.innerHTML, '1 – 31 October 2026');
+    });
+  }
+  /* review finding 1: the minute's re-ask must not wipe dates typed (not yet applied) into the open custom form */
+  {
+    mode = 'building';
+    const q = loadPage(routes); q.P.setD(cmPayload({ period: PER_CUR, periods: PERIODS_R })); q.P.setView('cm'); q.P.setSel('courtesy'); q.P.render();
+    await q.P.cmAsk(KEY, 'all'); await settle();
+    q.N.cmPeriod.value = 'custom'; q.N.cmPeriod.onchange(); await settle();
+    const put = (id, v) => { q.N[id] = q.N[id] || { value: '' }; q.N[id].value = v; };
+    put('cmFrom', '2026-09-03'); put('cmTo', '2026-09-10');
+    const MARK = '<!-- the form as the manager left it -->';
+    const n0 = q.calls.length; const t = q.timers.filter((x) => x.ms === 60000 && !x.cleared && !x.ran).pop();
+    q.N.root.innerHTML = MARK;
+    if (t) { t.ran = true; t.f(); } await settle();
+    check('a quiet re-ask with the same "being built" answer keeps the typed dates (no re-render that rebuilds the form)', () => {
+      if (!t) throw new Error('no re-ask was scheduled');
+      if (q.calls.length !== n0 + 1) throw new Error('the re-ask did not happen');
+      const h = q.N.root.innerHTML;
+      if (h !== MARK && !(h.indexOf('value="2026-09-03"') >= 0 && h.indexOf('value="2026-09-10"') >= 0)) throw new Error('the form was rebuilt without the typed dates');
+    });
+    check('…and it keeps asking every minute', () => { if (!q.timers.some((x) => x.ms === 60000 && !x.cleared && !x.ran)) throw new Error('no next re-ask scheduled'); });
+    q.N.root.innerHTML = '';
+    q.N.cmTenure.value = 'M1'; q.N.cmTenure.onchange(); await settle();
+    check('a re-render while the form is open (a tenure change) paints the dates typed so far, not blanks', () => {
+      const h = q.N.root.innerHTML; must(h, 'id="cmFrom"'); must(h, 'value="2026-09-03"'); must(h, 'value="2026-09-10"');
+    });
+  }
+  /* refused */
+  {
+    mode = 'refused';
+    const q = loadPage(routes); q.P.setD(cmPayload({ period: PER_CUR, periods: PERIODS_R })); q.P.setView('cm'); q.P.setSel('courtesy'); q.P.render();
+    await q.P.cmAsk(KEY, 'all'); await settle();
+    check('range_refused shows the reason in words — not "being built" — and no numbers', () => {
+      const h = q.N.root.innerHTML; clean(h); mustText(h, 'There are no figures for 1 – 15 Sep 2026 — nothing was uploaded for those days.'); mustText(h, '1 – 15 Sep 2026');
+      mustNotText(h, 'is being built'); mustNotText(h, 'Total Sales');
+    });
+    check('…and nothing re-asks a refused range', () => { if (q.timers.some((t) => t.ms === 60000)) throw new Error('a re-ask was scheduled'); });
+  }
+  {
+    mode = 'evil';
+    const q = loadPage(routes); q.P.setD(cmPayload({ period: PER_CUR, periods: PERIODS_R })); q.P.setView('cm'); q.P.setSel('courtesy'); q.P.render();
+    await q.P.cmAsk(KEY, 'all'); await settle();
+    check('a hostile label or reason is escaped', () => { const h = q.N.root.innerHTML; mustNot(h, '<img src=x'); mustNot(h, '<script>alert(2)'); mustText(h, 'onerror'); });
+  }
+  {
+    mode = 'full';
+    const q = loadPage(routes); q.P.setD(cmPayload({ period: PER_CUR, periods: PERIODS_R })); q.P.setView('cm'); q.P.setSel('courtesy'); q.P.render();
+    await q.P.cmAsk(KEY, 'all'); await settle();
+    check('a full queue (429) keeps the previous period on screen (no numbers lost, no waiting card)', () => {
+      const h = q.N.root.innerHTML; clean(h); mustText(h, '1 – 31 October 2026'); mustNotText(h, 'is being built'); mustText(h, 'Where my team leaders need help');
+    });
+  }
+  /* the remembered range */
+  {
+    mode = 'built';
+    const plainFirst = Object.assign({}, routes, { '/api/portal/overview': (u) => (u.indexOf('?') < 0 ? { status: 200, body: cmPayload({ period: PER_CUR, periods: PERIODS_R }) } : routes['/api/portal/overview'](u)) });
+    const r = loadPage(plainFirst);
+    r.sess['cbx_cm_view'] = JSON.stringify({ period: KEY, tenure: 'all' }); r.sess['cbx_agent_token'] = 'tok';
+    r.P.loadPortal(); await settle();
+    check('a stored cbx_cm_view with a valid range is re-asked after sign-in', () => {
+      const c = r.calls.filter((x) => x.indexOf('/api/portal/overview') === 0); if (c[c.length - 1] !== '/api/portal/overview?period=' + KEY + '&tenure=all') throw new Error(JSON.stringify(c));
+    });
+    for (const badKey of ['range-2026-09-15-2026-09-01', 'range-2099-01-01-2099-01-02', 'range-2026-01-01-2026-09-15', 'range-2024-12-01-2024-12-02', 'range-2026-09-01', 'range-2026-09-01-2026-09-15<x>']) {
+      const s = loadPage(plainFirst); s.sess['cbx_cm_view'] = JSON.stringify({ period: badKey, tenure: 'all' }); s.sess['cbx_agent_token'] = 'tok';
+      s.P.loadPortal(); await settle();
+      check('a stored invalid range (' + badKey + ') is never asked for', () => {
+        const c = s.calls.filter((x) => x.indexOf('/api/portal/overview') === 0); if (c.length !== 1 || c[0] !== '/api/portal/overview') throw new Error(JSON.stringify(c));
+      });
+    }
+    check('cmValidPeriod accepts a valid range key and the old periods', () => {
+      const { P: Q } = loadPage({}); if (!Q.cmValidPeriod(KEY) || !Q.cmValidPeriod('current') || !Q.cmValidPeriod('2026-08') || !Q.cmValidPeriod('cycle-2026-09')) throw new Error('rejected a valid period');
+      if (Q.cmValidPeriod('custom') || Q.cmValidPeriod('range-2026-02-30-2026-03-01')) throw new Error('accepted an invalid one');
+    });
+    check('cmRangeProblem: "" for a valid range, words otherwise (the Worker\'s rules)', () => {
+      const { P: Q } = loadPage({}); if (Q.cmRangeProblem('2026-09-01', '2026-09-15') !== '') throw new Error('refused a valid range');
+      if (Q.cmRangeProblem('2026-06-30', '2026-09-30') !== '') throw new Error('93 days is allowed'); if (!Q.cmRangeProblem('2026-06-29', '2026-09-30')) throw new Error('94 days is not');
+    });
+  }
 }
 
 /* ═════════════════════════ C · Team leaders' coaching ═════════════════════════ */
@@ -557,7 +755,9 @@ head('G · The page stays ES5, and new copy escapes data');
   const added = ['cmCoachPage', 'cmAsk', 'cmCoachLoad', 'cmCoachPick', 'coachLine', 'agentKpiStates', 'cmPeriodSelect', 'cmTenureSelect', 'cmHM', 'cmValidPeriod', 'cmValidTenure', 'cmSave', 'cmStored',
     'cmReset', 'cmOpen', 'cmMonthLabel', 'cmPeriodOptions', 'cmTenLabel', 'cmTenureKeys', 'cmSelect', 'cmSelectionLine', 'cmSliceEmpty', 'cmGateCard', 'cmConvTile', 'cmContactTile', 'cmHelpRows',
     'cmTeamConv', 'cmTeamContact', 'mtdGroups', 'reportSummary', 'cmSummaryCards', 'coachingAnalysisCard', 'kpiChip', 'fmtShort', 'fix1', 'lmExcludedList', 'lmIsExcluded', 'lmAllExcluded',
-    'visibleReportTabs', 'lmNoteHTML', 'agentCampOf', 'cmCoachNavHTML', 'pageMTD', 'coveredAgents', 'noOneMsg'];
+    'visibleReportTabs', 'lmNoteHTML', 'agentCampOf', 'cmCoachNavHTML', 'pageMTD', 'coveredAgents', 'noOneMsg',
+    /* spec 006 — the custom range */
+    'cmDayOk', 'cmTodaySast', 'cmRangeDays', 'cmRangeProblem', 'cmRangeKeyOk', 'cmRangeForm', 'cmRangeKeep', 'cmRangeApply', 'cmRetryStop', 'cmRetryLater', 'cmNoPubCard', 'repPeriod', 'repSync', 'repLoad', 'repStateCard'];
   const body = (name) => { const i = PAGE.indexOf('function ' + name + '('); if (i < 0) return ''; let d = 0, j = PAGE.indexOf('{', i); const s = j; for (; j < PAGE.length; j++) { if (PAGE[j] === '{') d++; else if (PAGE[j] === '}') { d--; if (!d) break; } } return PAGE.slice(s, j + 1); };
   check('the new functions use no arrow functions, let/const, template literals or spread', () => {
     for (const n of added) { const b = body(n); if (!b) throw new Error(n + ' not found'); if (/=>|\blet\s|\bconst\s|`|\.\.\.[A-Za-z_\[]/.test(b)) throw new Error(n + ' uses non-ES5 syntax'); }

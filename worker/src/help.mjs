@@ -752,9 +752,9 @@ export async function failsList(env, DB, user, digest) {
 }
 
 /* The story behind one fail — every session where the theme came up (date, product,
-   QA score, and what the coach wrote), plus the agent's current standing. Free-text
-   here is what a TEAM LEADER wrote on the coaching form, shown back to a team
-   leader — the same fields the coaching pages already print. */
+   QA score, and what the coach wrote), plus the agent's current standing. The written
+   note is withheld from a TEAM LEADER (spec 004: a submitted coaching document is
+   never shown to one), so for them each session is its date, product and QA score. */
 export async function failDetail(env, DB, user, digest, q) {
   const auth = authorise(user, digest);
   if (auth.error) return { status: auth.status, body: { error: auth.error } };
@@ -763,7 +763,9 @@ export async function failDetail(env, DB, user, digest, q) {
   if (!cb || !theme) return { status: 400, body: { error: 'cb and theme are required.' } };
   if (auth.scope !== 'all' && !auth.codes.has(cb)) return { status: 403, body: { error: 'That agent is not on your team.' } };
   const row = (auth.rows || []).find((a) => a.code === cb) || { code: cb, name: cb };
-  const co = await coachingFor(env, DB, [row], { withSessions: true });
+  /* A team leader is listed the sessions but never reads a submitted coaching document (spec 004, 2026-10-05):
+     coachingFor withholds the written content for them, so every `note` below is empty for a team leader. */
+  const co = await coachingFor(env, DB, [row], { withSessions: true, leader: user.role === 'team_leader' });
   const m = ((co && co.agents) || [])[0] || {};
   const sessions = (m.sessions || [])
     .filter((s) => (s.clusters || []).some((c) => c.clusterKey === theme))

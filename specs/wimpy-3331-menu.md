@@ -1,5 +1,9 @@
 # Wimpy Weekday Value Menu — the 3–3–3–1 Operating Model
 
+> **Changed 2026-10-06 (Nick, Spec Kit 009).** The sign-in now takes the CB number AND the person's own
+> password (the Agent Analytics one), checked with the main sign-in's lock — the "no password" below is
+> history. Spec: `specs/009-wimpy-password-signin/`; guard: `diagnostics/verify-wimpy-signin.mjs`.
+
 > **Changed 2026-09-10 (Nick).** Ordering left Agent Analytics for its OWN app at `/wimpy/`, signed in
 > with a CB number and no password (managers: their username); the session it mints reaches the Wimpy
 > routes and nothing else. The order form asks for CB number, name and surname, which travel to the

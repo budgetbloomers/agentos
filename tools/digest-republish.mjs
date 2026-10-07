@@ -20,6 +20,12 @@
  * open — kv:agent-digest-cycle-YYYY-MM (26th of the month before to the 25th of YYYY-MM) for the last complete
  * cycle and the one in progress, built by the same engine through the period switch setPeriod(m,'cycle').
  * Browsers never publish a cycle, and this never touches the live kv:agent-digest from a cycle build.
+ *
+ * Since 2026-10-06 (spec 006-cm-custom-range) it ALSO builds the custom date ranges campaign managers ask for: the Worker
+ * queues an unbuilt range in kv:cm-range-requests; this run builds each waiting one (and rebuilds one still filling)
+ * through __mtd.setRange(from,to), publishes kv:agent-digest-range-… + kv:agent-reports-variance|leads-range-… with a
+ * pointer {store, period, kind:'range'}, and writes {status:'built'|'refused', reason?} back to the request. Same rules as
+ * the cycles: its own keys only, under --apply only, each range an island that can never fail the live publish.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,6 +39,8 @@ const { chromium } = await import(pathToFileURL(path.join(ROOT, 'nicks_code', 'd
 const APPLY = process.argv.includes('--apply');
 /* the billing-cycle definition is the Worker's (one definition, imported — never re-derived here) */
 const { cyclesNow } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'cycle.mjs')).href);
+/* …and the custom-range definition + queue rules are the Worker's too (spec 006) */
+const { rangeOf, rangeFilling, queueList, settleQueue, RANGE_QUEUE_KEY } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'range.mjs')).href);
 const movesFailed = new Set();   // months whose campaign-moves read threw — a cycle touching one is refused
 /*CYCLE-JOBS-BEGIN*/
 /* the two cycles a manager can open at nowMs: the last complete one, then the one in progress — each with the
@@ -52,6 +60,55 @@ const cycleRefusal = (job, cp) => {
   return late > 3 ? 'its data starts ' + first + ', ' + late + ' days after the cycle begins (' + job.from + ') — the start is missing' : '';
 };
 /*CYCLE-JOBS-END*/
+/*RANGE-JOBS-BEGIN*/
+/* THE CUSTOM RANGES THE CAMPAIGN MANAGERS ASKED FOR (spec 006-cm-custom-range, contract C5). The Worker queues a range in
+   kv:cm-range-requests the first time a manager asks for it. This run builds every WAITING one (oldest ask first), then
+   rebuilds every one still FILLING — its last day within the last 2 days, so its figures can still move (FR-008) — a
+   refused one included, since the missing days may have landed since. Every entry is re-validated with the Worker's own
+   rangeOf (the queue is never trusted): an invalid key or a duplicate is never built. At most RANGE_BUILDS_MAX builds and
+   RANGE_BUDGET_MS of building per run — a burst waits for the next tick rather than overrunning this one. */
+const RANGE_BUILDS_MAX = 8;
+const RANGE_BUDGET_MS = 240000;
+const monthsOf = (from, to) => { const out = [], d = new Date(from.slice(0, 7) + '-01T00:00:00Z');
+  while (d.toISOString().slice(0, 7) <= to.slice(0, 7)) { out.push(d.toISOString().slice(0, 7)); d.setUTCMonth(d.getUTCMonth() + 1); }
+  return out; };
+const rangeJobsFor = (requests, nowMs) => {
+  const seen = new Set(), waiting = [], filling = [];
+  for (const q of Array.isArray(requests) ? requests : []) {
+    const r = q ? rangeOf(q.key, nowMs) : null;
+    if (!r || seen.has(r.key)) continue;
+    seen.add(r.key);
+    const job = { key: r.key, name: 'agent-digest-' + r.key, from: r.from, to: r.to, label: r.label, at: String(q.at || ''), months: monthsOf(r.from, r.to),
+      was: q.status || 'waiting' };   // 'built' = already published: a refused REBUILD must not flip it (rangeOutcome)
+    if ((q.status || 'waiting') === 'waiting') waiting.push({ ...job, why: 'waiting' });
+    else if (rangeFilling(r.to, nowMs)) filling.push({ ...job, why: 'filling' });
+  }
+  waiting.sort((a, b) => a.at.localeCompare(b.at));
+  return [...waiting, ...filling].slice(0, RANGE_BUILDS_MAX);
+};
+/* a range is only published WHOLE. Refused — with a reason the manager reads on the page — when the engine has no rows
+   for it, built a different window than asked (review 2026-10-06: a silent skip kept it "being built" for 7 days and took
+   a build slot every run), or its first covered day is more than 3 days after `from` (a weekend or a holiday may open it,
+   a missing week may not). '' = fine. */
+const rangeRefusal = (job, cp) => {
+  const none = 'There are no figures for ' + job.label + ' — nothing has been uploaded for those days yet.';
+  if (!cp || cp.empty || !(cp.agents || []).length) return none;
+  const pw = cp.period || {};
+  if (pw.from !== job.from || pw.to !== job.to)
+    return 'The engine built a different window (' + (pw.from || '?') + '–' + (pw.to || '?') + ') than ' + job.label + ' — the range was not built.';
+  const first = [...(cp.dates || [])].sort()[0];
+  if (!first) return none;
+  const late = Math.round((Date.parse(first + 'T00:00:00Z') - Date.parse(job.from + 'T00:00:00Z')) / 86400000);
+  return late > 3 ? 'The figures for ' + job.label + ' start on ' + first + ', ' + late + ' days after the range begins — the start of the range is missing, so it was not built. Pick a range that starts on or after ' + first + '.' : '';
+};
+/* what a refusal writes back: a range ALREADY PUBLISHED ('built') whose rebuild is refused keeps 'built' — its last good
+   digest is still what the Worker serves, so "refused" would be untrue (null = write nothing); a waiting or refused range
+   is recorded refused with the reason (review 2026-10-06) */
+const rangeOutcome = (job, why) => (job.was === 'built' ? null : { key: job.key, status: 'refused', reason: why });
+/* HELD, not refused: a failed campaign-moves read is this run's problem, not the range's — it waits for the next run */
+const rangeHeld = (job) => { const bad = job.months.filter((mo) => movesFailed.has(mo));
+  return bad.length ? 'the campaign-moves read failed for ' + bad.join(', ') + ' — its movers would be blended; it waits for the next run' : ''; };
+/*RANGE-JOBS-END*/
 const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8')
   .split(/\r?\n/).filter(l => l.includes('=')).map(l => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]));
 const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
@@ -137,6 +194,21 @@ try {
 } catch (e) { console.warn('referrals of record not read (' + String(e && e.message || e).slice(0, 120) + ') — publishing with the copy already in the state'); }
 /*REFERRALS-INGEST-END*/
 
+/* ---- the custom-range queue (spec 006-cm-custom-range) ---- read here, before the campaign moves, because a range's months
+   need their moves too. Read-only: the outcomes go back after the builds, by compare-and-set, and only under --apply. A
+   queue that cannot be read builds no range this run (said, never fatal). --month runs build no range, like the cycles. */
+let rangeJobs = [];
+if (!process.argv.some((a) => /^--month=/.test(a))) {
+  try {
+    const rq = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?key=eq.${encodeURIComponent(RANGE_QUEUE_KEY)}&select=value,updated_at`, { headers: H });
+    if (!rq.ok) throw new Error('HTTP ' + rq.status);
+    const row = (await rq.json())[0];
+    let qv = row && row.value; if (typeof qv === 'string') { try { qv = JSON.parse(qv); } catch { qv = null; } }
+    rangeJobs = rangeJobsFor(queueList(qv), Date.now());
+    console.log('custom ranges: ' + (rangeJobs.length ? rangeJobs.map((j) => j.key + ' (' + j.why + ')').join(', ') : 'none waiting or filling'));
+  } catch (e) { console.warn('custom-range queue not read (' + String(e && e.message || e).slice(0, 120) + ') — no range is built this run'); rangeJobs = []; }
+}
+
 /* ---- the campaign moves (sprint 2026-09-29, item 2; D4) ---- An open PULSE tab asks the Worker's
    /api/campaign-moves with its session; this tool has no session, so it runs the SAME derivation
    (worker/src/moves.mjs, imported — never a second implementation) over the same dated agent_list
@@ -153,7 +225,9 @@ try {
   const want = [...new Set([live, back(1), (process.argv.find((a) => /^--month=\d{4}-\d{2}$/.test(a)) || '').slice(8),
     ...(process.argv.includes('--history') ? [back(2), back(3)] : []),
     /* …and both months of each billing cycle: a cycle spans two, and a mover's days in each follow that month's moves */
-    ...cycleJobsFor(Date.now()).flatMap((j) => j.months)].filter(Boolean))];
+    ...cycleJobsFor(Date.now()).flatMap((j) => j.months),
+    /* …and every month a queued custom range touches (spec 006) — up to four for a 93-day range */
+    ...rangeJobs.flatMap((j) => j.months)].filter(Boolean))];
   for (const m of want) {
     try {
       const mv = await campaignMoves(DBr, m);
@@ -251,6 +325,42 @@ if (!argMonth) {
   /* a page error raised while building a cycle must not abort the live publish below */
   if (errs.length > errsBeforeCycles) { console.warn('page errors during the cycle builds (ignored for the live digest): ' + errs.slice(errsBeforeCycles, errsBeforeCycles + 3).join(' | ')); errs.length = errsBeforeCycles; }
 }
+/* ---- CUSTOM RANGES (spec 006) ---- built LAST, like the cycles: __mtd.setRange moves the engine off the live month, and
+   the live digest, the report keys and the cycles above are already in hand. Each range is its own island — whatever goes
+   wrong is logged and the run goes on. A refusal (no rows / the start missing) is recorded with its reason for the
+   manager; a held range (moves read failed) or one past this run's budget simply stays waiting for the next tick. */
+const rangeBuilt = [], rangeResults = [];
+const errsBeforeRanges = errs.length;
+const rangeStarted = Date.now();
+for (const job of rangeJobs) {
+  try {
+    if (Date.now() - rangeStarted > RANGE_BUDGET_MS) { console.log('range ' + job.key + ' left for the next run — this run\'s range budget (' + Math.round(RANGE_BUDGET_MS / 1000) + ' s) is spent'); continue; }
+    const held = rangeHeld(job);
+    if (held) { console.log('range ' + job.key + ' held — ' + held); continue; }
+    const body = await page.evaluate((j) => { window.__mtd.setRange(j.from, j.to); return JSON.stringify(agentDigestPayload()); }, { from: job.from, to: job.to });
+    const cp = JSON.parse(body);   // 'null' = the engine has no rows for it
+    const why = rangeRefusal(job, cp);
+    if (why) {
+      const out = rangeOutcome(job, why);
+      console.log('range ' + job.key + ' refused — ' + why + (out ? '' : ' (its published figures stay; the request stays built)'));
+      if (out) rangeResults.push(out);
+      continue;
+    }
+    /* a range is a range — even one that matches a billing month exactly (the engine marks that one kind:'cycle') */
+    cp.period = { from: job.from, to: job.to, kind: 'range', key: job.key, label: job.label };
+    const reports = [];
+    for (const kind of ['variance', 'leads']) {
+      const rb = await page.evaluate((k) => { const r = window.__mtd.reports && window.__mtd.reports(k); return r ? JSON.stringify(r) : ''; }, kind);
+      if (!rb) { console.log('range ' + job.key + ' report ' + kind + ': nothing to publish (no board/BI, or no case books for those days)'); continue; }
+      const rj = JSON.parse(rb);
+      if ((rj.period || {}).from !== job.from || (rj.period || {}).to !== job.to) { console.log('range ' + job.key + ' report ' + kind + ' is not the range\'s window — skipped'); continue; }
+      reports.push({ kind, body: rb });
+    }
+    rangeBuilt.push({ job, body: JSON.stringify(cp), n: cp.agents.length, reports });
+  } catch (e) { console.warn('range ' + job.key + ' skipped — the build failed (' + String(e && e.message || e).slice(0, 160) + ')'); continue; }
+}
+/* a page error raised while building a range must not abort the live publish below either */
+if (errs.length > errsBeforeRanges) { console.warn('page errors during the custom-range builds (ignored for the live digest): ' + errs.slice(errsBeforeRanges, errsBeforeRanges + 3).join(' | ')); errs.length = errsBeforeRanges; }
 await b.close(); server.close();
 if (errs.length) { console.error('page errors: ' + errs.slice(0, 3).join(' | ')); process.exit(1); }
 
@@ -267,6 +377,8 @@ if (p.empty && p.agents.some((a) => a.sales != null || (a.days && a.days.length)
    prove a new build's numbers BEFORE anything is published (2026-09-28) */
 { const i = process.argv.indexOf('--out'); if (i > 0 && process.argv[i + 1]) { fs.writeFileSync(process.argv[i + 1], payload); console.log('digest written to ' + process.argv[i + 1]); } }
 for (const c of cycleBuilt) console.log((APPLY ? 'will write ' : 'would write ') + 'kv:' + c.job.name + ' — cycle ' + c.period.from + '..' + c.period.to + ' (' + (c.job.complete ? 'complete' : 'in progress') + '), ' + c.n + ' agents, ' + Math.round(c.body.length / 1024) + ' KB');
+for (const rb of rangeBuilt) console.log((APPLY ? 'will write ' : 'would write ') + 'kv:' + rb.job.name + ' — custom range ' + rb.job.from + '..' + rb.job.to + ' (' + rb.job.why + '), ' + rb.n + ' agents' + (rb.reports.length ? ' + ' + rb.reports.map((x) => x.kind).join(' + ') : ' (no report built)') + ', ' + Math.round(rb.body.length / 1024) + ' KB');
+for (const x of rangeResults) console.log((APPLY ? 'will mark ' : 'would mark ') + x.key + ' ' + x.status + (x.reason ? ' — ' + x.reason : ''));
 /* ---- THE LIVE KEY'S MONTH RULE — ROLLOVER GRACE (2026-10-01, kept by spec 002) ---- This tool writes Storage directly, so the Worker's 409 never
    sees it — it asks the SAME rule itself (worker/src/rules.mjs, imported): the current month always; the month
    just closed only while the live key does not already hold the current month; nothing older. A refused live
@@ -362,5 +474,50 @@ for (const c of cycleBuilt) {
   if (!r.ok) throw new Error(keyName + ' rules write failed: ' + r.status + ' ' + (await r.text()).slice(0, 200));
   console.log('published ' + keyName + ' — ' + c.n + ' agents, ' + c.period.from + '..' + c.period.to);
   } catch (e) { console.error('cycle ' + c.job.name + ' NOT published — ' + String(e && e.message || e)); }   // the live key is already written; one cycle failing never undoes it
+}
+/* THE CUSTOM-RANGE KEYS (spec 006) — their own names, never the live key; each pointer says what it is. Each range is its
+   own island: a failed write is logged, its request is NOT marked built (it stays waiting for the next run) and the run goes
+   on. The reports go first and the digest last — the digest is what makes a range "built" for the Worker. */
+const putRangeKey = async (keyName, body, from) => {
+  const store = 'raw/kv/' + keyName;
+  const s = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json', 'x-upsert': 'true' }, body });
+  if (!s.ok) throw new Error(keyName + ' storage write failed: ' + s.status + ' ' + (await s.text()).slice(0, 200));
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?on_conflict=key`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify([{ key: 'kv:' + keyName, value: { store, period: from, kind: 'range', updated_at: new Date().toISOString() } }]) });
+  if (!r.ok) throw new Error(keyName + ' rules write failed: ' + r.status + ' ' + (await r.text()).slice(0, 200));
+};
+for (const rb of rangeBuilt) {
+  try {
+    for (const { kind, body } of rb.reports) await putRangeKey('agent-reports-' + kind + '-' + rb.job.key, body, rb.job.from);
+    await putRangeKey(rb.job.name, rb.body, rb.job.from);
+    rangeResults.push({ key: rb.job.key, status: 'built' });
+    console.log('published ' + rb.job.name + ' — ' + rb.n + ' agents, ' + rb.job.from + '..' + rb.job.to + (rb.reports.length ? ' + ' + rb.reports.map((x) => x.kind).join(' + ') : ''));
+  } catch (e) { console.error('range ' + rb.job.key + ' NOT published — ' + String(e && e.message || e)); }
+}
+/* every range's outcome back onto its request ({status:'built'|'refused', reason?, statusAt} — range.mjs settleQueue) by
+   COMPARE-AND-SET on the queue row's updated_at: a manager's request queued while this ran is never overwritten — a lost
+   race re-reads and re-applies (constitution VI). Failing here is said and left for the next run, never fatal. */
+if (rangeResults.length) {
+  try {
+    const qk = encodeURIComponent(RANGE_QUEUE_KEY);
+    let settled = false;
+    for (let attempt = 0; attempt < 3 && !settled; attempt++) {
+      const rq = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?key=eq.${qk}&select=value,updated_at`, { headers: H });
+      if (!rq.ok) throw new Error('queue not read (HTTP ' + rq.status + ')');
+      const row = (await rq.json())[0];
+      if (!row) { console.log('custom-range queue row is gone — no status to write'); break; }
+      let qv = row.value; if (typeof qv === 'string') { try { qv = JSON.parse(qv); } catch { qv = null; } }
+      const next = settleQueue(queueList(qv), rangeResults, Date.now());
+      const at = new Date(Math.max(Date.now(), (Date.parse(row.updated_at) || 0) + 1)).toISOString();
+      const w = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?key=eq.${qk}&updated_at=eq.${encodeURIComponent(row.updated_at)}`, {
+        method: 'PATCH', headers: { ...H, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+        body: JSON.stringify({ value: { v: 1, requests: next }, updated_by: 'digest-republish', updated_at: at }) });
+      if (!w.ok) throw new Error('queue write failed: ' + w.status + ' ' + (await w.text()).slice(0, 200));
+      settled = ((await w.json()) || []).length > 0;
+      if (!settled) console.log('custom-range queue moved while this ran — re-reading (attempt ' + (attempt + 2) + ' of 3)');
+    }
+    console.log(settled ? 'custom-range queue: ' + rangeResults.map((x) => x.key + ' ' + x.status).join(', ')
+      : 'custom-range queue NOT updated — it kept moving; the next run settles it');
+  } catch (e) { console.error('custom-range queue NOT updated — ' + String(e && e.message || e)); }
 }
 console.log('done. The Worker edge/memory caches hold old copies for up to 5 minutes.');

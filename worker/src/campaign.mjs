@@ -680,8 +680,9 @@ export function cmOverviewBody(digest, auth, assist, ctx, opts) {
   /* Freshness — the language rule is absolute: manually uploaded information is
      never described as live. "Latest operational position", never "real time". */
   /* THE AMBER "OLDER THAN A DAY" BAND IS FOR THE CURRENT PERIOD ONLY (review fix 6): a closed month or billing
-     month is published once and is meant to be old — it must not say "Waiting on new data". */
-  const closedPeriod = !!(opts && opts.periodKind && opts.periodKind !== 'current');
+     month is published once and is meant to be old — it must not say "Waiting on new data". A custom range that is
+     still filling (spec 006: it ends within the last 2 days and is rebuilt on every engine run) is not closed. */
+  const closedPeriod = !!(opts && opts.periodKind && opts.periodKind !== 'current' && !opts.periodOpen);
   const age = digest.updatedAt ? (Date.now() - Date.parse(digest.updatedAt)) / 3600000 : null;
   const freshness = {
     updatedAt: digest.updatedAt || null,

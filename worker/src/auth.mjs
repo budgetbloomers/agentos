@@ -46,6 +46,108 @@ const sha256hex = async (s) => toHex(await crypto.subtle.digest('SHA-256', new T
 const log = (DB, user_id, username, event, ip) =>
   DB.insert('auth_log', [{ user_id, username, event, ip }]).catch(() => {});
 
+/* CB NUMBERS ARE USERNAMES. Agent Analytics signs people in with their CB
+   number, and this is deliberately the SAME login as everyone else's rather
+   than a second authentication system: one hasher, one lockout, one session
+   table, one audit log. tools/provision-agent-logins.mjs stores the portal
+   accounts with username = the normalised CB number in lower case ("cb93"),
+   so all that is needed here is to accept the ways a person actually types it
+   — "CB-93", "cb 93", "093" — and normalise before the lookup. A name with no
+   digits is untouched, so management logins behave exactly as before.
+   Shared by login() and signinWimpy() (Spec Kit 009) so the two can never spell a CB differently. */
+function loginKey(typed) {
+  const raw = String(typed || '').trim();
+  if (/^\s*cb[\s-]*0*\d+\s*$/i.test(raw)) return 'cb' + String(parseInt(raw.replace(/[^0-9]/g, ''), 10));
+  if (/^\s*\d+\s*$/.test(raw)) return 'cb' + String(parseInt(raw, 10));
+  return raw.toLowerCase();
+}
+
+/* ...AND A CB NUMBER IS AN IDENTIFIER IN ITS OWN RIGHT, not merely a spelling of
+   a username. The username lookup assumes username === cb, which holds for every
+   account provision-agent-logins created and fails for anyone who already had a
+   management username before being given a CB. Dalwin is exactly that: the
+   account is `dalwin`, the CB is CB145, and typing the number he was told to use
+   answered "Invalid username or password" — which reads, to the person typing
+   it, as the campaign view being broken.
+   So fall back to the cb COLUMN. `app_users_cb_uniq` is a unique index on
+   upper(cb), so at most one account can answer and there is no ambiguity to
+   resolve. Nothing about the password check, the lockout or the audit trail
+   changes. Username is still tried FIRST, so an account literally named
+   "cb145" would still win. */
+async function findAccount(DB, username) {
+  let rows = await DB.select(`app_users?username=eq.${encodeURIComponent(username)}&limit=1`);
+  if ((!rows || !rows.length) && /^cb[0-9]+$/.test(username))
+    rows = await DB.select(`app_users?cb=ilike.${encodeURIComponent(username)}&limit=1`);
+  return (rows && rows[0]) || null;
+}
+
+const LOCKED_MSG = 'Account locked after repeated failures. Try again in a few minutes.';
+
+/* THE PASSWORD CHECK — ONE FOR EVERY SIGN-IN (Spec Kit 009, 2026-10-06). The main sign-in and the Wimpy
+   sign-in both come through here, so a password guessed on either page counts toward the SAME lock: a
+   separate, laxer Wimpy limit would have been a second door to the very password that opens Analytics.
+   `via` is '' for the main sign-in and 'wimpy' for Wimpy; it only changes the audit event names, the
+   wording of the wrong-password answer, and whether the no-account/locked notes are awaited (Wimpy's
+   per-network limit counts them, so they must land before the next attempt is counted).
+   → {ok:true} or {ok:false, status, error}. */
+async function checkPassword(DB, u, username, password, ip, defer, via) {
+  const fail = via ? 'login_fail:' + via + ':' : 'login_fail:';
+  const wrong = via === 'wimpy' ? WIMPY_NO_MATCH : 'Invalid username or password.';
+  const note = async (event) => { const p = log(DB, u?.id, username, event, ip); if (via) await p; else defer(p); };
+
+  if (!u || !u.active) { await note(fail + (u ? 'disabled' : 'no_user')); return { ok: false, status: 401, error: wrong }; }
+  if (u.locked_until && new Date(u.locked_until) > new Date()) {
+    await note(via ? 'locked:' + via : 'locked');
+    return { ok: false, status: 423, error: LOCKED_MSG };
+  }
+  if (!(await verifyPassword(String(password || ''), u.password_hash))) {
+    /* COUNTED FROM THE APPEND-ONLY LOG, NOT FROM A READ-MODIFY-WRITE COUNTER (audit round 4,
+       2026-08-28). `failed_attempts = read + 1` raced: fire N guesses in parallel, every one
+       reads 0, every one writes 1, and locked_until is never set — so an online brute force
+       was never locked out however many attempts it made. auth_log only ever has rows
+       INSERTED, so counting recent failures in it cannot race, whatever the concurrency.
+       The counter column is still maintained for the admin screens; the LOCK now follows
+       the log. Note the failure is logged before counting so this attempt is included. */
+    /* The insert must be OBSERVED, not swallowed: log() catches internally, so a failing
+       auth_log write used to resolve as success, the count then returned 0 rows, and the
+       lock could never fire — unlimited guesses, strictly worse than the counter it
+       replaced. If the write did not land we fall back to the counter and still lock. */
+    let logged = true;
+    try { await DB.insert('auth_log', [{ user_id: u.id, username, event: fail + 'bad_password', ip }]); }
+    catch (e) { logged = false; }
+    let recent = (u.failed_attempts || 0) + 1;               // the fail-CLOSED default
+    if (logged) try {
+      /* Count failures SINCE THE LAST SUCCESSFUL LOGIN, not just within the window. Counting
+         the bare window punished someone who had just proved they know the password: four
+         typos at 08:00, a good sign-in at 08:01, then ONE slip at 08:06 hit five-in-fifteen
+         and locked them out. One query fetches both events and the tally stops at the last
+         login_ok — or `login_ok:wimpy`, a Wimpy sign-in that proved the same password (Spec Kit 009).
+         NOT the old `wimpy_signin_ok`: that sign-in took no password and proved nothing. Wimpy
+         failures (`login_fail:wimpy:…`) start with login_fail, so they count here like any other. */
+      const since = new Date(Date.now() - LOCK_MIN * 60000).toISOString();
+      /* COUNTED PER ACCOUNT, NOT PER SPELLING (audit, 2026-09-03). The log used to be
+         read back by the username as TYPED, so an account reachable two ways — `dalwin`
+         and its CB `cb145` — carried two independent tallies and alternating them
+         doubled the guesses before the lock. Every failure row above carries the resolved
+         user_id, so that is what is counted. */
+      const rows = await DB.select(`auth_log?user_id=eq.${u.id}&at=gte.${since}&select=event,at&order=at.desc&limit=60`);
+      let n = 0;
+      for (const r of (rows || [])) {
+        const ev = String(r.event || '');
+        if (ev === 'login_ok' || ev.startsWith('login_ok:')) break;      // everything older is settled
+        if (ev.startsWith('login_fail')) n++;
+      }
+      recent = n;
+    } catch (e) { /* log unreadable — keep the fail-closed counter above */ }
+    const patch = { failed_attempts: Math.max(recent, (u.failed_attempts || 0) + 1) };
+    if (recent >= MAX_FAILS) patch.locked_until = new Date(Date.now() + LOCK_MIN * 60000).toISOString();
+    await DB.update(`app_users?id=eq.${u.id}`, patch);
+    /* already logged above — return the same generic answer without logging twice */
+    return { ok: false, status: 401, error: wrong };
+  }
+  return { ok: true };
+}
+
 /** POST /api/login {username,password} → sets cookie, returns profile+permissions.
  *
  * SIGNING IN USED TO COST FOUR SEQUENTIAL SUPABASE ROUND TRIPS — select the user,
@@ -61,83 +163,10 @@ const log = (DB, user_id, username, event, ip) =>
 export async function login(DB, req, body, ctx) {
   const defer = (p) => { try { ctx && ctx.waitUntil(p); } catch { /* no ctx: let it run detached */ } return p; };
   const ip = req.headers.get('cf-connecting-ip') || '';
-  /* CB NUMBERS ARE USERNAMES. Agent Analytics signs people in with their CB
-     number, and this is deliberately the SAME login as everyone else's rather
-     than a second authentication system: one hasher, one lockout, one session
-     table, one audit log. tools/provision-agent-logins.mjs stores the portal
-     accounts with username = the normalised CB number in lower case ("cb93"),
-     so all that is needed here is to accept the ways a person actually types it
-     — "CB-93", "cb 93", "093" — and normalise before the lookup. A name with no
-     digits is untouched, so management logins behave exactly as before. */
-  const raw = String(body.username || '').trim();
-  let username = raw.toLowerCase();
-  if (/^\s*cb[\s-]*0*\d+\s*$/i.test(raw)) username = 'cb' + String(parseInt(raw.replace(/[^0-9]/g, ''), 10));
-  else if (/^\s*\d+\s*$/.test(raw)) username = 'cb' + String(parseInt(raw, 10));
-  let rows = await DB.select(`app_users?username=eq.${encodeURIComponent(username)}&limit=1`);
-  /* ...AND A CB NUMBER IS AN IDENTIFIER IN ITS OWN RIGHT, not merely a spelling of
-     a username. The line above assumes username === cb, which holds for every
-     account provision-agent-logins created and fails for anyone who already had a
-     management username before being given a CB. Dalwin is exactly that: the
-     account is `dalwin`, the CB is CB145, and typing the number he was told to use
-     answered "Invalid username or password" — which reads, to the person typing
-     it, as the campaign view being broken.
-     So fall back to the cb COLUMN. `app_users_cb_uniq` is a unique index on
-     upper(cb), so at most one account can answer and there is no ambiguity to
-     resolve. Nothing about the password check, the lockout or the audit trail
-     changes. Username is still tried FIRST, so an account literally named
-     "cb145" would still win. */
-  if ((!rows || !rows.length) && /^cb[0-9]+$/.test(username))
-    rows = await DB.select(`app_users?cb=ilike.${encodeURIComponent(username)}&limit=1`);
-  const u = rows && rows[0];
-  const fail = async (why) => { defer(log(DB, u?.id, username, 'login_fail:' + why, ip)); return { ok: false, status: 401, error: 'Invalid username or password.' }; };
-
-  if (!u || !u.active) return fail(u ? 'disabled' : 'no_user');
-  if (u.locked_until && new Date(u.locked_until) > new Date()) {
-    defer(log(DB, u.id, username, 'locked', ip));
-    return { ok: false, status: 423, error: 'Account locked after repeated failures. Try again in a few minutes.' };
-  }
-  if (!(await verifyPassword(String(body.password || ''), u.password_hash))) {
-    /* COUNTED FROM THE APPEND-ONLY LOG, NOT FROM A READ-MODIFY-WRITE COUNTER (audit round 4,
-       2026-08-28). `failed_attempts = read + 1` raced: fire N guesses in parallel, every one
-       reads 0, every one writes 1, and locked_until is never set — so an online brute force
-       was never locked out however many attempts it made. auth_log only ever has rows
-       INSERTED, so counting recent failures in it cannot race, whatever the concurrency.
-       The counter column is still maintained for the admin screens; the LOCK now follows
-       the log. Note the failure is logged before counting so this attempt is included. */
-    /* The insert must be OBSERVED, not swallowed: log() catches internally, so a failing
-       auth_log write used to resolve as success, the count then returned 0 rows, and the
-       lock could never fire — unlimited guesses, strictly worse than the counter it
-       replaced. If the write did not land we fall back to the counter and still lock. */
-    let logged = true;
-    try { await DB.insert('auth_log', [{ user_id: u.id, username, event: 'login_fail:bad_password', ip }]); }
-    catch (e) { logged = false; }
-    let recent = (u.failed_attempts || 0) + 1;               // the fail-CLOSED default
-    if (logged) try {
-      /* Count failures SINCE THE LAST SUCCESSFUL LOGIN, not just within the window. Counting
-         the bare window punished someone who had just proved they know the password: four
-         typos at 08:00, a good sign-in at 08:01, then ONE slip at 08:06 hit five-in-fifteen
-         and locked them out. One query fetches both events and the tally stops at the last
-         login_ok. */
-      const since = new Date(Date.now() - LOCK_MIN * 60000).toISOString();
-      /* COUNTED PER ACCOUNT, NOT PER SPELLING (audit, 2026-09-03). The log used to be
-         read back by the username as TYPED, so an account reachable two ways — `dalwin`
-         and its CB `cb145` — carried two independent tallies and alternating them
-         doubled the guesses before the lock. Every failure row above carries the resolved
-         user_id, so that is what is counted. */
-      const rows = await DB.select(`auth_log?user_id=eq.${u.id}&at=gte.${since}&select=event,at&order=at.desc&limit=60`);
-      let n = 0;
-      for (const r of (rows || [])) {
-        if (String(r.event || '') === 'login_ok') break;      // everything older is settled
-        if (String(r.event || '').startsWith('login_fail')) n++;
-      }
-      recent = n;
-    } catch (e) { /* log unreadable — keep the fail-closed counter above */ }
-    const patch = { failed_attempts: Math.max(recent, (u.failed_attempts || 0) + 1) };
-    if (recent >= MAX_FAILS) patch.locked_until = new Date(Date.now() + LOCK_MIN * 60000).toISOString();
-    await DB.update(`app_users?id=eq.${u.id}`, patch);
-    /* already logged above — return the same generic answer without logging twice */
-    return { ok: false, status: 401, error: 'Invalid username or password.' };
-  }
+  const username = loginKey(body.username);
+  const u = await findAccount(DB, username);
+  const checked = await checkPassword(DB, u, username, body.password, ip, defer, '');
+  if (!checked.ok) return checked;
 
   const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
   await DB.insert('app_sessions', [{
@@ -173,9 +202,9 @@ export async function session(DB, req) {
      undefined and a simple RELOAD walked straight past the overlay — leaving the account on
      its temporary password for good. That matters most for exactly the accounts being handed
      out with a shared starter password. */
-  /* scope (migration-037): 'full' for every password login; 'wimpy' for the CB-only Wimpy
-     sign-in, which index.mjs refuses everywhere outside /api/wimpy/*. It travels on the
-     user object so the check is one line at the gate, never a second lookup. */
+  /* scope (migration-037): 'full' for every main login; 'wimpy' for the Wimpy sign-in (CB number +
+     password since Spec Kit 009), which index.mjs refuses everywhere outside /api/wimpy/*. It travels
+     on the user object so the check is one line at the gate, never a second lookup. */
   const rows = await DB.select(`app_sessions?token_hash=eq.${th}&select=expires_at,user_id,scope,app_users(username,full_name,role,apps,tabs,pii_unmask,active,cb,team,hub_ids,must_change_password,theme)`);
   const s = rows && rows[0];
   if (!s || new Date(s.expires_at) < new Date() || !s.app_users?.active) return null;
@@ -183,51 +212,59 @@ export async function session(DB, req) {
 }
 
 /**
- * THE WIMPY SIGN-IN — a CB number and no password (Nick, 2026-09-10: "sign in only with cb
- * number no password"). What makes that acceptable is that the session it mints is SCOPED:
- * app_sessions.scope = 'wimpy', and the Worker refuses it on every route but the Wimpy ones,
- * so knowing a colleague's CB buys lunch in their name (which Nick accepts — the typed name and
- * surname land on the kitchen sheet beside the account's own) and opens nothing else.
+ * THE WIMPY SIGN-IN — a CB number AND the person's password (Spec Kit 009, 2026-10-06; Nick: "for the
+ * wimpy app users must put this password as well, for example dalwin cb number and his password to
+ * login"). From 10 Sep it took a CB number alone, so knowing a colleague's CB bought lunch in their
+ * name. The password is the account's own — the one Agent Analytics and VAS check — proved by the
+ * same checkPassword() as login(), so a wrong guess here counts toward the same lock as one there.
+ * The session it mints is unchanged: app_sessions.scope = 'wimpy', refused by the Worker on every
+ * route but the Wimpy ones, so knowing the password still opens only lunch from this page.
  *
- *   · the field accepts a CB number in any spelling ("CB-93", "cb 93", "093") → looked up on the
- *     cb column; or a management username (no CB on those accounts) → looked up on username;
- *   · the account must be active and hold the Wimpy app (which the Agent List sync grants at
- *     birth and removes with the account when a person leaves);
- *   · rate-limited: ten failures per typed value or per IP in ten minutes → 429, counted from
- *     auth_log the same append-only way login() counts password failures;
- *   · the answer for an unknown, inactive or un-granted account is ONE generic 404, so the
- *     field cannot be used to discover which CB numbers exist.
+ *   · the field takes a CB number in any spelling, or a username (managers, or anyone), exactly as
+ *     login() reads it; `username` is accepted in place of `cb`;
+ *   · an old page sends no `password` key at all → told to reload, before anything is looked up;
+ *   · a hundred failures from one network in ten minutes → 429 before any lookup — a flood guard,
+ *     not the lock (security review 2026-10-06): the floor may share one address and launch day is
+ *     full of first-time password typos, so thirty could close lunch for everyone; the per-account
+ *     lock is the real guard, and /api/login checks the same password with no network cap at all;
+ *   · unknown, disabled and wrong-password get ONE answer, so the page cannot find which CBs exist;
+ *   · the right password on an account without the Wimpy app is told so (it proved who it is) and
+ *     is not counted as a failure.
  * Pure of transport: {ok, status, error} or {ok, token, user}.
  */
-const WIMPY_SIGNIN_MAX = 10, WIMPY_SIGNIN_MIN = 10, WIMPY_SESSION_HOURS = 12;
-export async function signinByCb(DB, req, body, ctx) {
+const WIMPY_NET_MAX = 100, WIMPY_NET_MIN = 10, WIMPY_SESSION_HOURS = 12;
+const WIMPY_NO_MATCH = 'That CB number and password do not match.';
+export async function signinWimpy(DB, req, body, ctx) {
   const defer = (p) => { try { ctx && ctx.waitUntil(p); } catch { /* no ctx */ } return p; };
   const ip = req.headers.get('cf-connecting-ip') || '';
-  const raw = String((body && (body.cb ?? body.username)) || '').trim();
-  let key = raw.toLowerCase();
-  const isCb = /^\s*(cb)?[\s-]*0*\d+\s*$/i.test(raw);
-  if (isCb) key = 'cb' + String(parseInt(raw.replace(/[^0-9]/g, ''), 10));
-  const generic = { ok: false, status: 404, error: 'No active account for that CB number. Check the number, or ask your team leader — accounts follow the Agent List.' };
-  if (!key || key.length > 40) return { ok: false, status: 400, error: 'Type your CB number.' };
+  const b = body && typeof body === 'object' ? body : {};
+  if (!('password' in b))
+    return { ok: false, status: 400, error: 'Wimpy now asks for your password too — reload this page (Ctrl+Shift+R) to sign in.' };
+  const raw = String((b.cb ?? b.username) || '').trim();
+  const password = b.password == null ? '' : String(b.password);
+  if (!raw || !password) return { ok: false, status: 400, error: 'Type your CB number and your password.' };
+  if (raw.length > 40 || password.length > 200) return { ok: false, status: 400, error: 'That is too long to be a CB number or password.' };
 
-  /* the rate limit, before any lookup */
-  try {
-    const since = new Date(Date.now() - WIMPY_SIGNIN_MIN * 60000).toISOString();
-    const byKey = await DB.select(`auth_log?username=eq.${encodeURIComponent('wimpy:' + key)}&event=eq.wimpy_signin_fail&at=gte.${since}&select=at&limit=${WIMPY_SIGNIN_MAX + 1}`);
-    const byIp = ip ? await DB.select(`auth_log?ip=eq.${encodeURIComponent(ip)}&event=eq.wimpy_signin_fail&at=gte.${since}&select=at&limit=${WIMPY_SIGNIN_MAX + 1}`) : [];
-    if ((byKey || []).length >= WIMPY_SIGNIN_MAX || (byIp || []).length >= WIMPY_SIGNIN_MAX)
-      return { ok: false, status: 429, error: 'Too many tries. Wait ten minutes and try again.' };
-  } catch { /* the log unreadable — carry on; the lookup below still decides */ }
+  /* the per-network limit, before any lookup — counts only Wimpy failures, so a burst of main
+     sign-in typos on the same office network does not close lunch */
+  if (ip) try {
+    const since = new Date(Date.now() - WIMPY_NET_MIN * 60000).toISOString();
+    const recent = await DB.select(`auth_log?ip=eq.${encodeURIComponent(ip)}&event=like.${encodeURIComponent('login_fail:wimpy:*')}&at=gte.${since}&select=at&limit=${WIMPY_NET_MAX + 1}`);
+    if ((recent || []).length >= WIMPY_NET_MAX)
+      return { ok: false, status: 429, error: 'Too many wrong sign-ins from this network. Wait ten minutes and try again.' };
+  } catch { /* the log unreadable — carry on; the per-account lock below still holds */ }
 
-  let rows = null;
-  if (isCb) rows = await DB.select(`app_users?cb=ilike.${encodeURIComponent(key)}&active=is.true&limit=1`);
-  if (!rows || !rows.length) rows = await DB.select(`app_users?username=eq.${encodeURIComponent(key)}&active=is.true&limit=1`);
-  const u = rows && rows[0];
-  const granted = u && Array.isArray(u.apps) && u.apps.includes('wimpy');
-  if (!u || !u.active || !granted) {
-    /* awaited, not deferred: the count above must see this failure next time */
-    await DB.insert('auth_log', [{ user_id: u ? u.id : null, username: 'wimpy:' + key, event: 'wimpy_signin_fail', ip }]).catch(() => {});
-    return generic;
+  const username = loginKey(raw);
+  const u = await findAccount(DB, username);
+  /* Two boxes make a swap likely, and a password typed into the CB box would otherwise land in auth_log as the
+     "username" of a no_user failure (code review 2026-10-06). An unknown name that is not CB-shaped is logged
+     without its text; an unknown CB number is logged as typed, so support can still see the typo. */
+  const logged = u || /^cb[0-9]+$/.test(username) ? username : '(unknown — not a CB number)';
+  const checked = await checkPassword(DB, u, logged, password, ip, defer, 'wimpy');
+  if (!checked.ok) return checked;
+  if (!(Array.isArray(u.apps) && u.apps.includes('wimpy'))) {
+    defer(log(DB, u.id, username, 'wimpy_signin_refused:no_app', ip));
+    return { ok: false, status: 403, error: 'Your account cannot order from Wimpy yet — ask your team leader.' };
   }
   const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
   await DB.insert('app_sessions', [{
@@ -235,7 +272,10 @@ export async function signinByCb(DB, req, body, ctx) {
     expires_at: new Date(Date.now() + WIMPY_SESSION_HOURS * 3600000).toISOString(),
     ip, user_agent: (req.headers.get('user-agent') || '').slice(0, 200),
   }]);
-  defer(log(DB, u.id, u.username, 'wimpy_signin_ok', ip));
+  /* the password was proved, so earlier failures are settled — as a main sign-in settles them
+     (last_login is left alone: it means "last opened Analytics" to the admin screens) */
+  defer(DB.update(`app_users?id=eq.${u.id}`, { failed_attempts: 0, locked_until: null }).catch(() => {}));
+  defer(log(DB, u.id, username, 'login_ok:wimpy', ip));
   return { ok: true, token, user: { username: u.username, full_name: u.full_name || '', role: u.role, cb: u.cb || '', scope: 'wimpy' } };
 }
 

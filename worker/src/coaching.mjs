@@ -151,12 +151,37 @@ function normalise(type, label, rec, hubTeamLeader) {
      part of a coaching record an agent recognises as their own conversation —
      but capped, because a Hub textarea has no length limit and this payload is
      read by phones. */
-  const TEXT = ['developmentAreas', 'teamLeaderComments', 'teamLeaderFeedback', 'agentFeedback',
-    'wayForward', 'supportProvided', 'agreedPlanAgentFeedback', 'coachingDetails', 'sosComments'];
-  for (const k of TEXT) {
+  for (const k of COACH_TEXT_FIELDS) {
     const v = rec[k];
     if (typeof v === 'string' && v.trim() && !isSignature(k, v)) out[k] = v.trim().slice(0, 1200);
   }
+  /* A FORMAL SESSION'S BODY IS ITS CALLS (spec 003, 2026-10-05). Each reviewed call carries what came out of listening
+     to it; dropping `calls` left the agent's card with nothing under "What was discussed". Only the development areas
+     travel — `contactNumber` is a CUSTOMER's phone number and must never reach an agent-facing payload. */
+  if (Array.isArray(rec.calls)) {
+    const notes = rec.calls.map((c) => String((c && c.developmentAreas) || '').trim()).filter(Boolean).slice(0, 3).map((t) => t.slice(0, CALL_NOTE_MAX));
+    if (notes.length) out.callNotes = notes;
+  }
+  return out;
+}
+
+/* Every written-content field a session can carry — the free text above plus the formal call notes. ONE list, read by
+   normalise() and by withoutText(), so a field added to one is withheld by the other. */
+export const COACH_TEXT_FIELDS = ['developmentAreas', 'teamLeaderComments', 'teamLeaderFeedback', 'agentFeedback',
+  'wayForward', 'supportProvided', 'agreedPlanAgentFeedback', 'coachingDetails', 'sosComments'];
+const CALL_NOTE_MAX = 600;
+
+/* A SUBMITTED COACHING DOCUMENT IS NEVER SHOWN TO A TEAM LEADER (spec 004, 2026-10-05 — UAT: "when click submit, he must
+   not be able view"). Every route that hands a team leader coaching sessions passes them through here, so the written
+   document is withheld by the Worker, not by a hidden button. What survives is the line: date, product, agent, who
+   coached and the classification themes the coaching analysis counts. An ALLOW list (security review, 2026-10-05): a
+   free-text field normalise() gains tomorrow is withheld without anyone remembering to add it here. */
+const SESSION_LINE = ['id', 'type', 'typeLabel', 'collection', 'date', 'cb', 'agentName', 'campaign', 'hubTeamLeader', 'hubTeamLeaderId',
+  'clusters', 'clusterSource', 'clusterConfidence', 'qaScore', 'callDate', 'coach', 'coachIsTl', 'groupSession'];
+export function withoutText(s) {
+  if (!s || typeof s !== 'object') return s;
+  const out = {};
+  for (const k of SESSION_LINE) if (s[k] !== undefined) out[k] = s[k];
   return out;
 }
 

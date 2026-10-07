@@ -32,6 +32,7 @@ const mk = (tl, codes) => codes.map((c, i) => ({ code: c, name: 'Agent ' + i, tl
 let served = { fingerprint: 'list:one', as_of: '2026-08-20', source: 'vas', n: 3,
   roster: mk('Renolan Pillay', ['CB100', 'CB101', 'CB102']) };
 let posted = [];
+let postFail = 0;                                      // spec 010: the next N publishes get an error status, not an answer
 
 const SIDE = { '/xlsx.full.min.js': path.join(AGENTOS, 'site', 'xlsx.full.min.js'),
   '/auth-gate.js': path.join(AGENTOS, 'site', 'auth-gate.js'),
@@ -40,7 +41,9 @@ const srv = http.createServer((q, s) => {
   const u = new URL(q.url, 'http://x');
   const J = (o) => { s.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); s.end(JSON.stringify(o)); };
   if (u.pathname === '/api/roster') {
-    if (q.method === 'POST') { let b = ''; q.on('data', c => b += c); return q.on('end', () => { posted.push(b.length); J({ accepted: true }); }); }
+    if (q.method === 'POST') { let b = ''; q.on('data', c => b += c); return q.on('end', () => { posted.push(b.length);
+      if (postFail > 0) { postFail--; s.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); return s.end('{"error":"supabase POST rpc/publish_agent_list → 500"}'); }
+      J({ accepted: true }); }); }
     return J(served);
   }
   if (u.pathname === '/api/me') return J({ user: { username: 'nick', role: 'admin' } });
@@ -158,6 +161,33 @@ ok('...and runs when the tab is focused, with nobody asking', wiring.onFocus > 0
   ok('...and clears the "came from the record" marker', r7.fp === null, String(r7.fp));
   ok('...and IS published to the other station', posted.length > postsBefore,
     'no publish fired — the list would stop travelling');
+}
+
+/* 8 — A PUBLISH THAT GETS NO ANSWER IS TRIED AGAIN (spec 010, 2026-10-07). Ashton's 7 Oct upload got an error status
+   once, was reported as "no reply" in his tab only, and four minutes later the re-sync put the 6 Oct list back. */
+{
+  const hand = (leader) => page.evaluate((tl) => {
+    INGEST.roster([
+      { 'Employee Code': 'CB310', 'Agent Name': 'Retry One', 'Sales Force': 'Retry One', 'Team Leader': tl, 'Campaign': 'Courtesy', 'Tenure': 'M1', 'Target': 3 },
+      { 'Employee Code': 'CB311', 'Agent Name': 'Retry Two', 'Sales Force': 'Retry Two', 'Team Leader': tl, 'Campaign': 'Cuddle', 'Tenure': 'Exp', 'Target': 8 },
+    ], 'Matrix - Agent List.xlsx', null);
+  }, leader);
+  const refusedNow = () => page.evaluate(() => window.__mtd.state().rosterRefused || null);
+  await page.evaluate(() => { window.__listRetryMs = [300, 300]; window.__mtd.state().rosterRefused = null; });
+
+  postFail = 1; let p0 = posted.length;
+  await hand('Retry Leader A');
+  await page.waitForTimeout(4600);                     // the 3 s publish delay + one short retry
+  ok('a publish that gets an error status once is TRIED AGAIN', posted.length - p0 === 2, (posted.length - p0) + ' attempt(s)');
+  ok('...and when the retry is answered, no "NOT published" notice is left', (await refusedNow()) === null, JSON.stringify(await refusedNow()));
+
+  postFail = 3; p0 = posted.length;
+  await hand('Retry Leader B');
+  await page.waitForTimeout(5200);
+  const ref = await refusedNow();
+  ok('three unanswered attempts, then it stops', posted.length - p0 === 3, (posted.length - p0) + ' attempt(s)');
+  ok('...and the notice says it tried three times', !!ref && /3 attempts/.test(String(ref.detail || '')), JSON.stringify(ref));
+  postFail = 0;
 }
 
 ok('no page errors', errs.length === 0, errs.slice(0, 2).join(' | '));

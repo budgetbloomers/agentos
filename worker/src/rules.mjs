@@ -84,8 +84,11 @@ export function referralsReadAllowed(user) {
 /* WHO MAY WRITE THE DIGEST AND REFERRAL KEYS (review M1, 2026-10-01). POST/DELETE /api/kv was open to any session that
    gets past the portal lockdown — which a team leader or campaign manager who also holds a management app does. The
    live digest is every agent's page; referrals are every agent's counts. Portal roles and scoped sessions are refused
-   for these keys whatever apps they hold; the staff roles keep writing exactly as before. Other keys are untouched. */
-const GUARDED_KV = /^(agent-digest(-[a-z0-9-]+)?|agent-reports-(variance|leads)|referrals-latest|referrals-sync-log)$/;
+   for these keys whatever apps they hold; the staff roles keep writing exactly as before. Other keys are untouched.
+   SPEC 006 (custom ranges): a range's digest (agent-digest-range-…, already covered) AND its two report keys
+   (agent-reports-variance|leads-range-YYYY-MM-DD-YYYY-MM-DD) and the request queue (cm-range-requests) are staff-written
+   only too — only the engine's publisher writes figures, and the Worker writes the queue itself, never through /api/kv. */
+const GUARDED_KV = /^(agent-digest(-[a-z0-9-]+)?|agent-reports-(variance|leads)(-range-[0-9-]+)?|cm-range-requests|referrals-latest|referrals-sync-log)$/;
 export const isGuardedKvKey = (key) => GUARDED_KV.test(String(key || ''));
 export function kvWriteAllowed(key, user) {
   if (!user) return false;

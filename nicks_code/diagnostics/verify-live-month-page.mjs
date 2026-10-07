@@ -340,7 +340,9 @@ const liveTeam = (over) => Object.assign(emptyTeam(), { empty: undefined, period
     others: [{ date: '2026-07-20', agentName: 'Ann Agent', cb: 'CB1', type: 'Lead Management Coaching', typeLabel: 'Lead Management Coaching', coach: 'Dalwin (SOS)', coachIsTl: false, themes: ['Lead Management'] }] };
   P.setHub(HUB);
   const h = P.coachHubPage();
-  check('the Hub tab keeps the live list of the leader\'s own sessions', () => { clean(h); mustText(h, 'Your sessions'); mustText(h, 'Greeting'); });
+  /* spec 004 (2026-10-05): a submitted session is a LINE for its author — even a payload that still carried a note
+     must not get it printed */
+  check('the Hub tab keeps the live list of the leader\'s own sessions — as locked lines', () => { clean(h); mustText(h, 'Your sessions'); mustText(h, 'Ann Agent'); mustText(h, 'Informal Coaching'); mustText(h, 'SUBMITTED'); mustNotText(h, 'Greeting', 'a submitted document\'s text is never shown to its author'); });
   check('the Hub tab adds "Coaching on your agents by others" with date, agent, type, coach, themes', () => {
     mustText(h, 'Coaching on your agents by others'); mustText(h, '20 Jul'); mustText(h, 'Ann Agent'); mustText(h, 'Lead Management Coaching'); mustText(h, 'Dalwin (SOS)');
     const blk = h.slice(h.indexOf('Coaching on your agents by others')); mustText(blk.slice(0, 1500), 'Lead Management');

@@ -40,7 +40,12 @@ jobs:
           set -e
           # verify-help-repeat / verify-help-contact (2026-09-28): an agent can ask their team leader for
           # help again — the Help location allows one HighLevel card per person, so every repeat ask 502'd
-          for t in verify-agent-analytics verify-wimpy verify-engine-rules verify-rule-constants verify-public-holidays verify-saturday-rule verify-leave-days verify-ops-leave \
+          # verify-coaching-signature / verify-coaching-drafts (2026-10-05, specs 003 + 004): signatures drawn on a
+          # coaching form reach the Hub; drafts are kept until Submit; a submitted document is never shown to its TL
+          # verify-wimpy-signin (2026-10-06, spec 009): the Wimpy sign-in needs the person's password and shares
+          # the main sign-in's lock; a CB number alone signs nobody in
+          for t in verify-agent-analytics verify-wimpy verify-wimpy-signin verify-engine-rules verify-rule-constants verify-public-holidays verify-saturday-rule verify-leave-days verify-ops-leave \
+                   verify-coaching-signature verify-coaching-drafts \
                    verify-cm-targets verify-campaign-manager verify-perf-score verify-history \
                    verify-tbc-backdate verify-variance verify-save-acks verify-login-lockout \
                    verify-help-repeat verify-help-contact \

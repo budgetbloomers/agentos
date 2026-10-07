@@ -29,13 +29,19 @@ const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } el
 
 /* ---- a stubbed Supabase: rules rows in memory, storage objects in a map ------------- */
 let rules = {}, store = {};
+/* spec 010: the database can be made to ERROR (a thrown publish — what lost the 7 Oct list) or to REFUSE */
+let rpcFailLeft = 0, rpcCalls = 0, rpcRefuse = false;
 const ENV = { SUPABASE_URL: 'http://stub.local', SUPABASE_SECRET_KEY: 'k' };
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (u, o = {}) => {
   const url = String(u);
   const J = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
-  if (url.startsWith('http://stub.local/rest/v1/rpc/publish_agent_list'))
+  if (url.startsWith('http://stub.local/rest/v1/rpc/publish_agent_list')) {
+    rpcCalls++;
+    if (rpcFailLeft > 0) { rpcFailLeft--; return J({ code: '57014', message: 'canceling statement due to statement timeout' }, 500); }
+    if (rpcRefuse) return J({ status: 'REFUSED', stage: 'agents', reason: 'two people claim one identity', errors: ['CB100 appears twice'] });
     return J(publishAgentListStub(JSON.parse(o.body || '{}')));
+  }
   if (url.startsWith('http://stub.local/rest/v1/rules')) {
     if ((o.method || 'GET') === 'GET') {
       const m = /key=eq\.([^&]+)/.exec(url);
@@ -156,6 +162,39 @@ ok('the same people in a different order is not a new list',
 g = await get();
 ok('the served roster says where it came from and when',
   !!g.as_of && !!g.uploaded_at && g.source === 'ops', JSON.stringify({ as_of: g.as_of, source: g.source, by: g.uploaded_by }));
+
+/* 11 — A PASSING DATABASE ERROR IS RETRIED; A STANDING ONE IS RECORDED (spec 010, 2026-10-07). The 7 Oct list's
+   publish got an error status back instead of an answer: no refusal was stored, nothing retried, and four minutes
+   later the uploader's page re-adopted the 6 Oct record — Hezron's team back, 35 moves undone. */
+{
+  const before = (await get()).fingerprint;
+  delete rules['kv:roster-refused'];
+  rpcFailLeft = 1; rpcCalls = 0;
+  let r11 = await post({ source: 'vas', file: 'Matrix - Agent List.xlsx', as_of: '2026-10-07',
+    roster: mkRoster('Sharoma Rampersad', [{ code: 'CB103', name: 'Delta Four', tl: 'Sharoma Rampersad', campaign: 'Cuddle', tenure: 'Exp', target: 8 }]) });
+  ok('the database erroring ONCE does not lose the list — the server tries again and publishes', r11.accepted === true, JSON.stringify(r11).slice(0, 220));
+  ok('...after exactly one extra call', rpcCalls === 4, 'publish calls: ' + rpcCalls + ' (plan failed, plan again, then the apply\'s plan + apply)');
+  ok('...and leaves no refusal behind', !rules['kv:roster-refused']);
+  ok('...and the record moved to the new list', (await get()).fingerprint !== before);
+
+  const kept = (await get()).fingerprint;
+  rpcFailLeft = 99; rpcCalls = 0;
+  r11 = await post({ source: 'vas', file: 'Matrix - Agent List.xlsx', as_of: '2026-10-07',
+    roster: mkRoster('Someone Else', [{ code: 'CB104', name: 'Echo Five', tl: 'Someone Else', campaign: 'Courtesy', tenure: 'M1', target: 3 }]) });
+  ok('a database error that STANDS is answered in words, not as an error status', r11.accepted === false && r11.stage === 'server', JSON.stringify(r11).slice(0, 260));
+  ok('...naming the database\'s own error', /statement timeout/.test(String(r11.detail || '') + String(r11.reason || '')), String(r11.detail));
+  ok('...after the one retry, no more', rpcCalls === 2, 'publish calls: ' + rpcCalls);
+  const ref = rules['kv:roster-refused'] && rules['kv:roster-refused'].value;
+  const rec = ref && (typeof ref.data === 'string' ? JSON.parse(ref.data) : ref);
+  ok('...and the refusal is STORED for the health alert and every app\'s banner', !!rec && rec.stage === 'server' && /statement timeout/.test(rec.detail || '')
+    && rec.file === 'Matrix - Agent List.xlsx', JSON.stringify(rec));
+  ok('...and the record is untouched', (await get()).fingerprint === kept);
+
+  rpcFailLeft = 0; rpcRefuse = true; rpcCalls = 0;
+  r11 = await post({ source: 'vas', file: 'dup.xlsx', as_of: '2026-10-07', roster: mkRoster('Dup Leader') });
+  ok('a deliberate database REFUSAL is not retried (the answer would not change)', r11.accepted === false && rpcCalls === 1, 'calls ' + rpcCalls + ' ' + JSON.stringify(r11).slice(0, 160));
+  rpcRefuse = false;
+}
 
 globalThis.fetch = realFetch;
 console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====');

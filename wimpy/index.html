@@ -8,8 +8,10 @@
 <!--
   WIMPY ORDER — the Chatterbox lunch app (2026-09-10; specs/wimpy-vas-apps-plan.md).
 
-  Its own app, its own sign-in: a CB number and nothing else (Nick: "sign in only with cb
-  number no password"). The Worker mints a session SCOPED to /api/wimpy/*, stored here under
+  Its own app, its own sign-in: a CB number and the person's own password — the one they use for
+  Agent Analytics (Spec Kit 009, 2026-10-06; Nick: "users must put this password as well"; until
+  then a CB number alone signed people in). The Worker checks it exactly as the main sign-in does,
+  same lock, then mints a session SCOPED to /api/wimpy/*, stored here under
   cbx_wimpy_token — never cbx_token, so a shared browser can never mistake a lunch session for a
   management one. auth-gate.js is deliberately NOT injected: this page's gate is below, and the
   Worker's scope check is the lock.
@@ -201,27 +203,36 @@ setInterval(function(){
   WWIN_LAST=open;
 },30000);
 
-/* ---------- sign-in: a CB number, nothing else ---------- */
-function loginScreen(msg, bad){
+/* ---------- sign-in: CB number + the person's own password (Spec Kit 009) ---------- */
+/* keepCb: after a refusal the CB number stays typed and only the password is asked again */
+function loginScreen(msg, bad, keepCb){
   $('root').innerHTML='<div class="login"><div class="box">'
     +'<div class="top"><div class="logo">🍔</div><h1>Wimpy Order</h1><p>Chatterbox × Wimpy · Weekday Value Menu</p></div>'
     +'<form id="lf" autocomplete="off">'
     +(msg?'<div class="msg '+(bad?'bad':'info')+'">'+esc(msg)+'</div>':'')
     +'<label class="lab" for="cb">CB number</label>'
-    +'<input class="inp" id="cb" name="cb" inputmode="text" autocapitalize="characters" placeholder="e.g. CB123" autofocus>'
+    +'<input class="inp" id="cb" name="cb" inputmode="text" autocomplete="username" autocapitalize="characters" placeholder="e.g. CB123" value="'+esc(keepCb||'')+'"'+(keepCb?'':' autofocus')+'>'
     +'<p class="hint">Managers: type your username here.</p>'
+    +'<label class="lab" for="pw" style="margin-top:14px">Password</label>'
+    +'<input class="inp" id="pw" name="pw" type="password" autocomplete="current-password" placeholder="Your password"'+(keepCb?' autofocus':'')+'>'
+    +'<p class="hint">The password you use for Agent Analytics.</p>'
     +'<button class="btn primary wide" id="go" type="submit" style="margin-top:14px">Let’s eat</button>'
-    +'<p class="foot">Orders 08:00–17:00, Monday to Friday. Your CB number is your sign-in — no password.</p>'
+    +'<p class="foot">Orders 08:00–17:00, Monday to Friday. Forgotten your password? Ask your team leader or manager to reset it.</p>'
     +'</form></div></div>';
+  /* autofocus is ignored on markup put in by innerHTML once the page has focused something — focus by hand, so a
+     second try after a refusal starts in the password box */
+  try{ (keepCb?$('pw'):$('cb')).focus(); }catch(e){}
   $('lf').onsubmit=function(e){
     e.preventDefault();
-    var v=String($('cb').value||'').trim(); if(!v){ $('cb').classList.add('err'); return; }
+    var v=String($('cb').value||'').trim(), p=String($('pw').value||'');
+    $('cb').classList.toggle('err',!v); $('pw').classList.toggle('err',!p);
+    if(!v||!p){ (v?$('pw'):$('cb')).focus(); return; }
     $('go').disabled=true; $('go').textContent='Signing in…';
-    api('/api/wimpy/signin',{cb:v}).then(function(r){
+    api('/api/wimpy/signin',{cb:v,password:p}).then(function(r){
       if(r.ok&&r.json&&r.json.token){
         try{ sessionStorage.setItem(TKEY,r.json.token); }catch(e){}
         U=r.json.user; boot();
-      } else loginScreen((r.json&&r.json.error)||'Could not sign in.', true);
+      } else loginScreen((r.json&&r.json.error)||'Could not sign in.', true, v);
     });
   };
 }

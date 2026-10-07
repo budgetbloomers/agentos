@@ -8,6 +8,10 @@
    cb number, name, surname, also add to the plan when the agent list is uploaded it must update the logins
    for this app, create this to my wimpy themed as well."
 
+> **Superseded 2026-10-06 (Nick, Spec Kit 009):** the sign-in now needs the CB number AND the person's own
+> password, under the main sign-in's lock (`auth.mjs signinWimpy`; `specs/009-wimpy-password-signin/`). Item 2
+> below describes the password-less sign-in as it was from 10 Sep to 6 Oct.
+
 **Decided (Nick, 2026-09-10, message 3):** orders 08:00–17:00; sign in with the CB number only, no password;
 quantity allowed, no customising of an item; everyone can order, management included.
 

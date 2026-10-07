@@ -122,6 +122,18 @@ console.log('\n7 · review fixes — who may WRITE the digest/referral keys, and
   ok('an unguarded key is open to any non-refused caller (unchanged)', kvWriteAllowed('vas-state', { role: 'team_leader' }) === true);
   ok('no user: refused', kvWriteAllowed(G, null) === false);
 
+  /* spec 006-cm-custom-range (FR-007): a custom range's published figures — its digest AND its two report keys — and the
+     request queue are staff-written only. The report regex had to be widened: before, only the bare live report keys matched. */
+  const RK = '2026-09-01-2026-09-15';
+  for (const k of ['agent-digest-range-' + RK, 'agent-reports-variance-range-' + RK, 'agent-reports-leads-range-' + RK, 'cm-range-requests'])
+    ok('guarded key (spec 006): ' + k, isGuardedKvKey(k) === true);
+  for (const role of ['agent', 'team_leader', 'campaign_manager'])
+    ok(role + ' may NOT write or delete a range\'s digest, report keys or the queue, even holding a management app',
+      ['agent-digest-range-' + RK, 'agent-reports-variance-range-' + RK, 'agent-reports-leads-range-' + RK, 'cm-range-requests'].every((k) => kvWriteAllowed(k, { role, apps: ['vas', 'ops'] }) === false));
+  ok('staff keep writing a range\'s keys (the publisher)', ['agent-digest-range-' + RK, 'agent-reports-variance-range-' + RK, 'agent-reports-leads-range-' + RK].every((k) => kvWriteAllowed(k, { role: 'admin' }) === true));
+  for (const k of ['agent-reports-variance-range-' + RK + '/x', 'agent-reports-varianceX', 'agent-reports-leads-2026-09', 'agent-reports-leads_range-' + RK])
+    ok('the widened report pattern is exact — not guarded: ' + k, isGuardedKvKey(k) === false);
+
   const ag = (o) => ({ code: 'CB1', sales: null, gwpEx: null, pctT: null, act: null, ...o });
   ok('no agents → empty_digest', digestEmptiness({ period: { from: '2026-10-01' }, agents: [] }).error === 'empty_digest');
   ok('agents missing → empty_digest', digestEmptiness({ period: { from: '2026-10-01' } }).error === 'empty_digest');

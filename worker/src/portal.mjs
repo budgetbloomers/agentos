@@ -18,9 +18,10 @@
  * calculation is written twice.
  */
 
-import { getCoaching, rollUp, sessionsForAgent, withinWindow, CX_RULES, coachAnalysis, sessionThemes, STALE_HOURS, LM_TYPE_LABEL } from './coaching.mjs';
+import { getCoaching, rollUp, sessionsForAgent, withinWindow, CX_RULES, coachAnalysis, sessionThemes, STALE_HOURS, LM_TYPE_LABEL, withoutText } from './coaching.mjs';
 import { campKey, cmOverviewBody, effectiveCamps, blockPanelFor, rowInTenure, TENURE_KEYS } from './campaign.mjs';
 import { cycleRange, cyclesNow } from './cycle.mjs';   // the billing month (26th–25th), spec 001-cm-view-signoff
+import { rangeOf, rangeFilling, queueList, enqueueRange, RANGE_QUEUE_KEY } from './range.mjs';   // the custom range, spec 006-cm-custom-range
 import { withFloorEx, checksFor, VAT } from './rules.mjs';
 import { drillFor } from './drill.mjs';   // the KPI drill-down verdicts (sprint 2026-09-29, item 3)
 /* what drillFor needs beyond the agent row: the floor's ex-VAT twin and how far the month has run */
@@ -57,6 +58,8 @@ export const PORTAL_ALLOWED = new Set([
   /* The two hubs. Proxied — the browser never reaches Convex, and the leader id
      comes from the session, never the request. */
   '/api/portal/hub/coaching',
+  /* A team leader's coaching drafts (spec 004) — kept by the Worker until Submit, owner = the session's user id. */
+  '/api/portal/hub/coaching/drafts',
   '/api/portal/hub/kpi',
   /* The Help Center (help.mjs). Proxied to HighLevel — the browser never holds the
      key. request = agents only; list/detail/stage = team leaders, scoped to their
@@ -123,9 +126,14 @@ export const normCb = (v) => {
    published by PULSE beside the digest. Same load path as loadDigest — the pointer row's data, else
    the storage object — one parse per key per minute per isolate. Never merged into the digest: the
    digest travels to every agent's own page, these travel only to a team leader's slice. */
-export async function loadReports(DB, kind) {
+/* A CUSTOM RANGE'S REPORTS (spec 006): `periodKey` 'range-YYYY-MM-DD-YYYY-MM-DD' reads kv:agent-reports-<kind>-<key>,
+   which the tool publishes beside the range's digest. Anything that is not a range key's SHAPE reads nothing (the caller
+   has already validated the dates through resolvePeriod). */
+const RANGE_KEY_SHAPE = /^range-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}$/;
+export async function loadReports(DB, kind, periodKey) {
   if (!/^(variance|leads)$/.test(String(kind || ''))) return null;
-  const key = 'kv:agent-reports-' + kind;
+  if (periodKey != null && periodKey !== '' && !RANGE_KEY_SHAPE.test(String(periodKey))) return null;
+  const key = 'kv:agent-reports-' + kind + (periodKey ? '-' + periodKey : '');
   const cc = (globalThis.__reportCaches = globalThis.__reportCaches || {});
   const c = cc[key];
   if (c && Date.now() - c.t < 60000) return c.d;
@@ -172,6 +180,35 @@ export function tlReports(user, digest, report, kind) {
   else if (report.teams && report.teams[auth.team] != null) teams[auth.team] = report.teams[auth.team];
   const { agents: _a, teams: _t, teamsByCamp: _tc, campaigns: _c, ...floor } = report;   // rules, days, checks, statuses, book … — nobody named
   return { status: 200, body: { ...floor, kind, agents, teams, teamsByCamp, campaigns, team: auth.team || '', scope: auth.scope, missing: Math.max(0, auth.codes.size - Object.keys(agents).length), ...(campBlocks ? { campBlocks } : {}) } };
+}
+
+/** GET /api/portal/tl/reports?kind=variance|leads[&period=range-…] — the route, whole (spec 006, contract C4).
+ *  No period (or 'current', or any non-range value — the route never read one before) = the LIVE report keys, exactly as
+ *  before. A CUSTOM RANGE is the campaign manager's alone (403 for everyone else): the range's own digest scopes the slice
+ *  — the agents of those days — and its own report key is served. The engine built both; nothing is summed here. */
+export async function reportsRequest(DB, user, q, nowMs = Date.now()) {
+  q = q || {};
+  const kind = String(q.kind || '');
+  if (!/^(variance|leads)$/.test(kind)) return { status: 400, body: { error: 'kind must be variance or leads' } };
+  const p = q.period == null ? '' : String(q.period);
+  const failed = (e) => { console.error('loadReports ' + kind + ' failed: ' + (e && e.message || e)); return null; };
+  if (!/^range-/.test(p)) {
+    const digest = await loadDigest(DB, null);
+    if (!digest) return { status: 404, body: { error: 'Nothing has been published yet. Check again a little later.' } };
+    return tlReports(user, digest, await loadReports(DB, kind).catch(failed), kind);
+  }
+  if (!user || user.role !== 'campaign_manager') return { status: 403, body: { error: 'Custom ranges are a campaign manager view.' } };
+  const per = resolvePeriod({ period: p }, nowMs);
+  if (per.error || per.kind !== 'range') return { status: 400, body: { error: 'bad_period' } };
+  const period = { key: per.key, from: per.from, to: per.to, label: per.label };
+  const digest = await loadDigest(DB, per.key);
+  if (!digest) return { status: 404, body: { error: 'range_building', period, message: per.label + ' is being built — it will be ready within about 15 minutes.' } };
+  const report = await loadReports(DB, kind, per.key).catch(failed);
+  if (!report) return { status: 404, body: { error: 'report_not_built', period,
+    message: 'No ' + (kind === 'leads' ? 'Lead management' : 'Variance') + ' report was built for ' + per.label + ' — the engine had nothing to report for those days.' } };
+  const r = tlReports(user, digest, report, kind);
+  if (r.status === 200) r.body.period = { ...(r.body.period || {}), kind: 'range', key: per.key, label: per.label };
+  return r;
 }
 
 export async function loadDigest(DB, month) {
@@ -228,6 +265,67 @@ export async function listDigestCycles(DB) {
   return s;
 }
 
+/* The custom ranges that have been BUILT (kv:agent-digest-range-…, written by tools/digest-republish.mjs — spec 006): found
+   by key prefix like the months and cycles, so building one IS listing it. Every manager sees every built range (a range is
+   campaign-agnostic; the slice is still cut to their campaigns). Newest end first, at most RANGES_LISTED. */
+const RANGES_LISTED = 30;
+export async function listDigestRanges(DB, nowMs = Date.now()) {
+  const c = globalThis.__digestRanges;
+  if (c && Date.now() - c.t < 60000) return c.r;
+  let r = [];
+  try {
+    const rows = await DB.select(`rules?key=like.${encodeURIComponent('kv:agent-digest-range-%')}&select=key`);
+    r = (rows || []).map((x) => rangeOf(String(x.key).slice('kv:agent-digest-'.length), nowMs)).filter(Boolean)
+      .sort((a, b) => b.to.localeCompare(a.to) || b.from.localeCompare(a.from)).slice(0, RANGES_LISTED)
+      .map((x) => ({ key: x.key, from: x.from, to: x.to, label: x.label }));
+  } catch (e) { r = []; }
+  globalThis.__digestRanges = { t: Date.now(), r };
+  return r;
+}
+
+/* ---------------------------------------------------------------------------
+   THE CUSTOM-RANGE QUEUE (spec 006, contract C2). A manager asking for a range nobody has built yet queues it in
+   kv:cm-range-requests; the laptop tick builds it and writes the outcome back. The row is shared by every manager and the
+   tool, so every write is a COMPARE-AND-SET on its updated_at (the drafts.mjs / /api/kv pattern — constitution VI): a
+   write that lost the race re-reads and re-applies, so neither side's entry is ever silently dropped. The queue rules
+   themselves (dedupe by key, ≤ 20 waiting, > 7 days dropped) live in range.mjs, shared with the tool.
+   --------------------------------------------------------------------------- */
+const nextStamp = (nowMs, prev) => new Date(Math.max(nowMs, (Date.parse(prev || '') || 0) + 1)).toISOString();
+async function queueRangeRequest(DB, req, nowMs) {
+  const pk = 'rules?key=eq.' + encodeURIComponent(RANGE_QUEUE_KEY);
+  const by = 'cm-range:' + String(req.by || '').slice(0, 40);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const rows = await DB.select(pk + '&select=value,updated_at');
+    const row = rows && rows[0];
+    const out = enqueueRange(queueList(row && row.value), req, nowMs);
+    if (!out.changed) return out;
+    const value = { v: 1, requests: out.list };
+    if (row) {
+      const won = await DB.updateReturning(pk + '&updated_at=eq.' + encodeURIComponent(row.updated_at || ''),
+        { value, updated_by: by, updated_at: nextStamp(nowMs, row.updated_at) });
+      if (won && won.length) return out;
+    } else {
+      try { await DB.insert('rules', [{ key: RANGE_QUEUE_KEY, value, updated_by: by, updated_at: new Date(nowMs).toISOString() }], false); return out; }
+      catch (e) { /* somebody created the row first — read it and apply again */ }
+    }
+  }
+  throw new Error('the range queue kept changing under this request');
+}
+
+/* An unbuilt range, asked for by a campaign manager: queue it (once) and say so — never another period's numbers. */
+async function rangeNotBuilt(DB, user, per, nowMs) {
+  const period = { key: per.key, from: per.from, to: per.to, label: per.label };
+  let out;
+  try { out = await queueRangeRequest(DB, { key: per.key, from: per.from, to: per.to, by: user.username }, nowMs); }
+  catch (e) {
+    console.warn('cm-range queue write failed: ' + String((e && e.message) || e).slice(0, 200));
+    return { status: 503, body: { error: 'range_queue_unavailable', period, message: 'The request for ' + per.label + ' could not be queued just now — try again in a minute.' } };
+  }
+  if (out.state === 'refused') return { status: 404, body: { error: 'range_refused', period, reason: String((out.entry && out.entry.reason) || 'The engine could not build this range.') } };
+  if (out.state === 'full') return { status: 429, body: { error: 'range_queue_full', period, message: 'Too many ranges are waiting to be built — try again after the next refresh (about 15 minutes).' } };
+  return { status: 404, body: { error: 'range_building', period, message: per.label + ' is being built — it will be ready within about 15 minutes.' } };
+}
+
 /* ---------------------------------------------------------------------------
    THE CAMPAIGN MANAGER'S TWO SELECTORS (spec 001-cm-view-signoff, contract C2): ?period= and ?tenure=. Both are
    validated here and both apply to role campaign_manager ONLY — agents and team leaders keep the "no month filter"
@@ -245,8 +343,10 @@ export function parseTenure(v) {
   return t === 'all' || TENURE_KEYS.includes(t) ? t : null;
 }
 
-/** ?period= → {kind:'current'|'month'|'cycle', key, from?, to?, label?} | {error:'bad_period'}. 'current' (the default)
- *  takes its dates from the live digest, so it carries none here. The retired ?month=YYYY-MM is read when no period is given. */
+/** ?period= → {kind:'current'|'month'|'cycle'|'range', key, from?, to?, label?} | {error:'bad_period'}. 'current' (the
+ *  default) takes its dates from the live digest, so it carries none here. The retired ?month=YYYY-MM is read when no period
+ *  is given. A custom range (spec 006, C1) is `range-YYYY-MM-DD-YYYY-MM-DD`, valid only when from ≤ to, ≤ 93 days, to ≤
+ *  today (SAST) and from ≥ 2025-01-01 (range.mjs rangeOf) — anything else is bad_period. */
 export function resolvePeriod(q, nowMs = Date.now()) {
   const given = q && q.period != null && q.period !== '' ? String(q.period) : null;
   const raw = given != null ? given : (q && /^\d{4}-\d{2}$/.test(String(q.month || '')) ? String(q.month) : 'current');
@@ -254,6 +354,8 @@ export function resolvePeriod(q, nowMs = Date.now()) {
   if (/^\d{4}-(0[1-9]|1[0-2])$/.test(raw)) return { kind: 'month', key: raw, from: raw + '-01', to: lastDayOf(raw), label: monthLabelOf(raw) };
   const cy = /^cycle-\d{4}-(0[1-9]|1[0-2])$/.test(raw) ? cycleRange(raw) : null;
   if (cy) return { kind: 'cycle', key: cy.key, from: cy.from, to: cy.to, label: cy.label };
+  const rg = /^range-/.test(raw) ? rangeOf(raw, nowMs) : null;
+  if (rg) return { kind: 'range', key: rg.key, from: rg.from, to: rg.to, label: rg.label };
   return { error: 'bad_period' };
 }
 
@@ -288,17 +390,21 @@ export async function overviewRequest(env, DB, user, q, opts) {
   const digest = await loadDigest(DB, per.kind === 'current' ? null : per.key);
   if (!digest) {
     if (per.kind === 'current') return { status: 404, body: { error: 'Nothing has been published yet. Check again a little later.' } };
+    if (per.kind === 'range') return rangeNotBuilt(DB, user, per, nowMs);   // spec 006 C2: queued once, "being built" / "refused"
     return { status: 404, body: { error: 'period_not_published', period: { key: per.key, from: per.from, to: per.to, label: per.label },
       message: 'The figures for ' + per.label + ' have not been published yet. The 15-minute refresh builds them \u2014 check again shortly.' } };
   }
-  const [months, cycles] = await Promise.all([listDigestMonths(DB), listDigestCycles(DB)]);
+  const [months, cycles, ranges] = await Promise.all([listDigestMonths(DB), listDigestCycles(DB), listDigestRanges(DB, nowMs)]);
   const assist = getAssist ? await Promise.resolve(getAssist(digest)).catch((e) => ({ error: String((e && e.message) || e).slice(0, 200) }))
     : { error: 'Assistance data was not loaded.' };
-  const r = await overview(env, DB, user, digest, months, { assist, tenure, periodKind: per.kind });
+  /* a range still FILLING (its end within the last 2 days) is rebuilt on every engine run, so its age matters like the
+     live month's \u2014 it is not a "closed period, figures as published" (spec 006, FR-008) */
+  const periodOpen = per.kind === 'range' && rangeFilling(per.to, nowMs);
+  const r = await overview(env, DB, user, digest, months, { assist, tenure, periodKind: per.kind, periodOpen });
   if (r.status !== 200) return r;
   const cn = cyclesNow(nowMs);
   r.body.period = periodOf(per, digest, nowMs);
-  r.body.periods = { months, cycles: [cn.current, cn.last].map((c) => ({ key: c.key, from: c.from, to: c.to, label: c.label, complete: c.complete, published: cycles.has(c.key) })) };
+  r.body.periods = { months, cycles: [cn.current, cn.last].map((c) => ({ key: c.key, from: c.from, to: c.to, label: c.label, complete: c.complete, published: cycles.has(c.key) })), ranges };
   return r;
 }
 
@@ -604,7 +710,9 @@ export async function coachingFor(env, DB, rows, opts = {}) {
       per.push({
         code: r.code,
         name: r.name,
-        sessions: opts.withSessions ? safe : undefined,
+        /* opts.leader: the caller is a team leader, who must not read a submitted coaching document (spec 004) — the
+           sessions still travel (date, product, coach, themes), their written content does not. */
+        sessions: opts.withSessions ? (opts.leader ? safe.map(withoutText) : safe) : undefined,
         count: sessions.length,
         byType,
         lmCount: lmHere.length,
@@ -822,7 +930,7 @@ export async function coachingOthers(env, DB, user, digest, q, nowMs = Date.now(
     .slice(0, OTHERS_MAX)
     .map((s) => { const w = withCoach(s, tctx); return { id: s.id || null, date: s.date, cb: s.cb, agentName: String(s.agentName || ''),
       type: s.type || s.typeLabel || '', typeLabel: s.typeLabel || s.type || '', collection: s.collection || '',
-      coach: w.coach, coachIsTl: w.coachIsTl, themes: sessionThemes(s), supportProvided: s.supportProvided ? String(s.supportProvided) : null }; });
+      coach: w.coach, coachIsTl: w.coachIsTl, themes: sessionThemes(s) }; });   // no written content: a team leader never reads a submitted document (spec 004)
   return { others, coachingAt: hub.fetchedAt || null, othersWindow: { from, to: to === '9999-12-31' ? null : to } };
 }
 
@@ -947,7 +1055,7 @@ export async function overview(env, DB, user, digest, months, extra) {
     const assist = (extra && extra.assist) || { error: 'Assistance data was not loaded.' };
     const cmCtx = globalThis.__cmCtx;
     const tenure = (extra && extra.tenure) || 'all';
-    const body = cmOverviewBody(digest, auth, assist, cmCtx, { tenure, periodKind: (extra && extra.periodKind) || 'current' });
+    const body = cmOverviewBody(digest, auth, assist, cmCtx, { tenure, periodKind: (extra && extra.periodKind) || 'current', periodOpen: !!(extra && extra.periodOpen) });
     /* THE CM'S REPORT DATA (contract C2): the SAME agent rows the team overview returns, for the manager's campaigns
        inside the chosen tenure, plus the engine's own leader and campaign blocks cut to those campaigns — nothing is
        summed here (the blocks are whole-period aggregates PULSE built, so a tenure slice does not re-cut them).
@@ -1040,7 +1148,8 @@ export async function agentDetail(env, DB, user, digest, wantCb) {
     const whole = (digest.agents || []).find((r) => r && normCb(r.code) === cb) || null;
     if (whole && Array.isArray(whole.segments) && (auth.campaigns || []).includes(campKey(whole.campaign))) row = whole;
   }
-  const coaching = await coachingFor(env, DB, [row || { code: cb, name: cb }], { withSessions: true, digest, period: digest.period });
+  const coaching = await coachingFor(env, DB, [row || { code: cb, name: cb }], { withSessions: true, digest, period: digest.period,
+    leader: user.role === 'team_leader' });
 
   /* THE LADDER TRAVELS WITH THE DRILL-DOWN, for a team scope only. Clicking a
      name in Team Results must open everything that name was listed for — the rule

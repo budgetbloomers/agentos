@@ -2999,14 +2999,26 @@ const INGEST={
          here waiting; "published, 123 agents" told them the file landed but not that eleven
          people can now sign in and three no longer can. A REFUSED or FAILED sync is the one
          that matters most and is shown as an error, never swallowed. */
-      fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/roster',
-        {method:'POST',headers:{'Authorization':'Bearer '+t,'Content-Type':'application/json'},
-         body:JSON.stringify({source:'vas',file:name,as_of:asOf||'',
+      var listBody=JSON.stringify({source:'vas',file:name,as_of:asOf||'',
            rows:(rosterRaw&&rosterRaw.name===name)?rosterRaw.rows:undefined,   // the whole file; the server derives the roster
            roster:(S.roster||[]).map(function(a){return {code:a.code,name:a.name,tl:a.tl,
-             campaign:a.campaign,tenure:a.tenure,callx:a.callx,sf:a.sf,target:a.target,start:a.start};})})})
-        .then(function(r){return r.ok?r.json():null})
+             campaign:a.campaign,tenure:a.tenure,callx:a.callx,sf:a.sf,target:a.target,start:a.start};})});
+      /* A PUBLISH THAT GETS NO ANSWER IS TRIED AGAIN (spec 010, 2026-10-07). Ashton's 7 Oct upload got an error
+         status ONCE, was written off as "no reply" in his tab only, and four minutes later the routine re-sync put
+         the 6 Oct list back over it — Hezron's team, Training Gr 17 and 35 moves undone. The same request goes again
+         after ~20 s and ~1 min (the guards above were checked once: this is the hand upload, never an adoption);
+         any ANSWER — accepted or refused — ends it, and only the third silence is reported, with its count. */
+      var listWaits=window.__listRetryMs||[20000,60000];
+      var publishList=function(attempt){
+        fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/roster',
+        {method:'POST',headers:{'Authorization':'Bearer '+(sessionStorage.getItem('cbx_token')||t),'Content-Type':'application/json'},body:listBody})
+        .then(function(r){return r.ok?r.json():null},function(){return null})
+        .catch(function(){return null})
         .then(function(j){
+          if(!j){
+            if(attempt<=listWaits.length){ setTimeout(function(){ publishList(attempt+1); },listWaits[attempt-1]); return; }
+            reportListRefused({file:name,reason:'the server did not accept the list (no reply after '+attempt+' attempts)',detail:''}); return;
+          }
           if(j&&j.accepted===false&&/older list/.test(j.reason||''))
             toast('This Agent List is dated '+(asOf||'?')+' and the suite already has one from '
               +(j.as_of||'?')+' — the newer list is being kept. Upload the latest list if that is wrong.',12000);
@@ -3018,10 +3030,12 @@ const INGEST={
             /* the published snapshot is what creates (or ends) a campaign move — ask the feed now (D4) */
             if(typeof syncCampaignMoves==='function') setTimeout(function(){ try{ syncCampaignMoves(); }catch(e){} },2500); }
           else if(j&&j.accepted===false&&j.publish) reportListRefused(Object.assign({file:name},j));
-          /* an answer that is neither (a 4xx/5xx became null above, or an unlisted refusal) is
+          /* an answer that is neither (an unlisted refusal — silence was retried above) is
              still a list that did not publish — say so rather than nothing */
-          else if(!j||(j.accepted===false&&!/identical list/.test(j.reason||''))) reportListRefused({file:name,reason:(j&&j.reason)||'the server did not accept the list (no reply)',detail:(j&&j.detail)||''});
-        }).catch(function(){ reportListRefused({file:name,reason:'the publish request failed (network)',detail:''}); });
+          else if(j.accepted===false&&!/identical list/.test(j.reason||'')) reportListRefused({file:name,reason:j.reason||'the server did not accept the list',detail:j.detail||''});
+        }).catch(function(){ reportListRefused({file:name,reason:'the publish request failed',detail:''}); });
+      };
+      publishList(1);
     }catch(e){} },3000);
     // the agent list is a LIVE SNAPSHOT, not history — a new upload supersedes any earlier
     // agent-list file in the registry (kept per-file, so a multi-sheet workbook's own roster
@@ -8008,7 +8022,7 @@ const HUBS=[
      mints reaches nothing but the menu and the order; everyone orders, management included.
      The card carries no screenshot on purpose: the menu changes daily. */
   {name:'Wimpy Order',url:'https://chatterbox-agentos.pages.dev/wimpy/',copy:true,shot:'',
-   desc:'Order the Weekday Value Menu — 3 breakfasts, 3 burgers, 3 toasteds and today’s Big One, served as it comes. Sign in with your CB number (managers: your username), type your CB number, name and surname on the order, and it goes straight to the kitchen. Orders 08:00–17:00, Monday to Friday.'},
+   desc:'Order the Weekday Value Menu — 3 breakfasts, 3 burgers, 3 toasteds and today’s Big One, served as it comes. Sign in with your CB number and your Agent Analytics password (managers: your username and password), type your CB number, name and surname on the order, and it goes straight to the kitchen. Orders 08:00–17:00, Monday to Friday.'},
   /* THE SUITE'S OWN agent-facing app — removed from the app switcher 2026-08-27 (Nick:
      "agent analytics is an app, where I can give the link to the agents and tls").
      This card is the one place the link lives now. Unlike the Vercel hubs its data

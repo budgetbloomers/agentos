@@ -247,7 +247,7 @@ console.log('Wrote ' + out + ' (' + (html.length / 1024).toFixed(0) + ' KB), shi
    login, for review only. It runs on the prototype's own fourteen sample people,
    so it is deliberately NOT at /agent/ — putting invented commission figures in
    front of 130 real agents would be worse than showing them nothing. */
-/* wimpy is the lunch-ordering app (2026-09-10): its own CB-number sign-in, no auth-gate — the
+/* wimpy is the lunch-ordering app (2026-09-10): its own sign-in (CB number + password since spec 009), no auth-gate — the
    Worker's session scope is its lock. Served at /wimpy/, linked from the VAS Apps page. */
 for (const [srcDir, urlDir, label] of [['nicks_code', 'pulse', 'VAS'], ['tracker', 'tracker', 'Tracker Analytics'], ['agent', 'agent', 'Agent Analytics'], ['agent-preview', 'agent-preview', 'Agent Analytics (prototype)'], ['wimpy', 'wimpy', 'Wimpy Order']]) {
   const src = path.join(root, srcDir, 'index.html');

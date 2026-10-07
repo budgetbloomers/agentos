@@ -14,6 +14,9 @@
  *   C  team leaders'      — GET /api/portal/cm-coaching: manager only, server-scoped, newest first
  *      coaching
  *   D  period             — ?period= current | YYYY-MM | cycle-YYYY-MM, 400 / 404 as contracted
+ *   R  custom range       — ?period=range-YYYY-MM-DD-YYYY-MM-DD (spec 006-cm-custom-range, contracts C1–C4): validated,
+ *                           queued once in kv:cm-range-requests while unbuilt (404 range_building / range_refused),
+ *                           served when built, listed in periods.ranges, and the range's report keys on tl/reports
  *   E  CM report data     — agents, tlAgg, campAgg + the envelope
  *   F  team-leader rows   — every agent row carries `drill` and `coach`
  *   G  the rule book      — specs/cm_rules.json and the operative copy cannot drift
@@ -43,6 +46,11 @@ const APP_USERS = [
   { username: 'cb300', full_name: 'Olivia Outside', cb: 'CB300', team: 'Olivia Outside', hub_ids: { coaching: 'olivia-id' } },   // another campaign
 ];
 const decodeKeys = (q) => { const m = /key=in\.\(([^)]*)\)/.exec(q); return m ? decodeURIComponent(m[1]).split(',') : []; };
+/* spec 006: the custom-range queue is a real rules row here — insert (create-only unless upsert) and a compare-and-set
+   PATCH on updated_at, exactly the PostgREST semantics the Worker relies on. Every OTHER key keeps the old no-op insert. */
+const STAMP = {};     // 'kv:cm-range…' -> updated_at
+const QUEUED = (k) => /^kv:cm-range/.test(k);
+let QUEUE_WRITES = 0;
 const DB = {
   select: async (q) => {
     if (q.startsWith('rules?key=in.')) return decodeKeys(q).filter((k) => RULES[k]).map((k) => ({ key: k, value: RULES[k] }));
@@ -50,15 +58,32 @@ const DB = {
       const pref = decodeURIComponent(q.split('like.')[1].split('&')[0]).replace(/%$/, '');
       return Object.keys(RULES).filter((k) => k.startsWith(pref)).map((key) => ({ key }));
     }
-    if (q.startsWith('rules?key=eq.')) { const k = decodeURIComponent(q.split('eq.')[1].split('&')[0]); return RULES[k] ? [{ key: k, value: RULES[k] }] : []; }
+    if (q.startsWith('rules?key=eq.')) { const k = decodeURIComponent(q.split('eq.')[1].split('&')[0]); return RULES[k] ? [{ key: k, value: RULES[k], updated_at: STAMP[k] }] : []; }
     if (q.startsWith('app_users?role=eq.team_leader')) return APP_USERS.map((u) => ({ ...u, ...(q.includes('hub_ids') ? {} : { hub_ids: undefined }) }));
     return [];
   },
-  insert: async () => {}, del: async () => {}, update: async () => {},
+  insert: async (table, rows, upsert) => {
+    if (!String(table).startsWith('rules')) return;
+    for (const r of rows || []) {
+      if (!QUEUED(r.key)) continue;
+      if (!upsert && RULES[r.key]) throw new Error('supabase POST rules → 409: duplicate key');
+      RULES[r.key] = r.value; STAMP[r.key] = r.updated_at; QUEUE_WRITES++;
+    }
+  },
+  updateReturning: async (q, patch) => {
+    const m = /^rules\?key=eq\.([^&]+)(?:&updated_at=eq\.([^&]+))?/.exec(q);
+    if (!m) return [];
+    const k = decodeURIComponent(m[1]);
+    if (!QUEUED(k) || !(k in RULES)) return [];
+    if (m[2] !== undefined && decodeURIComponent(m[2]) !== STAMP[k]) return [];     // somebody else got there first
+    RULES[k] = patch.value; STAMP[k] = patch.updated_at; QUEUE_WRITES++;
+    return [{ key: k, value: RULES[k], updated_at: STAMP[k] }];
+  },
+  del: async () => {}, update: async () => {},
   storageGet: async (bucket, key) => STORE[bucket + '/' + key] || null,
 };
 const env = {};
-const resetCaches = () => { for (const k of ['__digestCaches', '__digestMonths', '__digestCycles', '__coachCache', '__cmCtx', '__nbaCache', '__reportCaches']) delete globalThis[k]; };
+const resetCaches = () => { for (const k of ['__digestCaches', '__digestMonths', '__digestCycles', '__digestRanges', '__coachCache', '__cmCtx', '__nbaCache', '__reportCaches']) delete globalThis[k]; };
 
 /* ------------------------------------------------------------------ fixture digest */
 const DAYS = (n, sales, from = 1) => Array.from({ length: n }, (_, i) => ({ d: '2026-09-' + String(from + i).padStart(2, '0'), s: sales, t: 3, x: sales * 90, act: 1, emp: 1, tk: 16000 }));
@@ -97,6 +122,7 @@ const setup = async () => {
   resetCaches();
   for (const k of Object.keys(RULES)) delete RULES[k];
   for (const k of Object.keys(STORE)) delete STORE[k];
+  for (const k of Object.keys(STAMP)) delete STAMP[k];
   RULES['cm:assignments'] = { ryan: { name: 'Ryan G', campaigns: ['courtesy', 'cuddle'] }, dalwin: { name: 'Dalwin', campaigns: ['courtesy', 'cuddle'] } };
   return loadCmContext(DB, { force: true });
 };
@@ -295,6 +321,199 @@ head('D · period: current | YYYY-MM | cycle-YYYY-MM');
   ok('resolvePeriod: pure and total', resolvePeriod({ period: '2026-02' }, NOW).to === '2026-02-28' && resolvePeriod({ period: '2028-02' }, NOW).to === '2028-02-29' && resolvePeriod({ period: 'zzz' }, NOW).error === 'bad_period');
 }
 
+/* =================================================================== R (custom range, spec 006) */
+head('R · custom range: range-YYYY-MM-DD-YYYY-MM-DD (spec 006-cm-custom-range, C1–C4)');
+{
+  const NOW = Date.parse('2026-10-01T08:00:00Z');                         // 10:00 SAST, 1 October 2026
+  const KEY = 'range-2026-09-01-2026-09-15';
+  const QKEY = 'kv:cm-range-requests';
+  let RG = {};
+  try { RG = await import(SRC('range.mjs')); } catch (e) { ok('worker/src/range.mjs exists (the one definition of a range)', false, String(e.message).slice(0, 120)); }
+  const P = await import(SRC('portal.mjs'));
+  const queue = () => ((RULES[QKEY] || {}).requests || []);
+  const call = async (q, user = cmUser) => {
+    resetCaches(); await loadCmContext(DB, { force: true });
+    try { return await overviewRequest(env, DB, user, q, { getAssist: async () => ({ requests: [] }), nowMs: NOW }); }
+    catch (e) { return { status: 'threw', body: { error: String(e && e.message || e) } }; }
+  };
+
+  /* C1 — the key, its validation and its label */
+  const rp = resolvePeriod({ period: KEY }, NOW);
+  ok('resolvePeriod(' + KEY + ') → {kind:"range", key, from, to, label "1 – 15 Sep 2026"}',
+    rp.kind === 'range' && rp.key === KEY && rp.from === '2026-09-01' && rp.to === '2026-09-15' && rp.label === '1 – 15 Sep 2026', JSON.stringify(rp));
+  const lab = (k) => (resolvePeriod({ period: k }, NOW) || {}).label;
+  ok('a range across a month boundary is labelled "26 Aug – 25 Sep 2026"', lab('range-2026-08-26-2026-09-25') === '26 Aug – 25 Sep 2026', lab('range-2026-08-26-2026-09-25'));
+  ok('across a year boundary both years are named ("15 Dec 2025 – 10 Jan 2026")', lab('range-2025-12-15-2026-01-10') === '15 Dec 2025 – 10 Jan 2026', lab('range-2025-12-15-2026-01-10'));
+  ok('a single day is one date ("1 Oct 2026")', lab('range-2026-10-01-2026-10-01') === '1 Oct 2026', lab('range-2026-10-01-2026-10-01'));
+  ok('93 days exactly is allowed (30 Jun – 30 Sep)', resolvePeriod({ period: 'range-2026-06-30-2026-09-30' }, NOW).kind === 'range');
+  ok('to = today (SAST) is allowed', resolvePeriod({ period: 'range-2026-09-20-2026-10-01' }, NOW).kind === 'range');
+  ok('today is the SAST day: 23:30 UTC on 30 Sep is already 1 Oct', resolvePeriod({ period: 'range-2026-09-20-2026-10-01' }, Date.parse('2026-09-30T23:30:00Z')).kind === 'range'
+    && resolvePeriod({ period: 'range-2026-09-20-2026-10-01' }, Date.parse('2026-09-30T21:30:00Z')).error === 'bad_period');
+  ok('from = 1 January 2025 is the earliest allowed', resolvePeriod({ period: 'range-2025-01-01-2025-01-31' }, NOW).kind === 'range');
+  for (const [why, bad] of [['from after to', 'range-2026-09-15-2026-09-01'], ['94 days', 'range-2026-06-29-2026-09-30'], ['to after today', 'range-2026-09-20-2026-10-02'],
+    ['before 2025', 'range-2024-12-31-2025-01-10'], ['one-digit month', 'range-2026-9-01-2026-09-15'], ['one date only', 'range-2026-09-01'], ['31 September', 'range-2026-09-01-2026-09-31'],
+    ['30 February', 'range-2026-02-30-2026-03-01'], ['trailing space', KEY + ' '], ['underscore', 'range-2026-09-01_2026-09-15'], ['upper case', 'RANGE-2026-09-01-2026-09-15'],
+    ['injection', "range-2026-09-01-2026-09-15'; drop"]]) {
+    const r = await call({ period: bad });
+    ok('bad range (' + why + ') → 400 bad_period, nothing queued', r.status === 400 && r.body.error === 'bad_period' && !RULES[QKEY], r.status + JSON.stringify(r.body));
+  }
+  if (RG.rangeProblem) {
+    ok('range.mjs rangeProblem names what is wrong in words ("" when fine)', RG.rangeProblem('2026-09-01', '2026-09-15', NOW) === ''
+      && /after/i.test(RG.rangeProblem('2026-09-15', '2026-09-01', NOW)) && /93/.test(RG.rangeProblem('2026-06-29', '2026-09-30', NOW))
+      && /today/i.test(RG.rangeProblem('2026-09-20', '2026-10-02', NOW)) && /2025/.test(RG.rangeProblem('2024-12-31', '2025-01-10', NOW)));
+    ok('the limits are named constants (93 days, from 2025-01-01, 20 waiting, 7 days)', RG.RANGE_MAX_DAYS === 93 && RG.RANGE_MIN_FROM === '2025-01-01' && RG.RANGE_QUEUE_MAX === 20 && RG.RANGE_QUEUE_TTL_DAYS === 7 && RG.RANGE_QUEUE_KEY === QKEY);
+    /* settleQueue — what the tool writes back (pure; shared with tools/digest-republish.mjs) */
+    const T0 = new Date(NOW - 86400000).toISOString();
+    const L = [{ key: 'range-2026-09-01-2026-09-15', from: '2026-09-01', to: '2026-09-15', by: 'ryan', at: T0, status: 'waiting' },
+      { key: 'range-2026-09-16-2026-09-20', from: '2026-09-16', to: '2026-09-20', by: 'ryan', at: T0, status: 'refused', reason: 'old reason', statusAt: T0 },
+      { key: 'range-2026-08-01-2026-08-02', from: '2026-08-01', to: '2026-08-02', by: 'ryan', at: new Date(NOW - 9 * 86400000).toISOString(), status: 'waiting' },
+      { key: 'range-2026-09-21-2026-09-22', from: '2026-09-21', to: '2026-09-22', by: 'dalwin', at: T0, status: 'waiting' }];
+    const S2 = RG.settleQueue(L, [{ key: 'range-2026-09-01-2026-09-15', status: 'built' }, { key: 'range-2026-09-16-2026-09-20', status: 'built' },
+      { key: 'range-2026-09-21-2026-09-22', status: 'refused', reason: 'x'.repeat(500) }, { key: 'range-2026-01-01-2026-01-02', status: 'built' }], NOW);
+    const g = (k) => S2.find((e) => e.key === k);
+    ok('settleQueue: built → status "built" + statusAt, the request (by, at) kept', g('range-2026-09-01-2026-09-15').status === 'built' && g('range-2026-09-01-2026-09-15').statusAt === new Date(NOW).toISOString() && g('range-2026-09-01-2026-09-15').by === 'ryan' && g('range-2026-09-01-2026-09-15').at === T0);
+    ok('settleQueue: a refused range that now builds loses its old reason', g('range-2026-09-16-2026-09-20').status === 'built' && !('reason' in g('range-2026-09-16-2026-09-20')));
+    ok('settleQueue: refused → status "refused" + the reason (capped at 300 characters)', g('range-2026-09-21-2026-09-22').status === 'refused' && g('range-2026-09-21-2026-09-22').reason.length === 300);
+    ok('settleQueue: an expired request is dropped, and a result for a request no longer queued is not re-added', !g('range-2026-08-01-2026-08-02') && !g('range-2026-01-01-2026-01-02') && S2.length === 3);
+    ok('settleQueue does not change the list it was given (a new list back)', L[0].status === 'waiting' && L[1].reason === 'old reason');
+    const rq = RG.enqueueRange([{ key: KEY, from: '2026-09-01', to: '2026-09-15', by: 'ryan', at: T0, status: 'built', statusAt: T0 }], { key: KEY, from: '2026-09-01', to: '2026-09-15', by: 'dalwin' }, NOW);
+    ok('enqueueRange: a "built" range whose digest is missing is queued again (waiting, asked now)', rq.state === 'queued' && rq.changed && rq.list.length === 1 && rq.list[0].status === 'waiting' && rq.list[0].at === new Date(NOW).toISOString());
+    /* review finding 3: a refusal is not for ever — the missing days may land later */
+    const refusedAt = (ms) => [{ key: KEY, from: '2026-09-01', to: '2026-09-15', by: 'ryan', at: new Date(NOW - 3 * 86400000).toISOString(), status: 'refused', reason: 'no rows', statusAt: new Date(NOW - ms).toISOString() }];
+    const old1 = RG.enqueueRange(refusedAt(25 * 3600000), { key: KEY, from: '2026-09-01', to: '2026-09-15', by: 'dalwin' }, NOW);
+    ok('enqueueRange: a range refused MORE than a day ago is queued again when asked (waiting, asked now, reason dropped, still one entry)', RG.RANGE_REFUSED_RETRY_DAYS === 1 && old1.state === 'queued' && old1.changed
+      && old1.list.length === 1 && old1.list[0].status === 'waiting' && old1.list[0].at === new Date(NOW).toISOString() && !('reason' in old1.list[0]), JSON.stringify(old1));
+    const new1 = RG.enqueueRange(refusedAt(12 * 3600000), { key: KEY, from: '2026-09-01', to: '2026-09-15', by: 'dalwin' }, NOW);
+    ok('…a range refused LESS than a day ago still answers refused (no write)', new1.state === 'refused' && !new1.changed && new1.entry.reason === 'no rows');
+    ok('queueList reads anything malformed as an empty queue', RG.queueList(null).length === 0 && RG.queueList({ requests: 'x' }).length === 0 && RG.queueList({ requests: [null, { key: 1 }, { key: KEY }] }).length === 1);
+  }
+
+  /* C2 — an unbuilt range is queued once and says so */
+  await setup();
+  publish('kv:agent-digest', { ...DIGEST(), period: { from: '2026-10-01', to: '2026-10-31' }, marker: 'live' });
+  let r = await call({ period: KEY });
+  ok('an unbuilt range → 404 range_building with the period and a "being built … 15 minutes" message', r.status === 404 && r.body.error === 'range_building'
+    && same(r.body.period, { key: KEY, from: '2026-09-01', to: '2026-09-15', label: '1 – 15 Sep 2026' }) && /being built/.test(r.body.message || '') && /15 minutes/.test(r.body.message || ''), r.status + JSON.stringify(r.body));
+  ok('…and no numbers travel with it', !('cm' in r.body) && !('agents' in r.body));
+  ok('the request is queued in kv:cm-range-requests: {key, from, to, by, at, status:"waiting"}', queue().length === 1 && queue()[0].key === KEY && queue()[0].from === '2026-09-01' && queue()[0].to === '2026-09-15'
+    && queue()[0].by === 'ryan' && queue()[0].at === new Date(NOW).toISOString() && queue()[0].status === 'waiting', JSON.stringify(RULES[QKEY]));
+  r = await call({ period: KEY });
+  ok('asking again → still building, still ONE entry (deduped by key)', r.status === 404 && r.body.error === 'range_building' && queue().length === 1, JSON.stringify(queue()));
+  r = await call({ period: KEY }, { username: 'dalwin', full_name: 'Dalwin', role: 'campaign_manager', cb: '' });
+  ok('a second manager asking the same range → still ONE entry (the first asker kept)', r.status === 404 && queue().length === 1 && queue()[0].by === 'ryan', JSON.stringify(queue()));
+  r = await call({ period: 'range-2026-09-16-2026-09-30' });
+  ok('a different range is its own entry', queue().length === 2 && queue()[1].key === 'range-2026-09-16-2026-09-30');
+  /* a refused build says why */
+  RULES[QKEY] = { v: 1, requests: queue().map((e) => (e.key === KEY ? { ...e, status: 'refused', reason: 'There are no figures for 1 – 15 Sep 2026 — nothing was uploaded for those days.', statusAt: new Date(NOW).toISOString() } : e)) };
+  STAMP[QKEY] = '2026-10-01T08:00:00.500Z';
+  const writesBefore = QUEUE_WRITES;
+  r = await call({ period: KEY });
+  ok('a range the engine refused → 404 range_refused with the period and the reason', r.status === 404 && r.body.error === 'range_refused' && r.body.period && r.body.period.key === KEY
+    && /no figures/.test(r.body.reason || ''), r.status + JSON.stringify(r.body));
+  ok('…and it is not queued again (no write)', QUEUE_WRITES === writesBefore && queue().filter((e) => e.key === KEY).length === 1);
+  /* review finding 3, end to end: refused two days ago → asking again re-queues it (still one entry) */
+  RULES[QKEY] = { v: 1, requests: queue().map((e) => (e.key === KEY ? { ...e, statusAt: new Date(NOW - 2 * 86400000).toISOString() } : e)) };
+  STAMP[QKEY] = '2026-10-01T08:00:00.600Z';
+  r = await call({ period: KEY });
+  ok('a range refused more than a day ago, asked again → 404 range_building and its ONE entry is waiting again', r.status === 404 && r.body.error === 'range_building'
+    && queue().filter((e) => e.key === KEY).length === 1 && queue().find((e) => e.key === KEY).status === 'waiting', r.status + JSON.stringify(queue()));
+  /* bounded: entries older than 7 days are dropped, at most 20 waiting */
+  await setup(); publish('kv:agent-digest', { ...DIGEST(), period: { from: '2026-10-01', to: '2026-10-31' } });
+  const old = new Date(NOW - 8 * 86400000).toISOString(), recent = new Date(NOW - 86400000).toISOString();
+  RULES[QKEY] = { v: 1, requests: [{ key: 'range-2026-08-01-2026-08-10', from: '2026-08-01', to: '2026-08-10', by: 'ryan', at: old, status: 'waiting' },
+    { key: 'range-2026-08-11-2026-08-20', from: '2026-08-11', to: '2026-08-20', by: 'ryan', at: recent, status: 'built', statusAt: recent }] };
+  STAMP[QKEY] = '2026-09-30T08:00:00.000Z';
+  r = await call({ period: KEY });
+  ok('a request older than 7 days is dropped when the queue is next written; a recent one is kept', r.status === 404 && same(queue().map((e) => e.key), ['range-2026-08-11-2026-08-20', KEY]), JSON.stringify(queue().map((e) => e.key)));
+  ok('the write is a compare-and-set on updated_at (the stamp moved on)', STAMP[QKEY] !== '2026-09-30T08:00:00.000Z');
+  await setup(); publish('kv:agent-digest', { ...DIGEST(), period: { from: '2026-10-01', to: '2026-10-31' } });
+  const twenty = Array.from({ length: 20 }, (_, i) => { const d = String(i + 1).padStart(2, '0'); return { key: 'range-2026-08-' + d + '-2026-08-' + d, from: '2026-08-' + d, to: '2026-08-' + d, by: 'ryan', at: recent, status: 'waiting' }; });
+  RULES[QKEY] = { v: 1, requests: twenty }; STAMP[QKEY] = '2026-09-30T08:00:00.000Z';
+  r = await call({ period: KEY });
+  ok('with 20 ranges already waiting a 21st is refused (429 range_queue_full, with a message) and not queued', r.status === 429 && r.body.error === 'range_queue_full' && /try again/i.test(r.body.message || '') && queue().length === 20, r.status + JSON.stringify(r.body));
+  r = await call({ period: twenty[0].key });
+  ok('…but a range already waiting still answers "being built"', r.status === 404 && r.body.error === 'range_building');
+  /* a write race: somebody else moved the row between the read and the write — the request is not lost */
+  await setup(); publish('kv:agent-digest', { ...DIGEST(), period: { from: '2026-10-01', to: '2026-10-31' } });
+  RULES[QKEY] = { v: 1, requests: [] }; STAMP[QKEY] = 'v1';
+  const realUR = DB.updateReturning; let raced = false;
+  DB.updateReturning = async (q, patch) => { if (!raced) { raced = true; RULES[QKEY] = { v: 1, requests: [{ key: 'range-2026-08-01-2026-08-02', from: '2026-08-01', to: '2026-08-02', by: 'dalwin', at: recent, status: 'waiting' }] }; STAMP[QKEY] = 'v2'; return []; } return realUR(q, patch); };
+  r = await call({ period: KEY });
+  DB.updateReturning = realUR;
+  ok('a lost compare-and-set re-reads and retries: BOTH the other writer\'s entry and this one survive', r.status === 404 && same(queue().map((e) => e.key), ['range-2026-08-01-2026-08-02', KEY]), JSON.stringify(queue()));
+
+  /* C3 — a built range is served, labelled, and listed */
+  await setup();
+  publish('kv:agent-digest', { ...DIGEST(), period: { from: '2026-10-01', to: '2026-10-31' }, marker: 'live' });
+  publish('kv:agent-digest-2026-09', { ...DIGEST(), marker: 'month' });
+  const built = { ...DIGEST(), marker: 'range', period: { from: '2026-09-01', to: '2026-09-15', kind: 'range', key: KEY, label: '1 – 15 Sep 2026' }, updatedAt: new Date(NOW - 30 * 3600000).toISOString() };
+  built.agents = built.agents.map((a) => ({ ...a, sales: a.sales + 1000 }));      // unmistakable range figures
+  publish('kv:agent-digest-' + KEY, built);
+  publish('kv:agent-digest-range-2026-09-20-2026-10-01', { ...DIGEST(), marker: 'filling', period: { from: '2026-09-20', to: '2026-10-01', kind: 'range' }, updatedAt: new Date(NOW - 30 * 3600000).toISOString() });
+  r = await call({ period: KEY });
+  ok('a built range → 200, period {kind:"range", key, from, to, label}', r.status === 200 && r.body.period && r.body.period.kind === 'range' && r.body.period.key === KEY && r.body.period.from === '2026-09-01' && r.body.period.to === '2026-09-15' && r.body.period.label === '1 – 15 Sep 2026', r.status + JSON.stringify(r.body.period || r.body));
+  ok('…the figures are THAT digest\'s (the engine\'s, served — Courtesy sales 3060)', r.status === 200 && camp(r.body.cm, 'courtesy').kpis.sales.v === 3060, r.status === 200 ? JSON.stringify(camp(r.body.cm, 'courtesy').kpis.sales) : '');
+  ok('…and asking for a built range writes nothing to the queue', !RULES[QKEY]);
+  const pr = r.body.periods || {};
+  ok('periods.ranges lists the built ranges {key, from, to, label}, newest end first', Array.isArray(pr.ranges) && same(pr.ranges, [
+    { key: 'range-2026-09-20-2026-10-01', from: '2026-09-20', to: '2026-10-01', label: '20 Sep – 1 Oct 2026' }, { key: KEY, from: '2026-09-01', to: '2026-09-15', label: '1 – 15 Sep 2026' }]), JSON.stringify(pr.ranges));
+  ok('periods.months still lists months only (no range key leaks in), cycles unchanged', same(pr.months, ['2026-09']) && Array.isArray(pr.cycles) && pr.cycles.length === 2, JSON.stringify(pr));
+  ok('a closed range published 30 h ago is a closed period (not "Waiting on new data")', r.status === 200 && r.body.cm.freshness.stale === false && /Closed period/.test(r.body.cm.freshness.label), r.status === 200 ? JSON.stringify(r.body.cm.freshness) : '');
+  r = await call({ period: 'range-2026-09-20-2026-10-01' });
+  ok('a range still FILLING (ends today) is rebuilt each run, so its band is age-based like the live month (30 h → "Waiting on new data")', r.status === 200 && r.body.cm.freshness.stale === true && !/Closed period/.test(r.body.cm.freshness.label), r.status === 200 ? JSON.stringify(r.body.cm.freshness) : JSON.stringify(r.body));
+  r = await call({ period: KEY, tenure: 'M1' });
+  ok('range and tenure compose', r.status === 200 && r.body.cm.tenure === 'M1' && camp(r.body.cm, 'courtesy').agents === 1);
+
+  /* only campaign managers */
+  await setup(); publish('kv:agent-digest', { ...DIGEST(), period: { from: '2026-10-01', to: '2026-10-31' }, marker: 'live' });
+  r = await call({ period: KEY }, tlUser);
+  ok('a team leader asking for a range: param ignored, live digest served, NOTHING queued', r.status === 200 && r.body.scope === 'team' && !RULES[QKEY], r.status + JSON.stringify(r.body).slice(0, 100));
+  r = await call({ period: KEY }, agentUser);
+  ok('an agent asking for a range: live digest, nothing queued', r.status === 200 && r.body.me && r.body.me.code === 'CB1' && !RULES[QKEY]);
+
+  /* C4 — the range's Variance and Lead management reports */
+  await setup();
+  publish('kv:agent-digest', { ...DIGEST(), period: { from: '2026-10-01', to: '2026-10-31' } });
+  const rep = (marker, period) => ({ v: 1, kind: 'variance', updatedAt: new Date(NOW).toISOString(), period, marker,
+    agents: { CB1: { rows: 1 }, CB4: { rows: 2 }, CB9: { rows: 9 } }, teams: { 'Denise Haripersad': { agents: 3 } },
+    teamsByCamp: { 'Courtesy|Denise Haripersad': { camp: 'Courtesy', tl: 'Denise Haripersad', agents: 3 }, 'Rewarded|Olivia Outside': { camp: 'Rewarded', tl: 'Olivia Outside', agents: 1 } },
+    campaigns: { Courtesy: { camp: 'Courtesy', agents: 3 }, Rewarded: { camp: 'Rewarded', agents: 1 } } });
+  publish('kv:agent-reports-variance', rep('live', { from: '2026-10-01', to: '2026-10-01' }));
+  publish('kv:agent-digest-' + KEY, { ...DIGEST(), period: { from: '2026-09-01', to: '2026-09-15', kind: 'range' } });
+  publish('kv:agent-reports-variance-' + KEY, rep('range', { from: '2026-09-01', to: '2026-09-15' }));
+  const ask = async (user, q) => { resetCaches(); await loadCmContext(DB, { force: true });
+    if (typeof P.reportsRequest !== 'function') return { status: 'missing', body: { error: 'portal.mjs has no reportsRequest' } };
+    try { return await P.reportsRequest(DB, user, q, NOW); } catch (e) { return { status: 'threw', body: { error: String(e && e.message || e) } }; } };
+  r = await ask(cmUser, { kind: 'variance', period: KEY });
+  ok('tl/reports?kind=variance&period=range-… → the RANGE\'s report (kv:agent-reports-variance-range-…), sliced to the manager', r.status === 200 && r.body.marker === 'range' && r.body.period.from === '2026-09-01'
+    && r.body.scope === 'campaign' && same(Object.keys(r.body.campaigns), ['Courtesy']) && !('Rewarded|Olivia Outside' in r.body.teamsByCamp), r.status + JSON.stringify(r.body).slice(0, 200));
+  r = await ask(cmUser, { kind: 'variance' });
+  ok('…no period = the live report, as before', r.status === 200 && r.body.marker === 'live', r.status + JSON.stringify(r.body).slice(0, 120));
+  r = await ask(cmUser, { kind: 'variance', period: 'current' });
+  ok('…"current" = the live report too', r.status === 200 && r.body.marker === 'live');
+  r = await ask(cmUser, { kind: 'leads', period: KEY });
+  ok('a built range with no Lead management report → 404 that says the engine built none for those days', r.status === 404 && /Lead management/.test(r.body.message || r.body.error || '') && /1 – 15 Sep 2026/.test(r.body.message || r.body.error || ''), r.status + JSON.stringify(r.body));
+  r = await ask(cmUser, { kind: 'variance', period: 'range-2026-09-16-2026-09-30' });
+  ok('an unbuilt range → 404 range_building (the overview is what queues it)', r.status === 404 && r.body.error === 'range_building' && r.body.period && r.body.period.key === 'range-2026-09-16-2026-09-30' && !RULES[QKEY], r.status + JSON.stringify(r.body));
+  r = await ask(cmUser, { kind: 'variance', period: 'range-2026-09-15-2026-09-01' });
+  ok('a bad range → 400 bad_period', r.status === 400 && r.body.error === 'bad_period', r.status + JSON.stringify(r.body));
+  r = await ask(cmUser, { kind: 'nonsense', period: KEY });
+  ok('a bad kind → 400', r.status === 400, String(r.status));
+  r = await ask(tlUser, { kind: 'variance', period: KEY });
+  ok('a team leader asking for a range report → 403 (custom ranges are the campaign manager\'s)', r.status === 403, r.status + JSON.stringify(r.body));
+  r = await ask(agentUser, { kind: 'variance', period: KEY });
+  ok('an agent → 403', r.status === 403, String(r.status));
+  r = await ask(tlUser, { kind: 'variance' });
+  ok('a team leader\'s own live report is unchanged (200, their team)', r.status === 200 && r.body.scope === 'team' && r.body.marker === 'live', r.status + JSON.stringify(r.body).slice(0, 120));
+  if (typeof P.loadReports === 'function') {
+    resetCaches();
+    ok('loadReports(DB, kind, rangeKey) reads kv:agent-reports-<kind>-<rangeKey>', ((await P.loadReports(DB, 'variance', KEY)) || {}).marker === 'range');
+    ok('…and refuses anything that is not a range key (no path games)', (await P.loadReports(DB, 'variance', '../vas-state')) === null && (await P.loadReports(DB, 'variance', 'cycle-2026-09')) === null);
+  }
+  const IDX = fs.readFileSync(path.join(ROOT, 'worker', 'src', 'index.mjs'), 'utf8');
+  ok('index.mjs: the tl/reports route hands ?period= to reportsRequest', /\/api\/portal\/tl\/reports[\s\S]{0,600}reportsRequest\(DB, user, \{[^}]*period:\s*url\.searchParams\.get\('period'\)/.test(IDX));
+}
+
 /* =================================================================== E */
 head('E · CM report data: agents, tlAgg, campAgg + the envelope');
 {
@@ -407,6 +626,11 @@ head('C · team leaders\' coaching: GET /api/portal/cm-coaching');
   ok('a billing month: 26 Aug – 25 Sep takes the 5th and the 24th, not the 30th', same(r.body.sessions.map((s) => s.date), ['2026-09-24', '2026-09-05']) && r.body.period.label === '26 Aug – 25 Sep 2026', JSON.stringify(r.body.sessions.map((s) => s.date)));
   r = await ask(cmUser, { tl: 'Denise Haripersad', period: 'bogus' });
   ok('a bad period → 400 bad_period', r.status === 400 && r.body.error === 'bad_period');
+  /* spec 006: coaching follows a custom range — the sessions inside it, labelled with its dates */
+  r = await ask(cmUser, { tl: 'Denise Haripersad', period: 'range-2026-09-05-2026-09-24' });
+  ok('a custom range (5 – 24 Sep): the 5th and the 24th, not the 30th, labelled "5 – 24 Sep 2026"', r.status === 200 && same(r.body.sessions.map((s) => s.date), ['2026-09-24', '2026-09-05']) && r.body.period.label === '5 – 24 Sep 2026' && r.body.period.from === '2026-09-05' && r.body.period.to === '2026-09-24', r.status + ' ' + JSON.stringify(r.body.period || r.body));
+  r = await ask(cmUser, { tl: 'Denise Haripersad', period: 'range-2026-09-24-2026-09-05' });
+  ok('a backwards custom range → 400 bad_period', r.status === 400 && r.body.error === 'bad_period', r.status + JSON.stringify(r.body));
 
   for (const [who, u] of [['an agent', agentUser], ['a team leader', tlUser], ['an admin', adminUser]]) {
     r = await ask(u, { tl: 'Denise Haripersad' });

@@ -113,6 +113,33 @@ const sig = (v) => (typeof v === 'string' && v.startsWith('data:image/') && v.le
 
 const str = (v) => (v == null ? '' : String(v));
 
+/* WHO SIGNS WHAT (spec 003, 2026-10-05). The signatories of a product are the signature fields its create declares —
+   derived, so a product that gains one is covered without a second list. Group coaching is signed per attendee row
+   (employeeSignoffs) and the scorecard by nobody. */
+const SIG_WORD = { agentSignature: 'agent', teamLeaderSignature: 'team leader', sosSignature: 'SOS' };
+const SIG_LABEL = { agentSignature: 'Agent', teamLeaderSignature: 'Team leader', sosSignature: 'SOS' };
+export const signatureFields = (table) => ((CREATE_SPEC[table] && CREATE_SPEC[table].fields) || []).filter((f) => /Signature$/.test(f));
+export const sigState = (table, rec) => signatureFields(table).map((f) => ({ field: f, label: SIG_LABEL[f] || f,
+  signed: typeof (rec && rec[f]) === 'string' && rec[f].length > 0 }));
+
+/* A SUPPLIED SIGNATURE IS NEVER DROPPED SILENTLY (spec 003). An empty value means "not signed"; anything else that is not
+   an image within the bound used to vanish while the rest of the document saved — the save is refused instead, naming
+   whose signature it was, and nothing is written. Returns the message, or '' when every signature is acceptable. */
+export function signatureProblem(table, body) {
+  const spec = CREATE_SPEC[table];
+  if (!spec || !body) return '';
+  const bad = (v) => v != null && v !== '' && !sig(v);
+  for (const f of signatureFields(table))
+    if (bad(body[f])) return `The ${SIG_WORD[f] || f} signature could not be read — clear it and sign again.`;
+  if (spec.signoffs && Array.isArray(body.employeeSignoffs)) {
+    for (let i = 0; i < body.employeeSignoffs.length; i++) {
+      const r = body.employeeSignoffs[i];
+      if (r && bad(r.signature)) return `The signature for ${str(r.employeeName).trim() || 'attendee ' + (i + 1)} could not be read — clear it and sign again.`;
+    }
+  }
+  return '';
+}
+
 async function convex(base, kind, path, args) {
   const r = await fetch(base + '/api/' + kind, {
     method: 'POST',
@@ -148,7 +175,22 @@ const strip = (rec) => {
   return out;
 };
 
-/** Everything this leader has in the Coaching Hub, by product. */
+/* A SUBMITTED DOCUMENT, AS ITS AUTHOR MAY SEE IT (spec 004, 2026-10-05). The coaching list is a team-leader route, and
+   a team leader must not be able to view a coaching document once it is submitted — so a row is reduced to an ALLOW
+   list of what identifies it (date, product, agent, campaign) plus which signatures it holds. Allow, not deny: a free
+   text field the Hub adds tomorrow is withheld without anyone remembering to. Group sessions give an attendee count,
+   never the signed roll-call. */
+const LEADER_ROW = ['_id', 'date', 'dateOfCoaching', 'agentName', 'employeeCode', 'employeeNumber', 'campaign'];
+export function leaderRow(rec, table) {
+  const out = {};
+  for (const k of LEADER_ROW) if (rec[k] !== undefined && rec[k] !== null && typeof rec[k] !== 'object') out[k] = rec[k];
+  out._table = table; out._label = COACH_TABLES[table];
+  out._sigs = sigState(table, rec);
+  if (Array.isArray(rec.employeeSignoffs)) out.attendees = rec.employeeSignoffs.filter((r) => r && str(r.employeeName).trim()).length;
+  return out;
+}
+
+/** Everything this leader has in the Coaching Hub, by product — each a line, never the document (leaderRow). */
 export async function coachingList(ids) {
   if (!ids.coaching) return { error: 'You are not on the Coaching Hub yet.', linked: false };
   const out = { linked: true, byType: {}, sessions: [] };
@@ -161,8 +203,7 @@ export async function coachingList(ids) {
   for (const r of res) {
     if (r.error) errors.push(`${r.t}: ${r.error}`);
     out.byType[COACH_TABLES[r.t]] = r.rows.length;
-    for (const rec of r.rows)
-      out.sessions.push({ ...strip(rec), _table: r.t, _label: COACH_TABLES[r.t] });
+    for (const rec of r.rows) out.sessions.push(leaderRow(rec, r.t));
   }
   out.sessions.sort((a, b) => String(b.date || b.dateOfCoaching || '').localeCompare(String(a.date || a.dateOfCoaching || '')));
   if (errors.length) out.errors = errors;
@@ -175,6 +216,8 @@ export async function coachingCreate(ids, user, body) {
   const table = String(body.type || '');
   const spec = CREATE_SPEC[table];
   if (!COACH_TABLES[table] || !spec) return { error: 'Unknown coaching type.', status: 400 };
+  const sigErr = signatureProblem(table, body);
+  if (sigErr) return { error: sigErr, status: 400 };
 
   const args = { teamLeaderId: ids.coaching };
   /* The scorecard, QA and Lead Management documents name the leader in their own

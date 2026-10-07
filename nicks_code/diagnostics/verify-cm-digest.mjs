@@ -14,6 +14,9 @@
  *   D. MTD_RULES.leadReportExcludeCampaigns = the spec's value (and a dated _changes[] entry)
  *   E. Courtesy is out of the Lead management REPORT (PULSE page + agent-reports-leads) — and only there
  *   F. tools/digest-republish.mjs publishes the cycle keys, only under --apply, never the live key
+ *   C2. (spec 006) a CUSTOM-RANGE payload (setRange) carries exactly the range's days; so do its reports
+ *   G. (spec 006) the tool's RANGE-JOBS block: kv:cm-range-requests → waiting + filling jobs → setRange → digest + both
+ *      reports + pointer kind 'range' → {status:'built'|'refused'} back by compare-and-set; islands, --apply only
  */
 import fs from 'node:fs'; import path from 'node:path'; import http from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -168,6 +171,26 @@ try {
     ok('a week across the boundary: unchanged too', sg.week && sg.week.length === 2 && sg.week[0].from === '2026-09-01', J(sg.week));
     ok('a non-mover is still null on a cross-month range', sg.none === null, J(sg.none));
     ok('the same agent over the billing cycle IS gap-filled (Cuddle from 1 Aug, one merged stretch)', sg.cycle && sg.cycle.length === 2 && sg.cycle[0].from === '2026-08-01' && sg.cycle[0].to === '2026-09-13', J(sg.cycle)); }
+
+  /* ---------------------------------------------------------------- C2. a custom range (spec 006) ---- */
+  console.log('\nC2 · A CUSTOM-RANGE PAYLOAD (setRange 1 – 14 SEP) CARRIES EXACTLY THE RANGE\'S DAYS');
+  await page.evaluate(() => window.__mtd.setRange('2026-09-01', '2026-09-14'));
+  { const rg = await digestOf();
+    const IN_RANGE = DAYS.filter((d) => d >= '2026-09-01' && d <= '2026-09-14');
+    ok('range: period is the range (from 2026-09-01, to 2026-09-14) — never a cycle', rg && rg.period.from === '2026-09-01' && rg.period.to === '2026-09-14' && rg.period.kind !== 'cycle', J(rg && rg.period));
+    ok('range: dates are exactly the data days inside it (31 Aug and 28 Sep stay out)', J(rg.dates) === J(IN_RANGE), J(rg.dates));
+    ok('range: 21 sales — 7 agents × 3 in-range days', rg.agents.reduce((t, a) => t + a.sales, 0) === 21, String(rg.agents.reduce((t, a) => t + a.sales, 0)));
+    ok('range: every agent\'s day rows sit inside the range', rg.agents.every((a) => (a.days || []).every((d) => d.d >= '2026-09-01' && d.d <= '2026-09-14')), '');
+    ok('range: the campaign blocks carry every sale once', Object.values(rg.campAgg).reduce((t, c) => t + c.sales, 0) === 21, J(Object.fromEntries(Object.entries(rg.campAgg).map(([k, v]) => [k, v.sales]))));
+    ok('range: weeks sit inside the range', rg.weeks.length >= 1 && rg.weeks.every((w) => w.from >= '2026-09-01' && w.to <= '2026-09-14'), J(rg.weeks));
+    ok('range: `closed` follows the range (CB400: 2 Sep + 3 Sep + 14 Sep = 3)', rowOf(rg, 'CB400').closed === 3, String(rowOf(rg, 'CB400').closed)); }
+  { const rl = await page.evaluate(() => JSON.parse(JSON.stringify(window.__mtd.reports('leads'))));
+    ok('range: the Lead management report is built for the same days', rl && rl.period && rl.period.from === '2026-09-01' && rl.period.to === '2026-09-14', J(rl && rl.period));
+    const rv = await page.evaluate(() => { const r = window.__mtd.reports('variance'); return r ? JSON.parse(JSON.stringify(r)) : null; });
+    ok('range: the Variance report (when there is one) is built for the same days', rv === null || (rv.period.from === '2026-09-01' && rv.period.to === '2026-09-14'), J(rv && rv.period)); }
+  await page.evaluate(() => window.__mtd.setRange('2026-08-26', '2026-09-25'));
+  { const rc = await digestOf();
+    ok('a range that is exactly a billing month comes out of the engine marked cycle — the tool must stamp kind "range" over it', rc.period.kind === 'cycle' && /kind:\s*'range'/.test(TOOL), J(rc.period)); }
   await page.evaluate(() => window.__mtd.setPeriod('2026-09', 'month'));
 
   /* ---------------------------------------------------------------- D. the rule + the spec ---- */
@@ -268,6 +291,83 @@ console.log('\nF · tools/digest-republish.mjs PUBLISHES THE CYCLE KEYS — ONLY
   ok('a cycle build never joins the live/history jobs (no jobs.push in the cycle section)', !/jobs\.push/.test(sec) && !/keyName\s*=\s*'agent-digest'\s*[;,]/.test(sec));
   ok('the live-key logic is untouched (liveDigestAllowed + rollover grace still there)', /liveDigestAllowed\(from, liveFrom, Date\.now\(\)\)/.test(TOOL) && /ROLLOVER GRACE/.test(TOOL));
   ok('the campaign-move months are extended with the cycles\' months', /want\s*=/.test(TOOL) && /cycleJobsFor|cyclesNow/.test(TOOL.slice(TOOL.indexOf('const want'), TOOL.indexOf('const want') + 900)));
+}
+
+/* -------------------------------------------------------------------- G. the custom ranges (spec 006, C5) ---- */
+console.log('\nG · tools/digest-republish.mjs BUILDS THE QUEUED CUSTOM RANGES — kv:cm-range-requests → setRange → digest + reports + pointer → status');
+{
+  let RG = {};
+  try { RG = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'range.mjs')).href); } catch (e) { ok('worker/src/range.mjs exists', false, String(e.message).slice(0, 100)); }
+  ok('the tool imports the range definition from worker/src/range.mjs (one definition, never re-derived)', /['"]range\.mjs['"]|worker\/src\/range\.mjs/.test(TOOL) && /rangeOf/.test(TOOL));
+  ok('the tool reads the queue kv:cm-range-requests (through range.mjs RANGE_QUEUE_KEY)', /RANGE_QUEUE_KEY/.test(TOOL) && RG.RANGE_QUEUE_KEY === 'kv:cm-range-requests');
+  const m = TOOL.match(/\/\*RANGE-JOBS-BEGIN\*\/([\s\S]*?)\/\*RANGE-JOBS-END\*\//);
+  ok('the range planning is a delimited, testable block (RANGE-JOBS)', !!m);
+  if (m && RG.rangeOf) {
+    const B = new Function('rangeOf', 'rangeFilling', 'movesFailed', m[1] + '\nreturn { rangeJobsFor, rangeRefusal, rangeHeld, RANGE_BUILDS_MAX, rangeOutcome: typeof rangeOutcome === "function" ? rangeOutcome : null };');
+    const mk = (failed) => B(RG.rangeOf, RG.rangeFilling, new Set(failed || []));
+    const { rangeJobsFor, rangeRefusal, rangeHeld, RANGE_BUILDS_MAX, rangeOutcome } = mk();
+    const NOW = Date.parse('2026-10-01T08:00:00Z');
+    const q = (key, at, status, o) => Object.assign({ key, from: key.slice(6, 16), to: key.slice(17), by: 'ryan', at, status }, o || {});
+    const REQ = [
+      q('range-2026-09-01-2026-09-15', '2026-09-30T10:00:00.000Z', 'waiting'),
+      q('range-2026-09-20-2026-09-30', '2026-09-29T10:00:00.000Z', 'built'),          // ends 30 Sep: within the last 2 days → still filling → rebuilt
+      q('range-2026-08-01-2026-08-15', '2026-09-28T10:00:00.000Z', 'built'),          // closed and built: left alone
+      q('range-2026-09-28-2026-10-01', '2026-09-30T11:00:00.000Z', 'refused', { reason: 'no rows yet' }),   // refused but still filling: tried again
+      q('range-2026-08-16-2026-08-20', '2026-09-28T10:00:00.000Z', 'refused', { reason: 'x' }),   // refused and closed: left alone
+      q('range-2026-09-15-2026-09-01', '2026-09-29T10:00:00.000Z', 'waiting'),        // invalid (backwards): never built
+      { key: '../vas-state', at: '2026-09-29T10:00:00.000Z', status: 'waiting' },        // not a range key at all
+      q('range-2026-09-01-2026-09-15', '2026-09-30T12:00:00.000Z', 'waiting'),        // a duplicate
+      q('range-2026-09-02-2026-09-03', '2026-09-29T09:00:00.000Z'),                   // no status = waiting; the oldest ask
+    ];
+    const jobs = rangeJobsFor(REQ, NOW);
+    ok('jobs: every WAITING range (oldest ask first), then every range still FILLING (its end within the last 2 days)',
+      J(jobs.map((j) => j.key)) === J(['range-2026-09-02-2026-09-03', 'range-2026-09-01-2026-09-15', 'range-2026-09-20-2026-09-30', 'range-2026-09-28-2026-10-01']), J(jobs.map((j) => j.key)));
+    ok('…a closed range already built, or refused, is not rebuilt; an invalid key and a duplicate are never built', !jobs.some((j) => /08-01-2026-08-15|08-16|09-15-2026-09-01|vas-state/.test(j.key)) && jobs.filter((j) => j.key === 'range-2026-09-01-2026-09-15').length === 1);
+    const j1 = jobs.find((j) => j.key === 'range-2026-09-01-2026-09-15');
+    ok('a job carries {key, name agent-digest-range-…, from, to, label, months, why}', j1 && j1.name === 'agent-digest-range-2026-09-01-2026-09-15' && j1.from === '2026-09-01' && j1.to === '2026-09-15'
+      && j1.label === '1 – 15 Sep 2026' && J(j1.months) === J(['2026-09']) && j1.why === 'waiting' && jobs.find((j) => j.key === 'range-2026-09-20-2026-09-30').why === 'filling', J(j1));
+    ok('a 93-day range touches every month it spans (Jun, Jul, Aug, Sep)', J((rangeJobsFor([q('range-2026-06-30-2026-09-30', '2026-09-30T10:00:00.000Z', 'waiting')], NOW)[0] || {}).months) === J(['2026-06', '2026-07', '2026-08', '2026-09']));
+    const many = Array.from({ length: 12 }, (_, i) => q('range-2026-08-' + String(i + 1).padStart(2, '0') + '-2026-08-20', '2026-09-30T10:' + String(i).padStart(2, '0') + ':00.000Z', 'waiting'));
+    ok('at most RANGE_BUILDS_MAX per run (the rest wait for the next tick, oldest first)', RANGE_BUILDS_MAX >= 1 && RANGE_BUILDS_MAX <= 10 && rangeJobsFor(many, NOW).length === RANGE_BUILDS_MAX && rangeJobsFor(many, NOW)[0].key === many[0].key, String(RANGE_BUILDS_MAX));
+    ok('an empty or missing queue is no jobs', J(rangeJobsFor([], NOW)) === '[]' && J(rangeJobsFor(undefined, NOW)) === '[]');
+    const job = { key: 'range-2026-09-01-2026-09-15', from: '2026-09-01', to: '2026-09-15', label: '1 – 15 Sep 2026', months: ['2026-09'] };
+    ok('refused (in words) when the engine has no rows for the range', /no figures/i.test(rangeRefusal(job, null)) && /no figures/i.test(rangeRefusal(job, { agents: [], dates: [] })) && /1 – 15 Sep 2026/.test(rangeRefusal(job, null)));
+    ok('refused when the engine answers an EMPTY payload', /no figures/i.test(rangeRefusal(job, { empty: true, agents: [{ code: 'CB1' }], dates: [] })));
+    const W = { from: '2026-09-01', to: '2026-09-15' };   // the engine's window for the job
+    ok('refused when its first data day is more than 3 days after `from` (the start is missing), naming that day', /2026-09-05/.test(rangeRefusal(job, { agents: [{ code: 'CB1' }], dates: ['2026-09-05', '2026-09-08'], period: W })));
+    ok('accepted when the data starts on the first day, or up to 3 days late', rangeRefusal(job, { agents: [{ code: 'CB1' }], dates: ['2026-09-01'], period: W }) === '' && rangeRefusal(job, { agents: [{ code: 'CB1' }], dates: ['2026-09-04'], period: W }) === '');
+    ok('a campaign-moves read failure HOLDS the range for the next run (not refused — it is not the range\'s fault)', mk(['2026-09']).rangeHeld(job) !== '' && mk(['2026-08']).rangeHeld(job) === '' && rangeHeld(job) === '');
+    /* review finding 2: the engine building a DIFFERENT window is a refusal with a reason — never a silent skip that keeps the
+       range "being built" for 7 days and takes a build slot every run */
+    ok('refused when the engine built a different window, naming that window', /different window \(2026-09-02–2026-09-15\)/.test(rangeRefusal(job, { agents: [{ code: 'CB1' }], dates: ['2026-09-02'], period: { from: '2026-09-02', to: '2026-09-15' } })),
+      rangeRefusal(job, { agents: [{ code: 'CB1' }], dates: ['2026-09-02'], period: { from: '2026-09-02', to: '2026-09-15' } }));
+    ok('…and a payload with no period at all is a different window too', /different window/.test(rangeRefusal(job, { agents: [{ code: 'CB1' }], dates: ['2026-09-01'] })));
+    /* review finding 4: a REBUILD of a range already published that now comes back refused keeps "built" (its digest is still
+       served); a waiting or refused range is recorded as refused with the reason */
+    ok('jobs carry the status they were queued with (`was`)', jobs.find((j) => j.key === 'range-2026-09-20-2026-09-30').was === 'built' && jobs.find((j) => j.key === 'range-2026-09-28-2026-10-01').was === 'refused' && j1.was === 'waiting'
+      && jobs.find((j) => j.key === 'range-2026-09-02-2026-09-03').was === 'waiting', J(jobs.map((j) => j.was)));
+    ok('rangeOutcome: a refused rebuild of a PUBLISHED range keeps it built (no result written)', typeof rangeOutcome === 'function' && rangeOutcome({ ...job, was: 'built' }, 'why') === null);
+    ok('rangeOutcome: a waiting range is recorded refused with its reason', typeof rangeOutcome === 'function' && J(rangeOutcome({ ...job, was: 'waiting' }, 'why')) === J({ key: job.key, status: 'refused', reason: 'why' }));
+    ok('rangeOutcome: a refused range tried again stays refused with the new reason', typeof rangeOutcome === 'function' && J(rangeOutcome({ ...job, was: 'refused' }, 'new')) === J({ key: job.key, status: 'refused', reason: 'new' }));
+  }
+  const RS = (TOOL.match(/CUSTOM RANGES \(spec 006\)[\s\S]*?\nawait b\.close\(\)/) || [''])[0];
+  ok('the build calls __mtd.setRange(from, to) and agentDigestPayload()', /setRange\(/.test(RS) && /agentDigestPayload\(\)/.test(RS));
+  ok('…builds BOTH reports for the range (__mtd.reports variance + leads) and keeps one only for the range\'s own dates', /reports\(/.test(RS) && /'variance',\s*'leads'/.test(RS) && /period[\s\S]{0,80}from[\s\S]{0,200}job\.from|job\.from[\s\S]{0,200}period/.test(RS));
+  ok('…stamps period {kind:"range", key, label} on the digest', /kind:\s*'range'/.test(RS) && /key:\s*job\.key/.test(RS) && /label:\s*job\.label/.test(RS));
+  ok('…each range build is its own island (try/catch that logs and continues)', /for \(const job of rangeJobs\)[\s\S]*?try \{[\s\S]*?\} catch \(e\) \{[^}]*console\.(log|warn)[^}]*(continue|\})/.test(RS));
+  ok('…a moves-read failure holds (skips) the range; an engine refusal is recorded with its reason', /rangeHeld\(job\)/.test(RS) && /rangeRefusal\(job,/.test(RS) && /status:\s*'refused'/.test(TOOL));
+  ok('…every refusal goes through rangeOutcome (a published range keeps "built"), and no window mismatch is skipped without a result', /rangeOutcome\(job, why\)/.test(RS) && !/skipped — the engine built/.test(RS), '');
+  ok('…and a time budget stops new builds in a long run', /RANGE_BUDGET_MS|budget/i.test(RS));
+  const PS = (TOOL.match(/THE CUSTOM-RANGE KEYS[\s\S]*?console\.log\('done\./) || [''])[0];
+  ok('publish: digest at raw/kv/agent-digest-range-… + pointer {store, period, kind:"range", updated_at}', /raw\/kv\//.test(PS) && /x-upsert/.test(PS) && /kind:\s*'range'/.test(PS) && /period:/.test(PS) && /updated_at/.test(PS));
+  ok('publish: the report keys agent-reports-<kind>-range-…', /'agent-reports-'\s*\+\s*kind\s*\+\s*'-'\s*\+\s*\w+\.job\.key|'agent-reports-'\s*\+\s*kind\s*\+\s*'-'\s*\+\s*job\.key/.test(PS));
+  ok('publish: each range in its own try/catch, and the block never process.exit()s', /try \{[\s\S]*\} catch \(e\) \{/.test(PS) && !/process\.exit/.test(PS));
+  ok('the status goes back to the request ({status:"built"|"refused", reason?, statusAt}) by compare-and-set on updated_at', /status:\s*'built'/.test(TOOL) && /settleQueue\(/.test(TOOL) && /updated_at=eq\./.test(TOOL));
+  { const gate = TOOL.indexOf("if (!APPLY) {"), exit0 = TOOL.indexOf('process.exit(0)', gate), pub = TOOL.indexOf('THE CUSTOM-RANGE KEYS'), cas = TOOL.indexOf('settleQueue(queueList');
+    ok('ranges are written only under --apply: the range publish AND the status write come after the dry run\'s exit', gate > 0 && exit0 > gate && pub > exit0 && cas > exit0, J([gate, exit0, pub, cas]));
+    ok('…and the dry run says what it would write and mark', /'would write '\)\s*\+\s*'kv:'\s*\+\s*rb\.job\.name/.test(TOOL) && /would mark/.test(TOOL)); }
+  ok('the campaign-move months are extended with the ranges\' months', /rangeJobs/.test(TOOL.slice(TOOL.indexOf('const want'), TOOL.indexOf('const want') + 900)));
+  ok('a range is never written to the live key (the range section never names keyName = \'agent-digest\')', !/keyName\s*=\s*'agent-digest'\s*[;,]/.test(PS + RS) && !/jobs\.push/.test(PS + RS));
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
