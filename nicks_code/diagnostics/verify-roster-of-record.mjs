@@ -31,6 +31,8 @@ const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } el
 let rules = {}, store = {};
 /* spec 010: the database can be made to ERROR (a thrown publish — what lost the 7 Oct list) or to REFUSE */
 let rpcFailLeft = 0, rpcCalls = 0, rpcRefuse = false;
+/* spec 011: what the database's integrity view answers after a publish ('error' → the read fails) */
+let integrityRows = [{ check_name: 'agent login that is not on the latest list', severity: 'critical', failures: 0 }];
 const ENV = { SUPABASE_URL: 'http://stub.local', SUPABASE_SECRET_KEY: 'k' };
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (u, o = {}) => {
@@ -42,6 +44,8 @@ globalThis.fetch = async (u, o = {}) => {
     if (rpcRefuse) return J({ status: 'REFUSED', stage: 'agents', reason: 'two people claim one identity', errors: ['CB100 appears twice'] });
     return J(publishAgentListStub(JSON.parse(o.body || '{}')));
   }
+  if (url.startsWith('http://stub.local/rest/v1/agent_list_integrity'))
+    return integrityRows === 'error' ? J({ message: 'relation unavailable' }, 503) : J(integrityRows);
   if (url.startsWith('http://stub.local/rest/v1/rules')) {
     if ((o.method || 'GET') === 'GET') {
       const m = /key=eq\.([^&]+)/.exec(url);
@@ -194,6 +198,28 @@ ok('the served roster says where it came from and when',
   r11 = await post({ source: 'vas', file: 'dup.xlsx', as_of: '2026-10-07', roster: mkRoster('Dup Leader') });
   ok('a deliberate database REFUSAL is not retried (the answer would not change)', r11.accepted === false && rpcCalls === 1, 'calls ' + rpcCalls + ' ' + JSON.stringify(r11).slice(0, 160));
   rpcRefuse = false;
+}
+
+/* 12 — EVERY ACCEPTED PUBLISH SAYS WHETHER THE FLOOR NOW MATCHES THE LIST (spec 011, 2026-10-07: "make sure it
+   correctly creates, or deletes tl and campaigns and agents"). The database's own integrity view is the authority. */
+{
+  const roster12 = (tl, extra) => mkRoster(tl, extra);
+  integrityRows = [{ check_name: 'agent login that is not on the latest list', severity: 'critical', failures: 0 },
+    { check_name: 'team leader on the latest list with no login', severity: 'warning', failures: 0 }];
+  let r12 = await post({ source: 'vas', file: 'in-step.xlsx', as_of: '2026-10-08', roster: roster12('Leader In Step', [{ code: 'CB120', name: 'In Step', tl: 'Leader In Step', campaign: 'Courtesy', tenure: 'M1', target: 3 }]) });
+  ok('an accepted publish answers with the integrity result', r12.accepted === true && r12.integrity && r12.integrity.in_step === true
+    && Array.isArray(r12.integrity.failures) && r12.integrity.failures.length === 0, JSON.stringify(r12.integrity));
+  integrityRows = [{ check_name: 'agent login that is not on the latest list', severity: 'critical', failures: 0 },
+    { check_name: 'team leader on the latest list with no login', severity: 'warning', failures: 2 }];
+  r12 = await post({ source: 'vas', file: 'gap.xlsx', as_of: '2026-10-09', roster: roster12('Leader Gap', [{ code: 'CB121', name: 'Gap One', tl: 'Leader Gap', campaign: 'Cuddle', tenure: 'Exp', target: 8 }]) });
+  ok('a failing check is NAMED with its count, and the list is not "in step"', r12.integrity && r12.integrity.in_step === false
+    && r12.integrity.failures.length === 1 && r12.integrity.failures[0].check === 'team leader on the latest list with no login' && r12.integrity.failures[0].n === 2,
+    JSON.stringify(r12.integrity));
+  integrityRows = 'error';
+  r12 = await post({ source: 'vas', file: 'unread.xlsx', as_of: '2026-10-10', roster: roster12('Leader Unread', [{ code: 'CB122', name: 'Unread One', tl: 'Leader Unread', campaign: 'Courtesy', tenure: 'M1', target: 3 }]) });
+  ok('an unreadable integrity view says "could not be confirmed" — never in step', r12.accepted === true && r12.integrity && r12.integrity.in_step === null && !!r12.integrity.error,
+    JSON.stringify(r12.integrity));
+  integrityRows = [];
 }
 
 globalThis.fetch = realFetch;

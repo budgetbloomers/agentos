@@ -16,5 +16,11 @@ description: "Task list — 010 Agent List publish: retry a passing failure, rec
 - [x] T004 [US1] worker/src/index.mjs C1–C2
 - [x] T005 [US1] nicks_code/index.html C3
 - [x] T006 T002–T003 GREEN; verify-roster-changes, verify-publish relays, verify-agent-analytics green
-- [~] T007 Release with 003/004/006/009 — LIVE 2026-10-07 (Worker 665a8f9a, Pages muxtsen8, smoke green). OPEN: the 7 Oct list itself still has to be published once (re-upload, or tools/publish-agent-list.mjs --apply — the auto-mode classifier refused it for me)
-- [ ] T008 Commit (conventional), no push
+- [x] T007 Release with 003/004/006/009 — LIVE 2026-10-07 (Worker 665a8f9a, Pages muxtsen8, smoke green)
+- [x] T008 Commit (conventional), no push — 01f3fd2
+- [x] T009 ROOT CAUSE (recorded by T004's retry): leader named twice on the TL sheet → 21000 in sync_team_leaders'
+  map insert. verify-publish-agent-list D4 RED (exact live error) → supabase/migration-054-leader-twice-on-sheet.sql
+  applied → GREEN 62/62 (rolled back)
+- [x] T010 The 7 Oct list published (Nick: "Yes, publish it"): accepted, 128 agents, -5 agents, -3 leader logins,
+  Training Gr 17 deleted; kv:roster-refused cleared
+- [x] T011 Commit migration-054 + D4 + these notes (with spec 011)

@@ -901,7 +901,13 @@ async function load(key){
    refuses it when the store has moved on, and the saver RELOADS the store and REPLAYS the
    batches this session applied on top of the other session's copy — the supersede rules are
    key-based and idempotent, so a replay is the same operation as the first application. */
-const cfgPayload=()=>({kpis:state.kpis,rules:state.rules,agentMap:state.agentMap,sfOwnerMap:state.sfOwnerMap,cbInfo:state.cbInfo,user:state.user,syncedUploads:state.syncedUploads||{}});
+/* NO PERSON'S NAME IN THE SHARED CONFIG (Spec Kit 011, 2026-10-07: "I logged in with aarav … its showing nick").
+   cb-config is one row everybody shares; it used to carry `user`, and every load and every save conflict adopted it,
+   so the header and every upload's "uploaded by" read whoever saved last. Who is signed in comes from the session. */
+const cfgPayload=()=>({kpis:state.kpis,rules:state.rules,agentMap:state.agentMap,sfOwnerMap:state.sfOwnerMap,cbInfo:state.cbInfo,syncedUploads:state.syncedUploads||{}});
+function whoAmI(){ const U=(typeof window!=='undefined'&&window.CBX_USER)||{}; return String(U.full_name||U.username||'').trim(); }
+function paintUser(){ const n=whoAmI(), nm=$('#userNm'), av=$('#userAv'); if(nm)nm.textContent=n||'Signed in'; if(av)av.textContent=(n[0]||'·').toUpperCase(); }
+document.addEventListener('cbx-authed',function(){ try{ paintUser(); }catch(e){} });   // the gate knows the session after the page has painted
 const SAVE_TRIES=4;
 async function saveConfig(){
   bumpDataVer();
@@ -1513,7 +1519,8 @@ function applyLoad(srcKey,file,parsed,notes){
     const fact=TRANSFORM[srcKey](raw);fact._batch=batch_id;loaded.push(fact);
   });
   const dates=loaded.map(r=>r._d).filter(Boolean).sort();
-  const batch={batch_id,source_type:srcKey,source_system:spec.system,uploaded_by:state.user,
+  const batch={batch_id,source_type:srcKey,source_system:spec.system,uploaded_by:whoAmI()||'unknown',
+    uploaded_by_username:String(((typeof window!=='undefined'&&window.CBX_USER)||{}).username||''),
     uploaded_at:new Date().toISOString(),period_start:dates[0]||null,period_end:dates[dates.length-1]||null,
     original_file_name:file.name,file_hash:parsed.textHash,raw_row_count:parsed.data.length,
     loaded_row_count:loaded.length,rejected_row_count:rejects.length,
@@ -1799,6 +1806,15 @@ function reportListPublish(j){
       toast(D.length+' row'+(D.length===1?'':'s')+' in the file did not become an agent — '
         +esc(D.slice(0,4).map(d=>(d.code||d.name||('row '+d.row))+' ('+d.why+')').join(', '))+(D.length>4?' +'+(D.length-4)+' more':'')
         +'. Every other row is on the roster: '+j.n+' of '+j.on_file+'.','err',14000);
+    /* IS THE FLOOR IN STEP WITH THE LIST? (spec 011) — the database's integrity view, sent with an accepted publish.
+       Last on purpose: one toast element, so the verdict is the message the uploader is left reading. */
+    const I=j.integrity;
+    if(I&&I.in_step===true)
+      toast('In step with the list — '+esc(String(j.n))+' agents; agent logins, team leader logins and campaigns all match it.','ok',12000);
+    else if(I&&I.in_step===false)
+      toast('Published, but NOT in step with the list: '+esc((I.failures||[]).map(f=>f.check+' ('+f.n+')').join('; '))+'. The health banner will name it until it is fixed.','err',20000);
+    else if(I)
+      toast('Published — whether logins and campaigns now match the list could not be confirmed'+(I.error?' ('+esc(I.error)+')':'')+'.','err',15000);
   }catch(e){}
 }
 /* What the Agent List upload did to accounts, in a sentence. The Worker reconciles
@@ -5498,7 +5514,7 @@ function healRetiredRules(rules){const out=Object.assign({},rules);
   return out}
 function applyCfg(cfg){if(!cfg)return;
   if(cfg.kpis?.length)state.kpis=migrateKpis(cfg.kpis);if(cfg.rules)state.rules=healRetiredRules(Object.assign({},structuredClone(DEFAULT_RULES),cfg.rules));
-  if(cfg.agentMap)state.agentMap=cfg.agentMap;if(cfg.sfOwnerMap)state.sfOwnerMap=cfg.sfOwnerMap;if(cfg.cbInfo)state.cbInfo=cfg.cbInfo;if(cfg.user)state.user=cfg.user;if(cfg.syncedUploads)state.syncedUploads=cfg.syncedUploads}
+  if(cfg.agentMap)state.agentMap=cfg.agentMap;if(cfg.sfOwnerMap)state.sfOwnerMap=cfg.sfOwnerMap;if(cfg.cbInfo)state.cbInfo=cfg.cbInfo;if(cfg.syncedUploads)state.syncedUploads=cfg.syncedUploads}   // cfg.user (an old config's) is ignored — see cfgPayload
 /* PHASE A — paint from the local IndexedDB snapshot before any network happens. The auth
    gate still covers the screen until the session validates; this only removes the blank
    wait AFTER login while the cloud blobs download. Aborts the moment the cloud init has
@@ -5518,7 +5534,7 @@ async function initLocal(){
     // Paint EITHER WAY: with a snapshot this is last session's data; without one it is
     // the shell + empty states. A blank screen is never the right first frame.
     bumpDataVer();__localPainted=any||!!cfg;
-    $('#userNm').textContent=state.user;$('#userAv').textContent=state.user[0]||'A';
+    paintUser();
     render();
     const fa=$('#footAsof');if(fa)fa.textContent+=__localPainted?' · showing last-loaded data — refreshing from the cloud…':' · waiting for the cloud…';
   }catch(e){console.warn('[AgentOS] local-snapshot paint failed (cloud boot continues normally):',e)}
@@ -5538,7 +5554,7 @@ async function init(){
   // put on screen must never wait for the fact downloads. The blank-screen-until-every-
   // blob-arrives boot is what read as "the app is not loading" on a slow connection.
   bumpDataVer();
-  $('#userNm').textContent=state.user;$('#userAv').textContent=state.user[0]||'A';
+  paintUser();
   render();
   {const fa=$('#footAsof');if(fa&&!/downloading/.test(fa.textContent))fa.textContent+=' · downloading data from the cloud…'}
   // Parallel + resilient: 15 multi-MB sources load at once; one slow or failed
@@ -5602,9 +5618,9 @@ async function init(){
   __initDone=true;
   // Auto-unmask names for authorised users (admins / users with pii_unmask).
   // POPIA-safe: restricted users stay masked; the footer toggle still overrides.
-  try{var U=window.CBX_USER;if(U){if(U.full_name||U.username)state.user=U.full_name||U.username;
+  try{var U=window.CBX_USER;if(U){
     if(U.pii_unmask||U.role==='admin'){state.unmasked=true;var sw=document.getElementById('piiSwitch');if(sw)sw.checked=true;var ps=document.getElementById('piiState');if(ps)ps.textContent='Off — authorised view';}}}catch(e){}
-  $('#userNm').textContent=state.user;$('#userAv').textContent=state.user[0]||'A';
+  paintUser();
   render();
   syncReferralsFromAPI(true);   // referrals pull themselves from HighLevel on every sign-in — no manual upload needed
   setTimeout(function(){try{if(!(state.facts.REFERRALS||[]).length)syncReferralsFromAPI(true)}catch(e){}},20000);   // one retry if the first pull hit a transient failure

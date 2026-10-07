@@ -1342,7 +1342,17 @@ export default {
         /* THE ANSWER IS THE RECORD (one classifier, 2026-09-15): the station that posted the raw rows
            adopts the roster, the leaders and the leavers exactly as served to everyone else. */
         const extras = await rosterExtras(DB).catch((e) => { console.error('rosterExtras failed: ' + (e && e.message || e)); return { leaders: [], leavers: [], aliases: [], degraded: ['leaders', 'leavers', 'aliases'] }; });
-        return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length, on_file: out.on_file, roster: clean,
+        /* DID IT LEAVE THE FLOOR IN STEP? (spec 011, 2026-10-07: "make sure it correctly creates, or deletes tl and
+           campaigns and agents"). The answer used to say what CHANGED, never whether the result now matches the list.
+           The database's own integrity view (agent list ⇔ agent logins ⇔ leader logins ⇔ campaigns) is the authority;
+           a read that fails says so — it is never reported as "in step". One extra call, accepted publishes only. */
+        let integrity;
+        try {
+          const ir = await DB.select('agent_list_integrity?select=check_name,failures,severity');
+          const failures = (ir || []).filter((r) => +r.failures > 0).map((r) => ({ check: r.check_name, n: +r.failures, severity: r.severity }));
+          integrity = { in_step: failures.length === 0, failures };
+        } catch (e) { integrity = { in_step: null, failures: [], error: String((e && e.message) || e).slice(0, 200) }; }
+        return json({ accepted: true, fingerprint: fp, as_of: asOf, n: clean.length, on_file: out.on_file, roster: clean, integrity,
           dropped: out.dropped || [], blank_campaign: out.blank_campaign || [], campaigns_on_list: out.campaigns_on_list || [],
           mirrored, replaced: rec.replaced, sync: out.agents, leaders: out.leaders, campaigns: out.campaigns,
           review, renamed, record_leaders: extras.leaders, leavers: extras.leavers, aliases: extras.aliases || [], extras_degraded: extras.degraded || [] });

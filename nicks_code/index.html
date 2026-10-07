@@ -9091,6 +9091,15 @@ function reportListPublish(j){
       toast(D.length+' row'+(D.length===1?'':'s')+' in the file did not become an agent — '
         +D.slice(0,4).map(function(d){return (d.code||d.name||('row '+d.row))+' ('+d.why+')'}).join(', ')+(D.length>4?' +'+(D.length-4)+' more':'')
         +'. Every other row is on the roster: '+j.n+' of '+j.on_file+'.',14000);
+    /* IS THE FLOOR IN STEP WITH THE LIST? (spec 011) — the database's integrity view, sent with an accepted publish.
+       Last on purpose: one toast element, so the verdict is the message the uploader is left reading. */
+    var I=j.integrity;
+    if(I&&I.in_step===true)
+      toast('In step with the list — '+j.n+' agents; agent logins, team leader logins and campaigns all match it.',12000);
+    else if(I&&I.in_step===false)
+      toast('Published, but NOT in step with the list: '+(I.failures||[]).map(function(f){return f.check+' ('+f.n+')'}).join('; ')+'. The health banner will name it until it is fixed.','err',20000);
+    else if(I)
+      toast('Published — whether logins and campaigns now match the list could not be confirmed'+(I.error?' ('+I.error+')':'')+'.','err',15000);
   }catch(e){}
 }
 /* The server refused the whole publish — all or nothing, so NOTHING moved: not the roster,

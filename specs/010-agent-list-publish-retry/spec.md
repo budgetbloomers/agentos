@@ -23,6 +23,17 @@
   3 team leaders to remove (Renolan Pillay, Hezron Pillay, Kubenderan Govender), Training Gr 17 closed. The file is
   good; the failure was in the attempt.
 
+## Root cause, found once the retry recorded it (2026-10-07 10:38 SAST)
+
+The first diagnosis ("a passing error") was WRONG. With spec 010 live, the next attempt was stored with the database's
+own words: `ON CONFLICT DO UPDATE command cannot affect row a second time` (SQLSTATE 21000). The 7 Oct "TL" sheet names
+Fabian Chetty (CB194) twice — Matrix Vehicle Tracking - Digital and - Referral — and sync_team_leaders wrote the leader
+map with one insert … on conflict (leader_name), which Postgres refuses when one row would be touched twice. The plan
+step never writes the map (so every dry run passed); every apply threw. Fixed by migration-054 (one map row per leader,
+campaigns joined); guarded by verify-publish-agent-list D4 (live, rolled back: red with the exact live error, then
+green 62/62). The 7 Oct list was then published with Nick's approval: 128 agents, 34 updated, 5 removed, 3 leader
+logins removed (Hezron, Renolan, Kubenderan), Training Gr 17 deleted.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A passing server error does not lose the upload (Priority: P1)

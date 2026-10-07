@@ -172,6 +172,31 @@ try {
     ok(again.status === 'SUCCESS' && !((again.leaders || {}).removed || []).some((r) => r.username === 'cb900809'), 'a later publish without the sheet keeps the no-agent leader (on_list_as_of remembers)', JSON.stringify((again.leaders || {}).removed));
   }
 
+  head('D4 · ONE LEADER, TWO CAMPAIGNS ON THE SHEET (2026-10-07, spec 010)');
+  {
+    /* The 7 Oct list named Fabian Chetty (CB194) TWICE on the "TL" sheet — Digital and Referral. The leaders sync wrote
+       the map with ONE insert … on conflict (leader_name) do update, and Postgres refuses to touch a row twice in one
+       command (21000) — so every publish of that list THREW at the apply, and Hezron & co. stayed on for a day. A leader
+       who heads two campaigns is one row in the map, holding both. Savepoint: the failure must not poison the rest. */
+    await c.query('savepoint d4');
+    const live = file.map((r) => ({ ...r, sheet: r.sheet || 'VAS' }));
+    /* Fabian's two (Digital, Referral) both fold to VT before this step, so the fixture uses two campaigns that fold
+       apart — Courtesy and Cuddle — to prove a leader's campaigns are all kept, not just that the throw is gone */
+    const twice = [
+      { sheet: 'TL', role: 'leader', code: 'CB900801', name: 'Test Leader One', campaign: 'Matrix VAS - Courtesy', manager: 'Test Manager', callx: 'CB900801' },
+      { sheet: 'TL', role: 'leader', code: 'CB900801', name: 'Test Leader One', campaign: 'Matrix VAS - Cuddle', manager: 'Test Manager', callx: 'CB900801' },
+    ];
+    let out = null, err = '';
+    try { out = await publish([...twice, ...live], { asOf: ASOF, apply: true, hashes: hashesFor(['CB900801']) }); }
+    catch (e) { err = String(e.message || e); }
+    ok(!err && out && out.status === 'SUCCESS', 'a leader named twice on the sheet (two campaigns) publishes instead of throwing', err || (out && out.status + ' ' + JSON.stringify(out.detail || out.reason || '').slice(0, 120)));
+    if (!err) {
+      const m = await q(`select campaign from team_leader_cbs where leader_name = 'Test Leader One'`);
+      ok(m.length === 1 && /Courtesy/.test(m[0].campaign) && /Cuddle/.test(m[0].campaign), '…as ONE map row holding both campaigns', JSON.stringify(m));
+    }
+    await c.query('rollback to savepoint d4');
+  }
+
   head('E · INTEGRITY: THE LIST, THE LOGINS AND THE CAMPAIGNS AGREE');
   const integ = async () => Object.fromEntries((await q(`select check_name, failures, severity from agent_list_integrity`)).map((r) => [r.check_name, r]));
   let I = await integ();
