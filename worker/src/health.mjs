@@ -572,7 +572,18 @@ export async function dailySnapshots(env, DB) {
 
     const src = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/${key}`, { headers: sHdr });
     if (!src.ok) continue;
-    const gz = await new Response(src.body.pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+    /* A STORE KEPT COMPRESSED (spec 013 — Ops' call store) is copied AS IT IS: compressing it again would make a
+       snapshot that restore-state unpacks once and finds still gzip. Decided by the first bytes, streaming either way. */
+    const rd = src.body.getReader();
+    const first = await rd.read();
+    const lead = first.value || new Uint8Array(0);
+    const already = lead.length > 1 && lead[0] === 0x1f && lead[1] === 0x8b;
+    const whole = new ReadableStream({
+      start(c) { if (first.done) { c.close(); return; } if (lead.length) c.enqueue(lead); },
+      async pull(c) { const n = await rd.read(); if (n.done) c.close(); else c.enqueue(n.value); },
+    });
+    const gz = already ? await new Response(whole).arrayBuffer()
+      : await new Response(whole.pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
     const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${snapPath}`, {
       method: 'POST', headers: { ...sHdr, 'Content-Type': 'application/gzip', 'x-upsert': 'true' }, body: gz });
     if (put.ok) out.push(key + ' → ' + snapPath + ' (' + Math.round(gz.byteLength / 1024) + ' KB)');

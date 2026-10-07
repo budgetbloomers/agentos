@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { storeText } from './kv-store.mjs';   // a store may be kept gzipped at rest (spec 013)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { chromium } = await import(pathToFileURL(path.join(ROOT, 'nicks_code', 'diagnostics', 'node_modules', 'playwright', 'index.mjs')).href);
@@ -30,7 +31,7 @@ const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPA
 const get = async (key) => {
   const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/${key}`, { headers: H });
   if (!r.ok) return null;
-  return await r.text();
+  return storeText(Buffer.from(await r.arrayBuffer()));   // plain or kept-compressed (spec 013)
 };
 const config = JSON.parse(await get('cb-config') || '{}');
 const SRCS = ['AGENT_LIST', 'ATTENDANCE', 'QA_EVALUATIONS', 'BI_ACTIVE_CASES',

@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { storeText } from './kv-store.mjs';   // a store may be kept gzipped at rest (spec 013)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8')
@@ -67,7 +68,7 @@ for (const src of sources) {
 
   const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/${key}`, { headers: H });
   if (!r.ok) { console.log('  ' + src.padEnd(22) + 'read failed ' + r.status); continue; }
-  const text = await r.text();
+  const text = storeText(Buffer.from(await r.arrayBuffer()));   // plain or kept-compressed (spec 013)
   let rows; try { rows = JSON.parse(text); } catch { console.log('  ' + src.padEnd(22) + 'not JSON — skipped'); continue; }
   if (!Array.isArray(rows)) { console.log('  ' + src.padEnd(22) + 'not an array — skipped'); continue; }
 

@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from '../nicks_code/diagnostics/node_modules/pg/lib/index.js';
+import { storeText } from './kv-store.mjs';   // a store may be kept gzipped at rest (spec 013)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = {};
@@ -156,7 +157,7 @@ for (const [src, m] of Object.entries(MAP)) {
   if (ONLY && src !== ONLY) continue;
   const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/cb-facts-${src}`, { headers: H });
   if (!r.ok) { console.log('  ' + src.padEnd(22) + 'no blob (' + r.status + ')'); continue; }
-  let rows; try { rows = JSON.parse(await r.text()); } catch { console.log('  ' + src.padEnd(22) + 'not JSON'); continue; }
+  let rows; try { rows = JSON.parse(storeText(Buffer.from(await r.arrayBuffer()))); } catch {   /* plain or kept-compressed (spec 013) */ console.log('  ' + src.padEnd(22) + 'not JSON'); continue; }
 
   /* Rows the table cannot accept are REPORTED, never silently dropped: a not-null column
      with nothing to put in it is a mapping problem or a bad export, and both need naming. */

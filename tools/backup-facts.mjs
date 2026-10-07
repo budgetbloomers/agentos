@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { isGzip } from './kv-store.mjs';   // a store may be kept gzipped at rest (spec 013)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8')
@@ -61,7 +62,7 @@ for (const o of objects) {
   const src = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/${key}`, { headers: H });
   if (!src.ok) { console.log('  ' + key.padEnd(30) + 'READ FAILED ' + src.status); continue; }
   const buf = Buffer.from(await src.arrayBuffer());
-  const gz = zlib.gzipSync(buf);
+  const gz = isGzip(buf) ? buf : zlib.gzipSync(buf);   // a store kept compressed (spec 013) is copied as it is — never gzip of gzip
   const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${snapPath}`, {
     method: 'POST', headers: { ...H, 'Content-Type': 'application/gzip', 'x-upsert': 'true' }, body: gz });
   if (!put.ok) { console.log('  ' + key.padEnd(30) + 'WRITE FAILED ' + put.status + ' ' + (await put.text()).slice(0, 120)); continue; }

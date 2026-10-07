@@ -79,6 +79,19 @@ const json = (data, status = 200, headers = {}) =>
    writers treat it as abandoned (the /api/kv CAS path, 2026-09-14). A fact-store upload is
    seconds; two minutes is a dead Worker, not a slow one. */
 const KV_WRITING_TTL_MS = 120000;
+/* THE LINE PAST WHICH A SAVE IS NOT UNPACKED (spec 013): the Worker's memory is ~128 MB; vas-state, the largest store
+   the Worker itself reads, is ~21 MB — 32 MiB leaves room for both and catches Ops' call store (132.7 MB). */
+const KV_INFLATE_MAX = 32 * 1048576;
+/* Unpack only the START of a gzip body — enough to see its first characters — and stop. A corrupt gzip throws here. */
+async function gzipStart(buf) {
+  try {
+    const rd = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip')).getReader();
+    const dec = new TextDecoder(); let text = '';
+    while (!text.trim() && text.length < 4096) { const n = await rd.read(); if (n.done) break; text += dec.decode(n.value, { stream: true }); }
+    rd.cancel().catch(() => {});
+    return { text };
+  } catch (e) { return { error: String((e && e.message) || e) }; }
+}
 const REVIEW_REMOVALS = 5;
 const COACHING_CRON = "3,23,43 * * * *";                 // the coaching-wave trigger (wrangler.toml crons) — its own invocation, its own subrequest budget
 /* who sees the health banner (Nick, 2026-09-15) — `nick` is Nicholas's second admin login */
@@ -500,7 +513,9 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...cors, 'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Cbx-Client,Content-Encoding,X-Cbx-Base', 'Access-Control-Max-Age': '86400' } });
     const res = await this.handle(req, env, ctx);
     const h = new Headers(res.headers); for (const [k, v] of Object.entries(cors)) h.set(k, v);
-    return new Response(res.body, { status: res.status, headers: h });
+    /* a body that is ALREADY gzip (a large store kept compressed, spec 013) must go out as it is: without 'manual' the
+       runtime would compress it a second time on top of the Content-Encoding it carries */
+    return new Response(res.body, { status: res.status, headers: h, ...(h.get('Content-Encoding') ? { encodeBody: 'manual' } : {}) });
   },
 
   async handle(req, env, ctx) {
@@ -1669,7 +1684,19 @@ export default {
         if (v.store) { // payload in Storage — stream it straight through
           const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${v.store}`, { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY } });
           if (!sr.ok) return json({ found: false }, 404);
-          return new Response(sr.body, { status: 200, headers: hs });
+          /* A STORE KEPT COMPRESSED (spec 013) goes out compressed, labelled so the browser unpacks it. Decided by the
+             stored BYTES (the first chunk), never by a flag — a tool that rewrote the store plain is read correctly too. */
+          const rd = sr.body.getReader();
+          const first = await rd.read();
+          const lead = first.value || new Uint8Array(0);
+          const gz = lead.length > 1 && lead[0] === 0x1f && lead[1] === 0x8b;
+          const rest = new ReadableStream({
+            start(c) { if (first.done) { c.close(); return; } if (lead.length) c.enqueue(lead); },
+            async pull(c) { const n = await rd.read(); if (n.done) c.close(); else c.enqueue(n.value); },
+            cancel(why) { return rd.cancel(why); },
+          });
+          return gz ? new Response(rest, { status: 200, headers: { ...hs, 'Content-Encoding': 'gzip' }, encodeBody: 'manual' })
+            : new Response(rest, { status: 200, headers: hs });
         }
         return new Response(String(v.data ?? ''), { status: 200, headers: hs }); // legacy small row
       }
@@ -1700,6 +1727,7 @@ export default {
            the other dashboards, the maintenance scripts) is untouched. A client that cannot
            compress simply omits the header and takes the old path. */
         let body;
+        let gzRaw = null, gzSize = 0;   // a store too big to unpack, kept compressed (spec 013)
         {
           /* Decided by the BYTES, not by the header. Some edges decompress a gzipped request
              body before it reaches the Worker and some pass it through, so trusting
@@ -1709,10 +1737,27 @@ export default {
           const buf = await req.arrayBuffer();
           const u8 = new Uint8Array(buf);
           if (u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
-            try {
-              body = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
-            } catch (e) {
-              return json({ error: 'could not decompress the upload: ' + (e && e.message || e) }, 400);
+            /* A STORE TOO BIG TO UNPACK IS KEPT COMPRESSED (Spec Kit 013, 2026-10-07). Ops' ViciDial store — a row per
+               call — reached 132.7 MB, and unpacking the whole of it here ran out of memory ("Memory limit exceeded
+               before EOF"): no ViciDial save landed after 28 Sep, and every relay cycle failed the same save again.
+               The unpacked size is in the gzip trailer (ISIZE, last four bytes), so it is known WITHOUT unpacking. Past
+               the line, only the first chunk is unpacked — enough to know it is JSON — and the bytes are stored as
+               they came; the GET below sends them on with Content-Encoding: gzip and the browser unpacks them. Only
+               the Ops fact stores (cb-facts-*) may be kept that way: every other key is read by this Worker. */
+            const isize = u8.length >= 18 ? ((u8[u8.length - 4] | (u8[u8.length - 3] << 8) | (u8[u8.length - 2] << 16) | (u8[u8.length - 1] << 24)) >>> 0) : 0;
+            if (isize > KV_INFLATE_MAX) {
+              if (!/^cb-facts-/.test(qk))
+                return json({ error: 'too large: ' + qk + ' would unpack to ' + Math.round(isize / 1048576) + ' MB, over the ' + Math.round(KV_INFLATE_MAX / 1048576) + ' MB the server reads' }, 413);
+              const start = await gzipStart(buf);
+              if (start.error) return json({ error: 'could not decompress the upload: ' + start.error }, 400);
+              if (!/^\s*[\[{]/.test(start.text)) return json({ error: 'not JSON: a compressed store must hold a JSON array or object' }, 400);
+              gzRaw = u8; gzSize = isize; body = '';
+            } else {
+              try {
+                body = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+              } catch (e) {
+                return json({ error: 'could not decompress the upload: ' + (e && e.message || e) }, 400);
+              }
             }
           } else body = new TextDecoder().decode(buf);
         }
@@ -1819,8 +1864,8 @@ export default {
         }
         const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {
           method: 'POST',
-          headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'text/plain', 'x-upsert': 'true' },
-          body: body,
+          headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': gzRaw ? 'application/octet-stream' : 'text/plain', 'x-upsert': 'true' },
+          body: gzRaw || body,
         });
         if (!sr.ok) {
           if (claimed) { try { const cur = await DB.select(pk + '&select=value'); const v = { ...((cur && cur[0] && cur[0].value) || {}) }; delete v.writing; await DB.update(pk, { value: v }); } catch (e) {} }
@@ -1868,7 +1913,7 @@ export default {
            LATEST write; this row is the history, so "when exactly did saves stop" is a
            query rather than an archaeology dig through Storage timestamps. Deferred and
            best-effort — logging must never slow or fail the save it records. */
-        ctx.waitUntil(logKvWrite(DB, qk, body.length, user && user.username));
+        ctx.waitUntil(logKvWrite(DB, qk, gzRaw ? gzSize : body.length, user && user.username));
         return json({ ok: true, version: newVer }, 200, { 'X-Cbx-Version': newVer });
       }
       // Real delete (Upload Station "Delete file"): remove BOTH the Storage object and the
