@@ -46,6 +46,8 @@ export const PORTAL_ALLOWED = new Set([
      answer for the caller alone: the menu, and the caller's own order. */
   '/api/wimpy/menu',
   '/api/wimpy/order',
+  /* My orders (spec 015): the caller's OWN order history — owner from the session alone (wimpy-hl.mjs listMyOrders). */
+  '/api/wimpy/orders',
   '/api/portal/me',
   '/api/portal/overview',
   '/api/portal/agent',

@@ -149,8 +149,10 @@ First full run of every credential-free suite (47): all green but one — V9 los
 
 ## Close
 
-- [ ] Z0 RE-ENABLE THE LOCAL TICK — paused 2026-10-07 ~11:16 UTC with Nick's OK (it rebuilt site/ from the files being edited; the 11:04 digest step crashed on a half-edited build): `Enable-ScheduledTask -TaskName 'Chatterbox AgentOS local tick'` once the sweep is verified
+- [x] Z0 RE-ENABLED 2026-10-07 ~12:47 UTC right after the release (Nick: "Right after the release") — WAS: — paused 2026-10-07 ~11:16 UTC with Nick's OK (it rebuilt site/ from the files being edited; the 11:04 digest step crashed on a half-edited build): `Enable-ScheduledTask -TaskName 'Chatterbox AgentOS local tick'` once the sweep is verified
 - [x] Z1 independent review of all fixes (3 reviewers, no CRITICAL/HIGH; R1–R11 above); five new suites registered in
   verify.yml; final run 2026-10-07: 50 credential-free suites, every one green (3,320 checks). Not run: verify-controls,
   verify-vici-tz, verify-agent-portal (live database).
-- [ ] Z2 release + commit (Nick's go-ahead)
+- [x] Z2 released 2026-10-07 with Nick's go-ahead ("Deploy and commit"): Worker 4b090687, Pages muy3pzy2 (no migrations);
+  smoke verify-cors-headers --live 13/13, verify-live-save --live 5/5; commit 3acbf90 (not pushed). A2 kept for the TL
+  "(final)" view (Nick). Digest fence (R8) approved as a follow-up spec.

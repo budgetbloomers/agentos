@@ -402,6 +402,31 @@ export function evaluateFreshness(t) {
       break;
     }
   }
+  /* WIMPY ORDER CARDS (Spec Kit 015, 2026-10-07). The Wimpy cron (wimpy-hl.mjs retryDueOrders) writes
+     kv:wimpy-hl-status every run: counts only, no person in it. A row is `stuck` after 8 failed tries — the kitchen
+     has that order (n8n), but its HighLevel card never arrived, so the person's My orders shows it as "not on the
+     kitchen board yet" for ever. Pending/failed rows are being retried and raise nothing; an unconfigured HighLevel
+     raises only while orders are waiting on it. `wimpyHl` absent = the cron has not run: no opinion. A ledger insert
+     that failed (kv:wimpy-ledger-failed) means an order the person will never see in My orders — raised for 24 h. */
+  const wh = t.wimpyHl && typeof t.wimpyHl === 'object' ? t.wimpyHl : null;
+  if (wh) {
+    const c = wh.counts || {};
+    const stuckN = Number(c.stuck) || 0, waitingN = Number(c.pending) || 0;
+    if (stuckN > 0) alerts.push({ id: 'wimpy-hl-stuck', severity: 'warning',
+      message: stuckN + ' Wimpy order' + (stuckN === 1 ? '' : 's') + ' could not be put on the Wimpy HighLevel board after 8 tries — the kitchen got '
+        + (stuckN === 1 ? 'it' : 'them') + ', but My orders shows ' + (stuckN === 1 ? 'it' : 'them') + ' as not on the kitchen board. Last error: '
+        + String(wh.last_error || 'none recorded').slice(0, 160) + '. Fix the cause, then re-queue: update wimpy_orders set hl_state = \'pending\', hl_tries = 0, hl_next_at = now() where hl_state = \'stuck\'.',
+      since: 'wimpy-hl' });
+    if (wh.configured === false && waitingN > 0) alerts.push({ id: 'wimpy-hl-not-configured', severity: 'warning',
+      message: waitingN + ' Wimpy order' + (waitingN === 1 ? ' is' : 's are') + ' waiting for a HighLevel card because WIMPY_HL_API_KEY / WIMPY_HL_LOCATION_ID are not set on the Worker. '
+        + 'Ordering works; My orders shows no kitchen stage until they are set (npx wrangler secret put, in worker/).',
+      since: 'wimpy-hl' });
+  }
+  const wl = t.wimpyLedgerFailed && typeof t.wimpyLedgerFailed === 'object' ? t.wimpyLedgerFailed : null;
+  if (wl && wl.at && now - ms(wl.at) < 24 * HOUR) alerts.push({ id: 'wimpy-ledger-failed', severity: 'warning',
+    message: 'A Wimpy order reached the kitchen but could not be recorded for My orders (' + sast(ms(wl.at)) + ': ' + String(wl.error || '').slice(0, 120)
+      + ') — that person will not see it in their history. Check wimpy_orders (migration-055 applied?) and the Worker log.',
+    since: wl.at });
   /* No alert about the start password: keeping it is allowed (Nick, 2026-09-08 — "only if they want
      to"). accounts_on_default_password remains the audit view for whoever asks. */
   return alerts;
@@ -415,8 +440,15 @@ export function evaluateFreshness(t) {
  */
 export async function runHealthChecks(DB, opts = {}) {
   const rows = await DB.select(
-    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching,kv:referrals-sync-log')})&select=key,updated_at,value`);
+    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching,kv:referrals-sync-log,kv:wimpy-hl-status,kv:wimpy-ledger-failed')})&select=key,updated_at,value`);
   const at = {}; let opened = null;
+  /* spec 015: the Wimpy cron's status and the last lost ledger row ride this same select — no extra subrequest */
+  let wimpyHl = null, wimpyLedgerFailed = null;
+  const small = (v) => { try { return v && typeof v.data === 'string' ? JSON.parse(v.data) : (v && typeof v === 'object' ? v : null); } catch (e) { return null; } };
+  for (const r of rows || []) {
+    if (r.key === 'kv:wimpy-hl-status') wimpyHl = small(r.value);
+    if (r.key === 'kv:wimpy-ledger-failed') wimpyLedgerFailed = small(r.value);
+  }
   /* kv:coaching rides the same select (its value is the small pointer {store,bytes,sessions,fetchedAt}) — no extra subrequest;
      coachingAt is null when the row is missing (the copy was never taken) */
   let coachingAt = null, coachingIncomplete = [];
@@ -495,7 +527,7 @@ export async function runHealthChecks(DB, opts = {}) {
      (freshness, list refusal, integrity) was silent for a day. verify-roster-propagation caught it. */
   const helpCenter = await probeHelpCenter(opts.env);
   const alerts = evaluateFreshness({
-    helpCenter, coachingAt, coachingIncomplete, referralsLog,
+    helpCenter, coachingAt, coachingIncomplete, referralsLog, wimpyHl, wimpyLedgerFailed,
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
     staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster, db: dbh, runnerExpected: !!opts.runnerExpected,
   });

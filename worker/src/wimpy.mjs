@@ -48,7 +48,15 @@
  * orders, management included.
  */
 
+import { db } from './db.mjs';
+import { writeOrderToHighLevel, hlConfigured, dbWhy, FIRST_TRY_GRACE_MIN } from './wimpy-hl.mjs';
+
 const WEBHOOK = 'https://n8n-production-591cc.up.railway.app/webhook/wimpy';
+
+/* MY ORDERS STARTS HERE (Spec Kit 015, decision 4): orders placed before the release went only to the kitchen hand-off
+   and are not in the ledger, so the history begins on the release day — the page says so. Released 2026-10-07
+   (Worker 03191223) — the day the first ledger row was written. */
+export const WIMPY_HISTORY_SINCE = '2026-10-07';
 
 /* ---------------------------------------------------------------- ingredients
    THE thirteen. Ids are the contract the overlap test checks against; costs are
@@ -408,6 +416,43 @@ function sastNow() {
   return d.slice(0, 19) + '+02:00';
 }
 
+/* THE LEDGER (Spec Kit 015, 2026-10-07 — "it must only show their order history and no one elses"). Once the kitchen
+   has said yes, the order is kept in wimpy_orders, OWNED BY THE SESSION'S ACCOUNT (user.user_id — never anything the
+   page sent), and then its HighLevel card is written. BOTH happen after the reply, in one ctx.waitUntil chain
+   (insert → card; review M1): the database has no abort, and a stalled insert awaited here held the confirmation back
+   after the kitchen already had the order — the person presses Retry and the kitchen gets it twice. Nothing here can
+   change the reply: a failed insert is logged and reported (kv:wimpy-ledger-failed → the health banner); a HighLevel
+   failure is the row's business (wimpy-hl.mjs). The row is due for the retry cron only after FIRST_TRY_GRACE_MIN, so
+   the cron never races this chain. No session id (a direct call, as verify-wimpy makes) → nothing to own it → nothing
+   recorded. Never awaited by the caller; never throws. */
+function recordOrder(env, user, who, priced, notes, now, ctx) {
+  if (!user || !user.user_id || !env || !env.SUPABASE_URL) return;
+  const DB = db(env);
+  const configured = hlConfigured(env);
+  const chain = (async () => {
+    let row = null;
+    try {
+      const ins = await DB.insert('wimpy_orders', [{
+        owner_user_id: user.user_id, cb: who.cb, placed_at: new Date(now).toISOString(),
+        items: priced.items.map((i) => ({ id: i.id, item: i.item, quantity: i.quantity, item_total: i.item_total })),
+        total: priced.total, notes: notes || null,
+        hl_state: 'pending', hl_next_at: new Date(now + FIRST_TRY_GRACE_MIN * 60000).toISOString(),
+        hl_error: configured ? null : 'HighLevel is not configured yet — the card is written once WIMPY_HL_API_KEY and WIMPY_HL_LOCATION_ID are set',
+        hl_contact_seed: { first: who.first, last: who.last, phone: who.phone },
+      }], false, true);
+      row = (ins && ins[0]) || null;
+    } catch (e) {
+      const why = dbWhy(env, e);
+      console.error('[wimpy] the kitchen has the order but the ledger insert failed — it will be missing from My orders: ' + why);
+      await DB.insert('rules', [{ key: 'kv:wimpy-ledger-failed', value: { data: JSON.stringify({ at: new Date(now).toISOString(), error: why }) },
+        updated_by: 'wimpy', updated_at: new Date(now).toISOString() }], true).catch(() => {});
+      return;
+    }
+    if (row && configured) await writeOrderToHighLevel(env, DB, row);
+  })().catch((e) => { console.error('[wimpy] ledger chain failed: ' + dbWhy(env, e)); });
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(chain);
+}
+
 /**
  * POST /api/wimpy/order — validate, re-price, send.
  *
@@ -416,8 +461,9 @@ function sastNow() {
  * The typed name and surname travel as typed, and the account's own name (the
  * Agent List's) travels beside them as list_name, so the kitchen sheet can
  * reconcile a nickname without anyone's word being silently corrected.
+ * `ctx` (spec 015) lets the HighLevel card be written after the reply.
  */
-export async function submitWimpyOrder(env, user, body, now = Date.now()) {
+export async function submitWimpyOrder(env, user, body, now = Date.now(), ctx = null) {
   /* THE WINDOW IS ENFORCED HERE, not only shown on the page — a tab left open
      since 16:55 does not get to order at half past five. */
   if (!wimpyWindowOpen(now)) return { status: 403, body: {
@@ -472,6 +518,9 @@ export async function submitWimpyOrder(env, user, body, now = Date.now()) {
          offers Retry, so the message has to say what happened. */
       return { status: 502, body: { error: 'The order could not be sent (the kitchen system answered ' + r.status + '). Your order has been kept — press Retry.', detail: text.slice(0, 200) } };
     }
+    /* the kitchen said yes: keep it (spec 015) — never able to change this reply */
+    try { recordOrder(env, user, who, priced, notes, now, ctx); }   // after the reply (waitUntil) — never awaited here
+    catch (e) { console.error('[wimpy] ledger step failed: ' + String((e && e.message) || e).slice(0, 120)); }
     return { status: 200, body: { ok: true, total_price: priced.total, order_formatted: payload.order_formatted, timestamp: payload.timestamp } };
   } catch (e) {
     const why = ctrl.signal.aborted ? 'the kitchen system did not answer within 15 seconds' : String((e && e.message) || e).slice(0, 140);

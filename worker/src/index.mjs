@@ -15,7 +15,8 @@ import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed,
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { draftsGet, draftsPost } from './drafts.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, effPerDay } from './campaign.mjs';
-import { wimpyMenu, submitWimpyOrder } from './wimpy.mjs';
+import { wimpyMenu, submitWimpyOrder, WIMPY_HISTORY_SINCE } from './wimpy.mjs';
+import { retryDueOrders, listMyOrders, dbWhy } from './wimpy-hl.mjs';   // spec 015: the Wimpy cron's HighLevel retry; My orders
 import { syncAgentLogins, syncTeamLeaders, syncCampaigns, publishAgentList } from './provision.mjs';
 import { runHealthChecks, dailySnapshots, hygiene, logKvWrite } from './health.mjs';
 import { kickRunner } from './runner.mjs';
@@ -137,6 +138,32 @@ async function removeFailedBiBatch(DB, batchId, span) {
 }
 const REVIEW_REMOVALS = 5;
 const COACHING_CRON = "3,23,43 * * * *";                 // the coaching-wave trigger (wrangler.toml crons) — its own invocation, its own subrequest budget
+const WIMPY_CRON = "7,27,47 * * * *";                    // the Wimpy HighLevel retry (spec 015, wrangler.toml crons) — its own invocation, its own budget
+const TICK_CRON = '*/10 * * * *';
+/* ONE TRIGGER FOR COACHING AND THE WIMPY RETRY (spec 015 R11, 2026-10-08). The third trigger "7,27,47" was registered with
+   Cloudflare (its schedules API lists it) but NEVER invoked — 0 runs in 18 h while "3,23,43" ran 54 times
+   (workersInvocationsScheduled). So both jobs ride one trigger: every firing is still its own invocation with its own
+   50-subrequest budget, and the SCHEDULED MINUTE (event.scheduledTime) says which job it is — 3/23/43 coaching, 7/27/47
+   Wimpy. The two old strings stay recognised in case Cloudflare ever hands one over. */
+const SHARED_CRON = "3,7,23,27,43,47 * * * *";
+const WIMPY_MINUTES = new Set([7, 27, 47]);
+/* WHICH TRIGGER IS THIS? AN EXPLICIT MATCH (spec 015, 2026-10-07). Until now anything that was not the tick ran the
+   coaching wave — fine with two triggers, wrong with three: the Wimpy cron would have spent the coaching budget, and a
+   trigger added later would silently do the same. Matched on the minute field as a SET (whitespace and order forgiven —
+   the 17 Sep "strict compare never matched" worry), the other four fields must be `*`; anything else is 'unknown',
+   logged by name and run as the coaching wave (the old fallback — see scheduled()). No cron string at all (a hand-run scheduled(), as the roster suites do) is the tick. */
+function cronKind(expr, scheduledTime) {
+  const s = String(expr || '').replace(/\s+/g, ' ').trim();
+  if (!s) return 'tick';
+  const minutes = (e) => { const f = e.split(' '); return f.length === 5 && f.slice(1).every((x) => x === '*') ? f[0].split(',').sort().join(',') : null; };
+  const m = minutes(s);
+  if (m !== null && m === minutes(SHARED_CRON)) {
+    const t = Number(scheduledTime);
+    return Number.isFinite(t) && t > 0 && WIMPY_MINUTES.has(new Date(t).getUTCMinutes()) ? 'wimpy' : 'coaching';   // no time → the coaching wave, as before
+  }
+  if (m !== null) for (const [kind, e] of [['tick', TICK_CRON], ['coaching', COACHING_CRON], ['wimpy', WIMPY_CRON]]) if (m === minutes(e)) return kind;
+  return 'unknown';
+}
 /* who sees the health banner (Nick, 2026-09-15) — `nick` is Nicholas's second admin login */
 const HEALTH_RECIPIENTS = new Set(['aarav', 'nicholas', 'nick', 'barry']);                              // a publish removing this many agents gets a review note (never a refusal)
 
@@ -392,17 +419,31 @@ export default {
        subrequests, and the wave's 29 Convex calls tipped it over — silently, because the tick
        caught the error and `wrangler tail` redacts the message. Run by hand it works (three waves,
        1,022 sessions). A second cron expression gets a second invocation with its own budget. */
-    /* WHICH TRIGGER IS THIS? The tick is the only "every ten minutes" expression; anything else that
-       fires this handler is the coaching wave — compared loosely (2026-09-17: the snapshot sat 31 h old
-       while the wave ran by hand, so the strict string compare was not matching what Cloudflare hands
-       over). Every scheduled event is also stamped to kv:cron-log so the next such question is a read. */
+    /* WHICH TRIGGER IS THIS? cronKind() above — tick, coaching, wimpy, or unknown (spec 015: it used to be "the tick,
+       or else the coaching wave"). Every scheduled event is also stamped to kv:cron-log so the next such question is a
+       read; `tick` stays in the stamp beside `kind` for whoever reads the older shape. */
     const cronStr = String(event.cron || '').replace(/\s+/g, ' ').trim();
-    const isTick = cronStr === '*/10 * * * *' || cronStr === '';
-    ctx.waitUntil(DB.insert('rules', [{ key: 'kv:cron-log', value: { last: cronStr, at: new Date().toISOString(), tick: isTick }, updated_by: 'cron', updated_at: new Date().toISOString() }], true).catch(() => {}));
-    if (!isTick) {
+    const kind = cronKind(cronStr, event.scheduledTime);
+    const isTick = kind === 'tick';
+    ctx.waitUntil(DB.insert('rules', [{ key: 'kv:cron-log', value: { last: cronStr, at: new Date().toISOString(), tick: isTick, kind }, updated_by: 'cron', updated_at: new Date().toISOString() }], true).catch(() => {}));
+    /* An UNKNOWN trigger keeps the pre-015 fallback — the coaching wave (review, 2026-10-07): on 17 Sep the strict compare
+       never matched what Cloudflare handed over and the wave only ran because "not the tick" fell through to it. Doing
+       nothing would silently stop the coaching snapshot on the next such surprise; the Wimpy retry is never a fallback. */
+    if (kind === 'unknown')
+      console.warn('[cron] unknown trigger "' + cronStr + '" — running the coaching wave as the fallback (known: ' + TICK_CRON + ' · ' + SHARED_CRON + ')');
+    if (kind === 'coaching' || kind === 'unknown') {
       ctx.waitUntil((async () => {
         try { const cw = await snapshotCoachingWave(env, DB); console.info('[cron:coaching] ' + JSON.stringify(cw)); }
         catch (e) { console.warn('[cron:coaching] failed: ' + (e && e.message || e)); }
+      })());
+      return;
+    }
+    /* THE WIMPY CRON (spec 015): orders whose HighLevel card failed or never ran are retried here, ≤ 5 per run, on
+       this trigger's own 50-subrequest budget (wimpy-hl.mjs retryDueOrders; kv:wimpy-hl-status is its report). */
+    if (kind === 'wimpy') {
+      ctx.waitUntil((async () => {
+        try { const w = await retryDueOrders(env, DB); console.info('[cron:wimpy] ' + JSON.stringify(w)); }
+        catch (e) { console.warn('[cron:wimpy] failed: ' + dbWhy(env, e)); }   // redacted: a PostgREST error can quote a row (review L5)
       })());
       return;
     }
@@ -956,8 +997,17 @@ export default {
          for one release so a cached Agent Analytics tab fails in words. */
       if (path === '/api/wimpy/menu' && req.method === 'GET') return json(wimpyMenu());
       if (path === '/api/wimpy/order' && req.method === 'POST') {
-        const r = await submitWimpyOrder(env, user, await req.json().catch(() => ({})));
+        /* ctx (spec 015): the order's HighLevel card is written after this reply, inside this invocation's budget */
+        const r = await submitWimpyOrder(env, user, await req.json().catch(() => ({})), Date.now(), ctx);
         return json(r.body, r.status);
+      }
+      /* MY ORDERS (Spec Kit 015 — "it must only show their order history and no one elses"). Inside the wimpy fence
+         (a wimpy-scoped session reaches it; a referrals one is refused above), on PORTAL_ALLOWED for a full agent
+         session. listMyOrders is handed the SESSION user and nothing from the request — no query string, body or
+         header can change whose orders come back. no-store: a shared desk's browser keeps no copy. */
+      if (path === '/api/wimpy/orders' && req.method === 'GET') {
+        const r = await listMyOrders(env, DB, user, ctx, { since: WIMPY_HISTORY_SINCE });
+        return json(r.body, r.status, { 'Cache-Control': 'no-store' });
       }
       if (path.startsWith('/api/portal/wimpy/'))
         return json({ error: 'Wimpy ordering has moved to its own app — open Wimpy Order from the VAS Analytics Apps page and sign in with your CB number and password.' }, 410);

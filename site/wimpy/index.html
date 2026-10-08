@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<script id="cbx-build">window.CBX_BUILD='muy3pzy2';
+<script id="cbx-build">window.CBX_BUILD='muzajjov';
 (function(){function chk(){fetch('/build.txt?x='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null}).then(function(b){
   if(!b||b.trim()===window.CBX_BUILD)return;
   var el=document.getElementById('cbxStale');
@@ -166,6 +166,19 @@ a{color:var(--w-red)}
 .wp-ok .big{font-size:48px;line-height:1}
 .slip{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;background:var(--w-cream);border:1px dashed var(--w-line);border-radius:10px;padding:10px 12px;text-align:left;margin:12px 0 0}
 .foot{margin-top:18px;font-size:11.5px;color:var(--w-muted);text-align:center}
+
+/* ---- my orders (spec 015) ---- */
+.wp-tools{display:flex;justify-content:flex-end;margin:0 0 12px}
+.wp-hist-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.wp-hist-head h3{margin:0}
+.wp-order{border:1px solid var(--w-line);border-radius:12px;padding:10px 12px;margin:10px 0 0;background:var(--w-card)}
+.wp-order .t{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px}
+.wp-when{font-weight:900;color:var(--w-ink)}
+.wp-stage{font-size:11.5px;font-weight:900;border-radius:999px;padding:3px 9px;background:var(--w-cream);color:var(--w-muted);border:1px solid var(--w-line);text-align:right}
+.wp-stage.on{background:var(--w-yellow);color:var(--w-ink);border-color:var(--w-yellow)}
+.wp-oline{font-size:13.5px;color:var(--w-body);padding:2px 0}
+.wp-onote{font-size:12.5px;color:var(--w-muted);font-style:italic;padding:2px 0}
+.wp-hist-empty{font-size:14px;color:var(--w-muted);padding:14px 0 4px}
 </style>
 </head>
 <body>
@@ -182,6 +195,9 @@ var WHO=whoBlank();                             // the order form, typed by the 
 var WHO_FOR='';                                 // whose account WHO was filled for — another person never inherits it (A4)
 var MAX_QTY=10;                                 // quantity is the one thing a person may change
 var API_EPOCH=0;                                // bumped by wReset: a reply asked for before a sign-out is never let in
+/* MY ORDERS (spec 015): the signed-in person's own history, exactly as the Worker answers it — the Worker decides whose
+   orders and every figure; this page only paints them. Held only while the view is open; cleared by wReset. */
+var WHIST=null, WHIST_BUSY=false, WHIST_ERR='';
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -204,6 +220,7 @@ function wReset(){
   try{ sessionStorage.removeItem(TKEY); }catch(e){}
   U=null; WMENU=null; WCART=[]; WCAT='breakfast'; WDAY=null; WOPEN=false; WSTATE='order'; WERR=''; WBUSY=false; WDONE=null; WNOTE='';
   WHO=whoBlank(); WHO_FOR='';
+  WHIST=null; WHIST_BUSY=false; WHIST_ERR='';   // and their order history (spec 015)
 }
 
 /* ---------- money: display only, the Worker re-prices ---------- */
@@ -329,6 +346,7 @@ function render(){
   if(el){ try{ el.focus(); var n=el.value.length; if(sel&&sel[0]!=null) el.setSelectionRange(Math.min(sel[0],n),Math.min(sel[1],n)); }catch(e){} }
 }
 function wPaint(){
+  if(WSTATE==='history'){ shell(wHistoryPage()); wire(); return; }   // needs no menu — and a window-flip menu reload keeps it open
   if(!WMENU){ shell('<div class="card"><p class="why">Loading the menu…</p></div>'); return; }
   if(WMENU.error){ shell('<div class="card"><p class="why">'+esc(WMENU.error)+'</p><button type="button" class="btn" id="retry">Try again</button></div>'); var rt=$('retry'); if(rt) rt.onclick=wLoadMenu; return; }
   if(WSTATE==='done'){ shell(wDonePage()); wire(); return; }
@@ -396,7 +414,51 @@ function wMenuPage(){
         :'<button type="button" class="btn" disabled title="This item has no price configured">Unavailable</button>')
       +'</div>';
   }).join('')+'</div>';
-  return wWindowBar()+wNoteHTML()+header+hero+week+'<div class="wp-wrap"><div>'+cats+grid+'</div>'+(open?wCartHTML():'')+'</div>';
+  return wWindowBar()+wToolsHTML()+wNoteHTML()+header+hero+week+'<div class="wp-wrap"><div>'+cats+grid+'</div>'+(open?wCartHTML():'')+'</div>';
+}
+/* "My orders" sits on the menu whether ordering is open or closed — history is readable whenever the person can sign in */
+function wToolsHTML(){ return '<div class="wp-tools"><button type="button" class="btn" id="wpMine">🧾 My orders</button></div>'; }
+
+/* ---------- my orders (spec 015): the Worker's answer, painted ---------- */
+var WDAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+var WMONS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+var WMONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+/* placed_at arrives in SA time ("2026-10-08T12:31:04+02:00") — its own digits are read, never the browser's time zone */
+function wWhen(s){
+  var m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(s||'')); if(!m) return '';
+  var dow=new Date(Date.UTC(+m[1],+m[2]-1,+m[3])).getUTCDay();
+  return WDAYS[dow]+' '+(+m[3])+' '+WMONS[+m[2]-1]+' · '+m[4]+':'+m[5];
+}
+function wLongDate(s){ var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s||'')); return m?(+m[3])+' '+WMONTHS[+m[2]-1]+' '+m[1]:String(s||''); }
+function wOrderHTML(o){
+  return '<div class="wp-order"><div class="t"><span class="wp-when">'+esc(wWhen(o.placed_at))+'</span>'
+    +'<span class="wp-stage'+(o.stage?' on':'')+'">'+esc(o.stage||o.stage_note||'')+'</span></div>'
+    +(o.items||[]).map(function(i){ return '<div class="wp-oline">'+esc(i.quantity)+' × '+esc(i.item)+' — R'+esc(i.item_total)+'</div>'; }).join('')
+    +(o.notes?'<div class="wp-onote">“'+esc(o.notes)+'”</div>':'')
+    +'<div class="wp-tot"><span class="l">Total</span><span class="v">R'+esc(o.total)+'</span></div></div>';
+}
+function wHistoryPage(){
+  var h='<div class="card wp-hist" style="max-width:720px;margin:0 auto"><div class="wp-hist-head"><h3>My orders</h3>'
+    +'<div class="actions" style="margin:0"><button type="button" class="btn" id="wpHistBack">Back to menu</button>'
+    +'<button type="button" class="btn" id="wpHistRefresh"'+(WHIST_BUSY?' disabled':'')+'>'+(WHIST_BUSY?'Refreshing…':'Refresh')+'</button></div></div>';
+  if(WHIST&&WHIST.since) h+='<p class="why wp-since">History starts '+esc(wLongDate(WHIST.since))+' — orders placed before then are not shown.</p>';
+  if(WHIST_ERR) h+='<div class="msg bad">'+esc(WHIST_ERR)+'</div>';
+  if(!WHIST) return h+(WHIST_ERR?'':'<p class="why">Loading your orders…</p>')+'</div>';
+  if(WHIST.stages_available===false) h+='<div class="msg info">The kitchen stages are not available right now — your orders are below. Press Refresh in a minute.</div>';
+  var list=WHIST.orders||[];
+  h+=list.length?list.map(wOrderHTML).join(''):'<div class="wp-hist-empty">You have no orders yet. The orders you place will show here, newest first.</div>';
+  return h+'</div>';
+}
+/* GET with nothing but the session token — the Worker decides whose orders; a 401/403 is a dead session: sign-in, all cleared */
+function wLoadHistory(){
+  WHIST_BUSY=true; WHIST_ERR=''; render();
+  api('/api/wimpy/orders').then(function(r){
+    WHIST_BUSY=false;
+    if(r.status===401||r.status===403){ signOut(); return; }
+    if(r.ok&&r.json&&r.json.orders){ WHIST=r.json; WHIST_ERR=''; }
+    else WHIST_ERR=(r.json&&r.json.error)||'Your orders could not be loaded. Press Refresh to try again.';
+    if(WSTATE==='history') render();
+  });
 }
 
 function wCartHTML(){
@@ -511,6 +573,9 @@ function wire(){
   var ed=$('wpEdit'); if(ed) ed.onclick=function(){ WSTATE='form'; WERR=''; render(); };
   var send=$('wpSend'); if(send) send.onclick=wSubmit;
   var nw=$('wpNew'); if(nw) nw.onclick=function(){ WSTATE='order'; WDONE=null; WERR=''; WOPEN=false; render(); };
+  var mine=$('wpMine'); if(mine) mine.onclick=function(){ WSTATE='history'; WHIST=null; wLoadHistory(); };
+  var hr=$('wpHistRefresh'); if(hr) hr.onclick=function(){ if(!WHIST_BUSY) wLoadHistory(); };
+  var hb=$('wpHistBack'); if(hb) hb.onclick=function(){ WSTATE='order'; WHIST=null; WHIST_ERR=''; render(); };   // nothing of it kept once closed
 }
 
 boot();
