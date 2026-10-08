@@ -150,6 +150,101 @@ function liveFactors() {
   return new Set(Object.keys(out));
 }
 
+/* ---- the branded page shell, shared by every document this tool writes ----
+   A purpose-built renderer for exactly the markdown this tool emits — headings,
+   tables, bullets, rules, bold, italics and inline code. Not a general markdown
+   parser and not pretending to be one; there is no converter on this machine and
+   a document the team receives every month is worth forty lines. */
+function mdToHtml(md) {
+  const esc2 = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  /* <br> and <span> are ours, emitted above — put them back after escaping. */
+  const inline = t => esc2(t)
+    .replace(/&lt;br&gt;/g, '<br>').replace(/&lt;span&gt;/g, '<span class="fld">').replace(/&lt;\/span&gt;/g, '</span>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^*])\*([^*]+)\*/g, '$1<i>$2</i>');
+  const lines = md.split('\n');
+  const out = [];
+  let i = 0, inList = false;
+  const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^\|/.test(l) && /^\|[\s:–-]+\|/.test(lines[i + 1] || '')) {
+      closeList();
+      const cells = r => r.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const align = cells(lines[i + 1]).map(c => (c.endsWith(':') ? ' class="num"' : ''));
+      out.push('<table><thead><tr>' + cells(l).map((c, n) => `<th${align[n] || ''}>${inline(c)}</th>`).join('') + '</tr></thead><tbody>');
+      i += 2;
+      while (i < lines.length && /^\|/.test(lines[i])) {
+        out.push('<tr>' + cells(lines[i]).map((c, n) => `<td${align[n] || ''}>${inline(c)}</td>`).join('') + '</tr>');
+        i++;
+      }
+      out.push('</tbody></table>');
+      continue;
+    }
+    const h = l.match(/^(#{1,3})\s+(.*)$/);
+    if (h) { closeList(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); i++; continue; }
+    if (/^---\s*$/.test(l)) { closeList(); out.push('<hr>'); i++; continue; }
+    const b = l.match(/^[-*]\s+(.*)$/);
+    if (b) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${inline(b[1])}</li>`); i++; continue; }
+    if (!l.trim()) { closeList(); i++; continue; }
+    closeList(); out.push(`<p>${inline(l)}</p>`); i++;
+  }
+  closeList();
+  return out.join('\n');
+};
+
+const brandLogo = (() => {
+  try { return (readFileSync(join(ROOT, 'agent/index.html'), 'utf8').match(/var LOGO="(data:image\/png;base64,[^"]+)"/) || [])[1]; }
+  catch { return null; }
+})();
+
+function brandPage(title, subtitle, md) { return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow">
+<title>${title} — The Chatterbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root{--navy:#0A1730;--ink:#0F1E36;--body:#3B4A63;--muted:#71809B;--line:#E3E9F3;--bg:#F2F5FA;--card:#fff;
+ --blue:#2563EB;--green:#158A4C;--amber:#B45309;--red:#C42D2D;--radius:14px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:13px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:22px 22px 60px}
+.mast{background:var(--navy);color:#fff;border-radius:var(--radius);padding:22px 24px;margin-bottom:16px;position:relative;overflow:hidden}
+.mast::after{content:"";position:absolute;inset:0;background:radial-gradient(640px 300px at 92% -40%,rgba(56,189,248,.22),transparent 62%)}
+.mast-top{display:flex;gap:18px;align-items:flex-start;position:relative}
+.mast-logo{background:#fff;border-radius:11px;padding:11px 13px;flex:none}.mast-logo img{display:block;width:150px}
+.mast h1{font-size:21px;font-weight:800;letter-spacing:-.4px;border:none;padding:0;margin:0;color:#fff}
+.mast p{font-size:12.5px;color:#9FB6DA;margin-top:3px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:4px 20px 18px;box-shadow:0 1px 2px rgba(15,30,54,.05),0 4px 14px rgba(15,30,54,.05)}
+h1{font-size:19px;font-weight:800;letter-spacing:-.3px;margin:26px 0 10px;padding-bottom:8px;border-bottom:2px solid var(--line)}
+h2{font-size:15.5px;font-weight:800;margin:22px 0 8px}
+h3{font-size:13.5px;font-weight:800;margin:20px 0 7px;color:var(--navy)}
+p{margin:7px 0;max-width:96ch}
+ul{margin:7px 0 7px 20px}li{margin:3px 0;max-width:96ch}
+hr{border:none;border-top:1px solid var(--line);margin:22px 0}
+table{width:100%;border-collapse:collapse;font-size:12px;margin:9px 0 14px}
+th{text-align:left;font-size:9.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding:6px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
+th.num,td.num{text-align:right}
+td{padding:7px 9px;border-bottom:1px solid #F1F4FA;vertical-align:top}
+tbody tr:hover{background:#FAFCFF}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;background:#EEF3FB;color:#1E40AF;padding:1px 5px;border-radius:4px}
+b{font-weight:700}
+.fld{display:block;color:var(--muted);font-size:10.5px;margin-top:3px;line-height:1.45}
+td:nth-child(3){font-weight:700;white-space:nowrap}
+@page{size:A4;margin:12mm 10mm}
+@media print{*{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+ body{background:#fff;font-size:10px}.wrap{max-width:none;padding:0}.card{box-shadow:none;border:none;padding:0}
+ table,tr,h1,h2,h3{break-inside:avoid;page-break-inside:avoid}h1,h2,h3{break-after:avoid}thead{display:table-header-group}}
+</style></head><body><div class="wrap">
+<header class="mast"><div class="mast-top">
+${brandLogo ? `<div class="mast-logo"><img src="${brandLogo}" alt="The Chatterbox"></div>` : ''}
+<div><h1>${title}</h1>
+<p>${subtitle} · ${new Date().toISOString().slice(0, 10)} · internal</p></div>
+</div></header>
+<div class="card">${mdToHtml(md)}</div>
+</div></body></html>`; }
+
 /* ------------------------------------------------------------------- the run - */
 
 const LIVE = liveFactors();
@@ -218,6 +313,121 @@ if (!ONLY) {
 }
 
 /* -------------------------------------------------------- the requirements --- */
+
+/* ============================================================================
+   --asks : THE CONDENSED BRIEF. The requirements pack is 27 pages and answers
+   "what does this dashboard need?". This answers the question somebody actually
+   acts on — "what do I ask each department for?" — department by department,
+   split into what is missing from a PARTIAL, which readings are MANUAL, and the
+   exact fields where we need a FEED. Same probe, same requests; nothing here is
+   retyped, so the two documents cannot drift.
+   ============================================================================ */
+if (argv.includes('--asks')) {
+  const A = [];
+  const req = id => REQUESTS.requests.find(r => r.id === id);
+  /* "[INPUT REQUIRED — EXCO to nominate; P18 vacant]" must not be chopped at the
+     dash into a half-sentence. An unowned request says so, in as many words. */
+  const who = o => (o.startsWith('[') ? 'UNOWNED — EXCO to nominate' : o.split(' — ')[0]);
+  const cols = r => (r.sheets
+    ? Object.entries(r.sheets).map(([sh, cc]) => `*${sh}:* ` + cc.map(c => `\`${c.name}\`${c.required ? '†' : ''}`).join(', ')).join(' · ')
+    /* NOT an asterisk: a required-marker `*` pairs with the next one under the
+       italic rule and swallows every field name between the two. */
+    : r.columns.map(c => `\`${c.name}\`${c.required ? '†' : ''}`).join(', '));
+
+  A.push('# What to ask each department for');
+  A.push('');
+  A.push(`*Generated by \`node tools/exec-coverage.mjs --asks\` from the same probe as the full requirements pack — every state was tested against the repository, not asserted. \`†\` marks a required field.*`);
+  A.push('');
+  const n = { Fully: 0, Partially: 0, 'Not at all': 0 };
+  sections.forEach(x => x.rows.forEach(r => { n[r.have]++; }));
+  A.push(`**${n.Fully} factors we have fully · ${n.Partially} partially · ${n['Not at all']} not at all.** ` +
+    'A factor marked *fully* needs nothing from anyone outside this repo — it is either already read or ours to wire.');
+  A.push('');
+
+  sections.forEach(x => {
+    const part = x.rows.filter(r => r.state === 'partial');
+    const man = x.rows.filter(r => r.state === 'manual');
+    const feed = x.rows.filter(r => r.state === 'feed');
+    A.push(`## ${x.s.label} — ${x.s.weight}% of the business score`);
+    A.push('');
+    if (!part.length && !man.length && !feed.length) {
+      A.push(`**Ask for nothing.** All ${x.rows.length} factors are ours: ` +
+        x.rows.map(r => r.f.label).join(' · ') + '.');
+      const wiring = x.rows.filter(r => r.state === 'wiring');
+      if (wiring.length) A.push('');
+      wiring.forEach(r => A.push(`- Outstanding on our side: **${r.f.label}** — ${r.asks.map(a => cols(req(a.id))).join('; ') || 'wiring only'}.`));
+      A.push('');
+      return;
+    }
+    const seen = new Set();
+    const bucket = (rows, head, lead) => {
+      if (!rows.length) return;
+      A.push(`### ${head}`);
+      A.push('');
+      if (lead) { A.push(lead); A.push(''); }
+      rows.forEach(({ f, asks }) => {
+        const fe = f.feed;
+        A.push(`**${f.label}** (${f.w}% of the section)`);
+        if (fe.needs?.length) fe.needs.forEach(z => A.push(`- Missing: ${z}`));
+        asks.forEach(a => {
+          const r = req(a.id);
+          const key = `${f.k}:${r.id}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          A.push(`- **${r.id}** (${r.kind}, ${r.cadence}, ${who(r.owner)}) — ${cols(r)}`);
+        });
+        A.push('');
+      });
+    };
+    bucket(part, 'Partial — we hold one half', 'The value exists; what it is measured against does not.');
+    bucket(man, 'Manual — a register, kept by hand', 'Real readings. They age, so the report prints the date they were last touched.');
+    bucket(feed, 'Needs a feed — nothing produces this today', null);
+    const have = x.rows.filter(r => r.have === 'Fully');
+    if (have.length) {
+      A.push(`*Already ours, ask for nothing:* ${have.map(r => r.f.label).join(' · ')}.`);
+      A.push('');
+    }
+  });
+
+  /* The list the way it is actually sent: by the person who has to produce it. */
+  A.push('---');
+  A.push('');
+  A.push('## The ask list, by person');
+  A.push('');
+  const byOwner = new Map();
+  sections.forEach(x => x.rows.filter(r => r.have !== 'Fully').forEach(r => r.asks.forEach(a => {
+    /* Group on the PRIMARY owner, not the full string: a request owned by two
+       people would otherwise open a row of its own, and each unowned request
+       carries its own [INPUT REQUIRED] wording and would split three ways. */
+    const key = who(a.owner);
+    if (!byOwner.has(key)) byOwner.set(key, new Set());
+    byOwner.get(key).add(a.id);
+  })));
+  A.push('| Person | Asks | Cadence |');
+  A.push('|---|---|---|');
+  [...byOwner.entries()]
+    /* Most asks first; the unowned block last, because it is a different kind of
+       problem — nobody to send it to until EXCO names someone. */
+    .sort((a, b) => (a[0].startsWith('UNOWNED') ? 1 : 0) - (b[0].startsWith('UNOWNED') ? 1 : 0) || b[1].size - a[1].size)
+    .forEach(([person, ids]) => {
+      const rs = [...ids].map(req);
+      A.push(`| ${person.startsWith('UNOWNED') ? '**UNOWNED — EXCO to nominate**' : `**${person}**`} | ${rs.map(r => `**${r.id}** ${r.title}`).join('<br>')} | ${rs.map(r => r.cadence).join('<br>')} |`);
+    });
+  A.push('');
+  A.push('## Two rules to put in the request itself');
+  A.push('');
+  A.push(`- **Dates** — ${REQUESTS.conventions.dates}`);
+  A.push(`- **Empty cells** — ${REQUESTS.conventions.empty}`);
+  A.push('');
+  A.push('*Full column tables with types and examples are in `DATA-REQUIREMENTS.md`, part two.*');
+
+  writeFileSync(join(ROOT, 'reports/exec-weekly/ASK-LIST.md'), A.join('\n') + '\n');
+  writeFileSync(join(ROOT, 'reports/exec-weekly/ASK-LIST.html'), brandPage(
+    'What to ask each department for',
+    'Every data request behind the executive weekly report, by section and by person',
+    A.join('\n').replace(/^# What to ask[^\n]*\n/, '')));
+  console.log('  wrote reports/exec-weekly/ASK-LIST.md + .html\n');
+}
 
 if (argv.includes('--write')) {
   const L = [];
@@ -337,101 +547,11 @@ if (argv.includes('--write')) {
     }
   });
 
-  /* ---- the same pack as a branded page, for sending and printing ----
-     A purpose-built renderer for exactly the markdown this tool emits — headings,
-     tables, bullets, rules, bold, italics and inline code. Not a general markdown
-     parser and not pretending to be one; there is no converter on this machine and
-     a document the team receives every month is worth forty lines. */
-  const mdToHtml = (md) => {
-    const esc2 = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    /* <br> and <span> are ours, emitted above — put them back after escaping. */
-    const inline = t => esc2(t)
-      .replace(/&lt;br&gt;/g, '<br>').replace(/&lt;span&gt;/g, '<span class="fld">').replace(/&lt;\/span&gt;/g, '</span>')
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
-      .replace(/(^|[^*])\*([^*]+)\*/g, '$1<i>$2</i>');
-    const lines = md.split('\n');
-    const out = [];
-    let i = 0, inList = false;
-    const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
-    while (i < lines.length) {
-      const l = lines[i];
-      if (/^\|/.test(l) && /^\|[\s:–-]+\|/.test(lines[i + 1] || '')) {
-        closeList();
-        const cells = r => r.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-        const align = cells(lines[i + 1]).map(c => (c.endsWith(':') ? ' class="num"' : ''));
-        out.push('<table><thead><tr>' + cells(l).map((c, n) => `<th${align[n] || ''}>${inline(c)}</th>`).join('') + '</tr></thead><tbody>');
-        i += 2;
-        while (i < lines.length && /^\|/.test(lines[i])) {
-          out.push('<tr>' + cells(lines[i]).map((c, n) => `<td${align[n] || ''}>${inline(c)}</td>`).join('') + '</tr>');
-          i++;
-        }
-        out.push('</tbody></table>');
-        continue;
-      }
-      const h = l.match(/^(#{1,3})\s+(.*)$/);
-      if (h) { closeList(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); i++; continue; }
-      if (/^---\s*$/.test(l)) { closeList(); out.push('<hr>'); i++; continue; }
-      const b = l.match(/^[-*]\s+(.*)$/);
-      if (b) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${inline(b[1])}</li>`); i++; continue; }
-      if (!l.trim()) { closeList(); i++; continue; }
-      closeList(); out.push(`<p>${inline(l)}</p>`); i++;
-    }
-    closeList();
-    return out.join('\n');
-  };
 
-  const logo = (() => {
-    try { return (readFileSync(join(ROOT, 'agent/index.html'), 'utf8').match(/var LOGO="(data:image\/png;base64,[^"]+)"/) || [])[1]; }
-    catch { return null; }
-  })();
-
-  const page = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow">
-<title>Data Requirements — The Chatterbox</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
-<style>
-:root{--navy:#0A1730;--ink:#0F1E36;--body:#3B4A63;--muted:#71809B;--line:#E3E9F3;--bg:#F2F5FA;--card:#fff;
- --blue:#2563EB;--green:#158A4C;--amber:#B45309;--red:#C42D2D;--radius:14px}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:13px;line-height:1.55;-webkit-font-smoothing:antialiased}
-.wrap{max-width:1120px;margin:0 auto;padding:22px 22px 60px}
-.mast{background:var(--navy);color:#fff;border-radius:var(--radius);padding:22px 24px;margin-bottom:16px;position:relative;overflow:hidden}
-.mast::after{content:"";position:absolute;inset:0;background:radial-gradient(640px 300px at 92% -40%,rgba(56,189,248,.22),transparent 62%)}
-.mast-top{display:flex;gap:18px;align-items:flex-start;position:relative}
-.mast-logo{background:#fff;border-radius:11px;padding:11px 13px;flex:none}.mast-logo img{display:block;width:150px}
-.mast h1{font-size:21px;font-weight:800;letter-spacing:-.4px;border:none;padding:0;margin:0;color:#fff}
-.mast p{font-size:12.5px;color:#9FB6DA;margin-top:3px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:4px 20px 18px;box-shadow:0 1px 2px rgba(15,30,54,.05),0 4px 14px rgba(15,30,54,.05)}
-h1{font-size:19px;font-weight:800;letter-spacing:-.3px;margin:26px 0 10px;padding-bottom:8px;border-bottom:2px solid var(--line)}
-h2{font-size:15.5px;font-weight:800;margin:22px 0 8px}
-h3{font-size:13.5px;font-weight:800;margin:20px 0 7px;color:var(--navy)}
-p{margin:7px 0;max-width:96ch}
-ul{margin:7px 0 7px 20px}li{margin:3px 0;max-width:96ch}
-hr{border:none;border-top:1px solid var(--line);margin:22px 0}
-table{width:100%;border-collapse:collapse;font-size:12px;margin:9px 0 14px}
-th{text-align:left;font-size:9.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding:6px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
-th.num,td.num{text-align:right}
-td{padding:7px 9px;border-bottom:1px solid #F1F4FA;vertical-align:top}
-tbody tr:hover{background:#FAFCFF}
-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;background:#EEF3FB;color:#1E40AF;padding:1px 5px;border-radius:4px}
-b{font-weight:700}
-.fld{display:block;color:var(--muted);font-size:10.5px;margin-top:3px;line-height:1.45}
-td:nth-child(3){font-weight:700;white-space:nowrap}
-@page{size:A4;margin:12mm 10mm}
-@media print{*{print-color-adjust:exact;-webkit-print-color-adjust:exact}
- body{background:#fff;font-size:10px}.wrap{max-width:none;padding:0}.card{box-shadow:none;border:none;padding:0}
- table,tr,h1,h2,h3{break-inside:avoid;page-break-inside:avoid}h1,h2,h3{break-after:avoid}thead{display:table-header-group}}
-</style></head><body><div class="wrap">
-<header class="mast"><div class="mast-top">
-${logo ? `<div class="mast-logo"><img src="${logo}" alt="The Chatterbox"></div>` : ''}
-<div><h1>Executive Weekly Health Report — the data it needs</h1>
-<p>What each section requires, whether we have it, and the format for everything we do not · ${new Date().toISOString().slice(0, 10)} · internal</p></div>
-</div></header>
-<div class="card">${mdToHtml(L.join('\n').replace(/^# Executive[^\n]*\n/, ''))}</div>
-</div></body></html>`;
-  writeFileSync(join(ROOT, 'reports/exec-weekly/DATA-REQUIREMENTS.html'), page);
+  writeFileSync(join(ROOT, 'reports/exec-weekly/DATA-REQUIREMENTS.html'), brandPage(
+    'Executive Weekly Health Report — the data it needs',
+    'What each section requires, whether we have it, and the format for everything we do not',
+    L.join('\n').replace(/^# Executive[^\n]*\n/, '')));
 
   const out = join(ROOT, 'reports/exec-weekly/DATA-REQUIREMENTS.md');
   writeFileSync(out, L.join('\n') + '\n');

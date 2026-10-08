@@ -103,7 +103,8 @@ each section's `commentary`. Re-run the builder and the guard.
 ```bash
 node tools/exec-coverage.mjs              # the table
 node tools/exec-coverage.mjs --section lrc  # one section
-node tools/exec-coverage.mjs --write      # regenerates DATA-REQUIREMENTS.md
+node tools/exec-coverage.mjs --write      # regenerates the full requirements pack
+node tools/exec-coverage.mjs --asks       # the condensed brief: what to ask each department for
 ```
 
 Every factor in the rule book carries a `feed` block — the system, the store, the exact fields,
@@ -126,6 +127,12 @@ change:
   partially / not at all); part two, the format for everything we do not.
 - `DATA-REQUIREMENTS.html` — the same pack, branded, for sending and printing.
 - A PDF, via the same chromium command as the report.
+
+`--asks` writes `ASK-LIST.md` / `.html` — the same probe and the same requests, cut the way somebody
+acts on them: per department, what is missing from a *partial*, which readings are *manual*, and the
+exact fields where we need a *feed*; then the whole thing again grouped by the person who has to
+produce it. Seven pages against twenty-seven, and it cannot drift from the pack because neither
+document is written by hand.
 
 The three-state answer collapses the five probe states for someone deciding what to go and collect:
 **Fully** = live or wiring (ours to do, nobody outside this repo is asked for anything) · **Partially**

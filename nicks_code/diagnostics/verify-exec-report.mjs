@@ -341,6 +341,20 @@ if (fs.existsSync(REQ)) {
     ['ISO, YYYY-MM-DD', 'CB number', 'Exactly one header row'].every(z => req.includes(z)));
 }
 
+const ASKS = j(REPO, 'reports', 'exec-weekly', 'ASK-LIST.md');
+ok('the ask list exists', fs.existsSync(ASKS), 'run: node tools/exec-coverage.mjs --asks');
+if (fs.existsSync(ASKS)) {
+  const al = fs.readFileSync(ASKS, 'utf8');
+  const wanted = new Set(cov.flatMap(c => c.factors.filter(f => f.have !== 'Fully').flatMap(f => f.asks)));
+  ok('the ask list names every request a gap points at',
+    [...wanted].every(id => al.includes(id)), [...wanted].filter(id => !al.includes(id)).join(','));
+  ok('the ask list carries every section, so no department is silently left out',
+    RULES.sections.every(s => al.includes(`## ${s.label} — ${s.weight}%`)),
+    RULES.sections.filter(s => !al.includes(`## ${s.label} — ${s.weight}%`)).map(s => s.k).join(','));
+  ok('an unowned request is shown as unowned rather than wearing a half-sentence',
+    !al.includes('[INPUT REQUIRED') || al.includes('UNOWNED — EXCO to nominate'));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 failures.forEach(f => console.log('  · ' + f));
 process.exit(fail ? 1 : 0);
