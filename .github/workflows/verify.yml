@@ -53,13 +53,14 @@ jobs:
           # and tools/usage-backfill.mjs is re-runnable with the live Worker's keys
           # verify-usage-029 (2026-10-11, spec 029): who asks for help and what is asked most — migration-062 in PGlite (topics,
           # merges, askers per day/week/month, TL, CM), the TL's words on CM requests, the AI topic after the answer, the tools
+          # verify-usage-030 (2026-10-11, spec 030): who asked — name, CB, team, TL / CM on every ask (migration-063 in PGlite)
           # spec 014 (2026-10-07) system sweep: one suite per area — VAS, Ops, Agent Analytics+Wimpy, Worker, tick+tools
           # verify-wimpy-history (2026-10-07, spec 015): Wimpy "My orders" shows only the signed-in person's own orders; HighLevel cards never break ordering
           for t in verify-agent-analytics verify-wimpy verify-wimpy-signin verify-wimpy-history verify-session-name verify-kv-large-store verify-vas-sweep-014 verify-ops-sweep-014 verify-agent-sweep-014 verify-worker-sweep-014 verify-tick-014 verify-engine-rules verify-rule-constants verify-public-holidays verify-saturday-rule verify-leave-days verify-ops-leave \
                    verify-coaching-signature verify-coaching-drafts \
                    verify-cm-targets verify-targets-027 verify-campaign-manager verify-perf-score verify-history \
                    verify-tbc-backdate verify-variance verify-save-acks verify-login-lockout \
-                   verify-help-repeat verify-help-contact verify-usage-028 verify-usage-029 \
+                   verify-help-repeat verify-help-contact verify-usage-028 verify-usage-029 verify-usage-030 \
                    verify-drill verify-campaign-moves verify-campaign-split verify-comm-model \
                    verify-attendance-format verify-upload-station-layout verify-digest-fence \
                    verify-cm-digest verify-coaching-wave verify-cm-signoff-worker verify-cm-view \
