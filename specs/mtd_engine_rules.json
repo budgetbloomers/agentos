@@ -413,7 +413,9 @@
    "note": "Mirror: MTD_RULES.departures. Proven nightly by verify-departures.mjs; verify-vas-mtd's leaver simulation asserts they stay in the report, marked."
   },
   "sales_target_matrix": {
-   "_source": "agent_roster 'Target' column, keyed Campaign|Tenure. Read at runtime - values below are the observed state.",
+   "_source": "The rule-book FALLBACK for the daily sales target, keyed Campaign|Tenure (Spec Kit 027, 2026-10-11). The Agent List row's own Target column is the authority: these values apply only when the row in force that day has no numeric Target (blank, TBC, text) or for months recorded before 2026-10-01, which carry no list target. Values unchanged since 2026-08-20.",
+   "_precedence": ["override", "override*", "list", "book", "book*"],
+   "_precedence_note": "override = cm:targets matrix exact Campaign|Tenure; override* = cm:targets Campaign|*; list = the Target cell of the Agent List row in force for that agent on that day (recorded per month in the org history by the whole-month rule; used only when that row is for the campaign the day was worked under, so a mover never carries another campaign's cell); book = this table exact; book* = this table Campaign|*. Last resort when none answers: the current roster cell (legacy). Mirrors: MTD_RULES.salesTargetPrecedence (PULSE) and TARGET_PRECEDENCE (worker/src/campaign.mjs); verify-targets-027 holds all three equal.",
    "Cuddle|Exp": 8,
    "Courtesy|Exp": 5,
    "Courtesy|M2": 4,
@@ -586,7 +588,7 @@
     "name": "Sales Target",
     "type": "integer",
     "formula": "=VLOOKUP($F{r},Roster!$A:$J,10,FALSE)",
-    "source": "reference_data.sales_target_matrix keyed on Campaign|Tenure",
+    "source": "the Agent List row's Target in force that day, else reference_data.sales_target_matrix keyed on Campaign|Tenure (precedence: reference_data.sales_target_matrix._precedence, Spec Kit 027)",
     "note": "Daily target. MTD target = SUM over rows, so it scales automatically with employed days.",
     "number_format": "0"
    },
@@ -1856,6 +1858,14 @@
   "Nesting"
  ],
  "_changes": [
+  {
+   "date": "2026-10-11",
+   "by": "Nick (UAT: \"The targets are not updated for the agents based on their tenure below — Month 1 - 4, Month 2 - 5, Exp - 6\")",
+   "key": "reference_data.sales_target_matrix._precedence / MTD_RULES.salesTargetPrecedence / TARGET_PRECEDENCE",
+   "from": "override exact → override campaign-wide → rule book exact → rule book campaign-wide → the list's cell",
+   "to": "override exact → override campaign-wide → the Agent List row's Target in force that day → rule book exact → rule book campaign-wide",
+   "why": "The 9 Oct list carries Courtesy M1 4 / M2 5 / Exp 6 and the table (3/4/5) decided first. Decided with Nick (Spec Kit 027): the list's Target column is the authority; a list's targets apply to the month it is uploaded in, so September and earlier keep 3/4/5 to the cent and October reads 4/5/6. Table values unchanged."
+  },
   {
    "date": "2026-10-01",
    "by": "campaign managers (sign-off list)",

@@ -14,7 +14,7 @@ import { campaignMoves, setCampaignMove } from './moves.mjs';
 import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness, kvKeyValid, isFullScope } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { draftsGet, draftsPost } from './drafts.mjs';
-import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, effPerDay } from './campaign.mjs';
+import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, rosterTargets, listTargetGroups } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder, WIMPY_HISTORY_SINCE } from './wimpy.mjs';
 import { retryDueOrders, listMyOrders, dbWhy } from './wimpy-hl.mjs';   // spec 015: the Wimpy cron's HighLevel retry; My orders
 import { syncAgentLogins, syncTeamLeaders, syncCampaigns, publishAgentList } from './provision.mjs';
@@ -1025,7 +1025,13 @@ export default {
             if (user.role !== 'campaign_manager' && user.role !== 'admin')
               return json({ error: 'Target settings are a campaign manager page.' }, 403);
             const auth2 = { role: user.role, username: user.username };
-            if (req.method === 'GET') r = cmSettingsBody(digest, auth2, ctx);
+            if (req.method === 'GET') {
+              /* the current Agent List's targets per campaign|tenure (Spec Kit 027) — shown beside the rule book, so
+                 "inherited" names what the floor is actually measured on. One read; a failed read shows the rule book. */
+              const lr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-current')}&select=value`).catch(() => null);
+              const lrec = lr && lr[0] && lr[0].value;
+              r = cmSettingsBody(digest, auth2, ctx, listTargetGroups(lrec && Array.isArray(lrec.roster) ? lrec.roster : []));
+            }
             else if (req.method === 'POST') r = await cmSettingsApply(DB, auth2, ctx, await req.json().catch(() => ({})));
             if (r && r.error && r.status) r = { status: r.status, body: { error: r.error } };
             return json(r.body, r.status);
@@ -1261,17 +1267,17 @@ export default {
            it is a copy of the derivation, not a published list, so serving it would answer
            this route from a snapshot that can no longer move. Falling through re-derives
            and refreshes the seed in one go. */
-        /* THE TARGET SERVED IS THE RULE'S, NOT THE CELL'S (Nick, 2026-09-01: a target
-           Dalwin sets "must change on the dashboard as well"). Every row's Target is
-           resolved through the same chain PULSE's engine uses — cm:targets override,
-           then the salesTargetMatrix, then the list's own cell — so Ops scores against
-           the campaign manager's number the moment it next syncs. The stored list is
-           untouched; this is applied at serve time and clearing the override restores
-           the list's value on the next sync. */
+        /* THE TARGET SERVED FOLLOWS THE ONE CHAIN (Nick, 2026-09-01: a target Dalwin sets "must change on the
+           dashboard as well"; Spec Kit 027, 2026-10-11: the Agent List's Target column is the authority). Every row is
+           resolved by rosterTargets(): target = cm:targets override → the list's own cell → the salesTargetMatrix,
+           for the list's month (targets_from) and after; rule_target = the chain without the cell, for months before
+           it; list_target = the cell itself, which PULSE records in its month history. The stored list is untouched.
+           targets_rev moves whenever the served targets can move without a new list (an override change), so Ops
+           re-syncs on it. */
         const tctx = globalThis.__cmCtx || await loadCmContext(DB).catch(() => null);
-        const applyTargets = (rows) => (rows || []).map((r2) =>
-          ({ ...r2, target: effPerDay(tctx, r2.campaign, r2.tenure, r2.target) }));
+        const applyTargets = (rows) => rosterTargets(tctx, rows || []);
         const tstamp = (tctx && tctx.targets && tctx.targets.stamp) || '';
+        const trev = 'l1|' + tstamp;
         const cur = await DB.select(`rules?key=eq.${encodeURIComponent('kv:roster-current')}&select=value,updated_at`).catch(() => null);
         const rec = cur && cur[0] && cur[0].value;
         /* THE LEADERS' CB NUMBERS TRAVEL WITH THE ROSTER (2026-09-15). The Agent List names a
@@ -1285,11 +1291,11 @@ export default {
           return json({ fingerprint: rec.fingerprint, n: rec.roster.length, as_of: rec.as_of || '',
             file: rec.file || '', source: rec.source || '', uploaded_by: rec.uploaded_by || '',
             uploaded_at: rec.uploaded_at || '', state_updated_at: (cur[0].updated_at || ''),
-            targets_stamp: tstamp, roster: applyTargets(rec.roster), leaders, leavers, aliases, extras_degraded: degraded, renamed: rec.renamed || [], review: rec.review || null });
+            targets_stamp: tstamp, targets_rev: trev, targets_from: String(rec.as_of || '').slice(0, 7), roster: applyTargets(rec.roster), leaders, leavers, aliases, extras_degraded: degraded, renamed: rec.renamed || [], review: rec.review || null });
         }
         const payload = await rosterSync(env, DB, { fresh: !!url.searchParams.get('fresh'), who: user && user.username });
         if (payload && payload.error) return json({ error: payload.error }, payload.status || 500);
-        if (payload && Array.isArray(payload.roster)) { payload.roster = applyTargets(payload.roster); payload.targets_stamp = tstamp; payload.leaders = leaders; payload.leavers = leavers; payload.aliases = aliases; payload.extras_degraded = degraded; }
+        if (payload && Array.isArray(payload.roster)) { payload.roster = applyTargets(payload.roster); payload.targets_stamp = tstamp; payload.targets_rev = trev; payload.targets_from = String(payload.as_of || '').slice(0, 7); payload.leaders = leaders; payload.leavers = leavers; payload.aliases = aliases; payload.extras_degraded = degraded; }
         return json(payload);
       }
 

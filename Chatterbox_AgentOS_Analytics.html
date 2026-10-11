@@ -1274,7 +1274,10 @@ const TRANSFORM_EXTRA={
     agent_name:String(hcol(r,'Agent Name')||'').trim(),team_leader:hcol(r,'Team Leader'),
     queue:hcol(r,'Que')||hcol(r,'Queue')||hcol(r,'Campaign'),tenure:hcol(r,'Tenure'),
     callx_alias:String(hcol(r,'Call x')||'').trim(),sf_name:String(hcol(r,'Sales Force')||'').trim(),
-    target:parseNum(hcol(r,'Target')),start_date:isoDay(parseDT(hcol(r,'Start Date'))),_d:null}},
+    target:parseNum(hcol(r,'Target')),start_date:isoDay(parseDT(hcol(r,'Start Date'))),
+    /* Spec Kit 027: only rows synced from /api/roster carry these — the rule target for months BEFORE the list's month
+       (targets_from), the served target from it. A hand-uploaded list has neither and reads its own Target cell. */
+    rule_target:parseNum(hcol(r,'Rule Target')),target_from:String(hcol(r,'Target From')||'').trim(),_d:null}},
   VICI_CALL_REPORT(r){const rawLen=hcol(r,'length_in_sec');let len=parseNum(rawLen);
     // negative or unparseable-garbage lengths are corrupt, not a credit — zeroed AND counted
     const bad=(len==null&&String(rawLen??'').trim()!=='')||(len!=null&&len<0);
@@ -1809,7 +1812,8 @@ function buildIdentity(){
   state.agentMap={};state.cbInfo={};
   const claims={};                                   // normalised name -> the set of CBs claiming it
   list.forEach(a=>{if(!a.cb_norm)return;
-    state.cbInfo[a.cb_norm]={code:a.cb_code,name:a.agent_name,tl:a.team_leader,target:a.target,queue:a.queue,tenure:a.tenure};
+    state.cbInfo[a.cb_norm]={code:a.cb_code,name:a.agent_name,tl:a.team_leader,target:a.target,queue:a.queue,tenure:a.tenure,
+      ruleTarget:a.rule_target,targetFrom:a.target_from};
     if(!identBlank(a.callx_alias))state.agentMap[a.callx_alias]=a.cb_norm;
     if(!identBlank(a.agent_name))state.agentMap[a.agent_name]=a.cb_norm;
     [a.sf_name,a.agent_name].forEach(v=>{
@@ -1941,7 +1945,11 @@ async function syncRosterFromVAS(){
     j.roster=j.roster.filter(a=>a&&String(a.code||'').trim()&&String(a.name||'').trim());
     if(!j.roster.length)return;                                     // never wipe on an empty source
     const cur=state.batches.find(b=>b.source_type==='AGENT_LIST'&&b.validation_status!=='failed');
-    if(cur&&cur.file_hash===j.fingerprint)return;                   // already current
+    /* THE SERVED TARGETS CAN MOVE WITHOUT A NEW LIST (a campaign manager's override; Spec Kit 027's list-first chain),
+       so the hash this sync is stored under carries targets_rev beside the list's fingerprint — a move in either
+       re-syncs once. The prefix is still the fingerprint's, so the published-list test below reads it unchanged. */
+    const syncHash=j.fingerprint+(j.targets_rev?'~'+j.targets_rev:'');
+    if(cur&&cur.file_hash===syncHash)return;                        // already current
     /* THE SERVER DECIDES WHICH LIST THE SUITE IS ON (2026-08-28). This guard protected a
        hand-uploaded list here from being clobbered by an older VAS one — necessary while
        each app kept a PRIVATE copy that the other could not see. A list dropped here is
@@ -1958,9 +1966,10 @@ async function syncRosterFromVAS(){
       }
     }
     const rows=j.roster.map(a=>({'Employee Code':a.code,'Agent Name':a.name,'Team Leader':a.tl,'Campaign':a.campaign,
-      'Tenure':a.tenure,'Call x':a.callx,'Sales Force':a.sf,'Target':a.target,'Start Date':a.start}));
+      'Tenure':a.tenure,'Call x':a.callx,'Sales Force':a.sf,'Target':a.target,'Start Date':a.start,
+      'Rule Target':a.rule_target,'Target From':j.targets_from||''}));
     const res=applyLoad('AGENT_LIST',{name:'Agent List — synced from VAS'+(j.as_of?' (as of '+j.as_of+')':'')},
-      {data:rows,textHash:j.fingerprint},'auto-synced from the VAS Upload Station roster');
+      {data:rows,textHash:syncHash},'auto-synced from the VAS Upload Station roster');
     window.__cbxLastWrite=Date.now();                               // this tab wrote — cbx-fresh adopts, doesn't re-init
     try{await saveFacts('AGENT_LIST');await saveAudit()}
     catch(e){toast('Agent List synced on screen, but the cloud save failed: '+esc(e.message||e),'err')}
@@ -4172,13 +4181,24 @@ function acCtxBuild(win){
   }
   return C;
 }
+/* THE DAILY TARGET FOR A WINDOW (Spec Kit 027). Ops keeps no history of lists, so the Worker serves two numbers per
+   agent: the target for the current list's month and after (override → the list's cell → the rule book) and the rule
+   target for months before it (what those months were measured on — September keeps 3/4/5 while October reads the
+   9 Oct list's 4/5/6). A window that ENDS before the list's month reads the rule target; any other window reads the
+   list's. A list hand-uploaded here carries neither and reads its own Target cell, as before. A past month after a
+   LATER list (October once November's list lands) is beyond what Ops can know — PULSE's period digests carry it. */
+function opsTargetFor(i,win){
+  const t=(i&&i.target!=null)?i.target:null;
+  if(!i||!i.targetFrom||i.ruleTarget==null||!win||!win.to) return t;
+  return (String(win.to)<i.targetFrom+'-01')?i.ruleTarget:t;
+}
 function acStats(cb,win,C){
   const i=state.cbInfo[cb]||{};const T=k=>nbaVal(k,0);
   const sale=C.sale[cb]||{n:0,gwp:0},cl=C.closed[cb]||{tc:0},op=C.open[cb]||{n:0,aSum:0,aN:0};
   const qa=C.qa[cb]||{n:0,s:0,s0:0,sn:0,sd:0,crit:0},at=C.att[cb]||{sched:0,p:0,leave:0,leaveWorked:0},ca=C.call[cb]||{n:0,sec:0,bands:{},days:new Set(),uniq:new Set()};
   const canc=(C.canc[cb]||{n:0}).n;const refs=(C.ref[cb]||{n:0}).n;
   const p=at.p, sched=at.sched;
-  const target=i.target??null;
+  const target=opsTargetFor(i,win);
   /* A per-day rate needs a per-day denominator. With no present days on record there is no
      honest rate, so these read null: the card shows an em-dash, the composite renormalises
      across the metrics the agent actually HAS, and the ladder skips the rules that read them.
@@ -5872,7 +5892,7 @@ setTimeout(function(){
           ta:st.ta==null?null:Math.round(st.ta*10)/10},
         stats:{sales:st.sales,gwp:Math.round(st.gwp),ta:st.ta,gwpSale:st.gwpSale,qa:st.qaS,
                qaN:st.qaN,conv:st.conv,talkDay:st.talkDay,att:st.att,present:st.p,
-               scheduled:st.sched,target:i.target==null?null:i.target},
+               scheduled:st.sched,target:st.target==null?null:st.target},   // the window's own target (opsTargetFor)
         /* acWeakestDriver returns {driver,label,points} — this read drv.key, which is
            undefined, so every published row carried key:undefined and the team leader's
            "where your time buys the most" table looked the agent's figure up by it and

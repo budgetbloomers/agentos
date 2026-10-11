@@ -576,6 +576,13 @@ const MTD_RULES = {
   gwpPerSale: 89,
   vat: 1.15,
   salesTargetMatrix: { 'Cuddle|Exp':8, 'Courtesy|Exp':5, 'Courtesy|M2':4, 'Courtesy|M1':3, 'Nesting|M0':2, 'Nesting|*':2 },
+  /* THE DAILY TARGET'S PRECEDENCE (Spec Kit 027, Nick 2026-10-11: "The targets are not updated for the agents based on
+     their tenure below — Month 1 - 4, Month 2 - 5, Exp - 6"). The Agent List row's Target IN FORCE THAT DAY is the
+     authority; the matrix above is the fallback for a blank cell and for months recorded before the list carried
+     targets into history (everything before October 2026 — those months keep 3/4/5 to the cent). perDayTarget() is the
+     one place it is applied. Mirrors: specs/mtd_engine_rules.json sales_target_matrix._precedence, the Worker's
+     TARGET_PRECEDENCE (verify-targets-027). */
+  salesTargetPrecedence: ['override','override*','list','book','book*'],
 
   /* §4 — attendance shift weights, keyed on the register's Status Code. The export carries
      both a long Status ("Half Day CA") and a Status Code ("HDCA"); the CODE is canonical. */
@@ -1277,8 +1284,9 @@ const COMPOSITE_RULES = {
   targets:{ targetAch:100, qa:90, talk:210, attendance:95 },   // %, %, minutes/day, %
   /* The workbook's four tenure groups agree exactly with MTD_RULES.salesTargetMatrix
      for the groups that exist in both. It has NO NESTING GROUP and the live floor
-     runs ten Nesting agents, so the daily target comes from the LIVE matrix (which
-     knows Nesting) and only the GWP floor and conversion target are read here. */
+     runs ten Nesting agents, so the daily target comes from the LIVE chain (perDayTarget:
+     override → the Agent List row → the matrix, Spec Kit 027) and only the GWP floor and
+     conversion target are read here. */
   /* CONVERSION TARGETS ARE SET AGAINST THE DENOMINATOR THEY ARE DIVIDED BY
      (Nick, 2026-08-30, "conversion needs to be scored").
      The old figures — 8 / 10 / 12 / 40 — pre-date this app carrying any lead data
@@ -1584,7 +1592,11 @@ function mergeStates(mine,theirs){
   const myL=String((mine.rosterEffect||{}).at||''), thL=String((theirs.rosterEffect||{}).at||'');
   const listFrom=myL>=thL?mine:theirs;
   for(const k of ['roster','rosterFp','rosterEffect','rosterRefused','tlCbs','leavers']) out[k]=listFrom[k];
-  { const r=Object.assign({},theirs.orgHist||{}); for(const c in (mine.orgHist||{})){ const m=mine.orgHist[c], t=r[c]; if(!t||listFrom===mine||(m&&t&&m.length>t.length)) r[c]=m; } out.orgHist=r; }
+  /* a tie in segment count goes to the copy carrying more list targets (Spec Kit 027): a tab that has just recorded
+     October's targets must not lose them to an older copy of the same segments */
+  { const nT=h=>(h||[]).filter(s=>s&&s.target!=null).length;
+    const r=Object.assign({},theirs.orgHist||{}); for(const c in (mine.orgHist||{})){ const m=mine.orgHist[c], t=r[c];
+      if(!t||listFrom===mine||(m&&t&&m.length>t.length)||(m&&t&&m.length===t.length&&nT(m)>nT(t))) r[c]=m; } out.orgHist=r; }
   out.settings=Object.assign({},theirs.settings||{},mine.settings||{});
   if(mine.gwpPerUnit!=null) out.gwpPerUnit=mine.gwpPerUnit;
   out.cmTargets=String((mine.cmTargets||{}).stamp||'')>=String((theirs.cmTargets||{}).stamp||'')?mine.cmTargets:theirs.cmTargets;
@@ -1840,6 +1852,49 @@ document.addEventListener('cbx-authed',function(){ setTimeout(adoptUserView,0) }
    daily sheet does), that source is recorded too and wins outright at fact level: it is a
    dated statement of who owned the agent that day, not a snapshot of today. */
 const sameOrg=(a,b)=>!!a&&!!b&&a.tl===b.tl&&a.campaign===b.campaign&&a.tenure===b.tenure;
+/* THE LIST'S TARGET IS PART OF ITS RECORD (Spec Kit 027, 2026-10-11). recordOrgList stores the row's Target on the
+   month segment, so whether a LIST segment is new — or a repeat of its predecessor to be folded away — also compares
+   the target: October's list (Courtesy M1 4) must survive beside an identical-org September segment that carried
+   none, or October would read September's rule book. The tracker never speaks to targets, so recordOrg's own "nothing
+   changed" test stays org-only (sameOrg); only the folding of repeats uses this. A missing target equals a missing one. */
+const sameOrgT=(a,b)=>sameOrg(a,b)&&((a.target==null?null:a.target)===(b.target==null?null:b.target));
+/* A list cell as a daily target: a positive finite number (a number, or a plain numeric string, comma decimal
+   allowed), else null — blank, "TBC", 0 and text are NO list target and fall to the rule book, never a 0.
+   worker/src/campaign.mjs listTargetOf() is the same function (verify-targets-027 runs both over the same inputs). */
+/* THE UPLOAD STATION'S TARGET CHECK (Spec Kit 027, FR-004) — pure. rows: [{code, campaign, tenure, raw}]. Returns
+   {mixed:[{group, values:[{v,n}] smallest first, blank}], text:[{code, group, raw}]}: a campaign|tenure group whose
+   agents carry more than one numeric target, and every cell that is filled but not a number (it is treated as blank,
+   so the rule book applies). Blank cells are counted only inside a group already named. */
+function listTargetWarnings(rows){
+  const g={}, text=[];
+  for(const r of rows||[]){
+    const k=String(r.campaign||'').trim()+'|'+String(r.tenure||'').trim();
+    const e=g[k]=g[k]||{vals:{},blank:0};
+    const t=listTargetOf(r.raw);
+    if(t!=null) e.vals[t]=(e.vals[t]||0)+1;
+    else { e.blank++; const s=String(r.raw==null?'':r.raw).trim(); if(s) text.push({code:r.code,group:k,raw:s}); }
+  }
+  const mixed=[];
+  for(const k of Object.keys(g).sort()){ const vs=Object.keys(g[k].vals);
+    if(vs.length>1) mixed.push({group:k,values:vs.map(Number).sort((a,b)=>a-b).map(v=>({v,n:g[k].vals[v]})),blank:g[k].blank}); }
+  return {mixed,text};
+}
+function listTargetWarningText(tw,name){
+  const parts=[];
+  if(tw.mixed.length) parts.push('Daily targets differ within a campaign and tenure group on "'+name+'" — please check this is intended (each agent is measured on their own cell): '
+    +tw.mixed.map(m=>m.group+' '+m.values.map(x=>x.v+' ×'+x.n).join(', ')+(m.blank?' ('+m.blank+' blank → rule book)':'')).join('; ')+'.');
+  if(tw.text.length) parts.push(tw.text.length+' Target cell(s) are not a number, so the rule book applies to them: '
+    +tw.text.slice(0,5).map(t=>t.code+' "'+t.raw+'" ('+t.group+')').join(', ')+(tw.text.length>5?' +'+(tw.text.length-5)+' more':'')+'.');
+  return parts.join(' ');
+}
+function listTargetOf(v){
+  if(v==null) return null;
+  if(typeof v==='number') return (isFinite(v)&&v>0)?v:null;
+  const s=String(v).trim().replace(',','.');
+  if(!/^\d+(\.\d+)?$/.test(s)) return null;
+  const n=Number(s);
+  return n>0?n:null;
+}
 /* "TBC" is not a team leader — it is the ABSENCE of one. An agent parked under a
    placeholder was never attributed to an org; when their first REAL assignment arrives,
    splitting the period at the list date files their early days under nobody (Nick,
@@ -1894,8 +1949,9 @@ function recordOrg(code,d,val,src){
     moved=i>=0&&list[i].tl!==seg.tl;
     list.splice(i+1,0,seg);
   }
-  // a later segment that now repeats its predecessor is noise, not a movement
-  for(let k=1;k<list.length;k++) if(sameOrg(list[k-1],list[k])){ list.splice(k,1); k--; }
+  // a later segment that now repeats its predecessor is noise, not a movement — unless it carries a different list
+  // target (sameOrgT, Spec Kit 027): that segment is a list's month and its target, and folding it away loses both
+  for(let k=1;k<list.length;k++) if(sameOrgT(list[k-1],list[k])){ list.splice(k,1); k--; }
   return moved;
 }
 /* WHO LEFT, AND WHEN (rule departures, 2026-09-15). S.leavers holds the last list row that named
@@ -1980,6 +2036,35 @@ function listSegAt(code,d){
   return {campaign:c,tl};
 }
 const listCampAt=(code,d)=>listSegAt(code,d).campaign;
+/* THE LIST ROW'S TARGET IN FORCE ON DAY d (Spec Kit 027, 2026-10-11). The most recent Agent List segment dated on or
+   before d — the whole-month rule put each list's segment at its month's 1st (recordOrgList), so a list's target
+   prices every day of its month and carries on until a later list changes it. Before the agent's first list segment,
+   that segment answers only inside its own month (an intake added mid-month takes the list's target from the month's
+   first day, never a month it was not on the list for). {target, campaign} when the segment carries a target, else
+   null — and nothing before October 2026 carries one: those months were recorded without, so they keep the rule book. */
+function listTargetAt(code,d){
+  const list=S.orgHist&&S.orgHist[code];
+  if(!list||!list.length) return null;
+  let seg=null, first=null;
+  for(const s of list){ if(!/agent-list/.test(s.src||'')) continue;
+    if(!first) first=s;
+    if(s.d<=d) seg=s; else break; }
+  if(!seg&&first&&String(first.d).slice(0,7)===String(d).slice(0,7)) seg=first;
+  return (seg&&seg.target!=null)?{target:seg.target,campaign:seg.campaign||''}:null;
+}
+/* THE DAILY TARGET — THE ONE PLACE IT IS CHOSEN (Spec Kit 027; MTD_RULES.salesTargetPrecedence):
+     CM override exact → CM override campaign-wide → the list row's target in force that day → rule book exact →
+     rule book campaign-wide → (legacy last resort) the current roster cell.
+   The list's value counts only when its row is for the campaign the day was WORKED under (camp): a mover's days under
+   their earlier campaign never take the new row's cell — the 20 Aug failure, four Nesting movers measured on their
+   Courtesy 3/day, cannot come back through this door. buildModel prices every fact with it and emptyMonthPayload
+   prices the month's first day with it, so the two can never disagree. */
+function perDayTarget(code,camp,tenure,d,a){
+  const ovm=(S.cmTargets&&S.cmTargets.matrix)||{}, tm=MTD_RULES.salesTargetMatrix;
+  const lt=listTargetAt(code,d);
+  const lv=(lt&&campOf(lt.campaign)===camp)?lt.target:undefined;
+  return ovm[camp+'|'+tenure]??ovm[camp+'|*']??lv??tm[camp+'|'+tenure]??tm[camp+'|*']??(a?.target||0);
+}
 /* A MOVER'S MONTH IS SPLIT BY THE DATE OF THE MOVE — CAMPAIGN ONLY (D4, sprint 2026-09-29; Nick to
    confirm). UAT 28 Sep: CB121/CB150/CB162/CB245 worked Download & Test from 1 Sep and Courtesy from
    14 Sep, CB233 Cuddle → Courtesy the same day, and every report blended the month under one campaign
@@ -2056,6 +2141,9 @@ function recordOrgList(code,asOf,val){
   if(!code||!/^\d{4}-\d{2}-\d{2}$/.test(asOf||'')) return false;
   const seg={d:asOf,tl:String(val.tl||'').trim(),campaign:String(val.campaign||'').trim(),
              tenure:String(val.tenure||'').trim(),src:'agent-list'};
+  /* THE ROW'S TARGET, for this list's month (Spec Kit 027): recorded only when the cell is a real number, so a blank
+     or "TBC" cell leaves the segment without one and the day falls to the rule book (listTargetOf). */
+  { const t=listTargetOf(val.target); if(t!=null) seg.target=t; }
   if(!seg.tl&&!seg.campaign) return false;          // nothing to attribute — don't record a blank
   const list=S.orgHist[code]=S.orgHist[code]||[];
   // first real assignment after placeholder-only history: back-date the WHOLE history
@@ -2070,7 +2158,11 @@ function recordOrgList(code,asOf,val){
   const pre=list.filter(s=>s.d<ms), mid=list.filter(s=>s.d>=ms&&s.d<nextMs), post=list.filter(s=>s.d>=nextMs);
   const inForce=mid.length?mid[mid.length-1]:(pre.length?pre[pre.length-1]:null);
   if(provisionalTL(seg.tl)&&inForce&&!provisionalTL(inForce.tl)){
-    if(!seg.campaign||seg.campaign===inForce.campaign) return false;  // nothing real to record
+    const sameCamp=!seg.campaign||seg.campaign===inForce.campaign;
+    /* nothing real to record — but a new list TARGET is real (Spec Kit 027): a placeholder-led row still carries it */
+    /* a blank cell is a value too (null): a new month whose row is blank must not inherit last month's number */
+    if(sameCamp&&(seg.target==null?null:seg.target)===(inForce.target==null?null:inForce.target)) return false;
+    if(!seg.campaign) seg.campaign=inForce.campaign;
     seg.tl=inForce.tl;                                                // keep the real leader
   }
   /* The month segment starts at the month boundary — or at the agent's first sighting
@@ -2080,8 +2172,10 @@ function recordOrgList(code,asOf,val){
   const moved=!!inForce&&(inForce.tl!==seg.tl||(!!seg.campaign&&inForce.campaign!==seg.campaign));
   const next=pre.slice();
   const prev=next[next.length-1];
-  if(!prev||!sameOrg(prev,seg)) next.push(seg);     // month inherits when nothing changed
-  for(const s of post){ const p=next[next.length-1]; if(!p||!sameOrg(p,s)) next.push(s); }
+  /* month inherits when nothing changed — the target included (sameOrgT): a list whose target differs from the
+     segment in force opens its month even when the team leader, campaign and tenure did not move */
+  if(!prev||!sameOrgT(prev,seg)) next.push(seg);
+  for(const s of post){ const p=next[next.length-1]; if(!p||!sameOrgT(p,s)) next.push(s); }
   S.orgHist[code]=next;
   return moved;
 }
@@ -2860,6 +2954,7 @@ const INGEST={
        delayed publish could miss. */
     S.rosterFp=null;
     const out=[]; const newCamp=new Set(); const noCamp=[]; const sfDiffers=[];
+    const rawTarget=new Map();                // code -> the Target cell as the sheet wrote it (Spec Kit 027)
     /* WHICH COLUMN NAMES THE CAMPAIGN decides how far this sheet is trusted. The current
        format says 'Campaign'; the legacy tabs say 'Que'. A sheet with neither cannot say who
        is Cuddle and who is Courtesy at all — see the refusal below. */
@@ -2920,6 +3015,7 @@ const INGEST={
         target:parseFloat(r['Target'])||0, start:parseDateLoose(r['Start Date'])||'',
         role:r['Job Title']||''
       });
+      rawTarget.set(code,r['Target']);
     }
     if(!out.length) return null;
     /* NO CAMPAIGN COLUMN AT ALL — every row would become Courtesy, because that is what
@@ -2993,7 +3089,7 @@ const INGEST={
     for(const a of out){
       const hist=S.orgHist[a.code]||[]; const had=!!hist.length;
       if(had&&!provisionalTL(a.tl)&&hist.every(s=>provisionalTL(s.tl))) backdated++;
-      if(recordOrgList(a.code,asOf,{tl:a.tl,campaign:a.campaign,tenure:a.tenure})&&had) moved++;
+      if(recordOrgList(a.code,asOf,{tl:a.tl,campaign:a.campaign,tenure:a.tenure,target:rawTarget.get(a.code)})&&had) moved++;
       else if(!had) fresh++;
     }
     if(moved) toast(moved+' agent(s) moved team leader or campaign in "'+name+'" — applied to the whole of '
@@ -3010,6 +3106,15 @@ const INGEST={
     const fe=(S.rosterEffect&&S.rosterEffect.hash===feKey)?S.rosterEffect
       :{hash:feKey,at:new Date().toISOString().slice(0,16).replace('T',' '),asOf,file:name,agents:0,moved:0,fresh:0,left:0};
     fe.agents+=out.length; fe.moved+=moved; fe.fresh+=fresh; fe.left+=left; fe.pending=1;
+    /* MIXED TARGETS ARE NAMED, NEVER REFUSED (Spec Kit 027, FR-004). The list's Target column is now the authority,
+       so a group whose agents carry different numbers — or a cell that is not a number — is said out loud on the
+       receipt (and, for a hand upload, in a toast). VT really does run mixed M2 targets (1.5, 2.5, 7 on 9 Oct), so the
+       wording only asks for a check; the list loads either way. Accumulated per file across its sheets. */
+    { const tw=listTargetWarnings(out.map(a=>({code:a.code,campaign:a.campaign,tenure:a.tenure,raw:rawTarget.get(a.code)})));
+      const prevW=fe.targets||{mixed:[],text:[]};
+      fe.targets={mixed:prevW.mixed.concat(tw.mixed),text:prevW.text.concat(tw.text)};
+      if(!/^Agent List — published/.test(String(name||''))&&(tw.mixed.length||tw.text.length))
+        setTimeout(function(){ try{ toast(listTargetWarningText(tw,name),16000); }catch(e){} },2600); }
     S.rosterEffect=fe;
     if(typeof kickAgentDigest==='function') kickAgentDigest();   // guarded: the ingest also runs under the diagnostics harness
     /* AND TELL OPS AT ONCE (Nick, 2026-08-28). Ops keeps its own copy of the Agent List and
@@ -4675,26 +4780,16 @@ function buildModel(range, periodKey, opts){
          Shifts — so the target (perDay × emp) does not grow by it either. The row survives the
          guard below on its data. dataOnlyDay() is the one place that decides. */
       if(dataOnlyDay(d)){ emp=0; act=0; }
-      /* THE DAILY TARGET IS A RULE, NOT A CELL (Nick, 2026-08-20: 'the nesting target is
-         2 SPD'). It used to come straight from the roster's Target column, which let a
-         stale per-agent value override the campaign's rule — four agents who moved into
-         Nesting kept their Courtesy 3/day and the whole floor's target read wrong. The
-         salesTargetMatrix rule decides first (exact campaign|tenure key, then the
-         campaign-wide '*' key), and the roster's Target column remains the fallback for
-         anyone the matrix does not name — so nothing moves for Cuddle or Courtesy, whose
-         roster values equal their matrix rows. Attributed to the campaign the day was
-         WORKED under, like everything else. */
-      const tm=MTD_RULES.salesTargetMatrix;
+      /* THE DAILY TARGET (Spec Kit 027, 2026-10-11 — perDayTarget() decides). History of the rule: until 20 Aug it
+         was the roster cell; from 20 Aug the salesTargetMatrix decided first (four Nesting movers had kept their Courtesy
+         3/day from a stale cell); from 1 Sep a campaign manager's override sat over the matrix. Nick, 11 Oct: "The
+         targets are not updated for the agents based on their tenure below — Month 1 - 4, Month 2 - 5, Exp - 6" — the
+         9 Oct list said 4/5/6 and the matrix's 3/4/5 won. Now: override → override campaign-wide → the Agent List
+         row's Target IN FORCE THAT DAY (recorded per month by recordOrgList, and only for the campaign the day was
+         worked under) → rule book exact → rule book campaign-wide → the cell. Months recorded before October carry no
+         list target and price exactly as before. */
       const tTen=(oh&&oh.tenure)||a?.tenure||'';
-      /* THE CAMPAIGN MANAGER'S DIAL SITS OVER THE MATRIX (Nick, 2026-09-01: a target
-         Dalwin sets "must change on the dashboard as well because this is the new
-         targets"). S.cmTargets.matrix arrives from the Worker's /api/cm-targets and
-         the chain is shared verbatim with worker/src/campaign.mjs effPerDay():
-         override exact -> override campaign-wide -> rule-book exact -> rule-book
-         campaign-wide -> the Agent List's own cell. Clearing the override restores
-         the rule book exactly; the roster is never rewritten. */
-      const ovm=(S.cmTargets&&S.cmTargets.matrix)||{};
-      const perDay=ovm[camp+'|'+tTen]??ovm[camp+'|*']??tm[camp+'|'+tTen]??tm[camp+'|*']??(a?.target||0);
+      const perDay=perDayTarget(code,camp,tTen,d,a);
       const target=trackerIsSource?tr.target:(perDay*emp);
       const gwpT=trackerIsSource?tr.gwpT:(target*S.gwpPerUnit);
       /* canc belongs in this guard (audit round 3, 2026-08-27): under the NET rule a fully
@@ -7733,7 +7828,11 @@ PAGES.data=()=>{
         const lv=Object.values(S.leavers||{}).filter(a=>a&&a.left&&a.left>=dkey(new Date()).slice(0,7)+'-01').length;
         return {facts:`<span class="pill pgood">${S.roster.length} agents</span>`+(lv?`<span class="pill pmuted" title="Not on the latest Agent List — off every report (Nick, 15 Sep: only the current list counts)">${lv} left this month · off the reports</span>`:'')
           +(fe?`<span class="sf-cov">as of ${esc(String(fe.asOf||''))} · applied to whole of ${esc(String(fe.asOf||'').slice(0,7))}</span>`:''),
-          last:fe?`<span title="${esc(String(fe.file||''))}">${fmtNum(fe.moved)} moved · ${fmtNum(fe.fresh)} new · ${fmtNum(fe.left)} left · last upload ${esc(String(fe.at||''))}</span>`:''};})()},
+          last:fe?`<span title="${esc(String(fe.file||''))}">${fmtNum(fe.moved)} moved · ${fmtNum(fe.fresh)} new · ${fmtNum(fe.left)} left · last upload ${esc(String(fe.at||''))}</span>`
+            /* Spec Kit 027: mixed targets in a group / a Target cell that is not a number — named, never a refusal */
+            +((fe.targets&&((fe.targets.mixed||[]).length||(fe.targets.text||[]).length))
+              ?`<span class="pill pwarn" title="${esc(listTargetWarningText({mixed:fe.targets.mixed||[],text:fe.targets.text||[]},String(fe.file||'the list')))}">targets to check: ${esc((fe.targets.mixed||[]).map(m=>m.group+' '+m.values.map(x=>x.v+'×'+x.n).join('/')).concat((fe.targets.text||[]).length?[(fe.targets.text||[]).length+' not a number']:[]).join(' · '))}</span>`:'')
+            :''};})()},
     {t:'inactive',icon:I.alert,color:'var(--rose)',name:'Cancellations (BI Inactive)',desc:'Power BI Inactive export — cancelled contracts, counted per agent by Contract Deactivate Date. This is where the MTD Cancellations and % of Cancellations columns come from. Upload daily; each upload replaces the days it covers, so overlapping pulls never double-count.',stat:statFor(['cancellations'])},
     {t:'vici',reach:'calls',icon:I.phone,color:'var(--cuddle)',name:'ViciDial — all agents',desc:'<b>The one dialler source for the whole floor since 1 Sep 2026</b> — Courtesy and Nesting included, CallX retired. Pull <b>EXPORT_CALL_REPORT</b> (tab-separated .txt) with <b>every user group ticked</b>: an unticked group doesn\'t error, its agents just read as never having dialled. One row per call, dated per call, so any date range splits across its days correctly. Talk time is every call\'s length on the agent\'s CB number; the upload says how much of it is ringing rather than talking. The older <b>Agent Performance Detail</b> is one row per agent for the range in its own "Time range:" line — export that ONE DAY AT A TIME, because a multi-day pull is a single total per agent and cannot be split across days.',stat:statFor(['calls (ViciDial)','vici range'])},
     {t:'board',icon:I.scale,color:'var(--courtesy)',name:'Manual Stats',desc:'The agent-logged daily board that feeds <b>VAS Analytics → Variance Report</b>: Agent Name + Sale 1..Sale 27 (cell value = GWP) + Total Sales / Total GWP / Referrals. <b>One day per sheet, named DD.MM</b> (e.g. 13.08) — re-uploading a day replaces exactly that day, and a workbook of historical DD.MM tabs loads each day separately. Agents match through the Agent List; unmatched names are reported on the Variance page, never guessed.',stat:statFor(['board'])},
@@ -8539,7 +8638,9 @@ window.closeDrawer=()=>{ $('#drawer').classList.remove('open'); $('#scrim').clas
    "history" is noise. This is the visible half of the historical rule: the figures above are
    attributed to whoever owned the agent on the day, and this says who that was. */
 function orgHistLine(code){
-  const h=(S.orgHist&&S.orgHist[code])||[];
+  /* a segment that only records a new list TARGET (Spec Kit 027) is not a team move — consecutive entries under the
+     same leader collapse to the first */
+  const h=((S.orgHist&&S.orgHist[code])||[]).filter((s,i,arr)=>i===0||s.tl!==arr[i-1].tl);
   if(h.length<2) return '';
   return `<div class="sub" style="margin-top:3px;font-size:11.5px">Team history: `
     +h.map(s=>`<span title="recorded from the ${esc(s.src||'agent list')}">${esc(s.tl||'—')} <span style="color:var(--muted)">from ${s.d}</span></span>`).join(' → ')
@@ -9218,6 +9319,25 @@ function listRefusedBanner(){
     Fix the sheet at source and upload it again in <a class="linky" onclick="go('data')">Upload Station</a>; this notice clears itself when a list is accepted.</p></div>`;
 }
 
+/* Re-record the list target of every agent whose history, for the record's month, disagrees with the record's cell
+   (Spec Kit 027). Only when the Worker serves list_target (a row without it says nothing about the cell). Returns how
+   many agents' targets changed. */
+function backfillListTargets(j){
+  if(!j||!Array.isArray(j.roster)||!/^\d{4}-\d{2}-\d{2}$/.test(String(j.as_of||''))) return 0;
+  const on=new Map((S.roster||[]).map(a=>[a.code,a]));
+  let n=0;
+  for(const r of j.roster){
+    if(!r||!('list_target' in r)) continue;
+    const c=cbCode(String(r.code||'')); const a=c&&on.get(c); if(!a) continue;
+    const want=listTargetOf(r.list_target);
+    const was=listTargetAt(c,j.as_of), have=was?was.target:null;
+    if(have===want) continue;
+    recordOrgList(c,j.as_of,{tl:a.tl,campaign:a.campaign,tenure:a.tenure,target:want});
+    const now=listTargetAt(c,j.as_of);
+    if((now?now.target:null)!==have) n++;
+  }
+  return n;
+}
 async function adoptRosterFromRecord(given){
   if(__rosterAdoptBusy)return; __rosterAdoptBusy=true;
   try{
@@ -9262,6 +9382,12 @@ async function adoptRosterFromRecord(given){
        (2026-09-15), and a matching fingerprint skipped everything below. Reconcile the code set on
        every poll: anyone the record does not name is removed, named, whatever the fingerprint says. */
     if(!j.fingerprint||j.fingerprint===S.rosterFp){
+      /* THE LIST'S TARGETS, FOR A LIST THIS STATE ALREADY HOLDS (Spec Kit 027). The 9 Oct list was ingested before
+         the list's Target was recorded in history, and an unchanged fingerprint never re-ingests — so October would
+         stay on the rule book until the next upload. The record says each row's cell (list_target); where history
+         disagrees for the record's month it is re-recorded, exactly as the upload would have. Idempotent. */
+      const tb=backfillListTargets(j);
+      if(tb) save();
       const codes=new Set(j.roster.map(a=>cbCode(String(a.code||''))).filter(Boolean));
       const gone=(S.roster||[]).filter(a=>!codes.has(a.code));
       if(gone.length&&gone.length<(S.roster||[]).length&&codes.size>=25){
@@ -9270,14 +9396,16 @@ async function adoptRosterFromRecord(given){
         toast(gone.length+' agent(s) are not on the published Agent List — removed: '+gone.slice(0,6).map(a=>a.code+' '+(a.name||'')).join(', ')+(gone.length>6?' +'+(gone.length-6)+' more':''),10000);
         try{ save(); rebuild(); renderAll(); }catch(e){}
       }
-      else if(leaversMoved){ try{ rebuild(); renderAll(); }catch(e){} }
+      else if(leaversMoved||tb){ try{ rebuild(); renderAll(); }catch(e){} }
       return;
     }
     const rows=j.roster
       .filter(a=>a&&String(a.code||'').trim()&&String(a.name||'').trim())
       .map(a=>({'Employee Code':a.code,'Agent Name':a.name,'Sales Force':a.sf||a.name,
         'Team Leader':a.tl||'','Campaign':a.campaign||'','Tenure':a.tenure||'',
-        'Call x':a.callx||'','Target':a.target,'Start Date':a.start||''}));
+        /* the CELL, not the served target (Spec Kit 027): /api/roster's target is already resolved through the CM
+           override and the rule book; recording that would freeze an override as if the list had said it */
+        'Call x':a.callx||'','Target':('list_target' in a)?a.list_target:a.target,'Start Date':a.start||''}));
     if(!rows.length)return;                                           // never wipe on a bad payload
     const before=(S.roster||[]).length;
     __curFileHash=null;                                   // the record has no file bytes: regFile must not stamp the LAST upload's hash on it (it did — BI Inactive's, 2026-09-10)
@@ -9776,7 +9904,6 @@ function emptyMonthPayload(nowMs){
   const end=new Date(Date.UTC(+cur.slice(0,4),+cur.slice(5,7),0)).toISOString().slice(0,10);
   if(isCycleRange(M.range)||M.range.from!==cur+'-01'||M.range.to!==end) return null;
   const wd=calendarWorkingDays(M.range.from,M.range.to);
-  const tm=MTD_RULES.salesTargetMatrix, ovm=(S.cmTargets&&S.cmTargets.matrix)||{};
   const rows=[];
   for(const a of (S.roster||[])){
     if(!a||!a.code) continue;
@@ -9784,9 +9911,10 @@ function emptyMonthPayload(nowMs){
     const camp=campOf(a.campaign);
     if(!CAMPS.includes(camp)) continue;                                         // not a reported campaign (VT)
     const tenure=a.tenure||'';
-    /* the month target the engine would use: the SAME per-day chain buildModel applies (CM override, then the rule
-       book, then the list's own cell) over the month's working days */
-    const perDay=ovm[camp+'|'+tenure]??ovm[camp+'|*']??tm[camp+'|'+tenure]??tm[camp+'|*']??(a.target||0);
+    /* the month target the engine would use: the SAME per-day choice buildModel makes (perDayTarget — CM override,
+       then the list row's target in force, then the rule book; Spec Kit 027), priced on the month's first day and
+       spread over its working days */
+    const perDay=perDayTarget(a.code,camp,tenure,M.range.from,a);
     rows.push({code:a.code,name:a.name||a.code,campaign:camp,tenure:tenure,left:'',tl:a.tl||'',
       plan:commPlanOf(camp,tenure),target:Math.round(perDay*wd*100)/100,covered:false,
       sales:null,gwpEx:null,pctT:null,spd:null,att:null,qa:null,aveG:null,ref:null,closed:null,leads:null,calls:null,ans:null,

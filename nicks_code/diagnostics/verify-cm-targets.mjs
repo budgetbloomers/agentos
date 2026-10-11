@@ -2,9 +2,10 @@
  * a target Dalwin sets "must change on the dashboard as well because this is the new
  * targets that was set by him").
  *
- * The design is ONE precedence chain shared verbatim by the Worker and PULSE:
- *   override exact → override campaign-wide → rule-book exact → rule-book
- *   campaign-wide → the Agent List's own cell
+ * The design is ONE precedence chain shared verbatim by the Worker and PULSE (Spec Kit 027, 2026-10-11):
+ *   override exact → override campaign-wide → the Agent List row's target IN FORCE →
+ *   rule-book exact → rule-book campaign-wide → (legacy) the cell
+ * (verify-targets-027 proves the list step end to end; this suite keeps the override layer honest)
  * and this guard is what keeps "shared verbatim" true — it runs the Worker's
  * effPerDay() as a unit and PULSE's engine in a real browser over the SAME cases
  * and requires the same answers.
@@ -45,7 +46,9 @@ const specTm = SPEC.reference_data.sales_target_matrix;
   const ctx = (m) => ({ targets: { matrix: m } });
   ok('rule-book exact when nothing is set', C.effPerDay(ctx({}), 'Courtesy', 'Exp', 1) === 5);
   ok('rule-book campaign-wide when the tenure is unknown', C.effPerDay(ctx({}), 'Nesting', 'M9', 1) === 2);
-  ok('the LIST cell only when the rule book is silent', C.effPerDay(ctx({}), 'VT', 'Exp', 6) === 6);
+  ok('the cell is the last resort when nothing else answers (4-arg call)', C.effPerDay(ctx({}), 'VT', 'Exp', 6) === 6);
+  ok('the list row IN FORCE beats the rule book (Spec Kit 027: Courtesy Exp 6, not 5)', C.effPerDay(ctx({}), 'Courtesy', 'Exp', 6, 6) === 6);
+  ok('…and an override still beats the list', C.effPerDay(ctx({ 'Courtesy|Exp': 9 }), 'Courtesy', 'Exp', 6, 6) === 9);
   ok('override exact beats everything', C.effPerDay(ctx({ 'Courtesy|Exp': 9 }), 'Courtesy', 'Exp', 1) === 9);
   ok('override campaign-wide beats the rule book EXACT row', C.effPerDay(ctx({ 'Courtesy|*': 7 }), 'Courtesy', 'Exp', 1) === 7,
     'a campaign-wide dial means ALL of that campaign');

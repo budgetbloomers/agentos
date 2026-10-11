@@ -157,7 +157,14 @@ if (rc.ok) {
     const adopted = await page.evaluate((j) => {
       const S = window.__mtd.state();
       const leaversMoved = Array.isArray(j.leavers) && typeof adoptLeavers === 'function' ? adoptLeavers(j.leavers) : false;
-      if (!j.fingerprint || j.fingerprint === S.rosterFp) { if (leaversMoved) window.__mtd.rebuild(); return { same: true, n: (S.roster || []).length, leavers: Object.keys(S.leavers || {}).length }; }
+      /* THE LIST'S TARGETS FOR A LIST THE BLOB ALREADY HOLDS (Spec Kit 027, live 11 Oct). This reads kv:roster-current
+         directly, so each row's Target is the raw cell (there is no list_target here); a blob whose history was
+         recorded before 027 carries no targets, and an unchanged fingerprint used to return before anything was
+         recorded — the published October digest stayed on the rule book (3/4/5). PULSE's own backfill re-records the
+         record's month from the cells, exactly as a signed-in tab does on its next poll. Guarded for an older build. */
+      const tb = typeof backfillListTargets === 'function'
+        ? backfillListTargets({ as_of: j.as_of, roster: j.roster.map((a) => ({ ...a, list_target: ('list_target' in a) ? a.list_target : a.target })) }) : 0;
+      if (!j.fingerprint || j.fingerprint === S.rosterFp) { if (leaversMoved || tb) window.__mtd.rebuild(); return { same: true, n: (S.roster || []).length, leavers: Object.keys(S.leavers || {}).length, targets: tb }; }
       const rows = j.roster.filter(a => a && String(a.code || '').trim() && String(a.name || '').trim())
         .map(a => ({ 'Employee Code': a.code, 'Agent Name': a.name, 'Sales Force': a.sf || a.name,
           'Team Leader': a.tl || '', 'Campaign': a.campaign || '', 'Tenure': a.tenure || '',
@@ -169,7 +176,7 @@ if (rc.ok) {
       S.rosterFp = j.fingerprint; window.__mtd.rebuild();
       return { before, n: S.roster.length, as_of: j.as_of || null };
     }, rv);
-    console.log('roster of record: ' + (adopted.same ? 'blob already on this list (' + adopted.n + ' agents' + (adopted.leavers != null ? ', ' + adopted.leavers + ' leavers known — off the reports' : '') + ')'
+    console.log('roster of record: ' + (adopted.same ? 'blob already on this list (' + adopted.n + ' agents' + (adopted.leavers != null ? ', ' + adopted.leavers + ' leavers known — off the reports' : '') + (adopted.targets ? ', list targets recorded for ' + adopted.targets + ' agent(s)' : '') + ')'
       : adopted.refused ? 'NOT adopted — ' + adopted.refused
       : 'adopted ' + adopted.n + ' agents (blob had ' + adopted.before + ')' + (adopted.as_of ? ' as of ' + adopted.as_of : '')));
   }

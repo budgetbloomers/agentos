@@ -139,7 +139,8 @@ const CACHE_MIN = 5;
    SALES_TARGET_MATRIX_DEFAULTS mirrors specs/mtd_engine_rules.json
    reference_data.sales_target_matrix (drift-guarded by verify-cm-targets.mjs):
    the Worker needs the base so a settings screen can say what "inherited"
-   means, and so /api/roster serves rule targets, not stale roster cells. */
+   means. Since Spec Kit 027 (2026-10-11) it is the FALLBACK under the Agent
+   List row's own Target — see TARGET_PRECEDENCE below. */
 export const SALES_TARGET_MATRIX_DEFAULTS =
   { 'Cuddle|Exp': 8, 'Courtesy|Exp': 5, 'Courtesy|M2': 4, 'Courtesy|M1': 3, 'Nesting|M0': 2, 'Nesting|*': 2 };
 
@@ -152,14 +153,65 @@ export const CM_TARGET_BOUNDS = {
 
 const emptyTargets = () => ({ matrix: {}, gwpMonth: {}, sla: {}, stamp: '', log: [] });
 
-/* The one precedence everyone must share (PULSE mirrors this chain verbatim):
-   override exact → override campaign-wide → rule-book exact → rule-book
-   campaign-wide → the Agent List's own cell. */
-export function effPerDay(ctx, campaign, tenure, listFallback) {
+/* THE ONE PRECEDENCE EVERYONE SHARES (Spec Kit 027, Nick 2026-10-11: "The targets are not updated for the agents
+   based on their tenure below — Month 1 - 4, Month 2 - 5, Exp - 6"). The Agent List's Target column is the authority;
+   the rule book is the fallback for a blank cell; a campaign manager's override sits above both:
+     override exact → override campaign-wide → the LIST row's target in force → rule-book exact → rule-book
+     campaign-wide → (legacy last resort) the cell itself.
+   Mirrors: specs/mtd_engine_rules.json reference_data.sales_target_matrix._precedence and PULSE's
+   MTD_RULES.salesTargetPrecedence / perDayTarget() — verify-targets-027 holds the three equal. Until 2026-10-11 the
+   rule book came before the list (20 Aug), so Courtesy read 3/4/5 while the 9 Oct list said 4/5/6. */
+export const TARGET_PRECEDENCE = ['override', 'override*', 'list', 'book', 'book*'];
+
+/* A list cell as a daily target: a positive finite number (a number, or a plain numeric string, comma decimal
+   allowed), else null — blank, "TBC", 0 and text are NO list target and fall to the rule book (never a 0).
+   PULSE's listTargetOf() is the same function; verify-targets-027 runs both over the same inputs. */
+export function listTargetOf(v) {
+  if (v == null) return null;
+  if (typeof v === 'number') return (isFinite(v) && v > 0) ? v : null;
+  const s = String(v).trim().replace(',', '.');
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  return n > 0 ? n : null;
+}
+
+/* listTarget = the Agent List row's target IN FORCE for the day being priced (null/undefined = none in force: an
+   earlier month than the list's, a blank cell, or a different campaign's row). A 4-argument call is the old chain. */
+export function effPerDay(ctx, campaign, tenure, listFallback, listTarget) {
   const ov = (ctx && ctx.targets && ctx.targets.matrix) || {};
   const tm = SALES_TARGET_MATRIX_DEFAULTS;
   const c = norm(campaign), t = norm(tenure);
-  return ov[c + '|' + t] ?? ov[c + '|*'] ?? tm[c + '|' + t] ?? tm[c + '|*'] ?? (Number(listFallback) || 0);
+  const lt = listTargetOf(listTarget);
+  return ov[c + '|' + t] ?? ov[c + '|*'] ?? lt ?? tm[c + '|' + t] ?? tm[c + '|*'] ?? (Number(listFallback) || 0);
+}
+
+/* WHAT /api/roster SERVES PER ROW (Spec Kit 027). The Worker holds ONLY the current Agent List, and a list's targets
+   apply to the month it was uploaded in (the whole-month rule), so for that month and after it serves
+     target      — override → this row's list cell → rule book   (what Ops scores the list's month against)
+     list_target — the cell itself, normalised (null when blank / not a number) — PULSE records THIS in its history
+     rule_target — the chain WITHOUT the list cell — what a month BEFORE the list's month was measured on
+   It cannot know an OLDER list's cells for an older month: past months' figures come from the period digests PULSE
+   publishes (kv:agent-digest-YYYY-MM), which the CM view serves as they are. Rows are copied, never mutated. */
+export function rosterTargets(ctx, rows) {
+  return (rows || []).map((r) => {
+    const lt = listTargetOf(r && r.target);
+    return { ...r,
+      target: effPerDay(ctx, r && r.campaign, r && r.tenure, r && r.target, lt),
+      list_target: lt,
+      rule_target: effPerDay(ctx, r && r.campaign, r && r.tenure, r && r.target) };
+  });
+}
+
+/* The list's targets per campaign|tenure — {"Courtesy|M1": {"4": 16}, …} — for the settings screen. Blank cells
+   are not counted (they inherit the rule book). */
+export function listTargetGroups(rows) {
+  const g = {};
+  for (const r of rows || []) {
+    const lt = listTargetOf(r && r.target); if (lt == null) continue;
+    const k = norm(r.campaign) + '|' + norm(r.tenure);
+    (g[k] = g[k] || {})[lt] = ((g[k] || {})[lt] || 0) + 1;
+  }
+  return g;
 }
 export const slaFor = (ctx, key) =>
   ({ ...((ctx && ctx.sla) || CM_SLA_DEFAULTS), ...((ctx && ctx.targets && ctx.targets.sla && ctx.targets.sla[key]) || {}) });
@@ -231,10 +283,11 @@ const cmCampsFor = (ctx, user) => {
   return effectiveCamps(ctx, user.username);
 };
 
-export function cmSettingsBody(digest, user, ctx) {
+export function cmSettingsBody(digest, user, ctx, listGroups) {
   const allowed = cmCampsFor(ctx, user);
   if (allowed && !allowed.length) return { error: 'This account is not assigned to a campaign.', status: 403 };
   const t = ctx.targets || emptyTargets();
+  const lg = (listGroups && typeof listGroups === 'object') ? listGroups : {};
   /* campaigns come from the matrix keys (the rule book knows the floor), scoped
      to what this account runs; labels from the digest when it holds the campaign */
   const camps = {};
@@ -242,6 +295,14 @@ export function cmSettingsBody(digest, user, ctx) {
     const camp = k.split('|')[0]; const key = campKey(camp);
     if (allowed && !allowed.includes(key)) continue;
     (camps[key] = camps[key] || { key, label: camp, rows: {} }).rows[k] = true;
+  }
+  /* THE AGENT LIST'S OWN TARGETS (Spec Kit 027): a campaign|tenure the current list prices gets a row in a campaign
+     already shown (Courtesy|M0 has no rule-book row but the list says 3) — so "inherited" never reads the rule book
+     while the floor is measured on the list. */
+  for (const k of Object.keys(lg)) {
+    if (!/^[A-Za-z ]+\|(\*|[A-Za-z0-9]+)$/.test(k)) continue;   // only keys cmSettingsApply can save get an input
+    const camp = k.split('|')[0]; const key = campKey(camp);
+    if (camps[key]) camps[key].rows[k] = true;
   }
   /* CAMPAIGNS THE LIST CREATED THAT THE RULE BOOK HAS NO ROW FOR (migration-019, Nick
      2026-09-03: created with NO targets). They appear with one campaign-wide row so a
@@ -258,12 +319,19 @@ export function cmSettingsBody(digest, user, ctx) {
     .flatMap((a) => [a.campaign, ...((a && a.segments) || []).map((s) => s.campaign)]).map(norm).filter(Boolean));
   const out = Object.values(camps).map((c) => {
     const ov = t.matrix || {};
-    const rows = Object.keys(c.rows).sort().map((k) => ({
-      k, tenure: k.split('|')[1],
-      base: SALES_TARGET_MATRIX_DEFAULTS[k] ?? null,
-      set: ov[k] ?? null,
-      eff: ov[k] ?? ov[c.label + '|*'] ?? SALES_TARGET_MATRIX_DEFAULTS[k] ?? SALES_TARGET_MATRIX_DEFAULTS[c.label + '|*'] ?? null,
-    }));
+    const rows = Object.keys(c.rows).sort().map((k) => {
+      /* the list's values for this group, smallest first, with how many agents carry each */
+      const list = Object.entries(lg[k] || {}).map(([v, n]) => ({ v: Number(v), n: Number(n) })).sort((a, b) => a.v - b.v);
+      /* one value on the list = what the group is measured on; mixed values have no single "inherited" number */
+      const listEff = list.length === 1 ? list[0].v : null;
+      return {
+        k, tenure: k.split('|')[1],
+        base: SALES_TARGET_MATRIX_DEFAULTS[k] ?? null,
+        list,
+        set: ov[k] ?? null,
+        eff: ov[k] ?? ov[c.label + '|*'] ?? listEff ?? SALES_TARGET_MATRIX_DEFAULTS[k] ?? SALES_TARGET_MATRIX_DEFAULTS[c.label + '|*'] ?? null,
+      };
+    });
     const slaC = slaFor(ctx, c.key), slaSet = (t.sla || {})[c.key] || {};
     const hasTargets = rows.some((r) => r.set != null) || ((t.gwpMonth || {})[c.key] != null) || Object.keys(slaSet).length > 0;
     return { key: c.key, label: c.label, inDigest: digestCamps.has(c.label), isNew: newKeys.has(c.key), hasTargets, rows,

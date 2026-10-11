@@ -5449,7 +5449,10 @@ function cmSetLoad(){
         +'PULSE republishes within a few minutes; until then the other tabs still show numbers computed on the previous targets.</p></div>';
     (b.campaigns||[]).forEach(function(c){
       var rows=(c.rows||[]).map(function(rw){
-        var inh=(rw.base!=null)?('rule book '+rw.base):'—';
+        /* Spec Kit 027: the Agent List's own value comes first — it is what the floor is measured on; the rule book
+           only answers a blank cell. Several values = the list prices agents in this group differently. */
+        var lst=(rw.list&&rw.list.length)?('Agent List '+rw.list.map(function(x){return x.v+(rw.list.length>1?' ×'+x.n:'');}).join(', ')):'';
+        var inh=[lst,(rw.base!=null)?('rule book '+rw.base):''].filter(Boolean).join(' · ')||'—';
         return '<tr><td style="padding:6px 10px 6px 0"><b>'+esc(rw.tenure==='*'?'All tenures':rw.tenure)+'</b></td>'
           +'<td style="padding:6px 10px 6px 0"><input type="number" step="0.5" min="0.5" max="20" style="width:90px" '
           +'data-kind="matrix" data-key="'+esc(rw.k)+'" data-orig="'+(rw.set==null?'':esc(String(rw.set)))+'" '
