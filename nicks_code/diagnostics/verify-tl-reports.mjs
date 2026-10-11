@@ -19,6 +19,7 @@
  */
 import fs from 'node:fs'; import path from 'node:path'; import http from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { responseText } from '../../tools/kv-store.mjs';   // the VAS state may be kept gzipped at rest (Spec Kit 031)
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
 const { chromium } = await import(pathToFileURL(path.join(HERE, 'node_modules', 'playwright', 'index.mjs')).href);
@@ -90,7 +91,7 @@ console.log('\nA · THE WORKER SLICES BY authorise() — nothing else');
 console.log('\nB · PULSE PUBLISHES WHAT ITS OWN PAGES SHOW');
 const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8').split(/\r?\n/).filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]));
 const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
-const blob = await (await fetch(env.SUPABASE_URL + '/storage/v1/object/raw/kv/vas-state', { headers: H })).text();
+const blob = await responseText(await fetch(env.SUPABASE_URL + '/storage/v1/object/raw/kv/vas-state', { headers: H }));
 const PULSE = path.join(ROOT, 'site', 'pulse', 'index.html'), AGENT = path.join(ROOT, 'site', 'agent', 'index.html');
 const SITE = path.join(ROOT, 'site');
 const server = http.createServer((q, s) => {

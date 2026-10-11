@@ -40,6 +40,25 @@ export function orphans(objects, files) {
     .filter((x) => x && !known.has(x.prefix));
 }
 
+/* THE PENDING ARCHIVE UPLOADS ARE SWEPT (Spec Kit 031, review F3). An archive goes browser → Storage under
+   raw/pending-uploads/ and is moved into raw/uploads/ by /api/upload-archive/complete. One that never completed — a
+   closed tab, a failed size check — would sit there for ever. Every tick: ONE listing (oldest first) and at most ONE
+   delete of up to `max` objects older than an hour — two subrequests, inside the tick's 50. Nothing reads that folder,
+   so a sweep can never remove an archived file. */
+export async function sweepPendingUploads(env, { olderThanMs = 3600000, max = 50 } = {}) {
+  const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json' };
+  const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/list/raw`, { method: 'POST', headers: H,
+    body: JSON.stringify({ prefix: 'pending-uploads', limit: 100, sortBy: { column: 'created_at', order: 'asc' } }) });
+  if (!r.ok) return { checked: 0, deleted: [], error: 'list ' + r.status };
+  const cutoff = Date.now() - olderThanMs;
+  const old = ((await r.json()) || []).filter((o) => o && o.id && o.name && Date.parse(o.created_at || 0) < cutoff).slice(0, max);
+  if (!old.length) return { checked: 0, deleted: [] };
+  const prefixes = old.map((o) => 'pending-uploads/' + o.name);
+  const d = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw`, { method: 'DELETE', headers: H, body: JSON.stringify({ prefixes }) });
+  if (!d.ok) return { checked: old.length, deleted: [], error: 'delete ' + d.status };
+  return { checked: old.length, deleted: prefixes };
+}
+
 export async function reconcileManifest(env, DB, { days = 7, maxPerTick = 2 } = {}) {
   const objects = await listUploads(env, days);
   if (!objects.length) return { checked: 0, repaired: [] };

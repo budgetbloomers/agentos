@@ -22,6 +22,7 @@ import path from 'node:path';
 import http from 'node:http';
 
 import { fileURLToPath } from 'node:url';
+import { responseText } from '../../tools/kv-store.mjs';   // the VAS state may be kept gzipped at rest (Spec Kit 031)
 const REPO = process.env.AGENTOS || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');   // repo-relative: the nightly cloud run crashed on the laptop path (2026-09-07)
 const HTML = path.join(REPO, ...(process.env.PULSE_HTML || 'site/pulse/index.html').split('/'));
 let pass = 0, fail = 0; const failures = [];
@@ -35,7 +36,7 @@ if (!blob) {
   const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
   const r = await fetch(env.SUPABASE_URL + '/storage/v1/object/raw/kv/vas-state', { headers: H, signal: AbortSignal.timeout(90000) });
   if (!r.ok) { console.log('(skipping — cannot read live state: ' + r.status + ')'); process.exit(0); }
-  blob = await r.text();
+  blob = await responseText(r);
   console.log('pulled live state: ' + (blob.length / 1048576).toFixed(2) + ' MB');
 }
 

@@ -109,10 +109,14 @@ head('D · what is not JSON, or not gzip, is refused — never stored');
   ok(store['raw/kv/cb-facts-SF_INACTIVE'] === before, 'nothing was stored for either');
 }
 
-head('E · the keys the server reads are never stored compressed');
+head('E · the keys the server parses are never stored compressed');
 {
-  const r = await call('POST', 'key=vas-state', bigGz);
-  ok(r.status === 413, 'a server-read key (vas-state) past the line → 413, not a compressed blob', String(r.status));
+  /* Since Spec Kit 031 vas-state is kept as it arrives (never unpacked on save) — but still never past the line: a body
+     that unpacks past it is a bomb or a mistake, and the Worker's own fallback reader caps there (031 review F1). */
+  const r = await call('POST', 'key=agent-digest', bigGz);
+  ok(r.status === 413, 'a server-parsed key (agent-digest) past the line → 413, not a compressed blob', String(r.status));
+  const v = await call('POST', 'key=vas-state&files=1', bigGz);
+  ok(v.status === 413, 'vas-state past the line → 413 (spec 031 keeps it compressed, under the line)', String(v.status));
 }
 
 head('F · the daily snapshot copies a compressed store as it is (a restore unpacks once)');

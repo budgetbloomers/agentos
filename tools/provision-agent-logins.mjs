@@ -37,6 +37,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { responseText } from './kv-store.mjs';   // the VAS state is kept gzipped at rest (Spec Kit 031)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const APPLY = process.argv.includes('--apply');
@@ -73,7 +74,7 @@ if (!sr?.length) { console.error('No vas-state in Supabase — nothing to provis
 let payload = String(sr[0].value?.data || '');
 if (!payload && sr[0].value?.store) {
   const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/${sr[0].value.store.replace(/^raw\//, '')}`, { headers: H });
-  payload = await r.text();
+  payload = await responseText(r);   // kept gzipped at rest since Spec Kit 031
 }
 const S = JSON.parse(payload);
 const roster = (S.roster || []).filter(a => normCb(a.code));

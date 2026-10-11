@@ -20,10 +20,11 @@ import { retryDueOrders, listMyOrders, dbWhy } from './wimpy-hl.mjs';   // spec 
 import { syncAgentLogins, syncTeamLeaders, syncCampaigns, publishAgentList } from './provision.mjs';
 import { runHealthChecks, dailySnapshots, hygiene, logKvWrite } from './health.mjs';
 import { kickRunner } from './runner.mjs';
-import { manifestAdd, reconcileManifest } from './manifest.mjs';
+import { manifestAdd, reconcileManifest, sweepPendingUploads } from './manifest.mjs';
 import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
 import { usageTracker, recordOpen, recordAsk, pageOf, appFromPage } from './usage.mjs';   // the usage report (Spec Kit 028)
 import { askLabeller } from './topics.mjs';   // one topic per help ask / CM request, after the answer (Spec Kit 029)
+import { SUMMARY_MAX, summaryProblem, vasMonths, promptSafe, vasWriteAllowed } from './vas-summary.mjs';   // the Worker's small copy of the VAS state (Spec Kit 031)
 
 // Hermes 2 Pro was deprecated 2026-05-30. Default: Llama 4 Scout (131k context —
 // fits the entire software's digests without truncation). Fallback: Llama 3.3 70B.
@@ -82,19 +83,164 @@ const json = (data, status = 200, headers = {}) =>
    writers treat it as abandoned (the /api/kv CAS path, 2026-09-14). A fact-store upload is
    seconds; two minutes is a dead Worker, not a slow one. */
 const KV_WRITING_TTL_MS = 120000;
-/* THE LINE PAST WHICH A SAVE IS NOT UNPACKED (spec 013): the Worker's memory is ~128 MB; vas-state, the largest store
-   the Worker itself reads, is ~21 MB — 32 MiB leaves room for both and catches Ops' call store (132.7 MB). */
+/* THE LINE PAST WHICH A SAVE IS NOT UNPACKED (spec 013): the Worker's memory is ~128 MB; 32 MiB catches Ops' call store
+   (132.7 MB). Since spec 031 vas-state is never unpacked at all (it is kept as it arrives), so the line applies to the
+   other keys only. */
 const KV_INFLATE_MAX = 32 * 1048576;
-/* Unpack only the START of a gzip body — enough to see its first characters — and stop. A corrupt gzip throws here. */
+/* Unpack only the START of a gzip body — enough to see its first characters — and stop. A corrupt gzip throws here.
+   ONLY THE FIRST 16 KB GO IN (Spec Kit 031). Handing the unpacker the whole body let it inflate far more than the one
+   chunk read back — a 1.5 MB VAS save is 20 MB unpacked. 16 KB of gzip is at most a few hundred KB of text. */
+const GZIP_SNIFF_BYTES = 16384;
 async function gzipStart(buf) {
   try {
-    const rd = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip')).getReader();
+    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    const rd = new Blob([u8.subarray(0, GZIP_SNIFF_BYTES)]).stream().pipeThrough(new DecompressionStream('gzip')).getReader();
     const dec = new TextDecoder(); let text = '';
     while (!text.trim() && text.length < 4096) { const n = await rd.read(); if (n.done) break; text += dec.decode(n.value, { stream: true }); }
     rd.cancel().catch(() => {});
     return { text };
   } catch (e) { return { error: String((e && e.message) || e) }; }
 }
+/* THE UNPACKED SIZE WITHOUT UNPACKING (Spec Kit 031): gzip's trailer ends with ISIZE, the unpacked length mod 2^32,
+   little-endian. Plausible only between (compressed − 1 KB) — gzip never shrinks a body by more than its headers — and
+   1,100 × compressed (deflate's ceiling is ~1,032:1). Anything else is a truncated or garbled upload: null. */
+function gzipIsize(u8) {
+  if (u8.length < 18) return null;
+  const n = (u8[u8.length - 4] | (u8[u8.length - 3] << 8) | (u8[u8.length - 2] << 16) | (u8[u8.length - 1] << 24)) >>> 0;
+  return n >= u8.length - 1024 && n <= u8.length * 1100 ? n : null;
+}
+
+/* ONE LINE PER HEAVY REQUEST (Spec Kit 031, 2026-10-11 — Nick: "I get a lot of notification didnt reach the server, is
+   something wrong with supabase or agent os"). Cloudflare killed 102 requests for exceeding resources on 9 Oct and
+   nothing named them. Workers Logs (wrangler.toml [observability]) indexes the fields of a logged object, so each heavy
+   route writes one: route, method, key, request bytes (the Content-Length header — no body is read), status, wall time,
+   and on a refusal the first words of the answer (error answers are small JSON). A request Cloudflare KILLS writes no
+   line of ours — its invocation log carries outcome = exceededResources and the URL; runbook.md queries both. */
+const HEAVY_KV_GET = /^(vas-state|cb-facts-.+)$/;
+function heavyRoute(method, path, url) {
+  if (path === '/api/kv') {
+    if (method === 'POST') return true;
+    return method === 'GET' && HEAVY_KV_GET.test(url.searchParams.get('key') || '') && !url.searchParams.get('meta');
+  }
+  return path.startsWith('/api/upload-archive') || path === '/api/upload-file' || path === '/api/rake/page' || path.startsWith('/api/bi');
+}
+async function heavyLog(req, res, t0) {
+  try {
+    const url = new URL(req.url);
+    if (!heavyRoute(req.method, url.pathname, url)) return;
+    const line = { ev: 'cbx_heavy', route: url.pathname, method: req.method, key: url.searchParams.get('key') || '',
+      req_bytes: Number(req.headers.get('content-length')) || 0, status: res.status, ms: Date.now() - t0 };
+    /* the reason is a SHORT CODE — the error's words up to its first colon ("wipe_blocked", "version_conflict"), or its
+       first two words when it has none — never the message, which can name a file or an agent (review, 031) */
+    if (res.status >= 400 && /json/.test(res.headers.get('content-type') || '')) {
+      let e = ''; try { e = String((JSON.parse(await res.clone().text()) || {}).error || ''); } catch (x) { e = 'unreadable answer'; }
+      line.reason = (e.includes(':') ? e.split(':')[0] : e.split(/\s+/).slice(0, 2).join(' ')).replace(/[^\w .\-]/g, '').slice(0, 40);
+    }
+    console.log(line);
+  } catch (e) { /* a log line must never cost the request its answer */ }
+}
+
+/* EVERY UNPACK HERE COUNTS ITS BYTES AND STOPS AT A CAP (review F1, 031). A gzip's trailer can say anything; a few KB can
+   unpack to gigabytes. countCap() passes bytes through until `cap`, then errors the stream — the reader gets
+   {error:'too_large'} and nothing past the cap is ever held. */
+function countCap(cap, seen) {
+  let n = 0;
+  return new TransformStream({ transform(c, k) { n += c.byteLength; if (seen) seen(c); if (n > cap) k.error(new Error('too_large')); else k.enqueue(c); } });
+}
+/* A gzip from a tab that declared nothing (a page cached from before 031): checked the OLD way — unpacked in full, once,
+   streaming, under the cap — but nothing is kept: only the byte count and the first and last non-blank characters
+   (a JSON object starts with { and ends with }). Old cost, old tabs only; current pages declare &gz= / &size=. */
+async function gzipEnvelope(u8, cap) {
+  let first = 0, last = 0;
+  const seen = (c) => { for (let i = 0; i < c.length; i++) { const b = c[i]; if (b !== 0x20 && b !== 0x0a && b !== 0x0d && b !== 0x09) { if (!first) first = b; last = b; } } };
+  try {
+    const rd = new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip')).pipeThrough(countCap(cap, seen)).getReader();
+    let size = 0;
+    for (;;) { const n = await rd.read(); if (n.done) break; size += n.value.byteLength; }
+    return { size, object: first === 0x7b && last === 0x7d };
+  } catch (e) {
+    const m = String((e && e.message) || e);
+    return { error: /too_large/.test(m) ? 'too_large' : m };
+  }
+}
+/* a plain body is a JSON object: first and last non-blank bytes are { and } (no parse) */
+function plainIsObject(u8) {
+  let i = 0, j = u8.length - 1;
+  const blank = (b) => b === 0x20 || b === 0x0a || b === 0x0d || b === 0x09;
+  while (i < u8.length && blank(u8[i])) i++;
+  while (j > i && blank(u8[j])) j--;
+  return u8[i] === 0x7b && u8[j] === 0x7d;
+}
+
+/* THE WORKER'S OWN VIEW OF THE VAS STATE (Spec Kit 031). Three routes read kv:vas-state for themselves — the roster
+   derivation (before any list is published), /api/campaign-stats and the AI's VAS block — and each parsed the WHOLE
+   20 MB state: ~430 ms of CPU against the free plan's 10 ms, on every AI question. PULSE (the engine) writes a small
+   side-copy after every acknowledged save, kv:vas-summary {state_version, roster, files, map, calls, months}
+   (vas-summary.mjs says what it may hold — checked again HERE, so a copy planted by any other route is ignored).
+     · the summary is for the state's current version → it is used;
+     · it is valid but BEHIND (an old tab or a pagehide save moved the state on, a push failed) → it is still used,
+       flagged stale:true — never the whole-state parse that got requests killed (review F2); the page catches it up;
+     · there is no valid summary at all → the whole state, unpacked by streaming under KV_INFLATE_MAX. */
+const sameStamp = (a, b) => !!a && !!b && (a === b || (Date.parse(a) === Date.parse(b) && !isNaN(Date.parse(a))));
+async function storedText(env, store, cap) {
+  const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY } });
+  if (!sr.ok) return { status: sr.status };
+  const rd = sr.body.getReader();
+  const first = await rd.read();
+  const lead = first.value || new Uint8Array(0);
+  const rest = new ReadableStream({
+    start(c) { if (first.done) { c.close(); return; } if (lead.length) c.enqueue(lead); },
+    async pull(c) { const n = await rd.read(); if (n.done) c.close(); else c.enqueue(n.value); },
+    cancel(why) { return rd.cancel(why); },
+  });
+  const gz = lead.length > 1 && lead[0] === 0x1f && lead[1] === 0x8b;
+  try { return { text: await new Response((gz ? rest.pipeThrough(new DecompressionStream('gzip')) : rest).pipeThrough(countCap(cap))).text() }; }
+  catch (e) { return /too_large/.test(String((e && e.message) || e)) ? { status: 413, tooLarge: true } : { status: 500 }; }
+}
+async function vasView(env, DB) {
+  const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:vas-state')}&select=value,updated_at`);
+  if (!r || !r.length) return { error: 'no vas-state uploaded yet', status: 404 };
+  const at = r[0].updated_at || '';
+  try {
+    const sr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:vas-summary')}&select=value`);
+    const sv = sr && sr[0] && sr[0].value;
+    if (sv && sv.store) {
+      const got = await storedText(env, sv.store, SUMMARY_MAX);
+      let s = null; try { s = got.text ? JSON.parse(got.text) : null; } catch (e) { s = null; }
+      const problem = s ? summaryProblem(s) : 'unreadable';
+      if (!problem) {
+        const stale = !sameStamp(String(s.state_version), at);
+        if (stale) console.warn('vasView: summary behind the state — served flagged stale');
+        return { roster: s.roster, files: s.files, map: s.map, calls: s.calls, months: s.months, updated_at: at, source: 'summary', ...(stale ? { stale: true } : {}) };
+      }
+      console.warn('vasView: summary rejected (' + problem + ') — reading the whole state');
+    } else console.warn('vasView: no summary yet — reading the whole state');
+  } catch (e) { console.warn('vasView: summary unreadable — reading the whole state'); }
+  const v = r[0].value || {};
+  let S;
+  try {
+    if (v.store) {
+      const got = await storedText(env, v.store, KV_INFLATE_MAX);
+      if (got.text == null) return { error: got.tooLarge ? 'state too large to read here' : 'state blob unreadable: ' + got.status, status: got.status || 500 };
+      S = JSON.parse(got.text);
+    } else S = JSON.parse(String(v.data || '{}'));
+  } catch (e) { return { error: 'state blob is not JSON', status: 500 }; }
+  return { roster: Array.isArray(S.roster) ? S.roster : [], files: Array.isArray(S.files) ? S.files : [], map: S.map || {}, calls: S.calls || {}, months: vasMonths(S), updated_at: at, source: 'state' };
+}
+
+/* ARCHIVE NAMES (the relay): what the station calls a file, made safe for a storage path — the same rule on every route */
+const archiveName = (s) => String(s || '').replace(/[^\w .()\-\[\]]/g, '_').slice(0, 120);
+const ARCHIVE_MAX = 30 * 1048576;
+/* PENDING ARCHIVE UPLOADS (review F3): raw/pending-uploads/<owner>@<hash16>-<rand>-<name>. The owner (the session's
+   username, made path-safe) lets /start count a person's unfinished uploads and lets /complete refuse anyone else's. */
+const PENDING_DIR = 'pending-uploads';
+const PENDING_PER_USER = 5;
+/* STORAGE REFUSES A KEY WITH `~` OR `[ ]` ("InvalidKey" — caught by the live probe on release, 11 Oct): the owner is
+   separated by `@` (archiveOwner never leaves one) and brackets in the pending name become `_` (same length). */
+const PENDING_SEP = '@';
+const pendingName = (n) => String(n).replace(/[[\]]/g, '_');
+const archiveOwner = (u) => String(u || 'unknown').toLowerCase().replace(/[^a-z0-9._-]/g, '_').slice(0, 40) || 'unknown';
+const objUrl = (env, p) => `${env.SUPABASE_URL}/storage/v1/object/${p.split('/').map(encodeURIComponent).join('/')}`;
 /* POSTGREST ANSWERS AT MOST 1000 ROWS (Supabase max-rows) — a single `limit=20000` read silently returned the first 1000,
    so /api/agent-signins read "signed in on no days" for every later day (Spec Kit 014, W2). Pages of 1000 (moves.mjs does
    the same) ordered on a unique tiebreak, until a short page, the caller's `limit`, or the page budget (maxPages).
@@ -335,15 +481,9 @@ async function rosterSync(env, DB, { fresh = false, who = 'roster-sync' } = {}) 
             return payload;
           }
         }
-        const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:vas-state')}&select=value,updated_at`);
-        if (!r || !r.length) return { error: 'no vas-state uploaded yet', status: 404 };
-        const v = r[0].value || {};
-        let S;
-        if (v.store) {
-          const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${v.store}`, { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY } });
-          if (!sr.ok) return { error: 'state blob unreadable: ' + sr.status, status: 500 };
-          S = JSON.parse(await sr.text());
-        } else S = JSON.parse(String(v.data || '{}'));
+        /* the engine's small summary when it is current, else the whole state (Spec Kit 031, vasView) */
+        const S = await vasView(env, DB);
+        if (S.error) return S;
         const roster = (S.roster || []).map(a => ({ code: a.code, name: a.name || '', tl: a.tl || '', campaign: a.campaign || '',
           tenure: a.tenure || '', callx: a.callx || '', sf: a.sf || '', target: a.target || null, start: a.start || '' }));
         let h = 0x811c9dc5;   // FNV-1a over sorted rows: stable across roster order
@@ -352,7 +492,7 @@ async function rosterSync(env, DB, { fresh = false, who = 'roster-sync' } = {}) 
         const files = (S.files || []).filter(f => /^roster/.test(f.type || ''));
         const asOf = files.map(f => f.asOf || '').filter(Boolean).sort().pop() || '';
         const payload = { fingerprint: 'vas:' + h.toString(16), n: roster.length, as_of: asOf,
-          file: (files[0] && files[0].name) || '', state_updated_at: r[0].updated_at || '', roster };
+          file: (files[0] && files[0].name) || '', state_updated_at: S.updated_at || '', roster };
         globalThis.__rosterCache = { t: Date.now(), payload };
         /* Keep a stale SEED in step with what it was seeded from. Without this the record
            would still be serving the old roster to anything that reads it directly (the
@@ -576,6 +716,9 @@ export default {
       /* a blob in raw/uploads/ the manifest does not know is re-added (2026-09-08: the lost ViciDial report) */
       try { const m = await reconcileManifest(env, DB); if (m.repaired.length) console.info('[cron] manifest repaired: ' + m.repaired.join('; ')); }
       catch (e) { console.warn('[cron] manifest reconcile failed: ' + (e && e.message || e)); }
+      /* archive uploads that never completed (Spec Kit 031): two subrequests, oldest first, older than an hour */
+      try { const p = await sweepPendingUploads(env); if (p.deleted.length || p.error) console.info('[cron] pending uploads swept: ' + p.deleted.length + (p.error ? ' (' + p.error + ')' : '')); }
+      catch (e) { console.warn('[cron] pending sweep failed: ' + (e && e.message || e)); }
     })());
   },
   async fetch(req, env, ctx) {
@@ -597,7 +740,9 @@ export default {
        24 hours, so widening this list cannot rescue a client already being refused —
        the client must also stop sending the header. Both were done. */
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...cors, 'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Cbx-Client,Content-Encoding,X-Cbx-Base', 'Access-Control-Max-Age': '86400' } });
+    const t0 = Date.now();
     const res = await this.handle(req, env, ctx);
+    await heavyLog(req, res, t0);   // one line per heavy request (Spec Kit 031)
     const h = new Headers(res.headers); for (const [k, v] of Object.entries(cors)) h.set(k, v);
     /* a body that is ALREADY gzip (a large store kept compressed, spec 013) must go out as it is: without 'manual' the
        runtime would compress it a second time on top of the Content-Encoding it carries */
@@ -1189,15 +1334,9 @@ export default {
       // Per campaign it also names the roster CBs the dialler has NEVER seen — when Cuddle
       // reads zero, this is the list that proves the export was pulled without that floor.
       if (path === '/api/campaign-stats' && req.method === 'GET') {
-        const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:vas-state')}&select=value,updated_at`);
-        if (!r || !r.length) return json({ error: 'no vas-state uploaded yet' }, 404);
-        const v = r[0].value || {};
-        let S;
-        if (v.store) {
-          const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${v.store}`, { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY } });
-          if (!sr.ok) return json({ error: 'state blob unreadable: ' + sr.status }, 500);
-          S = JSON.parse(await sr.text());
-        } else S = JSON.parse(String(v.data || '{}'));
+        /* roster, map and calls from the engine's summary while it is current, else the whole state (Spec Kit 031) */
+        const S = await vasView(env, DB);
+        if (S.error) return json({ error: S.error }, S.status || 500);
         const normName = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
         const cbOf = s => { const m = String(s || '').toUpperCase().match(/CB\s*-?\s*0*(\d+)/); return m ? 'CB' + parseInt(m[1], 10) : null; };
         const byCode = {}, byName = {};
@@ -1240,7 +1379,7 @@ export default {
             : 'FAIL (VR16) — ' + campaigns[camp].covered_days + '/' + nDays + ' dialler days. ' + (camp === 'Cuddle'
               ? 'Pull EXPORT_CALL_REPORT with user groups Renolan_Matrix_WC + Sharoma_Matrix_WC ticked (or all groups); a single-day "Vici - Cuddle Agents" export per past day also counts.'
               : 'Upload the day\'s CallX call_records export.');
-        return json({ state_updated_at: r[0].updated_at || '', dialler_days: nDays, campaigns, days });
+        return json({ state_updated_at: S.updated_at || '', source: S.source, ...(S.stale ? { stale: true } : {}), dialler_days: nDays, campaigns, days });
       }
 
       // ---------- roster: the Agent List as PULSE holds it — the sync spine for AgentOS ----------
@@ -1498,13 +1637,79 @@ export default {
       // state-derived sync would silently strip columns the other app needs (QA coaching
       // categories, per-call rows, BI charge detail). Each app keeps its own parser;
       // nothing is implemented twice; an upload happens once.
+      /* THE ARCHIVE GOES STRAIGHT TO STORAGE (Spec Kit 031, 2026-10-11). Every raw file the stations archive — 7–9 a day,
+         up to 15 MB each — used to be relayed THROUGH this Worker, a whole file in its memory per request on the very
+         mornings it was being killed for exceeding resources. Now: `start` mints a signed upload URL for ONE pending path
+         (the large-file pattern below), the browser PUTs the bytes to Storage itself, and `complete` checks the object
+         arrived whole (its size), moves it to raw/uploads/<hash16>-<name> — exactly where the relay and Ops read it —
+         and records it in the manifest atomically (migration-024). A PUT that never finishes leaves no object; one that
+         finishes without `complete` sits under pending-uploads/, which nothing reads: no half-file is ever "archived".
+         POST /api/upload-archive below stays for tabs on an older build (one release). */
+      if (path === '/api/upload-archive/start' && req.method === 'POST') {
+        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        const b = await req.json().catch(() => ({}));
+        const name = archiveName(b.name), hash = String(b.hash || ''), size = Number(b.size || 0);
+        if (!name || !/^[0-9a-f]{8,64}$/i.test(hash)) return json({ error: 'name and hash required' }, 400);
+        if (!(size > 0)) return json({ error: 'size required' }, 400);
+        if (size > ARCHIVE_MAX) return json({ error: 'file exceeds the 30 MB relay cap — upload it in the other dashboard by hand' }, 413);
+        const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json' };
+        /* A PERSON'S PENDING UPLOADS ARE CAPPED (review F3): the pending path names its owner, so one listing counts what
+           this person has sent that was never completed (the tick sweeps anything older than an hour). */
+        const owner = archiveOwner(user.username);
+        const lr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/list/raw`, { method: 'POST', headers: H,
+          body: JSON.stringify({ prefix: PENDING_DIR, search: owner + PENDING_SEP, limit: PENDING_PER_USER + 1 }) });
+        const mine = lr.ok ? ((await lr.json().catch(() => [])) || []).filter((o) => o && String(o.name || '').startsWith(owner + PENDING_SEP)) : [];
+        if (mine.length >= PENDING_PER_USER)
+          return json({ error: 'too_many_pending: ' + mine.length + ' of your archive uploads never finished — wait a few minutes and try again' }, 429);
+        const rnd = [...crypto.getRandomValues(new Uint8Array(8))].map((x) => (x % 36).toString(36)).join('');
+        const pendingPath = PENDING_DIR + '/' + owner + PENDING_SEP + hash.slice(0, 16) + '-' + rnd + '-' + pendingName(name);
+        const sign = await fetch(`${env.SUPABASE_URL}/storage/v1/object/upload/sign/raw/${pendingPath.split('/').map(encodeURIComponent).join('/')}`, {
+          method: 'POST', headers: H, body: '{}' });
+        if (!sign.ok) return json({ error: 'could not sign an upload: ' + sign.status + ' ' + (await sign.text()).slice(0, 120) }, 502);
+        const sj = await sign.json();
+        return json({ upload_url: `${env.SUPABASE_URL}/storage/v1${sj.url}`, path: pendingPath, expires_in: 7200 });
+      }
+      if (path === '/api/upload-archive/complete' && req.method === 'POST') {
+        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        const b = await req.json().catch(() => ({}));
+        const name = archiveName(b.name), hash = String(b.hash || ''), size = Number(b.size || 0), pend = String(b.path || '');
+        if (!name || !/^[0-9a-f]{8,64}$/i.test(hash) || !(size > 0)) return json({ error: 'name, hash and size required' }, 400);
+        if (size > ARCHIVE_MAX) return json({ error: 'file exceeds the 30 MB relay cap — upload it in the other dashboard by hand' }, 413);   // the signed PUT itself does not cap
+        /* ONLY A PATH `start` COULD HAVE MINTED FOR THIS PERSON: pending-uploads/<owner>@<hash16>-<8 chars>-<name>, exactly —
+           never any other object, never another person's upload */
+        const pre = PENDING_DIR + '/' + archiveOwner(user.username) + PENDING_SEP + hash.slice(0, 16) + '-';
+        if (!pend.startsWith(pre) || pend.length !== pre.length + 9 + name.length || !/^[0-9a-z]{8}-$/.test(pend.slice(pre.length, pre.length + 9)) || pend.slice(pre.length + 9) !== pendingName(name))
+          return json({ error: 'not an archive upload path' }, 400);
+        const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
+        const info = await fetch(objUrl(env, 'info/raw/' + pend), { headers: H });
+        if (!info.ok) return json({ error: 'The file did not finish uploading to storage — nothing was archived. It will be tried again.' }, 409);
+        const meta = await info.json().catch(() => ({}));
+        const got = Number(meta.size != null ? meta.size : (meta.metadata && meta.metadata.size));
+        /* the size is the only proof the file arrived whole: no size, or the wrong one, and nothing is archived (review F4) */
+        if (!Number.isFinite(got) || got !== size) {
+          await fetch(objUrl(env, 'raw/' + pend), { method: 'DELETE', headers: H }).catch(() => {});
+          return json({ error: 'The file could not be confirmed complete (' + (Number.isFinite(got) ? got + ' of ' + size + ' bytes' : 'storage gave no size') + ') — nothing was archived. It will be tried again.' }, 409);
+        }
+        const dest = 'uploads/' + hash.slice(0, 16) + '-' + name;
+        const mv = await fetch(`${env.SUPABASE_URL}/storage/v1/object/move`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bucketId: 'raw', sourceKey: pend, destinationKey: dest }) });
+        if (!mv.ok) {
+          /* the same bytes were archived before (the destination exists): the pending copy goes, the manifest decides */
+          const there = await fetch(objUrl(env, 'info/raw/' + dest), { headers: H });
+          if (!there.ok) return json({ error: 'archive move failed: ' + mv.status + ' ' + (await mv.text()).slice(0, 120) }, 502);
+          await fetch(objUrl(env, 'raw/' + pend), { method: 'DELETE', headers: H }).catch(() => {});
+        }
+        const added = await manifestAdd(DB, { name, hash, size, actor: user.username });
+        if (added === 'dupe') return json({ ok: true, dupe: true });
+        return json({ ok: true, archived: 'raw/' + dest });
+      }
       if (path === '/api/upload-archive' && req.method === 'POST') {
-        const name = String(url.searchParams.get('name') || '').replace(/[^\w .()\-\[\]]/g, '_').slice(0, 120);
+        const name = archiveName(url.searchParams.get('name'));
         const hash = String(url.searchParams.get('hash') || '');
         if (!name || !/^[0-9a-f]{8,64}$/i.test(hash)) return json({ error: 'name and hash required' }, 400);
         const buf = await req.arrayBuffer();
         if (!buf.byteLength) return json({ error: 'empty body' }, 400);
-        if (buf.byteLength > 30 * 1048576) return json({ error: 'file exceeds the 30 MB relay cap — upload it in the other dashboard by hand' }, 413);
+        if (buf.byteLength > ARCHIVE_MAX) return json({ error: 'file exceeds the 30 MB relay cap — upload it in the other dashboard by hand' }, 413);
         /* THE MANIFEST IS APPENDED ATOMICALLY (2026-09-08, migration-024). The old read-modify-write
            here lost the ViciDial call report when five files landed in the same five seconds, and
            its own comment had called that a "KNOWN LIMIT" since August. upload_manifest_add() runs
@@ -1789,7 +1994,8 @@ export default {
         if (!r || !r.length) return json({ found: false }, 404, { 'X-Cbx-Version': 'none' });
         // meta mode: freshness beacon only — lets open tabs poll for other users'
         // uploads cheaply (no payload streamed) and re-pull when it changes.
-        if (url.searchParams.get('meta')) return json({ found: true, updated_at: r[0].updated_at || '' });
+        if (url.searchParams.get('meta')) return json({ found: true, updated_at: r[0].updated_at || '',
+          ...(key === 'vas-summary' ? { state_version: String((r[0].value && r[0].value.state_version) || '') } : {}) });   // which state the summary describes (031)
         const v = r[0].value || {};
         /* A WRITE IN FLIGHT IS NOT READABLE (2026-09-14). A compare-and-set writer (below) marks the
            pointer `writing` before it uploads the blob, and clears it — with the new version — only
@@ -1847,6 +2053,25 @@ export default {
            compress simply omits the header and takes the old path. */
         let body;
         let gzRaw = null, gzSize = 0;   // a store too big to unpack, kept compressed (spec 013)
+        let rawBytes = null;            // a plain vas-state kept as its bytes, never decoded (spec 031)
+        /* THE VAS STATE IS KEPT AS IT ARRIVES (Spec Kit 031, 2026-10-11). Every VAS save — ~20 MB unpacked, 20–25 a day —
+           was unpacked whole here and re-sent to Storage as text: the CPU and memory behind the 102 requests Cloudflare
+           killed on 9 Oct. PULSE sends it gzipped; it is now stored as those bytes (the GET below already serves a gzip
+           store with Content-Encoding: gzip, which the browser unpacks), and a plain body from an old tab is stored as
+           its bytes. Nothing unpacks it on this path. The checks that read the body are kept, cheaply:
+             · is it gzip / JSON — the first 16 KB only (gzipStart);
+             · its unpacked size — the gzip trailer (gzipIsize), which the wipe guard below compares;
+             · an empty state — PULSE declares &files=<n>, trusted only to REFUSE (files=0 without force → 409).
+           The Worker's own readers of the state use the engine's summary (vasView).
+           REVIEW (round 2): the unpacked size is capped as before (KV_INFLATE_MAX → 413); a gzip that DECLARES nothing
+           (a page cached from before 031) is checked the old way — unpacked in full, streaming, under the cap, kept only
+           as a byte count and its first/last characters (gzipEnvelope) — and a plain body must be a JSON object. */
+        const keepAsSent = qk === 'vas-state';
+        /* WHO MAY WRITE THE VAS STATE AND ITS SUMMARY (review F1.3/F2): admin, or a full session holding the VAS app —
+           every real writer of the last 30 days (vas-summary.mjs vasWriteAllowed names them). */
+        if ((keepAsSent || qk === 'vas-summary') && !vasWriteAllowed(user)) return json({ error: 'Not permitted.' }, 403);
+        if (keepAsSent && url.searchParams.get('files') === '0' && !url.searchParams.get('force'))
+          return json({ error: 'empty_state: refusing to replace the VAS state with one that holds no uploaded files. If this clear is deliberate, use the app\'s Danger zone.' }, 409);
         {
           /* Decided by the BYTES, not by the header. Some edges decompress a gzipped request
              body before it reaches the Worker and some pass it through, so trusting
@@ -1855,7 +2080,40 @@ export default {
              unambiguous, and plain JSON can never start with it. */
           const buf = await req.arrayBuffer();
           const u8 = new Uint8Array(buf);
-          if (u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
+          if (keepAsSent && u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
+            const isize = gzipIsize(u8);
+            if (isize == null) return json({ error: 'could not decompress the upload: its gzip trailer does not fit its length (truncated or garbled)' }, 400);
+            /* NOTHING UNPACKS THE WHOLE BODY, SO NOTHING CHECKS ITS CRC — the page therefore declares what it sent
+               (review, 031): &gz=<compressed bytes> and &size=<unpacked bytes>. Trusted only to REFUSE: a body shorter
+               than declared, or a trailer that disagrees with the size the page compressed, is a 400 — never stored. */
+            const declGz = url.searchParams.get('gz'), declSize = url.searchParams.get('size');
+            if (declGz != null && Number(declGz) !== u8.length)
+              return json({ error: 'the upload arrived incomplete: ' + u8.length + ' of ' + declGz + ' bytes' }, 400);
+            if (declSize != null && Number(declSize) !== isize)
+              return json({ error: 'could not decompress the upload: its gzip trailer says ' + isize + ' bytes, the page compressed ' + declSize }, 400);
+            if (isize > KV_INFLATE_MAX)
+              return json({ error: 'too large: vas-state would unpack to ' + Math.round(isize / 1048576) + ' MB, over the ' + Math.round(KV_INFLATE_MAX / 1048576) + ' MB the server accepts' }, 413);
+            if (declGz != null && declSize != null) {
+              /* a current page: the cheap path — the first 16 KB say it is JSON, the declarations vouch for the rest */
+              const start = await gzipStart(u8);
+              if (start.error) return json({ error: 'could not decompress the upload: ' + start.error }, 400);
+              if (!/^\s*\{/.test(start.text)) return json({ error: 'not JSON: the VAS state is a JSON object' }, 400);
+            } else {
+              /* an old tab: the old cost, once, under the cap — and the body must really be an object */
+              const env0 = await gzipEnvelope(u8, KV_INFLATE_MAX);
+              if (env0.error === 'too_large') return json({ error: 'too large: vas-state unpacks past the ' + Math.round(KV_INFLATE_MAX / 1048576) + ' MB the server accepts' }, 413);
+              if (env0.error) return json({ error: 'could not decompress the upload: ' + env0.error }, 400);
+              if (!env0.object) return json({ error: 'not JSON: the VAS state is a JSON object' }, 400);
+              if (env0.size !== isize) return json({ error: 'could not decompress the upload: its gzip trailer does not match its contents' }, 400);
+            }
+            gzRaw = u8; gzSize = isize; body = '';
+          } else if (keepAsSent) {
+            if (u8.length > KV_INFLATE_MAX) return json({ error: 'too large: vas-state is over the ' + Math.round(KV_INFLATE_MAX / 1048576) + ' MB the server accepts' }, 413);
+            if (!plainIsObject(u8)) return json({ error: 'not JSON: the VAS state is a JSON object' }, 400);
+            rawBytes = u8; body = '';
+          } else if (qk === 'vas-summary' && ((u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b) ? ((gzipIsize(u8) ?? Infinity) > SUMMARY_MAX) : u8.length > SUMMARY_MAX)) {
+            return json({ error: 'too large: a VAS summary is at most ' + Math.round(SUMMARY_MAX / 1048576) + ' MB' }, 413);
+          } else if (u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
             /* A STORE TOO BIG TO UNPACK IS KEPT COMPRESSED (Spec Kit 013, 2026-10-07). Ops' ViciDial store — a row per
                call — reached 132.7 MB, and unpacking the whole of it here ran out of memory ("Memory limit exceeded
                before EOF"): no ViciDial save landed after 28 Sep, and every relay cycle failed the same save again.
@@ -1873,8 +2131,10 @@ export default {
               gzRaw = u8; gzSize = isize; body = '';
             } else {
               try {
-                body = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+                /* counted and capped (review F1d): a trailer can lie, so the unpack stops at the line it claims to be under */
+                body = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip')).pipeThrough(countCap(qk === 'vas-summary' ? SUMMARY_MAX : KV_INFLATE_MAX))).text();
               } catch (e) {
+                if (/too_large/.test(String((e && e.message) || e))) return json({ error: 'too large: ' + qk + ' unpacks past what the server reads' }, 413);
                 return json({ error: 'could not decompress the upload: ' + (e && e.message || e) }, 400);
               }
             }
@@ -1887,6 +2147,20 @@ export default {
            write too: a live-key payload whose period is not the current SAST month is
            409'd. History keys (agent-digest-YYYY-MM) are untouched; the republish tool
            writes Storage directly and is unaffected. */
+        /* THE SUMMARY IS CHECKED BEFORE IT IS STORED (review F2, 031): its shape (vas-summary.mjs), and that it describes
+           the state AS IT IS NOW — a summary for an older version (two quick saves landing out of order, a tab that fell
+           behind) is 409 stale_summary, so it can never overwrite a newer one. Its pointer carries state_version, which
+           the ?meta=1 poll returns so a page can see the summary is behind and catch it up. */
+        let summaryOf = null;
+        if (qk === 'vas-summary') {
+          let sj = null; try { sj = JSON.parse(body); } catch (e) { return json({ error: 'bad_summary: not JSON' }, 400); }
+          const problem = summaryProblem(sj);
+          if (problem) return json({ error: 'bad_summary: ' + problem }, 400);
+          const sr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:vas-state')}&select=updated_at`);
+          const stateAt = (sr && sr[0] && sr[0].updated_at) || '';
+          if (!sameStamp(String(sj.state_version), stateAt)) return json({ error: 'stale_summary: it describes another version of the VAS state', current: stateAt }, 409);
+          summaryOf = String(sj.state_version);
+        }
         let digestFrom = null;   // the live digest's period, stamped on its pointer row below (rollover grace)
         let digestEmpty = false;   // an `empty:true` payload (spec 002 C2): its pointer row is stamped `empty` beside `period`
         if (qk === 'agent-digest' || /^agent-reports-(variance|leads)$/.test(qk)) {   // the report keys are fenced to the live month too (2026-09-21)
@@ -1931,13 +2205,27 @@ export default {
             return json({ error: 'empty_over_data', message: 'The live agent digest already holds ' + liveFrom.slice(0, 7) + ' figures; an empty month payload never replaces them.' }, 409);
           if (qk === 'agent-digest') { digestFrom = from; digestEmpty = payloadEmpty; }
         }
-        if (qk === 'vas-state' && body.length < 120000 && !url.searchParams.get('force')) {
-          const head = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {
-            method: 'HEAD', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY },
-          });
-          const cur = parseInt(head.headers.get('content-length') || '0', 10);
-          if (head.ok && cur > body.length * 10) {
-            return json({ error: 'wipe_blocked: refusing to replace ' + cur + 'B of stored data with ' + body.length + 'B. If this clear is deliberate, use the app\'s Danger zone.' }, 409);
+        /* the size the wipe guard and the write log speak in: UNPACKED bytes — from the gzip trailer for a compressed
+           body (spec 013/031), the byte length for one kept as sent, the text length otherwise (as before) */
+        const newSize = gzRaw ? gzSize : rawBytes ? rawBytes.length : body.length;
+        if (qk === 'vas-state' && newSize < 120000 && !url.searchParams.get('force')) {
+          /* THE STORED SIZE, UNPACKED (spec 031): a state kept compressed is ~1.5 MB of object for ~20 MB of data, so the
+             object's length is not comparable — its pointer carries `size`. A pointer without one (written before 031,
+             or by a tool) is measured by the object's length, as before. */
+          let cur = 0, known = false;
+          try {
+            const pr = await DB.select('rules?key=eq.' + encodeURIComponent('kv:vas-state') + '&select=value');
+            const ps = pr && pr[0] && pr[0].value && pr[0].value.size;
+            if (Number.isFinite(+ps) && +ps > 0) { cur = +ps; known = true; }
+          } catch (e) { /* fall through to the object's own length */ }
+          if (!known) {
+            const head = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {
+              method: 'HEAD', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY },
+            });
+            if (head.ok) cur = parseInt(head.headers.get('content-length') || '0', 10);
+          }
+          if (cur > newSize * 10) {
+            return json({ error: 'wipe_blocked: refusing to replace ' + cur + 'B of stored data with ' + newSize + 'B. If this clear is deliberate, use the app\'s Danger zone.' }, 409);
           }
         }
         /* COMPARE-AND-SET (2026-09-14 — the Ops fact-store lost update). Every Ops session — a
@@ -1984,14 +2272,18 @@ export default {
         const sr = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${objPath}`, {
           method: 'POST',
           headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': gzRaw ? 'application/octet-stream' : 'text/plain', 'x-upsert': 'true' },
-          body: gzRaw || body,
+          body: gzRaw || rawBytes || body,
         });
         if (!sr.ok) {
           if (claimed) { try { const cur = await DB.select(pk + '&select=value'); const v = { ...((cur && cur[0] && cur[0].value) || {}) }; delete v.writing; await DB.update(pk, { value: v }); } catch (e) {} }
           return json({ error: 'store failed: ' + sr.status + ' ' + (await sr.text()).slice(0, 150) }, 500);
         }
         const newAt = new Date().toISOString();
-        await DB.insert('rules', [{ key: 'kv:' + qk, value: digestFrom ? { store: objPath, period: digestFrom, ...(digestEmpty ? { empty: true } : {}) } : { store: objPath }, updated_by: user.username, updated_at: newAt }], true);
+        /* the VAS state's pointer carries its unpacked size (the wipe guard's yardstick) and, when kept compressed, gz:true */
+        const pointer = digestFrom ? { store: objPath, period: digestFrom, ...(digestEmpty ? { empty: true } : {}) }
+          : keepAsSent ? { store: objPath, size: newSize, ...(gzRaw ? { gz: true } : {}) }
+          : summaryOf ? { store: objPath, state_version: summaryOf } : { store: objPath };
+        await DB.insert('rules', [{ key: 'kv:' + qk, value: pointer, updated_by: user.username, updated_at: newAt }], true);
         /* the version the client should hold from now on — as the database renders it, which is
            what every later compare is made against */
         let newVer = newAt;
@@ -2032,7 +2324,7 @@ export default {
            LATEST write; this row is the history, so "when exactly did saves stop" is a
            query rather than an archaeology dig through Storage timestamps. Deferred and
            best-effort — logging must never slow or fail the save it records. */
-        ctx.waitUntil(logKvWrite(DB, qk, gzRaw ? gzSize : body.length, user && user.username));
+        ctx.waitUntil(logKvWrite(DB, qk, newSize, user && user.username));
         return json({ ok: true, version: newVer }, 200, { 'X-Cbx-Version': newVer });
       }
       // Real delete (Upload Station "Delete file"): remove BOTH the Storage object and the
@@ -2295,21 +2587,16 @@ export default {
           } catch (e) {}
           // VAS ANALYTICS — sales/GWP by month summarised LIVE from its cloud blob,
           // so VAS figures answer even when nobody has the VAS app open.
+          /* it parsed the WHOLE 20 MB state on every question (~430 ms of CPU); the engine's summary carries the month
+             totals (Spec Kit 031, vasView) */
           try {
-            const vr = await DB.select(`rules?key=eq.${encodeURIComponent('kv:vas-state')}&select=value`);
-            const vv = vr?.[0]?.value || {};
-            let vraw = String(vv.data || '');
-            if (!vraw && vv.store) vraw = (await DB.storageGet('raw', vv.store.replace(/^raw\//, ''))) || '';
-            if (vraw) {
-              const V = JSON.parse(vraw);
-              const perM = {};
-              const addM = (d, s, g) => { const m = String(d).slice(0, 7); const o = perM[m] = perM[m] || { sales: 0, gwp: 0 }; o.sales += (Number(s) || 0); o.gwp += (Number(g) || 0); };
-              for (const d in (V.sales || {})) for (const k in V.sales[d]) { const x = V.sales[d][k] || {}; addM(d, x.n, x.gwp); }
-              for (const d in (V.tracker || {})) { if (V.sales && V.sales[d]) continue; for (const k in V.tracker[d]) { const x = V.tracker[d][k] || {}; addM(d, x.sales, x.gwp); } }
-              const months = Object.keys(perM).sort();
+            const V = await vasView(env, DB);
+            if (!V.error) {
+              const perM = V.months || {};
+              const months = Object.keys(perM).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort();   // only months reach the prompt (031)
               if (months.length) cloud += '\n--- VAS ANALYTICS — sales/GWP by month (LIVE from the vas-state blob) ---\n'
                 + months.map(m => '- ' + m + ': ' + Math.round(perM[m].sales) + ' sales · GWP R' + Math.round(perM[m].gwp)).join('\n')
-                + '\nRoster: ' + ((V.roster || []).length) + ' agents · uploads: ' + ((V.files || []).map(f => f.type).join(', ') || 'none') + '\n';
+                + '\nRoster: ' + ((V.roster || []).length) + ' agents · uploads: ' + ((V.files || []).map(f => promptSafe(f && f.type, 60)).join(', ') || 'none') + '\n';   // promptSafe: no line break reaches the prompt (031)
             }
           } catch (e) {}
           // Live rules Dictionary (kv:cb-config) — the ACTUAL thresholds in force,

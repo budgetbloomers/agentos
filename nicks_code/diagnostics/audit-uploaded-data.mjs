@@ -9,6 +9,7 @@ import fs from 'node:fs';
    the same way verify-all-tabs does. Read-only throughout — this never writes to the blob. */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { responseText } from '../../tools/kv-store.mjs';   // the VAS state may be kept gzipped at rest (Spec Kit 031)
 const REPO = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 let blob = process.argv[2] ? fs.readFileSync(process.argv[2], 'utf8') : null;
 if (!blob) {
@@ -17,7 +18,7 @@ if (!blob) {
   const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
   const r = await fetch(env.SUPABASE_URL + '/storage/v1/object/raw/kv/vas-state', { headers: H, signal: AbortSignal.timeout(90000) });
   if (!r.ok) { console.error('cannot read live state: ' + r.status); process.exit(2); }
-  blob = await r.text();
+  blob = await responseText(r);
   console.log('pulled live state: ' + (blob.length / 1048576).toFixed(2) + ' MB');
 }
 const S = JSON.parse(blob);

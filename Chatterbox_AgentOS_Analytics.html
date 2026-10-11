@@ -2008,6 +2008,27 @@ const vasSyncOk=()=>{__vasSyncFails=0;__vasSyncWarned=false};
    re-archiving ~free, and a file that CAME from VAS is already in the manifest, so
    nothing ever ping-pongs. Session (SES_*) uploads never travel. */
 async function rawHash(buf){const h=await crypto.subtle.digest('SHA-256',buf);return [...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('')}
+/* THE ARCHIVE GOES STRAIGHT TO STORAGE (Spec Kit 031, 2026-10-11). The raw bytes used to be POSTed THROUGH the Worker —
+   up to 30 MB in its memory per file, on the mornings Cloudflare was killing it for exceeding resources. Now the Worker
+   only signs ONE pending path (start), this browser PUTs the bytes to Supabase Storage itself, and `complete` checks the
+   size, moves the file to where the relay reads it and adds it to the manifest. A Worker that does not know `start` yet
+   (404) gets the old relay POST. Resolves {ok, dupe} or {ok:false, error}. SAME FUNCTION in nicks_code/index.html. */
+function archiveDirect(base,tk,name,hash,buf){
+  const H={'Authorization':'Bearer '+tk,'Content-Type':'application/json','X-Cbx-Client':'v5'};
+  const err=async(r,what)=>{ let m=what+' HTTP '+r.status; try{ m=(await r.json()).error||m; }catch(e){} return {ok:false,error:m}; };
+  return fetch(base+'/api/upload-archive/start',{method:'POST',headers:H,body:JSON.stringify({name:name,hash:hash,size:buf.byteLength})})
+    .then(async st=>{
+      if(st.status===404) return fetch(base+'/api/upload-archive?name='+encodeURIComponent(name)+'&hash='+encodeURIComponent(hash),
+          {method:'POST',headers:{'Authorization':'Bearer '+tk,'Content-Type':'application/octet-stream'},body:buf})
+        .then(async r=>r.ok?Object.assign({ok:true},await r.json().catch(()=>({}))):err(r,'relay'));
+      if(!st.ok) return err(st,'start');
+      const sj=await st.json();
+      const put=await fetch(sj.upload_url,{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:buf});
+      if(!put.ok) return err(put,'storage');
+      const c=await fetch(base+'/api/upload-archive/complete',{method:'POST',headers:H,body:JSON.stringify({name:name,hash:hash,path:sj.path,size:buf.byteLength})});
+      return c.ok?Object.assign({ok:true},await c.json().catch(()=>({}))):err(c,'complete');
+    });
+}
 function archiveForVAS(file,srcKey){
   (async()=>{
     try{
@@ -2025,10 +2046,8 @@ function archiveForVAS(file,srcKey){
       const base='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
       const man=await fetch(base+'/api/upload-manifest',{headers:{'Authorization':'Bearer '+t}}).then(r=>r.ok?r.json():{files:[]}).catch(()=>({files:[]}));
       if((man.files||[]).some(f=>f&&f.h===h))return;               // already archived (e.g. it came FROM the relay)
-      const r=await fetch(base+'/api/upload-archive?name='+encodeURIComponent(file.name)+'&hash='+encodeURIComponent(h),
-        {method:'POST',headers:{'Authorization':'Bearer '+t,'Content-Type':'application/octet-stream'},body:buf});
-      if(!r.ok){let m='HTTP '+r.status;try{m=(await r.json()).error||m}catch(e){}
-        toast('"'+esc(file.name)+'" loaded here, but could not be archived for VAS — '+m+'. Upload it there by hand.','err')}
+      const r=await archiveDirect(base,t,file.name,h,buf);
+      if(!r.ok) toast('"'+esc(file.name)+'" loaded here, but could not be archived for VAS — '+esc(r.error)+'. Upload it there by hand.','err');
     }catch(e){
       /* SAY IT (audit round 5, 2026-08-28). The 30 MB cap and a !ok response both toast, but a
          THROWN fetch — offline, DNS, CORS, Worker unreachable — hit a bare catch and said

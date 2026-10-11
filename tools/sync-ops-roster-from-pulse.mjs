@@ -14,6 +14,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { responseText } from './kv-store.mjs';   // the VAS state is kept gzipped at rest (Spec Kit 031)
 
 const APPLY = process.argv.includes('--apply');
 const AGENTOS = 'C:/Users/aarav/OneDrive/Desktop/Chatterbox Agent OS/agentos';
@@ -23,7 +24,7 @@ const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPA
 const get = async (store) => {
   const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, { headers: H });
   if (!r.ok) throw new Error(store + ': ' + r.status);
-  return r.text();
+  return responseText(r);   // a store may be kept gzipped at rest (specs 013, 031)
 };
 
 /* ---- the app's own helpers, replicated verbatim ---- */

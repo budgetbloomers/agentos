@@ -20,6 +20,7 @@ import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { responseText } from './kv-store.mjs';   // the VAS state is kept gzipped at rest (Spec Kit 031)
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { chromium } = await import(pathToFileURL(path.join(ROOT, 'nicks_code', 'diagnostics', 'node_modules', 'playwright', 'index.mjs')).href);
 const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8')
@@ -45,7 +46,7 @@ const hash = crypto.createHash('sha256').update(bytes).digest('hex');
 /* ---- the live state, so campOf/orgHist/roster behave as they do for a real upload ---- */
 const st = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/vas-state`, { headers: H });
 if (!st.ok) { console.error('cannot read vas-state: ' + st.status); process.exit(2); }
-const blob = await st.text();
+const blob = await responseText(st);
 
 /* ---- the deployed build, headless ---- */
 const HTML = path.join(ROOT, 'site', 'pulse', 'index.html');

@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
+import { responseText } from '../../tools/kv-store.mjs';   // the VAS state may be kept gzipped at rest (Spec Kit 031)
 
 const AGENTOS = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const { chromium } = await import(pathToFileURL(path.join(AGENTOS, 'nicks_code', 'diagnostics', 'node_modules', 'playwright', 'index.mjs')).href);
@@ -31,7 +32,7 @@ process.stdout.write('loading the live VAS state … ');
 const r = await fetch(env.SUPABASE_URL + '/storage/v1/object/raw/kv/vas-state',
   { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY }, signal: AbortSignal.timeout(120000) });
 if (!r.ok) { console.log('FAILED ' + r.status); process.exit(1); }
-const blob = await r.text();
+const blob = await responseText(r);
 console.log((blob.length / 1048576).toFixed(1) + ' MB');
 
 const SIDE = { '/xlsx.full.min.js': path.join(AGENTOS, 'site', 'xlsx.full.min.js'),

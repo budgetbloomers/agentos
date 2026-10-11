@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { isGzip, storeText } from './kv-store.mjs';   // vas-state is kept gzipped at rest since Spec Kit 031
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = {};
@@ -65,7 +66,10 @@ if (!r.ok) {
   process.exit(1);
 }
 const gz = Buffer.from(await r.arrayBuffer());
-const plain = zlib.gunzipSync(gz);
+/* a snapshot of a store kept gzipped is that gzip copied as is (spec 013); storeText unpacks once — and once more for a
+   copy that was gzipped twice before 031 fixed the stash below */
+let plain = zlib.gunzipSync(gz);
+if (isGzip(plain)) plain = Buffer.from(storeText(plain), 'utf8');
 let parsed = null; try { parsed = JSON.parse(plain.toString('utf8')); } catch (e) {}
 
 console.log('SNAPSHOT ' + snapPath);
@@ -89,11 +93,13 @@ if (!APPLY) {
 
 /* ---- apply ---- */
 if (cur.ok) {
-  const liveBody = await (await fetch(STORE + '/raw/kv/' + KEY, { headers: H })).arrayBuffer();
+  const liveBody = Buffer.from(await (await fetch(STORE + '/raw/kv/' + KEY, { headers: H })).arrayBuffer());
   const stash = `raw/kv-history/${KEY}/pre-restore-${new Date().toISOString().replace(/[:.]/g, '-')}.json.gz`;
+  /* the live store may already be gzip (kept as it arrives since 031): copied as is, never gzip of gzip */
+  console.log('live store: ' + (liveBody.length / 1048576).toFixed(2) + ' MB stored, ' + (Buffer.byteLength(storeText(liveBody)) / 1048576).toFixed(2) + ' MB unpacked');
   const put = await fetch(STORE + '/' + stash, { method: 'POST',
     headers: { ...H, 'Content-Type': 'application/gzip', 'x-upsert': 'true' },
-    body: zlib.gzipSync(Buffer.from(liveBody)) });
+    body: isGzip(liveBody) ? liveBody : zlib.gzipSync(liveBody) });
   if (!put.ok) { console.error('Could not stash the live blob (' + put.status + ') — NOT restoring over an unbacked copy.'); process.exit(1); }
   console.log('\nstashed the live blob → ' + stash);
 }

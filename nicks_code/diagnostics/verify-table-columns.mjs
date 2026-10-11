@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
+import { responseText } from '../../tools/kv-store.mjs';   // the VAS state may be kept gzipped at rest (Spec Kit 031)
 const AGENTOS = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const { chromium } = await import(pathToFileURL(path.join(AGENTOS, 'nicks_code', 'diagnostics', 'node_modules', 'playwright', 'index.mjs')).href);
 const HTML = path.join(AGENTOS, ...(process.env.PULSE_HTML || 'nicks_code/index.html').split('/'));
@@ -23,7 +24,7 @@ const HTML = path.join(AGENTOS, ...(process.env.PULSE_HTML || 'nicks_code/index.
 const env = Object.fromEntries(fs.readFileSync(path.join(AGENTOS, 'supabase.env'), 'utf8')
   .split(/\r?\n/).filter(l => l.includes('=')).map(l => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]));
 const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
-const blob = await (await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/vas-state`, { headers: H, signal: AbortSignal.timeout(90000) })).text();
+const blob = await responseText(await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/vas-state`, { headers: H, signal: AbortSignal.timeout(90000) }));
 
 const SERVE = { '/': HTML, '/xlsx.full.min.js': path.join(AGENTOS, 'site', 'xlsx.full.min.js') };
 const srv = http.createServer((q, s) => { const p = SERVE[q.url.split('?')[0]];

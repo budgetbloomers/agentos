@@ -31,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { responseText } from './kv-store.mjs';   // the VAS state is kept gzipped at rest (Spec Kit 031)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /* playwright lives in nicks_code/diagnostics' node_modules — resolve it from
@@ -116,7 +117,7 @@ const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPA
 /* ---- the live state, read-only ---- */
 const st = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/vas-state`, { headers: H });
 if (!st.ok) { console.error('cannot read vas-state: ' + st.status); process.exit(2); }
-const blob = await st.text();
+const blob = await responseText(st);
 console.log('live state: ' + (blob.length / 1048576).toFixed(2) + ' MB');
 
 /* ---- the deployed build, headless ---- */

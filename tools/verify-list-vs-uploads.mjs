@@ -25,6 +25,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
+import { responseText } from './kv-store.mjs';   // the VAS state is kept gzipped at rest (Spec Kit 031)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIAG = path.join(ROOT, 'nicks_code', 'diagnostics');
@@ -44,7 +45,7 @@ let fail = 0;
 const line = (s) => console.log(s);
 
 /* ---- the live state, the record, the archive's extras ---- */
-const blob = await (await get('/storage/v1/object/raw/kv/vas-state')).text();
+const blob = await responseText(await get('/storage/v1/object/raw/kv/vas-state'));
 const rec = (await (await get('/rest/v1/rules?key=eq.' + encodeURIComponent('kv:roster-current') + '&select=value,updated_at')).json())[0];
 const record = rec.value;
 const aliases = await rpc('agent_list_aliases', { p_days: 180 });

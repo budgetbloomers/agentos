@@ -20,8 +20,18 @@ crons = ["*/10 * * * *", "3,7,23,27,43,47 * * * *"]   # the tick; ONE trigger sh
 #   npx wrangler secret put WIMPY_HL_API_KEY
 #   npx wrangler secret put WIMPY_HL_LOCATION_ID
 
+# REQUEST LOGS (Spec Kit 031, 2026-10-11 — Nick: "I get a lot of notification didnt reach the server, is something wrong
+# with supabase or agent os"). Cloudflare killed 102 requests for exceeding resources on 9 Oct and nothing said which.
+# Workers Logs is included in the FREE plan: 200,000 events a day, kept 3 days. The floor makes ~6,000 requests a day and
+# the Worker adds one `cbx_heavy` line per heavy request, so every request is kept (rate 1) at ~6 % of the allowance.
+# How to query: specs/031-server-overload-upload-days/runbook.md. Re-check the allowance before 1 Dec 2026 (Cloudflare
+# moves Workers Logs to "Observability pricing" that day).
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 [ai]
-binding = "AI"                    # Workers AI — Hermes 2 Pro (Phase 3)
+binding = "AI"                  # Workers AI — Hermes 2 Pro (Phase 3)
 
 [vars]
 SUPABASE_URL = "https://fxvnjhfdenycxxuklord.supabase.co"

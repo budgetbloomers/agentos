@@ -1527,6 +1527,71 @@ function __saveFailReport(why){
       body:JSON.stringify({app:'vas',key:'vas-state',status:String(why||'?'),build:window.CBX_BUILD||'',bytes:0})}).catch(function(){});
   }catch(e){}
 }
+/* THE SERVER'S SMALL COPY OF THE STATE (Spec Kit 031, 2026-10-11 — Nick: "I get a lot of notification didnt reach the
+   server, is something wrong with supabase or agent os"). The Worker used to unpack and parse this whole ~20 MB state for
+   its own few reads (the roster before any list is published, campaign stats, the AI's VAS block) — far past the 10 ms
+   of CPU Cloudflare's free plan allows, so it was killed. The state is now stored exactly as this page sends it, and
+   after every acknowledged save the page also sends this summary (~0.4 MB): what those reads need, plus the month
+   totals the AI quotes (the engine computes them, the Worker only serves them). `ver` is the version the save got
+   back; the Worker trusts the summary only while the state is still at that version. Keep it self-contained:
+   verify-overload-031 lifts it out of this page and runs it. */
+function vasSummary(S,ver){
+  var perM={};
+  var addM=function(d,s,g){var m=String(d).slice(0,7);var o=perM[m]=perM[m]||{sales:0,gwp:0};o.sales+=(Number(s)||0);o.gwp+=(Number(g)||0);};
+  var d,k,x;
+  for(d in (S.sales||{})) for(k in S.sales[d]){ x=S.sales[d][k]||{}; addM(d,x.n,x.gwp); }
+  for(d in (S.tracker||{})){ if(S.sales&&S.sales[d]) continue; for(k in S.tracker[d]){ x=S.tracker[d][k]||{}; addM(d,x.sales,x.gwp); } }
+  return {v:1,state_version:String(ver||''),
+    roster:(S.roster||[]).map(function(a){return {code:a.code,name:a.name,tl:a.tl,campaign:a.campaign,tenure:a.tenure,callx:a.callx,sf:a.sf,target:a.target,start:a.start};}),
+    files:(S.files||[]).map(function(f){return {type:f.type||'',name:f.name||'',asOf:f.asOf||''};}),
+    map:S.map||{},calls:S.calls||{},months:perM};
+}/*end vasSummary*/
+/* `sum` is vasSummary(S,'') stringified when the save was taken; the version the save got back is stamped into it here */
+function __vasSummaryPush(ver,sum){
+  try{
+    var t=sessionStorage.getItem('cbx_token'); if(!t||!ver||!sum) return;
+    /* the state moved on since this save (another save from this tab landed, or a reload merged someone else's):
+       this summary describes an older version and the Worker would refuse it (409 stale_summary) — the newer save
+       pushes its own, and __vasSummaryCatchUp covers the rest */
+    if(window.__vasBase!==ver) return;
+    var b=sum.replace('"state_version":""','"state_version":'+JSON.stringify(String(ver)));
+    var url='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=vas-summary';
+    var hdr={'Content-Type':'text/plain','Authorization':'Bearer '+t,'X-Cbx-Client':'v5'};
+    var send=function(body){ return fetch(url,{method:'POST',headers:hdr,body:body}); };
+    var p=typeof CompressionStream==='function'
+      ? new Response(new Blob([b]).stream().pipeThrough(new CompressionStream('gzip'))).blob().then(send,function(){ return send(b); })
+      : send(b);
+    /* not the user's data — the state itself is saved and acknowledged — so no banner, and NOT a save failure (that
+       channel is the floor's "your upload is not stored" alarm; spec 014 keeps it free of false alarms). It is noticed
+       on the SERVER: until the next summary lands the Worker reads the whole state (correct, only slower) and logs
+       "vasView: summary stale" — runbook.md. The console says it here. */
+    p.then(function(r){ if(!r.ok) console.warn('vas-summary not saved ('+r.status+') — the server reads the whole state until the next save'); })
+     .catch(function(e){ console.warn('vas-summary not saved (network '+String(e&&e.message||e).slice(0,100)+')'); });
+  }catch(e){ console.warn('vas-summary not built: '+String(e&&e.message||e).slice(0,100)); }
+}
+/* THE SUMMARY CATCHES UP (review F2, Spec Kit 031). It falls behind the state whenever a save carries none: the
+   pagehide (unload) save, a tab on a build from before 031, a push that failed. The Worker then serves the last good
+   summary flagged stale. So after hydrate, and every ten minutes, an open tab with nothing unsaved asks which state
+   version the stored summary describes (?meta=1 — no payload) and, when it is not this tab's version, sends one. */
+function __vasSummaryCatchUp(){
+  try{
+    var t=sessionStorage.getItem('cbx_token'); if(!t) return;
+    if(!window.__vasHydrated){ setTimeout(__vasSummaryCatchUp,15000); return; }
+    var ver=window.__vasBase; if(!ver||ver==='none'||window.__vasDirtySince) return;   // dirty: the coming save pushes its own
+    fetch('https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=vas-summary&meta=1',{headers:{'Authorization':'Bearer '+t,'X-Cbx-Client':'v5'}})
+      .then(function(r){ return r.status===404?{found:false}:(r.ok?r.json():null); })
+      .then(function(m){
+        if(!m) return;
+        var sv=m.state_version||'';
+        if(m.found&&sv&&Date.parse(sv)===Date.parse(ver)) return;   // already describes this version
+        if(window.__vasBase!==ver||window.__vasDirtySince) return;
+        var ui=S.ui,s; try{ delete S.ui; s=JSON.stringify(vasSummary(S,'')); } finally { S.ui=ui; }
+        __vasSummaryPush(ver,s);
+      }).catch(function(e){ console.warn('vas-summary catch-up skipped: '+String(e&&e.message||e).slice(0,100)); });
+  }catch(e){ console.warn('vas-summary catch-up skipped: '+String(e&&e.message||e).slice(0,100)); }
+}
+document.addEventListener('cbx-authed',function(){ setTimeout(__vasSummaryCatchUp,30000); });
+setInterval(function(){ __vasSummaryCatchUp(); },600000);
 function __saveFail(msg,why){
   if(typeof toast==='function') toast(msg,12000);
   if(why!=null) __saveFailReport(why);
@@ -1638,12 +1703,15 @@ function __cloudReplay(kl){
       });
     }).catch(function(){ __saveFail('⚠ Cloud save failed (network) while merging another session\'s save. Keep this tab open; it is retrying.','replay network'); });
 }
-var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_token');/* A SILENT no-op here is how Nick's 13-Aug Cuddle upload vanished: uploaded into a tab with no token (or one that never hydrated), it rendered perfectly from memory, pushed nothing, and the next refresh erased it without a trace. If this function cannot save, it must SAY so - the user is holding a file they believe is safe. */if(!t){if(typeof toast==='function')toast('⚠ Not signed in — this upload is NOT saved to the database. Sign in and re-upload it.',9000);return}if(!window.__vasHydrated){if(typeof toast==='function')toast('⚠ Still syncing with the database — your upload is NOT saved yet. Keep this tab open; it will retry, or re-upload after the page settles.',9000);clearTimeout(__cloudT);__cloudT=setTimeout(function(){__cloudPush(kl)},5000);return}if((!S.files||!S.files.length)&&!(window.__cbxIntentionalClear&&Date.now()-window.__cbxIntentionalClear<600000)){if(typeof toast==="function")toast("⚠ Refusing to overwrite the database with an EMPTY state — your uploads in the cloud are safe. Use Danger zone → Remove all uploaded data if you really mean to clear them.",9000);return}try{window.__vasLastPush=Date.now();window.__vasPushRev=S._rev;/* THE VIEW IS NOT DATA, AND THE BLOB IS SHARED. S.ui carries the period preset, the team and campaign filters and the open tab — one person's way of looking at the numbers. It used to ride along in this push, so whoever last uploaded a file stamped THEIR view on everyone: a 'yesterday' preset left on 24 Aug showed the whole floor a single day's figures and read as every number being wrong (Enoch 4 sales instead of 176). saveUI() already keeps ui in localStorage, which is where a per-person preference belongs. */var __ui=S.ui;var b;try{delete S.ui;b=JSON.stringify(S);}finally{S.ui=__ui;}(function(){/* GZIP THE UPLOAD (perf, 2026-08-28). The state is ~90% repetitive case rows and
+var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_token');/* A SILENT no-op here is how Nick's 13-Aug Cuddle upload vanished: uploaded into a tab with no token (or one that never hydrated), it rendered perfectly from memory, pushed nothing, and the next refresh erased it without a trace. If this function cannot save, it must SAY so - the user is holding a file they believe is safe. */if(!t){if(typeof toast==='function')toast('⚠ Not signed in — this upload is NOT saved to the database. Sign in and re-upload it.',9000);return}if(!window.__vasHydrated){if(typeof toast==='function')toast('⚠ Still syncing with the database — your upload is NOT saved yet. Keep this tab open; it will retry, or re-upload after the page settles.',9000);clearTimeout(__cloudT);__cloudT=setTimeout(function(){__cloudPush(kl)},5000);return}if((!S.files||!S.files.length)&&!(window.__cbxIntentionalClear&&Date.now()-window.__cbxIntentionalClear<600000)){if(typeof toast==="function")toast("⚠ Refusing to overwrite the database with an EMPTY state — your uploads in the cloud are safe. Use Danger zone → Remove all uploaded data if you really mean to clear them.",9000);return}try{window.__vasLastPush=Date.now();window.__vasPushRev=S._rev;/* THE VIEW IS NOT DATA, AND THE BLOB IS SHARED. S.ui carries the period preset, the team and campaign filters and the open tab — one person's way of looking at the numbers. It used to ride along in this push, so whoever last uploaded a file stamped THEIR view on everyone: a 'yesterday' preset left on 24 Aug showed the whole floor a single day's figures and read as every number being wrong (Enoch 4 sales instead of 176). saveUI() already keeps ui in localStorage, which is where a per-person preference belongs. */var __ui=S.ui;var b;try{delete S.ui;b=JSON.stringify(S);}finally{S.ui=__ui;}/* the summary is taken from THIS copy, now — an edit made while the save is in flight must not reach a summary labelled with this save's version (review, Spec Kit 031) */var __sum=null;try{__sum=JSON.stringify(vasSummary(S,''));}catch(e){__sum=null;}(function(){/* GZIP THE UPLOAD (perf, 2026-08-28). The state is ~90% repetitive case rows and
    compresses about ten to one; browsers never compress request bodies on their own, so every
    save pushed the full 8.8 MB up a slow link. The Worker decompresses, so what is STORED is
    unchanged. Falls back to the plain body when CompressionStream is unavailable or a
    keepalive (page-unload) push needs the synchronous path. */
-   var url='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=vas-state'+((window.__cbxIntentionalClear&&Date.now()-window.__cbxIntentionalClear<600000)?'&force=1':'');
+   /* &files=<n> (Spec Kit 031): the Worker no longer unpacks this save, so it cannot count the files itself — the count
+      rides on the URL (a query parameter, never a header: a new header needs the CORS preflight, the 28 Aug lesson
+      below). It is trusted only to REFUSE: files=0 without force is the empty-state save the guard above stops. */
+   var url='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev/api/kv?key=vas-state'+'&files='+((S.files||[]).length)+((window.__cbxIntentionalClear&&Date.now()-window.__cbxIntentionalClear<600000)?'&force=1':'');
    var hdr={'Content-Type':'text/plain','Authorization':'Bearer '+t,'X-Cbx-Client':'v5'};
    /* THE SAVE CARRIES THE VERSION IT WAS BASED ON (2026-09-15). Ops has had this since the 14 Sep
       lost-update audit; PULSE saved the whole blob on a timestamp tie-break, so any open tab could
@@ -1678,12 +1746,15 @@ var __cloudT=null;function __cloudPush(kl){var t=sessionStorage.getItem('cbx_tok
       cached the old reply would keep refusing for another day. Sending nothing new is
       the only change that works against a cached preflight, immediately. */
    if(!kl&&typeof CompressionStream==='function'){
-     return new Response(new Blob([b]).stream().pipeThrough(new CompressionStream('gzip'))).blob()
-       .then(function(gz){ return fetch(url,{method:'POST',headers:hdr,body:gz}); },
+     /* &size= / &gz= (Spec Kit 031): the Worker no longer unpacks the save, so nothing there checks the gzip's CRC; it
+        refuses a body whose length or trailer disagrees with what was compressed here. Query parameters, never headers. */
+     var plain=new Blob([b]);
+     return new Response(plain.stream().pipeThrough(new CompressionStream('gzip'))).blob()
+       .then(function(gz){ return fetch(url+'&size='+plain.size+'&gz='+gz.size,{method:'POST',headers:hdr,body:gz}); },
          function(){ return fetch(url,{method:'POST',headers:hdr,body:b}); });
    }
    return fetch(url,{method:'POST',headers:hdr,body:b,keepalive:keep});
- })().then(function(r){if(r&&r.ok){ try{ var nv=r.headers.get('X-Cbx-Version'); if(nv) window.__vasBase=nv; }catch(e){} window.__vasCasTries=0; window.__pushWipN=0; __saveAck(); return }
+ })().then(function(r){if(r&&r.ok){ var nv=null; try{ nv=r.headers.get('X-Cbx-Version'); if(nv) window.__vasBase=nv; }catch(e){} window.__vasCasTries=0; window.__pushWipN=0; __saveAck(); if(!kl&&nv&&__sum) __vasSummaryPush(nv,__sum); return }
      var why=(r?r.status:'?')+'';
      var say=function(){
        /* a conflict because another tab is MID-WRITE is not one of the four tries: wait a moment, then reload (spec 014) */
@@ -9224,6 +9295,28 @@ function dupStillLive(f){
    its OWN parser (see the Worker's /api/upload-archive note). Fire-and-forget: a
    failed archive never blocks the upload here, but it is SAID, never silent — the
    file would otherwise quietly stop existing for the other dashboard. */
+/* THE ARCHIVE GOES STRAIGHT TO STORAGE (Spec Kit 031, 2026-10-11). The raw bytes used to be POSTed THROUGH the Worker —
+   up to 30 MB in its memory per file, on the mornings Cloudflare was killing it for exceeding resources. Now the Worker
+   only signs ONE pending path (start), this browser PUTs the bytes to Supabase Storage itself (the CSP already names the
+   project for the large-file path), and `complete` checks the size, moves the file to where the relay reads it and adds
+   it to the manifest. A Worker that does not know `start` yet (404 — the release order slipped) gets the old relay POST.
+   Resolves {ok, dupe} or {ok:false, error}. SAME FUNCTION in Chatterbox_AgentOS_Analytics.html (archiveForVAS). */
+function archiveDirect(base,tk,name,hash,buf){
+  const H={'Authorization':'Bearer '+tk,'Content-Type':'application/json','X-Cbx-Client':'v5'};
+  const err=async(r,what)=>{ let m=what+' HTTP '+r.status; try{ m=(await r.json()).error||m; }catch(e){} return {ok:false,error:m}; };
+  return fetch(base+'/api/upload-archive/start',{method:'POST',headers:H,body:JSON.stringify({name:name,hash:hash,size:buf.byteLength})})
+    .then(async st=>{
+      if(st.status===404) return fetch(base+'/api/upload-archive?name='+encodeURIComponent(name)+'&hash='+encodeURIComponent(hash),
+          {method:'POST',headers:{'Authorization':'Bearer '+tk,'Content-Type':'application/octet-stream'},body:buf})
+        .then(async r=>r.ok?Object.assign({ok:true},await r.json().catch(()=>({}))):err(r,'relay'));
+      if(!st.ok) return err(st,'start');
+      const sj=await st.json();
+      const put=await fetch(sj.upload_url,{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:buf});
+      if(!put.ok) return err(put,'storage');
+      const c=await fetch(base+'/api/upload-archive/complete',{method:'POST',headers:H,body:JSON.stringify({name:name,hash:hash,path:sj.path,size:buf.byteLength})});
+      return c.ok?Object.assign({ok:true},await c.json().catch(()=>({}))):err(c,'complete');
+    });
+}
 function archiveUpload(name,buf,hash){
   try{
     const tk=sessionStorage.getItem('cbx_token'); if(!tk) return;
@@ -9234,10 +9327,9 @@ function archiveUpload(name,buf,hash){
       .then(r=>r.ok?r.json():{files:[]}).catch(()=>({files:[]}))
       .then(man=>{
         if((man.files||[]).some(f=>f&&f.h===hash)) return;   // already archived
-        return fetch(base+'/api/upload-archive?name='+encodeURIComponent(name)+'&hash='+encodeURIComponent(hash),
-          {method:'POST',headers:{'Authorization':'Bearer '+tk,'Content-Type':'application/octet-stream'},body:buf})
-          .then(async r=>{ if(!r.ok){ let m='HTTP '+r.status; try{m=(await r.json()).error||m}catch(e){}
-            toast('"'+name+'" loaded here, but could not be archived for AgentOS Analytics — '+m+'. Upload it there by hand.',9000); return; }
+        return archiveDirect(base,tk,name,hash,buf)
+          .then(r=>{ if(!r.ok){
+            toast('"'+name+'" loaded here, but could not be archived for AgentOS Analytics — '+r.error+'. Upload it there by hand.',9000); return; }
             /* TELL THE OTHER TAB NOW (Nick, 2026-08-28: "when files are uploaded in vas
                analytics it should also be uploaded in ops analytics"). The pull already
                happens on open, on focus and every ten minutes — but someone sitting IN Ops

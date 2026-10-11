@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { responseText } from './kv-store.mjs';   // the VAS state is kept gzipped at rest (Spec Kit 031)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const APPLY = process.argv.includes('--apply');
@@ -28,7 +29,7 @@ const read = async (key) => {
   const r = await (await fetch(`${env.SUPABASE_URL}/rest/v1/rules?key=eq.${encodeURIComponent(key)}&select=value`, { headers: H })).json();
   const v = r?.[0]?.value; if (!v) return null;
   let p = String(v.data || '');
-  if (!p && v.store) p = await (await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/${v.store.replace(/^raw\//, '')}`, { headers: H })).text();
+  if (!p && v.store) p = await responseText(await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/${v.store.replace(/^raw\//, '')}`, { headers: H }));
   return { meta: v, json: p ? JSON.parse(p) : null };
 };
 

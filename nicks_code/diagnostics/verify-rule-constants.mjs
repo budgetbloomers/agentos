@@ -23,6 +23,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { fileURLToPath } from 'node:url';
+import { responseText } from '../../tools/kv-store.mjs';   // the VAS state may be kept gzipped at rest (Spec Kit 031)
 const AGENTOS = process.env.AGENTOS || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');   // repo-relative so the nightly cloud run can find it
 const { chromium } = await import(pathToFileURL(path.join(AGENTOS, 'nicks_code', 'diagnostics', 'node_modules', 'playwright', 'index.mjs')).href);
 const HTML = path.join(AGENTOS, ...(process.env.PULSE_HTML || 'nicks_code/index.html').split('/'));
@@ -91,7 +92,7 @@ try {
   const env = Object.fromEntries(envTxt.split(/\r?\n/).filter(l => l.includes('=')).map(l => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]));
   const r = await fetch(env.SUPABASE_URL + '/storage/v1/object/raw/kv/vas-state',
     { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY } , signal: AbortSignal.timeout(90000) });
-  if (r.ok) { blob = await r.text(); console.log('  live state: ' + (blob.length / 1048576).toFixed(2) + ' MB'); }
+  if (r.ok) { blob = await responseText(r); console.log('  live state: ' + (blob.length / 1048576).toFixed(2) + ' MB'); }
 } catch (e) { /* offline: the source checks still run and the peer check reports it skipped */ }
 
 await new Promise(r => srv.listen(8216, '127.0.0.1', r));

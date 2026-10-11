@@ -9,6 +9,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { responseText } from '../../tools/kv-store.mjs';   // the VAS state may be kept gzipped at rest (Spec Kit 031)
 
 const REPO = process.env.AGENTOS || decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // repo-relative (2026-09-08): the laptop path failed every cloud run
 const HTML = path.join(REPO, 'site', 'pulse', 'index.html');
@@ -22,7 +23,7 @@ const e = Object.fromEntries(fs.readFileSync(path.join(REPO, 'supabase.env'), 'u
 const H = { apikey: e.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + e.SUPABASE_SECRET_KEY };
 const r = await fetch(e.SUPABASE_URL + '/storage/v1/object/raw/kv/vas-state', { headers: H, signal: AbortSignal.timeout(90000) });
 if (!r.ok) { console.log('(skipping — cannot read live state: ' + r.status + ')'); process.exit(0); }
-const blob = await r.text();
+const blob = await responseText(r);
 console.log('live state: ' + (blob.length / 1048576).toFixed(2) + ' MB');
 
 const SERVE = { '/': HTML, '/index.html': HTML, '/xlsx.full.min.js': path.join(REPO, 'site', 'xlsx.full.min.js') };
