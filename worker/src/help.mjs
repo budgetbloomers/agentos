@@ -251,7 +251,11 @@ async function reuseCard(env, DB, p, contactId, cb, oppName, now) {
   return archKey ? { id, reopened: true } : { id, merged: true };
 }
 
-export async function helpRequest(env, DB, user, digest, body) {
+/* THE USAGE REPORT (Spec Kit 028): `track` (optional, from index.mjs) records every ask that got past validation —
+   its topic, the agent's note, their team leader and campaign as the published digest names them, and whether it
+   reached the Help Center. A failed ask (HighLevel down, the note refused) is recorded delivered:false, never lost.
+   Its key, hl-help:<card>:<Asked: time>, is exactly what tools/usage-backfill.mjs reads back from the note. */
+export async function helpRequest(env, DB, user, digest, body, track) {
   if (user.role !== 'agent') return { status: 403, body: { error: 'Requests come from agents.' } };
   const auth = authorise(user, digest);
   if (auth.error) return { status: auth.status, body: { error: auth.error } };
@@ -259,13 +263,28 @@ export async function helpRequest(env, DB, user, digest, body) {
   const cat = HELP_CATEGORIES.includes(String(body.category)) ? String(body.category) : 'Something else';
   const note = String(body.note || '').trim().slice(0, 2000);
   if (!note) return { status: 400, body: { error: 'Say a little about what you need — the note is what your team leader reads.' } };
-  const p = await pipeline(env);
-  if (!p || !p.stages.length) return { status: 503, body: { error: 'The Help Center pipeline is missing in HighLevel — ask an admin to create "' + PIPE_NAME + '".' } };
   const me = (auth.rows && auth.rows[0]) || {};
   const name = user.full_name || user.username || cb;
+  const now = new Date().toISOString();
+  const said = (delivered, extra, key) => {
+    if (typeof track !== 'function') return;
+    try { track({ event: 'help_ask', app: 'agent', at: now, category: cat, team_leader: me.tl || null, campaign: me.campaign || null,
+      source_key: key || null, detail: { note, cb, agent_name: name, delivered, ...extra } }); } catch (e) { /* never in the way */ }
+  };
+  let r;
+  try { r = await sendAsk(env, DB, cb, cat, note, me, name, now); }
+  catch (e) { said(false, { error: String(e && e.message || e).slice(0, 300) }); throw e; }
+  const b = r.body || {}, ok = r.status === 200;
+  said(ok, { opp_id: b.id || null, merged: b.merged || undefined, reopened: b.reopened || undefined, note_failed: b.note_failed || undefined,
+    notify_failed: b.notify_failed || undefined, error: ok ? undefined : b.error }, ok && b.id ? 'hl-help:' + b.id + ':' + now : null);
+  return r;
+}
+
+async function sendAsk(env, DB, cb, cat, note, me, name, now) {
+  const p = await pipeline(env);
+  if (!p || !p.stages.length) return { status: 503, body: { error: 'The Help Center pipeline is missing in HighLevel — ask an admin to create "' + PIPE_NAME + '".' } };
   const contactId = await contactFor(env, DB, cb, name);
   const oppName = '[' + cat + '] ' + cb + ' ' + name;
-  const now = new Date().toISOString();
   let oppId = '', merged = false, reopened = false, notifyFailed = false;
   try {
     const opp = await hl(env, '/opportunities/', { method: 'POST', body: JSON.stringify({
@@ -316,7 +335,7 @@ export async function helpMine(env, DB, user, digest) {
     .sort((a, b) => String(b.created).localeCompare(String(a.created)));
   return { status: 200, body: { stages: p.stages.map((s) => ({ id: s.id, name: s.name })), requests: rows, truncated: __sr.truncated, total: __sr.total } };
 }
-export async function helpCloseOwn(env, DB, user, digest, body) {
+export async function helpCloseOwn(env, DB, user, digest, body, track) {
   if (user.role !== 'agent') return { status: 403, body: { error: 'Only the agent who asked can close their own request here.' } };
   const auth = authorise(user, digest);
   if (auth.error) return { status: auth.status, body: { error: auth.error } };
@@ -335,13 +354,15 @@ export async function helpCloseOwn(env, DB, user, digest, body) {
     pipelineStageId: p.stages[p.stages.length - 1].id, status: 'won' }) });
   let stampFailed = false;
   try { await stampCard(DB, id, cb, { closed_at: new Date().toISOString() }); } catch (e) { stampFailed = true; }
+  stageSaid(track, { category: p.stages[p.stages.length - 1].name, team_leader: auth.team || null,
+    campaign: (auth.rows && auth.rows[0] && auth.rows[0].campaign) || null, detail: { opp_id: id, closed: true, by: 'agent', action: 'close' } });
   return { status: 200, body: { ok: true, ...(stampFailed ? { stamp_failed: true } : {}) } };
 }
 
 /* THE AGENT CONFIRMS (Nick's step 6, 2026-09-29): "Yes, I was helped" closes the request and records
    it; "Not yet" hands it back to the team leader — back to the second stage, the icon lit again, one
    more reopen on the record. Only the agent who asked; never on a closed or archived request. */
-export async function helpConfirm(env, DB, user, digest, body) {
+export async function helpConfirm(env, DB, user, digest, body, track) {
   if (user.role !== 'agent') return { status: 403, body: { error: 'Only the agent who asked confirms whether it was sorted.' } };
   const auth = authorise(user, digest);
   if (auth.error) return { status: auth.status, body: { error: auth.error } };
@@ -370,6 +391,8 @@ export async function helpConfirm(env, DB, user, digest, body) {
     await stampCard(DB, id, cb, helped ? { agent_confirmed_at: now, closed_at: now }
       : (c) => ({ completed_at: null, acknowledged_at: null, acknowledged_by: null, reopens: (c.reopens || 0) + 1 }));
   } catch (e) { stampFailed = true; }
+  stageSaid(track, { category: to.name, team_leader: auth.team || null, campaign: (auth.rows && auth.rows[0] && auth.rows[0].campaign) || null,
+    detail: { opp_id: id, closed: helped, by: 'agent', action: helped ? 'confirm' : 'not_yet' } });
   return { status: 200, body: { ok: true, closed: helped, stage: to.name, ...(stampFailed ? { stamp_failed: true } : {}) } };
 }
 
@@ -459,6 +482,13 @@ function parseRow(o, stages, byCb, card) {
     awaitingAgent: !closed && si >= 0 && si === awaitIdx(stages),
     confirmedAt: c.agent_confirmed_at || null, reopens: c.reopens || 0 };
 }
+
+/* a card moved (Spec Kit 028): the usage report's help_stage — which stage, by whom; help_answer_times reads ask → first
+   move by anyone but the agent */
+const stageSaid = (track, ev) => {
+  if (typeof track !== 'function') return;
+  try { track({ event: 'help_stage', app: 'agent', ...ev }); } catch (e) { /* never in the way */ }
+};
 
 const tlOnly = (auth) => (auth.scope !== 'team' && auth.scope !== 'all')
   ? { status: 403, body: { error: 'The Help Center is for team leaders.' } } : null;
@@ -924,7 +954,7 @@ export async function syncCoaching(env, DB, user, digest, body) {
     truncated: !!scan.truncated } };
 }
 
-export async function helpStage(env, DB, user, digest, body) {
+export async function helpStage(env, DB, user, digest, body, track) {
   const auth = authorise(user, digest);
   if (auth.error) return { status: auth.status, body: { error: auth.error } };
   const deny = tlOnly(auth); if (deny) return deny;
@@ -953,5 +983,7 @@ export async function helpStage(env, DB, user, digest, body) {
       ...(auth.scope === 'team' && !c.acknowledged_at ? { acknowledged_at: now, acknowledged_by: user.full_name || user.username || '' } : {}),
     }));
   } catch (e) { stampFailed = true; }
+  stageSaid(track, { category: stage.name, team_leader: auth.scope === 'team' ? (auth.team || null) : null,
+    detail: { opp_id: id, closed: last, by: auth.scope === 'team' ? 'team_leader' : user.role, action: 'move' } });
   return { status: 200, body: { ok: true, stage: stage.name, closed: last, ...(stampFailed ? { stamp_failed: true } : {}) } };
 }

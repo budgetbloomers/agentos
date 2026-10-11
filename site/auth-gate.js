@@ -160,7 +160,7 @@
   }
   function doLogin(username, password) {
     if (!username || !password) return;
-    api('/api/login', { username: username, password: password }).then(function (r) {
+    api('/api/login', { username: username, password: password, page: location.pathname }).then(function (r) {
       if (r._status === 200 && r.token) {
         sessionStorage.setItem(TKEY, r.token);
         window.CBX_USER = r.user;
@@ -299,7 +299,8 @@
   function boot() {
     var tok = sessionStorage.getItem(TKEY);
     if (!tok) { loginForm(); return; }
-    api('/api/me').then(function (r) {
+    /* ?page= tells the usage report WHICH app was opened (Spec Kit 028) — Referrer-Policy hides the path from the Worker */
+    api('/api/me?page=' + encodeURIComponent(location.pathname)).then(function (r) {
       if (r._status === 200 && r.user) { window.CBX_USER = r.user; if (r.user.must_change_password) changeForm(); else authed(); }
       else { sessionStorage.removeItem(TKEY); loginForm(); }
     });

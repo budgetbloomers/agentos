@@ -22,6 +22,7 @@ import { runHealthChecks, dailySnapshots, hygiene, logKvWrite } from './health.m
 import { kickRunner } from './runner.mjs';
 import { manifestAdd, reconcileManifest } from './manifest.mjs';
 import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
+import { usageTracker, recordOpen, recordAsk, pageOf, appFromPage } from './usage.mjs';   // the usage report (Spec Kit 028)
 
 // Hermes 2 Pro was deprecated 2026-05-30. Default: Llama 4 Scout (131k context —
 // fits the entire software's digests without truncation). Fallback: Llama 3.3 70B.
@@ -606,6 +607,9 @@ export default {
     const url = new URL(req.url);
     const path = url.pathname;
     const DB = db(env);
+    /* THE USAGE REPORT (Spec Kit 028): track(user, event) writes one usage_events row via ctx.waitUntil — never awaited,
+       failures dropped. Built HERE because the campaign-manager block below names its own context `ctx`. */
+    const track = usageTracker(DB, ctx);
     try {
       // ---------- version gate (ONE check; was copy-pasted 8×) ----------
       // Outdated app copies (old tabs / bookmarked preview URLs) show stale ghost
@@ -618,8 +622,12 @@ export default {
       // ---------- auth ----------
       if (stale && (path === '/api/me' || (path === '/api/login' && req.method === 'POST'))) return json(OUTDATED, 426);
       if (path === '/api/login' && req.method === 'POST') {
-        const r = await login(DB, req, await req.json(), ctx);   // ctx lets the audit writes finish after the response
+        const lb = await req.json();
+        const r = await login(DB, req, lb, ctx);   // ctx lets the audit writes finish after the response
         if (!r.ok) return json({ error: r.error }, r.status);
+        /* the sign-in itself reaches the usage report through auth_log's trigger; what only this route knows is WHICH
+           app it happened in (the page sends `page`) — recorded as that app's first open */
+        recordOpen(track, { user_id: r.user_id, username: r.user.username, role: r.user.role, team: r.user.team }, lb && lb.page, 'login');
         // token also in body: cross-origin pages use Bearer (cookie is same-origin only)
         return json({ user: r.user, token: r.token });
       }
@@ -656,6 +664,7 @@ export default {
          session and has no use in a browser, so it is stripped here rather than shipped
          into window.CBX_USER (audit round 4, 2026-08-28). */
       if (path === '/api/me') { if (!user) return json({ error: 'not signed in' }, 401);
+        recordOpen(track, user, pageOf(req, url), 'boot');   // auth-gate's boot: one open per person × app per minute
         const { token_hash, ...safe } = user; return json({ user: safe }); }
       if (path === '/api/logout' && req.method === 'POST') { await logout(DB, user); return json({ ok: true }); }
 
@@ -792,6 +801,7 @@ export default {
         catch (e) { return json({ ok: false, error: String(e && e.message || e), stack: String(e && e.stack || '').split('\n').slice(0, 4) }, 200); }
       }
       if (path === '/api/portal/me' && req.method === 'GET') {
+        recordOpen(track, user, pageOf(req, url), 'boot');   // Agent Analytics' boot
         return json({ user: { username: user.username, name: user.full_name || user.username,
           role: user.role, cb: normCb(user.cb), team: user.team || '' } });
       }
@@ -898,7 +908,7 @@ export default {
         }
         const answer = (ai && (ai.response || ai.result || '')) || '';
         if (!answer) return json({ error: 'Nikola could not answer that just now.' }, 502);
-        ctx.waitUntil(DB.insert('ask_log', [{ asked_by: user.username, question: q, answer, model }]).catch(() => {}));
+        recordAsk(DB, ctx, user, { question: q, answer, model, app: 'agent' });   // ask_log + the usage report, after the answer
         return json({ answer, basis: 'From your own published figures · ' + (r.body.period?.from || '') + ' to ' + (r.body.period?.to || '') });
       }
 
@@ -968,11 +978,12 @@ export default {
         const digest = await loadDigest(DB);
         if (!digest) return json({ error: 'Nothing has been published yet.' }, 404);
         let r;
+        const said = (ev) => track(user, ev);   // the usage report: asks and stage moves (Spec Kit 028)
         try {
-          if (path === '/api/portal/help/request' && req.method === 'POST') r = await helpRequest(env, DB, user, digest, await req.json().catch(() => ({})));
+          if (path === '/api/portal/help/request' && req.method === 'POST') r = await helpRequest(env, DB, user, digest, await req.json().catch(() => ({})), said);
           else if (path === '/api/portal/help/list' && req.method === 'GET') r = await helpList(env, DB, user, digest);
           else if (path === '/api/portal/help/detail' && req.method === 'GET') r = await helpDetail(env, DB, user, digest, url.searchParams.get('id') || '');
-          else if (path === '/api/portal/help/stage' && req.method === 'POST') r = await helpStage(env, DB, user, digest, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/help/stage' && req.method === 'POST') r = await helpStage(env, DB, user, digest, await req.json().catch(() => ({})), said);
           else if (path === '/api/portal/help/actions' && req.method === 'GET') r = await actionsList(env, DB, user, digest);
           else if (path === '/api/portal/help/action' && req.method === 'POST') r = await actionSet(env, DB, user, digest, await req.json().catch(() => ({})));
           else if (path === '/api/portal/help/fails' && req.method === 'GET') r = await failsList(env, DB, user, digest);
@@ -980,8 +991,8 @@ export default {
           else if (path === '/api/portal/help/fail' && req.method === 'POST') r = await failSet(env, DB, user, digest, await req.json().catch(() => ({})));
           else if (path === '/api/portal/help/sync-coaching' && req.method === 'POST') r = await syncCoaching(env, DB, user, digest, await req.json().catch(() => ({})));
           else if (path === '/api/portal/help/mine' && req.method === 'GET') r = await helpMine(env, DB, user, digest);
-          else if (path === '/api/portal/help/close' && req.method === 'POST') r = await helpCloseOwn(env, DB, user, digest, await req.json().catch(() => ({})));
-          else if (path === '/api/portal/help/confirm' && req.method === 'POST') r = await helpConfirm(env, DB, user, digest, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/help/close' && req.method === 'POST') r = await helpCloseOwn(env, DB, user, digest, await req.json().catch(() => ({})), said);
+          else if (path === '/api/portal/help/confirm' && req.method === 'POST') r = await helpConfirm(env, DB, user, digest, await req.json().catch(() => ({})), said);
           else if (path === '/api/portal/help/pulse' && req.method === 'GET') r = await helpPulse(env, DB, user, digest);
           else r = { status: 404, body: { error: 'Unknown help route.' } };
         } catch (e) { r = { status: 502, body: { error: 'HighLevel did not answer: ' + String(e.message || e).slice(0, 160) } }; }
@@ -1036,10 +1047,11 @@ export default {
             if (r && r.error && r.status) r = { status: r.status, body: { error: r.error } };
             return json(r.body, r.status);
           }
-          if (path === '/api/portal/cm/request' && req.method === 'POST') r = await assistCreate(env, DB, user, digest, ctx, await req.json().catch(() => ({})));
+          const said = (ev) => track(user, ev);   // the usage report (Spec Kit 028); `ctx` here is the CM context, not the Worker's
+          if (path === '/api/portal/cm/request' && req.method === 'POST') r = await assistCreate(env, DB, user, digest, ctx, await req.json().catch(() => ({})), said);
           else if (path === '/api/portal/cm/assist' && req.method === 'GET') r = await assistList(env, DB, user, digest, ctx);
           else if (path === '/api/portal/cm/detail' && req.method === 'GET') r = await assistDetail(env, DB, user, digest, ctx, url.searchParams.get('id') || '');
-          else if (path === '/api/portal/cm/act' && req.method === 'POST') r = await assistAct(env, DB, user, digest, ctx, await req.json().catch(() => ({})));
+          else if (path === '/api/portal/cm/act' && req.method === 'POST') r = await assistAct(env, DB, user, digest, ctx, await req.json().catch(() => ({})), said);
           else if (path === '/api/portal/cm/eod' && req.method === 'GET') {
             if (user.role !== 'campaign_manager' && user.role !== 'admin' && user.role !== 'exec')
               return json({ error: 'The end-of-day pack is a campaign manager export.' }, 403);
@@ -2340,7 +2352,7 @@ export default {
           ai = await env.AI.run(model, { messages: [{ role: 'system', content: sys.slice(0, 90000) }, { role: 'user', content: question }], max_tokens: 900 });
         }
         const answer = (ai && (ai.response || ai.result || '')) || '[no response]';
-        ctx.waitUntil(DB.insert('ask_log', [{ asked_by: user.username, question, answer, model }]));
+        recordAsk(DB, ctx, user, { question, answer, model, app: appFromPage(pageOf(req, url)) });   // ask_log + the usage report
         return json({ answer });
       }
 

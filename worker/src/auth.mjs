@@ -178,8 +178,10 @@ export async function login(DB, req, body, ctx) {
   // Neither of these gates the response: the token above is already valid.
   defer(DB.update(`app_users?id=eq.${u.id}`, { failed_attempts: 0, locked_until: null, last_login: new Date().toISOString() }).catch(() => {}));
   defer(log(DB, u.id, username, 'login_ok', ip));
+  /* user_id is for the Worker's own records (the usage report's app open, Spec Kit 028) — the route never puts it in
+     the answer the page receives */
   return {
-    ok: true, token,
+    ok: true, token, user_id: u.id,
     user: { username: u.username, full_name: u.full_name, role: u.role, apps: u.apps, tabs: u.tabs,
       pii_unmask: u.pii_unmask, must_change_password: u.must_change_password, cb: u.cb || '', team: u.team || '' },
   };

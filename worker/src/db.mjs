@@ -18,8 +18,12 @@ export function db(env) {
   };
   return {
     select: (path) => q('GET', path),
+    /* upsert: false = plain insert · true = merge on conflict · 'ignore' = keep the existing row (ON CONFLICT DO
+       NOTHING — the usage report's idempotency, Spec Kit 028; name the column with ?on_conflict=<col>) */
     insert: (table, rows, upsert = false, returning = false) =>
-      q('POST', table, rows, returning ? { Prefer: 'return=representation' } : upsert
+      q('POST', table, rows, returning ? { Prefer: 'return=representation' } : upsert === 'ignore'
+        ? { Prefer: 'resolution=ignore-duplicates,return=minimal' }
+        : upsert
         ? { Prefer: 'resolution=merge-duplicates,return=minimal' }
         : { Prefer: 'return=minimal' }),
     update: (path, patch) => q('PATCH', path, patch, { Prefer: 'return=minimal' }),

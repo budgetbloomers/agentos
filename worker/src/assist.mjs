@@ -106,6 +106,16 @@ async function writeMirror(DB, id, v) {
   const c = globalThis.__cmMir; if (c) c.m[id] = v;
 }
 
+/* THE USAGE REPORT (Spec Kit 028). `track` (optional, from index.mjs) records each request and each action — blockage,
+   campaign, team leader, priority, card id; NEVER the request text (a restricted request's text never leaves the team
+   leader, and the report has no need of anyone's). Keys are the ones tools/usage-backfill.mjs derives from this mirror:
+   cm-req:<card>:<requested_at digits> and cm-hist:<card>:<history line time>. */
+export const cmReqKey = (id, requestedAt) => 'cm-req:' + id + ':' + String(requestedAt || '').replace(/[^0-9]/g, '').slice(0, 14);
+const cmSaid = (track, ev) => {
+  if (typeof track !== 'function') return;
+  try { track({ app: 'agent', ...ev }); } catch (e) { /* never in the way */ }
+};
+
 /* [blockage] CBnn Team Leader Name · Campaign — parseable with the proven regex. */
 const cardName = (bk, cb, name, camp) =>
   '[' + bk + '] ' + cb + ' ' + String(name).slice(0, 60) + ' · ' + String(camp).slice(0, 40);
@@ -184,7 +194,7 @@ function baselineFor(metric, digest, tlName, camp) {
 /** POST /api/portal/cm/request — a TEAM LEADER raises a request. raise_request
  *  is a team-leader-only permission: a campaign manager cannot raise one to
  *  themselves, and an agent's route is the Help Center. */
-export async function assistCreate(env, DB, user, digest, ctx, body) {
+export async function assistCreate(env, DB, user, digest, ctx, body, track) {
   if (user.role !== 'team_leader') return { status: 403, body: { error: 'Assistance requests come from team leaders. Agents ask through the Help Center.' } };
   const auth = authorise(user, digest);
   if (auth.error) return { status: auth.status, body: { error: auth.error } };
@@ -205,6 +215,20 @@ export async function assistCreate(env, DB, user, digest, ctx, body) {
   if (!cb) return { status: 403, body: { error: 'This account has no CB number — ask Nick to re-run provisioning.' } };
   const tlName = user.full_name || user.username;
 
+  /* A REQUEST THAT FAILS TO SEND IS STILL A REQUEST (Nick, 2026-10-11: "Yes, record them as not delivered"). Past
+     validation, every outcome that is not a 200 — HighLevel down, the open-card 409, a truncated scan — is recorded like
+     a failed help ask: cm_request, delivered=false, the reason clamped to 120 characters (a thrown HighLevel error keeps
+     only its "HighLevel <path> → <status>" head, never HighLevel's response body). Never the request text. */
+  const notSent = (reason, oppId) => cmSaid(track, { event: 'cm_request', at: new Date().toISOString(), category: blk.key, team_leader: tlName,
+    campaign: camp, detail: { opp_id: oppId || null, priority, restricted, affected, delivered: false, error: String(reason || 'not sent').slice(0, 120) } });
+  let r;
+  try { r = await sendRequest(env, DB, user, digest, ctx, track, { blk, priority, camp, restricted, desc, impact, affected, cb, tlName }); }
+  catch (e) { notSent(String((e && e.message) || e).split(': ')[0]); throw e; }
+  if (r.status !== 200) notSent((r.body && r.body.error) || 'status ' + r.status, r.body && r.body.id);
+  return r;
+}
+
+async function sendRequest(env, DB, user, digest, ctx, track, { blk, priority, camp, restricted, desc, impact, affected, cb, tlName }) {
   const p = await pipeline(env);
   if (!p || !p.stages.length) return { status: 503, body: { error: 'The Campaign Assistance pipeline could not be reached — try again shortly.' } };
 
@@ -220,6 +244,9 @@ export async function assistCreate(env, DB, user, digest, ctx, body) {
       if (!restricted) await note(env, row.contactId, row.id, 'Duplicate request merged into this one', desc);
       hist(m, tlName, 'duplicate merged');
       await writeMirror(DB, row.id, m);
+      const h = m.history[m.history.length - 1];
+      cmSaid(track, { event: 'cm_request', at: h.at, category: blk.key, team_leader: tlName, campaign: camp, source_key: 'cm-hist:' + row.id + ':' + h.at,
+        detail: { opp_id: row.id, priority, restricted, affected, merged: true, delivered: true } });
       return { status: 200, body: { ok: true, id: row.id, merged: true } };
     }
   }
@@ -310,6 +337,8 @@ export async function assistCreate(env, DB, user, digest, ctx, body) {
     : 'Request raised · ' + blk.label + ' · ' + priority + (affected ? ' · ' + affected + ' agents affected' : ''),
     restricted ? '' : desc + (impact ? '\n\nBusiness impact: ' + impact : ''));
   if (noted === null && !restricted) { m.note_failed = now; await writeMirror(DB, id, m).catch(() => {}); }
+  cmSaid(track, { event: 'cm_request', at: now, category: blk.key, team_leader: tlName, campaign: camp, source_key: cmReqKey(id, now),
+    detail: { opp_id: id, priority, restricted, affected, delivered: true, reused: !!reuse || undefined, note_failed: (noted === null && !restricted) || undefined } });
   return { status: 200, body: { ok: true, id, note_failed: noted === null && !restricted } };
 }
 
@@ -466,7 +495,7 @@ export async function assistDetail(env, DB, user, digest, ctx, id) {
  * the campaign manager's (and Director's); confirm_tl is the requesting team
  * leader's; acknowledge and evidence are open to both sides.
  */
-export async function assistAct(env, DB, user, digest, ctx, body) {
+export async function assistAct(env, DB, user, digest, ctx, body, track) {
   const auth = authorise(user, digest);
   if (auth.error) return { status: auth.status, body: { error: auth.error } };
   if (auth.scope === 'agent') return { status: 403, body: { error: 'Not an agent action.' } };
@@ -496,6 +525,7 @@ export async function assistAct(env, DB, user, digest, ctx, body) {
     body: JSON.stringify({ pipelineStageId: p.stages[i].id, status: i === p.stages.length - 1 ? 'won' : 'open' }) });
   const say = async (title, text) => { if (m.restricted) return; const r = await note(env, row.contactId || m.contactId, id, title, text || ''); if (r === null) m.note_failed = nowIso; };
   const started = !!m.assistance_started_at;
+  const lastBefore = ((m.history || [])[(m.history || []).length - 1] || {}).at || null;
   const CM_ONLY = { error: 'That action belongs to the campaign manager.', status: 403 };
 
   switch (action) {
@@ -633,6 +663,13 @@ export async function assistAct(env, DB, user, digest, ctx, body) {
   }
 
   await writeMirror(DB, id, m);
+  /* the usage report (Spec Kit 028): an action that wrote a history line is one cm_action, keyed by that line's time —
+     the same key tools/usage-backfill.mjs derives from the mirror row. A no-op (acknowledging twice) records nothing. */
+  const h = (m.history || [])[(m.history || []).length - 1];
+  if (h && h.at !== lastBefore)
+    cmSaid(track, { event: 'cm_action', at: h.at, category: action, team_leader: row.tl || m.tl || null, campaign: row.campaign || m.campaign || null,
+      source_key: 'cm-hist:' + id + ':' + h.at, detail: { opp_id: id, actor, started: !!m.assistance_started_at, resolved: m.resolution_mins != null,
+        disputed: (action === 'confirm_tl' && String(body.disputed) === 'true') || undefined } });
   /* The audit trail rides the mirror's history + updated_at; the auth_log
      carries sign-ins, not per-record acts — same split as the hubs. */
   return { status: 200, body: { ok: true, blockers: closeBlockers(m) } };

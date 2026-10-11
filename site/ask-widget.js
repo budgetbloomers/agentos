@@ -44,7 +44,7 @@
     inp.value = ""; window.askMsgs.push({ role: "user", html: esc(q) }); askRender();
     var st = document.getElementById("askStatus"); var html;
     try {
-      var r = await fetch(API + "/api/ask", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (sessionStorage.getItem("cbx_token") || "") }, body: JSON.stringify({ question: q, context: C.ctx ? C.ctx() : "" }) });
+      var r = await fetch(API + "/api/ask?page=" + encodeURIComponent(location.pathname), { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (sessionStorage.getItem("cbx_token") || "") }, body: JSON.stringify({ question: q, context: C.ctx ? C.ctx() : "" }) });
       if (!r.ok) throw 0;
       var j = await r.json();
       html = esc(j.answer || "(empty)");

@@ -48,13 +48,16 @@ jobs:
           # verify-kv-large-store (2026-10-07, spec 013): a store too big for the Worker to unpack is kept compressed, read back intact
           # verify-targets-027 (2026-10-11, spec 027): the Agent List row's Target in force that day sits between the CM override and the
           # rule book (VAS engine, digest, /api/roster, CM settings, Ops); September keeps the rule book; mixed groups are named
+          # verify-usage-028 (2026-10-11, spec 028): the usage report — migration-061 runs for real in PGlite (table, auth_log
+          # trigger, views, anon/authenticated locked out), the Worker records every event without ever changing an answer,
+          # and tools/usage-backfill.mjs is re-runnable with the live Worker's keys
           # spec 014 (2026-10-07) system sweep: one suite per area — VAS, Ops, Agent Analytics+Wimpy, Worker, tick+tools
           # verify-wimpy-history (2026-10-07, spec 015): Wimpy "My orders" shows only the signed-in person's own orders; HighLevel cards never break ordering
           for t in verify-agent-analytics verify-wimpy verify-wimpy-signin verify-wimpy-history verify-session-name verify-kv-large-store verify-vas-sweep-014 verify-ops-sweep-014 verify-agent-sweep-014 verify-worker-sweep-014 verify-tick-014 verify-engine-rules verify-rule-constants verify-public-holidays verify-saturday-rule verify-leave-days verify-ops-leave \
                    verify-coaching-signature verify-coaching-drafts \
                    verify-cm-targets verify-targets-027 verify-campaign-manager verify-perf-score verify-history \
                    verify-tbc-backdate verify-variance verify-save-acks verify-login-lockout \
-                   verify-help-repeat verify-help-contact \
+                   verify-help-repeat verify-help-contact verify-usage-028 \
                    verify-drill verify-campaign-moves verify-campaign-split verify-comm-model \
                    verify-attendance-format verify-upload-station-layout verify-digest-fence \
                    verify-cm-digest verify-coaching-wave verify-cm-signoff-worker verify-cm-view \

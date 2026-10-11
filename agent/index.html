@@ -1095,7 +1095,7 @@ function fail(title,detail){
 function boot(){
   var t=null; try{ t=sessionStorage.getItem(TKEY); }catch(e){}
   if(!t) return loginScreen();
-  api('/api/portal/me').then(function(r){
+  api('/api/portal/me?page='+encodeURIComponent(location.pathname)).then(function(r){   /* page: the usage report's app open (Spec Kit 028) */
     if(!r.ok){ try{sessionStorage.removeItem(TKEY);}catch(e){} return loginScreen(); }
     U=r.json.user; loadPortal();
   });
@@ -4330,7 +4330,7 @@ function loginScreen(msg){
     var u=cb.value.trim(), p=pw.value;
     if(!u||!p) return fail('Enter your CB number and your password.');
     go.disabled=true; go.textContent='Signing in…';
-    api('/api/login',{username:u,password:p}).then(function(r){
+    api('/api/login',{username:u,password:p,page:location.pathname}).then(function(r){
       if(r.status===200&&r.json.token){
         try{ sessionStorage.setItem(TKEY,r.json.token); }catch(e){}
         U=r.json.user;
