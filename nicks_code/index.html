@@ -1591,7 +1591,7 @@ function mergeStates(mine,theirs){
     out.closedcases=!t?m:(!m?t:Object.assign({},String(m.at||'')>=String(t.at||'')?m:t,{rows:Object.assign({},t.rows||{},m.rows||{}),n:null})); }
   const myL=String((mine.rosterEffect||{}).at||''), thL=String((theirs.rosterEffect||{}).at||'');
   const listFrom=myL>=thL?mine:theirs;
-  for(const k of ['roster','rosterFp','rosterEffect','rosterRefused','tlCbs','leavers']) out[k]=listFrom[k];
+  for(const k of ['roster','rosterFp','rosterEffect','rosterRefused','tlCbs','leavers','listGroups']) out[k]=listFrom[k];
   /* a tie in segment count goes to the copy carrying more list targets (Spec Kit 027): a tab that has just recorded
      October's targets must not lose them to an older copy of the same segments */
   { const nT=h=>(h||[]).filter(s=>s&&s.target!=null).length;
@@ -2042,7 +2042,7 @@ const listCampAt=(code,d)=>listSegAt(code,d).campaign;
    that segment answers only inside its own month (an intake added mid-month takes the list's target from the month's
    first day, never a month it was not on the list for). {target, campaign} when the segment carries a target, else
    null — and nothing before October 2026 carries one: those months were recorded without, so they keep the rule book. */
-function listTargetAt(code,d){
+function listSegInForce(code,d){
   const list=S.orgHist&&S.orgHist[code];
   if(!list||!list.length) return null;
   let seg=null, first=null;
@@ -2050,7 +2050,47 @@ function listTargetAt(code,d){
     if(!first) first=s;
     if(s.d<=d) seg=s; else break; }
   if(!seg&&first&&String(first.d).slice(0,7)===String(d).slice(0,7)) seg=first;
+  return seg;
+}
+function listTargetAt(code,d){
+  const seg=listSegInForce(code,d);
   return (seg&&seg.target!=null)?{target:seg.target,campaign:seg.campaign||''}:null;
+}
+/* A GROUP'S LIST VALUE (Nick, 2026-10-11, on CB173/CB262/CB303 — list row Cuddle Exp, Courtesy days worked: "The
+   Courtesy group's list value (6)"). counts = {value: agents}: the most common numeric cell wins, a tie goes to the
+   LOWER value, no numeric cell = null. worker/src/campaign.mjs listGroupTarget() is the same (verify-targets-027). */
+function listGroupTarget(counts){
+  let best=null, bestN=0;
+  for(const k of Object.keys(counts||{})){ const v=Number(k), n=Number(counts[k]);
+    if(!(v>0)||!(n>0)) continue;
+    if(n>bestN||(n===bestN&&v<best)){ best=v; bestN=n; } }
+  return best;
+}
+/* S.listGroups[YYYY-MM][campaign|tenure] = {v, n, counts}: what each Agent List month's rows carry per group, and the
+   value chosen (v, carried by n agents). Recorded by the list's ingest for the list's month (the whole-month rule) and
+   from the record on every poll; nothing is recorded for a month whose list came before 027, so it keeps the rule
+   book. `campaigns` limits the replacement to the campaigns this sheet covers (a VAS sheet never wipes VT's groups). */
+function recordListGroups(month,rows,campaigns){
+  if(!/^\d{4}-\d{2}$/.test(month||'')) return false;
+  if(!S.listGroups||typeof S.listGroups!=='object') S.listGroups={};
+  const cur=S.listGroups[month]||{}, next={};
+  const cov=campaigns?new Set(campaigns):null;
+  for(const k of Object.keys(cur)) if(cov&&!cov.has(k.split('|')[0])) next[k]=cur[k];
+  const counts={};
+  for(const r of rows||[]){ const t=listTargetOf(r.target); if(t==null) continue;
+    const k=String(r.campaign||'').trim()+'|'+String(r.tenure||'').trim();
+    (counts[k]=counts[k]||{})[t]=((counts[k]||{})[t]||0)+1; }
+  for(const k of Object.keys(counts)){ const v=listGroupTarget(counts[k]); if(v!=null) next[k]={v,n:counts[k][v],counts:counts[k]}; }
+  if(JSON.stringify(next)===JSON.stringify(cur)) return false;
+  S.listGroups[month]=next;
+  return true;
+}
+/* the group value in force on day d: that month's list, else the latest earlier month that recorded one */
+function groupTargetAt(camp,tenure,d){
+  const G=S.listGroups||{}, mo=String(d||'').slice(0,7);
+  let key=null; for(const m of Object.keys(G)) if(m<=mo&&(!key||m>key)) key=m;
+  const g=key&&G[key][camp+'|'+tenure];
+  return g?g.v:null;
 }
 /* THE DAILY TARGET — THE ONE PLACE IT IS CHOSEN (Spec Kit 027; MTD_RULES.salesTargetPrecedence):
      CM override exact → CM override campaign-wide → the list row's target in force that day → rule book exact →
@@ -2061,8 +2101,12 @@ function listTargetAt(code,d){
    prices the month's first day with it, so the two can never disagree. */
 function perDayTarget(code,camp,tenure,d,a){
   const ovm=(S.cmTargets&&S.cmTargets.matrix)||{}, tm=MTD_RULES.salesTargetMatrix;
-  const lt=listTargetAt(code,d);
-  const lv=(lt&&campOf(lt.campaign)===camp)?lt.target:undefined;
+  /* the agent's own row when it is for this campaign (a blank cell there → the rule book); a day worked under a campaign
+     the agent has NO row for in force takes that campaign|tenure group's value on the month's list (Nick, 11 Oct:
+     "The Courtesy group's list value (6)"), then the rule book */
+  const seg=listSegInForce(code,d);
+  const own=!!seg&&campOf(seg.campaign)===camp;
+  const lv=own?(seg.target!=null?seg.target:undefined):(groupTargetAt(camp,tenure,d)??undefined);
   return ovm[camp+'|'+tenure]??ovm[camp+'|*']??lv??tm[camp+'|'+tenure]??tm[camp+'|*']??(a?.target||0);
 }
 /* A MOVER'S MONTH IS SPLIT BY THE DATE OF THE MOVE — CAMPAIGN ONLY (D4, sprint 2026-09-29; Nick to
@@ -3092,6 +3136,8 @@ const INGEST={
       if(recordOrgList(a.code,asOf,{tl:a.tl,campaign:a.campaign,tenure:a.tenure,target:rawTarget.get(a.code)})&&had) moved++;
       else if(!had) fresh++;
     }
+    /* the list's group values for its month (Spec Kit 027, Nick 11 Oct) — what a day worked under a campaign an agent has no row for is priced at */
+    recordListGroups(String(asOf).slice(0,7),out.map(a=>({campaign:a.campaign,tenure:a.tenure,target:rawTarget.get(a.code)})),[...covered]);
     if(moved) toast(moved+' agent(s) moved team leader or campaign in "'+name+'" — applied to the whole of '
       +asOf.slice(0,7)+'. Earlier months keep the team leader they were worked under.',9000);
     if(backdated) toast(backdated+' agent(s) received their FIRST real team leader in "'+name+
@@ -9336,6 +9382,8 @@ function backfillListTargets(j){
     const now=listTargetAt(c,j.as_of);
     if((now?now.target:null)!==have) n++;
   }
+  /* and the record's group values for its month (the whole list, so every campaign) */
+  if(j.roster.some(r=>r&&('list_target' in r))&&recordListGroups(String(j.as_of).slice(0,7),j.roster.filter(r=>r&&('list_target' in r)).map(r=>({campaign:campOf(r.campaign),tenure:r.tenure,target:r.list_target})),null)) n++;
   return n;
 }
 async function adoptRosterFromRecord(given){

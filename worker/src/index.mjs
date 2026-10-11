@@ -14,7 +14,7 @@ import { campaignMoves, setCampaignMove } from './moves.mjs';
 import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness, kvKeyValid, isFullScope } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { draftsGet, draftsPost } from './drafts.mjs';
-import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, rosterTargets, listTargetGroups } from './campaign.mjs';
+import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, rosterTargets, listTargetGroups, listTargetGroupValues } from './campaign.mjs';
 import { wimpyMenu, submitWimpyOrder, WIMPY_HISTORY_SINCE } from './wimpy.mjs';
 import { retryDueOrders, listMyOrders, dbWhy } from './wimpy-hl.mjs';   // spec 015: the Wimpy cron's HighLevel retry; My orders
 import { syncAgentLogins, syncTeamLeaders, syncCampaigns, publishAgentList } from './provision.mjs';
@@ -1291,11 +1291,11 @@ export default {
           return json({ fingerprint: rec.fingerprint, n: rec.roster.length, as_of: rec.as_of || '',
             file: rec.file || '', source: rec.source || '', uploaded_by: rec.uploaded_by || '',
             uploaded_at: rec.uploaded_at || '', state_updated_at: (cur[0].updated_at || ''),
-            targets_stamp: tstamp, targets_rev: trev, targets_from: String(rec.as_of || '').slice(0, 7), roster: applyTargets(rec.roster), leaders, leavers, aliases, extras_degraded: degraded, renamed: rec.renamed || [], review: rec.review || null });
+            targets_stamp: tstamp, targets_rev: trev, targets_from: String(rec.as_of || '').slice(0, 7), target_groups: listTargetGroupValues(rec.roster), roster: applyTargets(rec.roster), leaders, leavers, aliases, extras_degraded: degraded, renamed: rec.renamed || [], review: rec.review || null });
         }
         const payload = await rosterSync(env, DB, { fresh: !!url.searchParams.get('fresh'), who: user && user.username });
         if (payload && payload.error) return json({ error: payload.error }, payload.status || 500);
-        if (payload && Array.isArray(payload.roster)) { payload.roster = applyTargets(payload.roster); payload.targets_stamp = tstamp; payload.targets_rev = trev; payload.targets_from = String(payload.as_of || '').slice(0, 7); payload.leaders = leaders; payload.leavers = leavers; payload.aliases = aliases; payload.extras_degraded = degraded; }
+        if (payload && Array.isArray(payload.roster)) { payload.roster = applyTargets(payload.roster); payload.targets_stamp = tstamp; payload.targets_rev = trev; payload.targets_from = String(payload.as_of || '').slice(0, 7); payload.target_groups = listTargetGroupValues(payload.roster.map((r) => ({ ...r, target: r.list_target }))); /* the cells, not the served targets */ payload.leaders = leaders; payload.leavers = leavers; payload.aliases = aliases; payload.extras_degraded = degraded; }
         return json(payload);
       }
 

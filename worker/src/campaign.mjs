@@ -202,6 +202,25 @@ export function rosterTargets(ctx, rows) {
   });
 }
 
+/* A GROUP'S LIST VALUE (Nick, 2026-10-11, on movers who worked a campaign their list row is not for: "The Courtesy
+   group's list value (6)"). counts = {value: agents}; the most common numeric cell wins, a tie goes to the LOWER value,
+   no numeric cell = null (the rule book answers). PULSE's listGroupTarget() is the same function (verify-targets-027). */
+export function listGroupTarget(counts) {
+  let best = null, bestN = 0;
+  for (const [k, n0] of Object.entries(counts || {})) {
+    const v = Number(k), n = Number(n0);
+    if (!(v > 0) || !(n > 0)) continue;
+    if (n > bestN || (n === bestN && v < best)) { best = v; bestN = n; }
+  }
+  return best;
+}
+/* {campaign|tenure: group value} for a list — served on /api/roster as target_groups so every consumer can say what a
+   day worked under another campaign is priced at. */
+export function listTargetGroupValues(rows) {
+  const g = listTargetGroups(rows), out = {};
+  for (const k of Object.keys(g)) { const v = listGroupTarget(g[k]); if (v != null) out[k] = v; }
+  return out;
+}
 /* The list's targets per campaign|tenure — {"Courtesy|M1": {"4": 16}, …} — for the settings screen. Blank cells
    are not counted (they inherit the rule book). */
 export function listTargetGroups(rows) {
@@ -322,8 +341,9 @@ export function cmSettingsBody(digest, user, ctx, listGroups) {
     const rows = Object.keys(c.rows).sort().map((k) => {
       /* the list's values for this group, smallest first, with how many agents carry each */
       const list = Object.entries(lg[k] || {}).map(([v, n]) => ({ v: Number(v), n: Number(n) })).sort((a, b) => a.v - b.v);
-      /* one value on the list = what the group is measured on; mixed values have no single "inherited" number */
-      const listEff = list.length === 1 ? list[0].v : null;
+      /* the group's list value (listGroupTarget: most common cell, a tie → the lower) — what a day worked under this
+         campaign by an agent whose own row is elsewhere is priced at; each agent's own cell still prices their row */
+      const listEff = listGroupTarget(lg[k] || {});
       return {
         k, tenure: k.split('|')[1],
         base: SALES_TARGET_MATRIX_DEFAULTS[k] ?? null,

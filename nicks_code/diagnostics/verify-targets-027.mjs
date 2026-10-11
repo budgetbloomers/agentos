@@ -76,6 +76,9 @@ head('A · Worker — the chain, /api/roster fields, the settings list column');
     ok('…a CM override still wins in what /api/roster serves (9), the list cell travels beside it',
       ov[0].target === 9 && ov[0].list_target === 4 && ov[0].rule_target === 9, J(ov[0]));
     ok('…the input rows are not mutated', rows[0].list_target === undefined && rows[0].target === 4);
+    const gvals = has(C.listTargetGroupValues) ? C.listTargetGroupValues(rows) : null;
+    ok('the Worker exposes each group list value (Courtesy|M1 4, VT|M2 2.5) for /api/roster',
+      !!gvals && gvals['Courtesy|M1'] === 4 && gvals['VT|M2'] === 2.5, J(gvals));
   }
 
   const sctx = { assign: { dalwin: { campaigns: ['courtesy'] } }, sla: C.CM_SLA_DEFAULTS,
@@ -146,6 +149,7 @@ const AG = [
   ['CB915', 'Courtesy', 'Leader Alpha', 'M2', 4, 'TBC'],    // text → rule book, named in the warning
   ['CB916', 'Courtesy', 'Leader Alpha', 'Exp', 8, '6'],     // a mover: Cuddle until 6 Oct, Courtesy from 7 Oct
   ['CB917', 'Cuddle', 'Leader Kappa', 'Exp', 8, '8'],
+  ['CB918', 'Cuddle', 'Leader Kappa', 'Exp', 5, '8'],      // Nick 11 Oct: list row Cuddle, worked Courtesy 1–6 Oct → "The Courtesy group's list value (6)"
 ];
 const VT = [['CB921', '1.5'], ['CB922', '1.5'], ['CB923', '2.5'], ['CB924', '7'], ['CB925', '']];
 const listCsv = (cells) => 'Employee Code,Agent Name,Team Leader,Campaign,Tenure,Sales Force,Target,Start Date\n'
@@ -188,7 +192,7 @@ try {
     S.evals = {}; S.board = {}; S.adjust = {}; S.refs = null; S.campaignMoves = {}; S.opencasesLM = null; S.closedcases = null;
     S.cmTargets = { matrix: {}, stamp: '' }; S.files = []; S.leavers = {};
     for (const [code, camp, tl, ten, sept] of AG) {
-      const sc = code === 'CB916' ? 'Cuddle' : camp, stl = code === 'CB916' ? 'Leader Kappa' : tl;
+      const sc = code === 'CB916' ? 'Cuddle' : code === 'CB918' ? 'Courtesy' : camp, stl = code === 'CB916' ? 'Leader Kappa' : code === 'CB918' ? 'Leader Alpha' : tl;
       S.roster.push({ code, name: 'Agent ' + code, sf: 'Agent ' + code, tl: stl, campaign: sc, tenure: ten, callx: '', target: sept, start: '2026-01-05' });
       recordOrgList(code, '2026-09-01', { campaign: sc, tl: stl, tenure: ten });
     }
@@ -214,7 +218,8 @@ try {
     !!(empty && empty.empty && e911 && e911.target === Math.round(4 * empty.wd * 100) / 100), J(e911 && { t: e911.target, wd: empty.wd }));
 
   await page.evaluate(() => { window.__mtd.state().campaignMoves = { '2026-10': { at: '2026-10-09T08:00:00Z',
-    agents: { CB916: [{ campaign: 'Cuddle', from: '2026-10-01' }, { campaign: 'Courtesy', from: '2026-10-07' }] } } }; });
+    agents: { CB916: [{ campaign: 'Cuddle', from: '2026-10-01' }, { campaign: 'Courtesy', from: '2026-10-07' }],
+      CB918: [{ campaign: 'Courtesy', from: '2026-10-01' }, { campaign: 'Cuddle', from: '2026-10-07' }] } } }; });
   await seedDays(page, OCT);
   const oct = await perDay(page, '2026-10');
   ok('October: Courtesy M1 with list target 4 → 4/day (was 3)', oct.CB911 && oct.CB911['2026-10-07'] === 4, J(oct.CB911));
@@ -227,6 +232,16 @@ try {
     oct.CB916 && oct.CB916['2026-10-06'] === 8, J(oct.CB916));
   ok('…and the same mover\'s Courtesy days (7, 8 Oct) take the list row\'s 6',
     oct.CB916 && oct.CB916['2026-10-07'] === 6 && oct.CB916['2026-10-08'] === 6, J(oct.CB916));
+
+  /* Nick, 11 Oct, on the movers CB173/CB262/CB303: "The Courtesy group's list value (6)" */
+  ok('a mover whose list row is Cuddle Exp takes the Courtesy|Exp GROUP list value (6) on her Courtesy day (6 Oct)',
+    oct.CB918 && oct.CB918['2026-10-06'] === 6, J(oct.CB918));
+  ok('…and her own row (8) on her Cuddle days (7, 8 Oct)', oct.CB918 && oct.CB918['2026-10-07'] === 8 && oct.CB918['2026-10-08'] === 8, J(oct.CB918));
+  ok('…September for her is unchanged (Courtesy Exp rule book 5)', septBefore.CB918 && septBefore.CB918['2026-09-02'] === 5, J(septBefore.CB918));
+  const grp = await page.evaluate(() => JSON.parse(JSON.stringify((window.__mtd.state().listGroups || {})['2026-10'] || null)));
+  ok('the October list group values are recorded with how they were chosen (Courtesy|Exp 6 from 6 x2)',
+    !!grp && !!grp['Courtesy|Exp'] && grp['Courtesy|Exp'].v === 6 && J(grp['Courtesy|Exp'].counts) === J({ 6: 2 }), J(grp && grp['Courtesy|Exp']));
+  ok('…none are recorded for September (it keeps the rule book)', await page.evaluate(() => !((window.__mtd.state().listGroups || {})['2026-09'])));
 
   const octD = await digestRows(page, '2026-10');
   const d911 = (octD.agents || []).find((a) => a.code === 'CB911');
@@ -259,7 +274,7 @@ try {
   const warn = await page.evaluate(() => { const S = window.__mtd.state();
     return { eff: JSON.parse(JSON.stringify((S.rosterEffect || {}).targets || null)), toasts: window.__toasts.slice(), onRoster: (S.roster || []).length,
       fn: typeof listTargetWarnings === 'function' }; });
-  ok('the list loaded anyway (all 12 rows on the roster)', warn.onRoster === 12, String(warn.onRoster));
+  ok('the list loaded anyway (all 13 rows on the roster)', warn.onRoster === 13, String(warn.onRoster));
   const g = warn.eff && (warn.eff.mixed || []).find((m) => m.group === 'VT|M2');
   ok('the receipt names the mixed group VT|M2 with its values and counts', !!g && J(g.values) === J([{ v: 1.5, n: 2 }, { v: 2.5, n: 1 }, { v: 7, n: 1 }]) && g.blank === 1, J(warn.eff));
   ok('…and the non-numeric cell by agent (CB915 "TBC")', !!warn.eff && (warn.eff.text || []).some((t) => t.code === 'CB915' && t.raw === 'TBC'), J(warn.eff && warn.eff.text));
@@ -267,6 +282,11 @@ try {
   const tt = warn.toasts.find((t) => /VT\|M2/.test(t));
   ok('the hand upload says so in neutral words (no "error", names values with counts)',
     !!tt && /1\.5 ×2/.test(tt) && /7 ×1/.test(tt) && !/error|wrong|invalid/i.test(tt), J(warn.toasts));
+  const gv = await page.evaluate(() => typeof listGroupTarget === 'function'
+    ? [listGroupTarget({ 1.5: 9, 2.5: 2, 7: 5 }), listGroupTarget({ 4: 2, 5: 2 }), listGroupTarget({ 6: 13 }), listGroupTarget({})] : null);
+  ok('a mixed group resolves deterministically: VT|M2 1.5 x9 / 2.5 x2 / 7 x5 → 1.5; a tie → the lower value; empty → none (PULSE = Worker)',
+    J(gv) === J([1.5, 4, 6, null]) && has(C.listGroupTarget)
+      && J([C.listGroupTarget({ 1.5: 9, 2.5: 2, 7: 5 }), C.listGroupTarget({ 4: 2, 5: 2 }), C.listGroupTarget({ 6: 13 }), C.listGroupTarget({})]) === J(gv), J(gv));
   if (warn.fn) {
     const live = await page.evaluate(() => JSON.parse(JSON.stringify(listTargetWarnings(
       [7, 7, 7, 7, 7, null, null, 2.5, 2.5].concat(Array(9).fill(1.5)).map((t, i) => ({ code: 'CB' + (800 + i), campaign: 'VT', tenure: 'M2', raw: t }))))));
