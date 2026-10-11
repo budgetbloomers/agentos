@@ -107,11 +107,34 @@ export function firstOpen(userKey, app, now = Date.now()) {
 }
 export function resetUsageSeen() { globalThis.__usageSeen = new Map(); }
 
+/* AN ASK AND ITS TOPIC (Spec Kit 029). A help ask or a CM request is inserted asking for its row id back (still ONE
+   insert, still ON CONFLICT DO NOTHING — a row already there comes back empty and is then found by its source_key), and
+   `label` (topics.mjs askLabeller) runs AFTER it, inside the same waitUntil: the response has long gone by then. */
+export const ASK_EVENTS = ['help_ask', 'cm_request'];
+export function usageInsertReturning(DB, ev) {
+  try {
+    const row = usageRow(ev);
+    if (!row || !DB || typeof DB.insert !== 'function') return Promise.resolve(null);
+    return Promise.resolve(DB.insert('usage_events?on_conflict=source_key&select=id', [row], 'ignore', true))
+      .then((got) => ({ row, id: Array.isArray(got) && got[0] && got[0].id != null ? got[0].id : null }), () => null);
+  } catch (e) { return Promise.resolve(null); }
+}
+export function recordAskEvent(DB, ctx, ev, label) {
+  try {
+    const p = usageInsertReturning(DB, ev).then((res) => (res && typeof label === 'function' ? label(res) : null)).catch(() => null);
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p);
+  } catch (e) { /* never in the way */ }
+}
+
 /** the request's recorder: track(user, ev) → recordUsage with who did it. Built once per request, before any block
-    shadows `ctx` (the campaign-manager route names its CM context `ctx`). */
-export function usageTracker(DB, ctx) {
-  return (user, ev) => recordUsage(DB, ctx, {
-    user_id: user && user.user_id, username: user && user.username, role: user && user.role, ...(ev || {}) });
+    shadows `ctx` (the campaign-manager route names its CM context `ctx`). opts.label (029): the ask labeller. */
+export function usageTracker(DB, ctx, opts) {
+  const label = opts && typeof opts.label === 'function' ? opts.label : null;
+  return (user, ev) => {
+    const full = { user_id: user && user.user_id, username: user && user.username, role: user && user.role, ...(ev || {}) };
+    if (label && ASK_EVENTS.includes(full.event)) return recordAskEvent(DB, ctx, full, label);
+    return recordUsage(DB, ctx, full);
+  };
 }
 
 /** an app open, de-duplicated; `via` is 'login' or 'boot'. TLs carry their own team as the team leader. */

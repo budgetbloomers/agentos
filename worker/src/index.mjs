@@ -23,6 +23,7 @@ import { kickRunner } from './runner.mjs';
 import { manifestAdd, reconcileManifest } from './manifest.mjs';
 import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs';
 import { usageTracker, recordOpen, recordAsk, pageOf, appFromPage } from './usage.mjs';   // the usage report (Spec Kit 028)
+import { askLabeller } from './topics.mjs';   // one topic per help ask / CM request, after the answer (Spec Kit 029)
 
 // Hermes 2 Pro was deprecated 2026-05-30. Default: Llama 4 Scout (131k context —
 // fits the entire software's digests without truncation). Fallback: Llama 3.3 70B.
@@ -609,7 +610,9 @@ export default {
     const DB = db(env);
     /* THE USAGE REPORT (Spec Kit 028): track(user, event) writes one usage_events row via ctx.waitUntil — never awaited,
        failures dropped. Built HERE because the campaign-manager block below names its own context `ctx`. */
-    const track = usageTracker(DB, ctx);
+    /* …and (Spec Kit 029) a help ask or CM request is then labelled with ONE topic by Workers AI — the same models as
+       /api/ask, inside the same waitUntil, after the answer; it never delays or fails the ask (worker/src/topics.mjs). */
+    const track = usageTracker(DB, ctx, { label: askLabeller(env, DB, { models: [DEFAULT_MODEL, FALLBACK_MODEL] }) });
     try {
       // ---------- version gate (ONE check; was copy-pasted 8×) ----------
       // Outdated app copies (old tabs / bookmarked preview URLs) show stale ghost

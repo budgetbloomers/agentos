@@ -138,6 +138,15 @@ export function restFetch(db, log) {
         const r = await db.query(sql, args);
         return rep ? J(r.rows, 201) : J(undefined, 201);
       }
+      if (method === 'PATCH') {   // Spec Kit 029: the topic label is a PATCH (column-level UPDATE grant)
+        const patch = JSON.parse(opts.body || '{}'); const args = [];
+        const sets = Object.keys(patch).map((k) => { args.push(val(patch[k])); return `${id(k)} = $${args.length}`; }).join(', ');
+        let sql = `update ${table} set ${sets}` + where(u.searchParams, args);
+        const rep = /return=representation/.test(prefer);
+        if (rep) sql += ' returning *';
+        const r = await db.query(sql, args);
+        return rep ? J(r.rows, 200) : J(undefined, 204);
+      }
       return J({ message: 'emulator: unsupported ' + method }, 405);
     } catch (e) {
       const m = String(e.message || e);

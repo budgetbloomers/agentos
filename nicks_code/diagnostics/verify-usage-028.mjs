@@ -400,7 +400,10 @@ if (worker.default && A && UM.resetUsageSeen) {
   const cm = r.usage[0] || {};
   ok(r.status === 200 && r.usage.length === 1 && cm.event === 'cm_request' && cm.category === 'dialler' && cm.campaign === 'Cuddle' && cm.team_leader === 'Renolan Pillay'
     && cm.detail.priority === 'P1' && cm.detail.opp_id === (r.j && r.j.id) && cm.detail.affected === 4, 'a CM request records blockage, campaign, TL, priority, card', { status: r.status, t: r.t.slice(0, 160), cm });
-  ok(!JSON.stringify(r.usage).includes('SECRET'), 'the request text is never copied into the usage table');
+  /* Spec Kit 029 FR-002 (Nick, 2026-10-11) supersedes 028's "never the text": the TL's words ride in detail.text — there
+     and nowhere else (verify-usage-029 holds the rest, incl. "never a restricted request's") */
+  ok(cm.detail.text === 'SECRET dialler drops every call' && !JSON.stringify({ ...r.usage[0], detail: { ...cm.detail, text: null } }).includes('SECRET'),
+    'the request text is kept in detail.text only (029 FR-002)', cm.detail);
   ok(cm.detail.delivered === true, 'a request that reached the campaign manager is delivered=true');
   const mir = RULES['kv:cm-areq:' + (r.j && r.j.id)] || {};
   ok(cm.source_key === 'cm-req:' + (r.j && r.j.id) + ':' + String(mir.requested_at || '').replace(/[^0-9]/g, '').slice(0, 14) && cm.at === mir.requested_at,
@@ -426,7 +429,7 @@ if (worker.default && A && UM.resetUsageSeen) {
   ok(r.status === 502 && r.usage.length === 1 && cf.event === 'cm_request' && cf.detail.delivered === false && /HighLevel/.test(cf.detail.error || '') && cf.detail.error.length <= 120
     && cf.category === 'leads' && cf.team_leader === 'Denise Haripersad' && cf.campaign === 'Courtesy' && cf.detail.priority === 'P3' && cf.detail.affected === 2 && cf.source_key == null,
     'HighLevel down: the CM request is still recorded — blockage, TL, campaign, priority — delivered=false with the reason clamped to 120', { status: r.status, cf });
-  ok(!JSON.stringify([c409, cf]).includes('SECRET'), 'a failed request\'s text is never copied either');
+  ok(c409.detail.text === 'SECRET no leads' && cf.detail.text === 'SECRET leads missing', 'a failed request keeps its words too, like a failed help ask (029 FR-002)', [c409.detail.text, cf.detail.text]);
   r = track('cm-invalid', await call('POST', '/api/portal/cm/request', { token: 'tok-cb207', body: { blockage: 'nonsense', description: 'x' } }));
   ok(r.status === 400 && r.usage.length === 0, 'an invalid request (unknown blockage) is refused before it is a request — nothing recorded');
 
@@ -453,7 +456,8 @@ if (worker.default && A && UM.resetUsageSeen) {
     MODE = mode; const got = await scenario();
     const same = got.every((g, i) => g.status === base[i].status && JSON.stringify(Object.keys(g.j || {}).sort()) === JSON.stringify(Object.keys(base[i].j || {}).sort()) && (i !== 0 || g.t === base[i].t));
     ok(same, `usage insert ${mode === 'fail' ? 'answering 500' : 'throwing'}: every status and body is unchanged`, got.map((g) => g.status + ' ' + g.t.slice(0, 60)));
-    ok(got.every((g, i) => g.others === base[i].others), `…and spends no extra subrequest retrying (${mode})`, got.map((g, i) => g.others + '/' + base[i].others));
+    /* ≤, not =: a failed insert also skips the 029 topic label that follows it (one topics read fewer) */
+    ok(got.every((g, i) => g.others <= base[i].others), `…and spends no extra subrequest retrying (${mode})`, got.map((g, i) => g.others + '/' + base[i].others));
   }
   MODE = 'hang'; UM.resetUsageSeen();
   const lost = []; const hangCtx = { waitUntil: (p) => lost.push(p) };

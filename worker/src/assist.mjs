@@ -46,7 +46,7 @@
 
 import { hl, searchAll, contactFor } from './help.mjs';
 import { authorise, normCb } from './portal.mjs';
-import { campKey, blockageOf, CM_SLA_DEFAULTS } from './campaign.mjs';
+import { campKey, blockageOf, CM_SLA_DEFAULTS, effectiveCamps } from './campaign.mjs';
 
 const PIPE = 'Campaign Assistance';
 const STAGES = ['New', 'Triaged', 'Assisting', 'Awaiting confirmation', 'Follow-up due', 'Closed'];
@@ -107,9 +107,14 @@ async function writeMirror(DB, id, v) {
 }
 
 /* THE USAGE REPORT (Spec Kit 028). `track` (optional, from index.mjs) records each request and each action — blockage,
-   campaign, team leader, priority, card id; NEVER the request text (a restricted request's text never leaves the team
-   leader, and the report has no need of anyone's). Keys are the ones tools/usage-backfill.mjs derives from this mirror:
-   cm-req:<card>:<requested_at digits> and cm-hist:<card>:<history line time>. */
+   campaign, team leader, priority, card id. Keys are the ones tools/usage-backfill.mjs derives from this mirror:
+   cm-req:<card>:<requested_at digits> and cm-hist:<card>:<history line time>.
+   THE TL'S WORDS (Spec Kit 029, FR-002 — Nick, 2026-10-11: "what was the most asked question"): a request's description
+   and business impact ride in detail.text / detail.impact (staff-only, clamped like a help note), delivered or not —
+   NEVER for a restricted request, whose text never leaves the team leader (it is not even read here). detail.cms names
+   the campaign managers responsible for that campaign at raise time (cm:assignments). */
+const cmWords = (restricted, desc, impact) => (restricted ? {} : { text: desc || undefined, impact: impact || undefined });
+const cmsFor = (ctx, camp) => Object.keys((ctx && ctx.assign) || {}).filter((u) => effectiveCamps(ctx, u).includes(campKey(camp))).sort();
 export const cmReqKey = (id, requestedAt) => 'cm-req:' + id + ':' + String(requestedAt || '').replace(/[^0-9]/g, '').slice(0, 14);
 const cmSaid = (track, ev) => {
   if (typeof track !== 'function') return;
@@ -218,17 +223,18 @@ export async function assistCreate(env, DB, user, digest, ctx, body, track) {
   /* A REQUEST THAT FAILS TO SEND IS STILL A REQUEST (Nick, 2026-10-11: "Yes, record them as not delivered"). Past
      validation, every outcome that is not a 200 — HighLevel down, the open-card 409, a truncated scan — is recorded like
      a failed help ask: cm_request, delivered=false, the reason clamped to 120 characters (a thrown HighLevel error keeps
-     only its "HighLevel <path> → <status>" head, never HighLevel's response body). Never the request text. */
+     only its "HighLevel <path> → <status>" head, never HighLevel's response body). The TL's words are kept (029). */
+  const words = { ...cmWords(restricted, desc, impact), cms: cmsFor(ctx, camp) };
   const notSent = (reason, oppId) => cmSaid(track, { event: 'cm_request', at: new Date().toISOString(), category: blk.key, team_leader: tlName,
-    campaign: camp, detail: { opp_id: oppId || null, priority, restricted, affected, delivered: false, error: String(reason || 'not sent').slice(0, 120) } });
+    campaign: camp, detail: { opp_id: oppId || null, priority, restricted, affected, delivered: false, error: String(reason || 'not sent').slice(0, 120), ...words } });
   let r;
-  try { r = await sendRequest(env, DB, user, digest, ctx, track, { blk, priority, camp, restricted, desc, impact, affected, cb, tlName }); }
+  try { r = await sendRequest(env, DB, user, digest, ctx, track, { blk, priority, camp, restricted, desc, impact, affected, cb, tlName, words }); }
   catch (e) { notSent(String((e && e.message) || e).split(': ')[0]); throw e; }
   if (r.status !== 200) notSent((r.body && r.body.error) || 'status ' + r.status, r.body && r.body.id);
   return r;
 }
 
-async function sendRequest(env, DB, user, digest, ctx, track, { blk, priority, camp, restricted, desc, impact, affected, cb, tlName }) {
+async function sendRequest(env, DB, user, digest, ctx, track, { blk, priority, camp, restricted, desc, impact, affected, cb, tlName, words }) {
   const p = await pipeline(env);
   if (!p || !p.stages.length) return { status: 503, body: { error: 'The Campaign Assistance pipeline could not be reached — try again shortly.' } };
 
@@ -246,7 +252,7 @@ async function sendRequest(env, DB, user, digest, ctx, track, { blk, priority, c
       await writeMirror(DB, row.id, m);
       const h = m.history[m.history.length - 1];
       cmSaid(track, { event: 'cm_request', at: h.at, category: blk.key, team_leader: tlName, campaign: camp, source_key: 'cm-hist:' + row.id + ':' + h.at,
-        detail: { opp_id: row.id, priority, restricted, affected, merged: true, delivered: true } });
+        detail: { opp_id: row.id, priority, restricted, affected, merged: true, delivered: true, ...words } });
       return { status: 200, body: { ok: true, id: row.id, merged: true } };
     }
   }
@@ -338,7 +344,7 @@ async function sendRequest(env, DB, user, digest, ctx, track, { blk, priority, c
     restricted ? '' : desc + (impact ? '\n\nBusiness impact: ' + impact : ''));
   if (noted === null && !restricted) { m.note_failed = now; await writeMirror(DB, id, m).catch(() => {}); }
   cmSaid(track, { event: 'cm_request', at: now, category: blk.key, team_leader: tlName, campaign: camp, source_key: cmReqKey(id, now),
-    detail: { opp_id: id, priority, restricted, affected, delivered: true, reused: !!reuse || undefined, note_failed: (noted === null && !restricted) || undefined } });
+    detail: { opp_id: id, priority, restricted, affected, delivered: true, reused: !!reuse || undefined, note_failed: (noted === null && !restricted) || undefined, ...words } });
   return { status: 200, body: { ok: true, id, note_failed: noted === null && !restricted } };
 }
 
