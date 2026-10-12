@@ -53,3 +53,16 @@ specs/team_leader_cbs.json
 # regenerated locally and hold company data; never in the repo.
 reports/tmp/
 reports/*.log
+
+# Agent worktrees Claude Code creates inside the repo — each is its own checkout, never content
+.claude/worktrees/
+
+# The 14 Sep Ops audit's raw captures: real agents' sales by username, upload file names and
+# screenshots of live pages — company data (the rule above). The audit's write-ups stay tracked.
+reports/ops-audit-2026-09-14/vas-state-sept-slice.json
+reports/ops-audit-2026-09-14/manifest-recent.json
+reports/ops-audit-2026-09-14/after/manifest-recent.json
+reports/ops-audit-2026-09-14/pages.json
+reports/ops-audit-2026-09-14/pages-mtd.json
+reports/ops-audit-2026-09-14/shots/
+reports/ops-audit-2026-09-14/shots-mtd/
