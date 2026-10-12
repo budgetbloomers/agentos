@@ -1,6 +1,6 @@
 # Spec 032 — A Claude Code Desktop session can reach the AgentOS data
 
-**Status:** investigated 2026-10-12 · decision pending (Nick)
+**Status:** investigated 2026-10-12 · **decided (Nick, 12 Oct): option 1 — run Desktop sessions locally**; branch pushed to GitHub the same day
 **Asked by:** Nick, 12 Oct: "I have this repo opend on claude code, desktop app query and got an error, please intevestigate"
 
 ## What happened
