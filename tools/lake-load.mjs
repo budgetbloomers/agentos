@@ -257,6 +257,32 @@ export async function loadAll({ client, map = MAP, readRows, log = console.log, 
   return { grandIn, grandOut, failed, reasons, aborted };
 }
 
+/* AFTER THE LOAD — data first, report second (2026-10-09). Every source had loaded ("new 0") and the step still said
+   FAILED on every run since early 9 Oct: `select * from lake_duplicates` — a REPORT, over a 10.2M-row sf_open_cases —
+   passed the 5-minute statement timeout, and because agent_day's refresh came after it, a run that DID add rows would
+   have left agent_day behind. So: the refresh runs first; the report runs only when something new landed (otherwise
+   nothing it counts can have changed); and a report that fails is a warning in the log, never the step's verdict.
+   After a client-side query timeout neither runs — the connection may still be busy (014 review T-R2). */
+export async function afterLoad({ client, grandOut, aborted, dry, log = console.log }) {
+  if (aborted) { log('\nSTOPPED after a query timeout (' + aborted + ') — the lake audit and the agent_day refresh are skipped.'); return { failed: false, auditNote: 'skipped after a query timeout' }; }
+  if (!grandOut) return { failed: false, auditNote: 'skipped — nothing new loaded' };
+  /* agent_day is built from these tables and was only ever refreshed by the rake after ITS loads —
+     so when this tool was the one adding days (Vici, closed cases) the view sat behind (14–21 Sep 2026). */
+  if (!dry) { log('refreshing agent_day…'); await client.query('refresh materialized view concurrently agent_day'); }
+  try {
+    const audit = await client.query('select * from lake_duplicates order by source');   // the contract, straight from the database
+    log('\n  ' + 'source'.padEnd(20) + 'rows'.padStart(9) + 'distinct'.padStart(11) + '   one row, one fact?');
+    for (const r of audit.rows)
+      log('  ' + r.source.padEnd(20) + String(r.rows).padStart(9) + String(r.distinct_keys).padStart(11)
+        + '   ' + (String(r.rows) === String(r.distinct_keys) ? 'yes' : 'NO — ' + (r.rows - r.distinct_keys) + ' extra'));
+    return { failed: false, auditNote: 'ran' };
+  } catch (e) {
+    const note = 'duplicate report skipped (warning, not a failure): ' + pgLine(e);
+    log('\n' + note);
+    return { failed: false, auditNote: note };
+  }
+}
+
 async function main() {
   const env = {};
   for (const l of fs.readFileSync(path.join(ROOT, 'supabase.env'), 'utf8').split(/\r?\n/)) {
@@ -285,23 +311,9 @@ async function main() {
     };
     const { grandIn, grandOut, failed, reasons, aborted } = await loadAll({ client, readRows, dry: DRY, only: ONLY });
 
-    /* after a client-side timeout the audit and the refresh would queue behind the server's statement (T-R2) */
-    if (aborted) {
-      console.log('\nSTOPPED after a query timeout (' + aborted + ') — the lake audit and the agent_day refresh are skipped.');
-    } else {
-      /* The contract, straight from the database. */
-      const audit = await client.query('select * from lake_duplicates order by source');
-      console.log('\n  ' + 'source'.padEnd(20) + 'rows'.padStart(9) + 'distinct'.padStart(11) + '   one row, one fact?');
-      for (const r of audit.rows)
-        console.log('  ' + r.source.padEnd(20) + String(r.rows).padStart(9) + String(r.distinct_keys).padStart(11)
-          + '   ' + (String(r.rows) === String(r.distinct_keys) ? 'yes' : 'NO — ' + (r.rows - r.distinct_keys) + ' extra'));
-    }
-
     console.log('\n' + (DRY ? 'dry run. ' : '') + grandIn.toLocaleString('en-ZA') + ' blob rows considered, '
       + grandOut.toLocaleString('en-ZA') + ' new row(s) in the lake.');
-    /* agent_day is built from these tables and was only ever refreshed by the rake after ITS loads —
-       so when this tool was the one adding days (Vici, closed cases) the view sat behind (14–21 Sep 2026). */
-    if (!DRY && grandOut > 0 && !aborted) { console.log('refreshing agent_day…'); await client.query('refresh materialized view concurrently agent_day'); }
+    await afterLoad({ client, grandOut, aborted, dry: DRY });
     if (failed.length) { console.error('FAILED: ' + failed.map((s) => s + ' — ' + reasons[s]).join(' · ')); process.exitCode = 1; }
   } finally { await client.end().catch(swallow); }
 }

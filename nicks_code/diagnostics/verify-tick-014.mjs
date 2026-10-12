@@ -464,7 +464,10 @@ if (lake.mod) {
     && /not attempted/i.test((out.reasons || {}).VICI_CALL_REPORT || ''), JSON.stringify(out.failed) + ' ' + JSON.stringify((out.reasons || {}).VICI_CALL_REPORT));
   ok('…the sources before it are unaffected, and the loader says why it stopped', !(out.failed || []).includes('ATTENDANCE') && /timeout/i.test(String(out.aborted || '')), JSON.stringify(out.aborted));
   const s = src('lake-load.mjs');
-  ok('main skips the lake audit and the agent_day refresh after a timeout (both would queue behind the stuck query)', /if \(aborted\)[\s\S]{0,400}lake_duplicates/.test(s) || /if \(!aborted\)[\s\S]{0,200}lake_duplicates/.test(s));
+  /* behaviour, not source text: since 2026-10-09 the post-load steps live in afterLoad() (tested below with a fake client);
+     here: main() hands it `aborted`, and afterLoad returns before any query when aborted */
+  ok('main skips the lake audit and the agent_day refresh after a timeout (both would queue behind the stuck query)',
+    /await afterLoad\(\{[^}]*aborted/.test(s) && /if \(aborted\)[^\n]*return/.test(s), 'main must pass aborted to afterLoad, and afterLoad must return early on it');
 }
 
 head('T-R3 · T-R4 · a stamp has a timeout, and keeps the whole note');
@@ -523,6 +526,24 @@ head('T-R5 · secrets never reach the step log (OneDrive) or kv:jobs-status (eve
   }
   ok('the tick loads supabase.env AND highlevel.env values into the redactor', /addSecrets\(/.test(src('tick-local.mjs')) && /highlevel\.env/.test(src('tick-local.mjs')));
   if (prevKey === undefined) delete process.env.SUPABASE_SECRET_KEY; else process.env.SUPABASE_SECRET_KEY = prevKey;
+}
+
+head('lake-load after the load (2026-10-09): the duplicate report never fails the step, and never blocks the agent_day refresh');
+{
+  /* every source loaded ("new 0") and the step still said FAILED: `select * from lake_duplicates` (a report over a
+     10.2M-row sf_open_cases) passed its 5-minute statement timeout — and agent_day's refresh came AFTER it */
+  const lkr = await safeImport('lake-load.mjs', ['afterLoad']); const lk = lkr.mod;
+  if (lk && typeof lk.afterLoad === 'function') {
+    const fake = (auditThrows) => { const q = []; return { q, client: { query: async (s) => { q.push(s); if (/lake_duplicates/.test(s) && auditThrows) { const e = new Error('canceling statement due to statement timeout'); e.code = '57014'; throw e; } return { rows: [] }; } } }; };
+    const a = fake(true); const ra = await lk.afterLoad({ client: a.client, grandOut: 12, aborted: null, dry: false, log: () => {} });
+    ok('new rows + a timed-out duplicate report → agent_day is still refreshed', a.q.some((s) => /refresh materialized view concurrently agent_day/.test(s)), a.q.join(' | '));
+    ok('…the refresh runs BEFORE the report (data first, report second)', a.q.findIndex((s) => /agent_day/.test(s)) < a.q.findIndex((s) => /lake_duplicates/.test(s)), a.q.join(' | '));
+    ok('…and the step is not failed by the report (a warning, not an error)', ra && ra.failed === false && /skipped|timed out|warning/i.test(ra.auditNote || ''), JSON.stringify(ra));
+    const b = fake(true); const rb = await lk.afterLoad({ client: b.client, grandOut: 0, aborted: null, dry: false, log: () => {} });
+    ok('nothing new loaded → no duplicate report and no refresh (nothing could have changed)', b.q.length === 0 && rb.failed === false, b.q.join(' | '));
+    const c = fake(false); await lk.afterLoad({ client: c.client, grandOut: 0, aborted: 'timeout', dry: false, log: () => {} });
+    ok('after a query timeout neither runs (the connection may still be busy — T-R2)', c.q.length === 0, c.q.join(' | '));
+  } else ok('lake-load exports afterLoad(): the post-load steps as one testable function', false, lkr.why);
 }
 
 head('node --check on every Area T tool');
