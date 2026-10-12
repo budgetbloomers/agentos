@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-/* verify-wimpy-history.mjs — WIMPY ORDER HISTORY: EACH PERSON SEES ONLY THEIR OWN ORDERS (Spec Kit 015, 2026-10-07).
+/* history.test.mjs — WIMPY ORDER HISTORY: EACH PERSON SEES ONLY THEIR OWN ORDERS (Spec Kit 015, 2026-10-07; ported to the
+ * Wimpy service, Spec Kit 018: the real service module in-process — app.mjs handle() in place of the Worker's fetch, the
+ * retry through GET /api/wimpy/cron/retry in place of scheduled(); the health-alert checks stayed in the suite).
  *
  * Nick: "I gave you the private intergration key and location ID to shpw the users their order history, it must only
  * show their order history and no one elses".
@@ -26,9 +28,10 @@ import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(HERE, '..', '..');
-const SRC = (rel) => pathToFileURL(path.join(ROOT, 'worker', 'src', rel)).href;
-const WIMPY_PAGE = path.resolve(ROOT, ...(process.env.WIMPY_HTML || 'wimpy/index.html').split('/'));
+const ROOT = path.resolve(HERE, '..');
+const SRC = (rel) => pathToFileURL(path.join(ROOT, 'src', rel)).href;
+const WIMPY_PAGE = path.join(ROOT, 'public', 'index.html');
+const CRON = 'cron-test-secret';   // fake, like every credential here
 
 let pass = 0, fail = 0;
 const ok = (c, m, d) => { if (c) { pass++; console.log('  ok   ' + m); } else { fail++; console.log('  FAIL ' + m + (d !== undefined ? ' — ' + d : '')); } };
@@ -45,7 +48,7 @@ for (const k of ['log', 'info', 'warn', 'error']) {
 
 /* ── the clock: the Worker reads Date.now() / new Date(); the suite moves it on purpose ── */
 const RealDate = Date;
-let CLOCK = RealDate.parse('2026-10-08T08:00:00Z');            // Thursday 8 Oct 2026, 10:00 SAST — the window is open
+let CLOCK = RealDate.parse('2026-10-08T05:00:00Z');            // Thursday 8 Oct 2026, 07:00 SAST — the window is open (07:00–09:00 since spec 020)
 class FakeDate extends RealDate {
   constructor(...a) { if (a.length) super(...a); else super(CLOCK); }
   static now() { return CLOCK; }
@@ -55,17 +58,15 @@ const useRealClock = () => { globalThis.Date = RealDate; };
 useFakeClock();
 const MIN = 60000;
 
-const worker = (await import(SRC('index.mjs'))).default;
+const app = await import(SRC('app.mjs'));
 const wimpy = await import(SRC('wimpy.mjs'));
 const hl = await tryImport('wimpy-hl.mjs');
-const health = await import(SRC('health.mjs'));
-const portal = await import(SRC('portal.mjs'));
 
 /* ── fake configuration only ── */
 const KEY = 'pit-test-key', LOC = 'loc-test';
 const N8N = 'https://n8n.test/webhook/wimpy';
-const ENV = { SUPABASE_URL: 'http://stub.local', SUPABASE_SECRET_KEY: 'svc-test', WIMPY_HL_API_KEY: KEY, WIMPY_HL_LOCATION_ID: LOC, WIMPY_WEBHOOK_URL: N8N };
-const ENV_NOHL = { SUPABASE_URL: 'http://stub.local', SUPABASE_SECRET_KEY: 'svc-test', WIMPY_WEBHOOK_URL: N8N };
+const ENV = { SUPABASE_URL: 'http://stub.local', SUPABASE_SECRET_KEY: 'svc-test', WIMPY_HL_API_KEY: KEY, WIMPY_HL_LOCATION_ID: LOC, WIMPY_WEBHOOK_URL: N8N, CRON_SECRET: CRON };
+const ENV_NOHL = { SUPABASE_URL: 'http://stub.local', SUPABASE_SECRET_KEY: 'svc-test', WIMPY_WEBHOOK_URL: N8N, CRON_SECRET: CRON };
 
 /* ── the people ── */
 const P = {
@@ -84,14 +85,13 @@ const mkSession = (token, who, scope, expires = '2099-01-01T00:00:00Z') => {
     app_users: { username: u.username, full_name: u.full_name, role: u.role, apps: u.apps, tabs: null, pii_unmask: false, active: true,
       cb: u.cb, team: null, hub_ids: null, must_change_password: false, theme: null } };
 };
-mkSession('tok-thandi-w', 'thandi', 'wimpy'); mkSession('tok-thandi-f', 'thandi', 'full');
+mkSession('tok-thandi-w', 'thandi', 'wimpy'); mkSession('tok-thandi-f', 'thandi', 'full'); mkSession('tok-thandi-w2', 'thandi', 'wimpy');
 mkSession('tok-sipho-w', 'sipho', 'wimpy'); mkSession('tok-sipho-f', 'sipho', 'full');
 mkSession('tok-mgr-f', 'mgr', 'full'); mkSession('tok-mgr-w', 'mgr', 'wimpy');
 mkSession('tok-ref', 'mgr', 'referrals');
 mkSession('tok-expired', 'thandi', 'wimpy', '2020-01-01T00:00:00Z');
 
 /* ════════════════════ the stubbed world ════════════════════ */
-const SUBREQ_CAP = 50;
 let sub = 0, subMax = 0, urls = [];
 const DBT = { orders: [], links: [], rules: {} };
 const HL = { contacts: [], notes: [], cards: [], calls: [], n: 0, searchExtra: [] };
@@ -263,7 +263,7 @@ function stubHighLevel(url, method, o) {
 
 globalThis.caches = { default: { match: async () => undefined, put: async () => {} } };
 globalThis.fetch = async (u, o = {}) => {
-  if (++sub > SUBREQ_CAP) throw new Error('Too many subrequests.');
+  ++sub;   // counted, not capped: the Worker's 50-call limit does not exist here; the budgets below are regression bounds
   subMax = Math.max(subMax, sub);
   const raw = String(u), method = String(o.method || 'GET').toUpperCase();
   urls.push(method + ' ' + raw);
@@ -283,20 +283,20 @@ const ctx = { waitUntil: (p) => { pending.push(Promise.resolve(p).catch(() => {}
 const settle = async () => { while (pending.length) await Promise.all(pending.splice(0)); };
 async function call(method, pathq, { token, body, env = ENV, headers = {} } = {}) {
   sub = 0; subMax = 0; urls = [];
-  const h = { 'X-Cbx-Client': 'v5', ...headers };
+  const h = { ...headers };
   if (token) h.Authorization = 'Bearer ' + token;
   if (body !== undefined) h['Content-Type'] = 'application/json';
   const req = new Request('https://api.local' + pathq, { method, headers: h, body: body === undefined ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)) });
-  const r = await worker.fetch(req, env, ctx);
+  const r = await app.handle(req, env, ctx);
   await settle();
   const t = await r.clone().text(); let j = null; try { j = JSON.parse(t); } catch (e) { j = null; }
   return { status: r.status, j, t, subs: subMax, urls: urls.slice() };
 }
-async function cron(expr, env = ENV, scheduledTime) {
-  sub = 0; subMax = 0; urls = [];
-  await worker.scheduled(scheduledTime == null ? { cron: expr } : { cron: expr, scheduledTime }, env, ctx);
-  await settle();
-  return { subs: subMax, urls: urls.slice() };
+/* THE RETRY, as Vercel Cron calls it: GET /api/wimpy/cron/retry with the CRON_SECRET bearer (the container's timer calls
+   retryDueOrders directly — the same function). The first argument is kept so the ported calls read unchanged. */
+async function cron(_expr, env = ENV) {
+  const r = await call('GET', '/api/wimpy/cron/retry', { env, headers: { Authorization: 'Bearer ' + CRON } });
+  return { subs: r.subs, urls: r.urls, status: r.status, j: r.j, t: r.t };
 }
 const orderBody = (who, items = [{ id: 'cheese_burger', quantity: 2 }], notes = '', over = {}) => {
   const b = { who: { cb: P[who].cb || P[who].username, first_name: P[who].first, surname: P[who].last, phone: P[who].phone, ...over },
@@ -329,7 +329,7 @@ const myOrders = (token, q = '', opts = {}) => {
 };
 
 /* ════════════════════ T001 · the harness reaches the real Worker ════════════════════ */
-head('T001 · the harness: the real Worker, stubbed Supabase / HighLevel / n8n, two people');
+head('T001 · the harness: the real service, stubbed Supabase / HighLevel / n8n, two people');
 {
   resetWorld();
   const m = await call('GET', '/api/wimpy/menu', { token: 'tok-thandi-w' });
@@ -343,8 +343,11 @@ head('T001 · the harness: the real Worker, stubbed Supabase / HighLevel / n8n, 
 /* ════════════════════ T002 · migration-055 (written, NOT applied) ════════════════════ */
 head('T002 · supabase/migration-055-wimpy-order-history.sql — the ledger and the contact link, locked down');
 {
-  const f = path.join(ROOT, 'supabase', 'migration-055-wimpy-order-history.sql');
+  /* the migration is the suite's (applied 7 Oct 2026); it sits beside this folder in the monorepo and is checked when it is there */
+  const f = path.join(ROOT, '..', 'supabase', 'migration-055-wimpy-order-history.sql');
   const raw = fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
+  if (!raw) console.log('  SKIP  the suite\'s supabase/migration-055 is not beside this checkout — its shape is proved there');
+  else {
   const sql = raw.replace(/--.*$/gm, '').replace(/\s+/g, ' ').toLowerCase();
   ok(raw.length > 0, 'migration-055 exists');
   const tbl = (name) => { const m = new RegExp('create table if not exists ' + name + ' \\((.*?)\\);').exec(sql); return m ? m[1] : ''; };
@@ -369,6 +372,7 @@ head('T002 · supabase/migration-055-wimpy-order-history.sql — the ledger and 
   ok(!/create policy/.test(sql), 'no RLS policy at all — the Worker (service_role) is the only reader');
   ok(!/create (or replace )?function/.test(sql), 'no functions (nothing for anon to EXECUTE)');
   ok(/not applied/i.test(raw) || /apply only/i.test(raw), 'the header says it is applied only at release, with Nick\'s go-ahead');
+  }
 }
 
 /* ════════════════════ T003 · worker/src/wimpy-hl.mjs — the HighLevel client ════════════════════ */
@@ -429,51 +433,24 @@ head('T003 · the HighLevel client: Bearer + Version, a timeout on every call, e
   }
 }
 
-/* ════════════════════ T004 · scheduled(): three triggers, matched explicitly ════════════════════ */
-head('T004 · scheduled() routes the tick, the coaching wave and the Wimpy cron explicitly — an unknown trigger keeps the old fallback (the coaching wave)');
+/* ════════════════════ T004 · the retry route ════════════════════ */
+head('T004 · GET /api/wimpy/cron/retry: closed without CRON_SECRET, 401 on any other bearer, the retry with the right one');
 {
-  const ran = (u) => ({ tick: u.some((x) => /upload-manifest/.test(x)), coaching: u.some((x) => /coaching-waves/.test(x)), wimpy: u.some((x) => /\/rest\/v1\/wimpy_orders/.test(x)) });
-  const kind = () => { const v = DBT.rules['kv:cron-log'] && DBT.rules['kv:cron-log'].value; return v && v.kind; };
-  const cases = [
-    ['*/10 * * * *', 'tick'], ['', 'tick'], ['3,23,43 * * * *', 'coaching'], ['3,23,43  *  * * *', 'coaching'],
-    ['7,27,47 * * * *', 'wimpy'], ['7,27,47  * * * *', 'wimpy'],
-  ];
-  for (const [expr, want] of cases) {
-    resetWorld();
-    const r = await cron(expr);
-    const got = ran(r.urls);
-    ok(got[want] && Object.keys(got).filter((k) => k !== want).every((k) => !got[k]),
-      JSON.stringify(expr) + ' runs the ' + want + ' and nothing else', JSON.stringify(got));
-    ok(kind() === want, '…and kv:cron-log says kind: ' + want, JSON.stringify(DBT.rules['kv:cron-log'] && DBT.rules['kv:cron-log'].value));
-  }
-  for (const expr of ['0 5 * * *', '*/5 * * * *', '3,23 * * * *']) {
-    resetWorld(); const before = LOGS.length;
-    const r = await cron(expr);
-    const got = ran(r.urls);
-    ok(!got.tick && got.coaching && !got.wimpy, 'an unknown trigger ' + JSON.stringify(expr) + ' still runs the coaching wave (the pre-015 fallback — the 17 Sep "never matched" scare) and never the tick or the Wimpy retry', JSON.stringify(got));
-    ok(kind() === 'unknown' && LOGS.slice(before).some((l) => /unknown/i.test(l) && l.includes(expr)), '…it is stamped kind: unknown and logged by name', JSON.stringify(DBT.rules['kv:cron-log'] && DBT.rules['kv:cron-log'].value));
-  }
-  /* R11 (2026-10-08): the third trigger "7,27,47" was registered with Cloudflare but NEVER invoked — 0 runs in 18 h while
-     "3,23,43" ran 54 times (Cloudflare's own workersInvocationsScheduled). Coaching and the Wimpy retry now share ONE trigger;
-     each firing is still its own invocation with its own 50 subrequests, and the SCHEDULED MINUTE says which job it is. */
-  const SHARED = '3,7,23,27,43,47 * * * *';
-  const at = (min) => RealDate.parse('2026-10-08T08:' + String(min).padStart(2, '0') + ':00Z');
-  for (const [min, want] of [[3, 'coaching'], [23, 'coaching'], [43, 'coaching'], [7, 'wimpy'], [27, 'wimpy'], [47, 'wimpy']]) {
-    resetWorld();
-    const r = await cron(SHARED, ENV, at(min));
-    const got = ran(r.urls);
-    ok(got[want] && Object.keys(got).filter((k) => k !== want).every((k) => !got[k]),
-      'the shared trigger at :' + String(min).padStart(2, '0') + ' runs the ' + want + ' and nothing else', JSON.stringify(got));
-    ok(kind() === want, '…stamped kind: ' + want, JSON.stringify(DBT.rules['kv:cron-log'] && DBT.rules['kv:cron-log'].value));
-  }
-  { resetWorld(); const r = await cron(SHARED); const got = ran(r.urls);
-    ok(got.coaching && !got.wimpy && !got.tick, 'the shared trigger with no scheduled time falls back to the coaching wave', JSON.stringify(got)); }
-  const toml = fs.readFileSync(path.join(ROOT, 'worker', 'wrangler.toml'), 'utf8');
-  const crons = (/^crons\s*=\s*\[([^\]]*)\]/m.exec(toml) || [])[1] || '';
-  const list = (crons.match(/"[^"]*"/g) || []).map((x) => x.slice(1, -1));
-  ok(list.length === 2 && list.includes('*/10 * * * *') && list.includes(SHARED), 'wrangler.toml declares exactly two triggers: the tick and the shared coaching/Wimpy trigger', crons);
-  const idx = fs.readFileSync(path.join(ROOT, 'worker', 'src', 'index.mjs'), 'utf8');
-  ok(idx.includes('const SHARED_CRON = "' + SHARED + '"'), 'index.mjs names SHARED_CRON = the same string as wrangler.toml');
+  resetWorld();
+  const none = await call('GET', '/api/wimpy/cron/retry', { env: { ...ENV, CRON_SECRET: '' } });
+  ok(none.status === 503 && /CRON_SECRET/.test(none.t), 'no CRON_SECRET on the host → 503, the route is closed (never open)', none.status + ' ' + none.t.slice(0, 100));
+  const wrong = await call('GET', '/api/wimpy/cron/retry', { headers: { Authorization: 'Bearer not-it' } });
+  const bare = await call('GET', '/api/wimpy/cron/retry');
+  const sess = await call('GET', '/api/wimpy/cron/retry', { token: 'tok-mgr-w' });
+  ok(wrong.status === 401 && bare.status === 401 && sess.status === 401, 'a wrong bearer, no bearer, or a person\'s session token → 401', [wrong.status, bare.status, sess.status].join(' '));
+  ok(![...wrong.urls, ...bare.urls, ...sess.urls].some((u) => /wimpy_orders|leadconnector/.test(u)), '…and nothing was read, written or sent to HighLevel');
+  const right = await cron();
+  ok(right.status === 200 && right.j && right.j.ok === true && right.j.counts && 'due' in right.j, 'the right bearer runs retryDueOrders and answers its summary', right.status + ' ' + JSON.stringify(right.j));
+  ok(!!DBT.rules['kv:wimpy-hl-status'], '…which writes kv:wimpy-hl-status (the suite\'s health check reads it)');
+  const vj = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
+  /* once a day at 05:07 SAST: the Hobby plan refuses anything more often (deploy 2026-10-09); the :07/:27/:47 cadence needs Pro.
+     A person's own late cards catch up whenever they open My orders regardless (listMyOrders, spec 015). */
+  ok(Array.isArray(vj.crons) && vj.crons.length === 1 && vj.crons[0].path === '/api/wimpy/cron/retry' && /^\d+ \d+ \* \* \*$/.test(vj.crons[0].schedule), 'vercel.json schedules exactly that route, once a day (the Hobby plan\'s limit)', JSON.stringify(vj.crons));
 }
 
 /* ════════════════════ T005 · every order reaches the kitchen board — and ordering never breaks because of it ════════════════════ */
@@ -481,7 +458,7 @@ head('T005 · POST /api/wimpy/order: the kitchen hand-off unchanged, then a ledg
 const BUDGET_ORDER = 11, BUDGET_HISTORY = 21, BUDGET_CRON = 42;
 const measured = { order: [], history: [], cron: [] };
 {
-  CLOCK = RealDate.parse('2026-10-08T08:00:00Z');   // Thursday 10:00 SAST
+  CLOCK = RealDate.parse('2026-10-08T05:00:00Z');   // Thursday 07:00 SAST
   resetWorld();
   const items = [{ id: 'cheese_burger', quantity: 2 }, { id: 'toasted_chicken_mayo', quantity: 1 }];
   const body = orderBody('thandi', items, 'no onions please');
@@ -514,9 +491,11 @@ const measured = { order: [], history: [], cron: [] };
   ok(!/hc-|op-|pl-wimpy|st-new/.test(r.t), 'the reply carries no HighLevel id', r.t.slice(0, 160));
 
   CLOCK += 30 * MIN;
-  const r2 = await call('POST', '/api/wimpy/order', { token: 'tok-thandi-f', body: orderBody('thandi', [{ id: 'mzansi_brekkie', quantity: 1 }]) });
+  const full = await call('POST', '/api/wimpy/order', { token: 'tok-thandi-f', body: orderBody('thandi', [{ id: 'mzansi_brekkie', quantity: 1 }]) });
+  ok(full.status === 403 && rowsOf('thandi').length === 1 && N8.bodies.length === 1, 'a FULL-scope session (the suite\'s sign-in) is refused here — the service accepts only the sessions it mints (FR-003)', full.status + ' ' + full.t.slice(0, 80));
+  const r2 = await call('POST', '/api/wimpy/order', { token: 'tok-thandi-w', body: orderBody('thandi', [{ id: 'mzansi_brekkie', quantity: 1 }]) });
   measured.order.push(r2.subs);
-  ok(r2.status === 200 && rowsOf('thandi').length === 2, 'her second order (a FULL session this time) is accepted and recorded', r2.status + ' ' + rowsOf('thandi').length);
+  ok(r2.status === 200 && rowsOf('thandi').length === 2, 'her second order is accepted and recorded', r2.status + ' ' + rowsOf('thandi').length);
   ok(HL.contacts.length === 1 && HL.cards.length === 2 && HL.cards[1].contactId === ct.id, '…reusing her contact — no duplicate person — with a card of its own', JSON.stringify({ contacts: HL.contacts.length, cards: HL.cards.map((c) => c.contactId) }));
   ok(rowsOf('thandi').every((x) => x.hl_state === 'written') && new Set(rowsOf('thandi').map((x) => x.hl_opportunity_id)).size === 2, '…both rows written, each with its own card');
   ok(r2.subs <= BUDGET_ORDER, '…' + r2.subs + ' subrequests', String(r2.subs));
@@ -551,7 +530,7 @@ head('T005 · when HighLevel fails, the order still goes through — the row say
   fresh({ hlSlow: true });
   sub = 0; subMax = 0; urls = [];
   const req = new Request('https://api.local/api/wimpy/order', { method: 'POST', headers: { Authorization: 'Bearer tok-thandi-w', 'Content-Type': 'application/json', 'X-Cbx-Client': 'v5' }, body: JSON.stringify(orderBody('thandi')) });
-  const t0 = RealDate.now(); const res = await worker.fetch(req, ENV, ctx); const replyMs = RealDate.now() - t0;
+  const t0 = RealDate.now(); const res = await app.handle(req, ENV, ctx); const replyMs = RealDate.now() - t0;
   await settle();
   const rc = rowsOf('thandi')[0] || {};
   ok(res.status === 200 && replyMs < 1500, 'HighLevel hanging → the person has the confirmation in ' + replyMs + ' ms (the card work runs after the reply)', res.status + ' ' + replyMs + ' ms');
@@ -591,7 +570,7 @@ head('T005 · when HighLevel fails, the order still goes through — the row say
   CLOCK = RealDate.parse('2026-10-08T15:30:00Z');   // 17:30 SAST — closed
   const h = await placeOrder('tok-thandi-w', 'thandi');
   ok(h.status === 403 && DBT.orders.length === 0 && N8.bodies.length === 0, 'outside the window → 403, nothing recorded, nothing sent (unchanged)', h.status + ' rows=' + DBT.orders.length);
-  CLOCK = RealDate.parse('2026-10-08T08:00:00Z');
+  CLOCK = RealDate.parse('2026-10-08T05:00:00Z');
   const i = await call('POST', '/api/wimpy/order', { token: 'tok-thandi-w', body: orderBody('thandi', undefined, '', { cb: 'CB902' }) });
   ok(i.status === 400 && DBT.orders.length === 0 && N8.bodies.length === 0, 'an order in someone else\'s CB → 400, nothing recorded (unchanged)', i.status + ' rows=' + DBT.orders.length);
   const ref = await placeOrder('tok-ref', 'mgr');
@@ -676,34 +655,6 @@ const status = () => { const v = DBT.rules['kv:wimpy-hl-status']; try { return v
   ok(JSON.stringify(row) === before && HL.calls.length === 0 && !r.urls.some((u) => /^PATCH .*wimpy_orders/.test(u)), 'no key/location → the cron touches no row and calls no HighLevel', r.urls.join(' | '));
   ok((status() || {}).configured === false && status().counts.pending === 1, '…and says so in kv:wimpy-hl-status (configured: false, 1 waiting)', JSON.stringify(status()));
 }
-head('T008 · health: stuck rows (and an unconfigured HighLevel with orders waiting, and a lost ledger row) raise an alert');
-{
-  const NOW = RealDate.parse('2026-10-08T09:00:00Z');
-  const ev = (extra) => health.evaluateFreshness({ now: NOW, manifestAt: null, vasAt: null, opsAt: null, staffLoginRecent: false, ...extra });
-  const a = ev({ wimpyHl: { at: '2026-10-08T08:47:00Z', configured: true, counts: { pending: 0, failed: 1, stuck: 2 }, last_error: 'card: HighLevel answered 401: Invalid JWT' } });
-  const s = a.find((x) => x.id === 'wimpy-hl-stuck');
-  ok(!!s && /2 Wimpy order/.test(s.message) && /re-queue|pending/i.test(s.message), 'stuck rows → "wimpy-hl-stuck", naming how many and how to re-queue', s && s.message);
-  ok(s && !SECRETS_AND_PHONES.some((x) => s.message.includes(x)), '…carrying no secret or phone number');
-  ok(!ev({ wimpyHl: { configured: true, counts: { pending: 3, failed: 2, stuck: 0 } } }).some((x) => /^wimpy-/.test(x.id)), 'pending and failed rows alone raise nothing (they are being retried)');
-  const nc = ev({ wimpyHl: { configured: false, counts: { pending: 4, failed: 0, stuck: 0 } } }).find((x) => x.id === 'wimpy-hl-not-configured');
-  ok(!!nc && /4/.test(nc.message), 'HighLevel not configured with orders waiting → "wimpy-hl-not-configured"', nc && nc.message);
-  ok(!ev({ wimpyHl: { configured: false, counts: { pending: 0, failed: 0, stuck: 0 } } }).some((x) => /^wimpy-/.test(x.id)), '…but not when nothing is waiting');
-  ok(!ev({}).some((x) => /^wimpy-/.test(x.id)), 'no status row at all (the cron has not run yet) → no opinion');
-  const lf = ev({ wimpyLedgerFailed: { at: '2026-10-08T07:00:00Z', error: '500 stub' } }).find((x) => x.id === 'wimpy-ledger-failed');
-  ok(!!lf, 'a ledger insert that failed in the last 24 h → "wimpy-ledger-failed" (an order the person will not see in My orders)', JSON.stringify(lf));
-  ok(!ev({ wimpyLedgerFailed: { at: '2026-10-06T07:00:00Z', error: '500 stub' } }).some((x) => x.id === 'wimpy-ledger-failed'), '…which clears itself after 24 h');
-
-  /* the real sentinel, end to end: the status rides the FIRST select (no extra subrequest) and lands in kv:health-alerts */
-  resetWorld(); CLOCK = NOW;
-  DBT.rules['kv:wimpy-hl-status'] = { value: { data: JSON.stringify({ at: iso0(NOW - 13 * MIN), configured: true, counts: { pending: 0, failed: 0, stuck: 3 }, last_error: 'card: x' }) }, updated_at: iso0(NOW - 13 * MIN) };
-  sub = 0; subMax = 0; urls = [];
-  await health.runHealthChecks(dbm.db(ENV), { env: ENV });
-  const alerts = (() => { try { return JSON.parse(DBT.rules['kv:health-alerts'].value.data).alerts; } catch (e) { return []; } })();
-  ok(alerts.some((x) => x.id === 'wimpy-hl-stuck'), 'runHealthChecks raises wimpy-hl-stuck into kv:health-alerts', JSON.stringify(alerts.map((x) => x.id)));
-  const reads = urls.filter((u) => /wimpy-hl-status/.test(decodeURIComponent(u)));
-  ok(reads.length === 1 && /upload-manifest/.test(decodeURIComponent(reads[0])), '…read inside the sentinel\'s first select — no extra subrequest', reads.map(decodeURIComponent).join(' | '));
-}
-
 /* ════════════════════ T009 · My orders — mine, and nobody else's ════════════════════ */
 head('T009 · GET /api/wimpy/orders — the signed-in person\'s own orders, newest first, with the kitchen stage');
 const ords = (x) => (x && x.j && Array.isArray(x.j.orders) ? x.j.orders : []);
@@ -713,17 +664,17 @@ const NOT_YET = 'Not on the kitchen board yet', UNREACHABLE = 'The kitchen board
 let T = {};   // the scenario's handles
 async function scenario() {
   resetWorld();
-  CLOCK = at('10:00'); await placeOrder('tok-thandi-w', 'thandi', [{ id: 'cheese_burger', quantity: 2 }], 'no onions please');      // R109.80
-  CLOCK = at('10:30'); await placeOrder('tok-thandi-w', 'thandi', [{ id: 'mzansi_brekkie', quantity: 1 }]);                           // R45.90
-  CLOCK = at('10:40'); await placeOrder('tok-sipho-w', 'sipho', [{ id: 'big_cheese_burger', quantity: 3 }], 'Sipho collects');       // R287.70
-  CLOCK = at('10:50'); await placeOrder('tok-sipho-w', 'sipho', [{ id: 'farmhouse_breakfast', quantity: 2 }]);                        // R155.80
+  CLOCK = at('07:00'); await placeOrder('tok-thandi-w', 'thandi', [{ id: 'cheese_burger', quantity: 2 }], 'no onions please');      // R109.80
+  CLOCK = at('07:30'); await placeOrder('tok-thandi-w', 'thandi', [{ id: 'mzansi_brekkie', quantity: 1 }]);                           // R45.90
+  CLOCK = at('07:40'); await placeOrder('tok-sipho-w', 'sipho', [{ id: 'big_cheese_burger', quantity: 3 }], 'Sipho collects');       // R287.70
+  CLOCK = at('07:50'); await placeOrder('tok-sipho-w', 'sipho', [{ id: 'farmhouse_breakfast', quantity: 2 }]);                        // R155.80
   F.hl5xx = '/opportunities/';
-  CLOCK = at('11:15'); await placeOrder('tok-thandi-w', 'thandi', [{ id: 'bacon_cheese_burger', quantity: 1 }]);                      // R82.90, card FAILED
+  CLOCK = at('08:15'); await placeOrder('tok-thandi-w', 'thandi', [{ id: 'bacon_cheese_burger', quantity: 1 }]);                      // R82.90, card FAILED
   delete F.hl5xx;
   const th = rowsOf('thandi').sort((a, b) => tsCmp(a.placed_at, b.placed_at)), si = rowsOf('sipho');
   T = { th, si, thContact: th[0].hl_contact_id, siContact: si[0].hl_contact_id };
-  HL.cards.find((c) => c.id === th[1].hl_opportunity_id).pipelineStageId = 'st-ready';        // the kitchen moved her 10:30 order on
-  CLOCK = at('11:16');                                                                         // her failed row is not due yet (11:17)
+  HL.cards.find((c) => c.id === th[1].hl_opportunity_id).pipelineStageId = 'st-ready';        // the kitchen moved her 07:30 order on
+  CLOCK = at('08:16');                                                                         // her failed row is not due yet (08:17)
 }
 await scenario();
 {
@@ -732,13 +683,13 @@ await scenario();
   const o = (r.j && r.j.orders) || [];
   ok(r.status === 200 && o.length === 3, 'thandi sees her 3 orders', r.status + ' ' + r.t.slice(0, 160));
   ok(r.j && r.j.since === '2026-10-07' && r.j.stages_available === true, '…with since: 2026-10-07 (WIMPY_HISTORY_SINCE) and stages_available: true', JSON.stringify(r.j && { since: r.j.since, s: r.j.stages_available }));
-  ok(o.map((x) => x.placed_at).join(',') === '2026-10-08T11:15:00+02:00,2026-10-08T10:30:00+02:00,2026-10-08T10:00:00+02:00', 'newest first, each placed_at in SA time (+02:00)', o.map((x) => x.placed_at).join(','));
+  ok(o.map((x) => x.placed_at).join(',') === '2026-10-08T08:15:00+02:00,2026-10-08T07:30:00+02:00,2026-10-08T07:00:00+02:00', 'newest first, each placed_at in SA time (+02:00)', o.map((x) => x.placed_at).join(','));
   ok(o.every((x) => JSON.stringify(Object.keys(x).sort()) === ORDER_KEYS), 'each order is exactly {placed_at, total, notes, items, stage, stage_note} — no id of any kind', o.map((x) => Object.keys(x).join('|')).join(' ; '));
   ok(o[2] && o[2].total === '109.80' && o[2].notes === 'no onions please' && JSON.stringify(o[2].items) === '[{"item":"Cheese Burger","quantity":2,"item_total":"109.80"}]',
     'items as {item, quantity, item_total}, money as "109.80", her notes', JSON.stringify(o[2]));
-  ok(o[2] && o[2].stage === 'New Order' && o[2].stage_note === null, 'the 10:00 order reads its card\'s stage: New Order', JSON.stringify(o[2] && [o[2].stage, o[2].stage_note]));
-  ok(o[1] && o[1].stage === 'Ready for Collection', 'the 10:30 order follows the kitchen: Ready for Collection', JSON.stringify(o[1] && o[1].stage));
-  ok(o[0] && o[0].stage === null && o[0].stage_note === NOT_YET && o[0].total === '82.90', 'the 11:15 order (card failed) is still listed: "' + NOT_YET + '"', JSON.stringify(o[0]));
+  ok(o[2] && o[2].stage === 'New Order' && o[2].stage_note === null, 'the 07:00 order reads its card\'s stage: New Order', JSON.stringify(o[2] && [o[2].stage, o[2].stage_note]));
+  ok(o[1] && o[1].stage === 'Ready for Collection', 'the 07:30 order follows the kitchen: Ready for Collection', JSON.stringify(o[1] && o[1].stage));
+  ok(o[0] && o[0].stage === null && o[0].stage_note === NOT_YET && o[0].total === '82.90', 'the 08:15 order (card failed) is still listed: "' + NOT_YET + '"', JSON.stringify(o[0]));
   ok(!/Sipho|Dlamini|CB902|287\.70|155\.80|farmhouse|Big Cheese/i.test(r.t) && !r.t.includes(P.sipho.user_id), 'NOTHING of sipho: no name, CB, total, item or account id', r.t.slice(0, 200));
   ok(!/hc-|op-|pl-wimpy|st-(new|ready|proc|done)/.test(r.t) && !r.t.includes(P.thandi.user_id) && !SECRETS_AND_PHONES.some((s) => r.t.includes(s)),
     'no HighLevel id, no account id, no phone, no key, no location id in the reply', r.t.slice(0, 200));
@@ -754,8 +705,8 @@ await scenario();
   ok(s.status === 200 && so.length === 2 && so.every((x) => ['287.70', '155.80'].includes(x.total)), 'sipho sees his 2 — and only his', s.t.slice(0, 200));
   ok(!/Thandi|Mokoena|CB901|109\.80|45\.90|82\.90|no onions/i.test(s.t), '…nothing of thandi\'s in his answer', s.t.slice(0, 200));
   const f = await myOrders('tok-thandi-f');
-  ok(f.status === 200 && f.t === r.t, 'a FULL session (Agent Analytics sign-in) gets exactly the same answer as the Wimpy one', f.status + ' ' + f.t.slice(0, 100));
-  const m = await myOrders('tok-mgr-f');
+  ok(f.status === 403 && !(f.j && f.j.orders), 'a FULL session (the suite\'s sign-in) is refused — only a Wimpy session reads history here (FR-003)', f.status + ' ' + f.t.slice(0, 100));
+  const m = await myOrders('tok-mgr-w');
   ok(m.status === 200 && ords(m).length === 0 && !!(m.j && m.j.orders), 'a manager who has not ordered sees an empty list (not anyone else\'s)', m.t.slice(0, 120));
 }
 head('T009 · whatever the request names, the answer is the signed-in person\'s own');
@@ -783,12 +734,12 @@ head('T009 · a HighLevel card counts only if it is on HER contact AND recorded 
   HL.searchExtra = [{ id: 'op-stray', contactId: T.thContact, pipelineStageId: 'st-done', pipelineId: 'pl-wimpy', name: 'CB901 · stray' }];
   const b = await myOrders('tok-thandi-w');
   ok(ords(b).length === 3 && !ords(b).some((x) => x.stage === 'Completed'), 'a card on her contact that is not recorded on any of her rows adds nothing', JSON.stringify(ords(b).map((x) => x.stage)));
-  /* the kitchen deletes her 10:00 card; a forged card with THAT id but sipho's contact shows up */
+  /* the kitchen deletes her 07:00 card; a forged card with THAT id but sipho's contact shows up */
   const real = HL.cards.find((c) => c.id === T.th[0].hl_opportunity_id);
   HL.cards = HL.cards.filter((c) => c !== real);
   HL.searchExtra = [{ id: real.id, contactId: T.siContact, pipelineStageId: 'st-done', pipelineId: 'pl-wimpy' }];
   const c = await myOrders('tok-thandi-w');
-  const o10 = ords(c).find((x) => x.placed_at.endsWith('10:00:00+02:00'));
+  const o10 = ords(c).find((x) => x.placed_at.endsWith('07:00:00+02:00'));
   ok(o10 && o10.stage === null && o10.stage_note === GONE, 'her card gone + a forged card with its id on another contact → "' + GONE + '", never the forged stage', JSON.stringify(o10));
   HL.cards.push(real); HL.searchExtra = [];
   /* a defensive check: a database filter that answers everyone's rows still shows her only hers */
@@ -797,7 +748,7 @@ head('T009 · a HighLevel card counts only if it is on HER contact AND recorded 
   delete F.ordersIgnoreOwner;
   ok(ords(d).length === 3 && !/287\.70|155\.80/.test(d.t), 'even a database answer carrying sipho\'s rows is filtered back to hers by the Worker', d.t.slice(0, 160));
   /* a row under her CB but owned by another account is not hers */
-  DBT.orders.push({ ...T.si[0], id: uuid(), cb: 'CB901', placed_at: iso0(at('11:30')), total: 311.1 });
+  DBT.orders.push({ ...T.si[0], id: uuid(), cb: 'CB901', placed_at: iso0(at('08:30')), total: 311.1 });
   const e = await myOrders('tok-thandi-w');
   ok(ords(e).length === 3 && !/311\.10/.test(e.t), 'a row carrying her CB number but owned by another account is not shown (owner = the session, never the CB)', e.t.slice(0, 160));
   DBT.orders.pop();
@@ -834,15 +785,16 @@ head('T009 · no session, an expired one, or the wrong kind of session → refus
   const c = await myOrders('tok-nobody');
   ok(c.status === 401, 'a token that is no session → 401', String(c.status));
   const d = await myOrders('tok-ref');
-  ok(d.status === 403 && !/orders/.test(d.t), 'a referrals-scoped session → 403', d.status + ' ' + d.t.slice(0, 80));
-  ok(portal.PORTAL_ALLOWED.has('/api/wimpy/orders'), 'the route is on the agent allow-list (a FULL agent session reaches it, as it reaches /api/wimpy/order)');
+  ok(d.status === 403 && !(d.j && d.j.orders), 'a referrals-scoped session → 403', d.status + ' ' + d.t.slice(0, 80));
+  const full = await myOrders('tok-thandi-f');
+  ok(full.status === 403, 'a full-scope session → 403 (the service mints only wimpy sessions)', String(full.status));
 }
 head('T009 · her own late card catches up when she looks; the newest 50');
 {
   const failed = T.th[2];
-  const siRow = { ...T.si[0], id: uuid(), hl_state: 'failed', hl_opportunity_id: null, hl_tries: 1, hl_next_at: iso0(at('11:00')), hl_contact_seed: { first: 'Sipho', last: 'Dlamini', phone: '0832220902' } };
+  const siRow = { ...T.si[0], id: uuid(), hl_state: 'failed', hl_opportunity_id: null, hl_tries: 1, hl_next_at: iso0(at('08:00')), hl_contact_seed: { first: 'Sipho', last: 'Dlamini', phone: '0832220902' } };
   DBT.orders.push(siRow);
-  CLOCK = at('11:30');                                                         // her failed row (due 11:17) and sipho's are both due
+  CLOCK = at('08:30');                                                         // her failed row (due 08:17) and sipho's are both due
   const cards = HL.cards.length;
   const r = await myOrders('tok-thandi-w');
   measured.history.push(r.subs);
@@ -855,7 +807,7 @@ head('T009 · her own late card catches up when she looks; the newest 50');
   /* worst case for the history: two of her rows due, no contact yet (a cold link), the pipeline cold */
   resetWorld(); CLOCK = at('12:00');
   for (let k = 0; k < 3; k++) DBT.orders.push({ id: uuid(), owner_user_id: P.thandi.user_id, cb: 'CB901', placed_at: iso0(at('11:0' + k)), items: [{ id: 'cheese_burger', item: 'Cheese Burger', quantity: 1, item_total: 54.9 }],
-    total: 54.9, notes: null, hl_state: 'failed', hl_contact_id: null, hl_opportunity_id: null, hl_tries: 1, hl_error: 'x', hl_next_at: iso0(at('11:30')), hl_contact_seed: { first: 'Thandi', last: 'Mokoena', phone: '0821110901' } });
+    total: 54.9, notes: null, hl_state: 'failed', hl_contact_id: null, hl_opportunity_id: null, hl_tries: 1, hl_error: 'x', hl_next_at: iso0(at('08:30')), hl_contact_seed: { first: 'Thandi', last: 'Mokoena', phone: '0821110901' } });
   F.linkRace = new Map([[P.thandi.user_id, 'hc-race-th']]);
   const w = await myOrders('tok-thandi-w');
   measured.history.push(w.subs);
@@ -872,11 +824,11 @@ head('T009 · her own late card catches up when she looks; the newest 50');
 const cardPosts = () => HL.calls.filter((c) => c.method === 'POST' && c.path === '/opportunities/').length;
 head('R1 (M1) · a stalled ledger insert never delays the confirmation');
 {
-  CLOCK = at('10:00'); resetWorld();
+  CLOCK = at('07:00'); resetWorld();
   F.ordersInsertHang = 30000;
   sub = 0; subMax = 0; urls = [];
   const req = new Request('https://api.local/api/wimpy/order', { method: 'POST', headers: { Authorization: 'Bearer tok-thandi-w', 'Content-Type': 'application/json', 'X-Cbx-Client': 'v5' }, body: JSON.stringify(orderBody('thandi')) });
-  const t0 = RealDate.now(); const res = await worker.fetch(req, ENV, ctx); const replyMs = RealDate.now() - t0;
+  const t0 = RealDate.now(); const res = await app.handle(req, ENV, ctx); const replyMs = RealDate.now() - t0;
   const j = await res.clone().json().catch(() => null);
   ok(res.status === 200 && replyMs < 1500, 'Supabase stalls 30 s on the ledger insert → the confirmation comes back in ' + replyMs + ' ms', res.status + ' ' + replyMs + ' ms');
   ok(j && j.ok === true && JSON.stringify(Object.keys(j).sort()) === '["ok","order_formatted","timestamp","total_price"]' && N8.bodies.length === 1, '…unchanged, and the kitchen has the order once', JSON.stringify(j).slice(0, 100));
@@ -887,35 +839,35 @@ head('R1 (M1) · a stalled ledger insert never delays the confirmation');
 }
 head('R2 (M2) · one order, one card — whatever fails after the card is made');
 {
-  CLOCK = at('10:00'); resetWorld();
+  CLOCK = at('07:00'); resetWorld();
   const r = await placeOrder('tok-thandi-w', 'thandi');
   const pIdx = r.urls.findIndex((u) => /^PATCH .*\/rest\/v1\/wimpy_orders/.test(u)), nIdx = r.urls.findIndex((u) => /\/notes$/.test(u));
   const card = HL.cards[0] || {};
   ok(pIdx > 0 && nIdx > 0 && pIdx < nIdx && PATCHES[0] && PATCHES[0].hl_opportunity_id === card.id, '(a) the card id is written onto the row straight after the card is made — before the note', 'patch@' + pIdx + ' note@' + nIdx + ' ' + JSON.stringify(PATCHES[0] || {}).slice(0, 120));
   ok(card.name && !/Thandi|Mokoena/.test(card.name) && /CB901/.test(card.name), '…the card\'s name is stable across retries (CB, total, time, the order\'s tag — no typed name)', card.name);
 
-  CLOCK = at('10:00'); resetWorld();
+  CLOCK = at('07:00'); resetWorld();
   F.cardTimeout = true;
   await placeOrder('tok-thandi-w', 'thandi');
   delete F.cardTimeout;
   const r1 = rowsOf('thandi')[0] || {};
   ok(HL.cards.length === 1 && r1.hl_state === 'failed' && !r1.hl_opportunity_id, '(b) setup: HighLevel made the card but the 8 s abort fired first — row failed, no card recorded', JSON.stringify({ c: HL.cards.length, s: r1.hl_state, o: r1.hl_opportunity_id }));
-  CLOCK = at('10:03');
+  CLOCK = at('07:03');
   const c1 = await cron('7,27,47 * * * *');
   measured.cron.push(c1.subs);
   ok(r1.hl_state === 'written' && r1.hl_opportunity_id === (HL.cards[0] || {}).id && HL.cards.length === 1, '(b) the retry finds that card by its name and records it — still ONE card', JSON.stringify({ s: r1.hl_state, o: r1.hl_opportunity_id, cards: HL.cards.length }));
 
-  CLOCK = at('10:00'); resetWorld();
+  CLOCK = at('07:00'); resetWorld();
   let once = true;
   F.ordersPatchFail = (b) => { if (once && b.hl_state === 'written') { once = false; return true; } return false; };
   await placeOrder('tok-thandi-w', 'thandi');
   delete F.ordersPatchFail;
   const r2 = rowsOf('thandi')[0] || {};
   ok(HL.cards.length === 1 && r2.hl_state === 'failed' && !r2.hl_opportunity_id, '(b) setup: the card was made but recording it failed', JSON.stringify({ c: HL.cards.length, s: r2.hl_state }));
-  CLOCK = at('10:03'); await cron('7,27,47 * * * *');
+  CLOCK = at('07:03'); await cron('7,27,47 * * * *');
   ok(r2.hl_state === 'written' && r2.hl_opportunity_id === (HL.cards[0] || {}).id && HL.cards.length === 1, '(b) the retry reuses it — still ONE card', JSON.stringify({ s: r2.hl_state, cards: HL.cards.length }));
 
-  CLOCK = at('10:00'); resetWorld();
+  CLOCK = at('07:00'); resetWorld();
   await placeOrder('tok-thandi-w', 'thandi');
   const thc = (DBT.links[0] || {}).contact_id;
   const R = seedRow({ owner_user_id: P.thandi.user_id, cb: 'CB901', hl_state: 'failed', hl_tries: 1, hl_next_at: iso0(CLOCK - MIN) });
@@ -939,7 +891,7 @@ head('R3 (M3) · stuck rows never starve the retry queue');
 }
 head('R4 (M4) · the typed name and phone are kept only while they can still be needed');
 {
-  CLOCK = at('12:00'); resetWorld();
+  CLOCK = at('08:00'); resetWorld();
   const a = seedRow({ hl_state: 'failed', hl_tries: 7, hl_next_at: iso0(CLOCK - MIN) });
   F.hl5xx = '/contacts/';
   await cron('7,27,47 * * * *');
@@ -958,12 +910,13 @@ head('R4 (M4) · the typed name and phone are kept only while they can still be 
   await placeOrder('tok-thandi-w', 'thandi');
   const d = rowsOf('thandi')[0] || {};
   ok(d.hl_state === 'failed' && d.hl_contact_seed && d.hl_contact_seed.phone === '0821110901', '…while a row whose person has no contact yet keeps it (the retry creates the contact from it)', JSON.stringify(d.hl_contact_seed));
-  const dm = fs.readFileSync(path.join(ROOT, 'specs', '015-wimpy-order-history', 'data-model.md'), 'utf8');
-  ok(/hl_contact_seed[^\n]*stuck/.test(dm) && /hl_contact_seed[^\n]*contact link/.test(dm), 'data-model.md says when the seed is cleared (written, stuck, or once the person has a contact link)');
+  const dmPath = path.join(ROOT, '..', 'specs', '015-wimpy-order-history', 'data-model.md');   // the suite's spec, when it sits beside this folder
+  if (!fs.existsSync(dmPath)) console.log('  SKIP  the suite\'s specs/015 data-model.md is not beside this checkout');
+  else { const dm = fs.readFileSync(dmPath, 'utf8'); ok(/hl_contact_seed[^\n]*stuck/.test(dm) && /hl_contact_seed[^\n]*contact link/.test(dm), 'data-model.md says when the seed is cleared (written, stuck, or once the person has a contact link)'); }
 }
 head('R5 (L1) · a row that kills its runner every time still goes stuck — each claim is a try');
 {
-  CLOCK = at('12:00'); resetWorld();
+  CLOCK = at('08:00'); resetWorld();
   await placeOrder('tok-thandi-w', 'thandi');
   const row = seedRow({ owner_user_id: P.thandi.user_id, cb: 'CB901', hl_state: 'pending', hl_tries: 0, hl_next_at: iso0(CLOCK - MIN), hl_contact_seed: null });
   F.hl5xx = '/opportunities/';
@@ -992,7 +945,7 @@ head('R7 (L3) · one HighLevel read per person per 10 s — never shared between
   const searches = () => HL.calls.filter((c) => c.path === '/opportunities/search');
   const a = await myOrders('tok-thandi-w');
   const n1 = searches().length;
-  const b = await myOrders('tok-thandi-f', '', { keepThrottle: true });
+  const b = await myOrders('tok-thandi-w2', '', { keepThrottle: true });
   ok(searches().length === n1 && b.status === 200 && b.t === a.t, 'a second look within 10 s (even from her other session) reads no HighLevel — the same answer from her own cache', (searches().length - n1) + ' reads');
   const s = await myOrders('tok-sipho-w', '', { keepThrottle: true });
   const sq = searches().slice(n1);
@@ -1008,22 +961,22 @@ head('R7 (L3) · one HighLevel read per person per 10 s — never shared between
 }
 head('R8 (L4) · a HighLevel error that quotes her typed name is stored without it');
 {
-  CLOCK = at('10:00'); resetWorld(); F.hlEchoName = true;
+  CLOCK = at('07:00'); resetWorld(); F.hlEchoName = true;
   await placeOrder('tok-thandi-w', 'thandi');
   const r = rowsOf('thandi')[0] || {};
   ok(r.hl_state === 'failed' && r.hl_error && /firstName/.test(r.hl_error) && !/Thandi|Mokoena/i.test(r.hl_error), 'hl_error keeps the field names, never the typed first or last name', r.hl_error);
 }
 head('R9 (L5) · the Wimpy cron\'s failure log carries no secret and no phone number');
 {
-  CLOCK = at('10:00'); resetWorld(); F.ordersSelectFail = true;
+  CLOCK = at('07:00'); resetWorld(); F.ordersSelectFail = true;
   const before = LOGS.length;
   await cron('7,27,47 * * * *');
-  const lines = LOGS.slice(before).filter((l) => /cron:wimpy/.test(l));
+  const lines = LOGS.slice(before).filter((l) => /wimpy:cron/.test(l));
   ok(lines.length === 1 && /failed/.test(lines[0]) && !SECRETS_AND_PHONES.some((x) => lines[0].includes(x)), 'a failing ledger read is logged, redacted', lines.join(' | '));
 }
 head('R10 (L6) · the contact carries the CB number as a tag');
 {
-  CLOCK = at('10:00'); resetWorld();
+  CLOCK = at('07:00'); resetWorld();
   await placeOrder('tok-thandi-w', 'thandi');
   await placeOrder('tok-mgr-w', 'mgr');
   ok(HL.contacts.length === 2 && JSON.stringify(HL.contacts[0].tags) === '["wimpy","cb901"]' && JSON.stringify(HL.contacts[1].tags) === '["wimpy","mgr.lee"]',
@@ -1035,9 +988,9 @@ head('SC-005 · no secret and no phone number in any log line the Worker wrote d
 {
   const leaked = LOGS.filter((l) => SECRETS_AND_PHONES.some((s) => l.includes(s)));
   ok(LOGS.length > 0 && !leaked.length, LOGS.length + ' log lines, none carries the key, the location id or a phone number', leaked.slice(0, 3).join(' | '));
-  const src = ['wimpy.mjs', 'wimpy-hl.mjs', 'index.mjs', 'health.mjs'].map((f) => fs.readFileSync(path.join(ROOT, 'worker', 'src', f), 'utf8')).join('\n')
-    + fs.readFileSync(path.join(ROOT, 'worker', 'wrangler.toml'), 'utf8');
-  ok(!/pit-[0-9a-f]{8}-/i.test(src) && !/WIMPY_HL_(API_KEY|LOCATION_ID)\s*=\s*["']/.test(src), 'the Worker source and wrangler.toml hold no key and no location value — only the secret NAMES');
+  const src = ['src/wimpy.mjs', 'src/wimpy-hl.mjs', 'src/app.mjs', 'src/auth.mjs', 'src/server.mjs', 'src/net.mjs', 'api/index.mjs', 'vercel.json', 'Dockerfile', 'docker-compose.yml', 'package.json'].map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
+  ok(!/pit-[0-9a-f]{8}-/i.test(src) && !/(WIMPY_HL_(API_KEY|LOCATION_ID)|SUPABASE_SECRET_KEY|CRON_SECRET)\s*[=:]\s*["'][^"']+/.test(src), 'the service source, vercel.json, Dockerfile and compose hold no key, secret or location value — only the NAMES');
+  ok(!fs.existsSync(path.join(ROOT, '.env')) || /^\.env$/m.test(fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8')), 'a filled .env, if one exists, is git-ignored');
 }
 useRealClock();
 
@@ -1056,11 +1009,11 @@ head('T011 · wimpy/index.html — "My orders", in a real Chromium against a stu
 
   const W = SRC('wimpy.mjs');
   const { wimpyMenu } = await import(W);
-  const { chromium } = await import(pathToFileURL(path.join(HERE, 'node_modules', 'playwright', 'index.mjs')).href);
+  const { chromium } = await (await import('./_harness.mjs')).playwright();
   const srv = http.createServer((q, r) => { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end(html); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const port = srv.address().port;
-  const OPEN = RealDate.parse('2026-10-08T10:00:00+02:00'), SHUT = RealDate.parse('2026-10-08T18:00:00+02:00');
+  const OPEN = RealDate.parse('2026-10-08T08:00:00+02:00'), SHUT = RealDate.parse('2026-10-08T18:00:00+02:00');
   const PEOPLE = {
     'thandi-pass-1': { token: 'tokThandi', user: { username: 'cb901', full_name: 'Thandi Mokoena', cb: 'CB901', scope: 'wimpy' } },
     'sipho-pass-1': { token: 'tokSipho', user: { username: 'cb902', full_name: 'Sipho Dlamini', cb: 'CB902', scope: 'wimpy' } },
@@ -1079,12 +1032,12 @@ head('T011 · wimpy/index.html — "My orders", in a real Chromium against a stu
   async function fresh() {
     const pg = await b.newPage();
     pg.on('pageerror', (e) => errs.push(String(e)));
-    await pg.route('**/chatterbox-agentos-api.chatterbox-agentos.workers.dev/**', async (route) => {
+    await pg.route('**/api/**', async (route) => {   // same origin: the page calls /api/… on itself
       const u = new URL(route.request().url()), auth = route.request().headers().authorization || '';
       const J = (o, s = 200) => route.fulfill({ status: s, contentType: 'application/json', body: JSON.stringify(o) });
       const who = Object.values(PEOPLE).filter((x) => 'Bearer ' + x.token === auth)[0];
       if (u.pathname === '/api/wimpy/signin') { const p = PEOPLE[(JSON.parse(route.request().postData() || '{}')).password]; return p ? J(p) : J({ error: 'That CB number and password do not match.' }, 401); }
-      if (u.pathname === '/api/me') return who ? J({ user: who.user }) : J({ error: 'no session' }, 401);
+      if (u.pathname === '/api/wimpy/me') return who ? J({ user: who.user }) : J({ error: 'no session' }, 401);
       if (u.pathname === '/api/wimpy/menu') return J(wimpyMenu(menuAt));
       if (u.pathname === '/api/wimpy/orders') {
         ordersCalls++; ordersUrls.push(u.href);
@@ -1137,7 +1090,7 @@ head('T011 · wimpy/index.html — "My orders", in a real Chromium against a stu
       menuAt = SHUT;
       const pg = await fresh();
       await signIn(pg, 'CB901', 'thandi-pass-1');
-      ok(/Ordering is closed/.test(await bodyText(pg)) && !!(await pg.$('#wpMine')), 'outside 08:00–17:00 the (closed) menu still has "My orders"');
+      ok(/Ordering is closed/.test(await bodyText(pg)) && !!(await pg.$('#wpMine')), 'outside 07:00–09:00 the (closed) menu still has "My orders"');
       await pg.click('#wpMine');
       await pg.waitForSelector('.wp-order', { timeout: 10000 });
       ok((await pg.$$('.wp-order')).length === 2, '…and it opens the same history');

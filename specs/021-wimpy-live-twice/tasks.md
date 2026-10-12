@@ -1,0 +1,2 @@
+- [x] T001 section F in nicks_code/diagnostics/verify-wimpy-live.mjs — second order (two lines, qty 2), refusals (qty 11, off-day Big One, add-on), second person (empty history, one order, cannot use the first name), cleanup of both accounts
+- [x] T002 run 2026-10-09 08:46 SAST: 68 passed, 0 failed. The second order shows "Not on the kitchen board yet" because HighLevel still refuses a second card per person (Allow duplicate opportunities OFF) — the kitchen had it; history correct.

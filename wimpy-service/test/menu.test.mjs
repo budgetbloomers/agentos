@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * verify-wimpy.mjs — the 3–3–3–1 Weekday Value Menu, proven.
+ * menu.test.mjs — the 3–3–3–1 Weekday Value Menu, proven (verify-wimpy.mjs, ported to the Wimpy service — Spec Kit 018).
  *
- *   node nicks_code/diagnostics/verify-wimpy.mjs
+ *   node test/menu.test.mjs   (or npm test)
  *
  * Stubbed, so it proves the RULES rather than the network:
  *   · 3 breakfasts + 3 burgers + 3 toasteds + exactly one Big One per weekday
@@ -20,10 +20,10 @@
  * (2026-10-06) the sign-in takes the CB number AND the person's password; verify-wimpy-signin.mjs drives that check.
  */
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const W = 'file:///' + path.resolve(HERE, '..', '..', 'worker', 'src', 'wimpy.mjs').replace(/\\/g, '/').replace(/ /g, '%20');
+const W = pathToFileURL(path.resolve(HERE, '..', 'src', 'wimpy.mjs')).href;
 
 let pass = 0, fail = 0;
 const ok = (c, n, extra) => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.log('  FAIL ' + n + (extra !== undefined ? ' — ' + extra : '')); } };
@@ -31,22 +31,21 @@ const head = (t) => console.log('\n' + t);
 
 const { wimpyMenu, priceOrder, formatOrder, submitWimpyOrder, whoIsOrdering, todaysBigOne, wimpyWindowOpen, WINDOW, ALL_ITEMS, ING } = await import(W);
 
-/* The page under test: its own app now. */
-const PAGE = path.resolve(HERE, '..', '..', ...(process.env.WIMPY_HTML || 'wimpy/index.html').split('/'));
-const AGENT_PAGE = path.resolve(HERE, '..', '..', 'agent', 'index.html');
+/* The page under test: the service's own. */
+const PAGE = path.resolve(HERE, '..', 'public', 'index.html');
 
 /* A UTC moment that is the given SAST weekday (0=Sun..6=Sat), mid-morning
    (10:00 SAST — OUTSIDE the ordering window, deliberately: pricing and menu
    structure must not depend on the window). */
 const onDay = (dow) => {
-  const base = Date.parse('2026-08-31T08:00:00Z');           // a Monday in SAST
+  const base = Date.parse('2026-08-31T06:00:00Z');           // a Monday, 08:00 SAST
   return base + ((dow + 6) % 7) * 86400000;
 };
 const MON = onDay(1), TUE = onDay(2), WED = onDay(3), THU = onDay(4), FRI = onDay(5), SAT = onDay(6), SUN = onDay(0);
-/* onDay is 10:00 SAST, which is INSIDE the 08:00–17:00 window since 2026-09-10.
-   outWindow is 19:00 SAST the same day — outside it. */
+/* onDay is 08:00 SAST, INSIDE the 07:00–09:00 window (Spec Kit 020, 2026-10-09; it was 08:00–17:00 before).
+   outWindow is 11:00 SAST the same day — outside it. */
 const inWindow = (dow) => onDay(dow);
-const outWindow = (dow) => onDay(dow) + 9 * 3600000;
+const outWindow = (dow) => onDay(dow) + 3 * 3600000;
 
 /* the payload the page half is served, built by the module itself — never a hand-typed menu */
 const MENU_FIXTURE = wimpyMenu(inWindow(3));
@@ -312,33 +311,41 @@ head('K2 · THE WEEK IS READABLE, AND STILL NOT ORDERABLE');
 }
 
 
-head('L · THE TAB IS GONE FROM AGENT ANALYTICS');
+head('N · THE WINDOW: 07:00–09:00 SAST, MONDAY TO FRIDAY (Spec Kit 020)');
 {
-  const fs0 = await import('node:fs');
-  const agentPage = fs0.readFileSync(AGENT_PAGE, 'utf8');
-  for (const gone of ['wimpyPage', 'wireWimpy', 'wimpyOpenNow', 'WCART', 'WMENU', 'wp-hero', 'ICON.wimpy'])
-    ok(agentPage.indexOf(gone) < 0, 'the agent app no longer carries ' + gone);
-  ok(!/\['wimpy','Wimpy Order'/.test(agentPage), 'and the nav has no Wimpy tab');
-  const worker = fs0.readFileSync(path.resolve(HERE, '..', '..', 'worker', 'src', 'index.mjs'), 'utf8');
-  ok(worker.indexOf('wimpy/model') < 0, 'the Worker still does not serve /api/portal/wimpy/model');
-  ok(worker.includes("path.startsWith('/api/portal/wimpy/')") && worker.includes('410'),
-    'the old portal paths answer 410 for one release, so a cached tab fails in words');
-  ok(worker.includes("user.scope === 'wimpy'"), 'a wimpy-scoped session is confined at the gate');
-  const portal = fs0.readFileSync(path.resolve(HERE, '..', '..', 'worker', 'src', 'portal.mjs'), 'utf8');
-  ok(portal.includes("'/api/wimpy/menu'") && portal.includes("'/api/wimpy/order'"), 'and the two new routes are on the agent allow-list');
-  const auth = fs0.readFileSync(path.resolve(HERE, '..', '..', 'worker', 'src', 'auth.mjs'), 'utf8');
-  /* Spec Kit 009: the sign-in takes the person's password; its behaviour is driven in verify-wimpy-signin.mjs */
-  ok(auth.includes('export async function signinWimpy') && auth.includes("scope: 'wimpy'"), 'the Wimpy sign-in mints a scoped session');
-  ok(/export async function signinWimpy[\s\S]*?checkPassword\(DB, u, \w+, password, ip, defer, 'wimpy'\)/.test(auth),
-    '...only after the same password check and lock as the main sign-in');
+  ok(WINDOW.hours === '07:00–09:00' && WINDOW.fromHour === 7 && WINDOW.toHour === 9, 'the module states the hours once', WINDOW.hours);
+  ok(wimpyWindowOpen(inWindow(3)) === true, 'Wednesday 08:00 SAST is inside the window');
+  ok(wimpyWindowOpen(inWindow(3) - 3600000) === true, 'so is 07:00');
+  ok(wimpyWindowOpen(inWindow(3) - 3600000 - 1000) === false, '06:59:59 is before opening');
+  ok(wimpyWindowOpen(inWindow(3) + 3600000 - 1000) === true, '08:59:59 is still inside');
+  ok(wimpyWindowOpen(inWindow(3) + 3600000) === false, '09:00 is closed');
+  ok(wimpyWindowOpen(outWindow(3)) === false, 'Wednesday 11:00 SAST is after closing');
+  ok(wimpyWindowOpen(inWindow(6)) === false, 'Saturday is a weekend — closed');
+  ok(wimpyWindowOpen(inWindow(0)) === false, 'Sunday too');
+  const m = wimpyMenu(inWindow(2));
+  ok(m.window && m.window.open === true && m.window.hours === '07:00–09:00', 'the menu payload carries the window, so the page never guesses from its own clock');
+  ok(wimpyMenu(outWindow(2)).window.open === false, '...and says closed at 11:00');
+  const realFetch = globalThis.fetch;
+  let reached = false;
+  globalThis.fetch = async () => { reached = true; return { ok: true, text: async () => '' }; };
+  try {
+    const user = { full_name: 'Ann Smith', username: 'cb999', cb: 'CB999' };
+    const body = { who: { cb: 'CB999', first_name: 'Ann', surname: 'Smith', phone: '082 123 4567' }, total_price: 54.90, order: { items: [{ id: 'cheese_burger', quantity: 1 }] } };
+    const late = await submitWimpyOrder({}, user, body, outWindow(3));
+    ok(late.status === 403 && /07:00 and 09:00/.test(late.body.error), 'an order at 11:00 is refused and the message names the hours', late.body.error);
+    const early = await submitWimpyOrder({}, user, body, inWindow(3) - 3600000 - 60000);
+    ok(early.status === 403, 'an order at 06:59 is refused too');
+    const sat = await submitWimpyOrder({}, user, body, inWindow(6));
+    ok(sat.status === 403, 'a Saturday order is refused even at 08:00');
+    ok(reached === false, 'the webhook was never called for a refused order');
+  } finally { globalThis.fetch = realFetch; }
 }
 
 head('M · THE APP: SIGN IN WITH A CB NUMBER AND PASSWORD, ORDER, SEND');
 {
   const fs2 = await import('node:fs');
   const http = await import('node:http');
-  const { pathToFileURL } = await import('node:url');
-  const { chromium } = await import(pathToFileURL(path.join(HERE, 'node_modules', 'playwright', 'index.mjs')).href);
+  const { chromium } = await (await import('./_harness.mjs')).playwright();
   const pageSrc = fs2.readFileSync(PAGE, 'utf8');
   const srv = http.createServer((q, r) => { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end(pageSrc); });
   await new Promise((r) => srv.listen(8298, '127.0.0.1', r));
@@ -349,14 +356,14 @@ head('M · THE APP: SIGN IN WITH A CB NUMBER AND PASSWORD, ORDER, SEND');
     pg.on('pageerror', (e) => errs.push(String(e)));
     /* the Worker is stubbed: sign-in, /api/me and the menu answer; the order is captured */
     let posted = null, signins = 0, orders = 0, signinBody = null;
-    await pg.route('**/chatterbox-agentos-api.chatterbox-agentos.workers.dev/**', async (route) => {
+    await pg.route('**/api/**', async (route) => {   // same origin: the page calls /api/… on itself
       const u = route.request().url();
       const J = (o, s = 200) => route.fulfill({ status: s, contentType: 'application/json', body: JSON.stringify(o) });
       const ME = { username: 'cb999', full_name: 'Ann Smith', cb: 'CB999', scope: 'wimpy' };
       if (u.includes('/api/wimpy/signin')) { signins++; signinBody = JSON.parse(route.request().postData() || '{}');
         if (signinBody.password !== 'right-pass-1') return J({ error: 'That CB number and password do not match.' }, 401);
         return J({ token: 'stub-token', user: ME }); }
-      if (u.endsWith('/api/me')) return J({ user: ME });
+      if (u.endsWith('/api/wimpy/me')) return J({ user: ME });
       if (u.includes('/api/wimpy/menu')) return J(MENU_FIXTURE);
       if (u.includes('/api/wimpy/order')) { orders++; posted = JSON.parse(route.request().postData() || '{}');
         return J({ ok: true, total_price: 91.80, order_formatted: 'WIMPY ORDER\n\nName: Ann Smith' }); }
@@ -376,7 +383,7 @@ head('M · THE APP: SIGN IN WITH A CB NUMBER AND PASSWORD, ORDER, SEND');
     /* Spec Kit 009 (Nick, 2026-10-06): "users must put this password as well" */
     ok(signin.pw === 1 && signin.pwId === 'pw', 'it asks for a password too — one hidden field, #pw', signin.pw + ' ' + signin.pwId);
     ok(/password/i.test(signin.pwLabel), '...labelled Password', signin.pwLabel);
-    ok(/the password you use for Agent Analytics/i.test(signin.text), '...and says which password it means');
+    ok(/Wimpy password/i.test(signin.text) && /start password/i.test(signin.text) && /not your Agent Analytics password/i.test(signin.text), '...and says which password it means (the Wimpy start password until changed — never the Agent Analytics one; spec 025)');
     ok(/forgotten your password\? ask your team leader or manager/i.test(signin.text), 'it tells a person who forgot it what to do');
     ok(!/no password/i.test(signin.text) && !/no password/i.test(pageSrc), 'nothing on the page or in its source still says "no password"');
     await pg.fill('#cb', 'CB999');
@@ -402,7 +409,7 @@ head('M · THE APP: SIGN IN WITH A CB NUMBER AND PASSWORD, ORDER, SEND');
     ok(await pg.evaluate(() => { try { return sessionStorage.getItem('cbx_wimpy_token') === 'stub-token'; } catch (e) { return false; } }), 'the token is kept under cbx_wimpy_token');
     ok(!(await pg.evaluate(() => JSON.stringify(sessionStorage) + JSON.stringify(localStorage))).includes('right-pass-1'), 'the password is never stored in the browser');
     ok(/Ordering is open/.test(menu), 'the window state comes from the payload, not the page’s clock');
-    ok(/08:00–17:00/.test(menu), '...and reads 08:00–17:00', (menu.match(/\d\d:\d\d–\d\d:\d\d/) || [])[0]);
+    ok(/07:00–09:00/.test(menu), '...and reads 07:00–09:00', (menu.match(/\d\d:\d\d–\d\d:\d\d/) || [])[0]);
     /* the header counts what the menu actually carries (Nick, 2026-09-14: "the toasteds still say 3 when there is 2") */
     const sub = await pg.evaluate(() => (document.querySelector('.wp-title .sub') || {}).innerText || '');
     ok(/3 breakfasts · 3 burgers · 2 toasteds/.test(sub), 'the header says 3 breakfasts · 3 burgers · 2 toasteds — counted from the menu, not typed', sub);
@@ -440,36 +447,6 @@ head('M · THE APP: SIGN IN WITH A CB NUMBER AND PASSWORD, ORDER, SEND');
       'a line is an id and a quantity, nothing else', JSON.stringify(posted && posted.order.items));
     ok(errs.length === 0, 'the page runs with no errors', errs[0]);
   } finally { await b.close(); srv.close(); }
-}
-
-head('N · THE WINDOW: 08:00–17:00 SAST, MONDAY TO FRIDAY');
-{
-  ok(WINDOW.hours === '08:00–17:00', 'the module states the hours once', WINDOW.hours);
-  ok(wimpyWindowOpen(inWindow(3)) === true, 'Wednesday 10:00 SAST is inside the window');
-  ok(wimpyWindowOpen(inWindow(3) - 2 * 3600000) === true, 'so is 08:00');
-  ok(wimpyWindowOpen(inWindow(3) - 3 * 3600000) === false, 'Wednesday 07:00 SAST is before opening');
-  ok(wimpyWindowOpen(outWindow(3)) === false, 'Wednesday 19:00 SAST is after closing');
-  ok(wimpyWindowOpen(inWindow(6)) === false, 'Saturday is a weekend — closed');
-  ok(wimpyWindowOpen(inWindow(0)) === false, 'Sunday too');
-  const m = wimpyMenu(inWindow(2));
-  ok(m.window && m.window.open === true && m.window.hours === '08:00–17:00',
-    'the menu payload carries the window, so the page never guesses from its own clock');
-  ok(wimpyMenu(outWindow(2)).window.open === false, '...and says closed at 19:00');
-
-  const realFetch = globalThis.fetch;
-  let reached = false;
-  globalThis.fetch = async () => { reached = true; return { ok: true, text: async () => '' }; };
-  try {
-    const user = { full_name: 'Ann Smith', username: 'cb999', cb: 'CB999' };
-    const body = { who: { cb: 'CB999', first_name: 'Ann', surname: 'Smith', phone: '082 123 4567' },
-      total_price: 54.90, order: { items: [{ id: 'cheese_burger', quantity: 1 }] } };
-    const late = await submitWimpyOrder({}, user, body, outWindow(3));
-    ok(late.status === 403 && /08:00 and 17:00/.test(late.body.error),
-      'an order at 19:00 is refused and the message names the hours', late.body.error);
-    const sat = await submitWimpyOrder({}, user, body, inWindow(6));
-    ok(sat.status === 403, 'a Saturday order is refused even at 10:00');
-    ok(reached === false, 'the webhook was never called for a refused order');
-  } finally { globalThis.fetch = realFetch; }
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

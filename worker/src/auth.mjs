@@ -3,16 +3,18 @@
  * lockout, per-app/per-tab permissions. Backed by app_users / app_sessions /
  * auth_log (migration 003). Passwords never touch disk or logs in plaintext.
  */
-const ITER = 100000; // Cloudflare Workers caps PBKDF2 at 100k iterations
 /* THE START PASSWORD (Nick, 2026-09-08: "agentos123 must be removed"). Every provisioned account
    is born on it with password_is_default = true (migration-025), which forces a change at first
    sign-in; nobody may choose it as a new password; tools/audit-default-passwords.mjs finds every
    account still on it. One definition — provision.mjs imports it from here. */
 export const START_PASSWORD = 'agentos123';
 const SESSION_HOURS = 12;
-const MAX_FAILS = 5;
-const LOCK_MIN = 15;
 
+/* SHARED-AUTH:hashing BEGIN — copied VERBATIM into wimpy-service/src/auth.mjs (Spec Kit 018, 2026-10-09): the Wimpy
+   lunch app is its own service now and signs people in with the same password through the same rules. Four blocks are
+   shared (hashing, lookup, lock, session); nicks_code/diagnostics/verify-wimpy-service-drift.mjs fails if a block differs
+   by one character between the two files. Change a block HERE and THERE in the same commit. */
+const ITER = 100000; // Cloudflare Workers caps PBKDF2 at 100k iterations
 // Hex encoding — unambiguous across runtimes (no atob/btoa variance).
 const toHex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 const fromHex = (s) => new Uint8Array((s.match(/.{2}/g) || []).map((h) => parseInt(h, 16)));
@@ -45,7 +47,9 @@ const sha256hex = async (s) => toHex(await crypto.subtle.digest('SHA-256', new T
 
 const log = (DB, user_id, username, event, ip) =>
   DB.insert('auth_log', [{ user_id, username, event, ip }]).catch(() => {});
+/* SHARED-AUTH:hashing END */
 
+/* SHARED-AUTH:lookup BEGIN (Spec Kit 018 — see the hashing block) */
 /* CB NUMBERS ARE USERNAMES. Agent Analytics signs people in with their CB
    number, and this is deliberately the SAME login as everyone else's rather
    than a second authentication system: one hasher, one lockout, one session
@@ -80,8 +84,15 @@ async function findAccount(DB, username) {
     rows = await DB.select(`app_users?cb=ilike.${encodeURIComponent(username)}&limit=1`);
   return (rows && rows[0]) || null;
 }
+/* SHARED-AUTH:lookup END */
 
+/* SHARED-AUTH:lock BEGIN (Spec Kit 018 — see the hashing block). WIMPY_NO_MATCH lives in this block because
+   checkPassword's `via === 'wimpy'` branch belongs to the Wimpy service's sign-in; the Worker itself has not passed
+   'wimpy' since Spec Kit 018 moved that sign-in out. */
+const MAX_FAILS = 5;
+const LOCK_MIN = 15;
 const LOCKED_MSG = 'Account locked after repeated failures. Try again in a few minutes.';
+const WIMPY_NO_MATCH = 'That CB number and password do not match.';
 
 /* THE PASSWORD CHECK — ONE FOR EVERY SIGN-IN (Spec Kit 009, 2026-10-06). The main sign-in and the Wimpy
    sign-in both come through here, so a password guessed on either page counts toward the SAME lock: a
@@ -147,6 +158,7 @@ async function checkPassword(DB, u, username, password, ip, defer, via) {
   }
   return { ok: true };
 }
+/* SHARED-AUTH:lock END */
 
 /** POST /api/login {username,password} → sets cookie, returns profile+permissions.
  *
@@ -187,6 +199,7 @@ export async function login(DB, req, body, ctx) {
   };
 }
 
+/* SHARED-AUTH:session BEGIN (Spec Kit 018 — see the hashing block) */
 /** Session middleware: returns the user or null. Token from cookie or bearer. */
 export async function session(DB, req) {
   const cookie = req.headers.get('cookie') || '';
@@ -212,74 +225,12 @@ export async function session(DB, req) {
   if (!s || new Date(s.expires_at) < new Date() || !s.app_users?.active) return null;
   return { ...s.app_users, user_id: s.user_id, token_hash: th, scope: s.scope || 'full' };
 }
+/* SHARED-AUTH:session END */
 
-/**
- * THE WIMPY SIGN-IN — a CB number AND the person's password (Spec Kit 009, 2026-10-06; Nick: "for the
- * wimpy app users must put this password as well, for example dalwin cb number and his password to
- * login"). From 10 Sep it took a CB number alone, so knowing a colleague's CB bought lunch in their
- * name. The password is the account's own — the one Agent Analytics and VAS check — proved by the
- * same checkPassword() as login(), so a wrong guess here counts toward the same lock as one there.
- * The session it mints is unchanged: app_sessions.scope = 'wimpy', refused by the Worker on every
- * route but the Wimpy ones, so knowing the password still opens only lunch from this page.
- *
- *   · the field takes a CB number in any spelling, or a username (managers, or anyone), exactly as
- *     login() reads it; `username` is accepted in place of `cb`;
- *   · an old page sends no `password` key at all → told to reload, before anything is looked up;
- *   · a hundred failures from one network in ten minutes → 429 before any lookup — a flood guard,
- *     not the lock (security review 2026-10-06): the floor may share one address and launch day is
- *     full of first-time password typos, so thirty could close lunch for everyone; the per-account
- *     lock is the real guard, and /api/login checks the same password with no network cap at all;
- *   · unknown, disabled and wrong-password get ONE answer, so the page cannot find which CBs exist;
- *   · the right password on an account without the Wimpy app is told so (it proved who it is) and
- *     is not counted as a failure.
- * Pure of transport: {ok, status, error} or {ok, token, user}.
- */
-const WIMPY_NET_MAX = 100, WIMPY_NET_MIN = 10, WIMPY_SESSION_HOURS = 12;
-const WIMPY_NO_MATCH = 'That CB number and password do not match.';
-export async function signinWimpy(DB, req, body, ctx) {
-  const defer = (p) => { try { ctx && ctx.waitUntil(p); } catch { /* no ctx */ } return p; };
-  const ip = req.headers.get('cf-connecting-ip') || '';
-  const b = body && typeof body === 'object' ? body : {};
-  if (!('password' in b))
-    return { ok: false, status: 400, error: 'Wimpy now asks for your password too — reload this page (Ctrl+Shift+R) to sign in.' };
-  const raw = String((b.cb ?? b.username) || '').trim();
-  const password = b.password == null ? '' : String(b.password);
-  if (!raw || !password) return { ok: false, status: 400, error: 'Type your CB number and your password.' };
-  if (raw.length > 40 || password.length > 200) return { ok: false, status: 400, error: 'That is too long to be a CB number or password.' };
-
-  /* the per-network limit, before any lookup — counts only Wimpy failures, so a burst of main
-     sign-in typos on the same office network does not close lunch */
-  if (ip) try {
-    const since = new Date(Date.now() - WIMPY_NET_MIN * 60000).toISOString();
-    const recent = await DB.select(`auth_log?ip=eq.${encodeURIComponent(ip)}&event=like.${encodeURIComponent('login_fail:wimpy:*')}&at=gte.${since}&select=at&limit=${WIMPY_NET_MAX + 1}`);
-    if ((recent || []).length >= WIMPY_NET_MAX)
-      return { ok: false, status: 429, error: 'Too many wrong sign-ins from this network. Wait ten minutes and try again.' };
-  } catch { /* the log unreadable — carry on; the per-account lock below still holds */ }
-
-  const username = loginKey(raw);
-  const u = await findAccount(DB, username);
-  /* Two boxes make a swap likely, and a password typed into the CB box would otherwise land in auth_log as the
-     "username" of a no_user failure (code review 2026-10-06). An unknown name that is not CB-shaped is logged
-     without its text; an unknown CB number is logged as typed, so support can still see the typo. */
-  const logged = u || /^cb[0-9]+$/.test(username) ? username : '(unknown — not a CB number)';
-  const checked = await checkPassword(DB, u, logged, password, ip, defer, 'wimpy');
-  if (!checked.ok) return checked;
-  if (!(Array.isArray(u.apps) && u.apps.includes('wimpy'))) {
-    defer(log(DB, u.id, username, 'wimpy_signin_refused:no_app', ip));
-    return { ok: false, status: 403, error: 'Your account cannot order from Wimpy yet — ask your team leader.' };
-  }
-  const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
-  await DB.insert('app_sessions', [{
-    token_hash: await sha256hex(token), user_id: u.id, scope: 'wimpy',
-    expires_at: new Date(Date.now() + WIMPY_SESSION_HOURS * 3600000).toISOString(),
-    ip, user_agent: (req.headers.get('user-agent') || '').slice(0, 200),
-  }]);
-  /* the password was proved, so earlier failures are settled — as a main sign-in settles them
-     (last_login is left alone: it means "last opened Analytics" to the admin screens) */
-  defer(DB.update(`app_users?id=eq.${u.id}`, { failed_attempts: 0, locked_until: null }).catch(() => {}));
-  defer(log(DB, u.id, username, 'login_ok:wimpy', ip));
-  return { ok: true, token, user: { username: u.username, full_name: u.full_name || '', role: u.role, cb: u.cb || '', scope: 'wimpy' } };
-}
+/* THE WIMPY SIGN-IN LEFT THIS WORKER (Spec Kit 018, 2026-10-09). signinWimpy — a CB number and the person's own
+   password, a session scoped to lunch — now lives in wimpy-service/src/auth.mjs, built on the SAME four SHARED-AUTH blocks
+   above (checkPassword, the lock, the session read), which verify-wimpy-service-drift.mjs keeps identical. The Worker
+   refuses a wimpy-scoped session on every route (index.mjs); migration-058 ended the ones minted before the move. */
 
 export async function logout(DB, user) {
   if (user?.token_hash) await DB.del(`app_sessions?token_hash=eq.${user.token_hash}`);

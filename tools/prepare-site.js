@@ -247,9 +247,9 @@ console.log('Wrote ' + out + ' (' + (html.length / 1024).toFixed(0) + ' KB), shi
    login, for review only. It runs on the prototype's own fourteen sample people,
    so it is deliberately NOT at /agent/ — putting invented commission figures in
    front of 130 real agents would be worse than showing them nothing. */
-/* wimpy is the lunch-ordering app (2026-09-10): its own sign-in (CB number + password since spec 009), no auth-gate — the
-   Worker's session scope is its lock. Served at /wimpy/, linked from the VAS Apps page. */
-for (const [srcDir, urlDir, label] of [['nicks_code', 'pulse', 'VAS'], ['tracker', 'tracker', 'Tracker Analytics'], ['agent', 'agent', 'Agent Analytics'], ['agent-preview', 'agent-preview', 'Agent Analytics (prototype)'], ['wimpy', 'wimpy', 'Wimpy Order']]) {
+/* The Wimpy lunch app left this site on 2026-10-09 (Spec Kit 018) — it is its own service (wimpy-service/, on Vercel or
+   as a container). site/_redirects forwards /wimpy/ to it so bookmarks keep working. */
+for (const [srcDir, urlDir, label] of [['nicks_code', 'pulse', 'VAS'], ['tracker', 'tracker', 'Tracker Analytics'], ['agent', 'agent', 'Agent Analytics'], ['agent-preview', 'agent-preview', 'Agent Analytics (prototype)']]) {
   const src = path.join(root, srcDir, 'index.html');
   if (!fs.existsSync(src)) { console.warn('NOTE: ' + srcDir + '/index.html not found — suite deploys without ' + label + '.'); continue; }
   fs.mkdirSync(path.join(outDir, urlDir), { recursive: true });
@@ -278,7 +278,7 @@ console.log('Wrote site/' + VT_REL + ' (embedded page).');
 // run's build id — a partial site/ exits nonzero and names the file.
 {
   const shells = ['index.html', 'pulse/index.html', 'tracker/index.html',
-    'agent/index.html', 'agent-preview/index.html', 'wimpy/index.html'];
+    'agent/index.html', 'agent-preview/index.html'];
   const bad = [];
   for (const rel of shells) {
     const p = path.join(outDir, rel);

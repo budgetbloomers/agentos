@@ -1,0 +1,4 @@
+- [x] T001 supabase/migration-059-wimpy-order-sheet.sql (view + grants), applied, queried
+- [x] T002 favicon + theme colour in wimpy-service/public/index.html; a test that the icon is a data URI
+- [x] T003 npm test; deploy; confirm live
+- [x] T004 (Nick, 10:05): the Wimpy card removed from the VAS Apps page; guard + CLAUDE.md updated; Pages redeployed

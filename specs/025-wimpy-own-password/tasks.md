@@ -1,0 +1,4 @@
+- [x] T001 migration-060 (column + reset trigger), applied
+- [x] T002 service: sign-in uses the Wimpy hash; changeWimpyPassword + POST /api/wimpy/password; page screen + hint
+- [x] T003 tests (signin section J, hosting route checks, live suite flow); deploy; live green
+- [x] T004 amendment: start password wimpy123 (AgentOS password never opens Wimpy), wimpy_password_is_default on sign-in + /me, page nudge; tests + drift guard + live check rewritten; deployed

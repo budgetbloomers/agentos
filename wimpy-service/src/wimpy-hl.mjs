@@ -4,8 +4,9 @@
  * Nick: "I gave you the private intergration key and location ID to shpw the users their order history, it must only
  * show their order history and no one elses".
  *
- * THE KEY AND THE LOCATION ARE WORKER SECRETS (WIMPY_HL_API_KEY, WIMPY_HL_LOCATION_ID — `wrangler secret put` at
- * release). They are never in this file, never in a reply and never in a log: every HighLevel error passes through
+ * THE KEY AND THE LOCATION ARE ENVIRONMENT VARIABLES OF THE WIMPY SERVICE (WIMPY_HL_API_KEY, WIMPY_HL_LOCATION_ID —
+ * Spec Kit 018, 2026-10-09: this module moved out of the Cloudflare Worker unchanged; Vercel env / the container's
+ * .env hold them). They are never in this file, never in a reply and never in a log: every HighLevel error passes through
  * redact() before it is stored or printed. Missing either one = "not configured": ordering is untouched, rows wait as
  * `pending`, and the history says the kitchen stages are not available.
  *

@@ -1,0 +1,5 @@
+# Tasks: live Wimpy verification (019)
+
+- [x] T001 `nicks_code/diagnostics/verify-wimpy-live.mjs` — sections A–E of plan.md (needs supabase.env + wimpy-service/.env; not in verify.yml, like the other live suites)
+- [x] T002 Run 2026-10-09 08:32 SAST against https://chatterbox-wimpy.vercel.app: 50 passed, 0 failed. Sign-in wrong/right, me, menu (9 items, Friday, Fully Loaded Dagwood, window open), empty history, an order in another name refused, ONE TEST order (1 × Mzansi Brekkie R45.90) accepted by the kitchen, shown in My orders at "New Order" (HighLevel reachable), retry with its secret ran and wrote kv:wimpy-hl-status, sign-out kills the token; Worker 410s, Pages 302s; trigger app_users_grant_wimpy enabled, integrity view clean; throwaway account removed.
+- [x] T003 Outcome recorded here and in memory. Left behind, labelled TEST: one kitchen slip and one HighLevel contact "Wimpy Livecheck" with its card (delete in the Wimpy sub-account). Retry report showed 1 failed + 1 stuck card from before today — see the session notes.

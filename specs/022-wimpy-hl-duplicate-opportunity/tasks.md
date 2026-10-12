@@ -1,0 +1,4 @@
+- [x] T001 allowDuplicateOpportunity=true — DONE 2026-10-09 ~10:00 SAST by Nick (not via the sub-account key: PUT /locations is agency-level and still 401s; the setting now reads true via GET). Proven: a second card on a test contact → 201.
+- [x] T002 read back via API: true
+- [x] T003 2 failed/stuck rows re-queued; retry via /api/wimpy/cron/retry → written 2; wimpy_order_sheet shows every order "on the kitchen board"
+- [x] Also proven: marking a card Won does NOT clear the duplicate rule (only deleting it or this setting does)

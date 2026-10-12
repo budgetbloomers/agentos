@@ -1,0 +1,5 @@
+# The image holds src/, public/ and package.json — nothing else. In particular never an env file or the tests.
+*
+!package.json
+!src/
+!public/

@@ -1,0 +1,2 @@
+- [x] T001 rename the Vercel project (API)
+- [x] T002 move the references; deploy Worker + Pages; guard + live suite green on the new address

@@ -15,10 +15,9 @@ compatibility_date = "2026-07-01"
 # there for days. The scheduled handler re-syncs the roster into every store every ten
 # minutes, with nothing open anywhere. Fingerprint-gated: no change, no writes.
 [triggers]
-crons = ["*/10 * * * *", "3,7,23,27,43,47 * * * *"]   # the tick; ONE trigger shared by the coaching wave (:03/:23/:43) and the Wimpy HighLevel retry (:07/:27/:47) — index.mjs SHARED_CRON picks by the scheduled minute; each firing has its own budget. A third trigger was never invoked (spec 015 R11)
-# Wimpy order history (spec 015) secrets, set at release with Nick's go-ahead — NEVER in this file:
-#   npx wrangler secret put WIMPY_HL_API_KEY
-#   npx wrangler secret put WIMPY_HL_LOCATION_ID
+crons = ["*/10 * * * *", "3,23,43 * * * *"]   # the tick, and the coaching wave (:03/:23/:43) — each firing has its own budget. The Wimpy HighLevel retry, which shared this trigger at :07/:27/:47 (spec 015 R11), left with the Wimpy service (Spec Kit 018, 2026-10-09)
+# The Wimpy HighLevel secrets are the Wimpy service's now (wimpy-service/.env, or Vercel environment variables). At the 018
+# release, remove them from this Worker:  npx wrangler secret delete WIMPY_HL_API_KEY  ·  npx wrangler secret delete WIMPY_HL_LOCATION_ID
 
 # REQUEST LOGS (Spec Kit 031, 2026-10-11 — Nick: "I get a lot of notification didnt reach the server, is something wrong
 # with supabase or agent os"). Cloudflare killed 102 requests for exceeding resources on 9 Oct and nothing said which.

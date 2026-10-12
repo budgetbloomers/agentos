@@ -1,0 +1,4 @@
+# Cloudflare Pages redirects — evaluated before any static file.
+# Wimpy Order left this site on 2026-10-09 (Spec Kit 018): it is its own service now. Bookmarks to /wimpy/ follow it.
+/wimpy/*  https://phoenix-wimpy.vercel.app/:splat  302
+/wimpy    https://phoenix-wimpy.vercel.app/  302

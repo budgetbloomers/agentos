@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Wimpy Order — Chatterbox</title>
 <meta name="theme-color" content="#d0021b">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><circle cx=%2232%22 cy=%2232%22 r=%2230%22 fill=%22%23d0021b%22/><circle cx=%2232%22 cy=%2232%22 r=%2224%22 fill=%22none%22 stroke=%22%23ffc72c%22 stroke-width=%223%22/><text x=%2232%22 y=%2243%22 font-family=%22Arial,Helvetica,sans-serif%22 font-size=%2230%22 font-weight=%22900%22 text-anchor=%22middle%22 fill=%22%23fff%22>W</text></svg>">   <!-- Spec Kit 023: the tab icon, inline (the CSP allows img-src data:) — a red roundel, yellow ring, W -->
 <!--
   WIMPY ORDER — the Chatterbox lunch app (2026-09-10; specs/wimpy-vas-apps-plan.md).
 
@@ -24,7 +25,7 @@
       2026-09-10: "they can have quantity just cant customize");
     · the order form asks for the CB number, name and surname, pre-filled from the account and
       typed by the person; the Worker refuses a CB that is not the signed-in person's own;
-    · orders are taken 08:00–17:00 SAST Mon–Fri; outside the window the menu reads, nothing adds,
+    · orders are taken 07:00–09:00 SAST Mon–Fri (Spec Kit 020; 08:00–17:00 before); outside the window the menu reads, nothing adds,
       and the Worker refuses regardless of what this page's clock says.
 
   THEME: Wimpy red and white with the yellow accent. The colour values below are placeholders
@@ -76,6 +77,7 @@ a{color:var(--w-red)}
 .msg{border-radius:12px;padding:10px 12px;font-size:13.5px;font-weight:700;margin:0 0 12px}
 .msg.bad{background:#fdecee;color:var(--w-bad);border:1px solid #f7c6cc}
 .msg.info{background:#fff3cf;color:#6b4d00;border:1px solid #f4dd8a}
+.linkbtn{background:none;border:0;padding:0;font:inherit;font-weight:800;color:inherit;text-decoration:underline;cursor:pointer}
 
 /* ---- page ---- */
 .wrap{max-width:1080px;margin:0 auto;padding:14px 14px 120px}
@@ -176,7 +178,7 @@ a{color:var(--w-red)}
 <div id="root"></div>
 <script>
 'use strict';
-var API='https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
+var API='';                                     // same origin as this page — the Wimpy service serves both (spec 018)
 var TKEY='cbx_wimpy_token';                     // never cbx_token — a lunch session is not a management one
 var U=null;                                     // {username, full_name, cb, role, scope}
 var WMENU=null, WCART=[], WCAT='breakfast', WDAY=null, WOPEN=false, WSTATE='order', WERR='', WBUSY=false, WDONE=null;
@@ -194,7 +196,7 @@ function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function api(path, body){
   var ep=API_EPOCH;
-  var o={method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-Cbx-Client':'v5'}};
+  var o={method:body?'POST':'GET',headers:{'Content-Type':'application/json'}};
   var t=null; try{ t=sessionStorage.getItem(TKEY); }catch(e){}
   if(t) o.headers.Authorization='Bearer '+t;
   if(body) o.body=JSON.stringify(body);
@@ -212,6 +214,37 @@ function wReset(){
   U=null; WMENU=null; WCART=[]; WCAT='breakfast'; WDAY=null; WOPEN=false; WSTATE='order'; WERR=''; WBUSY=false; WDONE=null; WNOTE='';
   WHO=whoBlank(); WHO_FOR='';
   WHIST=null; WHIST_BUSY=false; WHIST_ERR='';   // and their order history (spec 015)
+  WPW=wPwBlank();                                // and anything typed on the change-password screen (spec 025)
+}
+
+/* ---------- the Wimpy-only password (Spec Kit 025): change it here; the Agent Analytics one stays as it is ---------- */
+function wPwBlank(){ return {cur:'',nw:'',again:'',msg:'',bad:false,busy:false}; }
+var WPW=wPwBlank();
+function wPasswordPage(){
+  return '<div class="card" style="max-width:520px;margin:0 auto"><h3>Change your Wimpy password</h3>'
+    +'<p class="why">This changes the password for Wimpy only — your Agent Analytics password stays as it is. If you forget this one, ask your team leader to reset your password; that puts Wimpy back on the start password.</p>'
+    +(WPW.msg?'<div class="msg '+(WPW.bad?'bad':'info')+'">'+esc(WPW.msg)+'</div>':'')
+    +'<form id="pf" autocomplete="off">'
+    +'<div class="f"><label class="lab" for="pcur">Current password'+(U&&U.wimpy_password_is_default?' (the start password)':'')+'</label><input class="inp" id="pcur" type="password" autocomplete="current-password" value="'+esc(WPW.cur)+'"></div>'
+    +'<div class="f"><label class="lab" for="pnew">New password (10 or more characters)</label><input class="inp" id="pnew" type="password" autocomplete="new-password" value="'+esc(WPW.nw)+'"></div>'
+    +'<div class="f"><label class="lab" for="pagain">New password again</label><input class="inp" id="pagain" type="password" autocomplete="new-password" value="'+esc(WPW.again)+'"></div>'
+    +'<div class="actions"><button type="button" class="btn" id="wpPwBack">Back to menu</button>'
+    +'<button class="btn primary" type="submit"'+(WPW.busy?' disabled':'')+'>'+(WPW.busy?'Saving…':'Change password')+'</button></div></form></div>';
+}
+function wChangePassword(){
+  if(WPW.busy) return;
+  WPW.cur=String(($('pcur')||{}).value||''); WPW.nw=String(($('pnew')||{}).value||''); WPW.again=String(($('pagain')||{}).value||'');
+  if(!WPW.cur||!WPW.nw||!WPW.again){ WPW.msg='Fill in all three boxes.'; WPW.bad=true; return render(); }
+  if(WPW.nw.length<10){ WPW.msg='The new password must be at least 10 characters.'; WPW.bad=true; return render(); }
+  if(WPW.nw!==WPW.again){ WPW.msg='The two new passwords do not match.'; WPW.bad=true; return render(); }
+  WPW.busy=true; WPW.msg=''; render();
+  api('/api/wimpy/password',{current:WPW.cur,'new':WPW.nw}).then(function(r){
+    WPW.busy=false;
+    if(r.ok&&r.json&&r.json.ok){ WPW=wPwBlank(); WPW.msg='Done — use the new password for Wimpy from now on.'; if(U) U.wimpy_password_is_default=false; }
+    else if(r.status===401&&!(r.json&&/current/i.test(r.json.error||''))){ signOut(); return; }   // a dead session, not a wrong password
+    else { WPW.msg=(r.json&&r.json.error)||'The password could not be changed. Try again.'; WPW.bad=true; WPW.cur=''; }
+    render();
+  });
 }
 
 /* ---------- money: display only, the Worker re-prices ---------- */
@@ -229,7 +262,7 @@ function wTotalCents(){ return WCART.reduce(function(n,l){ return n+wLineCents(l
 function wimpyOpenNow(){ return !!(WMENU&&WMENU.window&&WMENU.window.open); }
 var WWIN_LAST=null;
 setInterval(function(){
-  var d=new Date(Date.now()+2*3600000), open=d.getUTCDay()>=1&&d.getUTCDay()<=5&&d.getUTCHours()>=8&&d.getUTCHours()<17;
+  var d=new Date(Date.now()+2*3600000), open=d.getUTCDay()>=1&&d.getUTCDay()<=5&&d.getUTCHours()>=7&&d.getUTCHours()<9;   // mirrors WINDOW in src/wimpy.mjs (spec 020) — only to know WHEN to re-ask; the server decides
   if(WWIN_LAST!==null&&open!==WWIN_LAST&&U) wLoadMenu();
   WWIN_LAST=open;
 },30000);
@@ -247,9 +280,9 @@ function loginScreen(msg, bad, keepCb){
     +'<p class="hint">Managers: type your username here.</p>'
     +'<label class="lab" for="pw" style="margin-top:14px">Password</label>'
     +'<input class="inp" id="pw" name="pw" type="password" autocomplete="current-password" placeholder="Your password"'+(keepCb?' autofocus':'')+'>'
-    +'<p class="hint">The password you use for Agent Analytics.</p>'
+    +'<p class="hint">Your Wimpy password — the start password your team leader gave you, until you change it inside the app. It is not your Agent Analytics password.</p>'
     +'<button class="btn primary wide" id="go" type="submit" style="margin-top:14px">Let’s eat</button>'
-    +'<p class="foot">Orders 08:00–17:00, Monday to Friday. Forgotten your password? Ask your team leader or manager to reset it.</p>'
+    +'<p class="foot">Orders 07:00–09:00, Monday to Friday. Forgotten your password? Ask your team leader or manager to reset it.</p>'
     +'</form></div></div>';
   /* autofocus is ignored on markup put in by innerHTML once the page has focused something — focus by hand, so a
      second try after a refusal starts in the password box */
@@ -269,7 +302,7 @@ function loginScreen(msg, bad, keepCb){
   };
 }
 function signOut(){
-  api('/api/logout',{}).then(function(){},function(){});   // sent with this person's token, before the reset drops it
+  api('/api/wimpy/logout',{}).then(function(){},function(){});   // sent with this person's token, before the reset drops it
   loginScreen('Signed out. See you tomorrow.');            // resets everything (wReset)
 }
 
@@ -277,7 +310,7 @@ function signOut(){
 function boot(){
   var t=null; try{ t=sessionStorage.getItem(TKEY); }catch(e){}
   if(!t){ loginScreen(); return; }
-  api('/api/me').then(function(r){
+  api('/api/wimpy/me').then(function(r){
     if(!r.ok||!r.json||!r.json.user){ loginScreen(r.status===426?'This page is an outdated copy — press Ctrl+Shift+R.':''); return; }
     U=r.json.user;
     var acct=String(U.cb||U.username||'').toUpperCase();
@@ -318,7 +351,7 @@ function shell(inner){
     +'<div class="wrap">'+inner+'</div>';
   var o=$('out'); if(o) o.onclick=signOut;
 }
-/* the order form as typed, read into WHO — on Review, and before ANY re-render (spec 014, A5: the 08:00/17:00 window
+/* the order form as typed, read into WHO — on Review, and before ANY re-render (spec 014, A5: the 07:00/09:00 window
    flip re-asks for the menu and re-renders; it used to put back what WHO held before the person started typing) */
 var WFORM_IDS=['fcb','ffn','fln','fph','fnt'];
 function wReadForm(){
@@ -338,6 +371,7 @@ function render(){
 }
 function wPaint(){
   if(WSTATE==='history'){ shell(wHistoryPage()); wire(); return; }   // needs no menu — and a window-flip menu reload keeps it open
+  if(WSTATE==='password'){ shell(wPasswordPage()); wire(); return; }  // spec 025 — needs no menu either
   if(!WMENU){ shell('<div class="card"><p class="why">Loading the menu…</p></div>'); return; }
   if(WMENU.error){ shell('<div class="card"><p class="why">'+esc(WMENU.error)+'</p><button type="button" class="btn" id="retry">Try again</button></div>'); var rt=$('retry'); if(rt) rt.onclick=wLoadMenu; return; }
   if(WSTATE==='done'){ shell(wDonePage()); wire(); return; }
@@ -408,7 +442,11 @@ function wMenuPage(){
   return wWindowBar()+wToolsHTML()+wNoteHTML()+header+hero+week+'<div class="wp-wrap"><div>'+cats+grid+'</div>'+(open?wCartHTML():'')+'</div>';
 }
 /* "My orders" sits on the menu whether ordering is open or closed — history is readable whenever the person can sign in */
-function wToolsHTML(){ return '<div class="wp-tools"><button type="button" class="btn" id="wpMine">🧾 My orders</button></div>'; }
+function wToolsHTML(){
+  /* still on the start password (spec 025): say so above the menu — anyone who knows a CB number could order in that name */
+  var nudge=(U&&U.wimpy_password_is_default)?'<div class="msg info" id="wpPwNudge">You are still on the Wimpy start password. <button type="button" class="linkbtn" id="wpPwNow">Choose your own</button> so nobody else can order in your name.</div>':'';
+  return nudge+'<div class="wp-tools"><button type="button" class="btn" id="wpPw" style="margin-right:8px">🔑 Change password</button><button type="button" class="btn" id="wpMine">🧾 My orders</button></div>';
+}
 
 /* ---------- my orders (spec 015): the Worker's answer, painted ---------- */
 var WDAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -567,6 +605,10 @@ function wire(){
   var mine=$('wpMine'); if(mine) mine.onclick=function(){ WSTATE='history'; WHIST=null; wLoadHistory(); };
   var hr=$('wpHistRefresh'); if(hr) hr.onclick=function(){ if(!WHIST_BUSY) wLoadHistory(); };
   var hb=$('wpHistBack'); if(hb) hb.onclick=function(){ WSTATE='order'; WHIST=null; WHIST_ERR=''; render(); };   // nothing of it kept once closed
+  var pw=$('wpPw'); if(pw) pw.onclick=function(){ WSTATE='password'; WPW=wPwBlank(); render(); };
+  var pn=$('wpPwNow'); if(pn) pn.onclick=function(){ WSTATE='password'; WPW=wPwBlank(); render(); };
+  var pf=$('pf'); if(pf) pf.onsubmit=function(e){ e.preventDefault(); wChangePassword(); };
+  var pb=$('wpPwBack'); if(pb) pb.onclick=function(){ WSTATE='order'; WPW=wPwBlank(); render(); };
 }
 
 boot();

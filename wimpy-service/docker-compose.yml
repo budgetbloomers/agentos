@@ -1,0 +1,29 @@
+# Wimpy Order as a container (Spec Kit 018).
+#   node scripts/env.mjs        # assembles .env from ../supabase.env + ../wimpy-highlevel.env (git-ignored, never committed)
+#   docker compose up -d --build
+#   curl -s localhost:8080/api/health
+services:
+  wimpy:
+    build: .
+    image: chatterbox-wimpy
+    container_name: chatterbox-wimpy
+    restart: unless-stopped
+    stop_grace_period: 30s      # > the server's 20 s drain: a card being written on SIGTERM is finished, never SIGKILLed (review 018)
+    # PLAIN HTTP ON LOCALHOST ONLY. Passwords and session tokens travel in this traffic, so the public listener must be a
+    # TLS proxy (Caddy/nginx/Traefik) on the same host that forwards to 127.0.0.1:8080 and appends x-forwarded-for — then set
+    # TRUST_PROXY=1 below, or every client shares the proxy's address and one bad actor's 100 failures close sign-in for the
+    # whole floor for ten minutes (security review 018 M1).
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - .env                    # SUPABASE_URL, SUPABASE_SECRET_KEY, WIMPY_HL_API_KEY, WIMPY_HL_LOCATION_ID, (WIMPY_WEBHOOK_URL)
+    environment:
+      PORT: "8080"
+      RETRY_EVERY_MIN: "20"     # the HighLevel card retry, in-process (the Worker ran it at :07/:27/:47); 0 = off
+      # TRUST_PROXY: "1"        # REQUIRED behind the TLS proxy (the RIGHTMOST x-forwarded-for entry is the client)
+    read_only: true             # the service writes nothing to disk
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m

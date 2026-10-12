@@ -1,0 +1,3 @@
+- [x] T001 WINDOW 07:00–09:00 + refusal message + page flip/footer + VAS Apps card + CLAUDE.md (2026-10-09)
+- [x] T002 menu/history/page-sweep tests and the live suite re-based onto the new hours — npm test 5/5 files green (216 · 61 · 171 · 19 · 61)
+- [x] T003 Deployed: Vercel (page shows "Orders 07:00–09:00") and Pages 777b6167 (card text); verify-wimpy-live run after deploy — see the session notes. Closed state unchanged by design: menu and My orders readable, nothing orderable.

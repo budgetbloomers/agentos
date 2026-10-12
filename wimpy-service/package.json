@@ -1,0 +1,21 @@
+{
+  "name": "chatterbox-wimpy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Wimpy Order — the Chatterbox lunch app as its own service (Spec Kit 018). One codebase: a dependency-free Node server (Docker) and a Vercel function. The Docker image installs nothing; @vercel/functions is the Vercel adapter's only dependency.",
+  "main": "src/app.mjs",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "test": "node test/run.mjs",
+    "env": "node scripts/env.mjs"
+  },
+  "dependencies": {
+    "@vercel/functions": "^2.0.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

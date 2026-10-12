@@ -5,7 +5,7 @@
  * IRON RULE: the LLM explains numbers, it never computes them.
  */
 import { db } from './db.mjs';
-import { login, logout, session, hashPassword, changePassword, signinWimpy } from './auth.mjs';
+import { login, logout, session, hashPassword, changePassword } from './auth.mjs';
 import { retrieveKB } from './kb.mjs';
 import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWave } from './coaching.mjs';
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, reportsRequest, listDigestMonths, overview, overviewRequest, cmCoaching, coachingOthers, agentDetail, normCb } from './portal.mjs';
@@ -15,8 +15,6 @@ import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed,
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { draftsGet, draftsPost } from './drafts.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, rosterTargets, listTargetGroups, listTargetGroupValues } from './campaign.mjs';
-import { wimpyMenu, submitWimpyOrder, WIMPY_HISTORY_SINCE } from './wimpy.mjs';
-import { retryDueOrders, listMyOrders, dbWhy } from './wimpy-hl.mjs';   // spec 015: the Wimpy cron's HighLevel retry; My orders
 import { syncAgentLogins, syncTeamLeaders, syncCampaigns, publishAgentList } from './provision.mjs';
 import { runHealthChecks, dailySnapshots, hygiene, logKvWrite } from './health.mjs';
 import { kickRunner } from './runner.mjs';
@@ -286,30 +284,25 @@ async function removeFailedBiBatch(DB, batchId, span) {
 }
 const REVIEW_REMOVALS = 5;
 const COACHING_CRON = "3,23,43 * * * *";                 // the coaching-wave trigger (wrangler.toml crons) — its own invocation, its own subrequest budget
-const WIMPY_CRON = "7,27,47 * * * *";                    // the Wimpy HighLevel retry (spec 015, wrangler.toml crons) — its own invocation, its own budget
 const TICK_CRON = '*/10 * * * *';
-/* ONE TRIGGER FOR COACHING AND THE WIMPY RETRY (spec 015 R11, 2026-10-08). The third trigger "7,27,47" was registered with
-   Cloudflare (its schedules API lists it) but NEVER invoked — 0 runs in 18 h while "3,23,43" ran 54 times
-   (workersInvocationsScheduled). So both jobs ride one trigger: every firing is still its own invocation with its own
-   50-subrequest budget, and the SCHEDULED MINUTE (event.scheduledTime) says which job it is — 3/23/43 coaching, 7/27/47
-   Wimpy. The two old strings stay recognised in case Cloudflare ever hands one over. */
-const SHARED_CRON = "3,7,23,27,43,47 * * * *";
-const WIMPY_MINUTES = new Set([7, 27, 47]);
-/* WHICH TRIGGER IS THIS? AN EXPLICIT MATCH (spec 015, 2026-10-07). Until now anything that was not the tick ran the
-   coaching wave — fine with two triggers, wrong with three: the Wimpy cron would have spent the coaching budget, and a
-   trigger added later would silently do the same. Matched on the minute field as a SET (whitespace and order forgiven —
-   the 17 Sep "strict compare never matched" worry), the other four fields must be `*`; anything else is 'unknown',
-   logged by name and run as the coaching wave (the old fallback — see scheduled()). No cron string at all (a hand-run scheduled(), as the roster suites do) is the tick. */
-function cronKind(expr, scheduledTime) {
+/* THE WIMPY LUNCH APP IS ITS OWN SERVICE (Spec Kit 018, 2026-10-09; Nick: "remove it from vas analytics and put that on
+   vercel"). Its sign-in, menu, order, HighLevel ledger and retry run in wimpy-service/ (Vercel, or a container). This
+   Worker answers 410 with the address on every former Wimpy route and refuses a wimpy-scoped session everywhere; the
+   Wimpy retry that rode the coaching trigger at :07/:27/:47 (spec 015 R11) left with it, so two triggers again. The
+   health alerts for the keys the service writes (kv:wimpy-hl-status, kv:wimpy-ledger-failed) stay in health.mjs.
+   ONE address, written here, in site/_redirects and on the VAS Apps card — verify-wimpy-removal checks they agree. */
+const WIMPY_URL = 'https://phoenix-wimpy.vercel.app';
+/* WHICH TRIGGER IS THIS? AN EXPLICIT MATCH (spec 015, 2026-10-07). Until then anything that was not the tick ran the
+   coaching wave — fine with two triggers, wrong with three, and a trigger added later would silently do the same.
+   Matched on the minute field as a SET (whitespace and order forgiven — the 17 Sep "strict compare never matched" worry),
+   the other four fields must be `*`; anything else is 'unknown', logged by name and run as the coaching wave (the old
+   fallback — see scheduled()). No cron string at all (a hand-run scheduled(), as the roster suites do) is the tick. */
+function cronKind(expr) {
   const s = String(expr || '').replace(/\s+/g, ' ').trim();
   if (!s) return 'tick';
   const minutes = (e) => { const f = e.split(' '); return f.length === 5 && f.slice(1).every((x) => x === '*') ? f[0].split(',').sort().join(',') : null; };
   const m = minutes(s);
-  if (m !== null && m === minutes(SHARED_CRON)) {
-    const t = Number(scheduledTime);
-    return Number.isFinite(t) && t > 0 && WIMPY_MINUTES.has(new Date(t).getUTCMinutes()) ? 'wimpy' : 'coaching';   // no time → the coaching wave, as before
-  }
-  if (m !== null) for (const [kind, e] of [['tick', TICK_CRON], ['coaching', COACHING_CRON], ['wimpy', WIMPY_CRON]]) if (m === minutes(e)) return kind;
+  if (m !== null) for (const [kind, e] of [['tick', TICK_CRON], ['coaching', COACHING_CRON]]) if (m === minutes(e)) return kind;
   return 'unknown';
 }
 /* who sees the health banner (Nick, 2026-09-15) — `nick` is Nicholas's second admin login */
@@ -565,27 +558,18 @@ export default {
        or else the coaching wave"). Every scheduled event is also stamped to kv:cron-log so the next such question is a
        read; `tick` stays in the stamp beside `kind` for whoever reads the older shape. */
     const cronStr = String(event.cron || '').replace(/\s+/g, ' ').trim();
-    const kind = cronKind(cronStr, event.scheduledTime);
+    const kind = cronKind(cronStr);
     const isTick = kind === 'tick';
     ctx.waitUntil(DB.insert('rules', [{ key: 'kv:cron-log', value: { last: cronStr, at: new Date().toISOString(), tick: isTick, kind }, updated_by: 'cron', updated_at: new Date().toISOString() }], true).catch(() => {}));
     /* An UNKNOWN trigger keeps the pre-015 fallback — the coaching wave (review, 2026-10-07): on 17 Sep the strict compare
        never matched what Cloudflare handed over and the wave only ran because "not the tick" fell through to it. Doing
        nothing would silently stop the coaching snapshot on the next such surprise; the Wimpy retry is never a fallback. */
     if (kind === 'unknown')
-      console.warn('[cron] unknown trigger "' + cronStr + '" — running the coaching wave as the fallback (known: ' + TICK_CRON + ' · ' + SHARED_CRON + ')');
+      console.warn('[cron] unknown trigger "' + cronStr + '" — running the coaching wave as the fallback (known: ' + TICK_CRON + ' · ' + COACHING_CRON + ')');
     if (kind === 'coaching' || kind === 'unknown') {
       ctx.waitUntil((async () => {
         try { const cw = await snapshotCoachingWave(env, DB); console.info('[cron:coaching] ' + JSON.stringify(cw)); }
         catch (e) { console.warn('[cron:coaching] failed: ' + (e && e.message || e)); }
-      })());
-      return;
-    }
-    /* THE WIMPY CRON (spec 015): orders whose HighLevel card failed or never ran are retried here, ≤ 5 per run, on
-       this trigger's own 50-subrequest budget (wimpy-hl.mjs retryDueOrders; kv:wimpy-hl-status is its report). */
-    if (kind === 'wimpy') {
-      ctx.waitUntil((async () => {
-        try { const w = await retryDueOrders(env, DB); console.info('[cron:wimpy] ' + JSON.stringify(w)); }
-        catch (e) { console.warn('[cron:wimpy] failed: ' + dbWhy(env, e)); }   // redacted: a PostgREST error can quote a row (review L5)
       })());
       return;
     }
@@ -779,14 +763,11 @@ export default {
         // token also in body: cross-origin pages use Bearer (cookie is same-origin only)
         return json({ user: r.user, token: r.token });
       }
-      /* THE WIMPY SIGN-IN (2026-09-10; password since Spec Kit 009, 2026-10-06): a CB number and the
-         person's own password, the same check and lock as /api/login, and a session scoped to
-         /api/wimpy/* — auth.mjs signinWimpy has the rules and the per-network limit. */
-      if (path === '/api/wimpy/signin' && req.method === 'POST') {
-        const r = await signinWimpy(DB, req, await req.json().catch(() => ({})), ctx);
-        if (!r.ok) return json({ error: r.error }, r.status);
-        return json({ user: r.user, token: r.token });
-      }
+      /* WIMPY ORDERING LEFT THIS WORKER (Spec Kit 018, 2026-10-09): the sign-in, the menu, the order, My orders and the
+         retry all live in wimpy-service/ at WIMPY_URL. Every former route — with or without a session, whatever the
+         method — answers 410 in words, so a cached old page fails by naming the new address. */
+      if (path.startsWith('/api/wimpy/') || path.startsWith('/api/portal/wimpy/'))
+        return json({ error: 'Wimpy ordering has moved to its own app — open ' + WIMPY_URL + ' and sign in with your CB number and password.' }, 410);
 
       // Referrals-pipe health: NO auth and NO data — booleans and counts only, so the
       // route/secrets/HighLevel legs can each be verified when the column reads 0.
@@ -808,6 +789,12 @@ export default {
       }
 
       const user = await session(DB, req);
+      /* A WIMPY-SCOPED SESSION REACHES NOTHING HERE ANY MORE (Spec Kit 018, 2026-10-09). Until the move, /api/me and
+         /api/logout answered one so the Wimpy page could show a name and sign out; the Wimpy service does both itself
+         now, and the only session this Worker has any business with is a full one (or the referrals pull's). Refused
+         above /api/me, above the agent-digest route, above the gate — every route alike. */
+      if (user && user.scope === 'wimpy')
+        return json({ error: 'This sign-in is for Wimpy orders only — open ' + WIMPY_URL + '.' }, 403);
       /* token_hash is the exact value stored in app_sessions — it identifies the live
          session and has no use in a browser, so it is stripped here rather than shipped
          into window.CBX_USER (audit round 4, 2026-08-28). */
@@ -880,16 +867,10 @@ export default {
       // Everything below requires a session.
       if (!user) return json({ error: 'Sign in required.' }, 401);
 
-      /* ---------- WIMPY SESSION SCOPE (2026-09-10) ----------
-         A session minted by the Wimpy sign-in (scope 'wimpy') buys lunch and reaches
-         NOTHING else — not /api/kv, not the portal, not the roster — whatever the role
-         on the account. Above the role lockdown so it applies to every role alike;
-         /api/me and /api/logout sit above the gate and still answer, which is what the
-         Wimpy page needs to show a name and to sign out. */
-      if (user.scope === 'wimpy' && !path.startsWith('/api/wimpy/'))
-        return json({ error: 'This sign-in is for Wimpy orders only.' }, 403);
-      /* A REFERRALS-SCOPED SESSION (review L2, spec 002): minted by tools/sync-referrals.mjs for the scheduled pull, it may
-         call GET /api/referrals and NOTHING else — whatever role the account behind it has. Same shape as the wimpy fence. */
+      /* ---------- SESSION SCOPES ----------
+         A wimpy-scoped session was refused above, straight after the session read (Spec Kit 018): it reaches nothing
+         here at all. A REFERRALS-SCOPED SESSION (review L2, spec 002): minted by tools/sync-referrals.mjs for the
+         scheduled pull, it may call GET /api/referrals and NOTHING else — whatever role the account behind it has. */
       if (user.scope === 'referrals' && !(path === '/api/referrals' && req.method === 'GET'))
         return json({ error: 'This sign-in is for the referrals pull only.' }, 403);
 
@@ -1146,30 +1127,6 @@ export default {
         } catch (e) { r = { status: 502, body: { error: 'HighLevel did not answer: ' + String(e.message || e).slice(0, 160) } }; }
         return json(r.body, r.status);
       }
-
-      /* ---------- WIMPY ORDERING — its own app since 2026-09-10 ----------
-         The menu is served from the Worker so a price lives in exactly one file,
-         and the order is POSTed from here because the page's CSP allows it to
-         reach this Worker and nothing else. Reachable by a wimpy-scoped session
-         (the app's own sign-in), by a full agent session (on PORTAL_ALLOWED) and
-         by any management session. The old /api/portal/wimpy/* paths answer 410
-         for one release so a cached Agent Analytics tab fails in words. */
-      if (path === '/api/wimpy/menu' && req.method === 'GET') return json(wimpyMenu());
-      if (path === '/api/wimpy/order' && req.method === 'POST') {
-        /* ctx (spec 015): the order's HighLevel card is written after this reply, inside this invocation's budget */
-        const r = await submitWimpyOrder(env, user, await req.json().catch(() => ({})), Date.now(), ctx);
-        return json(r.body, r.status);
-      }
-      /* MY ORDERS (Spec Kit 015 — "it must only show their order history and no one elses"). Inside the wimpy fence
-         (a wimpy-scoped session reaches it; a referrals one is refused above), on PORTAL_ALLOWED for a full agent
-         session. listMyOrders is handed the SESSION user and nothing from the request — no query string, body or
-         header can change whose orders come back. no-store: a shared desk's browser keeps no copy. */
-      if (path === '/api/wimpy/orders' && req.method === 'GET') {
-        const r = await listMyOrders(env, DB, user, ctx, { since: WIMPY_HISTORY_SINCE });
-        return json(r.body, r.status, { 'Cache-Control': 'no-store' });
-      }
-      if (path.startsWith('/api/portal/wimpy/'))
-        return json({ error: 'Wimpy ordering has moved to its own app — open Wimpy Order from the VAS Analytics Apps page and sign in with your CB number and password.' }, 410);
 
       /* ---------- CAMPAIGN ASSISTANCE — team leader → campaign manager ---------- */
       if (path.startsWith('/api/portal/cm/')) {

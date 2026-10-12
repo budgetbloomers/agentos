@@ -402,8 +402,10 @@ export function evaluateFreshness(t) {
       break;
     }
   }
-  /* WIMPY ORDER CARDS (Spec Kit 015, 2026-10-07). The Wimpy cron (wimpy-hl.mjs retryDueOrders) writes
-     kv:wimpy-hl-status every run: counts only, no person in it. A row is `stuck` after 8 failed tries — the kitchen
+  /* WIMPY ORDER CARDS (Spec Kit 015, 2026-10-07; the writer moved to the Wimpy service, Spec Kit 018, 2026-10-09). The
+     service's retry (wimpy-service/src/wimpy-hl.mjs retryDueOrders — Vercel Cron, or the container's timer) writes
+     kv:wimpy-hl-status every run: counts only, no person in it. This Worker only READS it, so the alerts below keep
+     reaching the same people. A row is `stuck` after 8 failed tries — the kitchen
      has that order (n8n), but its HighLevel card never arrived, so the person's My orders shows it as "not on the
      kitchen board yet" for ever. Pending/failed rows are being retried and raise nothing; an unconfigured HighLevel
      raises only while orders are waiting on it. `wimpyHl` absent = the cron has not run: no opinion. A ledger insert
@@ -418,14 +420,14 @@ export function evaluateFreshness(t) {
         + String(wh.last_error || 'none recorded').slice(0, 160) + '. Fix the cause, then re-queue: update wimpy_orders set hl_state = \'pending\', hl_tries = 0, hl_next_at = now() where hl_state = \'stuck\'.',
       since: 'wimpy-hl' });
     if (wh.configured === false && waitingN > 0) alerts.push({ id: 'wimpy-hl-not-configured', severity: 'warning',
-      message: waitingN + ' Wimpy order' + (waitingN === 1 ? ' is' : 's are') + ' waiting for a HighLevel card because WIMPY_HL_API_KEY / WIMPY_HL_LOCATION_ID are not set on the Worker. '
-        + 'Ordering works; My orders shows no kitchen stage until they are set (npx wrangler secret put, in worker/).',
+      message: waitingN + ' Wimpy order' + (waitingN === 1 ? ' is' : 's are') + ' waiting for a HighLevel card because WIMPY_HL_API_KEY / WIMPY_HL_LOCATION_ID are not set on the Wimpy service. '
+        + 'Ordering works; My orders shows no kitchen stage until they are set (Vercel environment variables, or the container\'s .env — see wimpy-service/README.md).',
       since: 'wimpy-hl' });
   }
   const wl = t.wimpyLedgerFailed && typeof t.wimpyLedgerFailed === 'object' ? t.wimpyLedgerFailed : null;
   if (wl && wl.at && now - ms(wl.at) < 24 * HOUR) alerts.push({ id: 'wimpy-ledger-failed', severity: 'warning',
     message: 'A Wimpy order reached the kitchen but could not be recorded for My orders (' + sast(ms(wl.at)) + ': ' + String(wl.error || '').slice(0, 120)
-      + ') — that person will not see it in their history. Check wimpy_orders (migration-055 applied?) and the Worker log.',
+      + ') — that person will not see it in their history. Check wimpy_orders (migration-055 applied?) and the Wimpy service log.',
     since: wl.at });
   /* No alert about the start password: keeping it is allowed (Nick, 2026-09-08 — "only if they want
      to"). accounts_on_default_password remains the audit view for whoever asks. */

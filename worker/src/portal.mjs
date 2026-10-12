@@ -41,13 +41,8 @@ export const PORTAL_ALLOWED = new Set([
   '/api/me',
   '/api/logout',
   '/api/password',
-  /* The Wimpy app (2026-09-10). Its own sign-in mints a wimpy-scoped session that index.mjs
-     confines to these two; a FULL agent session (Agent Analytics) may reach them as well. They
-     answer for the caller alone: the menu, and the caller's own order. */
-  '/api/wimpy/menu',
-  '/api/wimpy/order',
-  /* My orders (spec 015): the caller's OWN order history — owner from the session alone (wimpy-hl.mjs listMyOrders). */
-  '/api/wimpy/orders',
+  /* The Wimpy routes (menu, order, My orders) left this list with the lunch app on 2026-10-09 (Spec Kit 018): it is its
+     own service now, and an agent session has nothing to reach here for lunch. */
   '/api/portal/me',
   '/api/portal/overview',
   '/api/portal/agent',
@@ -100,7 +95,7 @@ export const PORTAL_ALLOWED = new Set([
   /* THE CAMPAIGN MANAGER'S VIEW OF HIS TEAM LEADERS' COACHING (spec 001-cm-view-signoff, C3). Manager only — the
      handler 403s everyone else — and scoped server-side to the leaders of the manager's own campaigns. */
   '/api/portal/cm-coaching',
-  /* Wimpy ordering moved to /api/wimpy/* (listed above) when it became its own app on
+  /* Wimpy ordering became its own app on
      2026-09-10; the old /api/portal/wimpy/* paths answer 410 in index.mjs and are no longer
      declared here — verify-agent-portal F5 fails on a declared route the Worker does not serve. */
 ]);
