@@ -61,7 +61,7 @@ Agentic OS for The Chatterbox call centre (Durban, ZA). Three parts: a single-fi
 - `node tools/prepare-site.js` → regenerates `site/index.html` (injects storage shim).
 - `/deploy` skill runs the full flow: prepare → verify → `npx wrangler pages deploy site`.
 - **Before real data goes live: Cloudflare Access (Zero Trust) in front of the Pages domain.** Public URL + agent PII + campaign economics = POPIA incident.
-- `site/_headers` carries the CSP — cdnjs.cloudflare.com must stay allowed (XLSX/Papa/Chart.js CDN) and `'unsafe-inline'` is required (inline script + onclick handlers).
+- `site/_headers` carries the CSP — cdnjs.cloudflare.com must stay allowed (XLSX/Papa/Chart.js CDN) and `'unsafe-inline'` is required (inline script + onclick handlers). **`frame-src https://coaching-hub-psi.vercel.app` is the ONE origin the suite frames (Spec Kit `specs/033-cm-coaching-hub-tab/`, 2026-10-13 — Nick: "the full view of the coaching hub exactly like it is, built in the campaign manager tab … I dont want the link"):** the campaign manager's Coaching Hub tab (`cm_hub`, below Reports) runs the live Hub app in ONE iframe kept OUTSIDE `#root` (shell() rewrites #root on every render and a frame inside it would reload and lose the manager's place), `src` assigned once (`?theme=agentos` — the campaign-manager palette is a theme built into the Hub's own repo, `budgetbloomers/coaching-hub` branch `feat/agentos-theme`), hidden off the tab, dropped on sign-out; failure is words + Retry, never a link. `connect-src` and `frame-ancestors 'self'` are unchanged. Guarded by `verify-cm-view` T, `verify-agent-analytics` (headers), `verify-cm-live --live` H (the Hub's frame headers, the deployed CSP, the Hub theme).
 
 ## Workflows
 

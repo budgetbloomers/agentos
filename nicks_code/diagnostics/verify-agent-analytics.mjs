@@ -1662,6 +1662,28 @@ head('Links tab (Nick, 2026-09-08) — agent view only');
 /indexOf\('data:image\/'\)===0/.test(PAGE) ? ok('only a data-URI screenshot the Worker served is ever painted') : bad('screenshot source not guarded');
 /rel="noopener noreferrer"/.test(PAGE) && /lk-off/.test(PAGE) ? ok('live links open in a new tab; a link without an address is shown greyed, never invented') : bad('link cards missing the safe-open or the greyed state');
 
+head('Campaign manager Coaching Hub tab (Spec Kit 033) — the Pages CSP frames exactly one origin');
+{
+  /* The tab shows the live Hub app inside the page. Our own CSP had no frame-src (so frames fell back to
+     default-src 'self' and the Hub was blocked by this side); the fix is ONE directive naming ONE origin — nothing
+     else in the policy moves, connect-src stays as it was (NN10). */
+  const csp = (rd('site', '_headers').match(/Content-Security-Policy:([^\n]*)/) || [])[1] || '';
+  const frameSrc = ((csp.match(/frame-src([^;]*)/) || [])[1] || '').trim();
+  frameSrc === 'https://coaching-hub-psi.vercel.app'
+    ? ok('site/_headers: frame-src names the Coaching Hub origin and nothing else')
+    : bad('site/_headers: frame-src is not exactly the Coaching Hub origin', JSON.stringify(frameSrc));
+  /frame-ancestors 'self'/.test(csp) ? ok('frame-ancestors \'self\' still there (this site is not framed by others)') : bad('frame-ancestors changed');
+  /connect-src 'self' https:\/\/chatterbox-agentos-api\.chatterbox-agentos\.workers\.dev https:\/\/fxvnjhfdenycxxuklord\.supabase\.co;/.test(csp)
+    ? ok('connect-src unchanged — the browser still talks only to the Worker and the storage host')
+    : bad('connect-src moved');
+  /var HUB_TAB_URL=HUB_APP_URL\+'\?theme=agentos';/.test(PAGE)
+    ? ok('the frame address is the Hub with ?theme=agentos — the campaign manager palette (Hub repo, feat/agentos-theme)')
+    : bad('HUB_TAB_URL is not HUB_APP_URL + ?theme=agentos');
+  /cmHubEnsure\(\)/.test(PAGE) && /cmHubDrop\(\)/.test(PAGE) && /document\.body\.appendChild\(/.test(PAGE)
+    ? ok('one frame outside #root (cmHubEnsure), dropped on sign-out (cmHubDrop)')
+    : bad('the persistent-frame functions are missing');
+}
+
 await Promise.all(PENDING);
 head(fails ? `\x1b[31m${fails} of ${checks} checks FAILED — do not deploy\x1b[0m`
            : `\x1b[32mAll ${checks} checks passed\x1b[0m`);

@@ -114,6 +114,11 @@ a{color:var(--blue)}
 .nav-item.sub{padding:6px 12px 6px 40px;font-size:12.5px;font-weight:500;color:#B4C3DD}
 .nav-item.sub.active{background:rgba(255,255,255,.14);color:#fff}
 .cm-coach-nav{margin-top:10px}
+/* the Coaching Hub tab (spec 033): the frame is fixed over the host; the page itself stops scrolling while it is open */
+.cmhub-host{min-height:60vh}
+.cmhub-frame{position:fixed;border:0;background:#fff;z-index:5;display:none;border-radius:12px;box-shadow:0 1px 2px rgba(10,23,48,.06)}
+body.cmhub-open{overflow:hidden}
+@media (max-width:860px){.cmhub-frame{left:0!important;width:100vw!important;border-radius:0}}   /* the sidebar's own breakpoint */
 .lm-note{margin:0 0 12px}
 .nav-item.parent.open{background:rgba(255,255,255,.07)}
 /* the KPI drill-down (item 3, 2026-09-29): tappable tiles and the panel */
@@ -1152,6 +1157,7 @@ function resetClientState(){
   API_EPOCH++;
   try{ sessionStorage.removeItem(TKEY); }catch(e){}
   cmReset();                                             // the CM period/tenure/range, its coaching copy, its session memory and the 60 s re-ask
+  cmHubDrop();                                           // the embedded Coaching Hub goes with the person who opened it (spec 033)
   U=null; D=null; ME=null; TEAM=null; VIEW='month'; EXTRA=1; PW_OPEN=false;
   LAST_REPORT='mtd_team'; LAST_CM_REPORT='cm_mtd'; DAY_FILTER=''; VAR_DAY='';
   REP={variance:repBlank(''),leads:repBlank('')};
@@ -1194,6 +1200,7 @@ function sessionExpired(){
 }
 
 function preShell(inner){
+  cmHubHide();   // the Coaching Hub frame lives OUTSIDE #root — a sign-in / password / fatal screen must never sit under it (spec 033)
   $('root').innerHTML='<div class="login"><div class="box">'
     +'<div class="mast"><img src="'+LOGO+'" alt="The Chatterbox"><div class="brand-sub">Agent Analytics</div></div>'
     +inner+'</div></div>';
@@ -4097,7 +4104,7 @@ var ICON={month:'🎯',mtd:'📅',week:'🗓️',day:'📆',coaching:'⭐',calc:
 var TL_VIEWS=['team','help','kpihub','coach_team','forms','results','reports','mtd_team','weekly_team','daily_team','variance_team','leads_team','nik_team'];
 /* The third view. Campaign · Team Leaders · Assistance · Nikola — the spec's
    four pages, nothing else. */
-var CM_VIEWS=['cm','cm_teams','cm_assist','cm_reports','cm_mtd','cm_daily','cm_weekly','cm_variance','cm_leads','cm_coach','cm_nik','cm_set'];
+var CM_VIEWS=['cm','cm_teams','cm_assist','cm_reports','cm_mtd','cm_daily','cm_weekly','cm_variance','cm_leads','cm_coach','cm_hub','cm_nik','cm_set'];
 /* THE MANAGER'S REPORTS = THE TEAM LEADER'S FIVE (spec 001-cm-view-signoff, US5). Month to date, Daily and
    Weekly reuse the team-leader renderers over the CM payload's agents/tlAgg/campAgg; Variance and Lead
    management are the published report keys, as before. */
@@ -4108,7 +4115,11 @@ function navFor(active){
     return [['cm','Campaign',ICON.results],['cm_teams','Team Leaders',ICON.team],
             ['cm_assist','Assistance',ICON.kpi],
             /* ONE REPORTS TAB for the manager too (Nick, 2026-09-21): Variance · Lead management as sub-tabs */
-            ['cm_reports','Reports',ICON.mtd,CM_REPORT_TABS],['cm_nik','Nikola',ICON.nik],['cm_set','Settings',ICON.set]];
+            ['cm_reports','Reports',ICON.mtd,CM_REPORT_TABS],
+            /* THE COACHING HUB ITSELF, below Reports (Nick, 2026-10-13, spec 033: "the full view of the coaching hub
+               exactly like it is … I dont want the link i want the exact interface") — see cmHubEnsure(). */
+            ['cm_hub','Coaching Hub',ICON.coaching],
+            ['cm_nik','Nikola',ICON.nik],['cm_set','Settings',ICON.set]];
   if(TL_VIEWS.indexOf(active)>=0)
     /* 'All Forms' is OFF the nav (Nick, 2026-08-26) — the view survives for old
        links; both hubs still carry their own forms. */
@@ -4272,6 +4283,7 @@ function wireShell(){
    already in memory — switching sections never re-asks the Worker. */
 function render(){
   if(!D) return;
+  if(VIEW!=='cm_hub'||PW_OPEN) cmHubHide();   // the Coaching Hub frame is KEPT off its tab, only hidden (spec 033); never over the password form
   if(PW_OPEN) return;   // the person is mid-way through changing their password — leave the form alone
   /* a refresh that arrived while a form was open (LIVE.pending) lands now, if this render is safe */
   if(LIVE.pending&&liveTeamScope()&&liveSafeToRender()){ var fr=LIVE.pending; LIVE.pending=null; D=fr; TEAM=D; }
@@ -5205,8 +5217,91 @@ function cmGateCard(c){
 /* ---------- Team leaders' coaching (spec 001, US4; contract C3) ----------
    The manager's own page: every team leader of their campaigns with the coaching the Hub holds for them, and the
    sessions of the one picked. The Worker serves a stored copy (kv:coaching), so the page states the copy's age. */
-var COACH_HUB_URL='https://coaching-hub-psi.vercel.app/';
+var HUB_APP_URL='https://coaching-hub-psi.vercel.app/';
+var COACH_HUB_URL=HUB_APP_URL;
 var CMC={d:null,busy:false,err:null,tl:'',key:'',seq:0};
+
+/* ============ THE COACHING HUB TAB (spec 033-cm-coaching-hub-tab, Nick 2026-10-13) ============
+   "I want the full view of the coaching hub exactly like it is, built in the campaign manager tab … I dont want the
+   link i want the exact interface." So the tab runs the live Hub app itself, in the campaign manager's colours
+   (?theme=agentos — a theme built into the Hub's own code, Hub repo branch feat/agentos-theme).
+   THE ONE TRAP: shell() rewrites #root on EVERY render (the 60 s range re-ask, a live refresh, the P1 marker), and a
+   frame inside #root reloads each time and loses the manager's place in the Hub — moving the node reloads it too. So
+   there is ONE frame, appended to <body> outside #root, fixed over a placeholder the tab draws (#cmHubHost), shown
+   with display, its address given once, removed only on sign-out. Failure is words + Retry, never a link. */
+var HUB_TAB_URL=HUB_APP_URL+'?theme=agentos';
+var CMHUB={el:null,loaded:false,failed:false,timer:0};
+var CMHUB_WAIT_MS=20000;   // a CSP block or a Hub that refuses to be framed fires no onload — the watchdog says so
+function cmHubBody(){
+  return (CMHUB.failed
+    ?'<div class="card"><h3>Coaching Hub</h3><p class="why">The Coaching Hub did not load. Check your connection and try again; '
+      +'if it keeps happening, tell Aarav — the Hub may have started refusing to open inside another page.</p>'
+      +'<p><button class="btn primary" id="cmHubRetry">Retry</button></p></div>'
+    :'')
+    +'<div id="cmHubHost" class="cmhub-host"></div>';
+}
+function cmHubWatch(){
+  if(CMHUB.timer) clearTimeout(CMHUB.timer);
+  CMHUB.timer=setTimeout(function(){
+    CMHUB.timer=0;
+    if(CMHUB.loaded) return;
+    CMHUB.failed=true;
+    if(VIEW==='cm_hub') render();
+  },CMHUB_WAIT_MS);
+}
+function cmHubEnsure(){
+  if(CMHUB.el) return;
+  var el=document.createElement('iframe');
+  el.id='cmHubFrame'; el.className='cmhub-frame'; el.title='Coaching Hub';
+  el.referrerPolicy='no-referrer';
+  el.setAttribute('allow','clipboard-write');
+  el.setAttribute('loading','eager');
+  /* A sandbox WITHOUT allow-top-navigation (security review, 2026-10-13): a compromised Hub deployment could otherwise
+     send this whole tab to a look-alike sign-in page after a click. Everything the Hub needs stays: scripts, its own
+     origin (Convex, its storage), forms, the PDF download, popups and alert/confirm. */
+  el.setAttribute('sandbox','allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals');
+  el.onload=function(){
+    var wasFailed=CMHUB.failed;
+    CMHUB.loaded=true; CMHUB.failed=false;
+    if(CMHUB.timer){ clearTimeout(CMHUB.timer); CMHUB.timer=0; }
+    if(wasFailed&&VIEW==='cm_hub') render();   // a late load takes the "did not load" card down with it
+  };
+  CMHUB.el=el; CMHUB.loaded=false; CMHUB.failed=false;
+  el.src=HUB_TAB_URL;          // ONCE — see cmHubRetry for the only other assignment
+  document.body.appendChild(el);
+  cmHubWatch();
+}
+/* fixed over the host: the host is where the tab's content would be; the frame sits there to the bottom of the window */
+function cmHubSync(){
+  var el=CMHUB.el, host=$('cmHubHost'); if(!el||!host) return;
+  var r=host.getBoundingClientRect();
+  var h=window.innerHeight?Math.max(320,window.innerHeight-r.top-8):r.height;
+  el.style.top=Math.round(r.top)+'px'; el.style.left=Math.round(r.left)+'px';
+  el.style.width=Math.round(r.width)+'px'; el.style.height=Math.round(h)+'px';
+  el.style.display='block';
+  try{ document.body.classList.add('cmhub-open'); }catch(e){}
+}
+function cmHubHide(){
+  if(CMHUB.el) CMHUB.el.style.display='none';
+  try{ document.body.classList.remove('cmhub-open'); }catch(e){}
+}
+function cmHubDrop(){
+  if(CMHUB.timer) clearTimeout(CMHUB.timer);
+  if(CMHUB.el){ try{ CMHUB.el.remove(); }catch(e){} }
+  CMHUB={el:null,loaded:false,failed:false,timer:0};
+  try{ document.body.classList.remove('cmhub-open'); }catch(e){}
+}
+function cmHubRetry(){
+  if(!CMHUB.el) return cmHubEnsure();
+  CMHUB.failed=false; CMHUB.loaded=false;
+  CMHUB.el.src=HUB_TAB_URL;
+  cmHubWatch();
+  render();
+}
+if(typeof window.addEventListener==='function'){   // the guards' stubbed windows have no listeners
+  window.addEventListener('resize',function(){ if(VIEW==='cm_hub') cmHubSync(); });
+  window.addEventListener('orientationchange',function(){ if(VIEW==='cm_hub') cmHubSync(); });
+}
 function cmCoachLoad(force){
   var key=CMPER+'|'+CMC.tl;
   if(!force&&CMC.key===key&&(CMC.d||CMC.err||CMC.busy)) return Promise.resolve();
@@ -5316,7 +5411,7 @@ function cmView(){
           wrong number becomes an unnoticed one. */
        +'<span class="ctrl" id="cmSelection">'+esc(cmSelectionLine(c))+'</span>'
        +'<button class="btn" id="cmEod">EOD report</button>'
-      :VIEW==='cm_set'?''
+      :(VIEW==='cm_set'||VIEW==='cm_hub')?''   // the Hub is not a period slice either (spec 033)
       :'<span class="ctrl" id="cmSelection" title="Campaign, tenure and period are chosen on the Campaign tab">'+esc(cmSelectionLine(c))+'</span>'
        +'<button class="btn" id="cmToCampaign">Change on the Campaign tab</button>');
   var subs={cm:'Sales, team leaders and where they need help',
@@ -5329,11 +5424,13 @@ function cmView(){
     cm_nik:'One fact, one explanation, one next action',
     cm_variance:'Salesforce against the agent-logged board, per agent per day — your campaigns only',
     cm_leads:'The lead funnel per team leader and per agent — your campaigns only',
+    cm_hub:'The Coaching Hub — exactly as it is',
     cm_set:'The targets each campaign is measured against — set here, applied everywhere'};
   /* a loading / not-published / empty-slice card replaces every figure (never a stale number under a new label);
-     the target settings and the coaching page do not depend on the slice */
-  var gate=(VIEW==='cm_set'||VIEW==='cm_coach')?'':cmGateCard(c);
+     the target settings, the coaching page and the Hub tab do not depend on the slice */
+  var gate=(VIEW==='cm_set'||VIEW==='cm_coach'||VIEW==='cm_hub')?'':cmGateCard(c);
   var body=gate?gate
+    :VIEW==='cm_hub'?cmHubBody()
     :VIEW==='cm_teams'?cmTeamsPage(c)
     :VIEW==='cm_mtd'?pageMTD()
     :VIEW==='cm_daily'?pageDailyTeam()
@@ -5354,10 +5451,13 @@ function cmView(){
   cmRangeKeep();   // the old form's typed dates, read before the new markup replaces it
   shell(esc(c.label),
     esc(D.name||'')+' · Campaign Manager · '+who+' · '+num(c.agents)+' agents · '+esc(subs[VIEW]||''),
-    (onCampaign?cmRangeForm():'')+body+'<div class="foot">Numbers updated '+esc(stamp())+'<br><button id="out">Sign out</button></div>',
+    (onCampaign?cmRangeForm():'')+body
+      /* the Hub fills the area to the bottom of the window; Sign out stays in the sidebar user card */
+      +(VIEW==='cm_hub'?'':'<div class="foot">Numbers updated '+esc(stamp())+'<br><button id="out">Sign out</button></div>'),
     VIEW,right);
   var out=$('out'); if(out) out.onclick=signOut;
   var toCm=$('cmToCampaign'); if(toCm) toCm.onclick=function(){ VIEW='cm'; render(); };
+  if(VIEW==='cm_hub'){ cmHubEnsure(); cmHubSync(); var hubRt=$('cmHubRetry'); if(hubRt) hubRt.onclick=cmHubRetry; }
   var selEl=$('cmSel'); if(selEl) selEl.onchange=function(){ CMSEL=selEl.value; CMEXP={}; render(); };
   var tenEl=$('cmTenure'); if(tenEl) tenEl.onchange=function(){ cmAsk(CMPER,tenEl.value); };
   /* "Custom range…" opens the from/to form and asks nothing; every other option asks for that period (spec 006) */

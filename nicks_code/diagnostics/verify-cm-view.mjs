@@ -55,8 +55,22 @@ function loadPage(routes) {
     innerHTML: '', value: '', style: {}, classList: { add() {}, remove() {}, contains: () => false },
     addEventListener() {}, setAttribute() {}, getAttribute: () => null, querySelectorAll: () => [], querySelector: () => null,
     focus() {}, onclick: null, onchange: null, remove() {}, appendChild() {},
+    getBoundingClientRect: () => ({ top: 80, left: 240, width: 900, height: 600 }),
   });
-  const doc = { getElementById: (id) => (nodes[id] = nodes[id] || mkEl()), querySelectorAll: () => [], createElement: mkEl, body: mkEl() };
+  /* <body> keeps what is appended to it (spec 033: the Coaching Hub frame lives OUTSIDE #root), and a created element
+     counts how often its `src` is assigned — the frame may be given its address exactly once. */
+  const bodyClasses = new Set();
+  const body = Object.assign(mkEl(), {
+    children: [], appendChild(el) { body.children.push(el); },
+    classList: { add: (c) => bodyClasses.add(c), remove: (c) => bodyClasses.delete(c), contains: (c) => bodyClasses.has(c) },
+  });
+  const createElement = (tag) => {
+    const el = mkEl(); el.tagName = String(tag).toUpperCase(); el._srcWrites = 0; el._attrs = {}; el.setAttribute = (k, v) => { el._attrs[k] = String(v); }; let src;
+    Object.defineProperty(el, 'src', { get: () => src, set: (v) => { src = v; el._srcWrites++; } });
+    el.remove = () => { const i = body.children.indexOf(el); if (i >= 0) body.children.splice(i, 1); };
+    return el;
+  };
+  const doc = { getElementById: (id) => (nodes[id] = nodes[id] || mkEl()), querySelectorAll: () => [], createElement, body };
   const store = {}, sess = {};
   const win = {
     location: { search: '' },
@@ -81,7 +95,10 @@ function loadPage(routes) {
     'document', 'window', 'localStorage', 'sessionStorage', 'location', 'fetch', 'URLSearchParams', 'setTimeout', 'setInterval', 'clearInterval', 'Intl', 'console', 'clearTimeout',
     src + '\nvar __o={};'
     + '["render","cmView","loadPortal","sidebarHTML","navFor","pageMTD","pageWeeklyTeam","pageDailyTeam","pageLeadsTeam","pageCmReport","reportsTabs","cmCmdPage","cmTeamsPage",'
-    + '"teamView","agentKpis","drillState","exportReports","reportMTD","reportLeads","cmAsk","cmCoachPick","cmCoachPage","cmHM","fmtShort","coachLine","agentKpiStates","cmValidPeriod","cmRangeProblem"]'
+    + '"teamView","agentKpis","drillState","exportReports","reportMTD","reportLeads","cmAsk","cmCoachPick","cmCoachPage","cmHM","fmtShort","coachLine","agentKpiStates","cmValidPeriod","cmRangeProblem","resetClientState","preShell"]'
+    + '.forEach(function(n){ try{ __o[n]=eval(n); }catch(e){ __o[n]=function(){ throw new Error("the page has no "+n+"()"); }; } });'
+    + '__o.getHub=function(){ try{ return CMHUB; }catch(e){ return null; } }; __o.hubTabUrl=function(){ try{ return HUB_TAB_URL; }catch(e){ return null; } };'
+    + '[]'
     + '.forEach(function(n){ try{ __o[n]=eval(n); }catch(e){ __o[n]=function(){ throw new Error("the page has no "+n+"()"); }; } });'
     + '__o.setD=function(d){D=d}; __o.setView=function(v){VIEW=v}; __o.getView=function(){return VIEW}; __o.getD=function(){return D}; __o.setU=function(u){U=u};'
     + '__o.setSel=function(s){CMSEL=s}; __o.getSel=function(){return CMSEL}; __o.setRepLeads=function(d){REP.leads.d=d}; __o.setRepVariance=function(d){REP.variance.d=d};'
@@ -89,6 +106,7 @@ function loadPage(routes) {
     + 'return __o;',
   );
   const api = fn(doc, win, win.localStorage, session, win.location, fetchImpl, URLSearchParams, setT, () => 0, () => {}, Intl, { log() {}, error() {} }, clearT);
+  win.__body = body;
   return { P: api, N: nodes, calls, sess, W: win, timers };
 }
 const tick = () => new Promise((r) => setImmediate(r));
@@ -877,6 +895,96 @@ head('S · The filters live on the Campaign tab only (spec 012-cm-filters-campai
     P.setView('cm_variance'); P.render(); mustNot(N.root.innerHTML, 'id="cmRangeCard"', 'range form on Variance');
     P.setView('cm'); P.render(); must(N.root.innerHTML, 'id="cmRangeCard"');
     if (N.cmRangeCancel) N.cmRangeCancel.onclick();
+  });
+}
+
+head('T · The Coaching Hub tab — the live Hub inside the page, below Reports (spec 033-cm-coaching-hub-tab)');
+{
+  /* Nick, 2026-10-13: "a tab that says coaching hub for the campaign manager below the reports … the full view of the
+     coaching hub exactly like it is … I dont want the link i want the exact interface". The tab shows the Hub app itself
+     (P1–P3 in contracts/interfaces.md): ONE frame outside #root, its address given once, kept across re-renders and tab
+     switches, hidden off the tab, removed on sign-out; the failure state is words + Retry, never a link. */
+  const HUB = 'https://coaching-hub-psi.vercel.app/?theme=agentos';
+  const { P, N, W, timers } = loadPage({});
+  const ids = (list) => list.map((n) => n[0]);
+  check('the manager nav reads Campaign · Team Leaders · Assistance · Reports · Coaching Hub · Nikola · Settings', () => {
+    const got = ids(P.navFor('cm')).join(' ');
+    if (got !== 'cm cm_teams cm_assist cm_reports cm_hub cm_nik cm_set') throw new Error(got);
+    const lab = P.navFor('cm').find((n) => n[0] === 'cm_hub')[1]; if (lab !== 'Coaching Hub') throw new Error('label ' + lab);
+  });
+  check('team leaders and agents do not get it', () => {
+    if (ids(P.navFor('team')).includes('cm_hub') || ids(P.navFor('month')).includes('cm_hub')) throw new Error('cm_hub on another nav');
+  });
+  check('the frame address is the Hub with ?theme=agentos (the campaign manager palette — contract T1)', () => {
+    if (P.hubTabUrl() !== HUB) throw new Error(String(P.hubTabUrl()));
+  });
+  const p = cmPayload();
+  p.assist = { requests: [{ id: 'r1', priority: 'P1', closed: false, campaign: 'courtesy', category: 'crm', tl: 'Denise Haripersad', sla: { state: 'near' } }] };
+  P.setD(p); P.setSel('courtesy'); P.setView('cm_hub'); P.render();
+  const h = N.root.innerHTML;
+  check('the tab draws the host and says what it is; no pickers, no selection line, no range form, no EOD, the P1 marker stays', () => {
+    must(h, 'id="cmHubHost"'); mustText(h, 'The Coaching Hub — exactly as it is'); mustText(h, 'P1 open');
+    for (const id of ['cmSel', 'cmTenure', 'cmPeriod', 'cmEod', 'cmSelection', 'cmToCampaign', 'cmRangeCard']) mustNot(h, 'id="' + id + '"', id + ' on cm_hub');
+    clean(h);
+  });
+  check('NOT A LINK: nothing on the tab points at the Hub address', () => { mustNot(h, 'href="https://coaching-hub-psi', 'a link to the Hub'); mustNotText(h, 'Open the Coaching Hub'); });
+  const frames = () => W.__body.children.filter((el) => el.id === 'cmHubFrame');
+  const fr = frames()[0];
+  check('exactly ONE frame, appended to <body> (outside #root), with the Hub address given ONCE, a title and no referrer', () => {
+    if (frames().length !== 1) throw new Error(frames().length + ' frames');
+    if (fr.tagName !== 'IFRAME') throw new Error('tag ' + fr.tagName);
+    if (fr.src !== HUB) throw new Error('src ' + fr.src);
+    if (fr._srcWrites !== 1) throw new Error('src assigned ' + fr._srcWrites + ' times');
+    if (fr.title !== 'Coaching Hub') throw new Error('title ' + fr.title);
+    if (fr.referrerPolicy !== 'no-referrer') throw new Error('referrerPolicy ' + fr.referrerPolicy);
+  });
+  check('shown on the tab: display block over the host, and the page stops scrolling (body.cmhub-open)', () => {
+    if (fr.style.display !== 'block') throw new Error('display ' + fr.style.display);
+    if (!W.__body.classList.contains('cmhub-open')) throw new Error('no cmhub-open on body');
+    if (fr.style.top !== '80px' || fr.style.left !== '240px' || fr.style.width !== '900px') throw new Error('not placed over the host: ' + JSON.stringify(fr.style));
+  });
+  check('a re-render keeps the SAME element and never touches src', () => {
+    P.render(); P.render();
+    if (frames().length !== 1 || frames()[0] !== fr) throw new Error('frame replaced');
+    if (fr._srcWrites !== 1) throw new Error('src assigned ' + fr._srcWrites + ' times');
+  });
+  check('another tab hides it (kept, not removed); coming back shows the same frame where it was', () => {
+    P.setView('cm_mtd'); P.render();
+    if (fr.style.display !== 'none') throw new Error('display ' + fr.style.display + ' on cm_mtd');
+    if (W.__body.classList.contains('cmhub-open')) throw new Error('body still cmhub-open on cm_mtd');
+    if (frames().length !== 1 || frames()[0] !== fr) throw new Error('frame replaced or dropped');
+    P.setView('cm_hub'); P.render();
+    if (fr.style.display !== 'block' || fr._srcWrites !== 1 || frames()[0] !== fr) throw new Error('not the same frame on return');
+  });
+  check('the Hub not rendering within the wait → words + Retry, no link; Retry gives the address again', () => {
+    const t = timers.find((x) => !x.cleared && x.ms === 20000); if (!t) throw new Error('no 20 s watchdog');
+    t.f(); const hh = N.root.innerHTML;
+    mustText(hh, 'did not load'); must(hh, 'id="cmHubRetry"'); mustNot(hh, 'href="https://coaching-hub-psi', 'a link in the failed state');
+    if (!N.cmHubRetry || typeof N.cmHubRetry.onclick !== 'function') throw new Error('Retry not wired');
+    N.cmHubRetry.onclick();
+    if (fr._srcWrites !== 2) throw new Error('Retry did not re-assign src (' + fr._srcWrites + ')');
+    if (P.getHub().failed) throw new Error('still failed after Retry');
+  });
+  check('a load clears the watchdog (onload)', () => {
+    if (typeof fr.onload !== 'function') throw new Error('no onload');
+    fr.onload(); if (!P.getHub().loaded) throw new Error('not marked loaded');
+  });
+  check('a pre-shell screen (change password, fatal) is never under the frame (review HIGH, 2026-10-13)', () => {
+    P.setView('cm_hub'); P.render(); if (fr.style.display !== 'block') throw new Error('not shown first');
+    P.preShell('<div>password form</div>');
+    if (fr.style.display !== 'none') throw new Error('display ' + fr.style.display + ' under preShell');
+    if (W.__body.classList.contains('cmhub-open')) throw new Error('page still locked under preShell');
+  });
+  check('the sandbox keeps the Hub working but forbids top navigation (security review)', () => {
+    const sb = fr._attrs.sandbox || '';
+    for (const t of ['allow-scripts', 'allow-same-origin', 'allow-forms', 'allow-downloads', 'allow-popups', 'allow-modals']) if (sb.indexOf(t) < 0) throw new Error('missing ' + t);
+    if (/allow-top-navigation/.test(sb)) throw new Error('top navigation allowed');
+  });
+  check('sign-out removes the frame', () => {
+    P.resetClientState();
+    if (frames().length !== 0) throw new Error(frames().length + ' frames left');
+    if (P.getHub().el !== null) throw new Error('state still holds the element');
+    if (W.__body.classList.contains('cmhub-open')) throw new Error('body still cmhub-open');
   });
 }
 

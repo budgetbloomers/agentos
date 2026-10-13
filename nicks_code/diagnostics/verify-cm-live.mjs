@@ -160,6 +160,28 @@ try {
   head('F · a request the manager should NOT be able to touch');
   const bogus = await call('/api/portal/cm/act', { id: 'not-a-real-opportunity', action: 'start' });
   ok(bogus.status >= 400, 'acting on an unknown request id fails cleanly (' + bogus.status + ')');
+
+  /* THE COACHING HUB TAB (spec 033-cm-coaching-hub-tab, 2026-10-13): the tab embeds the live Hub app, so two things
+     outside this Worker must hold — the Hub must not refuse to be framed, and the deployed Pages CSP must allow
+     framing exactly that origin. Both are read from the live responses, not from the repo. The theme check turns
+     green once the Hub repo's feat/agentos-theme is deployed on Vercel. */
+  head('H · the Coaching Hub tab: the Hub can be framed, the Pages CSP allows it, the Hub carries the theme');
+  const HUB = 'https://coaching-hub-psi.vercel.app/';
+  const hh = await fetch(HUB, { method: 'HEAD' }).catch(() => null);
+  ok(!!hh && hh.ok, 'the Hub answers (' + (hh ? hh.status : 'unreachable') + ')');
+  if (hh) {
+    const xfo = hh.headers.get('x-frame-options'), hcsp = hh.headers.get('content-security-policy') || '';
+    ok(!xfo, 'the Hub sends no X-Frame-Options' + (xfo ? ' — it sends ' + xfo + ': the tab will show words + Retry' : ''));
+    ok(!/frame-ancestors/.test(hcsp), 'the Hub sends no frame-ancestors' + (/frame-ancestors/.test(hcsp) ? ' — ' + hcsp.slice(0, 120) : ''));
+  }
+  const pg = await fetch('https://chatterbox-agentos.pages.dev/agent/', { method: 'GET' }).catch(() => null);
+  const pcsp = (pg && pg.headers.get('content-security-policy')) || '';
+  ok(/frame-src https:\/\/coaching-hub-psi\.vercel\.app(;|$)/.test(pcsp), 'the deployed /agent/ CSP frames the Hub origin only' + (pcsp ? '' : ' (no CSP header read)'));
+  ok(/frame-ancestors 'self'/.test(pcsp) && /connect-src 'self' /.test(pcsp), 'frame-ancestors and connect-src are as before');
+  const html = hh ? await (await fetch(HUB).catch(() => ({ text: async () => '' }))).text() : '';
+  const cssPath = (html.match(/href="(\/assets\/[^"]+\.css)"/) || [])[1];
+  const css = cssPath ? await (await fetch(HUB.replace(/\/$/, '') + cssPath).catch(() => ({ text: async () => '' }))).text() : '';
+  ok(/\[data-theme=agentos\]/.test(css), 'the Hub stylesheet carries the AgentOS theme (?theme=agentos)' + (/\[data-theme=agentos\]/.test(css) ? '' : ' — NOT YET: deploy the Hub repo branch feat/agentos-theme'));
 } finally {
   if (tokenHash) {
     const del = await fetch(REST + 'app_sessions?token_hash=eq.' + tokenHash, { method: 'DELETE', headers: H });
