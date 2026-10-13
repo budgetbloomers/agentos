@@ -139,12 +139,16 @@ try {
     } else if (leadRows.length) {
       /* CONVERSION = SALES ÷ CLOSED LEADS since spec 001-cm-view-signoff (1 Oct 2026): every case closed in the period,
          any status. The unique-lead book stays the denominator of attempts, volume and cover below. */
+      /* the Worker divides the sales OF THE ROWS THAT CARRY A CLOSED COUNT (campaign.mjs convSales) — a mover's earlier
+         segment carries no closed count (whole-month figures travel once, on the current segment), so its sales sit
+         outside the ratio on both sides */
       const closedRows = rows.filter((a) => a.closed != null);
       const closed = closedRows.reduce((s, a) => s + n(a.closed), 0);
-      ok(k.conv && near(k.conv.v, closed ? sales / closed : null, 1e-9),
-        '  Conversion = sales / CLOSED LEADS (' + (closed ? (sales / closed * 100).toFixed(2) : '—') + '%)',
+      const convSales = closedRows.reduce((s, a) => s + n(a.sales), 0);
+      ok(k.conv && near(k.conv.v, closed ? convSales / closed : null, 1e-9),
+        '  Conversion = sales / CLOSED LEADS (' + (closed ? (convSales / closed * 100).toFixed(2) : '—') + '%)',
         'served ' + (k.conv ? (k.conv.v * 100).toFixed(2) : 'null') + '% — must never be sales per call');
-      ok(k.conv && k.conv.closed === closed, '  ...and quotes the denominator it used (' + closed.toLocaleString() + ' closed)');
+      ok(k.conv && k.conv.closed === closed && k.conv.sales === convSales, '  ...and quotes the numerator and denominator it used (' + convSales.toLocaleString() + ' / ' + closed.toLocaleString() + ' closed)');
       ok(k.attempts && near(k.attempts.v, leads ? calls / leads : null, 1e-9), '  Attempts per Lead = dials / unique leads');
       ok(k.leads && k.leads.v === leads, '  Lead Volume = unique leads');
       ok(k.leads && near(k.leads.cover, sales ? leads / sales : null, 1e-9), '  Lead cover = leads / sales');
@@ -170,10 +174,11 @@ try {
       const tr = (c.key !== 'all' ? rows : rowsFor(campKey(tCamp)))
         .filter((a) => String(a.tl || '').trim() === t.tl);
       const ts = tr.reduce((s, a) => s + n(a.sales), 0);
-      const tc = tr.filter((a) => a.closed != null).reduce((s, a) => s + n(a.closed), 0);
+      const tcr = tr.filter((a) => a.closed != null);
+      const tc = tcr.reduce((s, a) => s + n(a.closed), 0), tcs = tcr.reduce((s, a) => s + n(a.sales), 0);
       ok(t.agents === people(tr) && t.sales === ts,
         '  ' + t.tl.padEnd(20) + ' ' + people(tr) + ' agents · ' + ts + ' sales', 'served ' + t.agents + ' agents · ' + t.sales + ' sales');
-      if (tc) ok(t.conv && near(t.conv.v != null ? t.conv.v : t.conv, ts / tc, 1e-9), '  ' + t.tl.padEnd(20) + ' conversion = its own sales / its own CLOSED leads (spec 001)');
+      if (tc) ok(t.conv && near(t.conv.v, tcs / tc, 1e-9), '  ' + t.tl.padEnd(20) + ' conversion = its own closed-row sales / its own CLOSED leads (spec 001)', 'served ' + JSON.stringify(t.conv));
     }
   }
 
