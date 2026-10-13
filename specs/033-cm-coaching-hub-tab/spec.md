@@ -138,6 +138,10 @@ buttons and highlights, `#F2F5FA` background, Inter. Open the plain address: gre
   AgentOS side; the Worker MUST NOT proxy or rewrite the Hub.
 - **FR-013**: Status colours MUST keep their meaning (red = problem, amber = watch, green = good) in the AgentOS
   values; per-leader avatar colours (data) MUST NOT change.
+- **FR-014** (Nick, 2026-10-13, screenshot of the live tab: "all I ask is to change the color to blue so it shows as if
+  its part of the agent os, and remove the throughballs logo"): under `?theme=agentos` the ThroughBalls logo MUST NOT
+  render anywhere in the Hub — sidebar, home, form and document headers, and therefore the PDF generated from the tab;
+  at the plain address it MUST remain exactly as today.
 
 ### Key Entities
 

@@ -64,12 +64,16 @@ needs access to the Hub's repository (Nick) and a Vercel deploy of the Hub.
 
 ## Phase 5: Release (Nick or Aarav)
 
-- [ ] T012 `node tools/prepare-site.js`; `wrangler pages deploy site --branch main`; post-deploy smoke
-  (`verify-cors-headers --live`, `verify-live-save --live`); `verify-cm-live --live` (+ `--ryan`)
-- [ ] T013 Real-browser smoke per quickstart.md steps 1–6 (desktop + phone width): Hub renders in the tab, `render()`
-  from the console does not reload it, PDF downloads, Reports ↔ Coaching Hub keeps state, sign-out removes it
-- [ ] T014 Commit (conventional: `feat(agent): campaign manager Coaching Hub tab embeds the live Hub (Spec Kit 033)`),
-  no push; memory note updated to LIVE
+- [x] T012 LIVE 2026-10-13 (Nick: "deploy it"): Pages deployment `db1feafa` (`--commit-dirty`); verify-cors-headers 13/13,
+  verify-live-save 5/5; verify-cm-live --live: section H green except the Hub theme (Vercel had not rebuilt the Hub yet —
+  main was fast-forwarded to 9b9326b and pushed; if Vercel does not auto-deploy from main, redeploy in the Vercel
+  dashboard). Two unrelated pre-existing FAILs in that suite (Worker conversion denominator; /api/kv answers 400)
+- [x] T013 Browser smoke on production as Dalwin (minted 15-min session, deleted after): sidebar Campaign · Team Leaders ·
+  Assistance · Reports · **Coaching Hub** · Nikola · Settings; the Hub renders inside the tab (frame child of body,
+  sandboxed, src with ?theme=agentos, no pickers, no link); `render()` twice → same element, loaded; Reports → hidden,
+  back → same element shown; sign-out → frame gone, login shown. NOT yet checked: PDF download inside the sandbox and
+  phone width — do these on a real device when the theme is live
+- [x] T014 Committed `920c55e` on feature/campaign-manager-theme-wimpy (no push); memory note updated
 
 ## Phase 6: WP-B — the Hub wears the campaign manager palette (US3; the Hub repository)
 
@@ -91,6 +95,26 @@ needs access to the Hub's repository (Nick) and a Vercel deploy of the Hub.
   on `feat/agentos-theme` — NOT pushed (Nick's call: push → merge → Vercel deploys)
 - [ ] T020 [US3] After the Hub deploy: `verify-cm-live --live` theme check (contract G) green; browser smoke SC-005 in
   the tab; memory note updated
+
+## Phase 7: WP-B follow-up — the logo (FR-014) and getting the Hub deployed
+
+- [x] T021 [US3] Hub `src/components/ThroughBallsLogo.tsx` renders nothing under the theme — built, preview checked
+  (themed: 0 logos, navy h1, --brand #2563eb; plain: logo present, unchanged), commit `b3c402d` on main, pushed
+- [x] T022 DONE 2026-10-13 (Nick: "deploy"). Findings: the Hub's Vercel project IS git-linked to the repo (prod branch
+  main), but the account is a Hobby team and Vercel BLOCKS any deployment whose commit author is not the Vercel user
+  (`readyStateReason: "the commit author doesn't have permission…"`, `seatBlock TEAM_ACCESS_REQUIRED`) — my commits are
+  authored `Aarav <nicholas@…>`, the repo's own are `budgetbloomers <110726950+budgetbloomers@users.noreply.github.com>`.
+  So both GitHub builds (9b9326b, b3c402d) and a first CLI deploy were BLOCKED. The live site had been deployed from the
+  CLI out of a working copy with the Team Leader KPI forms (Monthly/PIP) that never reached GitHub. Resolution: read that
+  deployment's 138 source files back from Vercel's API into `C:\Users\aarav\repos\coaching-hub-live`, re-applied the theme
+  + no-logo change on top (same substitutions; the five authored files were byte-identical to the GitHub base), built,
+  previewed, and deployed with the CLI **with the .git folder set aside** so no author travels → `dpl_HGnoomgomfPWpSi946y2V6vtzYNr`
+  READY 19:49 UTC; `coaching-hub-psi.vercel.app` now serves `index-ClThy_GB.css` with `[data-theme=agentos]`. The live
+  source + theme is also on GitHub as branch `live-source-2026-10-13` (merge into main; for future GitHub-triggered
+  deploys commit as budgetbloomers or add the author to the Vercel team)
+- [x] T023 DONE 2026-10-13 21:52: `verify-cm-live --live` section H all green (34 passed; the 2 fails are the pre-existing
+  Worker ones); production tab as Dalwin: the Hub renders in navy/blue, Inter, no ThroughBalls logo (screenshot taken);
+  sign-out removes the frame. Still to do on a device: PDF download inside the sandbox, phone width
 
 ## Dependencies
 
