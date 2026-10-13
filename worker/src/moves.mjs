@@ -24,6 +24,11 @@ const OVR = 'kv:campaign-move-overrides';
    under the campaign the agent graduated into, exactly as before. Found on the real September snapshots
    (2026-09-29): 13 Nesting → Courtesy graduates on 14 Sep beside the 4 Download & Test → Courtesy movers. */
 export const PHASE_CAMPAIGNS = ['Nesting'];
+/* …and so is a TRAINING GROUP (spec 034, 2026-10-13). October's lists carry the new intake as "Training Gr 17" under
+   the trainer until the day they graduate to Courtesy; read as a campaign, the graduation became a "move" and a stale
+   list re-uploaded on 8 Oct bounced thirteen agents Training → Courtesy → Training → Courtesy, splitting their month into
+   segment rows. Any campaign whose name starts with "training" (any case, any group number) is a phase. */
+export const isPhase = (camp) => { const c = String(camp || '').trim(); return PHASE_CAMPAIGNS.includes(c) || /^training\b/i.test(c); };
 
 function monthBounds(month) {
   const [y, m] = month.split('-').map(Number);
@@ -66,7 +71,7 @@ export function deriveMoves(rows, month) {
   const by = {};
   for (const r of rows || []) {
     const cb = normCb(r.employee_code || ''), camp = String(r.campaign || '').trim();
-    if (!cb || !camp || PHASE_CAMPAIGNS.includes(camp)) continue;
+    if (!cb || !camp || isPhase(camp)) continue;
     (by[cb] = by[cb] || []).push({ as_of: String(r.as_of), campaign: camp });
   }
   const agents = {};

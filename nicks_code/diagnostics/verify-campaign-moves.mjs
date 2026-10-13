@@ -97,5 +97,21 @@ console.log('\n7 · a campaign manager sees only their campaign\'s days of a mov
   ok('attendance is the segment\'s own', dt.att === 1 && co.att === 1);
   ok('premium incl. VAT follows the segment', Math.abs(dt.gwp - 1570.07) < 0.02, String(dt.gwp)); }
 
+console.log('\n5 · a training group is a phase, not a campaign (spec 034, 2026-10-13)');
+{ /* October's real snapshots: the 13 new agents were "Training Gr 17" under Ntokozo until 7 Oct, Courtesy after — and a
+     stale list uploaded on 8 Oct put them back in Training for a day. Neither the graduation nor the stale day is a move. */
+  const OCT = [
+    snap('2026-10-01', 'CB415', 'Training Gr 17'), snap('2026-10-07', 'CB415', 'Courtesy'), snap('2026-10-08', 'CB415', 'Training Gr 17'), snap('2026-10-09', 'CB415', 'Courtesy'),
+    snap('2026-10-01', 'CB416', 'training group 18'), snap('2026-10-07', 'CB416', 'Courtesy'),
+    snap('2026-10-01', 'CB368', 'Nesting'), snap('2026-10-07', 'CB368', 'Courtesy'),
+    snap('2026-10-01', 'CB173', 'Courtesy'), snap('2026-10-07', 'CB173', 'Cuddle'),
+  ];
+  const a = M.deriveMoves(OCT, '2026-10');
+  ok('"Training Gr 17" → Courtesy → "Training Gr 17" → Courtesy is NOT a mover', !a.CB415, JSON.stringify(a.CB415));
+  ok('any campaign starting with "training" (any case) is a phase', !a.CB416, JSON.stringify(a.CB416));
+  ok('Nesting is still a phase', !a.CB368);
+  ok('a real Courtesy → Cuddle move still derives', !!a.CB173 && a.CB173.length === 2 && a.CB173[1].campaign === 'Cuddle', JSON.stringify(a.CB173));
+  ok('isPhase is exported and says so', typeof M.isPhase === 'function' && M.isPhase('Training Gr 17') && M.isPhase('Nesting') && !M.isPhase('Courtesy')); }
+
 console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====');
 process.exitCode = fail ? 1 : 0;

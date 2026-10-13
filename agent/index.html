@@ -4166,9 +4166,11 @@ function freshHTML(){
 /* "Team leaders' coaching" — the manager's own entry, directly above the user card / Sign out at the bottom
    of the sidebar (spec 001, US4). A real button, so the keyboard reaches it; the label is a constant, not data. */
 function cmCoachNavHTML(active){
-  if(CM_VIEWS.indexOf(active)<0) return '';
-  return '<div class="nav cm-coach-nav"><button class="nav-item'+(VIEW==='cm_coach'?' active':'')+'" data-view="cm_coach">'
-    +'<span class="ic">'+ICON.coaching+'</span>Team leaders\' coaching</button></div>';
+  /* GONE from the sidebar (spec 034, Nick 2026-10-13: "remove this team leader coaching for campaign manager") — the
+     Coaching Hub tab (spec 033) is the manager's one coaching entry. The cm_coach page itself and its route stay for
+     old links; nothing else moved. */
+  void active;
+  return '';
 }
 function sidebarHTML(active){
   var nm=(TEAM&&TEAM.name)||(D&&D.name)||(U&&(U.name||U.full_name))||'';

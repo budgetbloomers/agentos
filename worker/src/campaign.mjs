@@ -434,9 +434,16 @@ export const blockageOf = (ctx, key) =>
    the reconciliation rule — "the campaign total must equal the sum of the
    teams shown, or the screen is lying" — holds by construction AND is asserted.
    --------------------------------------------------------------------------- */
+/* A HEADCOUNT IS PEOPLE, NOT ROWS (spec 034, 2026-10-13). The digest publishes a mover as one row per dated campaign
+   segment (D4) — and after a stale list upload an agent can carry two segment rows under the same leader. Those rows
+   are right for every SUM (each carries its own days once) and wrong for a count: Dalwin read "98 agents" for a
+   76-agent list. Every count below is distinct by CB; every sum still walks every row. */
+const codeOf = (r) => String((r && r.code) || '').trim().toUpperCase();
+const peopleIn = (rows) => new Set(rows.map(codeOf).filter(Boolean)).size;
+const onePerPerson = (rows) => { const seen = new Set(); return rows.filter((r) => { const c = codeOf(r); if (!c || seen.has(c)) return false; seen.add(c); return true; }); };
 function agg(rows, digest) {
   const n = (v) => (v == null || isNaN(v) ? 0 : Number(v));
-  const o = { agents: rows.length, sales: 0, target: 0, gwp: 0, gwpT: 0, canc: 0,
+  const o = { agents: peopleIn(rows), sales: 0, target: 0, gwp: 0, gwpT: 0, canc: 0,
     talk: 0, act: 0, emp: 0, fails: 0, ref: 0, qaN: 0, qaSum: 0, productive: 0, noGwp: [],
     calls: 0, ans: 0, leads: 0, leadsKnown: false, closed: 0, closedKnown: false, convSales: 0 };
   for (const r of rows) {
@@ -561,8 +568,8 @@ const tenureOfRow = (r) => (r && r.covered === false ? null : tenureKey(r && r.t
 /** Is this row inside the chosen tenure slice? 'all' keeps every row (a no-activity agent included). */
 export const rowInTenure = (r, tenure) => !tenure || tenure === 'all' || tenureOfRow(r) === tenure;
 const tenuresOf = (rows) => {
-  const n = {}; for (const r of rows) { const k = tenureOfRow(r); if (k) n[k] = (n[k] || 0) + 1; }
-  return TENURE_KEYS.filter((k) => n[k]).map((k) => ({ key: k, label: TENURE_LABELS[k], agents: n[k] }));
+  const n = {}; for (const r of rows) { const k = tenureOfRow(r); if (k) (n[k] = n[k] || new Set()).add(codeOf(r)); }   // people, not segment rows (spec 034)
+  return TENURE_KEYS.filter((k) => n[k] && n[k].size).map((k) => ({ key: k, label: TENURE_LABELS[k], agents: n[k].size }));
 };
 
 /** The "Where my team leaders need help" panel for ONE campaign's requests — the same sums assist.mjs builds for the
@@ -693,10 +700,10 @@ export function cmOverviewBody(digest, auth, assist, ctx, opts) {
       notCovered: (digest.notCovered || []).filter((n) => campKey(n.campaign) === key).map((n) => n.name),
     };
 
-    campaigns.push({ key, label, agents: rows.length, teamLeaders: teams.length, tenures: tenuresOf(allRows),
+    campaigns.push({ key, label, agents: peopleIn(rows), teamLeaders: teams.length, tenures: tenuresOf(allRows),
       /* the expanded team roster prints NAMES; without this the page fell back
          to printing bare CB codes at a manager who wanted to see people */
-      agentIndex: rows.map((a) => ({ code: a.code, name: a.name })),
+      agentIndex: onePerPerson(rows).map((a) => ({ code: a.code, name: a.name })),
       teams, kpis, projection, unattributed, reconciled,
       brief: cmBrief({ key, label, c, teams }, reqs, ctx) });
   }
@@ -726,12 +733,12 @@ export function cmOverviewBody(digest, auth, assist, ctx, opts) {
     campaigns.unshift({
       key: 'all',
       label: 'All campaigns',
-      agents: rows.length,
+      agents: peopleIn(rows),
       teamLeaders: teams.length,
       /* how many PEOPLE, as distinct from how many team rows */
       leaders: [...new Set(teams.map((t) => t.tl))].length,
       tenures: tenuresOf(allRows),
-      agentIndex: rows.map((a) => ({ code: a.code, name: a.name })),
+      agentIndex: onePerPerson(rows).map((a) => ({ code: a.code, name: a.name })),
       teams,
       kpis: {
         sales: { v: c.sales, target: Math.round(c.targetMtd), month: c.target, pct: c.pct },

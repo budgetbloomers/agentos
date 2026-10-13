@@ -99,8 +99,10 @@ try {
     /* 'all' is a pseudo-campaign the Worker adds for a manager holding more than
        one — it covers every row in scope, not a campaign of that name. */
     const rows = c.key === 'all' ? rowsAll(served.campaigns || []) : rowsFor(c.key);
-    console.log('  \x1b[1m' + c.label + '\x1b[0m (' + rows.length + ' agents in the digest)');
-    ok(rows.length === c.agents, '  agent count matches the digest', 'served ' + c.agents + ' vs digest ' + rows.length);
+    /* PEOPLE, NOT ROWS (spec 034): a mover is one digest row per dated segment — right for every sum, wrong for a count */
+    const people = (list) => new Set(list.map((a) => String(a.code || '').toUpperCase())).size;
+    console.log('  \x1b[1m' + c.label + '\x1b[0m (' + people(rows) + ' agents in the digest, ' + rows.length + ' rows)');
+    ok(people(rows) === c.agents, '  agent count = distinct agents in the digest', 'served ' + c.agents + ' vs digest ' + people(rows));
 
     const sales = rows.reduce((s, a) => s + n(a.sales), 0);
     const gwp = rows.reduce((s, a) => s + n(a.gwpEx), 0);
@@ -135,10 +137,14 @@ try {
       ok(!k.attempts || k.attempts.v == null, '  Attempts per Lead is not served either');
       ok(k.leads == null || k.leads.v === 0, '  Lead Volume = 0');
     } else if (leadRows.length) {
-      ok(k.conv && near(k.conv.v, leads ? sales / leads : null, 1e-9),
-        '  Conversion = sales / UNIQUE LEADS (' + (leads ? (sales / leads * 100).toFixed(2) : '—') + '%)',
+      /* CONVERSION = SALES ÷ CLOSED LEADS since spec 001-cm-view-signoff (1 Oct 2026): every case closed in the period,
+         any status. The unique-lead book stays the denominator of attempts, volume and cover below. */
+      const closedRows = rows.filter((a) => a.closed != null);
+      const closed = closedRows.reduce((s, a) => s + n(a.closed), 0);
+      ok(k.conv && near(k.conv.v, closed ? sales / closed : null, 1e-9),
+        '  Conversion = sales / CLOSED LEADS (' + (closed ? (sales / closed * 100).toFixed(2) : '—') + '%)',
         'served ' + (k.conv ? (k.conv.v * 100).toFixed(2) : 'null') + '% — must never be sales per call');
-      ok(k.conv && k.conv.leads === leads, '  ...and quotes the denominator it used (' + leads.toLocaleString() + ')');
+      ok(k.conv && k.conv.closed === closed, '  ...and quotes the denominator it used (' + closed.toLocaleString() + ' closed)');
       ok(k.attempts && near(k.attempts.v, leads ? calls / leads : null, 1e-9), '  Attempts per Lead = dials / unique leads');
       ok(k.leads && k.leads.v === leads, '  Lead Volume = unique leads');
       ok(k.leads && near(k.leads.cover, sales ? leads / sales : null, 1e-9), '  Lead cover = leads / sales');
@@ -164,10 +170,10 @@ try {
       const tr = (c.key !== 'all' ? rows : rowsFor(campKey(tCamp)))
         .filter((a) => String(a.tl || '').trim() === t.tl);
       const ts = tr.reduce((s, a) => s + n(a.sales), 0);
-      const tl = tr.filter((a) => a.leads != null).reduce((s, a) => s + n(a.leads), 0);
-      ok(t.agents === tr.length && t.sales === ts,
-        '  ' + t.tl.padEnd(20) + ' ' + tr.length + ' agents · ' + ts + ' sales');
-      if (tl) ok(near(t.conv, ts / tl, 1e-9), '  ' + t.tl.padEnd(20) + ' conversion = its own sales / its own leads');
+      const tc = tr.filter((a) => a.closed != null).reduce((s, a) => s + n(a.closed), 0);
+      ok(t.agents === people(tr) && t.sales === ts,
+        '  ' + t.tl.padEnd(20) + ' ' + people(tr) + ' agents · ' + ts + ' sales', 'served ' + t.agents + ' agents · ' + t.sales + ' sales');
+      if (tc) ok(t.conv && near(t.conv.v != null ? t.conv.v : t.conv, ts / tc, 1e-9), '  ' + t.tl.padEnd(20) + ' conversion = its own sales / its own CLOSED leads (spec 001)');
     }
   }
 

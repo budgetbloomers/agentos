@@ -576,11 +576,9 @@ head("C · Team leaders' coaching (US4)");
   } };
   const { P, N } = loadPage(routes);
   P.setD(cmPayload()); P.setView('cm'); P.setSel('courtesy'); P.render();
-  check('the CM sidebar has "Team leaders\' coaching" directly above the user card / Sign out', () => {
-    const h = N.root.innerHTML; const i = h.indexOf('data-view="cm_coach"'); if (i < 0) throw new Error('no cm_coach nav item');
-    const u = h.indexOf('class="user-card"'); if (u < i) throw new Error('it sits below the user card');
-    const between = h.slice(i + 10, u); if (/data-view=/.test(between)) throw new Error('another nav item sits between it and the user card');
-    mustText(h.slice(i - 80, u), "Team leaders' coaching"); must(h.slice(i - 60, i + 40), '<button', 'a real button, so the keyboard reaches it');
+  check('the CM sidebar has NO "Team leaders\' coaching" entry any more (spec 034, Nick 2026-10-13: "remove this team leader coaching for campaign manager" — the Coaching Hub tab is the one coaching entry)', () => {
+    const h = N.root.innerHTML; mustNot(h, 'data-view="cm_coach"', 'the cm_coach button is still in the sidebar'); mustNotText(h, "Team leaders' coaching");
+    must(h, 'data-view="cm_hub"', 'the Coaching Hub tab is the coaching entry');
   });
   check('the other roles do not get the item', () => {
     const t = P.sidebarHTML('team'); mustNot(t, 'cm_coach'); mustNot(P.sidebarHTML('month'), 'cm_coach');

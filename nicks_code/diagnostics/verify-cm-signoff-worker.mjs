@@ -811,5 +811,35 @@ head('G · the rule book: specs/cm_rules.json and the operative copy');
   ok('no literal 300 / 270 target outside the rule copy (a rule is read, not copied)', (src.match(/\b(300|270)\b/g) || []).length <= 3, String((src.match(/\b(300|270)\b/g) || []).length));
 }
 
+/* =================================================================== N */
+head('N · headcounts count PEOPLE, not digest rows (spec 034, 2026-10-13: Dalwin read "98 agents" for a 76-agent list)');
+{
+  /* The digest publishes a mover as one row per dated campaign segment (D4), and — after a stale list upload — an agent
+     can even carry two segment rows under the SAME leader and campaign. Those rows are right for the figures (each
+     carries its own days once) and wrong for a headcount. Every count the manager reads is distinct by CB. */
+  await setup();
+  const d = DIGEST();
+  const seg = (code, name, camp, tl, from, to, over) => Object.assign(mk(code, name, camp, 'M1', tl, over), { segment: { from, to } });
+  d.agents.push(
+    seg('CB7', 'Twice Listed', 'Courtesy', 'Denise Haripersad', '2026-09-07', '2026-09-07', { sales: 3 }),
+    seg('CB7', 'Twice Listed', 'Courtesy', 'Denise Haripersad', '2026-09-09', '2026-09-12', { sales: 8 }),
+    seg('CB8', 'Real Mover', 'Courtesy', 'Denise Haripersad', '2026-09-01', '2026-09-06', { sales: 4 }),
+    seg('CB8', 'Real Mover', 'Cuddle', 'Renolan Pillay', '2026-09-07', '2026-09-30', { sales: 6 }),
+  );
+  const r = await overview(env, DB, cmUser, d, [], { assist: { requests: [] }, tenure: 'all' });
+  const cms = r.body.cm.campaigns, all = cms.find((c) => c.key === 'all'), co = cms.find((c) => c.key === 'courtesy'), cu = cms.find((c) => c.key === 'cuddle');
+  /* the fixture's no-activity agent CB77 (notCovered, Courtesy/Denise) is a person too and has always counted */
+  ok('All campaigns: 8 people (CB1-5, CB7, CB8, CB77), not 10 rows', all.agents === 8, String(all.agents));
+  ok('Courtesy: 6 people (CB1-3, CB7 once, CB8 once, CB77)', co.agents === 6, String(co.agents));
+  ok('Cuddle: 3 people (CB4, CB5, CB8)', cu.agents === 3, String(cu.agents));
+  const denise = co.teams.find((t) => t.tl === 'Denise Haripersad');
+  ok('the team row counts CB7 once and CB8 once: Denise 6', denise && denise.agents === 6, JSON.stringify(denise && denise.agents));
+  ok('…while the team\'s sales still sum every row (60 + 3 + 8 + 4 = 75)', denise && denise.sales === 75, String(denise && denise.sales));
+  ok('Courtesy sales sum every row too (75)', co.kpis.sales.v === 75, String(co.kpis.sales.v));
+  ok('agentIndex lists each code once', all.agentIndex.length === 8 && new Set(all.agentIndex.map((a) => a.code)).size === 8, String(all.agentIndex.length));
+  const m1 = all.tenures.find((t) => t.key === 'M1');
+  ok('the tenure picker counts people (M1 = CB1, CB7, CB8 → 3)', m1 && m1.agents === 3, JSON.stringify(all.tenures));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
