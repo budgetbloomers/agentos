@@ -396,6 +396,8 @@
   /* the last-upload stamp answers "did my file go in?", which the coverage span cannot — its own muted line, never squeezed beside it (Agent List, 1 Sep) */
   .slot .sf-last,.slot .sfoot .smuted{color:var(--muted);font-size:11px}
   .slot .sf-status .pill{white-space:normal;text-align:left;line-height:1.3;border-radius:9px}
+  /* the Agent List's "targets to check" notice is a sentence, not a chip — it wraps inside the slot (spec 027, fixed 2026-10-13) */
+  .slot .sf-last .pill.ptargets{display:inline-block;white-space:normal;text-align:left;line-height:1.35;border-radius:9px;max-width:100%;margin-top:4px}
   .slot .att-upload-warn{display:block;flex:1 1 100%;white-space:normal;text-align:left;line-height:1.35;border-radius:8px;padding:6px 9px}
   #largePick{white-space:nowrap}   /* the full-width Large files card: its button on one line, like the slots' */
   .slot.builtin{border-style:solid;cursor:default}
@@ -2713,7 +2715,7 @@ function unattributedBanner(){
   const nr=Object.entries(M.near||{}); let nearLine='';
   if(nr.length){
     nearLine=`<div class="card" style="border-left:3px solid var(--amber);margin-bottom:14px"><div style="font-size:14px"><b>${fmtNum(nr.length)} name${nr.length===1?'':'s'} in the uploads matched an agent by near spelling</b> — counted for them now; confirm on the <a class="linky" onclick="go('data')">Upload Station</a> (Matched by spelling), or set one to Ignore if it is not the same person.</div>
-    <p class="note" style="margin:7px 0 0">${nr.slice(0,6).map(([k,v])=>'<code>'+esc(k)+'</code> → '+esc(v.code)+' '+esc(v.name)).join(' · ')}${nr.length>6?' +'+fmtNum(nr.length-6)+' more':''}</p></div>`; }
+    <ul class="note near-list" style="margin:7px 0 0;padding-left:18px">${nr.slice(0,6).map(([k,v])=>'<li style="white-space:nowrap;margin:2px 0"><code title="the name as the upload stores it — letters only, no spaces">'+esc(k)+'</code> in the upload → <b>'+esc(v.code)+' '+esc(v.name)+'</b> on the Agent List</li>').join('')}${nr.length>6?'<li>+'+fmtNum(nr.length-6)+' more on the Upload Station</li>':''}</ul></div>`; }
   if(!u.strangers.length) return nearLine;
   const who=u.strangers.slice(0,6).map(s=>'<code>'+esc(s.k)+'</code> ('+fmtNum(s.n)+(s.fits?' — fits '+s.fits.map(esc).join(' and '):'')+')');
   const lv=u.leavers.length?`<p class="note" style="margin:6px 0 0;opacity:.8">Also not counted, by rule: ${fmtNum(u.ln)} sale(s) by ${u.leavers.length} agent(s) who have left the list — ${u.leavers.slice(0,4).map(l=>esc(l.k)+' (left '+esc(String(l.left).slice(5))+')').join(', ')}${u.leavers.length>4?' +'+(u.leavers.length-4)+' more':''}.</p>`:'';
@@ -7948,7 +7950,13 @@ PAGES.data=()=>{
           last:fe?`<span title="${esc(String(fe.file||''))}">${fmtNum(fe.moved)} moved · ${fmtNum(fe.fresh)} new · ${fmtNum(fe.left)} left · last upload ${esc(String(fe.at||''))}</span>`
             /* Spec Kit 027: mixed targets in a group / a Target cell that is not a number — named, never a refusal */
             +((fe.targets&&((fe.targets.mixed||[]).length||(fe.targets.text||[]).length))
-              ?`<span class="pill pwarn" title="${esc(listTargetWarningText({mixed:fe.targets.mixed||[],text:fe.targets.text||[]},String(fe.file||'the list')))}">targets to check: ${esc((fe.targets.mixed||[]).map(m=>m.group+' '+m.values.map(x=>x.v+'×'+x.n).join('/')).concat((fe.targets.text||[]).length?[(fe.targets.text||[]).length+' not a number']:[]).join(' · '))}</span>`:'')
+              /* readable, and it WRAPS (Nick, 2026-10-13: the badge was cut off mid-figure): "VT · Experienced: 11 at 7,
+                 1 at 2.5, 4 blank". Each agent is measured on their own cell either way — this asks whether the
+                 differences inside one tenure group are intended. The full sentence stays in the tooltip. */
+              ?`<span class="pill pwarn ptargets" title="${esc(listTargetWarningText({mixed:fe.targets.mixed||[],text:fe.targets.text||[]},String(fe.file||'the list')))}">Targets to check on the list — ${esc((fe.targets.mixed||[]).map(m=>{
+                  const g=String(m.group).split('|'); const ten=g[1]==='Exp'?'Experienced':(g[1]||'');
+                  return (g[0]||'')+' · '+ten+': '+m.values.map(x=>fmtNum(x.n)+' at '+x.v).join(', ')+(m.blank?', '+fmtNum(m.blank)+' blank':'');
+                }).concat((fe.targets.text||[]).length?[fmtNum((fe.targets.text||[]).length)+' Target cell(s) not a number']:[]).join('; '))}</span>`:'')
             :''};})()},
     {t:'inactive',icon:I.alert,color:'var(--rose)',name:'Cancellations (BI Inactive)',desc:'Power BI Inactive export — cancelled contracts, counted per agent by Contract Deactivate Date. This is where the MTD Cancellations and % of Cancellations columns come from. Upload daily; each upload replaces the days it covers, so overlapping pulls never double-count.',stat:statFor(['cancellations'])},
     {t:'vici',reach:'calls',icon:I.phone,color:'var(--cuddle)',name:'ViciDial — all agents',desc:'<b>The one dialler source for the whole floor since 1 Sep 2026</b> — Courtesy and Nesting included, CallX retired. Pull <b>EXPORT_CALL_REPORT</b> (tab-separated .txt) with <b>every user group ticked</b>: an unticked group doesn\'t error, its agents just read as never having dialled. One row per call, dated per call, so any date range splits across its days correctly. Talk time is every call\'s length on the agent\'s CB number; the upload says how much of it is ringing rather than talking. The older <b>Agent Performance Detail</b> is one row per agent for the range in its own "Time range:" line — export that ONE DAY AT A TIME, because a multi-day pull is a single total per agent and cannot be split across days.',stat:statFor(['calls (ViciDial)','vici range'])},
