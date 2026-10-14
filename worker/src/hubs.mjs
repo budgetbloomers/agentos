@@ -304,6 +304,8 @@ export async function kpiList(ids) {
 
 /* The three form types the KPI Hub offers. Allow-listed for the same reason as
    the coaching tables: `title` reaches Convex. */
+/* one Convex document holds about 1 MiB; a KPI form's JSON stays well under this and is never cut (see kpiWrite) */
+export const KPI_FORM_MAX = 900000;
 export const KPI_TITLES = [
   'Monthly KPI Acknowledgement Form',
   'Nesting Phase KPI Acknowledgement Form',
@@ -341,7 +343,16 @@ export async function kpiWrite(ids, body) {
   if (act === 'update') {
     const args = { formId, leaderId: ids.kpi };
     if (body.agentName !== undefined) args.agentName = String(body.agentName);
-    if (body.formData !== undefined) args.formData = String(body.formData).slice(0, 20000);
+    /* NEVER CUT A FORM (2026-10-14 — Denise's KPI for Sibusiso Mkhize "got deleted"). This line used to be
+       `.slice(0, 20000)`: a form longer than that was saved with its tail cut off, the Hub could no longer parse the
+       JSON, and the form opened EMPTY — 309 of the 449 forms in the KPI Hub are longer than 20,000 characters (the
+       largest 127,372) and 5 of Denise's were already unreadable. A form that is genuinely too large for one Convex
+       document is REFUSED with the reason, never silently truncated. */
+    if (body.formData !== undefined) {
+      const fd = String(body.formData);
+      if (fd.length > KPI_FORM_MAX) return { error: `This form is too large to save (${fd.length.toLocaleString()} characters; the limit is ${KPI_FORM_MAX.toLocaleString()}). Nothing was changed — shorten a long answer and try again.`, status: 413 };
+      args.formData = fd;
+    }
     await m(KPI, 'forms:updateForm', args);
     return { ok: true };
   }

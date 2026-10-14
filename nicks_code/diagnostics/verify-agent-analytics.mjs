@@ -1662,6 +1662,14 @@ head('Links tab (Nick, 2026-09-08) — agent view only');
 /indexOf\('data:image\/'\)===0/.test(PAGE) ? ok('only a data-URI screenshot the Worker served is ever painted') : bad('screenshot source not guarded');
 /rel="noopener noreferrer"/.test(PAGE) && /lk-off/.test(PAGE) ? ok('live links open in a new tab; a link without an address is shown greyed, never invented') : bad('link cards missing the safe-open or the greyed state');
 
+head('KPI Hub forms are never truncated on save (2026-10-14 — a 20,000-character cut emptied long forms)');
+{
+  const hubs = rd('worker', 'src', 'hubs.mjs');
+  !/formData\)\.slice\(0,\s*\d+\)/.test(hubs) ? ok('the Worker no longer slices formData') : bad('formData is still sliced on save — a long form is destroyed');
+  /KPI_FORM_MAX\s*=\s*\d{6,}/.test(hubs) && /fd\.length > KPI_FORM_MAX/.test(hubs) && /status: 413/.test(hubs)
+    ? ok('a form over the limit is REFUSED with its size, never cut') : bad('no size refusal for an oversized form');
+}
+
 head('Campaign manager Coaching Hub tab (Spec Kit 033) — the Pages CSP frames exactly one origin');
 {
   /* The tab shows the live Hub app inside the page. Our own CSP had no frame-src (so frames fell back to
