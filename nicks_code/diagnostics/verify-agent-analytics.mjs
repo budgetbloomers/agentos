@@ -1684,9 +1684,9 @@ head('Campaign manager Coaching Hub tab (Spec Kit 033) — the Pages CSP frames 
   /connect-src 'self' https:\/\/chatterbox-agentos-api\.chatterbox-agentos\.workers\.dev https:\/\/fxvnjhfdenycxxuklord\.supabase\.co;/.test(csp)
     ? ok('connect-src unchanged — the browser still talks only to the Worker and the storage host')
     : bad('connect-src moved');
-  /var HUB_TAB_URL=HUB_APP_URL\+'\?theme=agentos';/.test(PAGE)
+  /function hubTabUrl\(\)\{[\s\S]{0,400}?'\?theme=agentos&leader='\+encodeURIComponent\(leader\)/.test(PAGE)
     ? ok('the frame address is the Hub with ?theme=agentos — the campaign manager palette (Hub repo, feat/agentos-theme)')
-    : bad('HUB_TAB_URL is not HUB_APP_URL + ?theme=agentos');
+    : bad('hubTabUrl() is not HUB_APP_URL + ?theme=agentos&leader=<id> (spec 035)');
   /cmHubEnsure\(\)/.test(PAGE) && /cmHubDrop\(\)/.test(PAGE) && /document\.body\.appendChild\(/.test(PAGE)
     ? ok('one frame outside #root (cmHubEnsure), dropped on sign-out (cmHubDrop)')
     : bad('the persistent-frame functions are missing');

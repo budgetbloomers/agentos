@@ -216,7 +216,7 @@ export async function coachingList(ids) {
 }
 
 /** Create one coaching session. teamLeaderId comes from the session, always. */
-export async function coachingCreate(ids, user, body) {
+export async function coachingCreate(ids, user, body, opts) {
   if (!ids.coaching) return { error: 'You are not on the Coaching Hub yet.', status: 409 };
   const table = String(body.type || '');
   const spec = CREATE_SPEC[table];
@@ -243,7 +243,7 @@ export async function coachingCreate(ids, user, body) {
      everything they did fill in. */
   for (const f of spec.required) if (args[f] === undefined) args[f] = '';
 
-  if (table !== 'groupCoaching' && !args.agentName)
+  if (table !== 'groupCoaching' && !args.agentName && !(opts && opts.asDraft === true))   // a migrated DRAFT may still lack its agent — that is what a draft is
     return { error: 'Choose the agent this session is for.', status: 400 };
   const dateField = table === 'qualityAssuranceCoaching' ? 'dateOfCoaching' : 'date';
   if (!args[dateField]) args[dateField] = sastNow().toISOString().slice(0, 10);   // the SAST day (W5), not UTC's
@@ -291,6 +291,10 @@ export async function coachingCreate(ids, user, body) {
     const d = String(args.employeeNumber).replace(/[^0-9]/g, '');
     if (d) args.employeeCode = 'CB' + String(parseInt(d, 10));
   }
+  /* spec 035: tools/migrate-worker-drafts.mjs carries a Worker draft into the Hub AS A DRAFT (submitted:false — the Hub's
+     leader mode lets its owner reopen it). Only the tool passes this; the Worker's own routes never do, so a submit from
+     the old tab still files a submitted document. */
+  if (opts && opts.asDraft === true) args.submitted = false;
   const id = await m(COACHING, `${table}:create`, args);
   return { ok: true, id, table, label: COACH_TABLES[table] };
 }

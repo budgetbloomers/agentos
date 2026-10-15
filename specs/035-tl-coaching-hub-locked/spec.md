@@ -1,6 +1,13 @@
 # Feature Specification: The team leader's Coaching Hub tab — the Hub itself, locked to their own workspace
 
-**Feature Branch**: `035-tl-coaching-hub-locked` · **Created**: 2026-10-14 · **Status**: PLAN — awaiting Nick's answers to Q1–Q3
+**Feature Branch**: `035-tl-coaching-hub-locked` · **Created**: 2026-10-14 · **Status**: BUILT 2026-10-15, guards green — awaiting deploy (Convex → Hub → Worker + Pages → `migrate-worker-drafts --apply` → browser walk as a leader)
+
+## Decisions (Nick, 2026-10-15 — "going back to change the team leader view to this only, where they see their forms; once they fill in and click submit they cannot edit their forms; once they click save they can go back and edit their form")
+
+- **Q1 — accepted**: the lock is in the Hub's leader mode and its data; the Hub still has no sign-in.
+- **Q2 — dropped from the tab**: the team leader's Coaching Hub tab is the Hub and nothing else. "Coaching on your agents by others" stays where it also lives, in the agent drill-down (spec 002).
+- **Q3 — keep the lock**: Submit locks a document for good (a line; never opened, edited, deleted or printed by its author in the Hub's leader mode). Save keeps a draft the leader can reopen and edit.
+- Every linked leader gets the frame at once (no per-account trial flag). `tools/map-hub-ids.mjs` matches all 9 team-leader accounts (Charlotte included) — run `--apply` if any account still lacks `hub_ids.coaching`.
 
 **Input**: Nick, 2026-10-13 (screenshot of the campaign manager's Coaching Hub tab showing Dharmendra's workspace in the
 AgentOS theme): "for the team leaders coaching hub I want it to look like this but there can only see their forms and etc"

@@ -97,7 +97,7 @@ function loadPage(routes) {
     + '["render","cmView","loadPortal","sidebarHTML","navFor","pageMTD","pageWeeklyTeam","pageDailyTeam","pageLeadsTeam","pageCmReport","reportsTabs","cmCmdPage","cmTeamsPage",'
     + '"teamView","agentKpis","drillState","exportReports","reportMTD","reportLeads","cmAsk","cmCoachPick","cmCoachPage","cmHM","fmtShort","coachLine","agentKpiStates","cmValidPeriod","cmRangeProblem","resetClientState","preShell"]'
     + '.forEach(function(n){ try{ __o[n]=eval(n); }catch(e){ __o[n]=function(){ throw new Error("the page has no "+n+"()"); }; } });'
-    + '__o.getHub=function(){ try{ return CMHUB; }catch(e){ return null; } }; __o.hubTabUrl=function(){ try{ return HUB_TAB_URL; }catch(e){ return null; } };'
+    + '__o.getHub=function(){ try{ return CMHUB; }catch(e){ return null; } }; __o.hubTabUrl=function(){ try{ return hubTabUrl(); }catch(e){ return null; } };'
     + '[]'
     + '.forEach(function(n){ try{ __o[n]=eval(n); }catch(e){ __o[n]=function(){ throw new Error("the page has no "+n+"()"); }; } });'
     + '__o.setD=function(d){D=d}; __o.setView=function(v){VIEW=v}; __o.getView=function(){return VIEW}; __o.getD=function(){return D}; __o.setU=function(u){U=u};'
@@ -914,7 +914,7 @@ head('T · The Coaching Hub tab — the live Hub inside the page, below Reports 
     if (ids(P.navFor('team')).includes('cm_hub') || ids(P.navFor('month')).includes('cm_hub')) throw new Error('cm_hub on another nav');
   });
   check('the frame address is the Hub with ?theme=agentos (the campaign manager palette — contract T1)', () => {
-    if (P.hubTabUrl() !== HUB) throw new Error(String(P.hubTabUrl()));
+    if (P.hubTabUrl() !== HUB + '&leader=') throw new Error(String(P.hubTabUrl()));   // leader= EMPTY for a manager (spec 035)
   });
   const p = cmPayload();
   p.assist = { requests: [{ id: 'r1', priority: 'P1', closed: false, campaign: 'courtesy', category: 'crm', tl: 'Denise Haripersad', sla: { state: 'near' } }] };
@@ -931,7 +931,7 @@ head('T · The Coaching Hub tab — the live Hub inside the page, below Reports 
   check('exactly ONE frame, appended to <body> (outside #root), with the Hub address given ONCE, a title and no referrer', () => {
     if (frames().length !== 1) throw new Error(frames().length + ' frames');
     if (fr.tagName !== 'IFRAME') throw new Error('tag ' + fr.tagName);
-    if (fr.src !== HUB) throw new Error('src ' + fr.src);
+    if (fr.src !== HUB + '&leader=') throw new Error('src ' + fr.src);   // leader= EMPTY for a manager (spec 035)
     if (fr._srcWrites !== 1) throw new Error('src assigned ' + fr._srcWrites + ' times');
     if (fr.title !== 'Coaching Hub') throw new Error('title ' + fr.title);
     if (fr.referrerPolicy !== 'no-referrer') throw new Error('referrerPolicy ' + fr.referrerPolicy);

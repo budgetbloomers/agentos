@@ -1117,6 +1117,10 @@ export async function overview(env, DB, user, digest, months, extra) {
          themselves — a team leader is entitled to their own team's figures. */
       agents: rows,
       coaching,
+      /* THE LEADER'S COACHING HUB ID (spec 035-tl-coaching-hub-locked, 2026-10-15): the Coaching Hub tab runs the live Hub
+         pinned to this workspace (?leader=). From the SESSION's app_users.hub_ids — never from the request — and '' when
+         the account is not linked, which the page says in words. Team scope only: the staff preview gets no frame. */
+      hubId: auth.scope === 'team' && user.hub_ids && user.hub_ids.coaching ? String(user.hub_ids.coaching) : '',
     },
   };
 }

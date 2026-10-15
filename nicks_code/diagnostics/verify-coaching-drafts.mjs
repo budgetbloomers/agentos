@@ -15,6 +15,9 @@
  *   C  submit lock   exactly-once submit, failure keeps the draft, reopen; NO written content on any leader route
  *   D  locked page   sessions are lines (SUBMITTED + signature state), no View/Notes, no "edit it in the Hub" footer
  *   E  signatures    content change clears them (page) and a stale signature beside new content is dropped (Worker)
+ *
+ *   NOTE (spec 035, 2026-10-15): the team leader's Coaching Hub TAB is now the embedded Hub (verify-tl-hub.mjs); the
+ *   native page functions below are called directly and stay until tools/migrate-worker-drafts.mjs has run (follow-up).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -415,7 +418,7 @@ try {
         /<a href="https:\/\/coaching-hub-psi\.vercel\.app\/" target="_blank" rel="noopener noreferrer">Open the Coaching Hub/.test(locked)
         && !/edit a session you already saved/i.test(locked) && !/to print one/i.test(locked));
       const all = P.allFormsPage();
-      ok('"All forms": the draft is DRAFT with Open; the submitted session is SUBMITTED with no action', /DRAFT/.test(text(all)) && all.includes('data-draft-open="d1"') && /SUBMITTED/.test(text(all)) && !all.includes('data-coach-view'), text(all).slice(0, 300));
+      ok('"All forms": the draft is DRAFT and says it is moving to the Coaching Hub tab — no Open here (spec 035); the submitted session is SUBMITTED with no action', /DRAFT/.test(text(all)) && !all.includes('data-draft-open="d1"') && /Moving to your Coaching Hub tab/.test(text(all)) && /SUBMITTED/.test(text(all)) && !all.includes('data-coach-view'), text(all).slice(0, 300));
       ok('no data-coach-view handler or button survives anywhere in the page', !PAGE.includes('data-coach-view') && !/function coachView\(/.test(PAGE));
       const card = P.coachHTML({ windowDays: 90, coachingAt: '2026-10-05T06:00:00Z', agents: [{ code: 'CB1', sessions: [{ type: 'Formal Coaching', typeLabel: 'Formal Coaching', collection: 'formalCoachingCalls', date: '2026-10-05' }], themes: [] }] });
       ok('a session with no text (what a team leader receives) is a plain line, not an empty expander', /Formal Coaching/.test(text(card)) && !/<details[^>]*>\s*<summary>[^]*?<\/summary>\s*<\/details>/.test(card), card.slice(0, 300));

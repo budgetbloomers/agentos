@@ -3417,8 +3417,8 @@ function allFormsPage(){
   var body=rows.map(function(r){
     /* a submitted coaching document has no action at all — it cannot be opened by its author (spec 004) */
     var open=r.src==='kpi' ? '<button class="btn small" data-af-kpi="'+esc(r.id)+'">Open</button>'
-      : r.src==='draft' ? (r.stuck?'<button class="btn small" data-draft-reopen="'+esc(r.id)+'">Reopen</button>'
-        :'<button class="btn small" data-draft-open="'+esc(r.id)+'">Open</button>')
+      /* a Worker draft is being carried into the Coaching Hub (spec 035, tools/migrate-worker-drafts.mjs) — it opens there, on the Coaching Hub tab */
+      : r.src==='draft' ? '<span class="sub2">Moving to your Coaching Hub tab</span>'
       : '';
     return '<tr><td class="l"><b>'+esc(r.kind)+'</b>'
       +(r.note?'<div class="sub2">'+esc(r.note.slice(0,110))+'</div>':'')+'</td>'
@@ -4285,7 +4285,7 @@ function wireShell(){
    already in memory — switching sections never re-asks the Worker. */
 function render(){
   if(!D) return;
-  if(VIEW!=='cm_hub'||PW_OPEN) cmHubHide();   // the Coaching Hub frame is KEPT off its tab, only hidden (spec 033); never over the password form
+  if(!isHubView()||PW_OPEN) cmHubHide();   // the Coaching Hub frame is KEPT off its tabs, only hidden (specs 033/035); never over the password form
   if(PW_OPEN) return;   // the person is mid-way through changing their password — leave the form alone
   /* a refresh that arrived while a form was open (LIVE.pending) lands now, if this render is safe */
   if(LIVE.pending&&liveTeamScope()&&liveSafeToRender()){ var fr=LIVE.pending; LIVE.pending=null; D=fr; TEAM=D; }
@@ -5231,7 +5231,17 @@ var CMC={d:null,busy:false,err:null,tl:'',key:'',seq:0};
    frame inside #root reloads each time and loses the manager's place in the Hub — moving the node reloads it too. So
    there is ONE frame, appended to <body> outside #root, fixed over a placeholder the tab draws (#cmHubHost), shown
    with display, its address given once, removed only on sign-out. Failure is words + Retry, never a link. */
-var HUB_TAB_URL=HUB_APP_URL+'?theme=agentos';
+/* THE FRAME'S ADDRESS, PER ROLE (spec 035-tl-coaching-hub-locked, Nick 2026-10-15): the campaign manager gets the whole
+   Hub — leader= EMPTY, which also clears a leader mode an earlier sign-in may have left in this tab's session storage;
+   a team leader gets the Hub pinned to their own workspace — &leader=<Hub id>, the id from the Worker's overview (the
+   session's app_users.hub_ids), never typed or chosen here. Read when the frame is created (once per sign-in). */
+function hubTabUrl(){
+  var leader=(D&&D.scope==='team'&&D.hubId)?String(D.hubId):'';
+  return HUB_APP_URL+'?theme=agentos&leader='+encodeURIComponent(leader);
+}
+function tlHubLinked(){ return !!(D&&D.scope==='team'&&D.hubId); }
+/* the views that ARE the Hub frame: the manager's tab, and the team leader's once their account is linked */
+function isHubView(){ return VIEW==='cm_hub'||(VIEW==='coach_team'&&tlHubLinked()); }
 var CMHUB={el:null,loaded:false,failed:false,timer:0};
 var CMHUB_WAIT_MS=20000;   // a CSP block or a Hub that refuses to be framed fires no onload — the watchdog says so
 function cmHubBody(){
@@ -5248,7 +5258,7 @@ function cmHubWatch(){
     CMHUB.timer=0;
     if(CMHUB.loaded) return;
     CMHUB.failed=true;
-    if(VIEW==='cm_hub') render();
+    if(isHubView()) render();
   },CMHUB_WAIT_MS);
 }
 function cmHubEnsure(){
@@ -5266,10 +5276,10 @@ function cmHubEnsure(){
     var wasFailed=CMHUB.failed;
     CMHUB.loaded=true; CMHUB.failed=false;
     if(CMHUB.timer){ clearTimeout(CMHUB.timer); CMHUB.timer=0; }
-    if(wasFailed&&VIEW==='cm_hub') render();   // a late load takes the "did not load" card down with it
+    if(wasFailed&&isHubView()) render();   // a late load takes the "did not load" card down with it
   };
   CMHUB.el=el; CMHUB.loaded=false; CMHUB.failed=false;
-  el.src=HUB_TAB_URL;          // ONCE — see cmHubRetry for the only other assignment
+  el.src=hubTabUrl();          // ONCE — see cmHubRetry for the only other assignment
   document.body.appendChild(el);
   cmHubWatch();
 }
@@ -5296,13 +5306,25 @@ function cmHubDrop(){
 function cmHubRetry(){
   if(!CMHUB.el) return cmHubEnsure();
   CMHUB.failed=false; CMHUB.loaded=false;
-  CMHUB.el.src=HUB_TAB_URL;
+  CMHUB.el.src=hubTabUrl();
   cmHubWatch();
   render();
 }
 if(typeof window.addEventListener==='function'){   // the guards' stubbed windows have no listeners
-  window.addEventListener('resize',function(){ if(VIEW==='cm_hub') cmHubSync(); });
-  window.addEventListener('orientationchange',function(){ if(VIEW==='cm_hub') cmHubSync(); });
+  window.addEventListener('resize',function(){ if(isHubView()) cmHubSync(); });
+  window.addEventListener('orientationchange',function(){ if(isHubView()) cmHubSync(); });
+}
+/* THE TEAM LEADER'S COACHING HUB TAB (spec 035-tl-coaching-hub-locked, Nick 2026-10-15: "change the team leader view to
+   this only, where they see their forms; once they click submit they cannot edit; once they click save they can go back
+   and edit"). The SAME frame as the manager's tab (cmHub*), pinned to the leader's own Hub workspace by hubTabUrl()
+   (&leader=); Save draft / Submit and the lock live inside the Hub's leader mode. The native forms, drafts card and
+   sessions list of specs 003/004 have left this tab — their functions stay in the file for the archive view until
+   tools/migrate-worker-drafts.mjs has carried every Worker draft into the Hub (follow-up: retire them). */
+function tlHubBody(){
+  if(!tlHubLinked()) return '<div class="card"><h3>Coaching Hub</h3>'
+    +'<p class="why" style="margin:0">Your account is not linked to the Coaching Hub yet. Nothing here is missing from your team — '
+    +'ask Nick to link it (tools/map-hub-ids.mjs) and this tab becomes your Hub workspace.</p></div>';
+  return cmHubBody();
 }
 function cmCoachLoad(force){
   var key=CMPER+'|'+CMC.tl;
@@ -5838,7 +5860,7 @@ function teamView(){
       : VIEW==='leads_team' ? 'The lead funnel per agent — open, closed, sales conversion and cancellations — your team only.'
       : VIEW==='kpihub' ? 'The KPI acknowledgement forms for your team.'
       : VIEW==='nik_team' ? 'One fact, one explanation, one next action.'
-      : VIEW==='coach_team' ? 'Every coaching product recorded for your team.'
+      : VIEW==='coach_team' ? 'The Coaching Hub — your workspace and your forms. Save draft to come back later; Submit locks a document.'
       : VIEW==='help' ? 'Requests from your agents, and where each one stands.'
       : VIEW==='forms' ? 'Every document you have created, across both hubs.'
       : VIEW==='results' ? 'Agents on target, the next best action for each, and what is coming off the score.'
@@ -5851,7 +5873,7 @@ function teamView(){
       : VIEW==='leads_team' ? pageLeadsTeam()
       : VIEW==='kpihub' ? (FORM.id?kpiFormPage():kpiHubPage())
       : VIEW==='nik_team' ? nikolaPage(null,null)
-      : VIEW==='coach_team' ? (CFORM.type?coachFormPage():coachHubPage())
+      : VIEW==='coach_team' ? tlHubBody()
       : VIEW==='help' ? helpPage()
       : VIEW==='forms' ? allFormsPage()
       : VIEW==='results' ? pageTeamResults()
@@ -5866,7 +5888,7 @@ function teamView(){
   if(VIEW==='nik_team') wireNikola();
   /* The hubs are fetched the first time their tab is opened, not on sign-in —
      two Convex round trips should not sit in front of every team leader's page. */
-  if(VIEW==='coach_team'){ if(!HUB.drafts) draftsLoad(); if(!HUB.coaching) hubLoad('coaching'); else if(CFORM.type) wireCoachForm(); else wireCoachHub(); }
+  if(VIEW==='coach_team'&&tlHubLinked()){ cmHubEnsure(); cmHubSync(); var tlRt=$('cmHubRetry'); if(tlRt) tlRt.onclick=cmHubRetry; }
   /* The archive reads both hubs, so it asks for whichever it has not got. */
   if(VIEW==='forms'){
     if(!HUB.drafts) draftsLoad();
