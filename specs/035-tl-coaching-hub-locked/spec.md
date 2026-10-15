@@ -6,7 +6,8 @@
 
 - **Q1 — accepted**: the lock is in the Hub's leader mode and its data; the Hub still has no sign-in.
 - **Q2 — dropped from the tab**: the team leader's Coaching Hub tab is the Hub and nothing else. "Coaching on your agents by others" stays where it also lives, in the agent drill-down (spec 002).
-- **Q3 — keep the lock**: Submit locks a document for good (a line; never opened, edited, deleted or printed by its author in the Hub's leader mode). Save keeps a draft the leader can reopen and edit.
+- **Q3 — keep the lock, view-only (amended by Nick the same afternoon: "allow the team leaders to view after submitted")**: Submit locks a document for good — its author can still open and print it, but never edit or delete it (the Hub's `update`/`remove` refuse `leaderMode`). Save keeps a draft the leader can reopen and edit.
+- **No Lead Management Coaching in a leader's workspace** (Nick, same message: "remove lead management coaching"): the section is not drawn in leader mode and its routes land on the dashboard; the Sales Optimisation Specialists keep filing it from the manager's tab / the plain address.
 - Every linked leader gets the frame at once (no per-account trial flag). `tools/map-hub-ids.mjs` matches all 9 team-leader accounts (Charlotte included) — run `--apply` if any account still lacks `hub_ids.coaching`.
 
 **Input**: Nick, 2026-10-13 (screenshot of the campaign manager's Coaching Hub tab showing Dharmendra's workspace in the

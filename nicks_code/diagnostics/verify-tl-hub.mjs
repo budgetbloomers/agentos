@@ -145,7 +145,8 @@ try {
     ok('App.tsx gates every route through leaderRedirect', /LeaderGate/.test(h('src', 'App.tsx')) && /leaderRedirect\(pathname, leaderId\(\)\)/.test(h('src', 'App.tsx')));
     ok('Sidebar: no back-to-home in leader mode', /\{!isLeaderMode\(\) && \(/.test(h('src', 'components', 'Sidebar.tsx')));
     const list = h('src', 'components', 'SessionList.tsx');
-    ok('SessionList: a submitted document is a locked line in leader mode; a draft opens its form', /const locked = isLeaderMode\(\) && isSubmitted\(session\)/.test(list) && /data-locked="true"/.test(list) && /isLeaderMode\(\) && draft \? editUrl : viewUrl/.test(list));
+    ok('SessionList: a submitted document is view-only in leader mode (no Edit / Delete, still opens); a draft opens its form', /const locked = isLeaderMode\(\) && isSubmitted\(session\)/.test(list) && (list.match(/\{!locked && <button/g) || []).length === 2 && /isLeaderMode\(\) && draft \? editUrl : viewUrl/.test(list));
+    ok('no Lead Management Coaching in a leader\'s workspace: hidden from the sidebar and the dashboard, routes land on the dashboard', /isHiddenInLeaderMode/.test(h('src', 'components', 'Sidebar.tsx')) && /isHiddenInLeaderMode/.test(h('src', 'pages', 'Dashboard.tsx')) && /HIDDEN_IN_LEADER_MODE = \["lead-management"\]/.test(mode) && /isHiddenInLeaderMode\(m\[2\]/.test(mode));
     const forms = ['FormalCoachingForm', 'InformalCoachingForm', 'GroupCoachingForm', 'QualityAssuranceForm', 'QualityCoachingForm', 'LeadManagementForm'];
     const flowed = forms.filter((f) => { const s = h('src', 'forms', f + '.tsx'); return /useDraftFlow\(/.test(s) && /onSubmit=\{flow\.leaderMode \? \(\) => handleSave\(true\) : undefined\}/.test(s) && /isLeaderMode\(\) && isSubmitted\(existing \?\? null\)/.test(s); });
     ok('every form: Save draft / Submit through useDraftFlow and a submitted document redirects away in leader mode', flowed.length === 6, 'flowed: ' + flowed.join(','));
@@ -156,8 +157,8 @@ try {
       tables.every((t) => (h('convex', t + '.ts').match(/withClearedSignatures\(fields\)/g) || []).length === 2) && /const sig = \(v: string \| undefined\)/.test(h('src', 'lib', 'useDraftFlow.ts'))
       && ['FormalCoachingForm', 'InformalCoachingForm', 'QualityAssuranceForm', 'LeadManagementForm'].every((f) => /flow\.sig\(/.test(h('src', 'forms', f + '.tsx'))));
     const views = ['FormalCoachingView', 'InformalCoachingView', 'GroupCoachingView', 'QualityAssuranceView', 'QualityCoachingView', 'LeadManagementView'];
-    const bounced = views.filter((v) => /isLeaderMode\(\) && isSubmitted\(session/.test(h('src', 'views', v + '.tsx')));
-    ok('every view: a submitted document redirects to its list in leader mode', bounced.length === 6, 'bounced: ' + bounced.join(','));
+    const viewOnly = views.filter((v) => { const s = h('src', 'views', v + '.tsx'); return /const editable = !\(isLeaderMode\(\) && isSubmitted\(session/.test(s) && /editUrl=\{editable \?/.test(s) && !/<Navigate/.test(s); });
+    ok('every view: a submitted document opens in leader mode with no Edit (view-only, Nick 2026-10-15)', viewOnly.length === 6, 'viewOnly: ' + viewOnly.join(','));
     const t = spawnSync(process.execPath, ['--test', 'tests/**/*.test.mjs'], { cwd: HUB_DIR, encoding: 'utf8', shell: false });
     const passed = /# pass (\d+)/.exec(t.stdout + t.stderr) || /pass (\d+)/.exec(t.stdout + t.stderr);
     ok('the Hub\'s own tests are green (node --test)', t.status === 0 && passed && +passed[1] >= 10, (t.stdout + t.stderr).slice(-300));
