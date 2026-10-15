@@ -4711,6 +4711,11 @@ function cmCmdPage(c){
       num(k.canc.v),'',(k.canc.rate==null?'No cancellations recorded this period':pct(k.canc.rate,1)+' of gross sales · guardrail '+pct(k.canc.guard,0)))
     +kpi('🕐',(k.att.v!=null&&k.att.v<k.att.target)?'var(--amber-soft)':'var(--green-soft)','Attendance',
       (k.att.v==null?'—':pct(k.att.v,0)),'',num(k.att.productive)+' of '+num(k.att.agents)+' agents productive · target '+pct(k.att.target,0))
+    /* REFERRALS (spec 037, Nick 2026-10-15): the Worker's Σ ref over the campaign's rows after the tenure slice, for the
+       period on screen — the card follows every filter because the figure does. Absent on an older payload = no card,
+       never a 0. */
+    +(k.referrals?kpi('🤝',k.referrals.v>0?'var(--green-soft)':'var(--blue-soft)','Referrals',num(k.referrals.v),'',
+      num(k.referrals.agents)+' of '+num(k.referrals.people)+' agents referred at least one · from the referrals feed'):'')
     +'</div>'
     /* ONE line, not four dead tiles. A measure with no source is removed; a measure
        whose source simply has not been uploaded is worth naming ONCE, because that

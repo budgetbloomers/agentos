@@ -142,6 +142,7 @@ function campaign(key, label, over) {
       attempts: null, contactRate: { v: 0.375, contacts: 300, dials: 800 }, contactWhy: '', leads: null,
       qa: { v: 0.9, target: 0.9 }, checks: null, crit: { fails: 0, p1Open: 0 }, canc: { v: 3, rate: 0.02, guard: 0.1 },
       att: { v: 0.95, target: 0.95, productive: 10, agents: 12 },
+      referrals: { v: 17, agents: 5, people: 12 },
     },
     teams: [teamRow('Denise Haripersad', label), teamRow('Sam Leader', label, { conv: null, contactRate: null })],
   }, over || {});
@@ -198,6 +199,15 @@ head('A · Campaign tab (US1) — conversion, talk, contact, the help card');
   });
   check('Cuddle talk target "4 h 30 m" comes from kpis.talk.targetMin, not a literal', () => {
     const h = html(cmPayload(), 'cuddle'); mustText(h, 'target 4 h 30 m'); mustNotText(h, 'target 5 h');
+  });
+  check('the Referrals card (spec 037) prints the Worker\'s figure and who referred: "17" · "5 of 12 agents referred at least one"', () => {
+    const h = html(cmPayload()); clean(h);
+    const tile = h.slice(h.indexOf('>Referrals<')); if (h.indexOf('>Referrals<') < 0) throw new Error('no Referrals card');
+    mustText(tile.slice(0, 500), '17'); mustText(tile.slice(0, 500), '5 of 12 agents referred at least one'); mustText(tile.slice(0, 500), 'referrals feed');
+  });
+  check('the Referrals card without the Worker figure (an older payload) is simply absent — never a 0', () => {
+    const p = cmPayload(); delete p.cm.campaigns[0].kpis.referrals; const h = html(p);
+    if (h.indexOf('>Referrals<') >= 0) throw new Error('a card with no figure');
   });
   check('contact rate reads "37.5%" with "300 people reached from 800 dials"', () => {
     const h = html(cmPayload()); mustText(h, 'Contact Rate'); mustText(h, '37.5%'); mustText(h, '300 people reached from 800 dials');

@@ -444,12 +444,13 @@ const onePerPerson = (rows) => { const seen = new Set(); return rows.filter((r) 
 function agg(rows, digest) {
   const n = (v) => (v == null || isNaN(v) ? 0 : Number(v));
   const o = { agents: peopleIn(rows), sales: 0, target: 0, gwp: 0, gwpT: 0, canc: 0,
-    talk: 0, act: 0, emp: 0, fails: 0, ref: 0, qaN: 0, qaSum: 0, productive: 0, noGwp: [],
+    talk: 0, act: 0, emp: 0, fails: 0, ref: 0, refPeople: new Set(), qaN: 0, qaSum: 0, productive: 0, noGwp: [],
     calls: 0, ans: 0, leads: 0, leadsKnown: false, closed: 0, closedKnown: false, convSales: 0 };
   for (const r of rows) {
     o.sales += n(r.sales); o.target += n(r.target);
     o.gwp += n(r.gwpEx); o.gwpT += n(r.gwpT); o.canc += n(r.canc);
     o.talk += n(r.talk); o.act += n(r.act); o.emp += n(r.emp); o.ref += n(r.ref);
+    if (n(r.ref) > 0 && codeOf(r)) o.refPeople.add(codeOf(r));   // spec 037: who referred at least one (distinct by CB, not by segment row)
     o.fails += n(r.composite && r.composite.r2a && r.composite.r2a.fails);
     if (r.qa != null && !isNaN(r.qa)) { o.qaN++; o.qaSum += Number(r.qa); }
     o.calls += n(r.calls); o.ans += n(r.ans);
@@ -687,6 +688,11 @@ export function cmOverviewBody(digest, auth, assist, ctx, opts) {
       crit: { fails: c.fails, p1Open: reqs.filter((r) => !r.closed && r.priority === 'P1' && campKey(r.campaign) === key).length },
       canc: { v: c.canc, rate: c.cancRate, guard: (Number(slaC.cancel_watch_pct) || 10) / 100 },
       att: { v: c.att, target: (Number(slaC.att_target) || 95) / 100, productive: c.productive, agents: c.agents },
+      /* REFERRALS (spec 037-cm-referrals-card, Nick 2026-10-15: "one of dalwins card should show how many referrals live,
+         and of course when he filters etc it must be there"): Σ ref over THESE rows — the campaign's, after the tenure
+         slice, from the period's digest — so the campaign picker, tenure, month, cycle and custom range all apply by
+         construction. `ref` is what the HighLevel referrals feed (08:00 / 14:00 SAST) put on each agent's row. */
+      referrals: { v: c.ref, agents: c.refPeople.size, people: c.agents },
     };
 
     const projection = c.projGwp == null ? null : {
@@ -757,6 +763,7 @@ export function cmOverviewBody(digest, auth, assist, ctx, opts) {
         crit: { fails: c.fails, p1Open: reqs.filter((r) => !r.closed && r.priority === 'P1').length },
         canc: { v: c.canc, rate: c.cancRate, guard: (Number(sla.cancel_watch_pct) || 10) / 100 },
         att: { v: c.att, target: (Number(sla.att_target) || 95) / 100, productive: c.productive, agents: c.agents },
+        referrals: { v: c.ref, agents: c.refPeople.size, people: c.agents },   // spec 037 — the same rows, all campaigns
       },
       projection: c.projGwp == null ? null : {
         perDay: Math.round(c.gwp / (Number(digest.diallingDays) || 1)),

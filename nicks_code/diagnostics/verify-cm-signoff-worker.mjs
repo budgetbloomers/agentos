@@ -142,6 +142,17 @@ head('A · campaign overview: conversion on closed leads, talk target, contact r
   ok('the All campaigns entry sums the same rows (160 ÷ 600)', all && close(all.kpis.conv.v, 160 / 600) && all.kpis.conv.closed === 600);
   ok('a team row carries its own closed-lead conversion in the same shape', cou.teams.every((t) => t.conv && t.conv.basis === 'sales ÷ closed leads' && t.conv.closed === 300), JSON.stringify(cou.teams[0].conv));
   ok('no convWhy while conversion is known', !('convWhy' in cou.kpis));
+  /* spec 037 (Nick, 2026-10-15: "one of dalwins card should show how many referrals live, and of course when he filters
+     etc it must be there"): referrals are the SAME rows' ref, summed by the Worker after the tenure slice — never on the page */
+  const dRef = DIGEST();
+  const refOf = (pred) => dRef.agents.filter(pred).reduce((n, a) => n + (Number(a.ref) || 0), 0);
+  const isCou = (a) => String(a.campaign).toLowerCase() === 'courtesy';
+  ok('referrals: Courtesy = Σ ref over its rows, with how many people referred and the headcount', cou.kpis.referrals && cou.kpis.referrals.v === refOf(isCou)
+    && cou.kpis.referrals.agents === new Set(dRef.agents.filter((a) => isCou(a) && Number(a.ref) > 0).map((a) => a.code)).size && cou.kpis.referrals.people === cou.agents, JSON.stringify(cou.kpis.referrals));
+  ok('referrals: All campaigns = Σ ref over every row', all && all.kpis.referrals && all.kpis.referrals.v === refOf(() => true), JSON.stringify(all && all.kpis.referrals));
+  { const ten = cou.tenures && cou.tenures.find((t) => t.key && t.key !== 'all');
+    if (ten) { const sliced = camp(body(DIGEST(), { tenure: ten.key }), 'courtesy');
+      ok('referrals follow the tenure filter (' + ten.key + '): Σ ref over the slice only', sliced.kpis.referrals.v === refOf((a) => isCou(a) && String(a.tenure) === String(ten.key)), JSON.stringify(sliced.kpis.referrals)); } }
 
   const n = body(noClosed(DIGEST()));
   const c0 = camp(n, 'courtesy');

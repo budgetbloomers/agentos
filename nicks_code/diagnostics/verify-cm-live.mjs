@@ -108,6 +108,12 @@ try {
     cs.map((c) => c.label + ' ' + (c.kpis.conv ? (c.kpis.conv.v * 100).toFixed(1) + '%' : 'null')).join(' · '));
   ok(cs.every((c) => c.kpis.contactRate && c.kpis.attempts && c.kpis.leads),
     'contact rate, attempts per lead and lead volume all read');
+  /* spec 037: the Referrals card — the Worker's figure on every campaign entry, a count with its people */
+  ok(cs.every((c) => c.kpis.referrals && Number.isInteger(c.kpis.referrals.v) && c.kpis.referrals.v >= 0 && c.kpis.referrals.agents <= c.kpis.referrals.people),
+    'referrals read on every campaign entry (Σ ref, people who referred ≤ headcount)',
+    cs.map((c) => c.label + ' ' + (c.kpis.referrals ? c.kpis.referrals.v + ' by ' + c.kpis.referrals.agents + ' of ' + c.kpis.referrals.people : 'MISSING')).join(' · '));
+  { const all = cs.find((c) => c.key === 'all'); const rest = cs.filter((c) => c.key !== 'all');
+    if (all && rest.length) ok(all.kpis.referrals.v === rest.reduce((n, c) => n + c.kpis.referrals.v, 0), "All campaigns referrals = the sum of the campaigns", all.kpis.referrals.v + ' vs ' + rest.map((c) => c.kpis.referrals.v).join('+')); }
 
   head('C · the assistance register, against LIVE HighLevel');
   r = await call('/api/portal/cm/assist');
