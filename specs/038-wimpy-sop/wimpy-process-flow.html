@@ -77,7 +77,7 @@ svg.flow text{font-family:"Nunito","Segoe UI",Arial,sans-serif}
       <div><b>Version</b>1.0 — first issue</div>
       <div><b>Effective</b>16 October 2026</div>
       <div><b>Owner</b>Nick · Operations</div>
-      <div><b>Payroll</b>Romano</div>
+      <div><b>Payroll</b>Payroll administrator</div>
       <div><b>Companion to</b>SOP-WIMPY-001 (the full SOP)</div>
     </div>
   </div>
@@ -96,7 +96,7 @@ svg.flow text{font-family:"Nunito","Segoe UI",Arial,sans-serif}
     <tr><td><b>2 Automation</b></td><td>The accepted order is posted to the n8n workflow (Webhook → Code). n8n sends it to the kitchen board in HighLevel and <b>appends one row to the Google Sheet that payroll works from</b>.</td><td>n8n (automatic)</td><td>HighLevel card · Google Sheet row</td></tr>
     <tr><td><b>3 Kitchen</b></td><td>The kitchen prepares from the card and moves it New Order → Order Processing → Ready for Collection.</td><td>Kitchen</td><td>Wimpy Pipeline stage</td></tr>
     <tr><td><b>4 Collection</b></td><td>The person sees <i>Ready for Collection</i> in My orders, collects, and the kitchen closes the card as Completed. No payment at the counter.</td><td>Staff member · Kitchen</td><td>Card Completed</td></tr>
-    <tr><td><b>5 Payroll</b></td><td>At the pay cut-off, payroll totals the sheet per CB number, verifies the totals against the order ledger, and loads one deduction per person onto the payslip.</td><td>Romano (payroll) · Operations</td><td>Payroll deduction · audit tab</td></tr>
+    <tr><td><b>5 Payroll</b></td><td>At the pay cut-off, payroll totals the sheet per CB number, verifies the totals against the order ledger, and loads one deduction per person onto the payslip.</td><td>Payroll · Operations</td><td>Payroll deduction · audit tab</td></tr>
     </tbody></table>
 </section>
 
@@ -164,7 +164,7 @@ svg.flow text{font-family:"Nunito","Segoe UI",Arial,sans-serif}
       <text x="810" y="544" text-anchor="middle" font-size="11.5" fill="#3b3536">one row per order · payroll's source</text>
 
       <rect x="660" y="600" width="300" height="60" rx="10" fill="#fff" stroke="#188038" stroke-width="2"/>
-      <text x="810" y="624" text-anchor="middle" font-weight="800">Payroll (Romano)</text>
+      <text x="810" y="624" text-anchor="middle" font-weight="800">Payroll</text>
       <text x="810" y="644" text-anchor="middle" font-size="11.5" fill="#3b3536">at cut-off: total per CB number</text>
 
       <rect x="660" y="700" width="300" height="60" rx="10" fill="#188038" stroke="#146b2e" stroke-width="2"/>
@@ -244,7 +244,7 @@ svg.flow text{font-family:"Nunito","Segoe UI",Arial,sans-serif}
       <text x="920" y="240" text-anchor="middle" font-size="10.5" font-weight="600" fill="#fff">Google Sheet “Wimpy Orders”</text>
       <text x="920" y="256" text-anchor="middle" font-size="10.5" font-weight="600" fill="#fff">one row per order, every order,</text>
       <text x="920" y="272" text-anchor="middle" font-size="10.5" font-weight="600" fill="#fff">captured automatically.</text>
-      <text x="920" y="292" text-anchor="middle" font-size="10.5" font-weight="800" fill="#ffe9a8">Romano works from this sheet.</text>
+      <text x="920" y="292" text-anchor="middle" font-size="10.5" font-weight="800" fill="#ffe9a8">Payroll works from this sheet.</text>
     </g>
   </svg>
 
@@ -277,7 +277,7 @@ svg.flow text{font-family:"Nunito","Segoe UI",Arial,sans-serif}
   <h2><span class="n">3</span>Accounts, payments and the verified deduction</h2>
   <p>Nobody pays at the counter: every order is on the person's staff account and is recovered as a <b>payroll deduction</b>, once per pay period, after verification against the service's own ledger.</p>
 
-  <h3>3.1 The deduction procedure (Romano, at the pay cut-off)</h3>
+  <h3>3.1 The deduction procedure (Payroll, at the pay cut-off)</h3>
   <div class="step"><div class="no">1</div><p><b>Cut the period.</b> Take every sheet row for the pay period (from the day after the last cut-off to today's cut-off). Copy them to a tab named for the period, e.g. <code>2026-10</code>; the live tab is never edited.</p></div>
   <div class="step"><div class="no">2</div><p><b>Remove test rows.</b> Delete rows whose CB NUMBER is not a real CB number or a staff username (<code>Test</code>, <code>wimpy.livecheck</code>). They are system checks, not meals.</p></div>
   <div class="step"><div class="no">3</div><p><b>Total per person.</b> Pivot: CB NUMBER → sum of Order Total. One line per person is the proposed deduction.</p></div>
@@ -320,21 +320,21 @@ svg.flow text{font-family:"Nunito","Segoe UI",Arial,sans-serif}
     <tr><td><b>Kitchen</b></td><td>Prepares from the card; moves New Order → Processing → Ready → Completed; closes every card by lunch</td><td>Confirms a disputed order from its cards if asked</td></tr>
     <tr><td><b>n8n automation</b></td><td>Posts each accepted order to the board and appends the sheet row — no human step</td><td>—</td></tr>
     <tr><td><b>Operations (Nick)</b></td><td>Reads the health alerts; glances at the order sheet view; announces kitchen closures</td><td>Exports the ledger for the period; resolves differences with payroll; approves the deduction file</td></tr>
-    <tr><td><b>Payroll (Romano)</b></td><td>—</td><td>Runs the procedure in 3.1: period tab, test rows out, totals per CB, verify, load, keep the audit tab</td></tr>
+    <tr><td><b>Payroll</b></td><td>—</td><td>Runs the procedure in 3.1: period tab, test rows out, totals per CB, verify, load, keep the audit tab</td></tr>
     <tr><td><b>Engineering</b></td><td>Keeps the service, the workflow and the guards green</td><td>On request: re-runs a failed row, adds the date column, fixes an automation fault</td></tr>
     </tbody></table>
 
   <h3>Month-end checklist</h3>
   <table>
     <thead><tr><th style="width:6%">✓</th><th>Item</th><th style="width:18%">Owner</th></tr></thead><tbody>
-    <tr><td>☐</td><td>Period tab created from the live sheet; live tab untouched</td><td>Romano</td></tr>
-    <tr><td>☐</td><td>Test rows removed (<code>Test</code>, <code>wimpy.livecheck</code>, any non-staff key)</td><td>Romano</td></tr>
-    <tr><td>☐</td><td>Pivot: one total per CB number</td><td>Romano</td></tr>
+    <tr><td>☐</td><td>Period tab created from the live sheet; live tab untouched</td><td>Payroll</td></tr>
+    <tr><td>☐</td><td>Test rows removed (<code>Test</code>, <code>wimpy.livecheck</code>, any non-staff key)</td><td>Payroll</td></tr>
+    <tr><td>☐</td><td>Pivot: one total per CB number</td><td>Payroll</td></tr>
     <tr><td>☐</td><td>Ledger export for the same period received from Operations</td><td>Nick</td></tr>
-    <tr><td>☐</td><td>Per-person totals agree; differences resolved and noted on the tab</td><td>Romano + Nick</td></tr>
+    <tr><td>☐</td><td>Per-person totals agree; differences resolved and noted on the tab</td><td>Payroll + Operations</td></tr>
     <tr><td>☐</td><td>Deduction file approved</td><td>Nick</td></tr>
-    <tr><td>☐</td><td>Deductions loaded; payslip line "Wimpy staff account — period"</td><td>Romano</td></tr>
-    <tr><td>☐</td><td>Audit pack kept: period tab, pivot, ledger export, notes</td><td>Romano</td></tr>
+    <tr><td>☐</td><td>Deductions loaded; payslip line "Wimpy staff account — period"</td><td>Payroll</td></tr>
+    <tr><td>☐</td><td>Audit pack kept: period tab, pivot, ledger export, notes</td><td>Payroll</td></tr>
     </tbody></table>
 
   <h3>If something breaks</h3>
@@ -345,7 +345,7 @@ svg.flow text{font-family:"Nunito","Segoe UI",Arial,sans-serif}
     <tr><td>Two rows for one order</td><td>The workflow ran twice</td><td>Deduct once; engineering checks the webhook</td></tr>
     <tr><td>A person disputes the amount</td><td>—</td><td>Walk through My orders with them; the kitchen's card decides a disputed line</td></tr>
     </tbody></table>
-  <p class="small">SOP-WIMPY-002 v1.0 · Effective 16 October 2026 · Owner: Operations (Nick) · Payroll: Romano · Companion to SOP-WIMPY-001.</p>
+  <p class="small">SOP-WIMPY-002 v1.0 · Effective 16 October 2026 · Owner: Operations (Nick) · Payroll administrator · Companion to SOP-WIMPY-001.</p>
   </div>
 </section>
 
