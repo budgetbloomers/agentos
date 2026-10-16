@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="en-ZA">
+<head>
+<meta charset="utf-8">
+<title>Wimpy Order — Standard Operating Procedure SOP-WIMPY-001 v1.0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+/* Brand tokens — the Wimpy Order app's own (wimpy-service/public/index.html) */
+:root{--red:#d0021b;--red-dark:#a30015;--yellow:#ffc72c;--cream:#fff7e8;--ink:#231f20;--body:#3b3536;--muted:#7a6f70;
+  --line:#f0dcc0;--card:#ffffff;--ok:#1c7c3e;--bad:#b3001b;--soft:#fdecee;--sand:#fff3cf}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#fff;color:var(--body);font-family:"Nunito","Segoe UI",system-ui,Arial,sans-serif;font-size:10.6pt;line-height:1.45}
+body{padding:0 14mm}
+h1,h2,h3,h4{color:var(--ink);line-height:1.15;margin:0}
+h1{font-size:30pt;font-weight:900;letter-spacing:-.3px}
+h2{font-size:17pt;font-weight:900;color:var(--red);margin:0 0 7pt;padding-bottom:5pt;border-bottom:3px solid var(--yellow);break-after:avoid}
+h2 .n{display:inline-block;min-width:30pt;color:var(--ink)}
+h3{font-size:12pt;font-weight:800;margin:12pt 0 4pt;break-after:avoid}
+h4{font-size:10.8pt;font-weight:800;margin:9pt 0 3pt;color:var(--red-dark)}
+p{margin:0 0 6pt}
+ul,ol{margin:0 0 7pt 18pt;padding:0}
+li{margin:0 0 3pt}
+section.page{break-before:page;padding-top:2pt}
+section.page.first{break-before:auto}
+.kicker{font-size:8.5pt;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--red)}
+small,.small{font-size:9pt;color:var(--muted)}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:9.2pt;background:var(--sand);padding:0 3pt;border-radius:3pt;color:var(--ink)}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:9pt}
+table{width:100%;border-collapse:collapse;margin:4pt 0 10pt;font-size:9.6pt;break-inside:auto}
+tr{break-inside:avoid}
+th{text-align:left;background:var(--red);color:#fff;font-weight:800;padding:5pt 6pt;border:1px solid var(--red-dark);font-size:9.2pt;letter-spacing:.2px}
+td{padding:4.5pt 6pt;border:1px solid var(--line);vertical-align:top;background:#fff}
+tbody tr:nth-child(even) td{background:#fffdf7}
+td.r,th.r{text-align:right;white-space:nowrap}
+.tag{display:inline-block;font-size:8pt;font-weight:800;border-radius:9pt;padding:1pt 7pt;letter-spacing:.3px;text-transform:uppercase}
+.tag.red{background:var(--soft);color:var(--red-dark);border:1px solid #f7c6cc}
+.tag.yel{background:var(--sand);color:#7a5a00;border:1px solid #f4dd8a}
+.tag.grn{background:#e6f4ea;color:var(--ok);border:1px solid #b9e0c4}
+.note,.warn,.do{border-radius:8pt;padding:8pt 11pt;margin:6pt 0 9pt;break-inside:avoid;font-size:9.8pt}
+.note{background:var(--cream);border:1px solid var(--line)}
+.warn{background:var(--soft);border:1px solid #f7c6cc}
+.do{background:#e6f4ea;border:1px solid #b9e0c4}
+.note b,.warn b,.do b{color:var(--ink)}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:10pt}
+.step{display:grid;grid-template-columns:22pt 1fr;gap:8pt;margin:0 0 6pt;break-inside:avoid}
+.step .no{width:20pt;height:20pt;border-radius:50%;background:var(--red);color:#fff;font-weight:900;font-size:10pt;display:flex;align-items:center;justify-content:center}
+.step p{margin:1pt 0 0}
+.msg{font-style:italic;color:var(--ink)}
+.rule{height:3px;background:var(--yellow);margin:8pt 0 12pt;border-radius:2px}
+
+/* cover */
+.cover{height:245mm;display:flex;flex-direction:column;justify-content:space-between;color:#fff;background:linear-gradient(160deg,var(--red) 0%,var(--red-dark) 100%);border-radius:14pt;padding:22mm 18mm 16mm;position:relative;overflow:hidden}
+.cover:after{content:"";position:absolute;right:-60mm;top:-60mm;width:170mm;height:170mm;border-radius:50%;border:26mm solid rgba(255,199,44,.14)}
+.cover .roundel{width:68pt;height:68pt}
+.cover h1{color:#fff;font-size:40pt;margin:14pt 0 6pt}
+.cover .sub{font-size:15pt;font-weight:700;color:#ffe9a8;margin-bottom:0}
+.cover .meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10pt;background:rgba(0,0,0,.18);border-radius:10pt;padding:10pt 12pt;font-size:9.6pt;position:relative}
+.cover .meta b{display:block;font-size:8pt;letter-spacing:1.5px;text-transform:uppercase;color:#ffd666;margin-bottom:2pt}
+.cover .brand{font-weight:900;letter-spacing:3px;text-transform:uppercase;font-size:11pt;color:#ffd666}
+.cover .yel{height:6pt;background:var(--yellow);border-radius:3pt;width:70pt;margin:10pt 0 0}
+.coverfoot{display:flex;justify-content:space-between;align-items:center;margin-top:10pt;font-size:9pt;color:var(--muted)}
+
+/* toc */
+.toc{columns:2;column-gap:22pt;font-size:10pt}
+.toc a{color:var(--ink);text-decoration:none;display:block;padding:2.5pt 0;border-bottom:1px dotted var(--line);break-inside:avoid}
+.toc a b{color:var(--red);display:inline-block;min-width:24pt}
+
+/* quick card */
+.card{border:3px solid var(--red);border-radius:14pt;padding:14pt 16pt;background:#fff}
+.card h2{border:0;margin:0 0 8pt}
+.big{font-size:22pt;font-weight:900;color:var(--ink)}
+.qgrid{display:grid;grid-template-columns:1fr 1fr;gap:12pt}
+.qbox{background:var(--cream);border:1px solid var(--line);border-radius:10pt;padding:9pt 11pt}
+.qbox h4{margin:0 0 4pt}
+@media print{a{color:inherit}}
+</style>
+</head>
+<body>
+
+<!-- ============================================================ COVER -->
+<section class="page first">
+  <div class="cover">
+    <div>
+      <div class="brand">Wimpy Order · The ChatterBox</div>
+      <svg class="roundel" viewBox="0 0 64 64" aria-hidden="true" style="margin-top:18pt"><circle cx="32" cy="32" r="30" fill="#fff"/><circle cx="32" cy="32" r="24" fill="none" stroke="#ffc72c" stroke-width="3"/><text x="32" y="43" font-family="Nunito,Arial,Helvetica,sans-serif" font-size="30" font-weight="900" text-anchor="middle" fill="#d0021b">W</text></svg>
+      <h1>Standard Operating<br>Procedure</h1>
+      <p class="sub">Wimpy Order — the weekday lunch app</p>
+      <div class="yel"></div>
+      <p style="margin-top:14pt;max-width:120mm;font-size:10.5pt;color:#fff3cf">How the floor orders, how the kitchen receives, how team leaders and management run it, and how it is changed. Written from the live service, for the people who use it every weekday morning.</p>
+    </div>
+    <div class="meta">
+      <div><b>Document</b>SOP-WIMPY-001</div>
+      <div><b>Version</b>1.0 — first issue</div>
+      <div><b>Effective</b>16 October 2026</div>
+      <div><b>Owner</b>Nick · Operations, The ChatterBox</div>
+      <div><b>Prepared by</b>Aarav · AgentOS engineering</div>
+      <div><b>Classification</b>Internal — the floor, kitchen, management</div>
+    </div>
+  </div>
+  <div class="coverfoot"><span>Panimax Solutions (Pty) Ltd t/a The ChatterBox · 203 Sunford Drive, Phoenix</span><span>Live service: https://phoenix-wimpy.vercel.app</span></div>
+</section>
+
+<!-- ============================================================ DOCUMENT CONTROL -->
+<section class="page" id="control" style="font-size:9.6pt">
+  <style>#control table{font-size:9pt;margin-bottom:7pt}#control td,#control th{padding:3.5pt 6pt}#control h3{margin-top:8pt}</style>
+  <div class="kicker">Document control</div>
+  <h2><span class="n">0</span>Control, approval and revision</h2>
+  <table>
+    <thead><tr><th style="width:28%">Field</th><th>Value</th></tr></thead><tbody>
+    <tr><td>Document number</td><td>SOP-WIMPY-001</td></tr>
+    <tr><td>Title</td><td>Wimpy Order — Standard Operating Procedure</td></tr>
+    <tr><td>Applies to</td><td>Every person with an active Agent List account at The ChatterBox (agents, team leaders, campaign managers, management), the kitchen, and the technical custodians of the service</td></tr>
+    <tr><td>System covered</td><td>Wimpy Order, the stand-alone lunch service at <b>https://phoenix-wimpy.vercel.app</b> (Vercel project <code>phoenix-wimpy</code>), its order ledger, its kitchen hand-off and its HighLevel order board</td></tr>
+    <tr><td>Source of truth</td><td>The service code (<code>agentos/wimpy-service/</code>) and Spec Kit features 009, 015, 018, 020–025. Where this document and the running service disagree, the service is right and this document is revised (section 18).</td></tr>
+    <tr><td>Review cycle</td><td>Quarterly, and on every release that changes the menu, prices, hours, sign-in or history</td></tr>
+    <tr><td>Distribution</td><td>Team leaders (print the quick card, section 22, for the floor); kitchen; management; AgentOS engineering</td></tr>
+  </tbody></table>
+
+  <h3>Approval</h3>
+  <table>
+    <thead><tr><th>Role</th><th>Name</th><th>Signature</th><th style="width:22%">Date</th></tr></thead><tbody>
+    <tr><td>Document owner (Operations)</td><td>Nick</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+    <tr><td>Technical custodian</td><td>Aarav</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+    <tr><td>Kitchen lead</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+  </tbody></table>
+
+  <h3>Revision history</h3>
+  <table>
+    <thead><tr><th style="width:12%">Version</th><th style="width:18%">Date</th><th>Change</th><th style="width:16%">By</th></tr></thead><tbody>
+    <tr><td>1.0</td><td>16 Oct 2026</td><td>First issue. Describes the service as released 9 October 2026 with the Wimpy-only password (start password <code>wimpy123</code>), the 07:00–09:00 window, My orders, the HighLevel board and the phoenix-wimpy address.</td><td>Aarav</td></tr>
+  </tbody></table>
+
+  <h3>System history the document rests on</h3>
+  <table>
+    <thead><tr><th style="width:18%">Date</th><th>Milestone</th></tr></thead><tbody>
+    <tr><td>30–31 Aug 2026</td><td>Wimpy tab inside Agent Analytics; the 3–3–3–1 weekday value menu with the Big One rotation; prices fixed to the brief</td></tr>
+    <tr><td>2 Sep 2026</td><td>Office hours introduced; orders are "as is" — no add-ons or customisations</td></tr>
+    <tr><td>10 Sep 2026</td><td>Wimpy becomes its own app; the order form asks CB number, name and surname; quantity 1–10</td></tr>
+    <tr><td>14 Sep 2026</td><td>Phone number required on the order form; Cheese &amp; Tomato toasted removed</td></tr>
+    <tr><td>7 Oct 2026</td><td>Sign-in needs the password (spec 009); My orders and the HighLevel order board (spec 015) — history starts here</td></tr>
+    <tr><td>9 Oct 2026</td><td>Stand-alone service on Vercel (018); ordering window 07:00–09:00 (020); duplicate cards allowed on the board (022); readable order sheet in Supabase and the tab icon (023); address phoenix-wimpy (024); Wimpy-only password, start password <code>wimpy123</code> (025)</td></tr>
+  </tbody></table>
+</section>
+
+<!-- ============================================================ TOC -->
+<section class="page" id="toc">
+  <div class="kicker">Contents</div>
+  <h2><span class="n">&nbsp;</span>What is in this document</h2>
+  <div class="toc">
+    <a href="#s1"><b>1</b>Purpose and scope</a>
+    <a href="#s2"><b>2</b>The system at a glance</a>
+    <a href="#s3"><b>3</b>Definitions</a>
+    <a href="#s4"><b>4</b>Roles and responsibilities</a>
+    <a href="#s5"><b>5</b>Access, sign-in and passwords</a>
+    <a href="#s6"><b>6</b>The ordering window</a>
+    <a href="#s7"><b>7</b>The menu and prices</a>
+    <a href="#s8"><b>8</b>Procedure: placing an order</a>
+    <a href="#s9"><b>9</b>What the kitchen receives</a>
+    <a href="#s10"><b>10</b>Procedure: My orders</a>
+    <a href="#s11"><b>11</b>Procedure: changing your Wimpy password</a>
+    <a href="#s12"><b>12</b>Kitchen procedure and the order board</a>
+    <a href="#s13"><b>13</b>Team-leader procedures</a>
+    <a href="#s14"><b>14</b>Management procedures: daily, weekly, monthly</a>
+    <a href="#s15"><b>15</b>Troubleshooting matrix</a>
+    <a href="#s16"><b>16</b>Escalation and response targets</a>
+    <a href="#s17"><b>17</b>Data, privacy and security</a>
+    <a href="#s18"><b>18</b>Change control</a>
+    <a href="#s19"><b>19</b>Known limitations and open items</a>
+    <a href="#s20"><b>20</b>Technical reference</a>
+    <a href="#s21"><b>21</b>Related documents and guards</a>
+    <a href="#s22"><b>22</b>Quick-reference card for the floor</a>
+  </div>
+  <div class="note" style="margin-top:14pt"><b>How to read this document.</b> Sections 5 to 11 are for everyone who orders. Section 12 is the kitchen's. Sections 13 and 14 are for team leaders and management. Sections 15 and 16 are the first stop when something goes wrong. Sections 17 to 21 are for whoever owns or changes the service. Section 22 is one page you can print and pin up.</div>
+</section>
+
+<!-- ============================================================ 1 PURPOSE -->
+<section class="page" id="s1">
+  <h2><span class="n">1</span>Purpose and scope</h2>
+  <p>Wimpy Order is how The ChatterBox floor orders breakfast and lunch from the on-site Wimpy kitchen on weekday mornings. This procedure exists so that every person who orders, cooks, supervises or maintains the service does the same thing the same way, and so that a new team leader can run it from this document alone.</p>
+  <h3>In scope</h3>
+  <ul>
+    <li>Using the app: signing in, the ordering window, the menu, placing an order, order history, the Wimpy password.</li>
+    <li>Running the app: onboarding and leavers, password resets, the kitchen's board, daily and weekly checks, errors and escalation.</li>
+    <li>Owning the app: what data it keeps and where, how prices, menu and hours are changed, released and verified, and how this document is kept true.</li>
+  </ul>
+  <h3>Out of scope</h3>
+  <ul>
+    <li>The kitchen's own cooking, stock and cash procedures.</li>
+    <li>Agent Analytics, VAS Analytics and the other AgentOS apps, except where they touch Wimpy (accounts come from the Agent List; a team-leader password reset affects Wimpy).</li>
+    <li>Payment. Wimpy Order places orders; settlement with the kitchen is handled outside the app.</li>
+  </ul>
+  <div class="note"><b>Principle.</b> The server decides. Every rule in this document — hours, prices, quantities, who may see which history — is enforced by the service, not by the page. A page that looks open after 09:00 still cannot order; a changed price on screen is never charged.</div>
+</section>
+
+<!-- ============================================================ 2 OVERVIEW -->
+<section class="page" id="s2">
+  <h2><span class="n">2</span>The system at a glance</h2>
+  <table>
+    <thead><tr><th style="width:26%">Part</th><th>What it is</th><th style="width:30%">Where</th></tr></thead><tbody>
+    <tr><td>The app</td><td>One web page: sign-in, the Weekday Value Menu with today's Big One, the cart, the order form, My orders, Change password</td><td>https://phoenix-wimpy.vercel.app (the old <code>/wimpy/</code> address on the VAS site forwards here)</td></tr>
+    <tr><td>The service</td><td>A small Node server that signs people in, serves the menu, prices and accepts orders, keeps history and talks to the kitchen and the order board</td><td>Vercel project <code>phoenix-wimpy</code> (account <code>budgetbloomers</code>); a container image exists for any other host</td></tr>
+    <tr><td>Accounts</td><td>The same accounts as Agent Analytics, created and removed by the Agent List. Every active account is granted Wimpy automatically</td><td>Supabase <code>app_users</code>, <code>app_sessions</code></td></tr>
+    <tr><td>The ledger</td><td>Every accepted order: who, when, what, total, notes, and the state of its board card</td><td>Supabase <code>wimpy_orders</code>, <code>wimpy_hl_contacts</code>; readable view <code>wimpy_order_sheet</code></td></tr>
+    <tr><td>The kitchen hand-off</td><td>The order slip, sent by the service the moment an order is confirmed</td><td>The kitchen's n8n workflow (the "kitchen system")</td></tr>
+    <tr><td>The order board</td><td>One contact per person and one card per order in the <b>Wimpy Pipeline</b>, moved by the kitchen as the order progresses</td><td>HighLevel, the dedicated <b>Wimpy</b> sub-account (not the referrals or Help Center one)</td></tr>
+  </tbody></table>
+
+  <h3>The life of an order</h3>
+  <div class="step"><div class="no">1</div><p><b>Sign in</b> with a CB number (managers: username) and the Wimpy password. The session lasts 12 hours and opens nothing but Wimpy.</p></div>
+  <div class="step"><div class="no">2</div><p><b>Inside the window</b> (07:00–09:00, Monday to Friday, South African time) the person adds items from today's menu, sets quantities, and fills in CB number, name, surname, phone and optional notes.</p></div>
+  <div class="step"><div class="no">3</div><p><b>The service re-prices the order</b> from its own menu, checks the window, the identity and every line, and only then sends the slip to the kitchen system. If the kitchen does not answer, the order stays on the confirm screen and the person sends it again.</p></div>
+  <div class="step"><div class="no">4</div><p><b>The kitchen said yes</b>: the service records the order in the ledger and, in the background, writes the person's contact and the order's card to the Wimpy Pipeline at <i>New Order</i>. The page shows the total, the slip and the time.</p></div>
+  <div class="step"><div class="no">5</div><p><b>The kitchen works the board</b>: New Order → Order Processing → Ready for Collection → Completed. The person sees the stage in <b>My orders</b> whenever they look.</p></div>
+  <div class="step"><div class="no">6</div><p><b>If the board write failed</b> (HighLevel down, a refused card), the service retries with growing gaps, and My orders heals the person's own late cards each time they open it. After eight failed tries a row is marked <i>stuck</i> and management is alerted.</p></div>
+</section>
+
+<!-- ============================================================ 3 DEFINITIONS -->
+<section class="page" id="s3">
+  <h2><span class="n">3</span>Definitions</h2>
+  <table>
+    <thead><tr><th style="width:26%">Term</th><th>Meaning in this document</th></tr></thead><tbody>
+    <tr><td>CB number</td><td>A person's employee number on the Agent List, e.g. CB145. Typed in any of the usual spellings (<code>CB-145</code>, <code>cb 145</code>, <code>145</code>). Managers without a CB number use their username.</td></tr>
+    <tr><td>Wimpy password</td><td>The password that opens Wimpy Order. It is separate from the AgentOS (Agent Analytics / VAS) password. Every account starts on the <b>start password</b> <code>wimpy123</code> until the person chooses their own inside the app.</td></tr>
+    <tr><td>Start password</td><td><code>wimpy123</code>. Also what Wimpy goes back to when a team leader resets the person's AgentOS password.</td></tr>
+    <tr><td>The window</td><td>The hours in which orders are taken: <b>07:00 to 09:00, Monday to Friday, South African time (UTC+2, no daylight saving)</b>. The menu and history can be read at any time.</td></tr>
+    <tr><td>Weekday Value Menu</td><td>The fixed menu: three breakfasts, three burgers, two toasteds, plus the day's Big One. Every price is set in the service and cannot be changed from the page.</td></tr>
+    <tr><td>Today's Big One</td><td>The hero item that changes by weekday (Monday Mega Breakfast … Friday Fully Loaded Dagwood). Only today's can be ordered; another day's is refused by name.</td></tr>
+    <tr><td>Order slip</td><td>The plain-text order the kitchen receives: name, CB number, phone, each line with quantity and price, the total and any notes.</td></tr>
+    <tr><td>Ledger</td><td>The table of every accepted order (<code>wimpy_orders</code>), each owned by the account that placed it. My orders reads only the signed-in owner's rows.</td></tr>
+    <tr><td>Order board / card</td><td>The Wimpy Pipeline in the Wimpy HighLevel sub-account. One card per order; the card's stage is what My orders shows.</td></tr>
+    <tr><td>Stage</td><td>One of New Order, Order Processing, Ready for Collection, Completed. "Not on the kitchen board yet" means the kitchen has the order but its card has not been written yet.</td></tr>
+    <tr><td>Stuck</td><td>A ledger row whose board card failed to write eight times. The order itself was delivered to the kitchen; only its card is missing. Management re-queues it after fixing the cause.</td></tr>
+    <tr><td>Health banner</td><td>The alert strip management sees in the AgentOS apps. Wimpy raises <code>wimpy-hl-stuck</code>, <code>wimpy-hl-not-configured</code> and <code>wimpy-ledger-failed</code> there.</td></tr>
+    <tr><td>SAST</td><td>South African Standard Time. Every time in the app and this document is SAST.</td></tr>
+  </tbody></table>
+</section>
+
+<!-- ============================================================ 4 ROLES -->
+<section class="page" id="s4">
+  <h2><span class="n">4</span>Roles and responsibilities</h2>
+  <table>
+    <thead><tr><th style="width:20%">Role</th><th>Responsible for</th><th style="width:30%">Not responsible for</th></tr></thead><tbody>
+    <tr><td><b>Orderer</b><br><small>agent, team leader, manager</small></td><td>Ordering only in their own name with their own CB number; keeping their Wimpy password private and changing it from the start password; collecting the order when the board says Ready; reporting a wrong or missing order the same morning</td><td>Changing prices, hours or the menu; ordering for colleagues</td></tr>
+    <tr><td><b>Team leader</b></td><td>Telling new agents the address and the start password; first-line help with sign-in, lockouts and "how do I"; resetting an AgentOS password when a Wimpy password is forgotten (section 13); escalating per section 16</td><td>Editing accounts directly; the kitchen board</td></tr>
+    <tr><td><b>Kitchen</b></td><td>Preparing from the slip; moving each card New Order → Order Processing → Ready for Collection → Completed on the day; telling Operations when slips stop arriving or a slip is unreadable</td><td>Sign-in problems; the ledger; the app's code</td></tr>
+    <tr><td><b>Operations owner</b><br><small>Nick</small></td><td>Owning this SOP; approving every menu, price and hours change; the HighLevel Wimpy sub-account and its settings (duplicates allowed, scopes); reading the daily health alerts and the order sheet; deciding escalations</td><td>Writing code</td></tr>
+    <tr><td><b>Technical custodian</b><br><small>Aarav / AgentOS engineering</small></td><td>The service code, tests and guards; releases (Vercel, Worker, Pages); secrets on the hosting platform; re-queuing stuck rows; keeping this document true after every release</td><td>Menu and price decisions; HighLevel account administration</td></tr>
+  </tbody></table>
+
+  <h3>RACI</h3>
+  <table>
+    <thead><tr><th>Activity</th><th>Orderer</th><th>Team leader</th><th>Kitchen</th><th>Operations</th><th>Technical</th></tr></thead><tbody>
+    <tr><td>Place an order</td><td><b>R/A</b></td><td>C</td><td>I</td><td>—</td><td>—</td></tr>
+    <tr><td>Prepare and hand over an order</td><td>I</td><td>—</td><td><b>R/A</b></td><td>I</td><td>—</td></tr>
+    <tr><td>Work the order board (stages)</td><td>I</td><td>—</td><td><b>R/A</b></td><td>C</td><td>I</td></tr>
+    <tr><td>Onboard a new agent to Wimpy</td><td>I</td><td><b>R/A</b></td><td>—</td><td>I</td><td>—</td></tr>
+    <tr><td>Password reset (forgotten Wimpy password)</td><td>I</td><td><b>R/A</b></td><td>—</td><td>I</td><td>C</td></tr>
+    <tr><td>Change a price, the menu or the hours</td><td>I</td><td>I</td><td>C</td><td><b>A</b></td><td><b>R</b></td></tr>
+    <tr><td>Release the service</td><td>—</td><td>—</td><td>I</td><td>A</td><td><b>R</b></td></tr>
+    <tr><td>Act on a health alert / stuck rows</td><td>—</td><td>—</td><td>C</td><td>A</td><td><b>R</b></td></tr>
+    <tr><td>HighLevel sub-account settings</td><td>—</td><td>—</td><td>I</td><td><b>R/A</b></td><td>C</td></tr>
+    <tr><td>Revise this SOP</td><td>—</td><td>C</td><td>C</td><td><b>A</b></td><td><b>R</b></td></tr>
+  </tbody></table>
+  <p class="small">R responsible · A accountable · C consulted · I informed</p>
+</section>
+
+<!-- ============================================================ 5 ACCESS -->
+<section class="page" id="s5">
+  <h2><span class="n">5</span>Access, sign-in and passwords</h2>
+  <h3>5.1 Who has access</h3>
+  <ul>
+    <li>Every active account on the Agent List. When the Agent List upload creates an account, a database trigger grants it the Wimpy app in the same transaction. Leavers lose the account, and with it Wimpy, when the list drops them.</li>
+    <li>Managers and management staff with an AgentOS account order too. Everyone orders; there is no "staff only" menu.</li>
+    <li>Nobody is added to Wimpy by hand. An active agent without the app shows as a warning row in the Agent List integrity report; the fix is the Agent List, not the Wimpy service.</li>
+  </ul>
+
+  <h3>5.2 Signing in</h3>
+  <div class="step"><div class="no">1</div><p>Open <b>https://phoenix-wimpy.vercel.app</b>. The sign-in screen says "Chatterbox × Wimpy · Weekday Value Menu" and shows the hours in its footer.</p></div>
+  <div class="step"><div class="no">2</div><p>Type your <b>CB number</b> in any spelling (<code>CB145</code>, <code>CB-145</code>, <code>145</code>). Managers without a CB number type their <b>username</b> ("Managers: type your username here.").</p></div>
+  <div class="step"><div class="no">3</div><p>Type your <b>Wimpy password</b>. On a new account that is the start password <code>wimpy123</code>. Your AgentOS password does <u>not</u> open Wimpy.</p></div>
+  <div class="step"><div class="no">4</div><p>You land on the menu, signed in under your CB number (shown at the top). The session lasts <b>12 hours</b> or until you sign out.</p></div>
+
+  <table>
+    <thead><tr><th style="width:36%">What you typed</th><th>What the app says</th><th style="width:28%">Why</th></tr></thead><tbody>
+    <tr><td>Nothing in one of the fields</td><td class="msg">Type your CB number and your password.</td><td>Checked before anything is looked up</td></tr>
+    <tr><td>A wrong password, an unknown CB number, or a disabled account</td><td class="msg">That CB number and password do not match</td><td>One plain message; the app never says which half was wrong</td></tr>
+    <tr><td>Five wrong passwords on one account within 15 minutes</td><td class="msg">Account locked after repeated failures. Try again in a few minutes.</td><td>The lock lasts 15 minutes and is <b>shared</b> with the AgentOS sign-in: Wimpy guesses lock both doors</td></tr>
+    <tr><td>A hundred wrong sign-ins from one network within ten minutes</td><td class="msg">Too many wrong sign-ins from this network. Wait ten minutes and try again.</td><td>A flood guard for the shared office connection; it does not count against any account</td></tr>
+  </tbody></table>
+
+  <h3>5.3 The Wimpy password rules</h3>
+  <ul>
+    <li><b>Start password:</b> <code>wimpy123</code> for every account until the person sets their own. While still on it, the menu shows a nudge: "You are still on the Wimpy start password. Choose your own so nobody else can order in your name."</li>
+    <li><b>Your own password:</b> at least 10 characters; not the same as the current one; not <code>wimpy123</code>. Set inside the app (section 11). Changing it signs out every <i>other</i> Wimpy session of your account.</li>
+    <li><b>Forgotten:</b> ask your team leader to reset your AgentOS password. That reset also clears your Wimpy password, so Wimpy answers to <code>wimpy123</code> again. Set a new one straight away.</li>
+    <li><b>Separate from AgentOS:</b> the two passwords never sync. Changing one never changes the other.</li>
+  </ul>
+  <div class="warn"><b>Never share a Wimpy password or order under someone else's CB number.</b> The order form checks that the CB number typed is the signed-in person's own; an order for a colleague is refused. Every order is recorded against the account that placed it.</div>
+</section>
+
+<!-- ============================================================ 6 WINDOW -->
+<section class="page" id="s6">
+  <h2><span class="n">6</span>The ordering window</h2>
+  <p class="big" style="margin:4pt 0 8pt">07:00 – 09:00 · Monday to Friday · South African time</p>
+  <table>
+    <thead><tr><th style="width:30%">When</th><th>What the app does</th></tr></thead><tbody>
+    <tr><td>Inside the window</td><td>The menu shows "Ordering is open · 07:00–09:00, Monday to Friday"; items have <b>Add to order</b>; the cart, the order form and Confirm all work.</td></tr>
+    <tr><td>Outside the window (before 07:00, from 09:00, weekends)</td><td>The menu is still readable and marked <b>Ordering closed</b>; nothing can be added; My orders and Change password still work. A tab left open flips by itself when the clock crosses 07:00 or 09:00.</td></tr>
+    <tr><td>An order sent anyway (stale tab, clock skew)</td><td>The service refuses it: <span class="msg">Wimpy orders are taken between 07:00 and 09:00, Monday to Friday (SA time). Ordering is closed now — the menu is back next working day.</span></td></tr>
+    <tr><td>Public holidays</td><td>The app does <b>not</b> close automatically on a public holiday. Operations tells the floor and the kitchen when the kitchen is closed (see section 14).</td></tr>
+  </tbody></table>
+  <div class="note"><b>Why the server's clock is the only clock.</b> The window is one constant in the service (<code>WINDOW</code>, 07:00–09:00). The page's flip clock is a courtesy; the refusal is the rule. Changing the hours is a release, not a setting (section 18).</div>
+</section>
+
+<!-- ============================================================ 7 MENU -->
+<section class="page" id="s7">
+  <h2><span class="n">7</span>The menu and prices</h2>
+  <p>The Weekday Value Menu is fixed: <b>3 breakfasts + 3 burgers + 2 toasteds</b>, plus <b>Today's Big One</b>. Burgers and toasteds come with chips; breakfasts with toast (the Farmhouse adds chips). Every item is served <b>as it is</b> — there are no add-ons, removals or customisations. Prices are set in the service to the cent and shown with the pre-discount price struck through and the saving.</p>
+  <table>
+    <thead><tr><th style="width:22%">Category</th><th>Item</th><th>What is in it</th><th class="r">Price</th><th class="r">Was</th><th class="r">Saving</th></tr></thead><tbody>
+    <tr><td rowspan="3"><b>Breakfast</b></td><td>Mzansi Brekkie</td><td>A fried egg, two rashers of bacon and grilled tomato on toast</td><td class="r"><b>R45.90</b></td><td class="r">R57.90</td><td class="r">21%</td></tr>
+    <tr><td>Double Up Breakfast</td><td>Two eggs, two rashers of bacon, a grilled banger and tomato on toast</td><td class="r"><b>R65.90</b></td><td class="r">R82.90</td><td class="r">21%</td></tr>
+    <tr><td>Farmhouse Breakfast</td><td>Two eggs, bacon, two bangers, grilled tomato and onion, with chips and toast</td><td class="r"><b>R77.90</b></td><td class="r">R97.90</td><td class="r">20%</td></tr>
+    <tr><td rowspan="3"><b>Burgers</b><br><small>with chips</small></td><td>Cheese Burger</td><td>Flame-grilled beef patty with cheese, lettuce, tomato, onion and Wimpy Relish</td><td class="r"><b>R54.90</b></td><td class="r">R68.90</td><td class="r">20%</td></tr>
+    <tr><td>Bacon &amp; Cheese Burger</td><td>Beef patty, crispy bacon and cheese with the full salad and Wimpy Relish</td><td class="r"><b>R82.90</b></td><td class="r">R103.90</td><td class="r">20%</td></tr>
+    <tr><td>Big Cheese Burger</td><td>Two patties, double cheese, the full salad and Wimpy Relish</td><td class="r"><b>R95.90</b></td><td class="r">R119.90</td><td class="r">20%</td></tr>
+    <tr><td rowspan="2"><b>Toasteds</b><br><small>with chips</small></td><td>Chicken Mayo Toasted</td><td>Creamy chicken mayo on toasted bread</td><td class="r"><b>R53.90</b></td><td class="r">R80.90</td><td class="r">33%</td></tr>
+    <tr><td>Bacon &amp; Egg Toasted</td><td>Bacon and fried egg on toasted bread</td><td class="r"><b>R55.90</b></td><td class="r">R84.90</td><td class="r">34%</td></tr>
+  </tbody></table>
+
+  <h3>Today's Big One — one per weekday</h3>
+  <table>
+    <thead><tr><th style="width:14%">Day</th><th>Item</th><th>What is in it</th><th class="r">Price</th><th class="r">Was</th></tr></thead><tbody>
+    <tr><td>Monday</td><td>Mega Breakfast</td><td>Three eggs, three rashers of bacon, two bangers, grilled tomato and onion, chips and toast</td><td class="r"><b>R95.90</b></td><td class="r">R119.90</td></tr>
+    <tr><td>Tuesday</td><td>Dagwood</td><td>Beef patty, fried egg, bacon and cheese stacked on three slices of toast with the full salad and Wimpy Relish, with chips</td><td class="r"><b>R97.90</b></td><td class="r">R149.90</td></tr>
+    <tr><td>Wednesday</td><td>Big Bacon &amp; Cheese</td><td>Two patties, three rashers of bacon and double cheese with the full salad and Wimpy Relish, with chips</td><td class="r"><b>R103.90</b></td><td class="r">R129.90</td></tr>
+    <tr><td>Thursday</td><td>Big Champion</td><td>Two patties, a fried egg and double cheese with the full salad and Wimpy Relish, with chips</td><td class="r"><b>R115.90</b></td><td class="r">R144.90</td></tr>
+    <tr><td>Friday</td><td>Fully Loaded Dagwood</td><td>Two patties, fried egg, bacon, double cheese and chicken mayo across three slices of toast, full salad, Wimpy Relish, chips</td><td class="r"><b>R127.90</b></td><td class="r">R159.90</td></tr>
+  </tbody></table>
+  <ul>
+    <li>The page shows the whole week's Big Ones as a strip you can read, but only <b>today's</b> has an Add button. Another day's Big One sent from a stale tab is refused by name: <span class="msg">Mega Breakfast is Monday's Big One — today's is the Big Champion.</span></li>
+    <li>The "was" price is the pre-discount list price. For the two toasteds and the Dagwood it is a supplied Wimpy list price; for the rest it is derived from the brief's 20% rule. The badge always shows the item's own saving.</li>
+    <li>An item with no price configured cannot be ordered and says so: <span class="msg">… has no price set yet, so it cannot be ordered. Ask Nick to configure it.</span></li>
+  </ul>
+</section>
+
+<!-- ============================================================ 8 ORDER -->
+<section class="page" id="s8">
+  <h2><span class="n">8</span>Procedure: placing an order</h2>
+  <p class="small">Inside the window, signed in.</p>
+  <div class="step"><div class="no">1</div><p><b>Choose.</b> Tap <b>Add to order</b> on an item. One tap adds one. Use <b>+</b> and <b>−</b> in the cart ("🛒 Your order") to set the quantity, from 1 to 10 per line. Add as many different items as you like.</p></div>
+  <div class="step"><div class="no">2</div><p><b>Check the cart.</b> It lists each line, its line total and the order total. The total on screen is for your information; the service re-prices the order from its own menu when you confirm.</p></div>
+  <div class="step"><div class="no">3</div><p><b>Next: your details.</b> On "Who is this order for?" type your <b>CB number</b> (it must be your own; managers type their username), your <b>name</b>, your <b>surname</b> (letters only, 2 to 40 characters), your <b>phone number</b> (a South African number, e.g. 082 123 4567) and, if needed, <b>Notes for the kitchen</b> (optional, up to 200 characters on the page). Your name as typed goes to the kitchen; your Agent List name is sent alongside it so a nickname is still recognisable.</p></div>
+  <div class="step"><div class="no">4</div><p><b>Review order</b>. The confirm screen ("Confirm your order") shows who the order is for and every line. <b>Back &amp; edit</b> returns to the form; <b>Confirm &amp; send to Wimpy</b> sends it.</p></div>
+  <div class="step"><div class="no">5</div><p><b>Read the confirmation.</b> The page says <b>Order sent</b> and shows the total and the order slip exactly as the kitchen received it, with an <b>Order again</b> button. The order is now in My orders with its time. Collect it when the board says <i>Ready for Collection</i>.</p></div>
+
+  <h3>What is refused, in the app's words</h3>
+  <table>
+    <thead><tr><th style="width:38%">Message</th><th>Meaning and what to do</th></tr></thead><tbody>
+    <tr><td class="msg">Add at least one item before submitting.</td><td>The cart is empty.</td></tr>
+    <tr><td class="msg">… : quantity must be between 1 and 10.</td><td>Set the quantity between 1 and 10. For more than ten of one item, place a second order.</td></tr>
+    <tr><td class="msg">… comes as it is — add-ons and customisations are not taken. Remove the item and add it back.</td><td>Something other than an item and a quantity reached the service (an old tab, a modified request). Remove the line and add it again.</td></tr>
+    <tr><td class="msg">… is Monday's Big One — today's is the …</td><td>You are ordering another day's hero from a stale tab. Reload and add today's Big One.</td></tr>
+    <tr><td class="msg">… has no price set yet, so it cannot be ordered. Ask Nick to configure it.</td><td>A menu line without a price. Order something else and tell your team leader.</td></tr>
+    <tr><td class="msg">Type your surname (letters only, 2 to 40 characters).</td><td>Fix the surname field.</td></tr>
+    <tr><td class="msg">Type your phone number.</td><td>The phone field is empty.</td></tr>
+    <tr><td class="msg">That phone number does not look right — type a South African number, e.g. 082 123 4567.</td><td>Use a South African mobile or landline number.</td></tr>
+    <tr><td class="msg">Wimpy orders are taken between 07:00 and 09:00 …</td><td>The window is closed (section 6).</td></tr>
+    <tr><td class="msg">The order could not be sent (the kitchen system answered …). Your order has been kept — press Retry.</td><td>The kitchen system refused or was down. Nothing was recorded and your order stays on the confirm screen: press <b>Confirm &amp; send to Wimpy</b> again (that is the "Retry" the message means). If it keeps failing, tell your team leader (section 15).</td></tr>
+    <tr><td class="msg">… the kitchen system did not answer within 15 seconds</td><td>A timeout. Your order stays on the confirm screen; press <b>Confirm &amp; send to Wimpy</b> again. If it keeps happening the kitchen system is down: escalate.</td></tr>
+  </tbody></table>
+  <div class="do"><b>A good order, every morning:</b> sign in before 09:00, add today's items, correct quantity, your own CB number and a phone number the kitchen can reach, confirm, then watch My orders for <i>Ready for Collection</i>.</div>
+</section>
+
+<!-- ============================================================ 9 KITCHEN RECEIVES -->
+<section class="page" id="s9">
+  <h2><span class="n">9</span>What the kitchen receives</h2>
+  <p>The moment the service accepts an order it sends one slip to the kitchen system. The slip is plain text so it prints and forwards cleanly. Prices on the slip are the service's, never the page's.</p>
+  <div class="cols">
+    <div>
+      <h4>The slip</h4>
+      <pre class="mono" style="background:var(--cream);border:1px dashed var(--line);border-radius:8pt;padding:9pt 11pt;margin:0;white-space:pre-wrap">WIMPY ORDER
+
+Name: Thandi Dlamini
+CB Number: CB287
+Phone: 0821234567
+On the Agent List as: Thandiwe Dlamini
+
+---
+
+2 × CHEESE BURGER — R109.80
+
+---
+
+1 × BIG CHAMPION (TODAY’S BIG ONE) — R115.90
+
+---
+
+TOTAL: R225.70
+
+Additional Notes:
+No onion on one burger please</pre>
+      <p class="small" style="margin-top:4pt">Illustrative names. "On the Agent List as" appears only when the typed name differs from the Agent List's. Notes are free text (up to 200 characters on the page) and are not a customisation the service enforces — the kitchen reads them as a request. The phone number is printed in the ten-digit form whatever was typed.</p>
+    </div>
+    <div>
+      <h4>Guarantees</h4>
+      <ul>
+        <li><b>One slip per accepted order.</b> A refused order (window, identity, pricing) never reaches the kitchen.</li>
+        <li><b>The kitchen's answer decides.</b> Only a "yes" from the kitchen system makes the order real. A "no" or silence leaves the order on the person's page with Retry.</li>
+        <li><b>Prices are the service's.</b> If the page's total disagrees with the service's, the service's total is used and the disagreement is recorded as <code>price_mismatch</code>.</li>
+        <li><b>The slip and the card agree.</b> The ledger row and the board card are written from the same accepted order: same items, same quantities, same total.</li>
+        <li><b>Timeout:</b> 15 seconds. After that the person is told the kitchen did not answer and can send the same order again from the confirm screen.</li>
+      </ul>
+      <h4>Then, in the background</h4>
+      <ul>
+        <li>The order is written to the ledger (<code>wimpy_orders</code>) under the account that placed it.</li>
+        <li>The person's contact (once) and the order's card are written to the Wimpy Pipeline at <b>New Order</b>. A failure here never fails the order; it is retried (section 12.3).</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 10 MY ORDERS -->
+<section class="page" id="s10">
+  <h2><span class="n">10</span>Procedure: My orders</h2>
+  <div class="step"><div class="no">1</div><p>Signed in, open <b>🧾 My orders</b> (next to Change password, above the menu). It works at any time, inside or outside the window.</p></div>
+  <div class="step"><div class="no">2</div><p>You see <b>your own orders only</b>, newest first: the date and time (SA time), each line with quantity and line total, your notes, the total and the kitchen stage.</p></div>
+  <div class="step"><div class="no">3</div><p>Press <b>Refresh</b> to re-read the board. Opening My orders also repairs any of your own cards that failed to write earlier.</p></div>
+  <table>
+    <thead><tr><th style="width:34%">What you see</th><th>What it means</th></tr></thead><tbody>
+    <tr><td><b>New Order</b></td><td>The kitchen has the slip and the card is on the board.</td></tr>
+    <tr><td><b>Order Processing</b></td><td>The kitchen is preparing it.</td></tr>
+    <tr><td><b>Ready for Collection</b></td><td>Collect it.</td></tr>
+    <tr><td><b>Completed</b></td><td>Collected and closed.</td></tr>
+    <tr><td><i>Not on the kitchen board yet</i></td><td>The kitchen has your order; its board card has not been written yet (HighLevel was unavailable). It is retried automatically and repaired when you open this page. The food is not affected.</td></tr>
+    <tr><td><i>The kitchen board could not be reached — try again shortly</i></td><td>My orders could not read the board just now. Your orders and the kitchen are unaffected; press Refresh in a minute.</td></tr>
+    <tr><td><i>Updated a moment ago — refresh in a few seconds for the latest stage</i></td><td>The board was read very recently and the cached stage is shown; Refresh shortly for the newest one.</td></tr>
+    <tr><td><i>No longer on the kitchen board</i></td><td>The card was removed on the board (deleted in HighLevel). The order still happened and stays in your history; tell your team leader if it should have been there.</td></tr>
+    <tr><td class="msg">You have no orders yet. The orders you place will show here, newest first.</td><td>No orders since history began. History starts at the My orders go-live, 7 October 2026; orders before that went to the kitchen only and are not shown.</td></tr>
+  </tbody></table>
+  <div class="note"><b>Isolation rule.</b> Whoever is signed in decides whose orders come back. Changing the page, the address or anything sent with the request can never return another person's orders, names, phone numbers or totals. The service ignores every parameter on the history request and accepts a card's stage only if it belongs to the owner's own row and the owner's own contact.</div>
+</section>
+
+<!-- ============================================================ 11 PASSWORD -->
+<section class="page" id="s11">
+  <h2><span class="n">11</span>Procedure: changing your Wimpy password</h2>
+  <div class="step"><div class="no">1</div><p>Signed in, open <b>🔑 Change password</b>.</p></div>
+  <div class="step"><div class="no">2</div><p>Type your <b>current password</b> (the field says "(the start password)" while you are still on <code>wimpy123</code>).</p></div>
+  <div class="step"><div class="no">3</div><p>Type your <b>new password</b> — 10 or more characters — and type it again.</p></div>
+  <div class="step"><div class="no">4</div><p>Press <b>Change password</b>. From now on Wimpy accepts only the new one. Any other device still signed in to Wimpy on your account is signed out. Your AgentOS password is untouched.</p></div>
+  <table>
+    <thead><tr><th style="width:40%">Refused when</th><th>What happens</th></tr></thead><tbody>
+    <tr><td>The current password is wrong</td><td>Refused, and counted as a failed sign-in toward the 15-minute lock</td></tr>
+    <tr><td>The new password is shorter than 10 characters</td><td>Refused</td></tr>
+    <tr><td>The new password equals the current one, or is <code>wimpy123</code></td><td>Refused</td></tr>
+    <tr><td>The two new-password fields differ</td><td>Refused by the page before anything is sent</td></tr>
+  </tbody></table>
+  <div class="do"><b>Policy.</b> Everyone changes from the start password within their first week on the floor. Team leaders check the nudge has gone from new agents' screens (section 13).</div>
+</section>
+
+<!-- ============================================================ 12 KITCHEN -->
+<section class="page" id="s12">
+  <h2><span class="n">12</span>Kitchen procedure and the order board</h2>
+  <h3>12.1 Receiving</h3>
+  <ul>
+    <li>Slips arrive in the kitchen system from 07:00; the last one can arrive at 08:59:59. Prepare from the slip's lines and quantities. Notes are requests, not instructions the app verified.</li>
+    <li>A slip always carries name, CB number and phone. Call the number on the slip if something is unclear.</li>
+    <li>If no slips arrive during a weekday window, tell Operations immediately (section 16): either nobody ordered, or the hand-off is down, and the ledger tells which.</li>
+  </ul>
+  <h3>12.2 Working the board</h3>
+  <p>In HighLevel (the <b>Wimpy</b> sub-account → Opportunities → <b>Wimpy Pipeline</b>) every accepted order appears as one card at <b>New Order</b>, named for the person and the order. Move it as the order progresses:</p>
+  <table>
+    <thead><tr><th style="width:26%">Stage</th><th>Move the card here when</th></tr></thead><tbody>
+    <tr><td>New Order</td><td>Where the service places it. Nothing to do.</td></tr>
+    <tr><td>Order Processing</td><td>Preparation starts.</td></tr>
+    <tr><td>Ready for Collection</td><td>It is on the counter. The person sees this in My orders.</td></tr>
+    <tr><td>Completed</td><td>Collected. Close every card by the end of the morning.</td></tr>
+  </tbody></table>
+  <ul>
+    <li>One person may have several cards in a morning — one per order. The sub-account setting "Allow duplicate opportunities" must stay <b>ON</b> (agency-level); without it a person's second order gets no card.</li>
+    <li>Do not delete cards — a deleted card shows the person "No longer on the kitchen board" in My orders. Completed is the end state.</li>
+  </ul>
+  <h3>12.3 Cards that are late or missing</h3>
+  <ul>
+    <li>The card is written in the background after the kitchen says yes. If HighLevel is unavailable the write is retried after 2, 5, 10, 20, 40, 80 and 160 minutes; the eighth failure marks the row <b>stuck</b> and raises the <code>wimpy-hl-stuck</code> alert for management.</li>
+    <li>On Vercel's current plan the scheduled retry runs once a day at 05:07 SAST; between runs, a person's own late cards are repaired whenever they open My orders.</li>
+    <li>A stuck row means the <b>order was delivered to the kitchen</b> and only its card is missing. Management re-queues stuck rows after fixing the cause (section 14).</li>
+  </ul>
+</section>
+
+<!-- ============================================================ 13 TL -->
+<section class="page" id="s13">
+  <h2><span class="n">13</span>Team-leader procedures</h2>
+  <h3>13.1 A new agent</h3>
+  <div class="step"><div class="no">1</div><p>The agent must be on the Agent List. The list upload creates the account and grants Wimpy; nothing else is needed.</p></div>
+  <div class="step"><div class="no">2</div><p>Tell them the address <b>https://phoenix-wimpy.vercel.app</b>, that they sign in with their <b>CB number</b> and the start password <b><code>wimpy123</code></b>, and the hours <b>07:00–09:00, Monday to Friday</b>. The sign-in screen does not print the start password; you do.</p></div>
+  <div class="step"><div class="no">3</div><p>Ask them to change the password on their first sign-in (section 11). Check within the week that the start-password nudge has gone.</p></div>
+  <h3>13.2 "I can't sign in"</h3>
+  <ol>
+    <li>Is it the <b>Wimpy</b> password they are typing, not the AgentOS one? If they never changed it, it is <code>wimpy123</code>.</li>
+    <li>Is the account locked ("Account locked after repeated failures")? Wait 15 minutes. The same lock also blocks Agent Analytics.</li>
+    <li>"Too many wrong sign-ins from this network"? The office connection hit the flood guard; wait ten minutes and warn the floor to stop guessing.</li>
+    <li>Still no? Reset per 13.3.</li>
+  </ol>
+  <h3>13.3 Forgotten Wimpy password — the reset</h3>
+  <div class="step"><div class="no">1</div><p>Reset the person's <b>AgentOS</b> password the normal way (the team-leader reset in Agent Analytics / VAS, which returns it to the AgentOS start password).</p></div>
+  <div class="step"><div class="no">2</div><p>That reset also clears the Wimpy password: Wimpy now answers to <b><code>wimpy123</code></b> again. Tell the person.</p></div>
+  <div class="step"><div class="no">3</div><p>They sign in to Wimpy with <code>wimpy123</code> and set a new password straight away (section 11), and set a new AgentOS password in that app.</p></div>
+  <h3>13.4 Leavers and movers</h3>
+  <ul>
+    <li>A leaver dropped from the Agent List loses the account and Wimpy with it. Nothing to do in Wimpy.</li>
+    <li>A mover between campaigns keeps the same CB number and account; Wimpy is unaffected.</li>
+  </ul>
+  <h3>13.5 What a team leader does not do</h3>
+  <ul>
+    <li>Order on behalf of an agent, or hand out a Wimpy password that is not the start password.</li>
+    <li>Change menu, prices or hours. Those are Operations decisions released by engineering (section 18).</li>
+  </ul>
+</section>
+
+<!-- ============================================================ 14 MANAGEMENT -->
+<section class="page" id="s14">
+  <h2><span class="n">14</span>Management procedures: daily, weekly, monthly</h2>
+  <h3>14.1 Every weekday</h3>
+  <table>
+    <thead><tr><th style="width:18%">When</th><th>Check</th><th style="width:34%">If not right</th></tr></thead><tbody>
+    <tr><td>Before 07:00</td><td>Is the kitchen open today? On a public holiday or a kitchen closure, tell the floor and the kitchen — the app does not close itself.</td><td>Announce; ask engineering for a one-day closure only if it recurs (section 18)</td></tr>
+    <tr><td>09:00–09:30</td><td>Health banner: no <code>wimpy-hl-stuck</code>, <code>wimpy-hl-not-configured</code> or <code>wimpy-ledger-failed</code> alert</td><td>Section 15, rows "stuck", "not configured", "ledger failed"</td></tr>
+    <tr><td>09:00–09:30</td><td>Supabase → Table Editor → Views → <code>wimpy_order_sheet</code>: today's orders in words, newest first, each with "on the kitchen board" state</td><td>Orders missing that the kitchen cooked: escalate to engineering with the time and CB number</td></tr>
+    <tr><td>By lunch</td><td>Every card on the Wimpy Pipeline reached Completed</td><td>Remind the kitchen (section 12.2)</td></tr>
+  </tbody></table>
+  <h3>14.2 Weekly</h3>
+  <ul>
+    <li>Read the week's volume from <code>wimpy_order_sheet</code> (orders per day, per item). Share with the kitchen for stock.</li>
+    <li>Pipeline hygiene: no cards left before Completed from earlier days; no test cards left behind (test slips are marked "TEST – please ignore").</li>
+    <li>HighLevel settings unchanged: "Allow duplicate opportunities" ON; "Allow duplicate contact" OFF (the kitchen's own workflow also creates contacts; ON makes duplicates).</li>
+  </ul>
+  <h3>14.3 Monthly and quarterly</h3>
+  <ul>
+    <li>Monthly: review the price list against the brief; any change goes through section 18. Review notes written by orderers for recurring requests (a frequent "no onion" is a menu question, not a kitchen one).</li>
+    <li>Quarterly: engineering runs the full test suites and the live check (section 21) and confirms this SOP still matches the service; the owner re-approves (section 0).</li>
+    <li>Quarterly: rotate the HighLevel private-integration key and the hosting secrets if any have been shared outside the vault.</li>
+  </ul>
+  <h3>14.4 Re-queuing stuck rows (engineering, on the owner's say-so)</h3>
+  <p>After the cause is fixed (HighLevel back, setting restored):</p>
+  <pre class="mono" style="background:var(--cream);border:1px dashed var(--line);border-radius:8pt;padding:8pt 11pt">update wimpy_orders set hl_state = 'pending', hl_tries = 0, hl_next_at = now() where hl_state = 'stuck';</pre>
+  <p>Then run the retry (the scheduled run, or the retry route with its secret) and confirm the cards appear at New Order.</p>
+</section>
+
+<!-- ============================================================ 15 TROUBLESHOOTING -->
+<section class="page" id="s15">
+  <h2><span class="n">15</span>Troubleshooting matrix</h2>
+  <table>
+    <thead><tr><th style="width:27%">Symptom</th><th style="width:30%">Likely cause</th><th>Action</th><th style="width:11%">Who</th></tr></thead><tbody>
+    <tr><td>"That CB number and password do not match"</td><td>AgentOS password typed instead of the Wimpy one; or still on <code>wimpy123</code>; or a typo</td><td>Try <code>wimpy123</code> if never changed; else reset (13.3)</td><td>Agent → TL</td></tr>
+    <tr><td>"Account locked after repeated failures"</td><td>Five wrong passwords in 15 minutes (either app)</td><td>Wait 15 minutes; then 13.3 if still forgotten</td><td>TL</td></tr>
+    <tr><td>"Too many wrong sign-ins from this network"</td><td>100 failures from the office connection in 10 minutes</td><td>Wait 10 minutes; stop the guessing</td><td>TL</td></tr>
+    <tr><td>Menu says "Ordering closed" during the window</td><td>Device clock wrong; or a tab open since before 07:00 that has not flipped</td><td>Reload the page; check the device time and zone (SAST)</td><td>Agent</td></tr>
+    <tr><td>"Wimpy orders are taken between 07:00 and 09:00 …" on Confirm</td><td>The window closed while the cart was open</td><td>Order tomorrow; the window is the rule</td><td>Agent</td></tr>
+    <tr><td>"quantity must be between 1 and 10"</td><td>Quantity outside the limit</td><td>Set 1–10; split larger orders</td><td>Agent</td></tr>
+    <tr><td>"… is Monday's Big One — today's is …"</td><td>Stale tab showing yesterday's hero</td><td>Reload; add today's Big One</td><td>Agent</td></tr>
+    <tr><td>"… comes as it is — add-ons and customisations are not taken"</td><td>A modified or very old request</td><td>Remove the line, add it again; reload</td><td>Agent</td></tr>
+    <tr><td>"That phone number does not look right"</td><td>Not a South African number</td><td>Type e.g. 082 123 4567</td><td>Agent</td></tr>
+    <tr><td>"The order could not be sent (the kitchen system answered 5xx). … press Retry" (there is no Retry button: send again)</td><td>The kitchen system refused or is down</td><td>Press Confirm &amp; send to Wimpy again, twice. If it persists for more than one person, escalate: kitchen hand-off down</td><td>Agent → TL → Eng</td></tr>
+    <tr><td>"the kitchen system did not answer within 15 seconds"</td><td>Kitchen system slow or down</td><td>As above</td><td>Agent → TL → Eng</td></tr>
+    <tr><td>Order confirmed but not in My orders</td><td>Ledger write failed (alert <code>wimpy-ledger-failed</code>)</td><td>The kitchen has the slip. Engineering reads the alert and the logs; the order is kept for the kitchen regardless</td><td>Eng</td></tr>
+    <tr><td>My orders shows "Not on the kitchen board yet" for hours</td><td>HighLevel unavailable, or duplicates switched off again</td><td>Check the alert; check "Allow duplicate opportunities" is ON; retry runs 05:07, or re-queue (14.4)</td><td>Ops → Eng</td></tr>
+    <tr><td>Alert <code>wimpy-hl-stuck</code></td><td>Eight failed card writes on at least one row</td><td>Fix the cause named in the alert; re-queue (14.4)</td><td>Eng</td></tr>
+    <tr><td>Alert <code>wimpy-hl-not-configured</code></td><td>HighLevel settings missing on the host</td><td>Set the HighLevel key and location on Vercel (or the container's .env); ordering is unaffected</td><td>Eng</td></tr>
+    <tr><td>Kitchen gets no slips in a window</td><td>Nobody ordered; or the hand-off URL changed / n8n down</td><td>Compare <code>wimpy_order_sheet</code> with the kitchen: orders present there but no slips = hand-off down</td><td>Ops → Eng</td></tr>
+    <tr><td>An active agent cannot see Wimpy at all</td><td>Account not on the Agent List, or the app grant missing</td><td>Check the Agent List integrity report; re-upload the list</td><td>Ops</td></tr>
+    <tr><td>My orders says "The kitchen board could not be reached"</td><td>HighLevel slow or down at that moment</td><td>Refresh in a minute; the orders themselves are safe</td><td>Agent</td></tr>
+    <tr><td>Page looks old / buttons missing</td><td>Cached page</td><td>Hard refresh (Ctrl+Shift+R)</td><td>Agent</td></tr>
+  </tbody></table>
+</section>
+
+<!-- ============================================================ 16 ESCALATION -->
+<section class="page" id="s16">
+  <h2><span class="n">16</span>Escalation and response targets</h2>
+  <table>
+    <thead><tr><th style="width:12%">Level</th><th style="width:22%">Who</th><th>Handles</th><th style="width:24%">Target (proposed, for the owner to confirm)</th></tr></thead><tbody>
+    <tr><td><b>L1</b></td><td>Team leader</td><td>Sign-in, lockouts, start password, "how do I", a single person's failed order</td><td>Within the window, same morning</td></tr>
+    <tr><td><b>L2</b></td><td>Operations owner (Nick)</td><td>Kitchen closures, board problems, HighLevel settings, access gaps on the Agent List, anything affecting more than one person</td><td>Same working day</td></tr>
+    <tr><td><b>L3</b></td><td>Technical custodian (Aarav / engineering)</td><td>Hand-off down, ledger failures, stuck rows, alerts, releases, anything in the code or on the hosts</td><td>Acknowledge same day; fix or workaround next working day</td></tr>
+  </tbody></table>
+  <h3>Severity</h3>
+  <table>
+    <thead><tr><th style="width:16%">Severity</th><th>Definition</th><th style="width:30%">Example</th></tr></thead><tbody>
+    <tr><td><span class="tag red">Sev 1</span></td><td>Nobody can order during the window, or orders are reaching the kitchen wrong</td><td>Kitchen system down at 07:30; prices wrong on slips</td></tr>
+    <tr><td><span class="tag yel">Sev 2</span></td><td>Ordering works but history, the board or one group of people is affected</td><td>Cards not writing; a team's accounts missing Wimpy</td></tr>
+    <tr><td><span class="tag grn">Sev 3</span></td><td>One person, or cosmetic</td><td>One forgotten password; an old tab</td></tr>
+  </tbody></table>
+  <h3>What to report</h3>
+  <ul>
+    <li>The time (SAST), the CB number, the exact message on screen (a screenshot), and what was tried.</li>
+    <li>For the kitchen: the slip time and name, and whether the card appeared on the board.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ 17 DATA -->
+<section class="page" id="s17">
+  <h2><span class="n">17</span>Data, privacy and security</h2>
+  <h3>17.1 What is stored, and where</h3>
+  <table>
+    <thead><tr><th style="width:28%">Data</th><th>Where</th><th style="width:34%">Who can see it</th></tr></thead><tbody>
+    <tr><td>Name, surname, phone number typed on the order; CB number; items, quantities, total; notes; time placed</td><td>Ledger <code>wimpy_orders</code> (owner = the account); the kitchen slip; the board card (HighLevel Wimpy sub-account)</td><td>The person (own rows only, via My orders); the kitchen; management via <code>wimpy_order_sheet</code> (which leaves out phone numbers and HighLevel ids)</td></tr>
+    <tr><td>The person's HighLevel contact link</td><td><code>wimpy_hl_contacts</code></td><td>Service only</td></tr>
+    <tr><td>Wimpy password</td><td>A hash in <code>app_users.wimpy_password_hash</code>; never the password itself</td><td>Nobody; it is compared, not read</td></tr>
+    <tr><td>Sign-in failures, locks, password changes</td><td>The shared audit log (<code>login_fail:wimpy:*</code>, <code>locked:wimpy</code>, <code>login_ok:wimpy</code>, <code>wimpy_password_change</code>)</td><td>Management reports</td></tr>
+  </tbody></table>
+  <h3>17.2 Rules</h3>
+  <ul>
+    <li><b>Own history only.</b> The history route ignores every parameter sent to it and answers from the session's owner alone (section 10).</li>
+    <li><b>A Wimpy session opens Wimpy only.</b> It is refused by every other AgentOS route, and the AgentOS Worker answers 410 Gone on every old Wimpy route.</li>
+    <li><b>Secrets live on the host.</b> The database key, the HighLevel key and location and the cron secret are environment settings on Vercel (or the container's .env), never in the code, the image, a reply or a log. Errors are redacted before they are stored.</li>
+    <li><b>Minimum data on the slip.</b> Name, CB, phone, lines, total, notes — nothing else travels to the kitchen.</li>
+    <li><b>Retention</b> is not yet defined. Proposed: ledger rows older than 12 months are archived or deleted by engineering on the owner's instruction; HighLevel cards follow the sub-account's own retention. The owner decides and this section is revised.</li>
+  </ul>
+  <h3>17.3 POPIA note</h3>
+  <p>The app processes employee personal information (name, CB number, phone) for one purpose: fulfilling a lunch order the person placed. It is not used for anything else and is not shared beyond the kitchen and the order board. Requests to view or delete a person's Wimpy data go to the Operations owner.</p>
+</section>
+
+<!-- ============================================================ 18 CHANGE CONTROL -->
+<section class="page" id="s18">
+  <h2><span class="n">18</span>Change control</h2>
+  <p>Nothing about the menu, prices, hours or sign-in is a setting a person can flip. Each is a line in the service and changes through a release. That is deliberate: the floor and the kitchen must never see a change nobody approved.</p>
+  <table>
+    <thead><tr><th style="width:24%">Change</th><th>Where it lives</th><th style="width:36%">Also update</th></tr></thead><tbody>
+    <tr><td>A price, an item, a description, the Big One rotation</td><td><code>wimpy-service/src/wimpy.mjs</code> (<code>ITEMS</code>, <code>BIG_ONES</code>, <code>wasPrice</code>)</td><td>The menu tests; section 7 of this SOP; the kitchen</td></tr>
+    <tr><td>The hours</td><td><code>WINDOW</code> in <code>src/wimpy.mjs</code></td><td>The page's flip clock and footer text; the refusal message; README; sections 6, 13, 22 here; the floor announcement</td></tr>
+    <tr><td>Quantity limit</td><td><code>MAX_QTY</code> in <code>src/wimpy.mjs</code></td><td>Section 8 here</td></tr>
+    <tr><td>Password rules, lockout, start password</td><td><code>src/auth.mjs</code> (shared-auth blocks are byte-identical with the AgentOS Worker — change both or the drift guard fails)</td><td>Sections 5, 11, 13 here</td></tr>
+    <tr><td>Kitchen hand-off address</td><td>The service's kitchen URL</td><td>Live check; the kitchen confirms a test slip</td></tr>
+    <tr><td>HighLevel pipeline or stage names</td><td>The HighLevel Wimpy sub-account (the service finds the pipeline and "New Order" by name)</td><td>Section 12 here; tell the kitchen</td></tr>
+  </tbody></table>
+  <h3>The release procedure</h3>
+  <div class="step"><div class="no">1</div><p><b>Approve.</b> The Operations owner approves the change in writing (what, why, from when). Prices come from the brief; "do not randomly change these prices" stands.</p></div>
+  <div class="step"><div class="no">2</div><p><b>Change and test.</b> Engineering edits the service and runs <code>npm test</code> in <code>wimpy-service/</code> (menu, sign-in, history, page sweep, hosting suites) plus the drift and removal guards. All green or no release.</p></div>
+  <div class="step"><div class="no">3</div><p><b>Release.</b> Deploy to Vercel <b>from a copy outside the git repository</b> (the hosting account blocks deployments attributed to a non-member author). Secrets are never re-typed; they already sit on the project.</p></div>
+  <div class="step"><div class="no">4</div><p><b>Verify live.</b> Run the live check (<code>verify-wimpy-live</code>): a throwaway sign-in, the menu, one order marked TEST to the kitchen, My orders, the retry, sign-out. Tell the kitchen a TEST slip is coming.</p></div>
+  <div class="step"><div class="no">5</div><p><b>Record.</b> Commit; update this SOP's affected sections and its revision table; tell team leaders what changed and from when.</p></div>
+  <h3>Emergency changes</h3>
+  <p>If orders are reaching the kitchen wrong (Sev 1), engineering may roll back to the previous Vercel deployment first and seek approval after. Every emergency change is still recorded under step 5 the same day.</p>
+</section>
+
+<!-- ============================================================ 19 LIMITATIONS -->
+<section class="page" id="s19">
+  <h2><span class="n">19</span>Known limitations and open items</h2>
+  <table>
+    <thead><tr><th style="width:30%">Item</th><th>Effect today</th><th style="width:30%">Owner / direction</th></tr></thead><tbody>
+    <tr><td>Scheduled retry once a day (Vercel Hobby plan)</td><td>A failed board card waits for the person to open My orders or for 05:07. The order itself is unaffected.</td><td>Operations: Pro plan would allow every 20 minutes</td></tr>
+    <tr><td>Public holidays not closed automatically</td><td>The app is open 07:00–09:00 on a holiday weekday</td><td>Operations announces; engineering could add a holiday list on request</td></tr>
+    <tr><td>Kitchen hand-off is an internal webhook without a shared secret</td><td>Acceptable on the internal network; add a secret if the kitchen system becomes reachable from outside</td><td>Engineering, with the kitchen's n8n owner</td></tr>
+    <tr><td>The service holds a full database key</td><td>Standard for the suite today</td><td>Engineering: a restricted database role is the planned follow-up</td></tr>
+    <tr><td>No per-person cap on orders or lines per morning</td><td>A person can place several orders; each gets its own card</td><td>Operations decides whether a cap is wanted</td></tr>
+    <tr><td>Masthead still reads "Chatterbox × Wimpy"</td><td>Cosmetic</td><td>Operations: say the word and it changes</td></tr>
+    <tr><td>Retention period undefined</td><td>Ledger grows</td><td>Operations decides (section 17)</td></tr>
+    <tr><td>Brand colours are the app's own placeholders in the Wimpy family</td><td>This document uses the same tokens</td><td>Swap in one place when a Wimpy brand sheet arrives</td></tr>
+  </tbody></table>
+</section>
+
+<!-- ============================================================ 20 TECH REF -->
+<section class="page" id="s20">
+  <h2><span class="n">20</span>Technical reference</h2>
+  <div class="cols">
+    <div>
+      <h4>Hosting</h4>
+      <ul>
+        <li>Vercel project <code>phoenix-wimpy</code>, account <code>budgetbloomers</code>; production address https://phoenix-wimpy.vercel.app.</li>
+        <li>Vercel runs <code>src/app.mjs</code> as the root Node entry point (no serverless split); the page and the API are one server.</li>
+        <li>A container image (node 24 alpine, no install step, health check) runs the same code with a 20-minute in-process retry timer.</li>
+        <li>Settings (five, all sensitive): database URL and key, HighLevel key and location id, cron secret. Set with <code>scripts/env.mjs --vercel</code> from the git-ignored env files.</li>
+        <li>Retry schedule on Vercel: <code>7 3 * * *</code> (05:07 SAST) with <code>Authorization: Bearer CRON_SECRET</code>.</li>
+      </ul>
+      <h4>The AgentOS side</h4>
+      <ul>
+        <li>The Worker answers <b>410 Gone</b> on <code>/api/wimpy/*</code> and <code>/api/portal/wimpy/*</code>, naming the new address, and refuses a Wimpy session on every route.</li>
+        <li>The VAS site forwards <code>/wimpy/*</code> to the service (302). The Wimpy card was removed from the VAS Apps page on 9 Oct 2026.</li>
+        <li>Health reads <code>kv:wimpy-hl-status</code> and <code>kv:wimpy-ledger-failed</code>, which the service writes (counts only, no person).</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Routes</h4>
+      <table style="font-size:9pt">
+        <thead><tr><th>Route</th><th>Purpose</th></tr></thead><tbody>
+        <tr><td><code>GET /api/health</code></td><td>Liveness</td></tr>
+        <tr><td><code>POST /api/wimpy/signin</code></td><td>CB/username + Wimpy password → 12-hour session</td></tr>
+        <tr><td><code>GET /api/wimpy/me</code></td><td>Who am I; whether still on the start password</td></tr>
+        <tr><td><code>POST /api/wimpy/logout</code></td><td>End the session</td></tr>
+        <tr><td><code>POST /api/wimpy/password</code></td><td>Change the Wimpy password</td></tr>
+        <tr><td><code>GET /api/wimpy/menu</code></td><td>Today's menu, prices, window state</td></tr>
+        <tr><td><code>POST /api/wimpy/order</code></td><td>Place an order (re-priced, window-checked)</td></tr>
+        <tr><td><code>GET /api/wimpy/orders</code></td><td>Own history with board stages</td></tr>
+        <tr><td><code>GET /api/wimpy/cron/retry</code></td><td>Board retry (bearer secret)</td></tr>
+      </tbody></table>
+      <h4>Database objects</h4>
+      <ul>
+        <li><code>app_users.wimpy_password_hash</code> (+ trigger: cleared when the AgentOS password is reset).</li>
+        <li><code>app_sessions</code> rows with <code>scope = 'wimpy'</code>.</li>
+        <li><code>wimpy_orders</code>, <code>wimpy_hl_contacts</code> (row-level security on; anonymous access none).</li>
+        <li>View <code>wimpy_order_sheet</code> (service role only).</li>
+        <li>Trigger <code>app_users_grant_wimpy</code>: every new account gets the app.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 21 RELATED -->
+<section class="page" id="s21">
+  <h2><span class="n">21</span>Related documents and guards</h2>
+  <table>
+    <thead><tr><th style="width:34%">Document</th><th>What it decides</th></tr></thead><tbody>
+    <tr><td><code>specs/009-wimpy-password-signin/</code></td><td>Sign-in needs the password; the shared lock; the flood guard</td></tr>
+    <tr><td><code>specs/015-wimpy-order-history/</code></td><td>My orders; the ledger; the HighLevel board; isolation rules; history starts at go-live</td></tr>
+    <tr><td><code>specs/018-wimpy-standalone-service/</code></td><td>The stand-alone service, its routes contract, the removal from the Worker, release order</td></tr>
+    <tr><td><code>specs/020-wimpy-window-7-to-9/</code></td><td>The 07:00–09:00 window</td></tr>
+    <tr><td><code>specs/021-wimpy-live-twice/</code>, <code>022-…</code></td><td>Second orders; duplicate cards allowed on the board</td></tr>
+    <tr><td><code>specs/023-wimpy-order-sheet-favicon/</code>, <code>024-wimpy-phoenix-domain/</code></td><td>The readable order sheet; the tab icon; the address</td></tr>
+    <tr><td><code>specs/025-wimpy-own-password/</code></td><td>The Wimpy-only password and the start password <code>wimpy123</code></td></tr>
+    <tr><td><code>specs/wimpy-3331-menu.md</code></td><td>The menu operating model: the 3–3–3–1 shape, ingredient overlap, costing, provenance of the "was" prices</td></tr>
+    <tr><td><code>wimpy-service/README.md</code></td><td>Run, test, configure, container, Vercel, the three deploy facts</td></tr>
+  </tbody></table>
+  <h3>Guards (run before every release)</h3>
+  <table>
+    <thead><tr><th style="width:34%">Suite</th><th>Proves</th></tr></thead><tbody>
+    <tr><td><code>wimpy-service/npm test</code></td><td>Menu and prices to the cent, 3+3+2+1, overlap rule, the window, pricing refusals (menu); sign-in, lock, network guard, start password, password change (sign-in); ledger, isolation, retry, stuck (history); the page's screens (page sweep); hosting adapters and headers (hosting)</td></tr>
+    <tr><td><code>verify-wimpy-service-drift</code></td><td>The shared sign-in code is byte-identical with the AgentOS Worker; a Wimpy session opens nothing else</td></tr>
+    <tr><td><code>verify-wimpy-removal</code></td><td>The Worker serves no Wimpy route; the VAS site forwards; the address agrees in every place</td></tr>
+    <tr><td><code>verify-wimpy-live</code></td><td>Against the live service: throwaway sign-in, menu, one TEST order to the kitchen, My orders, second order, isolation between two people, password change, retry, sign-out</td></tr>
+  </tbody></table>
+</section>
+
+<!-- ============================================================ 22 QUICK CARD -->
+<section class="page" id="s22">
+  <div class="card">
+    <div class="kicker">Print me · pin me up</div>
+    <h2><span class="n">22</span>Wimpy Order — the one-page card</h2>
+    <div class="qgrid">
+      <div class="qbox">
+        <h4>Where</h4>
+        <p class="big" style="font-size:14pt">phoenix-wimpy.vercel.app</p>
+        <p class="small">Works on your phone and the floor PCs.</p>
+      </div>
+      <div class="qbox">
+        <h4>When</h4>
+        <p class="big">07:00 – 09:00</p>
+        <p>Monday to Friday, South African time. Outside that you can read the menu and your orders; you cannot order.</p>
+      </div>
+      <div class="qbox">
+        <h4>Sign in</h4>
+        <p>Your <b>CB number</b> (any spelling) and your <b>Wimpy password</b>. Managers: username.</p>
+        <p>New account? The start password is <b><code>wimpy123</code></b>. Change it on day one: 🔑 Change password, 10+ characters.</p>
+        <p class="small">Five wrong tries locks you out for 15 minutes — on Wimpy and on Agent Analytics.</p>
+      </div>
+      <div class="qbox">
+        <h4>Order in five taps</h4>
+        <ol style="margin-bottom:0">
+          <li>Add to order (tap once per item; + / − for quantity, up to 10)</li>
+          <li>Next: your details</li>
+          <li>Your own CB number, name, surname, phone; notes if you need them</li>
+          <li>Review order</li>
+          <li>Confirm &amp; send to Wimpy</li>
+        </ol>
+      </div>
+      <div class="qbox">
+        <h4>Today's Big One</h4>
+        <p>Mon Mega Breakfast · Tue Dagwood · Wed Big Bacon &amp; Cheese · Thu Big Champion · Fri Fully Loaded Dagwood. Only today's can be ordered.</p>
+      </div>
+      <div class="qbox">
+        <h4>Collect</h4>
+        <p>Open <b>🧾 My orders</b>. When your order says <b>Ready for Collection</b>, fetch it. "Not on the kitchen board yet" means the kitchen has it; the board is catching up.</p>
+      </div>
+    </div>
+    <div class="rule"></div>
+    <div class="cols">
+      <div>
+        <h4>If something goes wrong</h4>
+        <ul style="margin-bottom:0">
+          <li>Can't sign in → are you typing the <b>Wimpy</b> password? Never changed it? It is <code>wimpy123</code>. Still no → your team leader resets it (back to <code>wimpy123</code>).</li>
+          <li>"The order could not be sent … press Retry" → press <b>Confirm &amp; send to Wimpy</b> again. Still failing → tell your team leader now, inside the window.</li>
+          <li>Page looks odd → Ctrl+Shift+R.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>Rules</h4>
+        <ul style="margin-bottom:0">
+          <li>Order in your own name only. Every order is recorded against your account.</li>
+          <li>Items come as they are. Notes are a request to the kitchen, not a guarantee.</li>
+          <li>Prices are fixed in the app; what the slip says is what you pay.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="small" style="margin:10pt 0 0">SOP-WIMPY-001 v1.0 · Effective 16 October 2026 · Owner: Operations (Nick) · Questions: your team leader first.</p>
+  </div>
+</section>
+
+</body>
+</html>
