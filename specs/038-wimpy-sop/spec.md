@@ -43,6 +43,11 @@ output: `C:\Users\aarav\Downloads\Wimpy Order SOP v1.0.pdf`.
 - **FR-004** The PDF is checked page by page after rendering (cover, TOC, tables, card) before it is handed over, and the
   `ecc:agent-evaluator` scores it against its rubric (accuracy, completeness, clarity, actionability, conciseness).
 
+## Amendment 2026-10-16 (Nick)
+
+- One page for staff in SOP-001: buying on credit, staff prices, the account terms (settlement cycle, monthly cap, leavers tagged for Operations to confirm — nothing recorded in the app or specs).
+- **SOP-WIMPY-002, Process Flow: Order to Payroll** (`wimpy-process-flow.html` → `DownloadsWimpy Order Process Flow - Order to Payroll v1.0.pdf`, 5 pages): the simple end-to-end flow management asked for — order → n8n automation → kitchen board → collection → Google Sheet → payroll (Romano) → verified deduction. The n8n workflow (Webhook → Code → HTTP Request to HighLevel + Append row in sheet) is drawn with the sheet called out as the payroll record; the sheet has no date column, so a date column is recommended; verification = sheet totals per CB must equal the order ledger before loading; test rows (`Test`, `wimpy.livecheck`) are never deducted.
+
 ## Out of scope
 
 Changing the app; a brand sheet from Wimpy (the tokens are the app's own placeholders in the Wimpy family); translation.
