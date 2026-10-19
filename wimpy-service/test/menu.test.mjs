@@ -50,15 +50,18 @@ const outWindow = (dow) => onDay(dow) + 3 * 3600000;
 /* the payload the page half is served, built by the module itself — never a hand-typed menu */
 const MENU_FIXTURE = wimpyMenu(inWindow(3));
 
-head('A · THE STRUCTURE IS 3 + 3 + 2 + 1 (Cheese & Tomato Toasted removed 2026-09-14)');
+head('A · THE STRUCTURE IS 3 + 6 + 2 + 1 (Cheese & Tomato Toasted removed 2026-09-14; Rib Burger, Crispy Stack, Peri-Peri Chicken added 2026-10-19)');
 {
   const m = wimpyMenu(MON);
   ok(m.categories.map((c) => c.id).join(',') === 'breakfast,burgers,toasteds', 'three categories, in menu order');
-  for (const c of ['breakfast', 'burgers'])
-    ok(m.items.filter((i) => i.category === c).length === 3, 'exactly three ' + c + ' choices');
+  ok(m.items.filter((i) => i.category === 'breakfast').length === 3, 'exactly three breakfast choices');
+  ok(m.items.filter((i) => i.category === 'burgers').length === 6, 'exactly six burger choices (Rib Burger, Crispy Stack, Peri-Peri Chicken added 2026-10-19)');
+  for (const [id, name] of [['rib_burger', 'Rib Burger'], ['crispy_stack', 'Crispy Stack'], ['peri_peri_chicken', 'Peri-Peri Chicken Burger']])
+    ok(m.items.some((i) => i.id === id && i.name === name && i.category === 'burgers'), name + ' is on the menu under Burgers');
+  ok(!m.items.some((i) => i.id === 'wimpy_burger'), 'no plain Wimpy Burger (Nick, 2026-10-19: "add only" the three)');
   ok(m.items.filter((i) => i.category === 'toasteds').length === 2, 'exactly two toasted choices');
   ok(!m.items.some((i) => /cheese.*tomato/i.test(i.name)), 'Cheese & Tomato Toasted is off the menu (Nick, 2026-09-14)');
-  ok(m.items.length === 9, 'the customer sees NINE choices — eight core plus today’s Big One', m.items.length);
+  ok(m.items.length === 12, 'the customer sees TWELVE choices — eleven core plus today’s Big One', m.items.length);
   ok(m.bigOne && m.items.some((i) => i.id === m.bigOne.id), 'the Big One is one of them');
   ok(m.title === 'Weekday Value Menu', 'and the menu says what it is', m.title);
 }
@@ -76,7 +79,13 @@ head('B · EVERY PRICE IS THE BRIEF’S, TO THE CENT');
     const d = ALL_ITEMS.find((i) => i.id === id);
     ok(d && d.basePrice === price, (d ? d.name : id) + ' is R' + price.toFixed(2), d ? 'got ' + d.basePrice : 'missing');
   }
-  ok(ALL_ITEMS.length === 13, 'thirteen definitions in total — eight core, five Big Ones, nothing invented', ALL_ITEMS.length);
+  ok(ALL_ITEMS.length === 16, 'sixteen definitions in total — eleven core, five Big Ones, nothing invented', ALL_ITEMS.length);
+  /* the three added on 2026-10-19 wait for Nick's prices: unpriced, shown but not orderable — never a guessed figure */
+  for (const id of ['rib_burger', 'crispy_stack', 'peri_peri_chicken']) {
+    const d = ALL_ITEMS.find((i) => i.id === id);
+    ok(d && d.basePrice === null && d.wasPrice === null, (d ? d.name : id) + ' carries NO price until Nick sets one', d && JSON.stringify([d.basePrice, d.wasPrice]));
+  }
+  ok(wimpyMenu(MON).items.filter((i) => i.available === false).map((i) => i.id).sort().join() === 'crispy_stack,peri_peri_chicken,rib_burger', 'the menu marks exactly those three as not available');
   ok(!ALL_ITEMS.some((i) => /wing|mince|liver|kids|dessert/i.test(i.name)),
     'the exclusions hold: no wings, mince, livers, kids meals or desserts');
 }
@@ -89,12 +98,16 @@ head('C · THE OVERLAP PRINCIPLE IS AN INVARIANT, NOT AN ASPIRATION');
     (uses[k] = uses[k] || new Set()).add(i.id);
     (cats[k] = cats[k] || new Set()).add(i.category);
   }
-  ok(Object.keys(ING).length === 13, 'thirteen core ingredients — the brief’s list exactly', Object.keys(ING).join(','));
+  ok(Object.keys(ING).length === 16, 'sixteen ingredients — the brief’s thirteen plus rib patty, crispy chicken fillet, peri-peri chicken fillet (Nick, 2026-10-19)', Object.keys(ING).join(','));
+  /* THE THREE EXCEPTIONS: each new burger's centre is used by nothing else. Nick asked for the items by name; the rule
+     stays for every other ingredient and this set is the only place a further exception could be added. */
+  const SINGLE_USE_ALLOWED = new Set(['rib_patty', 'crispy_chicken', 'peri_chicken']);
   for (const k of Object.keys(ING))
-    ok((uses[k] || new Set()).size >= 2, ING[k].name + ' is used by at least two items (' + (uses[k] ? uses[k].size : 0) + ')',
+    ok((uses[k] || new Set()).size >= (SINGLE_USE_ALLOWED.has(k) ? 1 : 2), ING[k].name + ' is used by ' + (SINGLE_USE_ALLOWED.has(k) ? 'at least one item (allowed single-use)' : 'at least two items') + ' (' + (uses[k] ? uses[k].size : 0) + ')',
       'SINGLE-USE INGREDIENT — this is the stock line the whole model exists to prevent');
+  ok(SINGLE_USE_ALLOWED.size === 3, 'exactly three single-use exceptions are on record');
   ok(Object.keys(uses).every((k) => ING[k]), 'no item uses an ingredient outside the thirteen');
-  const least = Object.keys(ING).sort((a, b) => uses[a].size - uses[b].size)[0];
+  const least = Object.keys(ING).filter((k) => !SINGLE_USE_ALLOWED.has(k)).sort((a, b) => uses[a].size - uses[b].size)[0];
   ok(least === 'chicken_mayo' && cats.chicken_mayo.size >= 2,
     'the least-shared ingredient (chicken mayo, ' + uses.chicken_mayo.size + ' items) still crosses categories: '
     + [...cats.chicken_mayo].join(' + '));
@@ -124,7 +137,7 @@ head('E · WEEKENDS: NOTHING INVENTED, MONDAY TRAILED');
 {
   for (const [label, t] of [['Saturday', SAT], ['Sunday', SUN]]) {
     const m = wimpyMenu(t);
-    ok(m.bigOne === null && m.items.length === 8, label + ' serves the eight core items and no hero');
+    ok(m.bigOne === null && m.items.length === 11, label + ' serves the eleven core items and no hero');
     ok(m.weekend && m.weekend.next.name === 'Mega Breakfast' && m.weekend.next.dayName === 'Monday',
       '...and trails Monday’s ' + m.weekend.next.name);
   }
@@ -262,9 +275,10 @@ head('J · THE PAGE HOLDS NO PRICE OF ITS OWN');
 }
 head('K · THE REAL PRICE, AND THE SAVING');
 {
-  const all = ALL_ITEMS;
+  const all = ALL_ITEMS.filter((i) => i.basePrice != null);   // the three unpriced additions (2026-10-19) have no saving to show yet
+  ok(all.length === 13, 'thirteen priced items', all.length);
   ok(all.every((i) => i.wasPrice > i.basePrice),
-    'every one of the fourteen carries a pre-discount price above what it sells for',
+    'every priced item carries a pre-discount price above what it sells for',
     all.filter((i) => !(i.wasPrice > i.basePrice)).map((i) => i.name).join(','));
 
   /* The four Nick actually gave a Wimpy price for, in the first brief. These are
@@ -412,10 +426,10 @@ head('M · THE APP: SIGN IN WITH A CB NUMBER AND PASSWORD, ORDER, SEND');
     ok(/07:00–09:00/.test(menu), '...and reads 07:00–09:00', (menu.match(/\d\d:\d\d–\d\d:\d\d/) || [])[0]);
     /* the header counts what the menu actually carries (Nick, 2026-09-14: "the toasteds still say 3 when there is 2") */
     const sub = await pg.evaluate(() => (document.querySelector('.wp-title .sub') || {}).innerText || '');
-    ok(/3 breakfasts · 3 burgers · 2 toasteds/.test(sub), 'the header says 3 breakfasts · 3 burgers · 2 toasteds — counted from the menu, not typed', sub);
+    ok(/3 breakfasts · 6 burgers · 2 toasteds/.test(sub), 'the header says 3 breakfasts · 6 burgers · 2 toasteds — counted from the menu, not typed', sub);
     /* and the category tab badges (Nick, 2026-09-16: "under toasteds it says 3 instead of 2") */
     const badges = await pg.evaluate(() => [...document.querySelectorAll('.wp-cat')].map((b) => b.innerText.replace(/\s+/g, ' ').trim()));
-    ok(badges.join(' | ') === 'Breakfast 3 | Burgers 3 | Toasteds 2', 'the tab badges count the menu too: Breakfast 3 · Burgers 3 · Toasteds 2', badges.join(' | '));
+    ok(badges.join(' | ') === 'Breakfast 3 | Burgers 6 | Toasteds 2', 'the tab badges count the menu too: Breakfast 3 · Burgers 6 · Toasteds 2', badges.join(' | '));
     await pg.click('[data-wadd="mzansi_brekkie"]');
     await pg.waitForSelector('#wpReview', { timeout: 10000 });
     ok(/1 × Mzansi Brekkie/.test(await pg.evaluate(() => document.querySelector('.wp-cart').innerText)),

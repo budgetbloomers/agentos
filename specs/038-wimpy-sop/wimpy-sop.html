@@ -359,15 +359,18 @@ td.r,th.r{text-align:right;white-space:nowrap}
 <!-- ============================================================ 7 MENU -->
 <section class="page" id="s7">
   <h2><span class="n">7</span>The menu and prices</h2>
-  <p>The Weekday Value Menu is fixed: <b>3 breakfasts + 3 burgers + 2 toasteds</b>, plus <b>Today's Big One</b>. Burgers and toasteds come with chips; breakfasts with toast (the Farmhouse adds chips). Every item is served <b>as it is</b> — there are no add-ons, removals or customisations. Prices are set in the service to the cent and shown with the pre-discount price struck through and the saving.</p>
+  <p>The Weekday Value Menu is fixed: <b>3 breakfasts + 6 burgers + 2 toasteds</b>, plus <b>Today's Big One</b>. Burgers and toasteds come with chips; breakfasts with toast (the Farmhouse adds chips). Every item is served <b>as it is</b> — there are no add-ons, removals or customisations. Prices are set in the service to the cent and shown with the pre-discount price struck through and the saving.</p>
   <table>
     <thead><tr><th style="width:22%">Category</th><th>Item</th><th>What is in it</th><th class="r">Price</th><th class="r">Was</th><th class="r">Saving</th></tr></thead><tbody>
     <tr><td rowspan="3"><b>Breakfast</b></td><td>Mzansi Brekkie</td><td>A fried egg, two rashers of bacon and grilled tomato on toast</td><td class="r"><b>R45.90</b></td><td class="r">R57.90</td><td class="r">21%</td></tr>
     <tr><td>Double Up Breakfast</td><td>Two eggs, two rashers of bacon, a grilled banger and tomato on toast</td><td class="r"><b>R65.90</b></td><td class="r">R82.90</td><td class="r">21%</td></tr>
     <tr><td>Farmhouse Breakfast</td><td>Two eggs, bacon, two bangers, grilled tomato and onion, with chips and toast</td><td class="r"><b>R77.90</b></td><td class="r">R97.90</td><td class="r">20%</td></tr>
-    <tr><td rowspan="3"><b>Burgers</b><br><small>with chips</small></td><td>Cheese Burger</td><td>Flame-grilled beef patty with cheese, lettuce, tomato, onion and Wimpy Relish</td><td class="r"><b>R54.90</b></td><td class="r">R68.90</td><td class="r">20%</td></tr>
+    <tr><td rowspan="6"><b>Burgers</b><br><small>with chips</small></td><td>Cheese Burger</td><td>Flame-grilled beef patty with cheese, lettuce, tomato, onion and Wimpy Relish</td><td class="r"><b>R54.90</b></td><td class="r">R68.90</td><td class="r">20%</td></tr>
     <tr><td>Bacon &amp; Cheese Burger</td><td>Beef patty, crispy bacon and cheese with the full salad and Wimpy Relish</td><td class="r"><b>R82.90</b></td><td class="r">R103.90</td><td class="r">20%</td></tr>
     <tr><td>Big Cheese Burger</td><td>Two patties, double cheese, the full salad and Wimpy Relish</td><td class="r"><b>R95.90</b></td><td class="r">R119.90</td><td class="r">20%</td></tr>
+    <tr><td>Rib Burger</td><td>A basted rib patty with lettuce, tomato, onion and Wimpy Relish</td><td class="r"><b>to be set</b></td><td class="r">—</td><td class="r">—</td></tr>
+    <tr><td>Crispy Stack</td><td>A crumbed crispy chicken fillet with lettuce, tomato and Wimpy Relish</td><td class="r"><b>to be set</b></td><td class="r">—</td><td class="r">—</td></tr>
+    <tr><td>Peri-Peri Chicken Burger</td><td>A flame-grilled chicken fillet basted in peri-peri, with lettuce and tomato</td><td class="r"><b>to be set</b></td><td class="r">—</td><td class="r">—</td></tr>
     <tr><td rowspan="2"><b>Toasteds</b><br><small>with chips</small></td><td>Chicken Mayo Toasted</td><td>Creamy chicken mayo on toasted bread</td><td class="r"><b>R53.90</b></td><td class="r">R80.90</td><td class="r">33%</td></tr>
     <tr><td>Bacon &amp; Egg Toasted</td><td>Bacon and fried egg on toasted bread</td><td class="r"><b>R55.90</b></td><td class="r">R84.90</td><td class="r">34%</td></tr>
   </tbody></table>
@@ -384,6 +387,7 @@ td.r,th.r{text-align:right;white-space:nowrap}
   <ul>
     <li>The page shows the whole week's Big Ones as a strip you can read, but only <b>today's</b> has an Add button. Another day's Big One sent from a stale tab is refused by name: <span class="msg">Mega Breakfast is Monday's Big One — today's is the Big Champion.</span></li>
     <li>The "was" price is the pre-discount list price. For the two toasteds and the Dagwood it is a supplied Wimpy list price; for the rest it is derived from the brief's 20% rule. The badge always shows the item's own saving.</li>
+    <li>Rib Burger, Crispy Stack and Peri-Peri Chicken Burger were added on 19 October 2026 and wait for their prices (Operations): until set they show "Price not set yet" and cannot be ordered.</li>
     <li>An item with no price configured cannot be ordered and says so: <span class="msg">… has no price set yet, so it cannot be ordered. Ask Nick to configure it.</span></li>
   </ul>
 </section>
@@ -767,7 +771,7 @@ No onion on one burger please</pre>
   <h3>Guards (run before every release)</h3>
   <table>
     <thead><tr><th style="width:34%">Suite</th><th>Proves</th></tr></thead><tbody>
-    <tr><td><code>wimpy-service/npm test</code></td><td>Menu and prices to the cent, 3+3+2+1, overlap rule, the window, pricing refusals (menu); sign-in, lock, network guard, start password, password change (sign-in); ledger, isolation, retry, stuck (history); the page's screens (page sweep); hosting adapters and headers (hosting)</td></tr>
+    <tr><td><code>wimpy-service/npm test</code></td><td>Menu and prices to the cent, 3+6+2+1, overlap rule (three recorded exceptions), the window, pricing refusals (menu); sign-in, lock, network guard, start password, password change (sign-in); ledger, isolation, retry, stuck (history); the page's screens (page sweep); hosting adapters and headers (hosting)</td></tr>
     <tr><td><code>verify-wimpy-service-drift</code></td><td>The shared sign-in code is byte-identical with the AgentOS Worker; a Wimpy session opens nothing else</td></tr>
     <tr><td><code>verify-wimpy-removal</code></td><td>The Worker serves no Wimpy route; the VAS site forwards; the address agrees in every place</td></tr>
     <tr><td><code>verify-wimpy-live</code></td><td>Against the live service: throwaway sign-in, menu, one TEST order to the kitchen, My orders, second order, isolation between two people, password change, retry, sign-out</td></tr>

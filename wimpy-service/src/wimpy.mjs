@@ -79,6 +79,12 @@ export const ING = {
   lettuce:      { name: 'Lettuce',       unitCost: 0.80 },
   relish:       { name: 'Wimpy Relish',  unitCost: 1.20 },
   chicken_mayo: { name: 'Chicken mayo',  unitCost: 7.50 },   // 80 g
+  /* THREE MORE (Nick, 2026-10-19: "add only the rib burger, crispy stack and the peri peri chicken"). Each is used by its
+     own burger alone — the brief's "no single-use ingredient" rule is overridden by that instruction and the test names
+     the three exceptions. Costs are ESTIMATES, like every cost here. */
+  rib_patty:      { name: 'Rib patty',                unitCost: 16.00 },   // basted rib patty
+  crispy_chicken: { name: 'Crispy chicken fillet',    unitCost: 14.00 },   // crumbed
+  peri_chicken:   { name: 'Peri-peri chicken fillet', unitCost: 15.00 },   // flame-grilled, basted
 };
 export const OVERHEAD_PER_MEAL = 1.20;   // butter, oil, gas, wrap — the spec's stated assumption
 
@@ -129,7 +135,7 @@ const ITEMS = [
     includedIngredients: [inc('2 fried eggs'), inc('Bacon'), inc('2 bangers'), inc('Chips'),
       inc('Grilled tomato'), inc('Grilled onion'), inc('Toast')] },
 
-  // ---- BURGERS — 3 ----
+  // ---- BURGERS — 6 (three added 2026-10-19, see below) ----
   { id: 'cheese_burger', name: 'Cheese Burger', category: 'burgers',
     basePrice: 54.90, wasPrice: 68.90, prep: 'LOW',
     description: 'Flame-grilled beef patty with cheese, lettuce, tomato, onion and Wimpy Relish, with chips.',
@@ -150,6 +156,28 @@ const ITEMS = [
     ing: { patty: 2, cheese: 2, lettuce: 1, tomato: 1, onion: 1, relish: 1, bun: 1, chips: 1 },
     includedIngredients: [inc('2 beef patties'), inc('Double cheese'), inc('Lettuce'),
       inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },
+
+  /* ADDED 2026-10-19 (Nick: "add only the rib burger, crispy stack and the peri peri chicken"). NO PRICE WAS GIVEN, and
+     a price here is never invented ("do not randomly change these prices"): basePrice/wasPrice stay null until Nick sets
+     them — the card reads "Price not set yet", priceOrder refuses the line, and the saving badge stays off. Put the six
+     figures in and nothing else changes. The builds are the standard Wimpy ones; confirm with Nick. */
+  { id: 'rib_burger', name: 'Rib Burger', category: 'burgers',
+    basePrice: null, wasPrice: null, prep: 'MEDIUM',
+    description: 'A basted rib patty with lettuce, tomato, onion and Wimpy Relish on a bun, with chips.',
+    ing: { rib_patty: 1, lettuce: 1, tomato: 1, onion: 1, relish: 1, bun: 1, chips: 1 },
+    includedIngredients: [inc('Basted rib patty'), inc('Lettuce'), inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },
+
+  { id: 'crispy_stack', name: 'Crispy Stack', category: 'burgers',
+    basePrice: null, wasPrice: null, prep: 'MEDIUM',
+    description: 'A crumbed crispy chicken fillet with lettuce, tomato and Wimpy Relish on a bun, with chips.',
+    ing: { crispy_chicken: 1, lettuce: 1, tomato: 1, relish: 1, bun: 1, chips: 1 },
+    includedIngredients: [inc('Crispy chicken fillet'), inc('Lettuce'), inc('Tomato'), inc('Wimpy Relish'), inc('Chips')] },
+
+  { id: 'peri_peri_chicken', name: 'Peri-Peri Chicken Burger', category: 'burgers',
+    basePrice: null, wasPrice: null, prep: 'MEDIUM',
+    description: 'A flame-grilled chicken fillet basted in peri-peri, with lettuce and tomato on a bun, with chips.',
+    ing: { peri_chicken: 1, lettuce: 1, tomato: 1, bun: 1, chips: 1 },
+    includedIngredients: [inc('Peri-peri chicken fillet'), inc('Lettuce'), inc('Tomato'), inc('Chips')] },
 
   // ---- TOASTEDS — 2 (Cheese & Tomato Toasted removed, Nick 2026-09-14; cheese, tomato,
   //      bread and chips are still each shared by other items, so the overlap rule holds) ----
