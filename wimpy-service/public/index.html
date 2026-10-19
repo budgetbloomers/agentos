@@ -113,19 +113,23 @@ a{color:var(--w-red)}
 .wp-peek .desc{font-size:13px;color:var(--w-body)}
 .wp-peek .row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
 .wp-peek .when{font-size:12px;font-weight:700;color:var(--w-muted)}
-.wp-cats{display:flex;gap:8px;margin:0 0 10px;overflow-x:auto}
+.wp-cats{display:flex;gap:8px;margin:0 0 14px;overflow-x:auto}
 .wp-cat{border:2px solid var(--w-line);background:#fff;border-radius:999px;padding:7px 14px;font-weight:900;font-size:13.5px;color:var(--w-body);white-space:nowrap}
 .wp-cat.on{border-color:var(--w-red);background:var(--w-red);color:#fff}
 .wp-cat .ct{opacity:.7;font-weight:800;margin-left:2px}
-.wp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
-.wp-card{background:#fff;border:1px solid var(--w-line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow)}
+/* even rows (Nick, 2026-10-19: "space this out properly"): three across on a desktop, two beside the cart, one on a phone */
+.wp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.wp-card{background:#fff;border:1px solid var(--w-line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:8px;box-shadow:var(--shadow)}
 .wp-card h4{margin:0;font-size:16px;font-weight:900;color:var(--w-ink)}
-.wp-card .d{font-size:12.5px;color:var(--w-body);flex:1}
+.wp-card .d{font-size:12.5px;line-height:1.5;color:var(--w-body);flex:1}
+.wp-card .btn{margin-top:6px;width:100%}
 .wp-card .p{font-size:17px;font-weight:900;color:var(--w-ink)}
 .wp-card .p.na{font-size:12.5px;color:var(--w-muted);font-weight:700}
 .was{color:var(--w-muted);font-weight:600;font-size:.8em;margin-left:5px}
 .save{display:inline-block;background:var(--w-yellow);color:var(--w-ink);font-size:10.5px;font-weight:900;border-radius:999px;padding:2px 7px;margin-left:6px;font-style:normal;vertical-align:middle}
-.wp-wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+.wp-wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}
+/* no cart (ordering closed): the menu takes the whole width instead of leaving the cart's column empty */
+.wp-wrap.solo{grid-template-columns:minmax(0,1fr)}
 @media(max-width:900px){.wp-wrap{grid-template-columns:minmax(0,1fr)}}
 
 /* ---- cart ---- */
@@ -439,7 +443,7 @@ function wMenuPage(){
         :'<button type="button" class="btn" disabled title="This item has no price configured">Unavailable</button>')
       +'</div>';
   }).join('')+'</div>';
-  return wWindowBar()+wToolsHTML()+wNoteHTML()+header+hero+week+'<div class="wp-wrap"><div>'+cats+grid+'</div>'+(open?wCartHTML():'')+'</div>';
+  return wWindowBar()+wToolsHTML()+wNoteHTML()+header+hero+week+'<div class="wp-wrap'+(open?'':' solo')+'"><div>'+cats+grid+'</div>'+(open?wCartHTML():'')+'</div>';
 }
 /* "My orders" sits on the menu whether ordering is open or closed — history is readable whenever the person can sign in */
 function wToolsHTML(){
