@@ -166,10 +166,10 @@ const ITEMS = [
   /* ADDED 2026-10-19 (Nick: "add only the rib burger, crispy stack and the peri peri chicken"; then the Wimpy menu cards:
      Crispy Stack R106.90, Peri-Peri Chicken R94.90; then "correct ... percentages to the other two burgers"). The card
      price is the struck-through LIST price; staff pay the highest .90 price at least 20% under it, like the rest of the
-     menu: R85.90 and R75.90 — each card reads "save 20%" (Nick: "must be 20 and not 21"). The Rib Burger had no card: it stays unpriced — "Price not set yet", priceOrder refuses
-     it — until Nick sends its price. */
+     menu: R85.90 and R75.90 — each card reads "save 20%" (Nick: "must be 20 and not 21"). The Rib Burger is priced exactly as the Cheese Burger (Nick: "make the rib burger the exact same as the
+     cheese burger"): R73.90, was R92.90. */
   { id: 'rib_burger', name: 'Rib Burger', category: 'burgers',
-    basePrice: null, wasPrice: null, prep: 'MEDIUM',
+    basePrice: 73.90, wasPrice: 92.90, prep: 'MEDIUM',
     description: 'A basted rib patty with lettuce, tomato, onion and Wimpy Relish on a bun, with chips.',
     ing: { rib_patty: 1, lettuce: 1, tomato: 1, onion: 1, relish: 1, bun: 1, chips: 1 },
     includedIngredients: [inc('Basted rib patty'), inc('Lettuce'), inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },

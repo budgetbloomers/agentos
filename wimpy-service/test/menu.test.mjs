@@ -74,19 +74,16 @@ head('B · EVERY PRICE IS THE BRIEF’S, TO THE CENT');
     toasted_chicken_mayo: 53.90, toasted_bacon_egg: 55.90,
     mega_breakfast: 95.90, dagwood: 97.90, big_bacon_cheese: 103.90,
     big_champion: 115.90, fully_loaded_dagwood: 127.90,
-    crispy_stack: 85.90, peri_peri_chicken: 75.90,   // Nick, 2026-10-19: ~20% under the Wimpy menu cards (R106.90, R94.90)
+    crispy_stack: 85.90, peri_peri_chicken: 75.90, rib_burger: 73.90,   // Nick, 2026-10-19: ~20% under the Wimpy menu cards (R106.90, R94.90)
   };
   for (const [id, price] of Object.entries(WANT)) {
     const d = ALL_ITEMS.find((i) => i.id === id);
     ok(d && d.basePrice === price, (d ? d.name : id) + ' is R' + price.toFixed(2), d ? 'got ' + d.basePrice : 'missing');
   }
   ok(ALL_ITEMS.length === 16, 'sixteen definitions in total — eleven core, five Big Ones, nothing invented', ALL_ITEMS.length);
-  /* the Rib Burger waits for Nick's price: unpriced, shown but not orderable — never a guessed figure */
-  for (const id of ['rib_burger']) {
-    const d = ALL_ITEMS.find((i) => i.id === id);
-    ok(d && d.basePrice === null && d.wasPrice === null, (d ? d.name : id) + ' carries NO price until Nick sets one', d && JSON.stringify([d.basePrice, d.wasPrice]));
-  }
-  ok(wimpyMenu(MON).items.filter((i) => i.available === false).map((i) => i.id).sort().join() === 'rib_burger', 'the menu marks exactly the Rib Burger as not available');
+  ok(wimpyMenu(MON).items.every((i) => i.available !== false), 'every item on the menu is priced and orderable');
+  { const rib = ALL_ITEMS.find((i) => i.id === 'rib_burger'), ch = ALL_ITEMS.find((i) => i.id === 'cheese_burger');
+    ok(rib.basePrice === ch.basePrice && rib.wasPrice === ch.wasPrice, 'the Rib Burger is priced exactly as the Cheese Burger (Nick, 2026-10-19)', JSON.stringify([rib.basePrice, rib.wasPrice])); }
   ok(!ALL_ITEMS.some((i) => /wing|mince|liver|kids|dessert/i.test(i.name)),
     'the exclusions hold: no wings, mince, livers, kids meals or desserts');
 }
@@ -277,8 +274,8 @@ head('J · THE PAGE HOLDS NO PRICE OF ITS OWN');
 }
 head('K · THE REAL PRICE, AND THE SAVING');
 {
-  const all = ALL_ITEMS.filter((i) => i.basePrice != null);   // the Rib Burger is unpriced until Nick sends its price
-  ok(all.length === 15, 'fifteen priced items', all.length);
+  const all = ALL_ITEMS.filter((i) => i.basePrice != null);
+  ok(all.length === 16, 'all sixteen items are priced', all.length);
   ok(all.every((i) => i.wasPrice > i.basePrice),
     'every priced item carries a pre-discount price above what it sells for',
     all.filter((i) => !(i.wasPrice > i.basePrice)).map((i) => i.name).join(','));
@@ -297,7 +294,7 @@ head('K · THE REAL PRICE, AND THE SAVING');
      "save 31%" would be a claim nobody can stand behind. */
   /* The Wimpy menu cards Nick sent on 2026-10-19: the card price IS the list price, and staff pay the highest .90 price
      at least 20% under it. */
-  const CARD = { cheese_burger: 92.90, crispy_stack: 106.90, peri_peri_chicken: 94.90 };
+  const CARD = { cheese_burger: 92.90, crispy_stack: 106.90, peri_peri_chicken: 94.90, rib_burger: 92.90 };   // rib = the Cheese's price
   for (const [id, was] of Object.entries(CARD)) {
     const d = all.find((i) => i.id === id);
     const save = (1 - d.basePrice / d.wasPrice) * 100;
