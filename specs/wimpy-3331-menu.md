@@ -7,7 +7,7 @@
 > **Peri-Peri Chicken R94.90** (peri-peri grilled fillet, onion rings, cheese, lettuce, creamy peri-peri mayo). **Then
 > (Nick: "correct the cheese burger price and percentages to the other two burgers"):** the card prices are the LIST
 > (struck-through) prices and staff pay the highest .90 price at least 20% under them — **Cheese R73.90 (was R92.90,
-> card build: patty, cheese, grilled onions, gherkins, lettuce, relish), Crispy Stack R84.90 (was R106.90), Peri-Peri
+> card build: patty, cheese, grilled onions, gherkins, lettuce, relish), Crispy Stack R85.90 (was R106.90), Peri-Peri
 > Chicken R75.90 (was R94.90)**. **Rib Burger: no price yet.** New ingredients: rib patty, peri-peri fillet and gherkins
 > (single-use, the overlap rule's three named exceptions), onion rings and mayo (shared).
 

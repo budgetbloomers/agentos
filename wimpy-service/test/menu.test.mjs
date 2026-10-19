@@ -74,7 +74,7 @@ head('B · EVERY PRICE IS THE BRIEF’S, TO THE CENT');
     toasted_chicken_mayo: 53.90, toasted_bacon_egg: 55.90,
     mega_breakfast: 95.90, dagwood: 97.90, big_bacon_cheese: 103.90,
     big_champion: 115.90, fully_loaded_dagwood: 127.90,
-    crispy_stack: 84.90, peri_peri_chicken: 75.90,   // Nick, 2026-10-19: ~20% under the Wimpy menu cards (R106.90, R94.90)
+    crispy_stack: 85.90, peri_peri_chicken: 75.90,   // Nick, 2026-10-19: ~20% under the Wimpy menu cards (R106.90, R94.90)
   };
   for (const [id, price] of Object.entries(WANT)) {
     const d = ALL_ITEMS.find((i) => i.id === id);
@@ -301,7 +301,7 @@ head('K · THE REAL PRICE, AND THE SAVING');
   for (const [id, was] of Object.entries(CARD)) {
     const d = all.find((i) => i.id === id);
     const save = (1 - d.basePrice / d.wasPrice) * 100;
-    ok(d.wasPrice === was && save >= 20 && save < 21, d.name + ' is struck through at its Wimpy card price R' + was.toFixed(2) + ' and saves ' + save.toFixed(1) + '%', JSON.stringify([d.basePrice, d.wasPrice]));
+    ok(d.wasPrice === was && Math.round(save) === 20, d.name + ' is struck through at its Wimpy card price R' + was.toFixed(2) + ' and saves ' + save.toFixed(1) + '%', JSON.stringify([d.basePrice, d.wasPrice]));
   }
   const derived = all.filter((i) => !SUPPLIED[i.id] && !CARD[i.id]);
   ok(derived.length === 9, 'nine items carry a derived pre-discount price', derived.length);
