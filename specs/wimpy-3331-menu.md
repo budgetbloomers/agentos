@@ -2,10 +2,11 @@
 
 > **Changed 2026-10-19 (Nick: "add only the rib burger, crispy stack and the peri peri chicken").** Three burgers join
 > the menu — **Rib Burger** (basted rib patty), **Crispy Stack** (crumbed chicken fillet) and **Peri-Peri Chicken
-> Burger** (flame-grilled peri-peri fillet). Each centre is a new, single-use ingredient (14th–16th) by Nick's
-> instruction — the three recorded exceptions to the overlap rule. Burgers are now 6. **No prices were given: all three
-> are unpriced** (the card reads "Price not set yet", the pricer refuses the line) until Nick sets
-> `basePrice`/`wasPrice` in `wimpy-service/src/wimpy.mjs`.
+> Burger** (flame-grilled peri-peri fillet). Burgers are now 6. **Prices (Nick, same day, from the Wimpy menu cards):
+> Crispy Stack R106.90** (beef patty, 2 streaky bacon, onion rings, cheese, tomato, lettuce, creamy or chilli mayo) and
+> **Peri-Peri Chicken R94.90** (peri-peri grilled fillet, onion rings, cheese, lettuce, creamy peri-peri mayo) — sold at
+> the card price, no struck-through price. **Rib Burger: no price yet** — unpriced until Nick sends it. New ingredients:
+> rib patty and peri-peri fillet (single-use, the overlap rule's two named exceptions), onion rings and mayo (shared).
 
 > **Changed 2026-10-06 (Nick, Spec Kit 009).** The sign-in now takes the CB number AND the person's own
 > password (the Agent Analytics one), checked with the main sign-in's lock — the "no password" below is

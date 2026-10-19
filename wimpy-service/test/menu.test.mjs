@@ -56,7 +56,7 @@ head('A · THE STRUCTURE IS 3 + 6 + 2 + 1 (Cheese & Tomato Toasted removed 2026-
   ok(m.categories.map((c) => c.id).join(',') === 'breakfast,burgers,toasteds', 'three categories, in menu order');
   ok(m.items.filter((i) => i.category === 'breakfast').length === 3, 'exactly three breakfast choices');
   ok(m.items.filter((i) => i.category === 'burgers').length === 6, 'exactly six burger choices (Rib Burger, Crispy Stack, Peri-Peri Chicken added 2026-10-19)');
-  for (const [id, name] of [['rib_burger', 'Rib Burger'], ['crispy_stack', 'Crispy Stack'], ['peri_peri_chicken', 'Peri-Peri Chicken Burger']])
+  for (const [id, name] of [['rib_burger', 'Rib Burger'], ['crispy_stack', 'Crispy Stack'], ['peri_peri_chicken', 'Peri-Peri Chicken']])
     ok(m.items.some((i) => i.id === id && i.name === name && i.category === 'burgers'), name + ' is on the menu under Burgers');
   ok(!m.items.some((i) => i.id === 'wimpy_burger'), 'no plain Wimpy Burger (Nick, 2026-10-19: "add only" the three)');
   ok(m.items.filter((i) => i.category === 'toasteds').length === 2, 'exactly two toasted choices');
@@ -74,18 +74,23 @@ head('B · EVERY PRICE IS THE BRIEF’S, TO THE CENT');
     toasted_chicken_mayo: 53.90, toasted_bacon_egg: 55.90,
     mega_breakfast: 95.90, dagwood: 97.90, big_bacon_cheese: 103.90,
     big_champion: 115.90, fully_loaded_dagwood: 127.90,
+    crispy_stack: 106.90, peri_peri_chicken: 94.90,   // Nick, 2026-10-19: the Wimpy menu cards' prices
   };
   for (const [id, price] of Object.entries(WANT)) {
     const d = ALL_ITEMS.find((i) => i.id === id);
     ok(d && d.basePrice === price, (d ? d.name : id) + ' is R' + price.toFixed(2), d ? 'got ' + d.basePrice : 'missing');
   }
   ok(ALL_ITEMS.length === 16, 'sixteen definitions in total — eleven core, five Big Ones, nothing invented', ALL_ITEMS.length);
-  /* the three added on 2026-10-19 wait for Nick's prices: unpriced, shown but not orderable — never a guessed figure */
-  for (const id of ['rib_burger', 'crispy_stack', 'peri_peri_chicken']) {
+  /* the Rib Burger waits for Nick's price: unpriced, shown but not orderable — never a guessed figure */
+  for (const id of ['rib_burger']) {
     const d = ALL_ITEMS.find((i) => i.id === id);
     ok(d && d.basePrice === null && d.wasPrice === null, (d ? d.name : id) + ' carries NO price until Nick sets one', d && JSON.stringify([d.basePrice, d.wasPrice]));
   }
-  ok(wimpyMenu(MON).items.filter((i) => i.available === false).map((i) => i.id).sort().join() === 'crispy_stack,peri_peri_chicken,rib_burger', 'the menu marks exactly those three as not available');
+  ok(wimpyMenu(MON).items.filter((i) => i.available === false).map((i) => i.id).sort().join() === 'rib_burger', 'the menu marks exactly the Rib Burger as not available');
+  for (const id of ['crispy_stack', 'peri_peri_chicken']) {
+    const d = ALL_ITEMS.find((i) => i.id === id);
+    ok(d && d.wasPrice === null, d.name + ' sells at the Wimpy card price with no struck-through price (none was given)', d && d.wasPrice);
+  }
   ok(!ALL_ITEMS.some((i) => /wing|mince|liver|kids|dessert/i.test(i.name)),
     'the exclusions hold: no wings, mince, livers, kids meals or desserts');
 }
@@ -98,14 +103,15 @@ head('C · THE OVERLAP PRINCIPLE IS AN INVARIANT, NOT AN ASPIRATION');
     (uses[k] = uses[k] || new Set()).add(i.id);
     (cats[k] = cats[k] || new Set()).add(i.category);
   }
-  ok(Object.keys(ING).length === 16, 'sixteen ingredients — the brief’s thirteen plus rib patty, crispy chicken fillet, peri-peri chicken fillet (Nick, 2026-10-19)', Object.keys(ING).join(','));
-  /* THE THREE EXCEPTIONS: each new burger's centre is used by nothing else. Nick asked for the items by name; the rule
-     stays for every other ingredient and this set is the only place a further exception could be added. */
-  const SINGLE_USE_ALLOWED = new Set(['rib_patty', 'crispy_chicken', 'peri_chicken']);
+  ok(Object.keys(ING).length === 17, 'seventeen ingredients — the brief’s thirteen plus rib patty, peri-peri fillet, onion rings, mayo (Nick, 2026-10-19)', Object.keys(ING).join(','));
+  /* THE TWO EXCEPTIONS: the rib patty and the peri-peri fillet are each used by one burger. Nick asked for the items by
+     name; onion rings and mayo are shared, and the rule stays for every other ingredient. This set is the only place a
+     further exception could be added. */
+  const SINGLE_USE_ALLOWED = new Set(['rib_patty', 'peri_chicken']);
   for (const k of Object.keys(ING))
     ok((uses[k] || new Set()).size >= (SINGLE_USE_ALLOWED.has(k) ? 1 : 2), ING[k].name + ' is used by ' + (SINGLE_USE_ALLOWED.has(k) ? 'at least one item (allowed single-use)' : 'at least two items') + ' (' + (uses[k] ? uses[k].size : 0) + ')',
       'SINGLE-USE INGREDIENT — this is the stock line the whole model exists to prevent');
-  ok(SINGLE_USE_ALLOWED.size === 3, 'exactly three single-use exceptions are on record');
+  ok(SINGLE_USE_ALLOWED.size === 2, 'exactly two single-use exceptions are on record');
   ok(Object.keys(uses).every((k) => ING[k]), 'no item uses an ingredient outside the thirteen');
   const least = Object.keys(ING).filter((k) => !SINGLE_USE_ALLOWED.has(k)).sort((a, b) => uses[a].size - uses[b].size)[0];
   ok(least === 'chicken_mayo' && cats.chicken_mayo.size >= 2,
@@ -275,7 +281,7 @@ head('J · THE PAGE HOLDS NO PRICE OF ITS OWN');
 }
 head('K · THE REAL PRICE, AND THE SAVING');
 {
-  const all = ALL_ITEMS.filter((i) => i.basePrice != null);   // the three unpriced additions (2026-10-19) have no saving to show yet
+  const all = ALL_ITEMS.filter((i) => i.basePrice != null && i.wasPrice != null);   // the 2026-10-19 additions claim no saving
   ok(all.length === 13, 'thirteen priced items', all.length);
   ok(all.every((i) => i.wasPrice > i.basePrice),
     'every priced item carries a pre-discount price above what it sells for',
