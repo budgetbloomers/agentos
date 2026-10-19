@@ -87,6 +87,7 @@ export const ING = {
   peri_chicken:   { name: 'Peri-peri chicken fillet', unitCost: 15.00 },   // flame-grilled, basted
   onion_rings:    { name: 'Crispy fried onion rings', unitCost: 3.50 },    // per portion
   mayo:           { name: 'Mayo (creamy / chilli / peri-peri)', unitCost: 1.50 },   // per portion
+  gherkins:       { name: 'Gherkins',                 unitCost: 0.80 },    // the Cheese card's build (Nick, 2026-10-19)
 };
 export const OVERHEAD_PER_MEAL = 1.20;   // butter, oil, gas, wrap — the spec's stated assumption
 
@@ -138,12 +139,15 @@ const ITEMS = [
       inc('Grilled tomato'), inc('Grilled onion'), inc('Toast')] },
 
   // ---- BURGERS — 6 (three added 2026-10-19, see below) ----
+  /* CORRECTED 2026-10-19 from the Wimpy menu card Nick sent: the Cheese is R92.90 at Wimpy (was shown as R68.90, a
+     derived figure). Staff pay R73.90 — the highest .90 price at least 20% under the card, like the rest of the menu.
+     The build is the card's: beef patty, cheese, grilled onions, gherkins, lettuce, Wimpy Relish. */
   { id: 'cheese_burger', name: 'Cheese Burger', category: 'burgers',
-    basePrice: 54.90, wasPrice: 68.90, prep: 'LOW',
-    description: 'Flame-grilled beef patty with cheese, lettuce, tomato, onion and Wimpy Relish, with chips.',
-    ing: { patty: 1, cheese: 1, lettuce: 1, tomato: 1, onion: 1, relish: 1, bun: 1, chips: 1 },
-    includedIngredients: [inc('Beef patty'), inc('Cheese'), inc('Lettuce'), inc('Tomato'),
-      inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },
+    basePrice: 73.90, wasPrice: 92.90, prep: 'LOW',
+    description: 'Beef patty, a slice of cheese, grilled onions, gherkins, lettuce and Famous Wimpy Relish, with chips.',
+    ing: { patty: 1, cheese: 1, onion: 1, gherkins: 1, lettuce: 1, relish: 1, bun: 1, chips: 1 },
+    includedIngredients: [inc('Beef patty'), inc('Cheese'), inc('Grilled onions'), inc('Gherkins'),
+      inc('Lettuce'), inc('Famous Wimpy Relish'), inc('Chips')] },
 
   { id: 'bacon_cheese_burger', name: 'Bacon & Cheese Burger', category: 'burgers',
     basePrice: 82.90, wasPrice: 103.90, prep: 'MEDIUM',
@@ -159,10 +163,11 @@ const ITEMS = [
     includedIngredients: [inc('2 beef patties'), inc('Double cheese'), inc('Lettuce'),
       inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },
 
-  /* ADDED 2026-10-19 (Nick: "add only the rib burger, crispy stack and the peri peri chicken"; then "here are the prices"
-     with the Wimpy menu cards: Crispy Stack R106.90, Peri-Peri Chicken R94.90). Those two sell at EXACTLY the price on the
-     card and carry no struck-through price (wasPrice null — no list price was given, so no saving is claimed). The Rib
-     Burger had no card: it stays unpriced — "Price not set yet", priceOrder refuses it — until Nick sends its price. */
+  /* ADDED 2026-10-19 (Nick: "add only the rib burger, crispy stack and the peri peri chicken"; then the Wimpy menu cards:
+     Crispy Stack R106.90, Peri-Peri Chicken R94.90; then "correct ... percentages to the other two burgers"). The card
+     price is the struck-through LIST price; staff pay the highest .90 price at least 20% under it, like the rest of the
+     menu: R84.90 and R75.90. The Rib Burger had no card: it stays unpriced — "Price not set yet", priceOrder refuses
+     it — until Nick sends its price. */
   { id: 'rib_burger', name: 'Rib Burger', category: 'burgers',
     basePrice: null, wasPrice: null, prep: 'MEDIUM',
     description: 'A basted rib patty with lettuce, tomato, onion and Wimpy Relish on a bun, with chips.',
@@ -170,14 +175,14 @@ const ITEMS = [
     includedIngredients: [inc('Basted rib patty'), inc('Lettuce'), inc('Tomato'), inc('Onion'), inc('Wimpy Relish'), inc('Chips')] },
 
   { id: 'crispy_stack', name: 'Crispy Stack', category: 'burgers',
-    basePrice: 106.90, wasPrice: null, prep: 'MEDIUM',
+    basePrice: 84.90, wasPrice: 106.90, prep: 'MEDIUM',
     description: 'Beef patty, two rashers of streaky bacon, crispy fried onion rings, a slice of cheese, tomato, lettuce and creamy or chilli mayo, with chips.',
     ing: { patty: 1, bacon: 2, onion_rings: 1, cheese: 1, tomato: 1, lettuce: 1, mayo: 1, bun: 1, chips: 1 },
     includedIngredients: [inc('Beef patty'), inc('2 rashers streaky bacon'), inc('Crispy fried onion rings'), inc('Cheese'),
       inc('Tomato'), inc('Lettuce'), inc('Creamy or chilli mayo'), inc('Chips')] },
 
   { id: 'peri_peri_chicken', name: 'Peri-Peri Chicken', category: 'burgers',
-    basePrice: 94.90, wasPrice: null, prep: 'MEDIUM',
+    basePrice: 75.90, wasPrice: 94.90, prep: 'MEDIUM',
     description: 'Peri-peri basted tender grilled chicken fillet, crispy fried onion rings, a slice of cheese, lettuce and creamy peri-peri mayo, with chips.',
     ing: { peri_chicken: 1, onion_rings: 1, cheese: 1, lettuce: 1, mayo: 1, bun: 1, chips: 1 },
     includedIngredients: [inc('Peri-peri grilled chicken fillet'), inc('Crispy fried onion rings'), inc('Cheese'), inc('Lettuce'),

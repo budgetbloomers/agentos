@@ -464,7 +464,7 @@ const measured = { order: [], history: [], cron: [] };
   const body = orderBody('thandi', items, 'no onions please');
   const r = await call('POST', '/api/wimpy/order', { token: 'tok-thandi-w', body });
   measured.order.push(r.subs);
-  ok(r.status === 200 && r.j && r.j.ok === true && r.j.total_price === 163.7, 'the order is accepted (200, the server total R163.70)', r.status + ' ' + r.t.slice(0, 120));
+  ok(r.status === 200 && r.j && r.j.ok === true && r.j.total_price === 201.7, 'the order is accepted (200, the server total R201.70)', r.status + ' ' + r.t.slice(0, 120));
   ok(r.j && JSON.stringify(Object.keys(r.j).sort()) === '["ok","order_formatted","timestamp","total_price"]', 'the reply to the page is the same four fields as before — nothing added', r.j && Object.keys(r.j).join(','));
   ok(N8.bodies.length === 1 && N8.bodies[0] === expectedN8n('thandi', body), 'the n8n kitchen body is byte-for-byte what it was before this feature', N8.bodies[0] && N8.bodies[0].slice(0, 160));
   ok(r.urls[1] === 'POST ' + N8N, 'the kitchen is called FIRST — straight after the session check, before any ledger or HighLevel call', r.urls.slice(0, 3).join(' | '));
@@ -472,18 +472,18 @@ const measured = { order: [], history: [], cron: [] };
   ok(rows.length === 1, 'one ledger row', String(rows.length));
   const row = rows[0] || {};
   ok(row.owner_user_id === P.thandi.user_id && row.cb === 'CB901', '…owned by the SESSION\'s account (user_id), under CB901', JSON.stringify({ o: row.owner_user_id, cb: row.cb }));
-  ok(Number(row.total) === 163.7 && row.notes === 'no onions please', '…with the server total and her notes', JSON.stringify({ t: row.total, n: row.notes }));
+  ok(Number(row.total) === 201.7 && row.notes === 'no onions please', '…with the server total and her notes', JSON.stringify({ t: row.total, n: row.notes }));
   ok(Array.isArray(row.items) && row.items.length === 2 && row.items.every((i) => JSON.stringify(Object.keys(i).sort()) === '["id","item","item_total","quantity"]')
-    && row.items[0].item === 'Cheese Burger' && row.items[0].quantity === 2 && row.items[0].item_total === 109.8, '…and the items as {id, item, quantity, item_total}', JSON.stringify(row.items));
+    && row.items[0].item === 'Cheese Burger' && row.items[0].quantity === 2 && row.items[0].item_total === 147.8, '…and the items as {id, item, quantity, item_total}', JSON.stringify(row.items));
   ok(HL.contacts.length === 1, 'her HighLevel contact is created once', String(HL.contacts.length));
   const ct = HL.contacts[0] || {};
   ok(ct.locationId === LOC && ct.firstName === 'Thandi' && ct.lastName === 'Mokoena' && ct.phone === '0821110901'
     && JSON.stringify(ct.tags) === '["wimpy","cb901"]' && ct.source === 'Wimpy app', '…{locationId, firstName, lastName, phone (normalised), tags:[wimpy, cb901] (R10/L6), source:"Wimpy app"}', JSON.stringify({ ...ct, locationId: ct.locationId === LOC ? 'LOC' : ct.locationId }));
-  ok(HL.notes.length === 1 && HL.notes[0].contactId === ct.id && /CB901/.test(HL.notes[0].body) && /CHEESE BURGER/.test(HL.notes[0].body) && /R163\.70/.test(HL.notes[0].body),
+  ok(HL.notes.length === 1 && HL.notes[0].contactId === ct.id && /CB901/.test(HL.notes[0].body) && /CHEESE BURGER/.test(HL.notes[0].body) && /R201\.70/.test(HL.notes[0].body),
     'a note on her contact carries the order (CB, items, total)', String(JSON.stringify(HL.notes[0] && HL.notes[0].body)).slice(0, 160));
   const card = HL.cards[0] || {};
   ok(HL.cards.length === 1 && card.pipelineId === 'pl-wimpy' && card.pipelineStageId === 'st-new' && card.status === 'open' && card.contactId === ct.id
-    && card.monetaryValue === 163.7 && card.locationId === LOC && /CB901/.test(card.name || ''), 'ONE card in "Wimpy Pipeline" at "New Order", open, on her contact, worth the total', JSON.stringify({ ...card, locationId: '…' }));
+    && card.monetaryValue === 201.7 && card.locationId === LOC && /CB901/.test(card.name || ''), 'ONE card in "Wimpy Pipeline" at "New Order", open, on her contact, worth the total', JSON.stringify({ ...card, locationId: '…' }));
   ok(row.hl_state === 'written' && row.hl_opportunity_id === card.id && row.hl_contact_id === ct.id && !row.hl_error, 'the row is marked written with its card and contact', JSON.stringify({ s: row.hl_state, o: row.hl_opportunity_id, c: row.hl_contact_id, e: row.hl_error }));
   ok(row.hl_state === 'written' && row.hl_contact_seed == null, '…and the typed name/phone seed is cleared once the card exists', JSON.stringify(row.hl_contact_seed));
   ok(DBT.links.length === 1 && DBT.links[0].owner_user_id === P.thandi.user_id && DBT.links[0].contact_id === ct.id && DBT.links[0].cb === 'CB901', 'her contact is linked to HER account once', JSON.stringify(DBT.links));
@@ -664,7 +664,7 @@ const NOT_YET = 'Not on the kitchen board yet', UNREACHABLE = 'The kitchen board
 let T = {};   // the scenario's handles
 async function scenario() {
   resetWorld();
-  CLOCK = at('07:00'); await placeOrder('tok-thandi-w', 'thandi', [{ id: 'cheese_burger', quantity: 2 }], 'no onions please');      // R109.80
+  CLOCK = at('07:00'); await placeOrder('tok-thandi-w', 'thandi', [{ id: 'cheese_burger', quantity: 2 }], 'no onions please');      // R147.80
   CLOCK = at('07:30'); await placeOrder('tok-thandi-w', 'thandi', [{ id: 'mzansi_brekkie', quantity: 1 }]);                           // R45.90
   CLOCK = at('07:40'); await placeOrder('tok-sipho-w', 'sipho', [{ id: 'big_cheese_burger', quantity: 3 }], 'Sipho collects');       // R287.70
   CLOCK = at('07:50'); await placeOrder('tok-sipho-w', 'sipho', [{ id: 'farmhouse_breakfast', quantity: 2 }]);                        // R155.80
@@ -685,8 +685,8 @@ await scenario();
   ok(r.j && r.j.since === '2026-10-07' && r.j.stages_available === true, '…with since: 2026-10-07 (WIMPY_HISTORY_SINCE) and stages_available: true', JSON.stringify(r.j && { since: r.j.since, s: r.j.stages_available }));
   ok(o.map((x) => x.placed_at).join(',') === '2026-10-08T08:15:00+02:00,2026-10-08T07:30:00+02:00,2026-10-08T07:00:00+02:00', 'newest first, each placed_at in SA time (+02:00)', o.map((x) => x.placed_at).join(','));
   ok(o.every((x) => JSON.stringify(Object.keys(x).sort()) === ORDER_KEYS), 'each order is exactly {placed_at, total, notes, items, stage, stage_note} — no id of any kind', o.map((x) => Object.keys(x).join('|')).join(' ; '));
-  ok(o[2] && o[2].total === '109.80' && o[2].notes === 'no onions please' && JSON.stringify(o[2].items) === '[{"item":"Cheese Burger","quantity":2,"item_total":"109.80"}]',
-    'items as {item, quantity, item_total}, money as "109.80", her notes', JSON.stringify(o[2]));
+  ok(o[2] && o[2].total === '147.80' && o[2].notes === 'no onions please' && JSON.stringify(o[2].items) === '[{"item":"Cheese Burger","quantity":2,"item_total":"147.80"}]',
+    'items as {item, quantity, item_total}, money as "147.80", her notes', JSON.stringify(o[2]));
   ok(o[2] && o[2].stage === 'New Order' && o[2].stage_note === null, 'the 07:00 order reads its card\'s stage: New Order', JSON.stringify(o[2] && [o[2].stage, o[2].stage_note]));
   ok(o[1] && o[1].stage === 'Ready for Collection', 'the 07:30 order follows the kitchen: Ready for Collection', JSON.stringify(o[1] && o[1].stage));
   ok(o[0] && o[0].stage === null && o[0].stage_note === NOT_YET && o[0].total === '82.90', 'the 08:15 order (card failed) is still listed: "' + NOT_YET + '"', JSON.stringify(o[0]));

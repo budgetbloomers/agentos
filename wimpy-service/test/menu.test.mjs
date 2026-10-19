@@ -70,11 +70,11 @@ head('B · EVERY PRICE IS THE BRIEF’S, TO THE CENT');
 {
   const WANT = {
     mzansi_brekkie: 45.90, double_up_breakfast: 65.90, farmhouse_breakfast: 77.90,
-    cheese_burger: 54.90, bacon_cheese_burger: 82.90, big_cheese_burger: 95.90,
+    cheese_burger: 73.90, bacon_cheese_burger: 82.90, big_cheese_burger: 95.90,
     toasted_chicken_mayo: 53.90, toasted_bacon_egg: 55.90,
     mega_breakfast: 95.90, dagwood: 97.90, big_bacon_cheese: 103.90,
     big_champion: 115.90, fully_loaded_dagwood: 127.90,
-    crispy_stack: 106.90, peri_peri_chicken: 94.90,   // Nick, 2026-10-19: the Wimpy menu cards' prices
+    crispy_stack: 84.90, peri_peri_chicken: 75.90,   // Nick, 2026-10-19: ~20% under the Wimpy menu cards (R106.90, R94.90)
   };
   for (const [id, price] of Object.entries(WANT)) {
     const d = ALL_ITEMS.find((i) => i.id === id);
@@ -87,10 +87,6 @@ head('B · EVERY PRICE IS THE BRIEF’S, TO THE CENT');
     ok(d && d.basePrice === null && d.wasPrice === null, (d ? d.name : id) + ' carries NO price until Nick sets one', d && JSON.stringify([d.basePrice, d.wasPrice]));
   }
   ok(wimpyMenu(MON).items.filter((i) => i.available === false).map((i) => i.id).sort().join() === 'rib_burger', 'the menu marks exactly the Rib Burger as not available');
-  for (const id of ['crispy_stack', 'peri_peri_chicken']) {
-    const d = ALL_ITEMS.find((i) => i.id === id);
-    ok(d && d.wasPrice === null, d.name + ' sells at the Wimpy card price with no struck-through price (none was given)', d && d.wasPrice);
-  }
   ok(!ALL_ITEMS.some((i) => /wing|mince|liver|kids|dessert/i.test(i.name)),
     'the exclusions hold: no wings, mince, livers, kids meals or desserts');
 }
@@ -103,15 +99,15 @@ head('C · THE OVERLAP PRINCIPLE IS AN INVARIANT, NOT AN ASPIRATION');
     (uses[k] = uses[k] || new Set()).add(i.id);
     (cats[k] = cats[k] || new Set()).add(i.category);
   }
-  ok(Object.keys(ING).length === 17, 'seventeen ingredients — the brief’s thirteen plus rib patty, peri-peri fillet, onion rings, mayo (Nick, 2026-10-19)', Object.keys(ING).join(','));
+  ok(Object.keys(ING).length === 18, 'eighteen ingredients — the brief’s thirteen plus rib patty, peri-peri fillet, onion rings, mayo, gherkins (Nick, 2026-10-19)', Object.keys(ING).join(','));
   /* THE TWO EXCEPTIONS: the rib patty and the peri-peri fillet are each used by one burger. Nick asked for the items by
      name; onion rings and mayo are shared, and the rule stays for every other ingredient. This set is the only place a
      further exception could be added. */
-  const SINGLE_USE_ALLOWED = new Set(['rib_patty', 'peri_chicken']);
+  const SINGLE_USE_ALLOWED = new Set(['rib_patty', 'peri_chicken', 'gherkins']);   // gherkins: the Cheese card's build
   for (const k of Object.keys(ING))
     ok((uses[k] || new Set()).size >= (SINGLE_USE_ALLOWED.has(k) ? 1 : 2), ING[k].name + ' is used by ' + (SINGLE_USE_ALLOWED.has(k) ? 'at least one item (allowed single-use)' : 'at least two items') + ' (' + (uses[k] ? uses[k].size : 0) + ')',
       'SINGLE-USE INGREDIENT — this is the stock line the whole model exists to prevent');
-  ok(SINGLE_USE_ALLOWED.size === 2, 'exactly two single-use exceptions are on record');
+  ok(SINGLE_USE_ALLOWED.size === 3, 'exactly three single-use exceptions are on record');
   ok(Object.keys(uses).every((k) => ING[k]), 'no item uses an ingredient outside the thirteen');
   const least = Object.keys(ING).filter((k) => !SINGLE_USE_ALLOWED.has(k)).sort((a, b) => uses[a].size - uses[b].size)[0];
   ok(least === 'chicken_mayo' && cats.chicken_mayo.size >= 2,
@@ -168,7 +164,7 @@ head('G · THE SERVER PRICES, AND QUANTITY IS THE ONLY EDIT');
     { id: 'cheese_burger', quantity: 2 },
     { id: 'toasted_chicken_mayo', quantity: 1 },
   ] } }, WED);
-  ok(r.ok && r.totalCents === 2 * 5490 + 5390, 'integer cents: 2 × R54.90 + R53.90 = R' + r.total, r.totalCents);
+  ok(r.ok && r.totalCents === 2 * 7390 + 5390, 'integer cents: 2 × R73.90 + R53.90 = R' + r.total, r.totalCents);
   /* QUANTITY IS THE ONE THING A PERSON MAY CHANGE (Nick, 2026-09-10: "they can have quantity
      just cant customize"). Every other shape of edit — a removal, an add-on, a choice — is
      refused in words, never silently stripped: stripping would hand the kitchen a different
@@ -186,7 +182,7 @@ head('G · THE SERVER PRICES, AND QUANTITY IS THE ONLY EDIT');
   const q11 = priceOrder({ order: { items: [{ id: 'mzansi_brekkie', quantity: 11 }] } }, WED);
   ok(!q11.ok && /between 1 and 10/.test(q11.errors[0]), 'eleven is refused, and the message says the cap', q11.errors[0]);
   const plain = priceOrder({ order: { items: [{ id: 'cheese_burger', quantity: 1, removed: [], added: [], choices: {} }] } }, WED);
-  ok(plain.ok && plain.total === 54.90, 'empty customisation fields from an old client still price fine');
+  ok(plain.ok && plain.total === 73.90, 'empty customisation fields from an old client still price fine');
   ok(!priceOrder({ order: { items: [{ id: 'cheese_burger', quantity: 1 }] } }, WED).items.some((i) => 'customisations' in i),
     'a priced line carries no customisations field at all — the door is gone, not merely shut');
   ok(!wimpyMenu(WED).items.some((i) => (i.addOns || []).length),
@@ -281,8 +277,8 @@ head('J · THE PAGE HOLDS NO PRICE OF ITS OWN');
 }
 head('K · THE REAL PRICE, AND THE SAVING');
 {
-  const all = ALL_ITEMS.filter((i) => i.basePrice != null && i.wasPrice != null);   // the 2026-10-19 additions claim no saving
-  ok(all.length === 13, 'thirteen priced items', all.length);
+  const all = ALL_ITEMS.filter((i) => i.basePrice != null);   // the Rib Burger is unpriced until Nick sends its price
+  ok(all.length === 15, 'fifteen priced items', all.length);
   ok(all.every((i) => i.wasPrice > i.basePrice),
     'every priced item carries a pre-discount price above what it sells for',
     all.filter((i) => !(i.wasPrice > i.basePrice)).map((i) => i.name).join(','));
@@ -299,8 +295,16 @@ head('K · THE REAL PRICE, AND THE SAVING');
   /* Everything else is the brief's own "~20% off, rounded clean" rule run
      backwards. It must land in a tight band — a derived figure that drifted to
      "save 31%" would be a claim nobody can stand behind. */
-  const derived = all.filter((i) => !SUPPLIED[i.id]);
-  ok(derived.length === 10, 'ten items carry a derived pre-discount price', derived.length);
+  /* The Wimpy menu cards Nick sent on 2026-10-19: the card price IS the list price, and staff pay the highest .90 price
+     at least 20% under it. */
+  const CARD = { cheese_burger: 92.90, crispy_stack: 106.90, peri_peri_chicken: 94.90 };
+  for (const [id, was] of Object.entries(CARD)) {
+    const d = all.find((i) => i.id === id);
+    const save = (1 - d.basePrice / d.wasPrice) * 100;
+    ok(d.wasPrice === was && save >= 20 && save < 21, d.name + ' is struck through at its Wimpy card price R' + was.toFixed(2) + ' and saves ' + save.toFixed(1) + '%', JSON.stringify([d.basePrice, d.wasPrice]));
+  }
+  const derived = all.filter((i) => !SUPPLIED[i.id] && !CARD[i.id]);
+  ok(derived.length === 9, 'nine items carry a derived pre-discount price', derived.length);
   for (const d of derived) {
     const save = (1 - d.basePrice / d.wasPrice) * 100;
     ok(save >= 19.5 && save <= 21, d.name + ' derives to save ' + save.toFixed(1) + '% — inside the brief’s 20% rule',
