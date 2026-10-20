@@ -25,7 +25,7 @@
       2026-09-10: "they can have quantity just cant customize");
     · the order form asks for the CB number, name and surname, pre-filled from the account and
       typed by the person; the Worker refuses a CB that is not the signed-in person's own;
-    · orders are taken 07:00–09:00 SAST Mon–Fri (Spec Kit 020; 08:00–17:00 before); outside the window the menu reads, nothing adds,
+    · orders are taken 07:00–10:00 SAST Mon–Fri (Nick 2026-10-20; 07:00–09:00 from spec 020, 08:00–17:00 before); outside the window the menu reads, nothing adds,
       and the Worker refuses regardless of what this page's clock says.
 
   THEME: Wimpy red and white with the yellow accent. The colour values below are placeholders
@@ -266,7 +266,7 @@ function wTotalCents(){ return WCART.reduce(function(n,l){ return n+wLineCents(l
 function wimpyOpenNow(){ return !!(WMENU&&WMENU.window&&WMENU.window.open); }
 var WWIN_LAST=null;
 setInterval(function(){
-  var d=new Date(Date.now()+2*3600000), open=d.getUTCDay()>=1&&d.getUTCDay()<=5&&d.getUTCHours()>=7&&d.getUTCHours()<9;   // mirrors WINDOW in src/wimpy.mjs (spec 020) — only to know WHEN to re-ask; the server decides
+  var d=new Date(Date.now()+2*3600000), open=d.getUTCDay()>=1&&d.getUTCDay()<=5&&d.getUTCHours()>=7&&d.getUTCHours()<10;   // mirrors WINDOW in src/wimpy.mjs (spec 020) — only to know WHEN to re-ask; the server decides
   if(WWIN_LAST!==null&&open!==WWIN_LAST&&U) wLoadMenu();
   WWIN_LAST=open;
 },30000);
@@ -286,7 +286,7 @@ function loginScreen(msg, bad, keepCb){
     +'<input class="inp" id="pw" name="pw" type="password" autocomplete="current-password" placeholder="Your password"'+(keepCb?' autofocus':'')+'>'
     +'<p class="hint">Your Wimpy password — the start password your team leader gave you, until you change it inside the app. It is not your Agent Analytics password.</p>'
     +'<button class="btn primary wide" id="go" type="submit" style="margin-top:14px">Let’s eat</button>'
-    +'<p class="foot">Orders 07:00–09:00, Monday to Friday. Forgotten your password? Ask your team leader or manager to reset it.</p>'
+    +'<p class="foot">Orders 07:00–10:00, Monday to Friday. Forgotten your password? Ask your team leader or manager to reset it.</p>'
     +'</form></div></div>';
   /* autofocus is ignored on markup put in by innerHTML once the page has focused something — focus by hand, so a
      second try after a refusal starts in the password box */
@@ -355,7 +355,7 @@ function shell(inner){
     +'<div class="wrap">'+inner+'</div>';
   var o=$('out'); if(o) o.onclick=signOut;
 }
-/* the order form as typed, read into WHO — on Review, and before ANY re-render (spec 014, A5: the 07:00/09:00 window
+/* the order form as typed, read into WHO — on Review, and before ANY re-render (spec 014, A5: the 07:00/10:00 window
    flip re-asks for the menu and re-renders; it used to put back what WHO held before the person started typing) */
 var WFORM_IDS=['fcb','ffn','fln','fph','fnt'];
 function wReadForm(){
