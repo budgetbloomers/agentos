@@ -48,7 +48,7 @@ for (const k of ['log', 'info', 'warn', 'error']) {
 
 /* ── the clock: the Worker reads Date.now() / new Date(); the suite moves it on purpose ── */
 const RealDate = Date;
-let CLOCK = RealDate.parse('2026-10-08T05:00:00Z');            // Thursday 8 Oct 2026, 07:00 SAST — the window is open (07:00–10:00 since 2026-10-20)
+let CLOCK = RealDate.parse('2026-10-08T05:00:00Z');            // Thursday 8 Oct 2026, 07:00 SAST — the window is open (07:00–10:30 since 2026-10-20)
 class FakeDate extends RealDate {
   constructor(...a) { if (a.length) super(...a); else super(CLOCK); }
   static now() { return CLOCK; }
@@ -1090,7 +1090,7 @@ head('T011 · wimpy/index.html — "My orders", in a real Chromium against a stu
       menuAt = SHUT;
       const pg = await fresh();
       await signIn(pg, 'CB901', 'thandi-pass-1');
-      ok(/Ordering is closed/.test(await bodyText(pg)) && !!(await pg.$('#wpMine')), 'outside 07:00–10:00 the (closed) menu still has "My orders"');
+      ok(/Ordering is closed/.test(await bodyText(pg)) && !!(await pg.$('#wpMine')), 'outside 07:00–10:30 the (closed) menu still has "My orders"');
       await pg.click('#wpMine');
       await pg.waitForSelector('.wp-order', { timeout: 10000 });
       ok((await pg.$$('.wp-order')).length === 2, '…and it opens the same history');

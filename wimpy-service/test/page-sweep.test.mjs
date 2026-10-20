@@ -46,7 +46,7 @@ head('A3 · A4 · A5 — the Wimpy page, in a real browser against a stubbed ser
   const port = srv.address().port;
   /* SAST wall-clock → UTC ms. Wednesday 2 September 2026 → Thursday 3 September 2026. */
   const sast = (iso) => Date.parse(iso + '+02:00');
-  const WED_OPEN = sast('2026-09-02T08:00:00'), WED_SHUT = sast('2026-09-02T10:00:05'), THU_OPEN = sast('2026-09-03T07:00:05');   // 07:00–10:00 since 2026-10-20
+  const WED_OPEN = sast('2026-09-02T08:00:00'), WED_SHUT = sast('2026-09-02T10:30:05'), THU_OPEN = sast('2026-09-03T07:00:05');   // 07:00–10:30 since 2026-10-20
   const PEOPLE = {
     'ann-pass-1': { token: 'tokAnn', user: { username: 'cb999', full_name: 'Ann Smith', cb: 'CB999', scope: 'wimpy' } },
     'bob-pass-1': { token: 'tokBob', user: { username: 'cb111', full_name: 'Bob Jones', cb: 'CB111', scope: 'wimpy' } },
@@ -152,7 +152,7 @@ head('A3 · A4 · A5 — the Wimpy page, in a real browser against a stubbed ser
       await flipTo(pg, WED_SHUT);
       const v = await formVals(pg);
       const page = await pg.evaluate(() => document.body.innerText);
-      check('A5 (setup) the 10:00 flip re-asked for the menu (' + menuCalls() + ' menu requests) and the form is still the page', () => {
+      check('A5 (setup) the 10:30 flip re-asked for the menu (' + menuCalls() + ' menu requests) and the form is still the page', () => {
         if (menuCalls() < 2) throw new Error('the flip never re-asked'); if (v[0] == null) throw new Error('the form is gone: ' + page.slice(0, 200));
       });
       check('A5 the form still holds what was typed (name, phone, notes) after the flip re-render', () => {

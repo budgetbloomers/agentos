@@ -134,7 +134,8 @@ try {
   const mj = menu.j || {};
   ok(menu.status === 200 && Array.isArray(mj.items) && mj.items.length >= 8 && mj.title === 'Weekday Value Menu', 'the menu: ' + (mj.items || []).length + ' items, "' + mj.title + '", ' + mj.dayName, menu.status);
   const sast = new Date(Date.now() + 2 * 3600000), dow = sast.getUTCDay(), hr = sast.getUTCHours();
-  const expectOpen = dow >= 1 && dow <= 5 && hr >= 7 && hr < 10;   // 07:00–10:00 since 2026-10-20
+  const mins = hr * 60 + sast.getUTCMinutes();
+  const expectOpen = dow >= 1 && dow <= 5 && mins >= 420 && mins < 630;   // 07:00–10:30 since 2026-10-20
   ok(mj.window && mj.window.open === expectOpen, 'the window says ' + (mj.window && mj.window.open ? 'OPEN' : 'closed') + ' — right for ' + sast.toISOString().slice(0, 16) + ' SAST', JSON.stringify(mj.window));
   ok(dow >= 1 && dow <= 5 ? (mj.bigOne && mj.bigOne.day === dow) : mj.bigOne === null, 'today\'s Big One: ' + (mj.bigOne ? mj.bigOne.name : '(weekend: none)'));
   const hist0 = await call(BASE + '/api/wimpy/orders', { token });
@@ -204,7 +205,7 @@ try {
     ok(h4.status === 200 && h4.j && h4.j.orders && h4.j.orders.length === 2 && !h4.t.includes('Second'), 'the first person still sees exactly TWO, nothing of the second person');
     const out2 = await call(BASE + '/api/wimpy/logout', { method: 'POST', token: token2, body: {} });
     ok(out2.status === 200, 'the second person signs out', String(out2.status));
-  } else ok(true, 'window closed — the twice/two-people checks need the window (weekday 07:00–10:00 SAST)');
+  } else ok(true, 'window closed — the twice/two-people checks need the window (weekday 07:00–10:30 SAST)');
 
   /* ── G · THE WIMPY-ONLY PASSWORD (Spec Kit 025: wimpy123 to start, then the person's own) ── */
   head('G · THE PERSON CHANGES THEIR WIMPY PASSWORD; AGENT ANALYTICS KEEPS ITS OWN');
