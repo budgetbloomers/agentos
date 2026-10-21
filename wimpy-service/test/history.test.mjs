@@ -65,8 +65,11 @@ const hl = await tryImport('wimpy-hl.mjs');
 /* ── fake configuration only ── */
 const KEY = 'pit-test-key', LOC = 'loc-test';
 const N8N = 'https://n8n.test/webhook/wimpy';
-const ENV = { SUPABASE_URL: 'http://stub.local', SUPABASE_SECRET_KEY: 'svc-test', WIMPY_HL_API_KEY: KEY, WIMPY_HL_LOCATION_ID: LOC, WIMPY_WEBHOOK_URL: N8N, CRON_SECRET: CRON };
-const ENV_NOHL = { SUPABASE_URL: 'http://stub.local', SUPABASE_SECRET_KEY: 'svc-test', WIMPY_WEBHOOK_URL: N8N, CRON_SECRET: CRON };
+/* WIMPY_SERVICE_CARDS: 'on' keeps the service's own HighLevel card machinery under test; production leaves it OFF since
+   2026-10-21 (the kitchen's n8n flow makes the card) — section D1 below is that default. */
+const ENV = { SUPABASE_URL: 'http://stub.local', SUPABASE_SECRET_KEY: 'svc-test', WIMPY_HL_API_KEY: KEY, WIMPY_HL_LOCATION_ID: LOC, WIMPY_WEBHOOK_URL: N8N, CRON_SECRET: CRON, WIMPY_SERVICE_CARDS: 'on' };
+const ENV_NOHL = { SUPABASE_URL: 'http://stub.local', SUPABASE_SECRET_KEY: 'svc-test', WIMPY_WEBHOOK_URL: N8N, CRON_SECRET: CRON, WIMPY_SERVICE_CARDS: 'on' };
+const { WIMPY_SERVICE_CARDS: _cardsOn, ...ENV_PROD } = ENV;   // production: HighLevel configured, the service writes NO card
 
 /* ── the people ── */
 const P = {
@@ -981,6 +984,28 @@ head('R10 (L6) · the contact carries the CB number as a tag');
   await placeOrder('tok-mgr-w', 'mgr');
   ok(HL.contacts.length === 2 && JSON.stringify(HL.contacts[0].tags) === '["wimpy","cb901"]' && JSON.stringify(HL.contacts[1].tags) === '["wimpy","mgr.lee"]',
     'tags ["wimpy","cb901"] — and a manager\'s username ("mgr.lee") — on contact creation', JSON.stringify(HL.contacts.map((c) => c.tags)));
+}
+head('D1 · ONE ORDER, ONE CARD — the kitchen\'s n8n flow makes it; the service makes none (Nick, 2026-10-21: "the second one must not come")');
+{
+  CLOCK = RealDate.parse('2026-10-08T05:30:00Z');   // Thursday 07:30 SAST
+  resetWorld();
+  ok(hl.serviceWritesCards(ENV_PROD) === false && hl.serviceWritesCards({}) === false && hl.serviceWritesCards({ WIMPY_SERVICE_CARDS: 'ON ' }) === true,
+    'the service\'s own card is OFF unless WIMPY_SERVICE_CARDS=on — a deploy without the setting cannot bring the duplicate back');
+  const body = orderBody('thandi', [{ id: 'crispy_stack', quantity: 1 }]);
+  const r = await call('POST', '/api/wimpy/order', { token: 'tok-thandi-w', body, env: ENV_PROD });
+  ok(r.status === 200 && r.j && r.j.ok === true, 'the order is accepted', r.status + ' ' + r.t.slice(0, 100));
+  ok(N8.bodies.length === 1 && N8.bodies[0] === expectedN8n('thandi', body), '…the kitchen\'s n8n flow gets it exactly once, unchanged (n8n makes the one card)');
+  ok(HL.calls.length === 0 && HL.contacts.length === 0 && HL.cards.length === 0 && HL.notes.length === 0, '…and the service calls HighLevel NOT AT ALL: no contact, no card, no note', JSON.stringify(HL.calls.map((c) => c.method + ' ' + c.path)));
+  const row = rowsOf('thandi')[0] || {};
+  ok(rowsOf('thandi').length === 1 && row.hl_state === 'written' && !row.hl_opportunity_id && !row.hl_error && row.hl_contact_seed == null,
+    'one ledger row, settled at once (no card id, no error) — and no typed name/phone kept', JSON.stringify({ s: row.hl_state, o: row.hl_opportunity_id, e: row.hl_error, seed: row.hl_contact_seed }));
+  CLOCK += 30 * MIN;
+  const c = await cron('7,27,47 * * * *', ENV_PROD);
+  ok(c.status === 200 && HL.calls.length === 0 && HL.cards.length === 0, 'the retry cron makes no card for it later either', JSON.stringify(c.j));
+  const m = await myOrders('tok-thandi-w', '', { env: ENV_PROD });
+  const o = ords(m)[0] || {};
+  ok(m.status === 200 && ords(m).length === 1 && o.stage === null && o.stage_note === 'Sent to the kitchen', 'My orders lists it as "Sent to the kitchen" — not "Not on the kitchen board yet"', JSON.stringify(o));
+  ok(HL.cards.length === 0 && !HL.calls.some((x) => x.method === 'POST'), '…and looking at My orders writes no card (the own-retry stays off)', JSON.stringify(HL.calls.map((x) => x.method + ' ' + x.path)));
 }
 console.log('  (measured subrequests — order: ' + measured.order.join(', ') + ' · history: ' + measured.history.join(', ') + ' · Wimpy cron: ' + measured.cron.join(', ') + ')');
 

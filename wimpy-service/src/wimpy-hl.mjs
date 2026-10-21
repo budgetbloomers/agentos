@@ -29,6 +29,17 @@ export function hlConfigured(env) {
   return !!(env && env.WIMPY_HL_API_KEY && env.WIMPY_HL_LOCATION_ID);
 }
 
+/* THE KITCHEN'S n8n FLOW MAKES THE CARD — THE SERVICE DOES NOT (Nick, 2026-10-21: "when users are placing order 2 is
+   coming of that person their name and cb number but its one person" … "the second one must not come"). Since ~9 Oct
+   the n8n workflow creates its own contact + card ("Avesh | 1 × Crispy Stack", source "Wimpy app"), so the service's
+   card ("CB183 · R85.90 · …") was a second card for one order. OFF unless WIMPY_SERVICE_CARDS=on: with it off the
+   ledger row is recorded already settled (hl_state 'written', no card, no contact, no phone kept), the cron and the
+   My-orders retry never write a card, and My orders says "Sent to the kitchen". Old rows that do carry a service card
+   still read their stage. Off by DEFAULT so a redeploy without the setting can never bring the duplicate back. */
+export function serviceWritesCards(env) {
+  return String((env && env.WIMPY_SERVICE_CARDS) || '').trim().toLowerCase() === 'on';
+}
+
 /* A STORED OR LOGGED ERROR NEVER CARRIES A SECRET OR A PHONE NUMBER. HighLevel's messages can echo what was sent (a
    validation error quotes the body; a 401 can quote the token), so the key, the location id, any bearer token and any
    run of digits long enough to be a phone number are replaced before the text goes anywhere. */
@@ -293,7 +304,7 @@ export async function retryDueOrders(env, DB) {
   const configured = hlConfigured(env);
   const results = [];
   let due = 0;
-  if (configured) {
+  if (configured && serviceWritesCards(env)) {                                 // the n8n flow makes the card (2026-10-21)
     const rows = (await DB.select('wimpy_orders?hl_state=in.(pending,failed)&hl_next_at=lte.' + enc(iso(now))
       + '&select=' + ROW_COLS + '&order=hl_next_at.asc&limit=' + CRON_ROWS)) || [];
     due = rows.length;
@@ -349,6 +360,7 @@ const STAGE_TTL_MS = 10000;
 const STAGE_CACHE_MAX = 500;
 export const STAGE_NOTES = {
   notYet: 'Not on the kitchen board yet',
+  sent: 'Sent to the kitchen',                       // the n8n flow made its card; the service keeps no card of its own
   unreachable: 'The kitchen board could not be reached — try again shortly',
   gone: 'No longer on the kitchen board',
   recent: 'Updated a moment ago — refresh in a few seconds for the latest stage',
@@ -385,10 +397,10 @@ async function readStages(env, DB, owner, carded) {
 }
 
 /** One order as the page sees it — a whitelist: nothing else of the row ever leaves. */
-function shapeOrder(r, stages) {
+function shapeOrder(r, stages, cardsOn = true) {
   let stage = null, note = null;
   const card = r.hl_opportunity_id ? String(r.hl_opportunity_id) : '';
-  if (!card) note = STAGE_NOTES.notYet;
+  if (!card) note = cardsOn ? STAGE_NOTES.notYet : STAGE_NOTES.sent;
   else if (!stages.ok) note = STAGE_NOTES.unreachable;
   else if (stages.byCard && stages.byCard[card]) stage = stages.byCard[card];
   else if (stages.cached && !(stages.byCard && Object.prototype.hasOwnProperty.call(stages.byCard, card))) note = STAGE_NOTES.recent;
@@ -434,10 +446,11 @@ export async function listMyOrders(env, DB, user, ctx, { since = null } = {}) {
       while (cache.size > STAGE_CACHE_MAX) cache.delete(cache.keys().next().value);
     }
   }
-  const orders = rows.map((r) => shapeOrder(r, stages));
+  const cardsOn = serviceWritesCards(env);
+  const orders = rows.map((r) => shapeOrder(r, stages, cardsOn));
 
   /* her own late cards catch up when she looks — after the reply, ≤ 2, each claimed with HER id in the filter */
-  const due = configured ? rows.filter((r) => isDue(r, now)).slice(0, OWN_RETRY_ROWS) : [];
+  const due = configured && cardsOn ? rows.filter((r) => isDue(r, now)).slice(0, OWN_RETRY_ROWS) : [];
   if (due.length && ctx && typeof ctx.waitUntil === 'function') {
     ctx.waitUntil((async () => {
       let contactId = stages.contactId, linkKnown = !!stages.linkKnown;

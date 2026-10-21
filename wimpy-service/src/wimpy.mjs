@@ -51,7 +51,7 @@
  */
 
 import { db } from './db.mjs';
-import { writeOrderToHighLevel, hlConfigured, dbWhy, FIRST_TRY_GRACE_MIN } from './wimpy-hl.mjs';
+import { writeOrderToHighLevel, hlConfigured, serviceWritesCards, dbWhy, FIRST_TRY_GRACE_MIN } from './wimpy-hl.mjs';
 
 const WEBHOOK = 'https://n8n-production-591cc.up.railway.app/webhook/wimpy';
 
@@ -472,6 +472,9 @@ function recordOrder(env, user, who, priced, notes, now, ctx) {
   if (!user || !user.user_id || !env || !env.SUPABASE_URL) return;
   const DB = db(env);
   const configured = hlConfigured(env);
+  /* the kitchen's n8n flow makes the HighLevel card (2026-10-21) — unless WIMPY_SERVICE_CARDS=on, the row is settled at
+     once: no card, no contact, no typed phone kept, nothing for any retry to pick up */
+  const cards = serviceWritesCards(env);
   const chain = (async () => {
     let row = null;
     try {
@@ -479,9 +482,9 @@ function recordOrder(env, user, who, priced, notes, now, ctx) {
         owner_user_id: user.user_id, cb: who.cb, placed_at: new Date(now).toISOString(),
         items: priced.items.map((i) => ({ id: i.id, item: i.item, quantity: i.quantity, item_total: i.item_total })),
         total: priced.total, notes: notes || null,
-        hl_state: 'pending', hl_next_at: new Date(now + FIRST_TRY_GRACE_MIN * 60000).toISOString(),
-        hl_error: configured ? null : 'HighLevel is not configured yet — the card is written once WIMPY_HL_API_KEY and WIMPY_HL_LOCATION_ID are set',
-        hl_contact_seed: { first: who.first, last: who.last, phone: who.phone },
+        hl_state: cards ? 'pending' : 'written', hl_next_at: new Date(now + FIRST_TRY_GRACE_MIN * 60000).toISOString(),
+        hl_error: !cards || configured ? null : 'HighLevel is not configured yet — the card is written once WIMPY_HL_API_KEY and WIMPY_HL_LOCATION_ID are set',
+        hl_contact_seed: cards ? { first: who.first, last: who.last, phone: who.phone } : null,
       }], false, true);
       row = (ins && ins[0]) || null;
     } catch (e) {
@@ -491,7 +494,7 @@ function recordOrder(env, user, who, priced, notes, now, ctx) {
         updated_by: 'wimpy', updated_at: new Date(now).toISOString() }], true).catch(() => {});
       return;
     }
-    if (row && configured) await writeOrderToHighLevel(env, DB, row);
+    if (row && cards && configured) await writeOrderToHighLevel(env, DB, row);
   })().catch((e) => { console.error('[wimpy] ledger chain failed: ' + dbWhy(env, e)); });
   if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(chain);
 }
