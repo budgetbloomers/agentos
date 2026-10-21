@@ -46,7 +46,7 @@
  * /wimpy/ (now the service's own origin), signed in with a CB number and the person's password since Spec Kit
  * 009 (a session SCOPED to these routes — see auth.mjs signinWimpy); the order form asks for the CB
  * number, name and surname, which travel to the kitchen beside the account's
- * own name; orders are taken 07:00–10:30 SAST, Monday to Friday (Nick, 2026-10-20; 07:00–09:00 from Spec Kit 020, 08:00–17:00 before); everyone
+ * own name; orders are taken 07:00–10:00 SAST, Monday to Friday (Nick, 2026-10-21; 07:00–10:30 on 20 Oct, 07:00–09:00 from Spec Kit 020, 08:00–17:00 before); everyone
  * orders, management included.
  */
 
@@ -263,16 +263,16 @@ export function todaysBigOne(now = Date.now()) {
   return BIG_ONES[d] || null;
 }
 
-/* THE ORDERING WINDOW — 07:00 to 10:30 SAST, Monday to Friday (Nick, 2026-10-20: "change the wimpy menu from 7 to 10",
-   then "07:00 to 10:30 last change" — so the window is held in MINUTES past midnight, 420 to 630;
+/* THE ORDERING WINDOW — 07:00 to 10:00 SAST, Monday to Friday (Nick, 2026-10-21: "the cut of for the wimpy must be at 10:00
+   not 10:30"; on 2026-10-20 it was "from 7 to 10", then "07:00 to 10:30") — held in MINUTES past midnight, 420 to 600;
    it was 07:00–09:00 from 2026-10-09, Spec Kit 020: "it must only be
    accessible from 7 to 9, monday to friday then its closed"; it was 08:00–17:00 from 2026-09-10 and the 08:00 hour
    alone from 2026-09-02). Outside the window the menu and My orders still read; nothing can be ordered. The
    page shows the hours when closed, but a page's clock is nobody's authority —
    THIS is the lock: the menu says whether the window is open and submit
    refuses outside it. SAST is UTC+2, no daylight saving. */
-export const WINDOW = { fromHour: 7, fromMinute: 0, toHour: 10, toMinute: 30, hours: '07:00–10:30', days: 'Monday to Friday' };
-const WINDOW_FROM = WINDOW.fromHour * 60 + WINDOW.fromMinute, WINDOW_TO = WINDOW.toHour * 60 + WINDOW.toMinute;   // 420, 630
+export const WINDOW = { fromHour: 7, fromMinute: 0, toHour: 10, toMinute: 0, hours: '07:00–10:00', days: 'Monday to Friday' };
+const WINDOW_FROM = WINDOW.fromHour * 60 + WINDOW.fromMinute, WINDOW_TO = WINDOW.toHour * 60 + WINDOW.toMinute;   // 420, 600
 export function wimpyWindowOpen(now = Date.now()) {
   const d = new Date(now + 2 * 3600000);
   const dow = d.getUTCDay(), m = d.getUTCHours() * 60 + d.getUTCMinutes();
@@ -513,7 +513,7 @@ export async function submitWimpyOrder(env, user, body, now = Date.now(), ctx = 
   /* THE WINDOW IS ENFORCED HERE, not only shown on the page — a tab left open
      since 16:55 does not get to order at half past five. */
   if (!wimpyWindowOpen(now)) return { status: 403, body: {
-    error: 'Wimpy orders are taken between 07:00 and 10:30, Monday to Friday (SA time). Ordering is closed now — the menu is back next working day.' } };
+    error: 'Wimpy orders are taken between 07:00 and 10:00, Monday to Friday (SA time). Ordering is closed now — the menu is back next working day.' } };
 
   const who = whoIsOrdering(user, body && body.who);
   if (who.error) return { status: 400, body: { error: who.error } };

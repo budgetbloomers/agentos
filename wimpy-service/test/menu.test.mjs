@@ -42,7 +42,7 @@ const onDay = (dow) => {
   return base + ((dow + 6) % 7) * 86400000;
 };
 const MON = onDay(1), TUE = onDay(2), WED = onDay(3), THU = onDay(4), FRI = onDay(5), SAT = onDay(6), SUN = onDay(0);
-/* onDay is 08:00 SAST, INSIDE the 07:00–10:30 window (Nick, 2026-10-20; 07:00–09:00 from Spec Kit 020, 08:00–17:00 before).
+/* onDay is 08:00 SAST, INSIDE the 07:00–10:00 window (Nick, 2026-10-21; 07:00–09:00 from Spec Kit 020, 08:00–17:00 before).
    outWindow is 11:00 SAST the same day — outside it. */
 const inWindow = (dow) => onDay(dow);
 const outWindow = (dow) => onDay(dow) + 3 * 3600000;
@@ -332,23 +332,22 @@ head('K2 · THE WEEK IS READABLE, AND STILL NOT ORDERABLE');
 }
 
 
-head('N · THE WINDOW: 07:00–10:30 SAST, MONDAY TO FRIDAY (Nick, 2026-10-20)');
+head('N · THE WINDOW: 07:00–10:00 SAST, MONDAY TO FRIDAY (Nick, 2026-10-21)');
 {
-  ok(WINDOW.hours === '07:00–10:30' && WINDOW.fromHour === 7 && WINDOW.fromMinute === 0 && WINDOW.toHour === 10 && WINDOW.toMinute === 30, 'the module states the hours once', WINDOW.hours);
+  ok(WINDOW.hours === '07:00–10:00' && WINDOW.fromHour === 7 && WINDOW.fromMinute === 0 && WINDOW.toHour === 10 && WINDOW.toMinute === 0, 'the module states the hours once', WINDOW.hours);
   ok(wimpyWindowOpen(inWindow(3)) === true, 'Wednesday 08:00 SAST is inside the window');
   ok(wimpyWindowOpen(inWindow(3) - 3600000) === true, 'so is 07:00');
   ok(wimpyWindowOpen(inWindow(3) - 3600000 - 1000) === false, '06:59:59 is before opening');
   ok(wimpyWindowOpen(inWindow(3) + 3600000 - 1000) === true, '08:59:59 is still inside');
   ok(wimpyWindowOpen(inWindow(3) + 3600000) === true, '09:00 is now inside (Nick, 2026-10-20: "from 7 to 10")');
   ok(wimpyWindowOpen(inWindow(3) + 2 * 3600000 - 1000) === true, '09:59:59 is still inside');
-  ok(wimpyWindowOpen(inWindow(3) + 2 * 3600000) === true, '10:00 is inside (Nick, 2026-10-20: "07:00 to 10:30")');
-  ok(wimpyWindowOpen(inWindow(3) + 2.5 * 3600000 - 1000) === true, '10:29:59 is still inside');
-  ok(wimpyWindowOpen(inWindow(3) + 2.5 * 3600000) === false, '10:30 is closed');
+  ok(wimpyWindowOpen(inWindow(3) + 2 * 3600000) === false, '10:00 is closed (Nick, 2026-10-21: "must be at 10:00 not 10:30")');
+  ok(wimpyWindowOpen(inWindow(3) + 2.5 * 3600000 - 1000) === false, '10:29:59 is closed too');
   ok(wimpyWindowOpen(outWindow(3)) === false, 'Wednesday 11:00 SAST is after closing');
   ok(wimpyWindowOpen(inWindow(6)) === false, 'Saturday is a weekend — closed');
   ok(wimpyWindowOpen(inWindow(0)) === false, 'Sunday too');
   const m = wimpyMenu(inWindow(2));
-  ok(m.window && m.window.open === true && m.window.hours === '07:00–10:30', 'the menu payload carries the window, so the page never guesses from its own clock');
+  ok(m.window && m.window.open === true && m.window.hours === '07:00–10:00', 'the menu payload carries the window, so the page never guesses from its own clock');
   ok(wimpyMenu(outWindow(2)).window.open === false, '...and says closed at 11:00');
   const realFetch = globalThis.fetch;
   let reached = false;
@@ -357,7 +356,7 @@ head('N · THE WINDOW: 07:00–10:30 SAST, MONDAY TO FRIDAY (Nick, 2026-10-20)')
     const user = { full_name: 'Ann Smith', username: 'cb999', cb: 'CB999' };
     const body = { who: { cb: 'CB999', first_name: 'Ann', surname: 'Smith', phone: '082 123 4567' }, total_price: 54.90, order: { items: [{ id: 'cheese_burger', quantity: 1 }] } };
     const late = await submitWimpyOrder({}, user, body, outWindow(3));
-    ok(late.status === 403 && /07:00 and 10:30/.test(late.body.error), 'an order at 11:00 is refused and the message names the hours', late.body.error);
+    ok(late.status === 403 && /07:00 and 10:00/.test(late.body.error), 'an order at 11:00 is refused and the message names the hours', late.body.error);
     const early = await submitWimpyOrder({}, user, body, inWindow(3) - 3600000 - 60000);
     ok(early.status === 403, 'an order at 06:59 is refused too');
     const sat = await submitWimpyOrder({}, user, body, inWindow(6));
@@ -434,7 +433,7 @@ head('M · THE APP: SIGN IN WITH A CB NUMBER AND PASSWORD, ORDER, SEND');
     ok(await pg.evaluate(() => { try { return sessionStorage.getItem('cbx_wimpy_token') === 'stub-token'; } catch (e) { return false; } }), 'the token is kept under cbx_wimpy_token');
     ok(!(await pg.evaluate(() => JSON.stringify(sessionStorage) + JSON.stringify(localStorage))).includes('right-pass-1'), 'the password is never stored in the browser');
     ok(/Ordering is open/.test(menu), 'the window state comes from the payload, not the page’s clock');
-    ok(/07:00–10:30/.test(menu), '...and reads 07:00–10:30', (menu.match(/\d\d:\d\d–\d\d:\d\d/) || [])[0]);
+    ok(/07:00–10:00/.test(menu), '...and reads 07:00–10:00', (menu.match(/\d\d:\d\d–\d\d:\d\d/) || [])[0]);
     /* the header counts what the menu actually carries (Nick, 2026-09-14: "the toasteds still say 3 when there is 2") */
     const sub = await pg.evaluate(() => (document.querySelector('.wp-title .sub') || {}).innerText || '');
     ok(/3 breakfasts · 6 burgers · 2 toasteds/.test(sub), 'the header says 3 breakfasts · 6 burgers · 2 toasteds — counted from the menu, not typed', sub);
