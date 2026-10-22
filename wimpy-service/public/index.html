@@ -472,7 +472,10 @@ function wToolsHTML(){
   var nudge=(U&&U.wimpy_password_is_default)?'<div class="msg info" id="wpPwNudge">You are still on the Wimpy start password. <button type="button" class="linkbtn" id="wpPwNow">Choose your own</button> so nobody else can order in your name.</div>':'';
   /* agents only (Nick, 2026-10-22: "the limit for the credit amount fo agents is 1200 rand, so all the agents make sure,
      support staff dont add this disclaimer") — keyed on the account's role, so team leaders, managers and support staff never see it */
-  var credit=(U&&U.role==='agent')?'<div class="credit" id="wpCredit" role="note"><span class="i" aria-hidden="true">⚠️</span><div><b>Credit limit: R1,200.</b> Agents may order on credit up to R1,200 in total. Please make sure your Wimpy orders stay within this amount.</div></div>':'';
+  /* support staff whose AgentOS account is an AGENT (it follows the Agent List, so the role cannot change) — Nick, 2026-10-22:
+     "Kubenderan Govender must not see this" (CB328, Sales Coach) */
+  var NO_CREDIT_NOTICE={CB328:1};
+  var credit=(U&&U.role==='agent'&&!NO_CREDIT_NOTICE[String(U.cb||'').toUpperCase()])?'<div class="credit" id="wpCredit" role="note"><span class="i" aria-hidden="true">⚠️</span><div><b>Credit limit: R1,200.</b> Agents may order on credit up to R1,200 in total. Please make sure your Wimpy orders stay within this amount.</div></div>':'';
   return nudge+credit+'<div class="wp-tools"><button type="button" class="btn" id="wpPw" style="margin-right:8px">🔑 Change password</button><button type="button" class="btn" id="wpMine">🧾 My orders</button></div>';
 }
 
