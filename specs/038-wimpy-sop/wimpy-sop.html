@@ -140,7 +140,7 @@ td.r,th.r{text-align:right;white-space:nowrap}
     <tr><td>14 Sep 2026</td><td>Phone number required on the order form; Cheese &amp; Tomato toasted removed</td></tr>
     <tr><td>7 Oct 2026</td><td>Sign-in needs the password (spec 009); My orders and the HighLevel order board (spec 015) — history starts here</td></tr>
     <tr><td>9 Oct 2026</td><td>Stand-alone service on Vercel (018); ordering window 07:00–09:00 (020); duplicate cards allowed on the board (022); readable order sheet in Supabase and the tab icon (023); address phoenix-wimpy (024); Wimpy-only password, start password <code>wimpy123</code> (025)</td></tr>
-    <tr><td>19–20 Oct 2026</td><td>Rib Burger, Crispy Stack and Peri-Peri Chicken added; Cheese Burger corrected to its Wimpy card price; every card saves 20%; ordering window extended to 07:00–10:00</td></tr>
+    <tr><td>19–20 Oct 2026</td><td>Rib Burger, Crispy Stack and Peri-Peri Chicken added; Cheese Burger corrected to its Wimpy card price; every card saves 20%; ordering window extended to 07:00–10:30</td></tr>
   </tbody></table>
 </section>
 
@@ -208,7 +208,7 @@ td.r,th.r{text-align:right;white-space:nowrap}
     <tr><td>Who may buy on account</td><td>Every active colleague on the Agent List, agents and managers alike. Access ends when you leave the Agent List.</td></tr>
     <tr><td>What goes on account</td><td>The slip total of every order you confirm — the service's price, never the page's. Items come as they are; notes do not change the price.</td></tr>
     <tr><td>How you are charged</td><td>Operations settles the staff account on the company's agreed cycle and method. <span class="tag yel">Operations to confirm</span> the cycle (weekly or monthly) and the method (salary deduction or payment at the office).</td></tr>
-    <tr><td>Spending limit</td><td>The app limits each line to 10 of an item and takes orders only 07:00–10:00 on weekdays; there is no rand limit in the app today. <span class="tag yel">Operations to confirm</span> whether a monthly limit applies.</td></tr>
+    <tr><td>Spending limit</td><td>The app limits each line to 10 of an item and takes orders only 07:00–10:30 on weekdays; there is no rand limit in the app today. <span class="tag yel">Operations to confirm</span> whether a monthly limit applies.</td></tr>
     <tr><td>Your statement</td><td>My orders in the app; Operations can reconcile against the order sheet, which carries the same orders and totals.</td></tr>
     <tr><td>Disputes</td><td>A wrong or missing order is reported to your team leader the same morning. The slip the kitchen received is shown on screen when you order and again in My orders, so both sides read the same lines.</td></tr>
     <tr><td>When you leave</td><td>Any balance on the staff account is settled in your final pay run or paid at the office before your last day. <span class="tag yel">Operations to confirm</span>.</td></tr>
@@ -234,7 +234,7 @@ td.r,th.r{text-align:right;white-space:nowrap}
     <li>Agent Analytics, VAS Analytics and the other AgentOS apps, except where they touch Wimpy (accounts come from the Agent List; a team-leader password reset affects Wimpy).</li>
     <li>Payment. Wimpy Order places orders; settlement with the kitchen is handled outside the app.</li>
   </ul>
-  <div class="note"><b>Principle.</b> The server decides. Every rule in this document — hours, prices, quantities, who may see which history — is enforced by the service, not by the page. A page that looks open after 10:00 still cannot order; a changed price on screen is never charged.</div>
+  <div class="note"><b>Principle.</b> The server decides. Every rule in this document — hours, prices, quantities, who may see which history — is enforced by the service, not by the page. A page that looks open after 10:30 still cannot order; a changed price on screen is never charged.</div>
 </section>
 
 <!-- ============================================================ 2 OVERVIEW -->
@@ -252,7 +252,7 @@ td.r,th.r{text-align:right;white-space:nowrap}
 
   <h3>The life of an order</h3>
   <div class="step"><div class="no">1</div><p><b>Sign in</b> with a CB number (managers: username) and the Wimpy password. The session lasts 12 hours and opens nothing but Wimpy.</p></div>
-  <div class="step"><div class="no">2</div><p><b>Inside the window</b> (07:00–10:00, Monday to Friday, South African time) the person adds items from today's menu, sets quantities, and fills in CB number, name, surname, phone and optional notes.</p></div>
+  <div class="step"><div class="no">2</div><p><b>Inside the window</b> (07:00–10:30, Monday to Friday, South African time) the person adds items from today's menu, sets quantities, and fills in CB number, name, surname, phone and optional notes.</p></div>
   <div class="step"><div class="no">3</div><p><b>The service re-prices the order</b> from its own menu, checks the window, the identity and every line, and only then sends the slip to the kitchen system. If the kitchen does not answer, the order stays on the confirm screen and the person sends it again.</p></div>
   <div class="step"><div class="no">4</div><p><b>The kitchen said yes</b>: the service records the order in the ledger and, in the background, writes the person's contact and the order's card to the Wimpy Pipeline at <i>New Order</i>. The page shows the total, the slip and the time.</p></div>
   <div class="step"><div class="no">5</div><p><b>The kitchen works the board</b>: New Order → Order Processing → Ready for Collection → Completed. The person sees the stage in <b>My orders</b> whenever they look.</p></div>
@@ -267,7 +267,7 @@ td.r,th.r{text-align:right;white-space:nowrap}
     <tr><td>CB number</td><td>A person's employee number on the Agent List, e.g. CB145. Typed in any of the usual spellings (<code>CB-145</code>, <code>cb 145</code>, <code>145</code>). Managers without a CB number use their username.</td></tr>
     <tr><td>Wimpy password</td><td>The password that opens Wimpy Order. It is separate from the AgentOS (Agent Analytics / VAS) password. Every account starts on the <b>start password</b> <code>wimpy123</code> until the person chooses their own inside the app.</td></tr>
     <tr><td>Start password</td><td><code>wimpy123</code>. Also what Wimpy goes back to when a team leader resets the person's AgentOS password.</td></tr>
-    <tr><td>The window</td><td>The hours in which orders are taken: <b>07:00 to 10:00, Monday to Friday, South African time (UTC+2, no daylight saving)</b>. The menu and history can be read at any time.</td></tr>
+    <tr><td>The window</td><td>The hours in which orders are taken: <b>07:00 to 10:30, Monday to Friday, South African time (UTC+2, no daylight saving)</b>. The menu and history can be read at any time.</td></tr>
     <tr><td>Weekday Value Menu</td><td>The fixed menu: three breakfasts, three burgers, two toasteds, plus the day's Big One. Every price is set in the service and cannot be changed from the page.</td></tr>
     <tr><td>Today's Big One</td><td>The hero item that changes by weekday (Monday Mega Breakfast … Friday Fully Loaded Dagwood). Only today's can be ordered; another day's is refused by name.</td></tr>
     <tr><td>Order slip</td><td>The plain-text order the kitchen receives: name, CB number, phone, each line with quantity and price, the total and any notes.</td></tr>
@@ -346,15 +346,15 @@ td.r,th.r{text-align:right;white-space:nowrap}
 <!-- ============================================================ 6 WINDOW -->
 <section class="page" id="s6">
   <h2><span class="n">6</span>The ordering window</h2>
-  <p class="big" style="margin:4pt 0 8pt">07:00 – 10:00 · Monday to Friday · South African time</p>
+  <p class="big" style="margin:4pt 0 8pt">07:00 – 10:30 · Monday to Friday · South African time</p>
   <table>
     <thead><tr><th style="width:30%">When</th><th>What the app does</th></tr></thead><tbody>
-    <tr><td>Inside the window</td><td>The menu shows "Ordering is open · 07:00–10:00, Monday to Friday"; items have <b>Add to order</b>; the cart, the order form and Confirm all work.</td></tr>
-    <tr><td>Outside the window (before 07:00, from 10:00, weekends)</td><td>The menu is still readable and marked <b>Ordering closed</b>; nothing can be added; My orders and Change password still work. A tab left open flips by itself when the clock crosses 07:00 or 10:00.</td></tr>
-    <tr><td>An order sent anyway (stale tab, clock skew)</td><td>The service refuses it: <span class="msg">Wimpy orders are taken between 07:00 and 10:00, Monday to Friday (SA time). Ordering is closed now — the menu is back next working day.</span></td></tr>
+    <tr><td>Inside the window</td><td>The menu shows "Ordering is open · 07:00–10:30, Monday to Friday"; items have <b>Add to order</b>; the cart, the order form and Confirm all work.</td></tr>
+    <tr><td>Outside the window (before 07:00, from 10:30, weekends)</td><td>The menu is still readable and marked <b>Ordering closed</b>; nothing can be added; My orders and Change password still work. A tab left open flips by itself when the clock crosses 07:00 or 10:30.</td></tr>
+    <tr><td>An order sent anyway (stale tab, clock skew)</td><td>The service refuses it: <span class="msg">Wimpy orders are taken between 07:00 and 10:30, Monday to Friday (SA time). Ordering is closed now — the menu is back next working day.</span></td></tr>
     <tr><td>Public holidays</td><td>The app does <b>not</b> close automatically on a public holiday. Operations tells the floor and the kitchen when the kitchen is closed (see section 14).</td></tr>
   </tbody></table>
-  <div class="note"><b>Why the server's clock is the only clock.</b> The window is one constant in the service (<code>WINDOW</code>, 07:00–10:00). The page's flip clock is a courtesy; the refusal is the rule. Changing the hours is a release, not a setting (section 18).</div>
+  <div class="note"><b>Why the server's clock is the only clock.</b> The window is one constant in the service (<code>WINDOW</code>, 07:00–10:30). The page's flip clock is a courtesy; the refusal is the rule. Changing the hours is a release, not a setting (section 18).</div>
 </section>
 
 <!-- ============================================================ 7 MENU -->
@@ -414,11 +414,11 @@ td.r,th.r{text-align:right;white-space:nowrap}
     <tr><td class="msg">Type your surname (letters only, 2 to 40 characters).</td><td>Fix the surname field.</td></tr>
     <tr><td class="msg">Type your phone number.</td><td>The phone field is empty.</td></tr>
     <tr><td class="msg">That phone number does not look right — type a South African number, e.g. 082 123 4567.</td><td>Use a South African mobile or landline number.</td></tr>
-    <tr><td class="msg">Wimpy orders are taken between 07:00 and 10:00 …</td><td>The window is closed (section 6).</td></tr>
+    <tr><td class="msg">Wimpy orders are taken between 07:00 and 10:30 …</td><td>The window is closed (section 6).</td></tr>
     <tr><td class="msg">The order could not be sent (the kitchen system answered …). Your order has been kept — press Retry.</td><td>The kitchen system refused or was down. Nothing was recorded and your order stays on the confirm screen: press <b>Confirm &amp; send to Wimpy</b> again (that is the "Retry" the message means). If it keeps failing, tell your team leader (section 15).</td></tr>
     <tr><td class="msg">… the kitchen system did not answer within 15 seconds</td><td>A timeout. Your order stays on the confirm screen; press <b>Confirm &amp; send to Wimpy</b> again. If it keeps happening the kitchen system is down: escalate.</td></tr>
   </tbody></table>
-  <div class="do"><b>A good order, every morning:</b> sign in before 10:00, add today's items, correct quantity, your own CB number and a phone number the kitchen can reach, confirm, then watch My orders for <i>Ready for Collection</i>.</div>
+  <div class="do"><b>A good order, every morning:</b> sign in before 10:30, add today's items, correct quantity, your own CB number and a phone number the kitchen can reach, confirm, then watch My orders for <i>Ready for Collection</i>.</div>
 </section>
 
 <!-- ============================================================ 9 KITCHEN RECEIVES -->
@@ -512,7 +512,7 @@ No onion on one burger please</pre>
   <h2><span class="n">12</span>Kitchen procedure and the order board</h2>
   <h3>12.1 Receiving</h3>
   <ul>
-    <li>Slips arrive in the kitchen system from 07:00; the last one can arrive at 09:59:59. Prepare from the slip's lines and quantities. Notes are requests, not instructions the app verified.</li>
+    <li>Slips arrive in the kitchen system from 07:00; the last one can arrive at 10:29:59. Prepare from the slip's lines and quantities. Notes are requests, not instructions the app verified.</li>
     <li>A slip always carries name, CB number and phone. Call the number on the slip if something is unclear.</li>
     <li>If no slips arrive during a weekday window, tell Operations immediately (section 16): either nobody ordered, or the hand-off is down, and the ledger tells which.</li>
   </ul>
@@ -542,7 +542,7 @@ No onion on one burger please</pre>
   <h2><span class="n">13</span>Team-leader procedures</h2>
   <h3>13.1 A new agent</h3>
   <div class="step"><div class="no">1</div><p>The agent must be on the Agent List. The list upload creates the account and grants Wimpy; nothing else is needed.</p></div>
-  <div class="step"><div class="no">2</div><p>Tell them the address <b>https://phoenix-wimpy.vercel.app</b>, that they sign in with their <b>CB number</b> and the start password <b><code>wimpy123</code></b>, and the hours <b>07:00–10:00, Monday to Friday</b>. The sign-in screen does not print the start password; you do.</p></div>
+  <div class="step"><div class="no">2</div><p>Tell them the address <b>https://phoenix-wimpy.vercel.app</b>, that they sign in with their <b>CB number</b> and the start password <b><code>wimpy123</code></b>, and the hours <b>07:00–10:30, Monday to Friday</b>. The sign-in screen does not print the start password; you do.</p></div>
   <div class="step"><div class="no">3</div><p>Ask them to change the password on their first sign-in (section 11). Check within the week that the start-password nudge has gone.</p></div>
   <h3>13.2 "I can't sign in"</h3>
   <ol>
@@ -574,8 +574,8 @@ No onion on one burger please</pre>
   <table>
     <thead><tr><th style="width:18%">When</th><th>Check</th><th style="width:34%">If not right</th></tr></thead><tbody>
     <tr><td>Before 07:00</td><td>Is the kitchen open today? On a public holiday or a kitchen closure, tell the floor and the kitchen — the app does not close itself.</td><td>Announce; ask engineering for a one-day closure only if it recurs (section 18)</td></tr>
-    <tr><td>10:00–10:30</td><td>Health banner: no <code>wimpy-hl-stuck</code>, <code>wimpy-hl-not-configured</code> or <code>wimpy-ledger-failed</code> alert</td><td>Section 15, rows "stuck", "not configured", "ledger failed"</td></tr>
-    <tr><td>10:00–10:30</td><td>Supabase → Table Editor → Views → <code>wimpy_order_sheet</code>: today's orders in words, newest first, each with "on the kitchen board" state</td><td>Orders missing that the kitchen cooked: escalate to engineering with the time and CB number</td></tr>
+    <tr><td>10:30–11:00</td><td>Health banner: no <code>wimpy-hl-stuck</code>, <code>wimpy-hl-not-configured</code> or <code>wimpy-ledger-failed</code> alert</td><td>Section 15, rows "stuck", "not configured", "ledger failed"</td></tr>
+    <tr><td>10:30–11:00</td><td>Supabase → Table Editor → Views → <code>wimpy_order_sheet</code>: today's orders in words, newest first, each with "on the kitchen board" state</td><td>Orders missing that the kitchen cooked: escalate to engineering with the time and CB number</td></tr>
     <tr><td>By lunch</td><td>Every card on the Wimpy Pipeline reached Completed</td><td>Remind the kitchen (section 12.2)</td></tr>
   </tbody></table>
   <h3>14.2 Weekly</h3>
@@ -605,7 +605,7 @@ No onion on one burger please</pre>
     <tr><td>"Account locked after repeated failures"</td><td>Five wrong passwords in 15 minutes (either app)</td><td>Wait 15 minutes; then 13.3 if still forgotten</td><td>TL</td></tr>
     <tr><td>"Too many wrong sign-ins from this network"</td><td>100 failures from the office connection in 10 minutes</td><td>Wait 10 minutes; stop the guessing</td><td>TL</td></tr>
     <tr><td>Menu says "Ordering closed" during the window</td><td>Device clock wrong; or a tab open since before 07:00 that has not flipped</td><td>Reload the page; check the device time and zone (SAST)</td><td>Agent</td></tr>
-    <tr><td>"Wimpy orders are taken between 07:00 and 10:00 …" on Confirm</td><td>The window closed while the cart was open</td><td>Order tomorrow; the window is the rule</td><td>Agent</td></tr>
+    <tr><td>"Wimpy orders are taken between 07:00 and 10:30 …" on Confirm</td><td>The window closed while the cart was open</td><td>Order tomorrow; the window is the rule</td><td>Agent</td></tr>
     <tr><td>"quantity must be between 1 and 10"</td><td>Quantity outside the limit</td><td>Set 1–10; split larger orders</td><td>Agent</td></tr>
     <tr><td>"… is Monday's Big One — today's is …"</td><td>Stale tab showing yesterday's hero</td><td>Reload; add today's Big One</td><td>Agent</td></tr>
     <tr><td>"… comes as it is — add-ons and customisations are not taken"</td><td>A modified or very old request</td><td>Remove the line, add it again; reload</td><td>Agent</td></tr>
@@ -698,7 +698,7 @@ No onion on one burger please</pre>
   <table>
     <thead><tr><th style="width:30%">Item</th><th>Effect today</th><th style="width:30%">Owner / direction</th></tr></thead><tbody>
     <tr><td>Scheduled retry once a day (Vercel Hobby plan)</td><td>A failed board card waits for the person to open My orders or for 05:07. The order itself is unaffected.</td><td>Operations: Pro plan would allow every 20 minutes</td></tr>
-    <tr><td>Public holidays not closed automatically</td><td>The app is open 07:00–10:00 on a holiday weekday</td><td>Operations announces; engineering could add a holiday list on request</td></tr>
+    <tr><td>Public holidays not closed automatically</td><td>The app is open 07:00–10:30 on a holiday weekday</td><td>Operations announces; engineering could add a holiday list on request</td></tr>
     <tr><td>Kitchen hand-off is an internal webhook without a shared secret</td><td>Acceptable on the internal network; add a secret if the kitchen system becomes reachable from outside</td><td>Engineering, with the kitchen's n8n owner</td></tr>
     <tr><td>The service holds a full database key</td><td>Standard for the suite today</td><td>Engineering: a restricted database role is the planned follow-up</td></tr>
     <tr><td>No per-person cap on orders or lines per morning</td><td>A person can place several orders; each gets its own card</td><td>Operations decides whether a cap is wanted</td></tr>
@@ -762,7 +762,7 @@ No onion on one burger please</pre>
     <tr><td><code>specs/009-wimpy-password-signin/</code></td><td>Sign-in needs the password; the shared lock; the flood guard</td></tr>
     <tr><td><code>specs/015-wimpy-order-history/</code></td><td>My orders; the ledger; the HighLevel board; isolation rules; history starts at go-live</td></tr>
     <tr><td><code>specs/018-wimpy-standalone-service/</code></td><td>The stand-alone service, its routes contract, the removal from the Worker, release order</td></tr>
-    <tr><td><code>specs/020-wimpy-window-7-to-9/</code></td><td>The 07:00–10:00 window</td></tr>
+    <tr><td><code>specs/020-wimpy-window-7-to-9/</code></td><td>The 07:00–10:30 window</td></tr>
     <tr><td><code>specs/021-wimpy-live-twice/</code>, <code>022-…</code></td><td>Second orders; duplicate cards allowed on the board</td></tr>
     <tr><td><code>specs/023-wimpy-order-sheet-favicon/</code>, <code>024-wimpy-phoenix-domain/</code></td><td>The readable order sheet; the tab icon; the address</td></tr>
     <tr><td><code>specs/025-wimpy-own-password/</code></td><td>The Wimpy-only password and the start password <code>wimpy123</code></td></tr>
@@ -792,7 +792,7 @@ No onion on one burger please</pre>
       </div>
       <div class="qbox">
         <h4>When</h4>
-        <p class="big">07:00 – 10:00</p>
+        <p class="big">07:00 – 10:30</p>
         <p>Monday to Friday, South African time. Outside that you can read the menu and your orders; you cannot order.</p>
       </div>
       <div class="qbox">
