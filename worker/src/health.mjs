@@ -53,6 +53,7 @@ export async function probeHelpCenter(env) {
 const SAST_WORKING = (nowMs) => { const s = new Date(nowMs + 2 * HOUR); const h = s.getUTCHours(), w = s.getUTCDay(); return w >= 1 && w <= 5 && h >= 6 && h < 20; };
 const REACH_LABEL = { sales: 'Sales (BI Active cases)', calls: 'Calls (ViciDial)', attendance: 'Attendance register', qa: 'QA evaluations' };
 export const ALERTS_KEY = 'kv:health-alerts';
+export const SIZE_KEY = 'kv:db-size-history';   // one database-size sample per SAST day (stability plan, 2026-10-26)
 const REFERRAL_SLOTS = [8, 14];                          // SAST hours the local tick pulls referrals (spec 002 C3)
 
 /**
@@ -62,6 +63,24 @@ const REFERRAL_SLOTS = [8, 14];                          // SAST hours the local
  *                    strings (or null) and a boolean; now is epoch ms.
  * @returns {array}   alert objects {id, severity, message, since}
  */
+/** How fast the database grows and when it reaches the 6 GB line, from kv:db-size-history ({d: 'YYYY-MM-DD' SAST, b: bytes},
+ *  one sample a day). Uses the oldest sample of the last 14 days; null until two different days exist. Pure. */
+const DB_CRITICAL = 6 * 1073741824;
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export function dbForecast(history, nowBytes, nowMs) {
+  const samples = (Array.isArray(history) ? history : []).filter((s) => s && /^\d{4}-\d{2}-\d{2}$/.test(String(s.d)) && Number.isFinite(Number(s.b)));
+  const since = nowMs - 14 * 86400000;
+  const base = samples.map((s) => ({ t: Date.parse(s.d + 'T12:00:00+02:00'), b: Number(s.b) })).filter((s) => s.t >= since && s.t < nowMs).sort((a, b) => a.t - b.t)[0];
+  if (!base || !Number.isFinite(nowBytes)) return null;
+  const days = (nowMs - base.t) / 86400000;
+  if (days < 1) return null;
+  const perDay = (nowBytes - base.b) / days;
+  if (!(perDay > 0)) return { perDay, daysToCritical: null, criticalDate: null };
+  const daysToCritical = nowBytes >= DB_CRITICAL ? 0 : (DB_CRITICAL - nowBytes) / perDay;
+  const at = new Date(nowMs + daysToCritical * 86400000 + 2 * HOUR);
+  return { perDay, daysToCritical, criticalDate: at.getUTCDate() + ' ' + MONTHS[at.getUTCMonth()] };
+}
+
 export function evaluateFreshness(t) {
   const ms = (iso) => (iso ? Date.parse(iso) : 0);
   const now = t.now || Date.now();
@@ -247,6 +266,22 @@ export function evaluateFreshness(t) {
         message: 'The nightly verification is red: ' + red.map(([k, v]) => k + (v.note ? ' (' + String(v.note).slice(0, 80) + ')' : '')).join('; ') + '. A figure on screen may be wrong — read the run log before trusting today.',
         since: new Date(Math.min(...red.map(([, v]) => ms(v.ranAt)))).toISOString() });
     }
+    /* ANY STEP THAT KEEPS FAILING IS SAID OUT LOUD (stability plan, 2026-10-26). Only verify* steps used to raise an alert,
+       so the lake loader failing on every tick from 12 Oct to 26 Oct ("password authentication failed") was seen by nobody
+       for two weeks while dialler calls and closed cases stopped at 10 Oct. A step failing 3 times running (job-status
+       withStep counts them) or for 2 hours is an alert; a wrong database password says exactly where the fix goes. */
+    const stuck = steps.filter(([k, v]) => !/^verify/.test(k) && v && v.ok === false && now - ms(v.ranAt) < 24 * HOUR
+      && ((Number(v.fails) || 1) >= 3 || (v.failingSince && now - ms(v.failingSince) >= 2 * HOUR)));
+    if (stuck.length) {
+      const cred = stuck.some(([, v]) => /password authentication failed|28P01/i.test(String(v.note || '')));
+      const startAt = Math.min(...stuck.map(([, v]) => ms(v.failingSince || v.ranAt)));
+      alerts.push({ id: 'scheduled-step-failing', severity: cred || stuck.some(([k]) => /rake|lake/.test(k)) ? 'critical' : 'warning',
+        message: 'A scheduled step keeps failing: ' + stuck.map(([k, v]) => k + ' (' + (Number(v.fails) || 1) + ' in a row since ' + sast(ms(v.failingSince || v.ranAt))
+          + (v.note ? ' — ' + String(v.note).slice(0, 90) : '') + ')').join('; ') + '.'
+          + (cred ? ' The database password the tools use is wrong or was changed: put the current one in SUPABASE_DB_URL in agentos/supabase.env on the machine that runs the tick (and in the GitHub secret), and the next tick catches up.'
+            : ' Read reports/tick-local.log on the machine that runs the tick.'),
+        since: new Date(startAt).toISOString() });
+    }
   }
   /* SOURCES MUST REACH THE DAY THEY ARE DUE (never-stale plan, Phase 2). The digest carries the
      last day each source covers; the cadence table names who owns each drop. A source a day
@@ -332,15 +367,31 @@ export function evaluateFreshness(t) {
   /* THE DISK (migration-041). 15 Sep: the database filled the disk and Postgres restarted with no
      warning anywhere. Warn at 4 GB, critical at 6 GB of an 8 GB disk; a table carrying more than
      two million dead tuples is the September open-cases partition all over again. */
+  /* A SIZE CHECK THAT CANNOT BE READ IS NOT A HEALTHY DISK (stability plan, 2026-10-26): it used to turn into "no opinion",
+     so the alert vanished exactly when the database was least able to answer. */
+  if (t.dbUnreadable) alerts.push({ id: 'database-health-unreadable', severity: 'warning',
+    message: 'The database size check could not be read, so a filling disk would go unseen. Check that db_health() still answers for the service key.', since: 'db' });
+  /* SAY WHAT IS FILLING IT, HOW FAST, AND WHAT FIXES IT (stability plan, 2026-10-26). The old text told people to run VACUUM,
+     which frees nothing when the bytes are live rows — on 26 Oct the 4.66 GB was the daily Open Cases copies (~490k rows each,
+     ~14M rows). The alert now carries the growth per day and the date the 6 GB line is reached (from kv:db-size-history, one
+     sample a day), names VACUUM only when dead rows are the cause, and also fires early when that date is under 3 weeks away. */
   if (t.db && t.db.db_bytes != null) {
-    const gb = (n) => (n / 1073741824).toFixed(2) + ' GB';
-    const bits = [];
-    if (t.db.db_bytes >= 4 * 1073741824) bits.push('the database is ' + gb(t.db.db_bytes));
-    if (t.db.wal_bytes != null && t.db.wal_bytes >= 1073741824) bits.push('WAL is ' + gb(t.db.wal_bytes));
+    const GB = 1073741824;
+    const gb = (n) => (n / GB).toFixed(2) + ' GB', mb = (n) => Math.round(n / 1048576) + ' MB';
+    const f = dbForecast(t.dbHistory, t.db.db_bytes, now);
+    const wal = t.db.wal_bytes != null && t.db.wal_bytes >= GB;
     const heavy = (t.db.dead_heavy || []).filter((x) => x && x.dead >= 2000000);
-    if (heavy.length) bits.push(heavy.map((x) => x.table + ' carries ' + Math.round(x.dead / 1e6) + 'M dead rows').join(', '));
-    if (bits.length) alerts.push({ id: 'database-size', severity: t.db.db_bytes >= 6 * 1073741824 ? 'critical' : 'warning',
-      message: 'The database needs attention: ' + bits.join('; ') + '. The weekly vacuum runs Sunday 03:30 SAST; run VACUUM (ANALYZE) on the named table now if this is red.', since: 'db' });
+    const soon = !!(f && f.daysToCritical != null && f.daysToCritical <= 21);
+    if (t.db.db_bytes >= 4 * GB || wal || heavy.length || soon) {
+      const parts = ['The database is ' + gb(t.db.db_bytes) + ' of its 8 GB disk'
+        + (f && f.perDay > 0 ? ', growing about ' + mb(f.perDay) + ' a day' : '')
+        + (f && f.criticalDate ? (t.db.db_bytes >= 6 * GB ? '' : ' — at this rate it reaches the 6 GB danger line around ' + f.criticalDate) : '') + '.'];
+      if (wal) parts.push('The write-ahead log is ' + gb(t.db.wal_bytes) + '.');
+      if (heavy.length) parts.push(heavy.map((x) => x.table + ' carries ' + Math.round(x.dead / 1e6) + 'M dead rows').join(', ') + ' — run VACUUM (ANALYZE) on it; the weekly vacuum is Sunday 03:30 SAST.');
+      else parts.push('This is live data, not waste, so VACUUM will not free it. The biggest grower is the daily Open Cases copy: apply the Open Cases retention in the stability plan (store agent rows only, archive old days, then drop them).');
+      alerts.push({ id: 'database-size', severity: t.db.db_bytes >= 6 * GB || (f && f.daysToCritical != null && f.daysToCritical <= 7) ? 'critical' : 'warning',
+        message: parts.join(' '), since: 'db' });
+    }
   }
   /* THE COACHING HUB COPY IS REFRESHING (spec 001-cm-view-signoff, R7, 2026-10-01). kv:coaching sat on
      21 September for ten days because every refresh wave died on the Free plan's subrequest cap and the only
@@ -442,8 +493,9 @@ export function evaluateFreshness(t) {
  */
 export async function runHealthChecks(DB, opts = {}) {
   const rows = await DB.select(
-    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching,kv:referrals-sync-log,kv:wimpy-hl-status,kv:wimpy-ledger-failed')})&select=key,updated_at,value`);
+    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching,kv:referrals-sync-log,kv:wimpy-hl-status,kv:wimpy-ledger-failed,' + SIZE_KEY)})&select=key,updated_at,value`);
   const at = {}; let opened = null;
+  const sizeRow = ((rows || []).find((r) => r.key === SIZE_KEY) || {}).value || null;
   /* spec 015: the Wimpy cron's status and the last lost ledger row ride this same select — no extra subrequest */
   let wimpyHl = null, wimpyLedgerFailed = null;
   const small = (v) => { try { return v && typeof v.data === 'string' ? JSON.parse(v.data) : (v && typeof v === 'object' ? v : null); } catch (e) { return null; } };
@@ -489,8 +541,22 @@ export async function runHealthChecks(DB, opts = {}) {
   let rake = null;
   try { rake = await DB.rpc('rake_health', {}); } catch (e) { rake = null; }
   /* the disk (migration-041): size, WAL, dead tuples — the 15 Sep disk-full had no warning at all */
-  let dbh = null;
+  let dbh = null, dbUnreadable = false;
   try { dbh = await DB.rpc('db_health', {}); } catch (e) { dbh = null; }
+  if (!dbh || dbh.db_bytes == null) { dbh = null; dbUnreadable = true; }
+  /* one size sample per SAST day (stability plan, 2026-10-26) — the growth rate and the date the 6 GB line is reached
+     come from these; it rode the first select (kv:db-size-history), so a day that already has its sample costs nothing */
+  let dbHistory = [];
+  try { const v = sizeRow ? (typeof sizeRow.data === 'string' ? JSON.parse(sizeRow.data) : sizeRow) : null; dbHistory = Array.isArray(v && v.samples) ? v.samples : []; } catch (e) { dbHistory = []; }
+  if (dbh) {
+    const today = new Date(Date.now() + 2 * HOUR).toISOString().slice(0, 10);
+    if (!dbHistory.length || dbHistory[dbHistory.length - 1].d !== today) {
+      dbHistory = [...dbHistory.filter((s) => s && s.d !== today), { d: today, b: Number(dbh.db_bytes) }].slice(-30);
+      try {
+        await DB.insert('rules', [{ key: SIZE_KEY, value: { data: JSON.stringify({ samples: dbHistory }) }, updated_by: 'health-cron', updated_at: new Date().toISOString() }], true);
+      } catch (e) { console.warn('[health] the database size sample could not be stored: ' + String((e && e.message) || e).slice(0, 120)); }
+    }
+  }
   /* the Worker's last ask for the GitHub tick (runner.mjs) — so the alert says what was already done */
   let kick = null;
   try { const kr = await DB.select('rules?key=eq.' + encodeURIComponent('kv:runner-kick') + '&select=value'); kick = kr && kr[0] && kr[0].value ? JSON.parse(kr[0].value.data || 'null') : null; } catch (e) { kick = null; }
@@ -531,7 +597,7 @@ export async function runHealthChecks(DB, opts = {}) {
   const alerts = evaluateFreshness({
     helpCenter, coachingAt, coachingIncomplete, referralsLog, wimpyHl, wimpyLedgerFailed,
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
-    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster, db: dbh, runnerExpected: !!opts.runnerExpected,
+    staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster, db: dbh, dbUnreadable, dbHistory, runnerExpected: !!opts.runnerExpected,
   });
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);

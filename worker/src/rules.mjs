@@ -100,7 +100,7 @@ const GUARDED_KV = /^(agent-digest(-[a-z0-9-]+)?|agent-reports-(variance|leads)(
 export const isGuardedKvKey = (key) => GUARDED_KV.test(String(key || ''));
 /* KEYS ONLY THE WORKER WRITES (stability plan, 2026-10-26). health-alerts is the banner every admin reads; the cron writes
    it straight to the database. Through /api/kv any staff session could overwrite or clear it — fake or hide an outage. */
-const SYSTEM_KV = /^(health-alerts)$/;
+const SYSTEM_KV = /^(health-alerts|db-size-history)$/;
 export const isSystemKvKey = (key) => SYSTEM_KV.test(String(key || ''));
 export function kvWriteAllowed(key, user) {
   if (!user) return false;

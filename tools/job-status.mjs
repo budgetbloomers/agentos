@@ -31,10 +31,19 @@ export function parseJobsDoc(value) {
   return { steps: {} };
 }
 
-/** a NEW document with one step replaced — the input is never touched */
+/** a NEW document with one step replaced — the input is never touched.
+ *  A FAILING STEP REMEMBERS HOW LONG IT HAS BEEN FAILING (stability plan, 2026-10-26). The lake loader failed on every
+ *  tick from 12 Oct to 26 Oct — 133 times — and each stamp simply overwrote the last, so nothing could tell "failed once"
+ *  from "failed for two weeks". A failure now carries `fails` (in a row) and `failingSince` (the first of the run); a
+ *  success drops both. The Worker's sentinel alerts on any step failing 3 times running or for 2 hours. */
 export function withStep(doc, step, entry, at, runner) {
   const base = doc && typeof doc === 'object' ? doc : {};
-  return { ...base, steps: { ...(base.steps || {}), [step]: entry }, updatedAt: at, ...(runner ? { lastRunner: runner } : {}) };
+  const prev = (base.steps || {})[step] || null;
+  const run = prev && prev.ok === false;
+  const e = entry && entry.ok === false
+    ? { ...entry, fails: (run ? (Number(prev.fails) || 1) : 0) + 1, failingSince: (run && (prev.failingSince || prev.ranAt)) || entry.ranAt || at }
+    : entry;
+  return { ...base, steps: { ...(base.steps || {}), [step]: e }, updatedAt: at, ...(runner ? { lastRunner: runner } : {}) };
 }
 
 /**
