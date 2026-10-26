@@ -2414,6 +2414,66 @@ function isSaleDisp(disp){
 }
 
 /* ================= ingestion ================= */
+/* WIDE-REGISTER:BEGIN — this block is identical in nicks_code/index.html and Chatterbox_AgentOS_Analytics.html
+   (verify-attendance-wide.mjs compares the two byte for byte).
+   THE MONTHLY REGISTER (HR, October 2026: "Attendance Register October 2026.csv"). One row per person, one column per
+   day ("Thu 1" … "Sat 31", Sundays absent), the Status Code in each cell, and the month ONLY in the file name. It is
+   unpivoted here into the long rows the daily export always gave (Date · Employee Code · Status Code …), so every
+   store, filter and upload report reads it unchanged. People are matched on Employee Code (the CB), never the name —
+   five agents are spelt differently in the register and the Agent List. Employee Type is not in this format, so it is
+   derived exactly as the daily export assigned it (checked against every Sep 2026 lake row): a Sales or Training
+   person whose title is an Agent or a Trainee is a "Call Agent"; team leaders, CMs, QA agents, coaches and every
+   other department are "Support Staff". A blank cell is a day HR has not captured — skipped, never read as absent.
+   The month must agree with the weekday headers (1 Oct 2026 IS a Thursday): a name with no month falls back to the
+   latest month the weekdays fit, and a name that contradicts them refuses the file, loudly. */
+const WIDE_REG_MONTHS=['january','february','march','april','may','june','july','august','september','october','november','december'];
+function wideRegisterDays(headers){
+  const out=[];
+  (headers||[]).forEach(h=>{ const m=/^(sun|mon|tue|wed|thu|fri|sat)[a-z]*\.?\s+(\d{1,2})$/i.exec(String(h||'').trim());
+    if(m) out.push({h,wd:['sun','mon','tue','wed','thu','fri','sat'].indexOf(m[1].toLowerCase()),day:+m[2]}); });
+  return out;
+}
+function isWideRegister(headers){
+  const H=(headers||[]).map(h=>String(h||'').trim().toLowerCase());
+  return H.includes('employee code')&&!H.includes('date')&&wideRegisterDays(headers).length>=5;
+}
+function wideRegisterMonth(days,label,today){
+  const fits=(y,m)=>days.every(d=>{ const t=new Date(Date.UTC(y,m,d.day)); return t.getUTCMonth()===m&&t.getUTCDay()===d.wd; });
+  const s=String(label||'').toLowerCase();
+  const mm=/\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\b/.exec(s);
+  const yy=/\b(20\d\d)\b/.exec(s), num=/\b(20\d\d)[-_. ](0?[1-9]|1[0-2])\b/.exec(s);
+  const m=mm?WIDE_REG_MONTHS.findIndex(n=>n.startsWith(mm[1].slice(0,3))):num?(+num[2]-1):-1;
+  const y=yy?+yy[1]:null, now=today||new Date(), ty=now.getUTCFullYear(), tm=now.getUTCMonth();
+  const cap=k=>WIDE_REG_MONTHS[k][0].toUpperCase()+WIDE_REG_MONTHS[k].slice(1);
+  if(m>=0){
+    for(const yr of (y?[y]:[ty,ty-1,ty+1])) if(fits(yr,m)) return {y:yr,m};
+    return {error:'the file is named '+cap(m)+(y?' '+y:'')+' but its day columns ('+days.slice(0,3).map(d=>d.h).join(', ')
+      +' …) do not fall on those weekdays in that month. Check it is the month it is named after. Nothing was loaded.'};
+  }
+  for(let k=0;k<=24;k++){ const t=new Date(Date.UTC(ty,tm-k,1)); if(fits(t.getUTCFullYear(),t.getUTCMonth())) return {y:t.getUTCFullYear(),m:t.getUTCMonth(),inferred:true}; }
+  return {error:'the register names no month and its day columns fit none of the last 24 months. Name the file with its month (e.g. "Attendance Register October 2026"). Nothing was loaded.'};
+}
+function wideRegisterToLong(headers,rows,label,today){
+  const days=wideRegisterDays(headers), ym=wideRegisterMonth(days,label,today);
+  if(ym.error) return {error:ym.error};
+  const pad=n=>String(n).padStart(2,'0'), month=ym.y+'-'+pad(ym.m+1);
+  const out=[], blank=[]; let people=0, agents=0;
+  for(const r of rows||[]){
+    const g=k=>String(r[k]==null?'':r[k]).trim();
+    const code=g('Employee Code'); if(!code) continue;
+    const dept=g('Department'), title=g('Employee Title')||g('Title');
+    const type=/sales|training/i.test(dept)&&/agent|trainee/i.test(title)?'Call Agent':'Support Staff';
+    people++; if(type==='Call Agent') agents++;
+    const before=out.length;
+    for(const d of days){ const v=String(r[d.h]==null?'':r[d.h]).trim(); if(!v) continue;
+      out.push({'Date':month+'-'+pad(d.day),'Employee Code':code,'Employee Name':g('Employee Name'),'Title':title,'Employee Type':type,
+        'Department':dept,'Reports To':g('Reports To'),'Status Code':v,'Status':v}); }
+    if(type==='Call Agent'&&out.length===before) blank.push(code);   // on the register, not one day captured (new starters, Oct 2026)
+  }
+  return {headers:['Date','Employee Code','Employee Name','Title','Employee Type','Department','Reports To','Status Code','Status'],
+    rows:out,month,inferred:!!ym.inferred,people,agents,blank};
+}
+/* WIDE-REGISTER:END */
 function detectType(header, sheetName, recs){
   const H=header.map(h=>h.toLowerCase());
   const has=(...ks)=>ks.every(k=>H.some(h=>h.includes(k)));
@@ -2542,13 +2602,21 @@ async function ingestText(name, text, expected, hash){
     const rank=n=>/agent list|vas$/i.test(n)?0:(/^(june|july|august|september|october|november|december|january|february|march|april|may)$/i.test(n)?1:2);
     return rank(a)-rank(b);
   });
-  let dailyDone=false;
+  let dailyDone=false, wideErr=null;
   for(const sn of order){
     if(/"USER NAME"/.test(sheets[sn])&&/time range:/i.test(sheets[sn])){
       const vr=INGEST.vici(sheets[sn],name); if(vr){ ingested.push(vr); continue; }
     }
-    const {header,recs}=await toObjectsAsync(await parseCSVAsync(sheets[sn], sniffDelim(sheets[sn])));
+    let {header,recs}=await toObjectsAsync(await parseCSVAsync(sheets[sn], sniffDelim(sheets[sn])));
     if(!recs.length) continue;
+    if(isWideRegister(header)){   // the monthly HR register → the daily export's long rows (WIDE-REGISTER above)
+      const w=wideRegisterToLong(header,recs,name+' '+sn,new Date());
+      if(w.error){ wideErr='"'+name+'": '+w.error; continue; }
+      header=w.headers; recs=w.rows;
+      if(w.inferred) toast('"'+name+'" names no month — its day columns were read as '+w.month+'. Name the file with its month to be sure.','err',15000);
+      if(w.blank.length) __uploadWarns.push('Attendance "'+name+'": '+w.blank.length+' agent(s) are on the register with NO day captured for '+w.month+' ('+w.blank.slice(0,8).join(', ')+(w.blank.length>8?' …':'')+') — HR has not filled their rows, so this file gives them no shifts');
+      if(!recs.length) continue;
+    }
     let type=detectType(header, sn, recs);
     if(!type) continue;
     /* WHICH LEAD PAGE DOES THIS OPEN-CASES PULL BELONG TO? The two Salesforce exports are
@@ -2584,7 +2652,8 @@ async function ingestText(name, text, expected, hash){
     const {recs}=await toObjectsAsync(await parseCSVAsync(first, sniffDelim(first)));
     if(recs.length){ try{ const res=INGEST[expected](recs,name); if(res) ingested.push(res); }catch(err){} }
   }
-  if(!ingested.length){ toast('Could not recognise "'+name+'" — check the file headers'); return false; }
+  if(!ingested.length){ if(wideErr){ __uploadWarns.push('Attendance '+wideErr); toast('Attendance '+wideErr,'err',20000); }
+    else toast('Could not recognise "'+name+'" — check the file headers'); return false; }
   if(expected){
     const SLOT_TYPES={bi:['bi'],calls:['calls'],attendance:['attendance'],inactive:['cancellations'],vici:['calls (ViciDial)','vici'],
       evals:['evals'],roster:['roster'],trackerDaily:['tracker','roster'],referrals:['referrals'],board:['board']};
