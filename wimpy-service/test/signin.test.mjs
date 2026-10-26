@@ -192,7 +192,9 @@ head('E · GUESSING LOCKS THE ACCOUNT — THE SAME LOCK AS THE MAIN SIGN-IN');
   for (let i = 0; i < 4; i++) await signin(st.DB, reqFrom('10.0.3.1'), { cb: 'CB9101', password: 'Wrong-Pass' }, ctx);
   const good = await signin(st.DB, reqFrom('10.0.3.1'), { cb: 'CB9101', password: WD }, ctx); await settle();
   ok('four wrong then the right one → signed in', good.ok === true, JSON.stringify(good));
-  ok('...and the success resets the counters', st.user('u-agent').failed_attempts === 0 && !st.user('u-agent').locked_until,
+  /* stability plan (2026-10-26): a Wimpy success settles the WIMPY tally (its login_ok:wimpy row) but no longer writes the
+     account's counter or lock — those belong to the AgentOS door too, and clearing them reopened AgentOS after 4 guesses */
+  ok('...and the success leaves the account\'s lock clear without rewriting the AgentOS counter', !st.user('u-agent').locked_until && st.user('u-agent').failed_attempts === 4,
     'failed_attempts=' + st.user('u-agent').failed_attempts);
   await signin(st.DB, reqFrom('10.0.3.1'), { cb: 'CB9101', password: 'Wrong-Pass' }, ctx);
   ok('one typo after a Wimpy success does not lock (earlier failures are settled)', !st.user('u-agent').locked_until);

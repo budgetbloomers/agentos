@@ -97,7 +97,9 @@ head('B · ONE PASSWORD, ONE LOCK — ACROSS THE TWO DOORS, ON ONE DATABASE');
     const pending = []; const ctx = { waitUntil: (p) => { pending.push(Promise.resolve(p).catch(() => {})); } }; const settle = () => Promise.all(pending.splice(0));
     const wReq = (ip) => ({ headers: { get: (h) => (h === 'cf-connecting-ip' ? ip : h === 'user-agent' ? 'verify' : '') } });
     const sReq = (ip) => ({ headers: { get: (h) => (h === 'x-wimpy-socket-ip' ? ip : h === 'user-agent' ? 'verify' : '') } });
-    /* Spec Kit 025: Wimpy answers to its OWN password (wimpy123 until the person sets one), the main door to the AgentOS one; the LOCK is still shared */
+    /* Spec Kit 025: Wimpy answers to its OWN password (wimpy123 until the person sets one), the main door to the AgentOS one.
+       Stability plan (2026-10-26): ONE LOCK, TWO TALLIES — each door counts only its own failures and is settled only by its
+       own success; the lock field is still one, honoured and set by both, so it fails closed. */
     const WD = service.WIMPY_DEFAULT_PASSWORD;
     const wimpy = (st, ip, password) => service.signinWimpy(st.DB, sReq(ip), { cb: 'CB9101', password }, ctx, {});
     const main = (st, ip, password) => worker.login(st.DB, wReq(ip), { username: 'CB9101', password }, ctx);
@@ -105,9 +107,11 @@ head('B · ONE PASSWORD, ONE LOCK — ACROSS THE TWO DOORS, ON ONE DATABASE');
       const st = makeDB();
       for (let i = 0; i < 3; i++) await wimpy(st, '10.0.2.1', 'Wrong-Pass');
       for (let i = 0; i < 2; i++) await main(st, '10.0.2.1', 'Wrong-Pass');
-      ok(!!st.user().locked_until, 'three wrong on the Wimpy service + two on the main sign-in = locked (one tally)', 'failed_attempts=' + st.user().failed_attempts);
+      ok(!st.user().locked_until, 'three wrong on the Wimpy service + two on the main sign-in = NOT locked (two tallies)', 'locked_until=' + st.user().locked_until);
+      for (let i = 0; i < 2; i++) await wimpy(st, '10.0.2.1', 'Wrong-Pass');
+      ok(!!st.user().locked_until, '…two more wrong on Wimpy = five on that door = locked', 'locked_until=' + st.user().locked_until);
       const w = await wimpy(st, '10.0.2.1', WD), m = await main(st, '10.0.2.1', PW);
-      ok(w.status === 423 && m.status === 423, '…and the right password is then refused on BOTH doors (423)', w.status + ' ' + m.status);
+      ok(w.status === 423 && m.status === 423, '…and the lock is one field: the right password is then refused on BOTH doors (423)', w.status + ' ' + m.status);
     }
     {
       const st = makeDB();
@@ -120,7 +124,24 @@ head('B · ONE PASSWORD, ONE LOCK — ACROSS THE TWO DOORS, ON ONE DATABASE');
       const good = await wimpy(st, '10.0.3.1', WD); await settle();
       ok(good.ok === true, 'four wrong on the main sign-in, then the right Wimpy password → signed in', JSON.stringify(good).slice(0, 120));
       await main(st, '10.0.3.1', 'Wrong-Pass'); await main(st, '10.0.3.1', 'Wrong-Pass');
-      ok(!st.user().locked_until, '…and that success settled the earlier failures on the main door too (two typos after it do not lock)');
+      ok(!!st.user().locked_until, '…but a Wimpy success does NOT settle the main door: two more AgentOS typos lock it (the old bypass is closed)', 'locked_until=' + st.user().locked_until);
+    }
+    {
+      const st = makeDB();
+      for (let i = 0; i < 4; i++) await main(st, '10.0.3.9', 'Wrong-Pass');
+      const mgood = await main(st, '10.0.3.9', PW); await settle();
+      ok(mgood.ok === true, 'four wrong on the main sign-in, then the right AgentOS password → signed in');
+      await main(st, '10.0.3.9', 'Wrong-Pass'); await main(st, '10.0.3.9', 'Wrong-Pass');
+      ok(!st.user().locked_until, '…and a main success still settles the main door (two typos after it do not lock)');
+    }
+    {
+      const st = makeDB();
+      for (let i = 0; i < 100; i++) await worker.login(st.DB, wReq('10.9.9.9'), { username: 'CB' + (8000 + i), password: 'wrong-one' }, ctx);
+      await settle();
+      const more = await main(st, '10.9.9.9', PW);
+      ok(more.status === 429, '100 main-sign-in failures from one network in ten minutes → that network is paused on the main door (429)', JSON.stringify(more).slice(0, 120));
+      const other = await main(st, '10.9.9.10', PW);
+      ok(other.ok === true, '…another network signs in normally');
     }
     {
       const st = makeDB();

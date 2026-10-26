@@ -94,12 +94,17 @@ const LOCK_MIN = 15;
 const LOCKED_MSG = 'Account locked after repeated failures. Try again in a few minutes.';
 const WIMPY_NO_MATCH = 'That CB number and password do not match.';
 
-/* THE PASSWORD CHECK — ONE FOR EVERY SIGN-IN (Spec Kit 009, 2026-10-06). The main sign-in and the Wimpy
-   sign-in both come through here, so a password guessed on either page counts toward the SAME lock: a
-   separate, laxer Wimpy limit would have been a second door to the very password that opens Analytics.
-   `via` is '' for the main sign-in and 'wimpy' for Wimpy; it only changes the audit event names, the
-   wording of the wrong-password answer, and whether the no-account/locked notes are awaited (Wimpy's
-   per-network limit counts them, so they must land before the next attempt is counted).
+/* WHICH DOOR AN auth_log EVENT BELONGS TO (stability plan, 2026-10-26). The main door's events are `login_ok` and
+   `login_fail…` (not `login_fail:wimpy:…`); the Wimpy door's are `login_ok:wimpy` and `login_fail:wimpy:…`. A door's tally
+   counts only its own failures and stops only at its own success. */
+const failOf = (ev, via) => (via ? ev.startsWith('login_fail:' + via + ':') : ev.startsWith('login_fail') && !ev.startsWith('login_fail:wimpy:'));
+const okOf = (ev, via) => (via ? ev === 'login_ok:' + via : ev === 'login_ok');
+
+/* THE PASSWORD CHECK — ONE FOR EVERY SIGN-IN (Spec Kit 009, 2026-10-06), ONE TALLY PER DOOR (stability plan, 2026-10-26).
+   The main sign-in and the Wimpy sign-in both come through here and share one lock (see ONE LOCK, TWO TALLIES below).
+   `via` is '' for the main sign-in and 'wimpy' for Wimpy; it changes the audit event names, the wording of the
+   wrong-password answer, which door's failures are counted, and whether the no-account/locked notes are awaited
+   (Wimpy's per-network limit counts them, so they must land before the next attempt is counted).
    → {ok:true} or {ok:false, status, error}. */
 async function checkPassword(DB, u, username, password, ip, defer, via) {
   const fail = via ? 'login_fail:' + via + ':' : 'login_fail:';
@@ -107,6 +112,11 @@ async function checkPassword(DB, u, username, password, ip, defer, via) {
   const note = async (event) => { const p = log(DB, u?.id, username, event, ip); if (via) await p; else defer(p); };
 
   if (!u || !u.active) { await note(fail + (u ? 'disabled' : 'no_user')); return { ok: false, status: 401, error: wrong }; }
+  /* ONE LOCK, TWO TALLIES (stability plan, 2026-10-26). Since Spec Kit 025 Wimpy answers to its OWN password, so a Wimpy
+     success proves nothing about the AgentOS one — yet it used to settle the AgentOS failures: guess four times on
+     AgentOS, sign in to Wimpy on the public start password, repeat, and the account never locked. Each door now counts
+     only its own failures and is settled only by its own success (failOf / okOf). The lock itself stays one account
+     field both doors honour and both doors set — so it still fails CLOSED when the log cannot be written. */
   if (u.locked_until && new Date(u.locked_until) > new Date()) {
     await note(via ? 'locked:' + via : 'locked');
     return { ok: false, status: 423, error: LOCKED_MSG };
@@ -128,25 +138,24 @@ async function checkPassword(DB, u, username, password, ip, defer, via) {
     catch (e) { logged = false; }
     let recent = (u.failed_attempts || 0) + 1;               // the fail-CLOSED default
     if (logged) try {
-      /* Count failures SINCE THE LAST SUCCESSFUL LOGIN, not just within the window. Counting
+      /* Count failures SINCE THE LAST SUCCESSFUL LOGIN ON THIS DOOR, not just within the window. Counting
          the bare window punished someone who had just proved they know the password: four
          typos at 08:00, a good sign-in at 08:01, then ONE slip at 08:06 hit five-in-fifteen
-         and locked them out. One query fetches both events and the tally stops at the last
-         login_ok — or `login_ok:wimpy`, a Wimpy sign-in that proved the same password (Spec Kit 009).
-         NOT the old `wimpy_signin_ok`: that sign-in took no password and proved nothing. Wimpy
-         failures (`login_fail:wimpy:…`) start with login_fail, so they count here like any other. */
-      const since = new Date(Date.now() - LOCK_MIN * 60000).toISOString();
-      /* COUNTED PER ACCOUNT, NOT PER SPELLING (audit, 2026-09-03). The log used to be
+         and locked them out. The tally stops at this door's last success and counts only this
+         door's failures (failOf / okOf above) — since 26 Oct a Wimpy sign-in no longer settles
+         the main door, and Wimpy failures no longer count toward it.
+         COUNTED PER ACCOUNT, NOT PER SPELLING (audit, 2026-09-03). The log used to be
          read back by the username as TYPED, so an account reachable two ways — `dalwin`
          and its CB `cb145` — carried two independent tallies and alternating them
          doubled the guesses before the lock. Every failure row above carries the resolved
          user_id, so that is what is counted. */
+      const since = new Date(Date.now() - LOCK_MIN * 60000).toISOString();
       const rows = await DB.select(`auth_log?user_id=eq.${u.id}&at=gte.${since}&select=event,at&order=at.desc&limit=60`);
       let n = 0;
       for (const r of (rows || [])) {
         const ev = String(r.event || '');
-        if (ev === 'login_ok' || ev.startsWith('login_ok:')) break;      // everything older is settled
-        if (ev.startsWith('login_fail')) n++;
+        if (okOf(ev, via)) break;                                         // everything older is settled
+        if (failOf(ev, via)) n++;
       }
       recent = n;
     } catch (e) { /* log unreadable — keep the fail-closed counter above */ }
@@ -172,9 +181,19 @@ async function checkPassword(DB, u, username, password, ip, defer, via) {
  * to ctx.waitUntil so the Worker still finishes them after the response is sent.
  * Failure paths keep awaiting the counter update, because lockout must not race.
  */
+const LOGIN_NET_MAX = 100, LOGIN_NET_MIN = 10;   // the main door's per-network limit (stability plan, 2026-10-26)
 export async function login(DB, req, body, ctx) {
   const defer = (p) => { try { ctx && ctx.waitUntil(p); } catch { /* no ctx: let it run detached */ } return p; };
   const ip = req.headers.get('cf-connecting-ip') || '';
+  /* ONE NETWORK, A HUNDRED FAILURES IN TEN MINUTES, THEN STOP (stability plan, 2026-10-26) — the limit the Wimpy door has
+     had since Spec Kit 009. CB numbers are sequential and agents and team leaders keep a known start password, so one
+     guess per CB never trips a per-account lock; this does. It counts only main-door failures from this address. */
+  if (ip) {
+    const since = new Date(Date.now() - LOGIN_NET_MIN * 60000).toISOString();
+    const recent = await DB.select(`auth_log?ip=eq.${encodeURIComponent(ip)}&event=like.${encodeURIComponent('login_fail*')}&event=not.like.${encodeURIComponent('login_fail:wimpy:*')}&at=gte.${since}&select=event&limit=${LOGIN_NET_MAX + 1}`).catch(() => []);
+    const mine = (recent || []).filter((r) => !String(r.event || '').startsWith('login_fail:wimpy:'));
+    if (mine.length >= LOGIN_NET_MAX) return { ok: false, status: 429, error: 'Too many failed sign-ins from this network — wait ten minutes and try again.' };
+  }
   const username = loginKey(body.username);
   const u = await findAccount(DB, username);
   const checked = await checkPassword(DB, u, username, body.password, ip, defer, '');
