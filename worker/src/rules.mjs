@@ -98,10 +98,34 @@ export function referralsReadAllowed(user) {
    only too — only the engine's publisher writes figures, and the Worker writes the queue itself, never through /api/kv. */
 const GUARDED_KV = /^(agent-digest(-[a-z0-9-]+)?|agent-reports-(variance|leads)(-range-[0-9-]+)?|cm-range-requests|referrals-latest|referrals-sync-log)$/;
 export const isGuardedKvKey = (key) => GUARDED_KV.test(String(key || ''));
+/* KEYS ONLY THE WORKER WRITES (stability plan, 2026-10-26). health-alerts is the banner every admin reads; the cron writes
+   it straight to the database. Through /api/kv any staff session could overwrite or clear it — fake or hide an outage. */
+const SYSTEM_KV = /^(health-alerts)$/;
+export const isSystemKvKey = (key) => SYSTEM_KV.test(String(key || ''));
 export function kvWriteAllowed(key, user) {
   if (!user) return false;
+  if (isSystemKvKey(key)) return false;
   if (!isGuardedKvKey(key)) return true;
   return isFullScope(user) && !PORTAL_ONLY_ROLES.has(user.role);
+}
+
+/* THE UPLOAD STATION IS A GRANT THE SERVER CHECKS (stability plan, 2026-10-26: "check app permissions on the server").
+   Until now the routes that load, replace or delete data only refused the portal roles, so EVERY other session — a viewer
+   with three VAS tabs, HR with Ops' Workforce — could wipe every BI row, delete any stored file (the whole VAS state
+   included) or publish an Agent List. The tab grants lived only in the browser (auth-gate.js allowedTabs).
+   The rule is the browser's, read the same way: admin sees every tab; anyone else needs the app AND, in that app's tab
+   list, '*' or one of its Upload Station pages — VAS 'data' (Upload Station), Ops 'uploads' / 'sess_uploads'. The people
+   who upload today (nicholas, nick, the exec accounts with '*', ashton with vas:*) keep doing so unchanged. */
+const UPLOAD_TABS = { vas: ['data'], ops: ['uploads', 'sess_uploads'] };
+export function canUpload(user) {
+  if (!isFullScope(user) || PORTAL_ONLY_ROLES.has(user.role)) return false;
+  if (user.role === 'admin') return true;
+  const apps = Array.isArray(user.apps) ? user.apps : [];
+  const tabs = user.tabs && typeof user.tabs === 'object' ? user.tabs : {};
+  return Object.entries(UPLOAD_TABS).some(([app, ids]) => {
+    const t = Array.isArray(tabs[app]) ? tabs[app] : [];
+    return apps.includes(app) && (t.includes('*') || ids.some((i) => t.includes(i)));
+  });
 }
 
 /* EMPTINESS IS DERIVED, NEVER TRUSTED (review M1). The `empty:true` flag decides whether a payload may be refused by the

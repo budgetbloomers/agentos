@@ -54,6 +54,7 @@ import { db } from './db.mjs';
 import { writeOrderToHighLevel, hlConfigured, serviceWritesCards, dbWhy, FIRST_TRY_GRACE_MIN } from './wimpy-hl.mjs';
 
 const WEBHOOK = 'https://n8n-production-591cc.up.railway.app/webhook/wimpy';
+export const WEBHOOK_SECRET_HEADER = 'X-Wimpy-Secret';   // n8n Webhook node → Header Auth uses this exact name
 
 /* MY ORDERS STARTS HERE (Spec Kit 015, decision 4): orders placed before the release went only to the kitchen hand-off
    and are not in the ledger, so the history begins on the release day — the page says so. Released 2026-10-07
@@ -549,12 +550,18 @@ export async function submitWimpyOrder(env, user, body, now = Date.now(), ctx = 
   if (mismatch) payload.price_mismatch = mismatch;
 
   const url = String(env.WIMPY_WEBHOOK_URL || WEBHOOK);
+  /* SIGNED FOR THE KITCHEN (stability plan, 2026-10-26). The webhook address sits in this file, and anyone holding it
+     could post an order — a kitchen card AND a payroll row in any staff member's name — that the ledger never sees.
+     With WIMPY_WEBHOOK_SECRET set, every order carries it in X-Wimpy-Secret; n8n's Webhook node (Authentication: Header
+     Auth, same name + value) refuses anything without it. Harmless before n8n checks it, so the two can switch on apart. */
+  const headers = { 'Content-Type': 'application/json' };
+  if (env.WIMPY_WEBHOOK_SECRET) headers[WEBHOOK_SECRET_HEADER] = String(env.WIMPY_WEBHOOK_SECRET);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
     const r = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
       signal: ctrl.signal,
     });

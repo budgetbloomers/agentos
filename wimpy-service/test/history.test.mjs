@@ -272,6 +272,7 @@ globalThis.fetch = async (u, o = {}) => {
   urls.push(method + ' ' + raw);
   if (raw === N8N) {
     N8.bodies.push(o.body);
+    N8.headers = [...(N8.headers || []), { ...(o.headers || {}) }];
     return F.n8nFail ? new Response('kitchen down', { status: 500 }) : new Response('{"ok":true}', { status: 200 });
   }
   const url = new URL(raw);
@@ -1006,6 +1007,19 @@ head('D1 · ONE ORDER, ONE CARD — the kitchen\'s n8n flow makes it; the servic
   const o = ords(m)[0] || {};
   ok(m.status === 200 && ords(m).length === 1 && o.stage === null && o.stage_note === 'Sent to the kitchen', 'My orders lists it as "Sent to the kitchen" — not "Not on the kitchen board yet"', JSON.stringify(o));
   ok(HL.cards.length === 0 && !HL.calls.some((x) => x.method === 'POST'), '…and looking at My orders writes no card (the own-retry stays off)', JSON.stringify(HL.calls.map((x) => x.method + ' ' + x.path)));
+}
+head('D2 · every order to the kitchen is signed when WIMPY_WEBHOOK_SECRET is set (stability plan, 2026-10-26)');
+{
+  CLOCK = RealDate.parse('2026-10-08T05:40:00Z');   // Thursday 07:40 SAST
+  resetWorld(); N8.headers = [];
+  const SECRET = 'test-kitchen-secret-1234567890';
+  const r = await call('POST', '/api/wimpy/order', { token: 'tok-thandi-w', body: orderBody('thandi', [{ id: 'cheese_burger', quantity: 1 }]), env: { ...ENV_PROD, WIMPY_WEBHOOK_SECRET: SECRET } });
+  const h = N8.headers[0] || {};
+  ok(r.status === 200 && h[wimpy.WEBHOOK_SECRET_HEADER] === SECRET, 'the order reaches n8n carrying X-Wimpy-Secret', r.status + ' ' + JSON.stringify(Object.keys(h)));
+  ok(!r.t.includes(SECRET), '…and the secret never comes back to the page', r.t.slice(0, 120));
+  resetWorld(); N8.headers = [];
+  const r2 = await call('POST', '/api/wimpy/order', { token: 'tok-thandi-w', body: orderBody('thandi', [{ id: 'cheese_burger', quantity: 1 }]), env: ENV_PROD });
+  ok(r2.status === 200 && !((N8.headers[0] || {})[wimpy.WEBHOOK_SECRET_HEADER]), 'with no secret configured the order still goes, unsigned (n8n decides)', r2.status);
 }
 console.log('  (measured subrequests — order: ' + measured.order.join(', ') + ' · history: ' + measured.history.join(', ') + ' · Wimpy cron: ' + measured.cron.join(', ') + ')');
 

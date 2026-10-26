@@ -11,7 +11,7 @@ import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWa
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, reportsRequest, listDigestMonths, overview, overviewRequest, cmCoaching, coachingOthers, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn, helpConfirm, helpPulse } from './help.mjs';
 import { campaignMoves, setCampaignMove } from './moves.mjs';
-import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness, kvKeyValid, isFullScope } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
+import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness, kvKeyValid, isFullScope, canUpload } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { draftsGet, draftsPost } from './drafts.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, rosterTargets, listTargetGroups, listTargetGroupValues } from './campaign.mjs';
@@ -540,6 +540,8 @@ function portalOnly(user) {
   const apps = Array.isArray(user.apps) ? user.apps : [];
   return !apps.some((a) => MANAGEMENT_APPS.has(String(a)));
 }
+/* the answer every load / replace / delete route gives a session without the Upload Station (rules.mjs canUpload) */
+const NO_UPLOAD = () => json({ error: 'Not permitted — this needs Upload Station access.' }, 403);
 
 export default {
   /* THE SAFETY NET (Nick, 2026-08-28: "make this never happen again"). Every ten minutes,
@@ -1443,6 +1445,7 @@ export default {
            removing logins, and re-pointing a leader's team. The role decides here, not the page. */
         if (user && PORTAL_ROLES.has(user.role))
           return json({ error: 'Publishing the Agent List is a management action — it belongs to the Upload Station accounts.' }, 403);
+        if (!canUpload(user)) return NO_UPLOAD();   // and only the accounts that hold the Upload Station (stability plan, 2026-10-26)
         let body = null;
         try { body = await req.json(); } catch { return json({ error: 'json body required' }, 400); }
         /* THE FILE IS THE RECORD (Nick, 2026-09-03: "so this never happens again"). The
@@ -1603,7 +1606,7 @@ export default {
          finishes without `complete` sits under pending-uploads/, which nothing reads: no half-file is ever "archived".
          POST /api/upload-archive below stays for tabs on an older build (one release). */
       if (path === '/api/upload-archive/start' && req.method === 'POST') {
-        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        if (!canUpload(user)) return NO_UPLOAD();
         const b = await req.json().catch(() => ({}));
         const name = archiveName(b.name), hash = String(b.hash || ''), size = Number(b.size || 0);
         if (!name || !/^[0-9a-f]{8,64}$/i.test(hash)) return json({ error: 'name and hash required' }, 400);
@@ -1627,7 +1630,7 @@ export default {
         return json({ upload_url: `${env.SUPABASE_URL}/storage/v1${sj.url}`, path: pendingPath, expires_in: 7200 });
       }
       if (path === '/api/upload-archive/complete' && req.method === 'POST') {
-        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        if (!canUpload(user)) return NO_UPLOAD();
         const b = await req.json().catch(() => ({}));
         const name = archiveName(b.name), hash = String(b.hash || ''), size = Number(b.size || 0), pend = String(b.path || '');
         if (!name || !/^[0-9a-f]{8,64}$/i.test(hash) || !(size > 0)) return json({ error: 'name, hash and size required' }, 400);
@@ -1661,6 +1664,7 @@ export default {
         return json({ ok: true, archived: 'raw/' + dest });
       }
       if (path === '/api/upload-archive' && req.method === 'POST') {
+        if (!canUpload(user)) return NO_UPLOAD();
         const name = archiveName(url.searchParams.get('name'));
         const hash = String(url.searchParams.get('hash') || '');
         if (!name || !/^[0-9a-f]{8,64}$/i.test(hash)) return json({ error: 'name and hash required' }, 400);
@@ -1689,7 +1693,7 @@ export default {
          The runner (tools/rake.mjs) does everything after that. The service key never leaves here:
          the signed URL is the only thing the browser holds, it names one path, and it expires. */
       if (path === '/api/upload/large/start' && req.method === 'POST') {
-        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        if (!canUpload(user)) return NO_UPLOAD();
         const b = await req.json().catch(() => ({}));
         const name = String(b.name || '').replace(/[^\w .()\-\[\]]/g, '_').slice(0, 120);
         const size = Number(b.size || 0);
@@ -1707,7 +1711,7 @@ export default {
         return json({ id, upload_url: `${env.SUPABASE_URL}/storage/v1${sj.url}`, token: sj.token, path: objectPath, expires_in: 7200 });
       }
       if (path === '/api/upload/large/complete' && req.method === 'POST') {
-        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        if (!canUpload(user)) return NO_UPLOAD();
         const b = await req.json().catch(() => ({}));
         const id = String(b.id || ''); if (!/^[0-9a-f-]{36}$/.test(id)) return json({ error: 'id required' }, 400);
         const rows = await DB.select(`upload_files?id=eq.${id}&select=id,storage_path,status,uploaded_by`);
@@ -1726,7 +1730,7 @@ export default {
          functions; this route is a pass-through — the request body IS the function's parameters, and
          it is streamed to PostgREST untouched, so a 10 MB slice of rows costs this Worker no CPU. */
       if (path === '/api/rake/page' && req.method === 'POST') {
-        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        if (!canUpload(user)) return NO_UPLOAD();
         const fn = String(url.searchParams.get('fn') || '');
         if (!/^(begin|stage|merge|finish|abandon)$/.test(fn)) return json({ error: 'unknown step' }, 400);
         const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/rake_page_${fn}`, {
@@ -1742,7 +1746,7 @@ export default {
          management tab can now pull the object through a short-lived signed URL and run the same
          in-page loader — nothing waits for a runner. */
       if (path === '/api/upload/large/retry' && req.method === 'POST') {
-        if (portalOnly(user)) return json({ error: 'Not permitted.' }, 403);
+        if (!canUpload(user)) return NO_UPLOAD();
         const b = await req.json().catch(() => ({}));
         const id = String(b.id || ''); if (!/^[0-9a-f-]{36}$/.test(id)) return json({ error: 'id required' }, 400);
         const rows = await DB.select(`upload_files?id=eq.${id}&select=id,file_name,storage_bucket,storage_path,status,bytes,validated_at,received_at`);
@@ -2290,6 +2294,7 @@ export default {
         const qk = url.searchParams.get('key');
         if (!kvKeyValid(qk)) return json({ error: qk ? 'invalid key: a plain name only (letters, digits . _ : -)' : 'key required' }, 400);   // W1: never a path
         if (!kvWriteAllowed(qk, user)) return json({ error: 'Not permitted.' }, 403);   // same fence as the POST (review M1)
+        if (!canUpload(user)) return NO_UPLOAD();   // deleting a stored file is the Upload Station's job (stability plan, 2026-10-26)
         await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/${qk}`, {
           method: 'DELETE', headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY },
         }).catch(() => {});                                    // ignore if there was no Storage object
@@ -2342,6 +2347,7 @@ export default {
       // removed separately via DELETE /api/kv). The raw monthly archive in the
       // bi-reports bucket is kept as the audit trail (R-FMT-06 traceability).
       if (path === '/api/bi' && req.method === 'DELETE') {
+        if (!canUpload(user)) return NO_UPLOAD();   // wipes EVERY money row — it had no check at all (stability plan, 2026-10-26)
         // rows first (FK), then the batch records — so a later re-upload of the same
         // file is allowed again (its file_hash is no longer on record).
         await DB.del('bi_active_cases?id=gt.0');
@@ -2349,6 +2355,7 @@ export default {
         return json({ ok: true });
       }
       if (path === '/api/bi' && req.method === 'POST') {
+        if (!canUpload(user)) return NO_UPLOAD();
         const b = await req.json();                       // {batch, rows:[ table-shaped ]}
         const rows = Array.isArray(b.rows) ? b.rows : [];
         if (!rows.length) return json({ error: 'rows required' }, 400);
@@ -2447,6 +2454,7 @@ export default {
       // Immutable archive of the exact monthly export, so any figure can be
       // re-derived from the bytes that produced it (R-FMT-06 traceability).
       if (path === '/api/bi/raw' && req.method === 'POST') {
+        if (!canUpload(user)) return NO_UPLOAD();
         const name = (url.searchParams.get('name') || '').replace(/[^A-Za-z0-9._-]/g, '_');
         if (!name) return json({ error: 'name required' }, 400);
         const objPath = 'bi-reports/' + name;
