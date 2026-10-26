@@ -28,8 +28,18 @@ const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPA
 const COLS = ['snapshot_date', 'case_number', 'case_id', 'subject', 'opened_at', 'age_hours', 'account_number', 'account_name', 'case_owner', 'employee_code', 'owner_kind', 'status', 'record_type', 'batch_id', 'loaded_at'];
 const csvCell = (v) => { if (v == null) return ''; const s = v instanceof Date ? v.toISOString() : String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
 
-const c = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false }, statement_timeout: 0 });
-await c.connect();
+/* A FRESH CONNECTION PER DAY (2026-10-26). The pooler closed a long-lived connection between days ("Connection terminated
+   unexpectedly") and the role's default timeout (2 min) stopped the first run on the third day — so every day, and every
+   VACUUM, gets its own connection with its own session timeout (set on the session: the pooler drops the client option),
+   and a dropped connection is a reported error, never an unhandled crash. Each day is still one transaction. */
+async function open() {
+  const cl = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false } });
+  cl.on('error', (e) => console.error('  (connection error: ' + String(e && e.message || e).slice(0, 120) + ')'));
+  await cl.connect();
+  await cl.query(`set statement_timeout to '60min'`);
+  return cl;
+}
+let c = await open();
 
 /* the snapshots that still hold queue rows, per day */
 const days = (await c.query(`
@@ -62,8 +72,9 @@ if (!APPLY) { console.log('\nDRY RUN — nothing written. Re-run with --apply on
 /* ---------------------------------------------------------------- apply, one day at a time */
 for (const d of days) {
   const day = d.d;
+  await c.end().catch(() => {}); c = await open();
   /* 2 · archive first, outside the transaction: a file that cannot be written or read back stops the run */
-  const rows = (await c.query(`select ${COLS.join(',')} from sf_open_cases where snapshot_date = $1 and owner_kind = 'queue' order by case_number`, [day])).rows;
+  const rows = (await c.query(`select ${COLS.join(',')} from sf_open_cases where snapshot_date = $1 and owner_kind = 'queue'`, [day])).rows;
   const csv = COLS.join(',') + '\n' + rows.map((r) => COLS.map((k) => csvCell(r[k])).join(',')).join('\n') + '\n';
   const gz = zlib.gzipSync(Buffer.from(csv, 'utf8'));
   const obj = `archive/sf_open_cases/${day.slice(0, 4)}/${day.slice(5, 7)}/${day}.queue.csv.gz`;
@@ -87,13 +98,15 @@ for (const d of days) {
 }
 /* the space comes back only when each trimmed partition is rewritten */
 for (const p of touched) {
+  await c.end().catch(() => {}); c = await open();
   const before = Number((await c.query('select pg_total_relation_size($1::regclass) b', [p])).rows[0].b);
   await c.query(`vacuum (full, analyze) ${p}`);
   const after = Number((await c.query('select pg_total_relation_size($1::regclass) b', [p])).rows[0].b);
   console.log('  ' + p + ': ' + MB(before) + ' → ' + MB(after));
 }
+await c.end().catch(() => {}); c = await open();
 const book = (await c.query('select lm_open_book_refresh() j')).rows[0].j;
 const db = (await c.query('select pg_size_pretty(pg_database_size(current_database())) s')).rows[0].s;
-console.log('\nlead book: ' + JSON.stringify({ snapshot_date: book.snapshot_date, total: book.total, agent_rows: book.agent_rows, queue_rows: book.queue_rows }));
+console.log('\nlead book: ' + JSON.stringify(book));
 console.log('database now: ' + db);
 await c.end();
