@@ -1901,7 +1901,7 @@ function adoptUserView(){
     if(typeof renderAll==='function')renderAll();
   }catch(e){}
 }
-document.addEventListener('cbx-authed',function(){ setTimeout(adoptUserView,0) });
+document.addEventListener('cbx-authed',function(){ setTimeout(function(){ adoptUserView(); if(!tabAllowed(S.ui.tab)) renderPage(); },0) });
 
 /* ================= org history — historical attribution ================= *
    THE RULE: an agent's CURRENT team leader must never rewrite the team leader attached to
@@ -6660,8 +6660,17 @@ function filteredAgents(){
 
 /* ================= pages ================= */
 const PAGES={};
+/* A HIDDEN TAB IS A CLOSED TAB (Nick, 2026-10-26: "remove the access to adjustments for ashton"). auth-gate only hides
+   the nav item; the page itself still opened from a saved view (S.ui.tab is per person) or a go() call. A page this
+   account is not granted (app_users.tabs.vas) never renders — they land on their first granted page instead. Before
+   sign-in resolves there is no user and nothing is decided here: the gate's overlay covers the page. */
+function tabAllowed(id){
+  const u=window.CBX_USER; if(!u||u.role==='admin') return true;
+  const t=(u.tabs||{}).vas||[]; return t.includes('*')||t.includes(id);
+}
 function renderPage(){
   const el=$('#view');
+  if(!tabAllowed(S.ui.tab)){ S.ui.tab=NAV.flatMap(g=>g.items.map(i=>i[0])).find(tabAllowed)||'dashboard'; renderSide(); }
   const fn=PAGES[S.ui.tab]||PAGES.dashboard;
   /* the header's report filters stand down on the Upload Station (see header.top.filters-off) */
   const tb=$('#topbar'); if(tb) tb.classList.toggle('filters-off',S.ui.tab==='data');
