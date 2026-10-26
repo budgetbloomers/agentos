@@ -52,6 +52,7 @@ const cellFor = (cb, d) => {   // captured to Fri 23 Oct; one leave row filed ah
   const wd = new Date(Date.UTC(2026, 9, d)).getUTCDay();
   if (cb === 'CB9907') return '';
   if (cb === 'CB9902' && d === 28) return 'AL';
+  if (cb === 'CB9903' && d === 26) return 'AL';   // filed ahead ON the upload day, like the real 26 Oct file
   if (d > 23) return '';
   if (wd === 6) return cb === 'CB9901' ? 'P' : '';
   if (cb === 'CB9903' && d === 7) return 'SL';
@@ -70,7 +71,8 @@ const supportCells = Object.keys(expected).length - agentKeys.length;
 
 /* ------------------------------------------------------------------ A. one block ---- */
 console.log('\nA · ONE WIDE-REGISTER BLOCK, IDENTICAL IN PULSE AND OPS');
-const block = (t) => { const a = t.indexOf('/* WIDE-REGISTER:BEGIN'), e = t.indexOf('/* WIDE-REGISTER:END */'); return a >= 0 && e > a ? t.slice(a, e) : null; };
+/* line endings are not code: a git checkout on Windows writes CRLF into one copy and not the other */
+const block = (t) => { const a = t.indexOf('/* WIDE-REGISTER:BEGIN'), e = t.indexOf('/* WIDE-REGISTER:END */'); return a >= 0 && e > a ? t.slice(a, e).replace(/\r\n/g, '\n') : null; };
 const P_SRC = fs.readFileSync(PULSE_HTML, 'utf8'), O_SRC = fs.readFileSync(OPS_HTML, 'utf8');
 const bP = block(P_SRC), bO = block(O_SRC);
 ok('PULSE carries the block', !!bP);
@@ -184,6 +186,34 @@ try {
   ok('Ops carries the derived Employee Type (Call Agent / Support Staff)', O.rows.every((r) => r.t === (expected[r.k].kind === 'agent' ? 'Call Agent' : 'Support Staff')));
   ok('Ops refuses a mis-named month with the reason', !!O.badErr && /November 2026/.test(O.badErr), O.badErr);
   ok('no page errors in Ops', oerrs.length === 0, oerrs.join(' | '));
+
+  /* ------------------------------------------------------------------ E. today is never a gap ---- */
+  /* 26 Oct 2026, Monday morning: the register complete through Friday 23rd read "HR has not captured 2026-10-26 yet"
+     in red. A day HR can be asked for is a day that has ended; the same file one day later IS short of Monday. */
+  console.log('\nE · TODAY IS NEVER A GAP — ONLY A DAY THAT HAS ENDED');
+  const MON = new Date('2026-10-26T08:00:00+02:00'), TUE = new Date('2026-10-27T08:00:00+02:00');
+  const pulseWarn = async (when) => { const pg = await b.newPage(); await pg.clock.setFixedTime(when);
+    await pg.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    await pg.goto('http://127.0.0.1:8286/index.html', { waitUntil: 'domcontentloaded' });
+    await pg.waitForFunction(() => window.__mtd && window.__mtd.state(), null, { timeout: 30000 });
+    const r = await pg.evaluate(async ({ TEXT, NAME }) => { const S = window.__mtd.state(); window.__cloudPush = function () {}; S.att = {}; S.files = [];
+      await window.__mtd.ingest(NAME, TEXT, 'attendance', 'h-clock'); const e = S.files.find((f) => f.name === NAME) || {}; return { warn: e.warn || null, sev: e.warnSev || null }; }, { TEXT, NAME });
+    await pg.close(); return r; };
+  const opsNote = async (when) => { const pg = await b.newPage(); await pg.clock.setFixedTime(when);
+    await pg.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => { const u = r.request().url();
+      if (/cdnjs\.cloudflare\.com\/ajax\/libs\/xlsx\//.test(u)) return r.fulfill({ path: SIDE['/xlsx.full.min.js'], contentType: 'text/javascript' });
+      if (/cdnjs\.cloudflare\.com\/ajax\/libs\/PapaParse\//.test(u)) return r.continue(); return r.abort(); });
+    await pg.goto('http://127.0.0.1:8287/', { waitUntil: 'domcontentloaded' });
+    await pg.waitForFunction(() => typeof readUpload === 'function' && typeof applyLoad === 'function' && typeof state === 'object', null, { timeout: 30000 });
+    const r = await pg.evaluate(async ({ TEXT, NAME }) => { state.facts.ATTENDANCE = []; state.batches = []; bumpDataVer();
+      const f = new File([TEXT], NAME, { type: 'text/csv' }); const res = applyLoad('ATTENDANCE', f, await readUpload(f, 'ATTENDANCE')); return res.batch.register_note || null; }, { TEXT, NAME });
+    await pg.close(); return r; };
+  const pMon = await pulseWarn(MON), pTue = await pulseWarn(TUE);
+  ok('PULSE, Monday 08:00: a register complete through Friday raises no warning (the filed-ahead Monday row is not a gap)', !pMon.warn, J(pMon));
+  ok('PULSE, Tuesday 08:00: the same file is short of Monday — said, naming 2026-10-26', !!pTue.warn && /HR has not captured 2026-10-26/.test(pTue.warn), J(pTue));
+  const oMon = await opsNote(MON), oTue = await opsNote(TUE);
+  ok('Ops, Monday 08:00: no register note', !oMon, oMon);
+  ok('Ops, Tuesday 08:00: the note names the register end (2026-10-23) and Monday', !!oTue && /stops at 2026-10-23/.test(oTue) && /2026-10-26/.test(oTue), oTue);
 } finally { await b.close(); sPulse.close(); sOps.close(); }
 
 console.log(`\n${pass} passed, ${fail} failed`);

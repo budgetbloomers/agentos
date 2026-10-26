@@ -2378,7 +2378,9 @@ function attUploadReport(byDate,name,rows){
   let regEnd=null; for(let i=days.length-1;i>=0;i--) if(attDayIsRegister(byDate[days[i]])){ regEnd=days[i]; break; }
   const rowEnd=days.length?days[days.length-1]:null;
   const named=(String(name||'').match(/\d{4}-\d{2}-\d{2}/g)||[]).pop()||null;
-  let bound=named||rowEnd; const today=dkey(new Date()); if(bound&&bound>today) bound=today;
+  /* a day HR can be asked for is a day that has ENDED (2026-10-26): the monthly register uploaded on Monday morning read
+     "HR has not captured 2026-10-26 yet" in red, while the register was complete through Friday — today is never a gap */
+  let bound=named||rowEnd; const lastClosed=addDays(dkey(new Date()),-1); if(bound&&bound>lastClosed) bound=lastClosed;
   const gap=[]; let gapRows=0;
   if(regEnd&&bound&&bound>regEnd)
     for(let d=addDays(regEnd,1); d<=bound; d=addDays(d,1)){

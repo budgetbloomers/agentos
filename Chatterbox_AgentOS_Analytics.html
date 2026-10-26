@@ -1528,10 +1528,15 @@ function attRegisterNote(file,loaded){
   const reg=attRegisterDays(loaded),regEnd=reg.length?reg[reg.length-1]:null;
   const rowEnd=loaded.reduce((m,r)=>r._d&&r._d>m?r._d:m,'');
   let bound=(String(file&&file.name||'').match(/\d{4}-\d{2}-\d{2}/g)||[]).pop()||rowEnd;
-  const today=isoDay(new Date());if(bound&&bound>today)bound=today;
+  /* only a day that has ENDED can be missing, and only a weekday (2026-10-26: the monthly register uploaded on Monday
+     morning was told Monday itself was missing — the register was complete through Friday) */
+  const yday=isoDay(new Date(Date.now()-864e5));if(bound&&bound>yday)bound=yday;
   if(!loaded.length)return '';
   if(!regEnd)return '⚠ no day in this file is a register day (nobody marked present on any day)';
   if(!bound||bound<=regEnd)return '';
+  let workday=false;
+  for(let t=Date.parse(regEnd+'T00:00:00Z')+864e5;t<=Date.parse(bound+'T00:00:00Z');t+=864e5){const wd=new Date(t).getUTCDay();if(wd&&wd!==6){workday=true;break}}
+  if(!workday)return '';
   const after=loaded.filter(r=>r._d&&r._d>regEnd&&r._d<=bound).length;
   return '⚠ the register stops at '+regEnd+' although the file runs to '+bound+': its '+after.toLocaleString()+' row(s) after '+regEnd
     +' are leave or absence filed ahead (nobody marked present), so HR has not captured those days yet — Workforce weeks anchor on '+regEnd;
