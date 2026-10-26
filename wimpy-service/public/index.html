@@ -285,10 +285,20 @@ function wTotalCents(){ return WCART.reduce(function(n,l){ return n+wLineCents(l
 function wimpyOpenNow(){ return !!(WMENU&&WMENU.window&&WMENU.window.open); }
 var WWIN_LAST=null;
 setInterval(function(){
-  var d=new Date(Date.now()+2*3600000), mins=d.getUTCHours()*60+d.getUTCMinutes(), open=d.getUTCDay()>=1&&d.getUTCDay()<=5&&mins>=420&&mins<630;   // mirrors WINDOW in src/wimpy.mjs (spec 020) — only to know WHEN to re-ask; the server decides
+  /* the window's minutes come from the service with the menu (window.from_min / to_min) — never typed in here
+     (stability plan, 2026-10-26); this clock only knows WHEN to re-ask, the server decides */
+  var w=WMENU&&WMENU.window; if(!w||typeof w.from_min!=='number'||typeof w.to_min!=='number') return;
+  var d=new Date(Date.now()+2*3600000), mins=d.getUTCHours()*60+d.getUTCMinutes(), open=d.getUTCDay()>=1&&d.getUTCDay()<=5&&mins>=w.from_min&&mins<w.to_min;
   if(WWIN_LAST!==null&&open!==WWIN_LAST&&U) wLoadMenu();
   WWIN_LAST=open;
 },30000);
+/* the sign-in screen's hours, from /api/health (the same WINDOW constant) */
+var WHOURS='';
+function wHoursText(){ return WHOURS?('Orders '+WHOURS+'.'):'Orders on weekday mornings.'; }
+fetch('/api/health').then(function(r){return r.json();}).then(function(j){
+  var w=j&&j.window; if(!w||!w.hours) return;
+  WHOURS=w.hours+(w.days?', '+w.days:''); var el=$('wpHours'); if(el) el.textContent=wHoursText();
+}).catch(function(){});
 
 /* ---------- sign-in: CB number + the person's own password (Spec Kit 009) ---------- */
 /* keepCb: after a refusal the CB number stays typed and only the password is asked again */
@@ -305,7 +315,7 @@ function loginScreen(msg, bad, keepCb){
     +'<input class="inp" id="pw" name="pw" type="password" autocomplete="current-password" placeholder="Your password"'+(keepCb?' autofocus':'')+'>'
     +'<p class="hint">Your Wimpy password — the start password your team leader gave you, until you change it inside the app. It is not your Agent Analytics password.</p>'
     +'<button class="btn primary wide" id="go" type="submit" style="margin-top:14px">Let’s eat</button>'
-    +'<p class="foot">Orders 07:00–10:30, Monday to Friday. Forgotten your password? Ask your team leader or manager to reset it.</p>'
+    +'<p class="foot"><span id="wpHours">'+esc(wHoursText())+'</span> Forgotten your password? Ask your team leader or manager to reset it.</p>'
     +'</form></div></div>';
   /* autofocus is ignored on markup put in by innerHTML once the page has focused something — focus by hand, so a
      second try after a refusal starts in the password box */

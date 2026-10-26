@@ -30,7 +30,7 @@
 import fs from 'node:fs';
 import { db } from './db.mjs';
 import { session, signinWimpy, logout, changeWimpyPassword } from './auth.mjs';
-import { wimpyMenu, submitWimpyOrder, WIMPY_HISTORY_SINCE } from './wimpy.mjs';
+import { wimpyMenu, submitWimpyOrder, WIMPY_HISTORY_SINCE, windowInfo } from './wimpy.mjs';
 import { retryDueOrders, listMyOrders, dbWhy, hlConfigured } from './wimpy-hl.mjs';
 import { SECURITY_HEADERS } from './headers.mjs';
 import { clientIp, SOCKET_IP_HEADER } from './net.mjs';
@@ -76,7 +76,8 @@ export async function handle(req, env, ctx) {
   if ((req.method === 'GET' || req.method === 'HEAD') && (path === '/' || path === '/index.html'))
     return new Response(req.method === 'HEAD' ? null : page(), { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', ...SECURITY_HEADERS } });
   if (path === '/api/health') {
-    return json({ ok: true, service: 'wimpy', version: VERSION, db_configured: dbConfigured(env), hl_configured: hlConfigured(env), cron_configured: !!(env && env.CRON_SECRET) });
+    /* window: the ordering hours for the sign-in screen, from the one WINDOW constant (stability plan, 2026-10-26) */
+    return json({ ok: true, service: 'wimpy', version: VERSION, db_configured: dbConfigured(env), hl_configured: hlConfigured(env), cron_configured: !!(env && env.CRON_SECRET), window: windowInfo() });
   }
   if (!path.startsWith('/api/')) return json({ error: 'Not found.' }, 404);   // the page itself is the adapter's business
   if (!dbConfigured(env)) return json({ error: NOT_CONFIGURED }, 503);

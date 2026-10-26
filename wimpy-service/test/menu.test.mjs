@@ -350,6 +350,18 @@ head('N · THE WINDOW: 07:00–10:30 SAST, MONDAY TO FRIDAY (Nick, 2026-10-22)')
   const m = wimpyMenu(inWindow(2));
   ok(m.window && m.window.open === true && m.window.hours === '07:00–10:30', 'the menu payload carries the window, so the page never guesses from its own clock');
   ok(wimpyMenu(outWindow(2)).window.open === false, '...and says closed at 11:00');
+  /* ONE SOURCE FOR THE WINDOW (stability plan, 2026-10-26): the page reads the minutes and the hours from the service */
+  {
+    const svc = await import(pathToFileURL(path.resolve(HERE, '..', 'src', 'wimpy.mjs')).href);
+    const wi = svc.windowInfo();
+    ok(wi.from_min === WINDOW.fromHour * 60 + WINDOW.fromMinute && wi.to_min === WINDOW.toHour * 60 + WINDOW.toMinute && wi.hours === WINDOW.hours,
+      'windowInfo() is built from WINDOW alone', JSON.stringify(wi));
+    ok(m.window.from_min === wi.from_min && m.window.to_min === wi.to_min, 'the menu payload carries the minutes the page re-asks on');
+    const page = (await import('node:fs')).readFileSync(PAGE, 'utf8');
+    const script = page.slice(page.indexOf('<script'));
+    ok(!/\b(420|630|600)\b/.test(script.replace(/max-width:\s*\d+px/g, '')) && !/Orders \d\d:\d\d/.test(script),
+      'the page holds no window of its own — no minute literals, no typed-in hours', (script.match(/\b(420|630|600)\b|Orders \d\d:\d\d/) || [])[0]);
+  }
   const realFetch = globalThis.fetch;
   let reached = false;
   globalThis.fetch = async () => { reached = true; return { ok: true, text: async () => '' }; };

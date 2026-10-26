@@ -274,6 +274,12 @@ export function todaysBigOne(now = Date.now()) {
    refuses outside it. SAST is UTC+2, no daylight saving. */
 export const WINDOW = { fromHour: 7, fromMinute: 0, toHour: 10, toMinute: 30, hours: '07:00–10:30', days: 'Monday to Friday' };
 const WINDOW_FROM = WINDOW.fromHour * 60 + WINDOW.fromMinute, WINDOW_TO = WINDOW.toHour * 60 + WINDOW.toMinute;   // 420, 630
+/* THE WINDOW HAS ONE SOURCE (stability plan, 2026-10-26). The hours changed four times in a week and every change touched
+   this constant, the page's own clock (420/630 typed in), its sign-in footer, three tests, a live check and two SOPs.
+   The page now reads all of it from here: the menu carries it, and /api/health carries it for the sign-in screen. */
+export function windowInfo() {
+  return { hours: WINDOW.hours, days: WINDOW.days, from_min: WINDOW_FROM, to_min: WINDOW_TO };
+}
 export function wimpyWindowOpen(now = Date.now()) {
   const d = new Date(now + 2 * 3600000);
   const dow = d.getUTCDay(), m = d.getUTCHours() * 60 + d.getUTCMinutes();
@@ -299,7 +305,7 @@ export function wimpyMenu(now = Date.now()) {
     dayName: DAY_NAMES[d],
     /* the window travels with the menu so a page that fetched it can say when
        ordering opens rather than guessing from its own clock */
-    window: { open: wimpyWindowOpen(now), hours: WINDOW.hours, days: WINDOW.days },
+    window: { open: wimpyWindowOpen(now), ...windowInfo() },
     categories: CATEGORIES,
     items: [...ITEMS, ...(hero ? [BIG_ONES[d]] : [])].map(served),
     bigOne: hero ? { ...served(hero), dayName: DAY_NAMES[d] } : null,
