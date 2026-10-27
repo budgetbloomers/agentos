@@ -40,6 +40,8 @@
   "_bandsNote": "Deliberately NOT the agent bands in specs/composite_rules.json (Elite 90 / Strong 80 / On track 70 / Building 60 / Needs support). Those grade a person against a tenure target; these grade a department against plan, and the wording an executive acts on is different. Both sets are live-editable and neither may be copied into the other.",
   "coverageFloor": 0.5,
   "_coverageFloorNote": "A section measured on less than half its weight is reported with its score AND a 'thin evidence' flag, and the score is shown as INDICATIVE — greyed, with the share actually measured beside it — because a figure standing on one factor out of eight is not the same kind of number as one standing on six. It still counts in the business score at its full weight. An earlier draft of this note promised the section would contribute 'at its measured coverage only'; that was never built, and on 2026-10-27 it was deliberately dropped rather than implemented — see _changes.",
+  "businessFloor": 0.5,
+  "_businessFloorNote": "AN ABSENCE IS NOT A NOUGHT AT THE TOP OF THE PAGE EITHER. The overall business score is reported only when the sections that could be scored carry at least this share of the declared weight. Below it the masthead reads 'Not measured' and says what share was scorable, because a number computed over a tenth of the business is not a statement about the business. Born 2026-10-27: a window with no data in it yet scored 0/100 'Critical' off one section measured on 10% of itself — the exact failure the factor-level and section-level rules already prevent, arriving one level up.",
   "countSimulated": true,
   "_countSimulatedNote": "TRUE for this first framework build only, so every section produces a number and the shape can be reviewed. Set FALSE once real feeds land and the overall score must be defensible — the generator then scores only 'actual' and 'manual' readings and reports the rest as coverage gaps.",
   "scales": {
@@ -1744,6 +1746,14 @@
       "from": "the note promised a thin section would contribute to the overall at its measured coverage only",
       "to": "a thin section is shown as indicative and still counts at full weight",
       "why": "Measured on real data only, LRC scores 0 on one factor of eight — zero of thirteen registered systems at G4. Weighting that section down by its 10% coverage would have lifted the business score from 74.3 to about 86 and quietly buried the single worst measured number in the report. A thin section is a reason to distrust the FIGURE, never a reason to discount the FINDING. The flag and the greying say so; the arithmetic does not move."
+    },
+    {
+      "date": "2026-10-27",
+      "by": "framework",
+      "key": "businessFloor",
+      "from": null,
+      "to": 0.5,
+      "why": "Setting a new reporting window (25 Sep – 26 Oct) produced a page reading OVERALL 0/100 Critical, because the only section carrying a score was LRC — measured on one factor of eight, and that factor a genuine zero. The arithmetic was right and the headline was a lie. The overall is now withheld below half the declared weight and the page says how much could be scored."
     }
   ],
   "_bandScaleNote": "A count whose target is ZERO cannot be scored as value ÷ target — one incident would read 0 and two would read 0, and the report could not tell a wobble from a crisis. Those factors carry step BANDS in this file instead, first match wins, listed high to low: the rule book says what one critical fail is worth and what eight are worth, and the generator only looks it up.",

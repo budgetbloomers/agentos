@@ -1,0 +1,422 @@
+{
+  "_README": "THE WEEK'S READINGS — nothing here is a score. Scores are computed by tools/build-exec-report.mjs from specs/exec_scorecard_rules.json. Every reading carries a basis: 'actual' (an engine computed it, and the source line says from which upload and to which date), 'manual' (a named person supplied it), 'simulated' (a placeholder so the framework can be reviewed before the feed exists — badged and shaded on the report) or 'absent' (no feed at all: the factor leaves the denominator and the section renormalises). A basis describes the SCORE: a real value measured against a placeholder target is a simulated score.",
+  "_actuals": "NOTHING IN THIS FILE IS A FIGURE YET. The window is 25 September – 26 October 2026, a CROSS-MONTH range, and the Ops engine's digest (kv:nba-digest) is published for a single calendar month — tools/nba-republish.mjs refuses any other window by design. So this period cannot be filled from the digest: it needs a date-ranged read of the lake (bi_active_cases on contract_create_date, attendance, qa_evaluations, vici_calls, sf_inactive), or an Ops session with its period bar set to this range. `node tools/exec-pull.mjs <dir> --window 2026-09-25..2026-10-26` REFUSES rather than quietly pulling a calendar-month digest and labelling it with this window — which would make every figure on the page a lie about its own period.",
+  "meta": {
+    "periodLabel": "Month to date · 25 September – 26 October 2026",
+    "window": {
+      "from": "2026-09-25",
+      "to": "2026-10-26"
+    },
+    "issued": "Tuesday 27 October 2026",
+    "asAt": "27 October 2026",
+    "audience": "EXCO · The Chatterbox",
+    "roster": "Roster as at the latest Agent List — pending the pull",
+    "headline": "The reporting window is set to 25 September – 26 October 2026 and the figures are not in it yet. This period is a cross-month range, which the Ops engine's digest cannot serve — it publishes one calendar month at a time — so Performance and the rest need a date-ranged read of the lake before this page carries a number. The structure, the weights, the owners and the data contracts are all in place; what is missing is the pull, not the design.",
+    "headlineMeasured": "Nothing has been measured for this window yet. The period is set to 25 September – 26 October 2026, a cross-month range the Ops digest cannot serve, so every factor reads Missing until a date-ranged lake read fills it. The one exception is the system register, which is a standing governance reading rather than a figure about this month — and it still reads zero of thirteen systems live and controlled."
+  },
+  "summary": [
+    "WINDOW SET — 25 September to 26 October 2026. Every weight, owner, threshold and data contract behind this report is in place; no figure is.",
+    "BLOCKED — This is a CROSS-MONTH window. The Ops digest publishes a single calendar month and the republisher refuses anything else, so Performance cannot be pulled the usual way. It needs a date-ranged read of the lake.",
+    "UNCHANGED — Zero of thirteen registered systems are live and controlled, with 27 open actions. That register is dated 2 July and is the only standing reading on this page.",
+    "NEXT — Point the pull at the lake for this window, then the 25 requests in the ask list for everything the business still does not produce."
+  ],
+  "summaryMeasured": [
+    "WINDOW SET — 25 September to 26 October 2026. Every weight, owner, threshold and data contract behind this report is in place; no figure is.",
+    "BLOCKED — This is a CROSS-MONTH window. The Ops digest publishes a single calendar month and the republisher refuses anything else, so Performance cannot be pulled the usual way. It needs a date-ranged read of the lake.",
+    "UNCHANGED — Zero of thirteen registered systems are live and controlled, with 27 open actions. That register is dated 2 July and is the only standing reading on this page.",
+    "NEXT — Point the pull at the lake for this window, then the 25 requests in the ask list for everything the business still does not produce."
+  ],
+  "sections": {
+    "performance": {
+      "commentary": "No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.",
+      "factors": {
+        "gwpVsTarget": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs stats.gwp, stats.target at agent · month to date, 15 min — Leon (P10)"
+        },
+        "salesVsTarget": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs stats.sales, stats.target at agent · month to date, 15 min — Leon (P10)"
+        },
+        "spdVsTarget": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs stats.sales, stats.present, stats.target at agent · month to date, 15 min — Leon (P10)"
+        },
+        "conversion": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs stats.conv, thresholds.convTarget at agent · month to date, 15 min — Ryan (P08)"
+        },
+        "qaMean": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs stats.qa, stats.qaN, thresholds.qaTarget at agent · month to date, 15 min — Stephanie (P12)"
+        },
+        "cancelRate": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs stats.canc at agent · month to date, 15 min — Leon (P10)"
+        },
+        "optIn": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs opt, optPct at agent · month to date, on upload — Leon (P10)"
+        },
+        "ratedOnTrack": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs composite.adj at agent · last 5 confirmed sessions, 15 min — Leon (P10)"
+        }
+      }
+    },
+    "recruitment": {
+      "commentary": "No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.",
+      "factors": {
+        "salesReadyVsPlan": {
+          "basis": "absent",
+          "source": "awaiting the GoHighLevel (LeadConnector API v2) feed. Needs opportunity.pipelineStageId, opportunity.createdAt, opportunity.status… at candidate · weekly, daily — Abigail (P06)"
+        },
+        "pipelineCoverage": {
+          "basis": "absent",
+          "source": "awaiting the GoHighLevel feed. Needs opportunity.pipelineStageId, seatPlan.openSeats at weekly, daily — Abigail (P06)"
+        },
+        "showRate": {
+          "basis": "absent",
+          "source": "awaiting the GoHighLevel feed. Needs appointment.startTime, appointment.appointmentStatus at candidate · weekly, daily — Abigail (P06)"
+        },
+        "timeToFill": {
+          "basis": "absent",
+          "source": "awaiting the GoHighLevel + Agent List feed. Needs requisition.openedAt, agent_list.first_seen at requisition, weekly — Abigail (P06)"
+        },
+        "retention30": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs agent_list.as_of, agent_list.cb, agent_sync_logs.removed_at at cohort · monthly, 10 min — Claudell (P05)"
+        }
+      }
+    },
+    "workforce": {
+      "commentary": "No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.",
+      "factors": {
+        "attendance": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs attendance.date, attendance.cb, attendance.code at agent · day, on upload — Keshree (P13)"
+        },
+        "unplannedAbsence": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs attendance.code at agent · day, on upload — Keshree (P13)"
+        },
+        "seatFill": {
+          "basis": "absent",
+          "source": "awaiting the Capacity plan feed. Needs seats.physical, seats.support, seats.byShift… at site · month, monthly — [INPUT REQUIRED — P18 vacant]"
+        },
+        "attrition": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs agent_sync_logs.cb, agent_sync_logs.removed_at, REASON CODE (missing) at agent · month, on publish — Claudell (P05)"
+        },
+        "disciplineLoad": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs qa_evaluations.offense_number, qa_evaluations.qa_status, qa_evaluations.sales_agent_code at agent · rolling, on upload — Stephanie (P12)"
+        },
+        "shrinkage": {
+          "basis": "absent",
+          "source": "awaiting the HR OS / WFM feed. Needs schedule.plannedHours, actual.loggedHours, offline.reasonCode at agent · day, weekly — Keshree (P13)"
+        }
+      }
+    },
+    "lrc": {
+      "commentary": "No reading for this window yet. The system register is a standing governance reading and carries over; every other factor here is waiting on its feed.",
+      "factors": {
+        "criticalFails": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs qa_evaluations.escalation_decision, qa_evaluations.qa_status at evaluation · rolling, on upload — Jared (P04)"
+        },
+        "r2aShare": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs r2a.tier, r2a.fails, r2a.cfr at agent · month to date, 15 min — Jared (P04)"
+        },
+        "popia": {
+          "basis": "absent",
+          "source": "awaiting the Incident register feed. Needs incident.id, incident.raisedAt, incident.category… at incident, on event — Jared (P04)"
+        },
+        "riskRegister": {
+          "basis": "absent",
+          "source": "awaiting the Risk register feed. Needs risk.id, risk.title, risk.likelihood… at risk, weekly — Jared (P04)"
+        },
+        "systemsControlled": {
+          "value": 0,
+          "target": 100,
+          "basis": "manual",
+          "source": "Canonical system register (Chatterbox Operating System Governance v1.1, 2026-07-02): 13 systems — 10 red, 2 amber, 1 grey, ZERO at G4, 27 open actions. A measured nought, not a missing feed. Re-dated by Jared, it moves"
+        },
+        "contractsCurrent": {
+          "basis": "absent",
+          "source": "awaiting the Legal register feed. Needs contract.party, contract.type, contract.signedAt… at contract, monthly — Jared (P04)"
+        },
+        "auditActions": {
+          "basis": "absent",
+          "source": "awaiting the Blue (actions of record) feed. Needs action.id, action.source (audit/review/council), action.owner… at action, weekly — Ryan (P08)"
+        },
+        "legalMatters": {
+          "basis": "absent",
+          "source": "awaiting the Legal register feed. Needs matter.id, matter.type, matter.openedAt… at matter, weekly — Jared (P04)"
+        }
+      }
+    },
+    "training": {
+      "commentary": "No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.",
+      "factors": {
+        "nestingProductivity": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs campaign, stats.sales, stats.present… at agent · month to date, 15 min — Jojo & Pamela (P15/P16)"
+        },
+        "graduationRate": {
+          "basis": "absent",
+          "source": "awaiting the LMS feed. Needs cohort.id, cohort.startedAt, learner.cb… at cohort, per intake — Jojo & Pamela (P15/P16)"
+        },
+        "timeToFirstSale": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs agent_list.first_seen, bi_active_cases.owner, bi_active_cases.contract_create_date at agent · cohort, daily — Jojo & Pamela (P15/P16)"
+        },
+        "pipelineFill": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs agent_list.campaign = Nesting, plan.intakeSeats at month, weekly — Abigail (P06)"
+        },
+        "certCompliance": {
+          "basis": "absent",
+          "source": "awaiting the LMS feed. Needs learner.cb, course.id, course.required… at agent · course, weekly — Jojo & Pamela (P15/P16)"
+        }
+      }
+    },
+    "it": {
+      "commentary": "No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.",
+      "factors": {
+        "diallerUptime": {
+          "basis": "absent",
+          "source": "awaiting the ViciDial platform feed. Needs uptime.window, uptime.downSeconds, incident.startedAt… at day, daily — Rogen (P14)"
+        },
+        "talkPerAgentDay": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs vici_calls.user, vici_calls.length_in_sec, vici_calls.call_date at agent · day, on upload — Rogen (P14)"
+        },
+        "connectRate": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs vici_calls.status, vici_calls.length_in_sec, vici_calls.user at agent · day, on upload — Rogen (P14)"
+        },
+        "ticketSla": {
+          "basis": "absent",
+          "source": "awaiting the Service desk feed. Needs ticket.id, ticket.raisedAt, ticket.priority… at ticket, daily — Rishae (P11)"
+        },
+        "openP1": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs alert.id, alert.severity, alert.raisedAt at alert · live, 10 min — Nicholas (P02)"
+        }
+      }
+    },
+    "finance": {
+      "commentary": "No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.",
+      "factors": {
+        "revenueVsBudget": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs bi_active_cases.charge_amount, bi_active_cases.contract_create_date, budget.month… at month, monthly — Mekaeel (P03)"
+        },
+        "costPerAgent": {
+          "basis": "absent",
+          "source": "awaiting the Xero / Payscale feed. Needs gl.period, gl.account, gl.costCentre… at month, monthly — Mekaeel (P03)"
+        },
+        "contributionMargin": {
+          "basis": "absent",
+          "source": "awaiting the Xero feed. Needs gl.revenue, gl.directCost, gl.costCentre… at month · campaign, monthly — Mekaeel (P03)"
+        },
+        "payrollRatio": {
+          "basis": "absent",
+          "source": "awaiting the Payscale feed. Needs payrun.period, payrun.gross, payrun.employer_contributions… at month, monthly — Romona (P17)"
+        },
+        "commissionAccuracy": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs commission.projected (live), payrun.commissionPaid (missing) at agent · month, monthly — Romona (P17)"
+        }
+      }
+    },
+    "facilities": {
+      "commentary": "No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.",
+      "factors": {
+        "seatReadiness": {
+          "basis": "absent",
+          "source": "awaiting the Facilities walk-round feed. Needs date, seats.total, seats.usable… at site · day, daily — [INPUT REQUIRED — P18 vacant]"
+        },
+        "powerUptime": {
+          "basis": "absent",
+          "source": "awaiting the Load-shedding schedule + generator log feed. Needs date, outage.startedAt, outage.endedAt… at site · day, daily — [INPUT REQUIRED]"
+        },
+        "connectivity": {
+          "basis": "absent",
+          "source": "awaiting the ISP / line monitoring feed. Needs link.id, link.downStartedAt, link.downEndedAt… at site · day, daily — Rishae (P11)"
+        },
+        "hsIncidents": {
+          "basis": "absent",
+          "source": "awaiting the Incident register feed. Needs incident.id, incident.date, incident.type… at incident, on event — [INPUT REQUIRED]"
+        },
+        "maintenanceSla": {
+          "basis": "absent",
+          "source": "awaiting the Facilities job log feed. Needs job.id, job.raisedAt, job.priority… at job, weekly — [INPUT REQUIRED]"
+        }
+      }
+    },
+    "analytics": {
+      "commentary": "No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.",
+      "factors": {
+        "ticketSla": {
+          "basis": "absent",
+          "source": "awaiting the Blue feed. Needs ticket.id, ticket.board, ticket.raisedAt… at ticket, daily — Ryan (P08)"
+        },
+        "backlog": {
+          "basis": "absent",
+          "source": "awaiting the Blue feed. Needs ticket.status, ticket.board at daily, daily — Ryan (P08)"
+        },
+        "ageing": {
+          "basis": "absent",
+          "source": "awaiting the Blue feed. Needs ticket.raisedAt, ticket.status at daily, daily — Ryan (P08)"
+        },
+        "blockageSla": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs blockage.priority, blockage.raisedAt, blockage.clearedAt… at blockage, live — Leon (P10)"
+        },
+        "dataFreshness": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs source, expected_reach, last_seen… at source · live, 10 min — Nicholas (P02)"
+        },
+        "reportOnTime": {
+          "basis": "absent",
+          "source": "awaiting the Reporting calendar feed. Needs report.id, report.dueAt, report.deliveredAt… at report, weekly — Ryan (P08)"
+        }
+      }
+    },
+    "marketing": {
+      "commentary": "No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.",
+      "factors": {
+        "contentSla": {
+          "basis": "absent",
+          "source": "awaiting the Content calendar feed. Needs content.id, content.pillar, content.briefedAt… at item, weekly — Keshav (P07)"
+        },
+        "leadsDelivered": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs lead.batch_id, lead.source, lead.supplier… at batch · week, on upload — Ryan (P08)"
+        },
+        "leadToSale": {
+          "basis": "absent",
+          "source": "awaiting a date-ranged read of the lake. Needs lead.id, lead.source, lead.supplier… at source · month, daily — Ryan (P08)"
+        },
+        "candidateApps": {
+          "basis": "absent",
+          "source": "awaiting the GoHighLevel feed. Needs contact.source, contact.tags, contact.dateAdded… at campaign · week, daily — Keshav (P07)"
+        },
+        "costPerLead": {
+          "basis": "absent",
+          "source": "awaiting the Ad platforms / supplier invoices feed. Needs spend.channel, spend.period, spend.amount… at channel · month, monthly — Keshav (P07)"
+        }
+      }
+    }
+  },
+  "redIssues": [
+    {
+      "section": "performance",
+      "issue": "A cross-month window cannot be pulled from the digest",
+      "impact": "Performance is the one section that is fully reachable on live data, and it cannot be filled for this period the usual way. Every other section was already waiting on a feed.",
+      "evidence": "kv:nba-digest publishes periodWindow() for a single calendar month; tools/nba-republish.mjs refuses a payload whose window is not one reporting month (line 140).",
+      "owner": "Nicholas Pillay — CTTO (P02)",
+      "action": "Point exec-pull at the lake for an arbitrary window — bi_active_cases on contract_create_date, attendance, qa_evaluations, vici_calls, sf_inactive — instead of the digest.",
+      "due": "Fri 6 Nov",
+      "escalation": "EXCO if the board pack needs this window before it exists"
+    },
+    {
+      "section": "lrc",
+      "issue": "Not one registered system is live and controlled",
+      "impact": "Zero of thirteen systems at G4, 27 open actions. The only standing reading on this page, and it is the worst number in the report.",
+      "evidence": "Canonical system register (Operating System Governance v1.1, 2026-07-02) — now nearly four months old.",
+      "owner": "Jared — Risk & Compliance Executive (P04)",
+      "action": "Re-date the register this month; it is quoted at four months stale every week it is not.",
+      "due": "Fri 6 Nov",
+      "escalation": "EXCO at the November pack"
+    }
+  ],
+  "redIssuesMeasured": [
+    {
+      "section": "performance",
+      "issue": "A cross-month window cannot be pulled from the digest",
+      "impact": "Performance is the one section that is fully reachable on live data, and it cannot be filled for this period the usual way. Every other section was already waiting on a feed.",
+      "evidence": "kv:nba-digest publishes periodWindow() for a single calendar month; tools/nba-republish.mjs refuses a payload whose window is not one reporting month (line 140).",
+      "owner": "Nicholas Pillay — CTTO (P02)",
+      "action": "Point exec-pull at the lake for an arbitrary window — bi_active_cases on contract_create_date, attendance, qa_evaluations, vici_calls, sf_inactive — instead of the digest.",
+      "due": "Fri 6 Nov",
+      "escalation": "EXCO if the board pack needs this window before it exists"
+    },
+    {
+      "section": "lrc",
+      "issue": "Not one registered system is live and controlled",
+      "impact": "Zero of thirteen systems at G4, 27 open actions. The only standing reading on this page, and it is the worst number in the report.",
+      "evidence": "Canonical system register (Operating System Governance v1.1, 2026-07-02) — now nearly four months old.",
+      "owner": "Jared — Risk & Compliance Executive (P04)",
+      "action": "Re-date the register this month; it is quoted at four months stale every week it is not.",
+      "due": "Fri 6 Nov",
+      "escalation": "EXCO at the November pack"
+    }
+  ],
+  "sources": [
+    {
+      "name": "Agent List (roster)",
+      "endsOn": "pending the pull",
+      "state": "stale"
+    },
+    {
+      "name": "BI Active Cases (money)",
+      "endsOn": "pending the pull",
+      "state": "stale"
+    },
+    {
+      "name": "Attendance register",
+      "endsOn": "pending the pull",
+      "state": "stale"
+    },
+    {
+      "name": "ViciDial call report",
+      "endsOn": "pending the pull",
+      "state": "stale"
+    },
+    {
+      "name": "QA evaluations",
+      "endsOn": "pending the pull",
+      "state": "stale"
+    },
+    {
+      "name": "SF Inactive (cancellations)",
+      "endsOn": "pending the pull",
+      "state": "stale"
+    },
+    {
+      "name": "Open Cases (lake)",
+      "endsOn": "pending the pull",
+      "state": "stale"
+    },
+    {
+      "name": "Coaching Hub",
+      "endsOn": "pending the pull",
+      "state": "stale"
+    },
+    {
+      "name": "GHL (recruitment)",
+      "endsOn": "pending the pull",
+      "state": "down"
+    },
+    {
+      "name": "Blue (tickets/actions)",
+      "endsOn": "pending the pull",
+      "state": "down"
+    },
+    {
+      "name": "LMS (training)",
+      "endsOn": "pending the pull",
+      "state": "down"
+    },
+    {
+      "name": "Payscale / Xero (finance)",
+      "endsOn": "pending the pull",
+      "state": "down"
+    }
+  ],
+  "trustNote": "Every source state on this page is pending: the window has been set but not read. The three marked down have never been connected and are the subject of the ask list."
+}

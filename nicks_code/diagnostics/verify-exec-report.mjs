@@ -415,6 +415,47 @@ ok('no placeholder-only figure is quoted back in the measured narrative',
   simOnly.filter(v => narrative.includes(v)).join(','));
 ok('the markdown mirror prints Missing too', moMd.includes('| Missing |') || moMd.includes('**Missing**'));
 
+/* ------------------------------------ 9. the floor at the top of the page --- */
+console.log('\n== an absence is not a nought at the business level either ==');
+const floorPct = (RULES.businessFloor ?? 0) * 100;
+ok('the rule book carries a business-score floor', typeof RULES.businessFloor === 'number' && floorPct > 0);
+
+const mk = (parts) => parts.map(([k, weight, score, rc]) =>
+  ({ k, weight, score, realCoverage: rc, band: bandOf(score, RULES.bands) }));
+const thinBiz = scoreBusiness(mk([['a', 7, 0, 10], ['b', 93, null, 0]]), RULES);
+ok('an overall standing on less than the floor is WITHHELD, not printed',
+  thinBiz.score === null && thinBiz.withheld === true && thinBiz.scoredShare === 7, JSON.stringify(thinBiz));
+ok('the withheld figure is kept on the record rather than lost', thinBiz.wouldBe === 0);
+const okBiz = scoreBusiness(mk([['a', 60, 80, 100], ['b', 40, null, 0]]), RULES);
+ok('an overall above the floor still prints', okBiz.score === 80 && !okBiz.withheld);
+ok('a fully scored business is never withheld',
+  !scoreBusiness(mk([['a', 100, 55, 100]]), RULES).withheld);
+
+const WIN = j(REPO, 'reports', 'exec-weekly', '2026-09-25_2026-10-26');
+if (fs.existsSync(j(WIN, 'data.json'))) {
+  const wm = build(WIN, { write: false, measuredOnly: true });
+  ok('the cross-month window report withholds its overall rather than reading 0/100 Critical',
+    wm.business.score === null && wm.business.withheld, JSON.stringify(wm.business));
+  const wh = fs.readFileSync(j(WIN, 'index-measured.html'), 'utf8');
+  ok('its masthead says Not measured and names the share that could be scored',
+    wh.includes('>Not measured<') && wh.includes(`only ${wm.business.scoredShare}% of the declared weight could be scored`));
+  const wd = JSON.parse(fs.readFileSync(j(WIN, 'data.json'), 'utf8'));
+  ok('a report states the window it covers', !!wd.meta.window?.from && !!wd.meta.window?.to);
+  ok('the page carries that window, so no reader has to ask which fortnight it is',
+    wh.includes(wd.meta.periodLabel.replace(/&/g, '&amp;')));
+}
+
+/* The digest covers one calendar month; a report for any other window must not be
+   filled from it. The refusal is the feature. */
+const pullSrc = fs.readFileSync(j(REPO, 'tools', 'exec-pull.mjs'), 'utf8');
+ok('exec-pull checks the report window against the digest window',
+  /function checkWindow/.test(pullSrc) && /REFUSING — the digest does not cover/.test(pullSrc));
+const cwBody = pullSrc.slice(pullSrc.indexOf('function checkWindow'));
+ok('a window mismatch exits non-zero instead of writing',
+  /process\.exit\(4\)/.test(cwBody.slice(0, cwBody.indexOf('\nasync function main'))));
+ok('the check runs before anything is written',
+  pullSrc.indexOf('checkWindow(digest, wantWin)') < pullSrc.indexOf('writeFileSync(dataPath'));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 failures.forEach(f => console.log('  · ' + f));
 process.exit(fail ? 1 : 0);

@@ -71,6 +71,23 @@ check — it checks colour, not geometry. To look at the paper layout without pr
 `@media print{…}` wrapper into a copy and render it at 718px (A4's text column at 96dpi); that is
 how the KPI grid was caught running off the right edge at five columns, and why it is four.
 
+## Setting the reporting window
+
+A report states the period it covers in `meta.window` (`from`/`to`) and `meta.periodLabel`. The
+window is not decoration: **`exec-pull` refuses to fill a report whose window the digest does not
+cover**, and exits non-zero rather than writing.
+
+That refusal exists because `kv:nba-digest` is published for a SINGLE CALENDAR MONTH — the Ops
+engine publishes `periodWindow()` and `nba-republish` rejects any payload that is not one reporting
+month. Pull it into a report labelled *25 September – 26 October* and every figure on the page
+becomes a lie about its own period: right arithmetic, wrong fortnight, and nothing on the face of it
+to say so.
+
+So a cross-month window is a different SOURCE, not a different flag. It needs a date-ranged read of
+the lake — `bi_active_cases` on `contract_create_date`, `attendance`, `qa_evaluations`, `vici_calls`,
+`sf_inactive` — which is not yet built. Until it is, either set the window to the month the digest
+covers, or accept a report that prints Missing.
+
 ## Starting a new week
 
 ```bash
@@ -143,7 +160,7 @@ like the dashboard's own `SOURCES` entries, so a delivered file becomes an uploa
 translation. **The guard fails if any factor we do not fully have is left without a request**, which
 is what stops a gap sitting in the report for ever wearing a placeholder.
 
-## The four rules this report will not bend
+## The five rules this report will not bend
 
 1. **Scores are computed, never typed.** CLAUDE.md non-negotiable 1. If a figure in the narrative
    disagrees with the table, the narrative is wrong — fix the sentence, never the number.
@@ -155,6 +172,10 @@ is what stops a gap sitting in the report for ever wearing a placeholder.
    in its source line. The masthead states what share of the business score rests on measured
    evidence — currently under a quarter, which is the most important sentence in the report.
 4. **Contribution, never EBITDA**, until management accounts are tied out. The guard enforces it.
+5. **The overall is withheld below `businessFloor`** (50% of the declared weight). A number computed
+   over a tenth of the business is not a statement about the business — the masthead reads *Not
+   measured* and says what share could be scored. Born the day a new window read `0/100 Critical`
+   off one section measured on 10% of itself.
 
 ## What would make this report defensible
 

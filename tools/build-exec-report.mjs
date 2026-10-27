@@ -153,10 +153,20 @@ export function scoreBusiness(sections, rules) {
   const live = sections.filter(s => s.score !== null);
   const w = live.reduce((a, s) => a + s.weight, 0);
   const declared = sections.reduce((a, s) => a + s.weight, 0);
-  const score = w ? round1(live.reduce((a, s) => a + s.score * s.weight, 0) / w) : null;
+  const raw = w ? round1(live.reduce((a, s) => a + s.score * s.weight, 0) / w) : null;
   const realWeight = sections.reduce((a, s) => a + s.weight * (s.realCoverage / 100), 0);
+  /* An absence is not a nought at the top of the page either. A number computed
+     over a tenth of the business is not a statement about the business, so below
+     the floor the overall is WITHHELD rather than printed — `wouldBe` keeps it on
+     the record without putting it in the masthead. */
+  const scoredShare = declared ? round1((w / declared) * 100) : 0;
+  const withheld = raw !== null && scoredShare < (rules.businessFloor ?? 0) * 100;
+  const score = withheld ? null : raw;
   return {
     score,
+    wouldBe: withheld ? raw : null,
+    withheld,
+    scoredShare,
     band: bandOf(score, rules.bands),
     weightScored: w,
     weightDeclared: declared,
@@ -444,6 +454,7 @@ th.bar-h{width:120px}
 .mast-sub{font-size:12.5px;color:#9FB6DA;margin-top:3px}
 .mast-right{margin-left:auto;text-align:right}
 .big-score{font-size:60px;font-weight:900;letter-spacing:-2.6px;line-height:1}
+.big-score.none{font-size:30px;letter-spacing:-1px;color:#8FA8CC}
 .big-score span{font-size:19px;font-weight:800;color:#8FA8CC;letter-spacing:-.4px}
 .big-band{display:inline-block;font-size:12px;font-weight:800;padding:4px 12px;border-radius:999px;margin-top:5px;letter-spacing:.02em}
 .big-band.green{background:rgba(52,211,153,.18);color:#6EE7B7}
@@ -596,15 +607,17 @@ tr.sim:hover td{background:#F9F7EF}
         <div class="mast-sub">${esc(meta.periodLabel)} · issued ${esc(meta.issued)} · ${esc(meta.audience)}</div>
       </div>
       <div class="mast-right">
-        <div class="big-score">${business.score === null ? '—' : business.score}<span>/100</span></div>
-        <div class="big-band ${business.band.rag}">${esc(business.band.label)}</div>
-        <div class="mast-meter">${meter(business.score, business.band.rag)}</div>
+        <div class="big-score${business.score === null ? ' none' : ''}">${business.score === null ? 'Not measured' : business.score}${business.score === null ? '' : '<span>/100</span>'}</div>
+        ${business.score === null ? '' : `<div class="big-band ${business.band.rag}">${esc(business.band.label)}</div>
+        <div class="mast-meter">${meter(business.score, business.band.rag)}</div>`}
       </div>
     </div>
     ${MO ? `<div class="mode-strap">Measured data only — every factor without a real reading prints <b>Missing</b>, and a section with nothing measured carries no score at all. ${sections.filter(s => s.score === null).length} of ${sections.length} sections cannot be scored.</div>` : ''}
     <div class="mast-note">${esc(headline)}</div>
     <div class="mast-bar">
-      <span><b>${business.evidence}%</b> of the business score rests on a measured number</span>
+      ${business.withheld
+        ? `<span><b>Overall withheld</b> — only ${business.scoredShare}% of the declared weight could be scored, below the ${(rules.businessFloor * 100)}% floor${business.wouldBe === null ? '' : ` (on that ${business.scoredShare}% the figure is ${business.wouldBe})`}</span>`
+        : `<span><b>${business.evidence}%</b> of the business score rests on a measured number</span>`}
       <span><b>${sections.filter(s => s.score !== null).length} of ${sections.length}</b> sections carried a score</span>
       <span><b>${esc(meta.roster)}</b></span>
       <span>Rule book <b>${esc(rules.version)}</b></span>
@@ -673,11 +686,13 @@ function renderMD(model) {
   L.push('');
   L.push(`**${meta.periodLabel}** · issued ${meta.issued} · ${meta.audience}`);
   L.push('');
-  L.push(`## Overall business health: ${business.score ?? '—'}/100 — ${business.band.label}`);
+  L.push(business.score === null
+    ? `## Overall business health: NOT MEASURED — only ${business.scoredShare}% of the declared weight could be scored`
+    : `## Overall business health: ${business.score}/100 — ${business.band.label}`);
   L.push('');
   L.push((meta.measuredOnly && meta.headlineMeasured) || meta.headline);
   L.push('');
-  L.push(`${business.evidence}% of the business score rests on a measured number; ${business.weightScored} of ${business.weightDeclared} points of section weight were scored. ${meta.roster}`);
+  L.push(`${business.withheld ? `The overall is withheld below the ${(model.rules.businessFloor * 100)}% floor` + (business.wouldBe === null ? '' : `; on the ${business.scoredShare}% that could be scored the figure is ${business.wouldBe}`) + '. ' : ''}${business.evidence}% of the business score rests on a measured number; ${business.weightScored} of ${business.weightDeclared} points of section weight were scored. ${meta.roster}`);
   L.push('');
   L.push('| Section | Weight | Score | Band | Measured | Owner |');
   L.push('|---|---:|---:|---|---:|---|');
@@ -805,7 +820,10 @@ if (invoked) {
   const m = build(resolve(dir), { measuredOnly });
   const pad = (s, n) => String(s).padEnd(n);
   console.log(`\n  ${m.meta.periodLabel}${measuredOnly ? '   [MEASURED DATA ONLY — placeholders print as Missing]' : ''}`);
-  console.log(`  OVERALL  ${m.business.score}/100  ${m.business.band.label}   (${m.business.evidence}% measured evidence)\n`);
+  console.log(m.business.score === null
+    ? `  OVERALL  NOT MEASURED — only ${m.business.scoredShare}% of the declared weight could be scored` +
+      `${m.business.wouldBe === null ? '' : ` (on that share the figure is ${m.business.wouldBe})`}\n`
+    : `  OVERALL  ${m.business.score}/100  ${m.business.band.label}   (${m.business.evidence}% measured evidence)\n`);
   m.sections.forEach(s => console.log(
     `    ${pad(s.label, 34)} ${String(s.score ?? 'MISSING').padStart(7)}  ${pad(s.band.label, 13)} w${String(s.weight).padStart(3)}%  measured ${String(s.realCoverage).padStart(5)}%${s.thin ? '  THIN' : ''}`));
   const sfx = measuredOnly ? '-measured' : '';

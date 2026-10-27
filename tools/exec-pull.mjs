@@ -46,6 +46,7 @@ const argv = process.argv.slice(2);
 const DIR = argv.find(a => !a.startsWith('--'));
 const flag = n => { const i = argv.indexOf(n); return i < 0 ? null : (argv[i + 1] || ''); };
 const DRY = argv.includes('--dry');
+const WINDOW = flag('--window');   // YYYY-MM-DD..YYYY-MM-DD
 
 /* ------------------------------------------------------------ the digest ---- */
 
@@ -208,12 +209,43 @@ export function breakoutsFrom(digest, rules) {
 const invoked = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
 if (!invoked) { /* imported as a library */ } else { await main(); }
 
+/* THE WINDOW MUST BE THE WINDOW (2026-10-27). kv:nba-digest is published for a
+   SINGLE CALENDAR MONTH — periodWindow() in the Ops engine, and nba-republish
+   refuses any payload whose window is not one reporting month. Pull it into a
+   report labelled 25 Sep – 26 Oct and every figure on the page becomes a lie
+   about its own period: right arithmetic, wrong fortnight, and nothing on the
+   face of it would say so. So the window is checked against the digest's own,
+   and a mismatch REFUSES rather than writes. A cross-month range needs a
+   date-ranged read of the lake (bi_active_cases on contract_create_date,
+   attendance, qa_evaluations, vici_calls, sf_inactive), which is a different
+   source, not a different flag. */
+function checkWindow(digest, want) {
+  const have = `${digest.period?.from}..${digest.period?.to}`;
+  if (!want || want === have) return;
+  console.error(
+    `\n  REFUSING — the digest does not cover the window this report is for.\n` +
+    `    report wants : ${want}\n` +
+    `    digest covers: ${have}\n\n` +
+    `  kv:nba-digest is published one calendar month at a time, so a cross-month window\n` +
+    `  cannot come from it. Fill this period from a date-ranged read of the lake, or set\n` +
+    `  the report's window to the month the digest actually covers.\n`);
+  process.exit(4);
+}
+
 async function main() {
 if (!DIR) {
   console.error('usage: node tools/exec-pull.mjs <report-folder> [--digest <file>] [--dry]');
   process.exit(1);
 }
 const digest = await loadDigest();
+/* The report's own window wins: --window overrides, otherwise data.json states it. */
+const wantWin = WINDOW || (() => {
+  try {
+    const dj = JSON.parse(readFileSync(join(resolve(DIR), 'data.json'), 'utf8'));
+    return dj.meta?.window ? `${dj.meta.window.from}..${dj.meta.window.to}` : null;
+  } catch { return null; }
+})();
+checkWindow(digest, wantWin);
 const rules = JSON.parse(readFileSync(join(ROOT, 'specs/exec_scorecard_rules.json'), 'utf8'));
 const readings = performanceFrom(digest);
 const bo = breakoutsFrom(digest, rules);

@@ -1,0 +1,402 @@
+{
+  "measuredOnly": true,
+  "generated": "2026-10-27",
+  "rules": "exec-scorecard-1.0",
+  "period": "Month to date · 25 September – 26 October 2026",
+  "business": {
+    "score": null,
+    "wouldBe": 0,
+    "withheld": true,
+    "scoredShare": 7,
+    "band": {
+      "label": "Not measured",
+      "rag": "grey",
+      "min": null
+    },
+    "weightScored": 7,
+    "weightDeclared": 100,
+    "evidence": 0.7
+  },
+  "sections": {
+    "performance": {
+      "score": null,
+      "band": "Not measured",
+      "weight": 25,
+      "coverage": 0,
+      "measured": 0,
+      "factors": {
+        "gwpVsTarget": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "salesVsTarget": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "spdVsTarget": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "conversion": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "qaMean": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "cancelRate": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "optIn": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "ratedOnTrack": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        }
+      }
+    },
+    "recruitment": {
+      "score": null,
+      "band": "Not measured",
+      "weight": 8,
+      "coverage": 0,
+      "measured": 0,
+      "factors": {
+        "salesReadyVsPlan": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "pipelineCoverage": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "showRate": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "timeToFill": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "retention30": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        }
+      }
+    },
+    "workforce": {
+      "score": null,
+      "band": "Not measured",
+      "weight": 12,
+      "coverage": 0,
+      "measured": 0,
+      "factors": {
+        "attendance": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "unplannedAbsence": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "seatFill": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "attrition": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "disciplineLoad": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "shrinkage": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        }
+      }
+    },
+    "lrc": {
+      "score": 0,
+      "band": "Critical",
+      "weight": 7,
+      "coverage": 10,
+      "measured": 10,
+      "factors": {
+        "criticalFails": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "r2aShare": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "popia": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "riskRegister": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "systemsControlled": {
+          "score": 0,
+          "basis": "manual",
+          "effW": 100
+        },
+        "contractsCurrent": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "auditActions": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "legalMatters": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        }
+      }
+    },
+    "training": {
+      "score": null,
+      "band": "Not measured",
+      "weight": 8,
+      "coverage": 0,
+      "measured": 0,
+      "factors": {
+        "nestingProductivity": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "graduationRate": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "timeToFirstSale": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "pipelineFill": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "certCompliance": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        }
+      }
+    },
+    "it": {
+      "score": null,
+      "band": "Not measured",
+      "weight": 10,
+      "coverage": 0,
+      "measured": 0,
+      "factors": {
+        "diallerUptime": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "talkPerAgentDay": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "connectRate": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "ticketSla": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "openP1": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        }
+      }
+    },
+    "finance": {
+      "score": null,
+      "band": "Not measured",
+      "weight": 15,
+      "coverage": 0,
+      "measured": 0,
+      "factors": {
+        "revenueVsBudget": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "costPerAgent": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "contributionMargin": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "payrollRatio": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "commissionAccuracy": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        }
+      }
+    },
+    "facilities": {
+      "score": null,
+      "band": "Not measured",
+      "weight": 4,
+      "coverage": 0,
+      "measured": 0,
+      "factors": {
+        "seatReadiness": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "powerUptime": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "connectivity": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "hsIncidents": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "maintenanceSla": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        }
+      }
+    },
+    "analytics": {
+      "score": null,
+      "band": "Not measured",
+      "weight": 6,
+      "coverage": 0,
+      "measured": 0,
+      "factors": {
+        "ticketSla": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "backlog": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "ageing": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "blockageSla": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "dataFreshness": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "reportOnTime": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        }
+      }
+    },
+    "marketing": {
+      "score": null,
+      "band": "Not measured",
+      "weight": 5,
+      "coverage": 0,
+      "measured": 0,
+      "factors": {
+        "contentSla": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "leadsDelivered": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "leadToSale": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "candidateApps": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        },
+        "costPerLead": {
+          "score": null,
+          "basis": "absent",
+          "effW": 0
+        }
+      }
+    }
+  }
+}

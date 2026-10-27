@@ -5,6 +5,9 @@
   "period": "Week 37 · 7–13 September 2026 (money and attendance month-to-date to 14 Sep)",
   "business": {
     "score": 77.5,
+    "wouldBe": null,
+    "withheld": false,
+    "scoredShare": 100,
     "band": {
       "label": "Healthy",
       "min": 75,

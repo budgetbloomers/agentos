@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="theme-color" content="#0A1730">
+<title>Executive Weekly Health Report (measured data only) — The Chatterbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+/* Tokens are the suite's — the same ones in agent/index.html and the Ops
+   dashboard — so this reads as the same product. Light theme by intent: this
+   page is printed and forwarded far more often than it is browsed. */
+:root{
+  --navy:#0A1730; --navy2:#0E2244; --ink:#0F1E36; --body:#3B4A63; --muted:#71809B;
+  --line:#E3E9F3; --bg:#F2F5FA; --card:#FFFFFF;
+  --blue:#2563EB; --blue-soft:#EAF1FF; --sky:#38BDF8;
+  --green:#158A4C; --green-soft:#E6F6ED;
+  --amber:#B45309; --amber-soft:#FCF0DD;
+  --red:#C42D2D; --red-soft:#FBE9E9;
+  --violet:#6D4AE0; --violet-soft:#EFEAFD;
+  --grey:#7A8797; --grey-soft:#EEF2F8;
+  --radius:14px; --shadow:0 1px 2px rgba(15,30,54,.05),0 4px 14px rgba(15,30,54,.05);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:13.5px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.num{font-variant-numeric:tabular-nums;text-align:right}
+.wrap{max-width:1180px;margin:0 auto;padding:22px 22px 60px}
+a{color:var(--blue)}
+
+/* ---------- chart marks ----------
+   Thin marks, a 4px rounded data-end anchored square to the baseline, a hairline
+   target tick, recessive tracks. Status fills are the text-safe steps (>=3:1 on
+   white); each track is the lighter step of the SAME ramp, so the state reads
+   across the whole bar and not only where it is filled. */
+.meter{position:relative;display:block;height:8px;border-radius:5px;background:var(--st-grey-t);overflow:hidden;margin:9px 0 7px}
+.meter.sm{height:6px;margin:0}
+.meter i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0;background:var(--st-grey);transition:none}
+.meter.green{background:var(--st-green-t)} .meter.green i{background:var(--st-green)}
+.meter.amber{background:var(--st-amber-t)} .meter.amber i{background:var(--st-amber)}
+.meter.red{background:var(--st-red-t)}     .meter.red i{background:var(--st-red)}
+/* the target tick: 100 is the limit the fill is read against, not the bar's end */
+.meter b{position:absolute;top:-1px;bottom:-1px;width:1px;background:rgba(15,30,54,.34)}
+.mag{position:relative;display:block;height:8px;min-width:90px;border-radius:5px;background:var(--mag-t);overflow:hidden}
+.mag i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0;background:var(--mag)}
+.mag b{position:absolute;top:-1px;bottom:-1px;width:1px;background:rgba(15,30,54,.3)}
+.idot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:middle;flex:none}
+td.mt{width:118px;padding-right:14px;vertical-align:top}
+td.mt .meter{margin:5px 0 0}
+td.bar-c .mag{margin:5px 0 0}
+th.mt-h{width:118px}
+td.sc{width:46px}
+td.bar-c{width:120px;vertical-align:top}
+th.bar-h{width:120px}
+
+/* ---------- the section strip ---------- */
+.strip-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px 16px 11px;margin-bottom:12px}
+.strip-h{font-size:12px;font-weight:800;color:var(--body);display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;margin-bottom:9px}
+.strip-h span{font-weight:500;color:var(--muted);font-size:11.5px}
+.strip{display:flex;gap:2px;height:58px;align-items:flex-end}
+.seg{position:relative;display:block;height:100%;border-radius:4px;background:var(--st-grey-t);overflow:hidden}
+.seg.green{background:var(--st-green-t)}.seg.amber{background:var(--st-amber-t)}.seg.red{background:var(--st-red-t)}
+.seg i{position:absolute;left:0;right:0;bottom:0;background:var(--st-grey);border-radius:4px 4px 0 0}
+.seg.green i{background:var(--st-green)}.seg.amber i{background:var(--st-amber)}.seg.red i{background:var(--st-red)}
+.seg em{position:absolute;left:0;right:0;top:4px;text-align:center;font-style:normal;font-size:9.5px;font-weight:800;color:var(--ink);opacity:.5}
+.strip-l{display:flex;gap:2px;margin-top:5px}
+.strip-l span{font-size:9px;color:var(--muted);text-align:center;line-height:1.25;overflow:hidden;letter-spacing:-.01em}
+
+/* ---------- masthead ---------- */
+.mast{background:var(--navy);border-radius:var(--radius);padding:22px 24px;color:#fff;position:relative;overflow:hidden;margin-bottom:14px}
+.mast::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(680px 320px at 92% -40%,rgba(56,189,248,.22),transparent 62%)}
+.mast-top{display:flex;align-items:flex-start;gap:18px;position:relative;flex-wrap:wrap}
+.mast-logo{background:#fff;border-radius:11px;padding:11px 13px;flex:none}
+.mast-logo img{display:block;width:150px}
+.mast-ttl{font-size:21px;font-weight:800;letter-spacing:-.4px}
+.mast-mode{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#FCD34D;background:rgba(251,191,36,.14);border-radius:999px;padding:3px 10px;vertical-align:middle;margin-left:6px}
+.mast-sub{font-size:12.5px;color:#9FB6DA;margin-top:3px}
+.mast-right{margin-left:auto;text-align:right}
+.big-score{font-size:60px;font-weight:900;letter-spacing:-2.6px;line-height:1}
+.big-score.none{font-size:30px;letter-spacing:-1px;color:#8FA8CC}
+.big-score span{font-size:19px;font-weight:800;color:#8FA8CC;letter-spacing:-.4px}
+.big-band{display:inline-block;font-size:12px;font-weight:800;padding:4px 12px;border-radius:999px;margin-top:5px;letter-spacing:.02em}
+.big-band.green{background:rgba(52,211,153,.18);color:#6EE7B7}
+.big-band.amber{background:rgba(251,191,36,.16);color:#FCD34D}
+.big-band.red{background:rgba(251,113,133,.16);color:#FDA4AF}
+.big-band.grey{background:rgba(148,182,255,.14);color:#C6D3E8}
+.mast-meter{margin-top:9px;width:190px;margin-left:auto}
+.mast-meter .meter{background:rgba(255,255,255,.16)}
+.mode-strap{position:relative;margin-top:13px;font-size:12px;font-weight:600;color:#FCD34D;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);border-radius:9px;padding:8px 11px;max-width:86ch;line-height:1.5}
+.mode-strap b{color:#fff}
+.mast-note{position:relative;margin-top:14px;font-size:12.5px;color:#C7D6EE;max-width:74ch;line-height:1.55}
+.mast-note b{color:#fff}
+.mast-bar{position:relative;display:flex;gap:16px;flex-wrap:wrap;margin-top:13px;padding-top:12px;border-top:1px solid rgba(255,255,255,.13);font-size:11.5px;color:#9FB6DA}
+.mast-bar b{color:#E7EEFA;font-weight:700}
+
+/* ---------- kpi strip ---------- */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:10px;margin-bottom:16px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 13px;box-shadow:var(--shadow);text-decoration:none;color:inherit;display:block;transition:transform .12s,box-shadow .12s}
+.kpi:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(15,30,54,.09)}
+.kpi-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.kpi-w{font-size:10px;font-weight:800;letter-spacing:.09em;color:var(--muted);text-transform:uppercase}
+.kpi-name{font-size:12px;font-weight:700;color:var(--body);line-height:1.25;min-height:30px}
+.kpi-val{font-size:27px;font-weight:800;letter-spacing:-.9px;display:flex;align-items:baseline;gap:5px}
+.kpi-val .unit{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0}
+.kpi-sub{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.delta{font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:12px}
+.delta.up{background:var(--green-soft);color:var(--green)}
+.delta.down{background:var(--red-soft);color:var(--red)}
+.delta.flat{background:var(--grey-soft);color:var(--muted)}
+.kpi-cov{position:relative;height:4px;border-radius:3px;background:#EEF2F8;margin-top:9px;overflow:hidden}
+.kpi-cov span{position:absolute;left:0;top:0;bottom:0;background:#CBD8EC}
+.kpi-cov i{position:absolute;left:0;top:0;bottom:0;background:var(--blue)}
+.kpi-cov-l{font-size:9.5px;color:var(--muted);margin-top:4px;letter-spacing:.01em}
+
+/* ---------- cards ---------- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:12px}
+.card h2{font-size:16px;font-weight:800;letter-spacing:-.2px;display:flex;align-items:center;gap:8px}
+.card h3{font-size:13.5px;font-weight:800;margin-bottom:6px}
+.sec-head{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:11px;margin-bottom:11px}
+.q{font-size:12.5px;color:var(--muted);margin-top:3px;max-width:78ch}
+.sec-score{margin-left:auto;text-align:right;flex:none}
+.ss-val{font-size:30px;font-weight:900;letter-spacing:-1.2px;line-height:1}
+.ss-val span{font-size:13px;font-weight:700;color:var(--muted);letter-spacing:0}
+.ss-b{font-size:11px;font-weight:800;padding:2px 9px;border-radius:999px;display:inline-block;margin-top:5px}
+.ss-b.green{background:var(--green-soft);color:var(--green)}
+.ss-b.amber{background:var(--amber-soft);color:var(--amber)}
+.ss-b.red{background:var(--red-soft);color:var(--red)}
+.ss-b.grey{background:var(--grey-soft);color:var(--grey)}
+.ss-w{font-size:10.5px;color:var(--muted);margin-top:4px}
+.meta-row{display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-bottom:10px}
+.meta-row b{color:var(--body);font-weight:700}
+.warn{color:var(--amber)!important}
+.comm{font-size:13px;color:var(--body);line-height:1.6;margin-bottom:11px;max-width:92ch}
+
+.sec-score.thin .ss-val,.kpi-val.thin{color:#8FA0B8}
+.sec-score.none .ss-val,.kpi-val.none{color:var(--muted);font-size:20px;letter-spacing:-.3px}
+.ind{font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--grey-soft);padding:1px 6px;border-radius:999px}
+.miss{color:var(--muted);font-weight:700;font-size:11.5px;letter-spacing:.01em}
+
+/* ---------- tables ---------- */
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th.num{text-align:right}
+td{padding:7px 8px;border-bottom:1px solid #F1F4FA;vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:#FAFCFF}
+tr.sim td{background:#FCFBF6}
+tr.sim:hover td{background:#F9F7EF}
+.fx b{font-weight:700}
+.src{font-size:10.5px;color:var(--muted);margin-top:2px;line-height:1.4;max-width:58ch}
+.eff{color:var(--blue);font-weight:700}
+.muted{color:var(--muted)}
+.ev{font-size:11.5px;color:var(--body)}
+.pill{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;letter-spacing:.02em;white-space:nowrap}
+.pill.actual{background:var(--green-soft);color:var(--green)}
+.pill.manual{background:var(--blue-soft);color:var(--blue)}
+.pill.simulated{background:var(--amber-soft);color:var(--amber)}
+.pill.absent{background:var(--grey-soft);color:var(--grey)}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none;margin-right:7px}
+.dot.green{background:#34D399}.dot.amber{background:#FBBF24}.dot.red{background:#FB7185}.dot.grey{background:#C3CCDC}
+.bl{font-size:11.5px;font-weight:800;color:var(--body)}
+.bl.green{color:var(--green)}.bl.amber{color:var(--amber)}.bl.red{color:var(--red)}.bl.grey{color:var(--muted)}
+.bo{margin-top:13px;border:1px solid var(--line);border-radius:11px;overflow:hidden}
+.bo-h{background:#F7F9FD;padding:8px 11px;font-size:11.5px;font-weight:800;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.bo-n{padding:7px 11px 0;font-size:11px;color:var(--muted)}
+.bt{font-size:12px}
+.bt th{padding:6px 11px}
+.bt td{padding:6px 11px}
+
+/* ---------- red issues ---------- */
+.reds{border-left:3px solid var(--red)}
+.reds h2{color:var(--red)}
+.rsec{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--red);margin-top:4px}
+/* ---------- data trust ---------- */
+.src-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.src-chip{border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:11px;display:flex;flex-direction:column;gap:1px;background:#FAFCFF}
+.src-chip b{font-weight:700;font-size:11.5px;display:flex;align-items:center}
+.src-chip span{color:var(--muted);font-size:10.5px}
+.src-chip.stale{border-color:#F3D9A6;background:#FEFBF4}
+.src-chip.down{border-color:#F0C9C9;background:#FEF6F6}
+.foot{font-size:11.5px;color:var(--muted);margin-top:18px;line-height:1.6;max-width:94ch}
+.foot b{color:var(--body)}
+/* PRINT — this page is forwarded and printed more often than it is browsed, so
+   the paper layout is a first-class target, not a fallback. Every fill keeps its
+   colour (a RAG report in greyscale is a table), nothing splits across a page
+   break mid-card, and the masthead leads page one on its own. */
+@page{size:A4;margin:12mm 10mm}
+@media print{
+  *{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  body{background:#fff;font-size:10.5px}
+  .wrap{max-width:none;padding:0}
+  .card,.kpi,.strip-card{box-shadow:none;break-inside:avoid;page-break-inside:avoid}
+  .kpi:hover,.kpi{transform:none}
+  .mast{break-after:avoid}
+  .bo,.reds table tr,.ft tr{break-inside:avoid;page-break-inside:avoid}
+  .card h2,.sec-head{break-after:avoid}
+  /* A4's text column is ~190 mm. Five KPI cards do not fit: one fr will not shrink
+     below a card's min-content, and the 27px value plus its delta pill pushed the
+     fifth card off the page. Four columns, minmax(0,·) so they may shrink, and the
+     display figures step down for paper. (Proved by forcing the print rules on
+     screen at 718px and looking at it — the validator checks colour, not layout.) */
+  .kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+  .kpi-val{font-size:20px;letter-spacing:-.6px}
+  .kpi-w{font-size:8.5px;letter-spacing:.05em}
+  .kpi-name{font-size:11px;min-height:26px}
+  .delta{font-size:9px;padding:1px 5px}
+  .strip{height:46px}
+  .strip-l span{font-size:7.5px}
+  .seg em{font-size:8.5px}
+  .src{max-width:46ch}
+  .foot{break-inside:avoid}
+  a{color:inherit;text-decoration:none}
+  thead{display:table-header-group}
+}
+@media(max-width:720px){
+  .mast-right{margin-left:0;text-align:left}
+  .sec-score{margin-left:0;text-align:left}
+  table{font-size:11.5px}
+}
+</style>
+</head>
+<body style="--mag:#2563EB;--mag-t:#E8EFFB;--st-green:#158A4C;--st-amber:#B45309;--st-red:#C42D2D;--st-grey:#8FA0B8;--st-green-t:#E6F6ED;--st-amber-t:#FCF0DD;--st-red-t:#FBE9E9;--st-grey-t:#EEF2F8">
+<div class="wrap">
+
+  <header class="mast">
+    <div class="mast-top">
+      <div class="mast-logo"><img src="data:image/png;base64,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" alt="The Chatterbox"></div>
+      <div>
+        <div class="mast-ttl">Executive Weekly Health Report <span class="mast-mode">measured data only</span></div>
+        <div class="mast-sub">Month to date · 25 September – 26 October 2026 · issued Tuesday 27 October 2026 · EXCO · The Chatterbox</div>
+      </div>
+      <div class="mast-right">
+        <div class="big-score none">Not measured</div>
+        
+      </div>
+    </div>
+    <div class="mode-strap">Measured data only — every factor without a real reading prints <b>Missing</b>, and a section with nothing measured carries no score at all. 9 of 10 sections cannot be scored.</div>
+    <div class="mast-note">Nothing has been measured for this window yet. The period is set to 25 September – 26 October 2026, a cross-month range the Ops digest cannot serve, so every factor reads Missing until a date-ranged lake read fills it. The one exception is the system register, which is a standing governance reading rather than a figure about this month — and it still reads zero of thirteen systems live and controlled.</div>
+    <div class="mast-bar">
+      <span><b>Overall withheld</b> — only 7% of the declared weight could be scored, below the 50% floor (on that 7% the figure is 0)</span>
+      <span><b>1 of 10</b> sections carried a score</span>
+      <span><b>Roster as at the latest Agent List — pending the pull</b></span>
+      <span>Rule book <b>exec-scorecard-1.0</b></span>
+      <span>Confidential · internal</span>
+    </div>
+  </header>
+
+  <section class="strip-card">
+    <div class="strip-h">Where the business score comes from<span>each block is a section, as wide as its share of the score</span></div>
+    <div class="strip"><span class="seg grey" style="flex:25"
+        title="Performance — 25% of the score, not measured (Not measured)">
+        <i style="height:0%"></i>
+        <em>25%</em></span><span class="seg grey" style="flex:8"
+        title="Recruitment — 8% of the score, not measured (Not measured)">
+        <i style="height:0%"></i>
+        <em>8%</em></span><span class="seg grey" style="flex:12"
+        title="Workforce — 12% of the score, not measured (Not measured)">
+        <i style="height:0%"></i>
+        <em>12%</em></span><span class="seg red" style="flex:7"
+        title="LRC — Legal, Risk &amp; Compliance — 7% of the score, 0/100 (Critical)">
+        <i style="height:0.0%"></i>
+        <em>7%</em></span><span class="seg grey" style="flex:8"
+        title="Training — Nesting &amp; Pipeline — 8% of the score, not measured (Not measured)">
+        <i style="height:0%"></i>
+        <em>8%</em></span><span class="seg grey" style="flex:10"
+        title="IT — Dialler &amp; Service — 10% of the score, not measured (Not measured)">
+        <i style="height:0%"></i>
+        <em>10%</em></span><span class="seg grey" style="flex:15"
+        title="Finance — 15% of the score, not measured (Not measured)">
+        <i style="height:0%"></i>
+        <em>15%</em></span><span class="seg grey" style="flex:4"
+        title="Facilities — 4% of the score, not measured (Not measured)">
+        <i style="height:0%"></i>
+        <em>4%</em></span><span class="seg grey" style="flex:6"
+        title="Business Analytics — 6% of the score, not measured (Not measured)">
+        <i style="height:0%"></i>
+        <em>6%</em></span><span class="seg grey" style="flex:5"
+        title="Marketing — 5% of the score, not measured (Not measured)">
+        <i style="height:0%"></i>
+        <em>5%</em></span></div>
+    <div class="strip-l"><span style="flex:25">Performance</span><span style="flex:8">Recruitment</span><span style="flex:12">Workforce</span><span style="flex:7">LRC</span><span style="flex:8">Training</span><span style="flex:10">IT</span><span style="flex:15">Finance</span><span style="flex:4">Facilities</span><span style="flex:6">Business Analytics</span><span style="flex:5">Marketing</span></div>
+  </section>
+
+  <div class="kpi-grid"><a class="kpi" href="#sec-performance">
+      <div class="kpi-top"><span class="kpi-w">25% of business</span><span class="dot grey"></span></div>
+      <div class="kpi-name">Performance</div>
+      <div class="kpi-val none">Missing
+        </div>
+      <span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl grey">Not measured</span></div>
+      <div class="kpi-cov"><span style="width:0%"></span><i style="width:0%"></i></div>
+      <div class="kpi-cov-l">0% measured · 0% scored</div>
+    </a><a class="kpi" href="#sec-recruitment">
+      <div class="kpi-top"><span class="kpi-w">8% of business</span><span class="dot grey"></span></div>
+      <div class="kpi-name">Recruitment</div>
+      <div class="kpi-val none">Missing
+        </div>
+      <span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl grey">Not measured</span></div>
+      <div class="kpi-cov"><span style="width:0%"></span><i style="width:0%"></i></div>
+      <div class="kpi-cov-l">0% measured · 0% scored</div>
+    </a><a class="kpi" href="#sec-workforce">
+      <div class="kpi-top"><span class="kpi-w">12% of business</span><span class="dot grey"></span></div>
+      <div class="kpi-name">Workforce</div>
+      <div class="kpi-val none">Missing
+        </div>
+      <span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl grey">Not measured</span></div>
+      <div class="kpi-cov"><span style="width:0%"></span><i style="width:0%"></i></div>
+      <div class="kpi-cov-l">0% measured · 0% scored</div>
+    </a><a class="kpi" href="#sec-lrc">
+      <div class="kpi-top"><span class="kpi-w">7% of business</span><span class="dot red"></span></div>
+      <div class="kpi-name">LRC — Legal, Risk &amp; Compliance</div>
+      <div class="kpi-val thin">0<span class="unit">/100</span>
+        </div>
+      <span class="meter red" title="0 / 100">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl red">Critical</span><span class="ind">indicative</span></div>
+      <div class="kpi-cov"><span style="width:10%"></span><i style="width:10%"></i></div>
+      <div class="kpi-cov-l">10% measured · 10% scored</div>
+    </a><a class="kpi" href="#sec-training">
+      <div class="kpi-top"><span class="kpi-w">8% of business</span><span class="dot grey"></span></div>
+      <div class="kpi-name">Training — Nesting &amp; Pipeline</div>
+      <div class="kpi-val none">Missing
+        </div>
+      <span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl grey">Not measured</span></div>
+      <div class="kpi-cov"><span style="width:0%"></span><i style="width:0%"></i></div>
+      <div class="kpi-cov-l">0% measured · 0% scored</div>
+    </a><a class="kpi" href="#sec-it">
+      <div class="kpi-top"><span class="kpi-w">10% of business</span><span class="dot grey"></span></div>
+      <div class="kpi-name">IT — Dialler &amp; Service</div>
+      <div class="kpi-val none">Missing
+        </div>
+      <span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl grey">Not measured</span></div>
+      <div class="kpi-cov"><span style="width:0%"></span><i style="width:0%"></i></div>
+      <div class="kpi-cov-l">0% measured · 0% scored</div>
+    </a><a class="kpi" href="#sec-finance">
+      <div class="kpi-top"><span class="kpi-w">15% of business</span><span class="dot grey"></span></div>
+      <div class="kpi-name">Finance</div>
+      <div class="kpi-val none">Missing
+        </div>
+      <span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl grey">Not measured</span></div>
+      <div class="kpi-cov"><span style="width:0%"></span><i style="width:0%"></i></div>
+      <div class="kpi-cov-l">0% measured · 0% scored</div>
+    </a><a class="kpi" href="#sec-facilities">
+      <div class="kpi-top"><span class="kpi-w">4% of business</span><span class="dot grey"></span></div>
+      <div class="kpi-name">Facilities</div>
+      <div class="kpi-val none">Missing
+        </div>
+      <span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl grey">Not measured</span></div>
+      <div class="kpi-cov"><span style="width:0%"></span><i style="width:0%"></i></div>
+      <div class="kpi-cov-l">0% measured · 0% scored</div>
+    </a><a class="kpi" href="#sec-analytics">
+      <div class="kpi-top"><span class="kpi-w">6% of business</span><span class="dot grey"></span></div>
+      <div class="kpi-name">Business Analytics</div>
+      <div class="kpi-val none">Missing
+        </div>
+      <span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl grey">Not measured</span></div>
+      <div class="kpi-cov"><span style="width:0%"></span><i style="width:0%"></i></div>
+      <div class="kpi-cov-l">0% measured · 0% scored</div>
+    </a><a class="kpi" href="#sec-marketing">
+      <div class="kpi-top"><span class="kpi-w">5% of business</span><span class="dot grey"></span></div>
+      <div class="kpi-name">Marketing</div>
+      <div class="kpi-val none">Missing
+        </div>
+      <span class="meter grey" title="not measured">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span>
+      <div class="kpi-sub"><span class="bl grey">Not measured</span></div>
+      <div class="kpi-cov"><span style="width:0%"></span><i style="width:0%"></i></div>
+      <div class="kpi-cov-l">0% measured · 0% scored</div>
+    </a></div>
+
+  <section class="card">
+    <h2>What an executive needs to do about it</h2>
+    <div class="q">The 60-second test: what works, what is broken, who owns it, what action is live, where it escalates.</div>
+    <ul style="margin:11px 0 0 18px;font-size:13px;line-height:1.7">
+      <li>WINDOW SET — 25 September to 26 October 2026. Every weight, owner, threshold and data contract behind this report is in place; no figure is.</li><li>BLOCKED — This is a CROSS-MONTH window. The Ops digest publishes a single calendar month and the republisher refuses anything else, so Performance cannot be pulled the usual way. It needs a date-ranged read of the lake.</li><li>UNCHANGED — Zero of thirteen registered systems are live and controlled, with 27 open actions. That register is dated 2 July and is the only standing reading on this page.</li><li>NEXT — Point the pull at the lake for this window, then the 25 requests in the ask list for everything the business still does not produce.</li>
+    </ul>
+  </section>
+
+  <section class="card reds">
+    <h2>Red issues — governed format</h2>
+    <div class="q">A red number without an owner, an action and a due date is not governed (KB module 08).</div>
+    <table style="margin-top:9px"><thead><tr>
+      <th>Issue</th><th>Impact</th><th>Evidence</th><th>Owner</th><th>Action</th><th class="num">Due</th><th>Escalation</th>
+    </tr></thead><tbody><tr>
+      <td><b>A cross-month window cannot be pulled from the digest</b><div class="rsec">Performance</div></td>
+      <td>Performance is the one section that is fully reachable on live data, and it cannot be filled for this period the usual way. Every other section was already waiting on a feed.</td><td class="ev">kv:nba-digest publishes periodWindow() for a single calendar month; tools/nba-republish.mjs refuses a payload whose window is not one reporting month (line 140).</td>
+      <td>Nicholas Pillay — CTTO (P02)</td><td>Point exec-pull at the lake for an arbitrary window — bi_active_cases on contract_create_date, attendance, qa_evaluations, vici_calls, sf_inactive — instead of the digest.</td><td class="num">Fri 6 Nov</td><td>EXCO if the board pack needs this window before it exists</td>
+    </tr><tr>
+      <td><b>Not one registered system is live and controlled</b><div class="rsec">LRC — Legal, Risk &amp; Compliance</div></td>
+      <td>Zero of thirteen systems at G4, 27 open actions. The only standing reading on this page, and it is the worst number in the report.</td><td class="ev">Canonical system register (Operating System Governance v1.1, 2026-07-02) — now nearly four months old.</td>
+      <td>Jared — Risk &amp; Compliance Executive (P04)</td><td>Re-date the register this month; it is quoted at four months stale every week it is not.</td><td class="num">Fri 6 Nov</td><td>EXCO at the November pack</td>
+    </tr></tbody></table>
+  </section>
+
+  
+    <section class="card" id="sec-performance">
+      <div class="sec-head">
+        <div>
+          <h2><span class="dot grey"></span>Performance</h2>
+          <div class="q">Is the floor selling what the plan says it must, and is it spread across campaigns, teams and people or carried by a few?</div>
+        </div>
+        <div class="sec-score none">
+          <div class="ss-val">Missing</div>
+          <div class="ss-b grey">Not measured</div>
+          <div class="ss-w">25% of the business score</div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span><b>Owner</b> Leon — Sales Ops (P10)</span>
+        <span><b>Exec</b> Nicholas Pillay — CTTO (P02)</span>
+        <span><b>Evidence</b> 0% of this section is a measured number <b class="warn">· thin evidence</b></span>
+      </div>
+      <p class="comm">No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.</p>
+      <table class="ft">
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <tbody><tr class="">
+      <td class="fx"><b>GWP vs target (MTD, incl VAT)</b><div class="src">awaiting a date-ranged read of the lake. Needs stats.gwp, stats.target at agent · month to date, 15 min — Leon (P10)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">30</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Sales vs target</b><div class="src">awaiting a date-ranged read of the lake. Needs stats.sales, stats.target at agent · month to date, 15 min — Leon (P10)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Sales per day vs tenure target</b><div class="src">awaiting a date-ranged read of the lake. Needs stats.sales, stats.present, stats.target at agent · month to date, 15 min — Leon (P10)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">12</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Conversion vs tenure target</b><div class="src">awaiting a date-ranged read of the lake. Needs stats.conv, thresholds.convTarget at agent · month to date, 15 min — Ryan (P08)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">8</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>QA score (mean of agent means)</b><div class="src">awaiting a date-ranged read of the lake. Needs stats.qa, stats.qaN, thresholds.qaTarget at agent · month to date, 15 min — Stephanie (P12)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Cancellation rate</b><div class="src">awaiting a date-ranged read of the lake. Needs stats.canc at agent · month to date, 15 min — Leon (P10)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">5</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Insurance opt-in rate</b><div class="src">awaiting a date-ranged read of the lake. Needs opt, optPct at agent · month to date, on upload — Leon (P10)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">5</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Agents rated 70+ (share of floor)</b><div class="src">awaiting a date-ranged read of the lake. Needs composite.adj at agent · last 5 confirmed sessions, 15 min — Leon (P10)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr></tbody>
+      </table>
+      
+    </section>
+    <section class="card" id="sec-recruitment">
+      <div class="sec-head">
+        <div>
+          <h2><span class="dot grey"></span>Recruitment</h2>
+          <div class="q">Are we putting enough sales-ready people on the floor, fast enough and cheaply enough, and do they stay?</div>
+        </div>
+        <div class="sec-score none">
+          <div class="ss-val">Missing</div>
+          <div class="ss-b grey">Not measured</div>
+          <div class="ss-w">8% of the business score</div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span><b>Owner</b> Abigail — Recruitment &amp; Workforce Ops Lead (P06)</span>
+        <span><b>Exec</b> Claudell Panday — People Executive (P05)</span>
+        <span><b>Evidence</b> 0% of this section is a measured number <b class="warn">· thin evidence</b></span>
+      </div>
+      <p class="comm">No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.</p>
+      <table class="ft">
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <tbody><tr class="">
+      <td class="fx"><b>Sales-ready starters vs plan</b><div class="src">awaiting the GoHighLevel (LeadConnector API v2) feed. Needs opportunity.pipelineStageId, opportunity.createdAt, opportunity.status… at candidate · weekly, daily — Abigail (P06)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">30</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Pipeline coverage (candidates per open seat)</b><div class="src">awaiting the GoHighLevel feed. Needs opportunity.pipelineStageId, seatPlan.openSeats at weekly, daily — Abigail (P06)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Interview show rate</b><div class="src">awaiting the GoHighLevel feed. Needs appointment.startTime, appointment.appointmentStatus at candidate · weekly, daily — Abigail (P06)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Time to fill (days)</b><div class="src">awaiting the GoHighLevel + Agent List feed. Needs requisition.openedAt, agent_list.first_seen at requisition, weekly — Abigail (P06)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>30-day retention of new intakes</b><div class="src">awaiting a date-ranged read of the lake. Needs agent_list.as_of, agent_list.cb, agent_sync_logs.removed_at at cohort · monthly, 10 min — Claudell (P05)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">25</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr></tbody>
+      </table>
+      
+    </section>
+    <section class="card" id="sec-workforce">
+      <div class="sec-head">
+        <div>
+          <h2><span class="dot grey"></span>Workforce</h2>
+          <div class="q">Are the seats we pay for occupied, productive and staying occupied?</div>
+        </div>
+        <div class="sec-score none">
+          <div class="ss-val">Missing</div>
+          <div class="ss-b grey">Not measured</div>
+          <div class="ss-w">12% of the business score</div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span><b>Owner</b> Keshree — HR Ops (P13)</span>
+        <span><b>Exec</b> Claudell Panday — People Executive (P05)</span>
+        <span><b>Evidence</b> 0% of this section is a measured number <b class="warn">· thin evidence</b></span>
+      </div>
+      <p class="comm">No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.</p>
+      <table class="ft">
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <tbody><tr class="">
+      <td class="fx"><b>Attendance (Actual ÷ Employed shifts)</b><div class="src">awaiting a date-ranged read of the lake. Needs attendance.date, attendance.cb, attendance.code at agent · day, on upload — Keshree (P13)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">25</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Unplanned absence rate</b><div class="src">awaiting a date-ranged read of the lake. Needs attendance.code at agent · day, on upload — Keshree (P13)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Productive seats filled vs capacity plan</b><div class="src">awaiting the Capacity plan feed. Needs seats.physical, seats.support, seats.byShift… at site · month, monthly — [INPUT REQUIRED — P18 vacant]</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Attrition (monthly)</b><div class="src">awaiting a date-ranged read of the lake. Needs agent_sync_logs.cb, agent_sync_logs.removed_at, REASON CODE (missing) at agent · month, on publish — Claudell (P05)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Agents in disciplinary process (per 100 agents)</b><div class="src">awaiting a date-ranged read of the lake. Needs qa_evaluations.offense_number, qa_evaluations.qa_status, qa_evaluations.sales_agent_code at agent · rolling, on upload — Stephanie (P12)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Shrinkage (leave, training, offline)</b><div class="src">awaiting the HR OS / WFM feed. Needs schedule.plannedHours, actual.loggedHours, offline.reasonCode at agent · day, weekly — Keshree (P13)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr></tbody>
+      </table>
+      
+    </section>
+    <section class="card" id="sec-lrc">
+      <div class="sec-head">
+        <div>
+          <h2><span class="dot red"></span>LRC — Legal, Risk &amp; Compliance</h2>
+          <div class="q">Is the business legally covered, are its risks owned and closing, and is the floor behaving compliantly on the call?</div>
+        </div>
+        <div class="sec-score thin">
+          <div class="ss-val">0<span>/100</span></div>
+          <div class="ss-b red">Critical</div>
+          <div class="ss-w">indicative — only 10% measured · 7% of the business score</div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span><b>Owner</b> Jared — Risk &amp; Compliance Executive (P04)</span>
+        <span><b>Exec</b> Jared — Risk &amp; Compliance Executive (P04)</span>
+        <span><b>Evidence</b> 10% of this section is a measured number <b class="warn">· thin evidence</b></span>
+      </div>
+      <p class="comm">No reading for this window yet. The system register is a standing governance reading and carries over; every other factor here is waiting on its feed.</p>
+      <table class="ft">
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <tbody><tr class="">
+      <td class="fx"><b>Open critical compliance fails</b><div class="src">awaiting a date-ranged read of the lake. Needs qa_evaluations.escalation_decision, qa_evaluations.qa_status at evaluation · rolling, on upload — Jared (P04)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Floor in R2A tier 2 or 3 (compliance risk)</b><div class="src">awaiting a date-ranged read of the lake. Needs r2a.tier, r2a.fails, r2a.cfr at agent · month to date, 15 min — Jared (P04)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>POPIA &amp; data incidents</b><div class="src">awaiting the Incident register feed. Needs incident.id, incident.raisedAt, incident.category… at incident, on event — Jared (P04)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>High or critical risks open past their due date</b><div class="src">awaiting the Risk register feed. Needs risk.id, risk.title, risk.likelihood… at risk, weekly — Jared (P04)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Registered systems live and controlled (G4)</b><div class="src">Canonical system register (Chatterbox Operating System Governance v1.1, 2026-07-02): 13 systems — 10 red, 2 amber, 1 grey, ZERO at G4, 27 open actions. A measured nought, not a missing feed. Re-dated by Jared, it moves</div></td>
+      <td class="num">0%</td>
+      <td class="num muted">100%</td>
+      <td class="mt"><span class="meter red" title="0 / 100">
+    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="num sc"><b>0</b></td>
+      <td class="num muted">10<span class="eff">→100</span></td>
+      <td><span class="pill manual">Manual</span></td>
+      <td><span class="bl red">Critical</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Client &amp; supplier contracts current and signed</b><div class="src">awaiting the Legal register feed. Needs contract.party, contract.type, contract.signedAt… at contract, monthly — Jared (P04)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Governance &amp; audit actions closed on time</b><div class="src">awaiting the Blue (actions of record) feed. Needs action.id, action.source (audit/review/council), action.owner… at action, weekly — Ryan (P08)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Open legal matters and disputes</b><div class="src">awaiting the Legal register feed. Needs matter.id, matter.type, matter.openedAt… at matter, weekly — Jared (P04)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr></tbody>
+      </table>
+      
+    </section>
+    <section class="card" id="sec-training">
+      <div class="sec-head">
+        <div>
+          <h2><span class="dot grey"></span>Training — Nesting &amp; Pipeline</h2>
+          <div class="q">Are the people we put through nesting reaching the floor competent, and how fast?</div>
+        </div>
+        <div class="sec-score none">
+          <div class="ss-val">Missing</div>
+          <div class="ss-b grey">Not measured</div>
+          <div class="ss-w">8% of the business score</div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span><b>Owner</b> Jojo &amp; Pamela — Training Ops (P15/P16)</span>
+        <span><b>Exec</b> Claudell Panday — People Executive (P05)</span>
+        <span><b>Evidence</b> 0% of this section is a measured number <b class="warn">· thin evidence</b></span>
+      </div>
+      <p class="comm">No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.</p>
+      <table class="ft">
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <tbody><tr class="">
+      <td class="fx"><b>Nesting SPD vs M1 target</b><div class="src">awaiting a date-ranged read of the lake. Needs campaign, stats.sales, stats.present… at agent · month to date, 15 min — Jojo &amp; Pamela (P15/P16)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">25</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Nesting graduation rate</b><div class="src">awaiting the LMS feed. Needs cohort.id, cohort.startedAt, learner.cb… at cohort, per intake — Jojo &amp; Pamela (P15/P16)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">25</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Time to first sale (days)</b><div class="src">awaiting a date-ranged read of the lake. Needs agent_list.first_seen, bi_active_cases.owner, bi_active_cases.contract_create_date at agent · cohort, daily — Jojo &amp; Pamela (P15/P16)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Learners in nest vs required intake</b><div class="src">awaiting a date-ranged read of the lake. Needs agent_list.campaign = Nesting, plan.intakeSeats at month, weekly — Abigail (P06)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Certification &amp; refresher completion</b><div class="src">awaiting the LMS feed. Needs learner.cb, course.id, course.required… at agent · course, weekly — Jojo &amp; Pamela (P15/P16)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr></tbody>
+      </table>
+      
+    </section>
+    <section class="card" id="sec-it">
+      <div class="sec-head">
+        <div>
+          <h2><span class="dot grey"></span>IT — Dialler &amp; Service</h2>
+          <div class="q">Did the floor have a working dialler and working systems every hour it was paid to sell?</div>
+        </div>
+        <div class="sec-score none">
+          <div class="ss-val">Missing</div>
+          <div class="ss-b grey">Not measured</div>
+          <div class="ss-w">10% of the business score</div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span><b>Owner</b> Rishae — Tech Ops (P11) · Rogen — Dialler Ops (P14)</span>
+        <span><b>Exec</b> Nicholas Pillay — CTTO (P02)</span>
+        <span><b>Evidence</b> 0% of this section is a measured number <b class="warn">· thin evidence</b></span>
+      </div>
+      <p class="comm">No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.</p>
+      <table class="ft">
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <tbody><tr class="">
+      <td class="fx"><b>Dialler uptime in shift hours</b><div class="src">awaiting the ViciDial platform feed. Needs uptime.window, uptime.downSeconds, incident.startedAt… at day, daily — Rogen (P14)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">25</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Talk time per agent-day vs standard</b><div class="src">awaiting a date-ranged read of the lake. Needs vici_calls.user, vici_calls.length_in_sec, vici_calls.call_date at agent · day, on upload — Rogen (P14)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Connect rate</b><div class="src">awaiting a date-ranged read of the lake. Needs vici_calls.status, vici_calls.length_in_sec, vici_calls.user at agent · day, on upload — Rogen (P14)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>IT tickets resolved within SLA</b><div class="src">awaiting the Service desk feed. Needs ticket.id, ticket.raisedAt, ticket.priority… at ticket, daily — Rishae (P11)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Open P1 incidents / platform alerts</b><div class="src">awaiting a date-ranged read of the lake. Needs alert.id, alert.severity, alert.raisedAt at alert · live, 10 min — Nicholas (P02)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr></tbody>
+      </table>
+      
+    </section>
+    <section class="card" id="sec-finance">
+      <div class="sec-head">
+        <div>
+          <h2><span class="dot grey"></span>Finance</h2>
+          <div class="q">Is the revenue landing, is the cost per seat where the model says, and is cash safe?</div>
+        </div>
+        <div class="sec-score none">
+          <div class="ss-val">Missing</div>
+          <div class="ss-b grey">Not measured</div>
+          <div class="ss-w">15% of the business score</div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span><b>Owner</b> Mekaeel — CFO (P03) · Romona — Finance Admin &amp; Commission (P17)</span>
+        <span><b>Exec</b> Mekaeel — CFO (P03)</span>
+        <span><b>Evidence</b> 0% of this section is a measured number <b class="warn">· thin evidence</b></span>
+      </div>
+      <p class="comm">No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.</p>
+      <table class="ft">
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <tbody><tr class="">
+      <td class="fx"><b>Revenue (GWP incl VAT) vs budget</b><div class="src">awaiting a date-ranged read of the lake. Needs bi_active_cases.charge_amount, bi_active_cases.contract_create_date, budget.month… at month, monthly — Mekaeel (P03)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">30</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>All-in cost per active agent vs model</b><div class="src">awaiting the Xero / Payscale feed. Needs gl.period, gl.account, gl.costCentre… at month, monthly — Mekaeel (P03)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Seat contribution margin</b><div class="src">awaiting the Xero feed. Needs gl.revenue, gl.directCost, gl.costCentre… at month · campaign, monthly — Mekaeel (P03)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Payroll as a share of revenue</b><div class="src">awaiting the Payscale feed. Needs payrun.period, payrun.gross, payrun.employer_contributions… at month, monthly — Romona (P17)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Commission accrual vs plan</b><div class="src">awaiting a date-ranged read of the lake. Needs commission.projected (live), payrun.commissionPaid (missing) at agent · month, monthly — Romona (P17)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr></tbody>
+      </table>
+      
+    </section>
+    <section class="card" id="sec-facilities">
+      <div class="sec-head">
+        <div>
+          <h2><span class="dot grey"></span>Facilities</h2>
+          <div class="q">Could every person who arrived actually sit down, log in and work?</div>
+        </div>
+        <div class="sec-score none">
+          <div class="ss-val">Missing</div>
+          <div class="ss-b grey">Not measured</div>
+          <div class="ss-w">4% of the business score</div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span><b>Owner</b> [INPUT REQUIRED — facilities owner unresolved; P18 COO/Delivery Exec vacant]</span>
+        <span><b>Exec</b> [INPUT REQUIRED]</span>
+        <span><b>Evidence</b> 0% of this section is a measured number <b class="warn">· thin evidence</b></span>
+      </div>
+      <p class="comm">No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.</p>
+      <table class="ft">
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <tbody><tr class="">
+      <td class="fx"><b>Desks ready and usable</b><div class="src">awaiting the Facilities walk-round feed. Needs date, seats.total, seats.usable… at site · day, daily — [INPUT REQUIRED — P18 vacant]</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">30</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Power availability in shift hours (incl. UPS/generator)</b><div class="src">awaiting the Load-shedding schedule + generator log feed. Needs date, outage.startedAt, outage.endedAt… at site · day, daily — [INPUT REQUIRED]</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">30</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Connectivity uptime</b><div class="src">awaiting the ISP / line monitoring feed. Needs link.id, link.downStartedAt, link.downEndedAt… at site · day, daily — Rishae (P11)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Health &amp; safety incidents</b><div class="src">awaiting the Incident register feed. Needs incident.id, incident.date, incident.type… at incident, on event — [INPUT REQUIRED]</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Maintenance jobs closed within SLA</b><div class="src">awaiting the Facilities job log feed. Needs job.id, job.raisedAt, job.priority… at job, weekly — [INPUT REQUIRED]</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr></tbody>
+      </table>
+      
+    </section>
+    <section class="card" id="sec-analytics">
+      <div class="sec-head">
+        <div>
+          <h2><span class="dot grey"></span>Business Analytics</h2>
+          <div class="q">Are the actions the business agreed to actually being closed, and is the data under every number in this report trustworthy?</div>
+        </div>
+        <div class="sec-score none">
+          <div class="ss-val">Missing</div>
+          <div class="ss-b grey">Not measured</div>
+          <div class="ss-w">6% of the business score</div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span><b>Owner</b> Ryan — Data &amp; Lead Intelligence (P08)</span>
+        <span><b>Exec</b> Nicholas Pillay — CTTO (P02)</span>
+        <span><b>Evidence</b> 0% of this section is a measured number <b class="warn">· thin evidence</b></span>
+      </div>
+      <p class="comm">No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.</p>
+      <table class="ft">
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <tbody><tr class="">
+      <td class="fx"><b>Blue tickets closed within SLA</b><div class="src">awaiting the Blue feed. Needs ticket.id, ticket.board, ticket.raisedAt… at ticket, daily — Ryan (P08)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Open ticket backlog</b><div class="src">awaiting the Blue feed. Needs ticket.status, ticket.board at daily, daily — Ryan (P08)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Tickets open over 7 days</b><div class="src">awaiting the Blue feed. Needs ticket.raisedAt, ticket.status at daily, daily — Ryan (P08)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">10</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Campaign blockages closed within SLA</b><div class="src">awaiting a date-ranged read of the lake. Needs blockage.priority, blockage.raisedAt, blockage.clearedAt… at blockage, live — Leon (P10)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Source freshness (sources current, no stale feed)</b><div class="src">awaiting a date-ranged read of the lake. Needs source, expected_reach, last_seen… at source · live, 10 min — Nicholas (P02)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">25</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Governed reports delivered on time</b><div class="src">awaiting the Reporting calendar feed. Needs report.id, report.dueAt, report.deliveredAt… at report, weekly — Ryan (P08)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr></tbody>
+      </table>
+      
+    </section>
+    <section class="card" id="sec-marketing">
+      <div class="sec-head">
+        <div>
+          <h2><span class="dot grey"></span>Marketing</h2>
+          <div class="q">Is marketing producing measurable demand — leads and candidates — not artwork volume?</div>
+        </div>
+        <div class="sec-score none">
+          <div class="ss-val">Missing</div>
+          <div class="ss-b grey">Not measured</div>
+          <div class="ss-w">5% of the business score</div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span><b>Owner</b> Keshav — Marketing Ops (P07)</span>
+        <span><b>Exec</b> Claudell Panday — People Executive (P05)</span>
+        <span><b>Evidence</b> 0% of this section is a measured number <b class="warn">· thin evidence</b></span>
+      </div>
+      <p class="comm">No reading for this window yet. Every factor in this section is waiting on its feed — see the ask list for what each one needs and who owns it.</p>
+      <table class="ft">
+        <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
+        <tbody><tr class="">
+      <td class="fx"><b>Content delivered on brief and on time</b><div class="src">awaiting the Content calendar feed. Needs content.id, content.pillar, content.briefedAt… at item, weekly — Keshav (P07)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">20</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Leads delivered vs plan</b><div class="src">awaiting a date-ranged read of the lake. Needs lead.batch_id, lead.source, lead.supplier… at batch · week, on upload — Ryan (P08)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">25</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Lead-to-sale conversion by source</b><div class="src">awaiting a date-ranged read of the lake. Needs lead.id, lead.source, lead.supplier… at source · month, daily — Ryan (P08)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">25</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Recruitment applications generated</b><div class="src">awaiting the GoHighLevel feed. Needs contact.source, contact.tags, contact.dateAdded… at campaign · week, daily — Keshav (P07)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr><tr class="">
+      <td class="fx"><b>Cost per qualified lead</b><div class="src">awaiting the Ad platforms / supplier invoices feed. Needs spend.channel, spend.period, spend.amount… at channel · month, monthly — Keshav (P07)</div></td>
+      <td class="num"><span class="miss">Missing</span></td>
+      <td class="num muted">—</td>
+      <td class="mt"></td>
+      <td class="num sc"><b>—</b></td>
+      <td class="num muted">15</td>
+      <td><span class="pill absent">No feed</span></td>
+      <td><span class="bl grey">Not measured</span></td>
+    </tr></tbody>
+      </table>
+      
+    </section>
+
+  <section class="card">
+    <h2>Data trust</h2>
+    <div class="q">The sources never end on the same day. This is where each one stops, as at 27 October 2026.</div>
+    <div class="src-row"><div class="src-chip stale">
+      <b><span class="dot amber"></span>Agent List (roster)</b><span>pending the pull</span></div><div class="src-chip stale">
+      <b><span class="dot amber"></span>BI Active Cases (money)</b><span>pending the pull</span></div><div class="src-chip stale">
+      <b><span class="dot amber"></span>Attendance register</b><span>pending the pull</span></div><div class="src-chip stale">
+      <b><span class="dot amber"></span>ViciDial call report</b><span>pending the pull</span></div><div class="src-chip stale">
+      <b><span class="dot amber"></span>QA evaluations</b><span>pending the pull</span></div><div class="src-chip stale">
+      <b><span class="dot amber"></span>SF Inactive (cancellations)</b><span>pending the pull</span></div><div class="src-chip stale">
+      <b><span class="dot amber"></span>Open Cases (lake)</b><span>pending the pull</span></div><div class="src-chip stale">
+      <b><span class="dot amber"></span>Coaching Hub</b><span>pending the pull</span></div><div class="src-chip down">
+      <b><span class="dot red"></span>GHL (recruitment)</b><span>pending the pull</span></div><div class="src-chip down">
+      <b><span class="dot red"></span>Blue (tickets/actions)</b><span>pending the pull</span></div><div class="src-chip down">
+      <b><span class="dot red"></span>LMS (training)</b><span>pending the pull</span></div><div class="src-chip down">
+      <b><span class="dot red"></span>Payscale / Xero (finance)</b><span>pending the pull</span></div></div>
+    <p class="comm" style="margin-top:11px">Every source state on this page is pending: the window has been set but not read. The three marked down have never been connected and are the subject of the ask list.</p>
+  </section>
+
+  <div class="foot">
+    <b>How to read a score.</b> Every factor is scored against its own target, capped at 110, then weighted inside its
+    section; the section is weighted by its share of the business. A factor with no reading leaves the denominator and the
+    others renormalise — an absence is never counted as a nought, which is why every score is printed beside the share of it
+    that rests on a measured number. Bands: Strong 85+ · Healthy 75+ · Watch 65+ · At risk 55+ · Critical 0+.<br>
+    <b>Basis.</b> <span class="pill actual">Actual</span> an engine computed it from an upload ·
+    <span class="pill manual">Manual</span> a named person supplied it ·
+    <span class="pill simulated">Simulated</span> a placeholder while the feed is built — shaded rows ·
+    <span class="pill absent">No feed</span> nothing to score.<br>
+    <b>Language.</b> Seat-level or modelled <i>contribution</i> only; never EBITDA before management accounts are tied out.<br>
+    Generated by <code>tools/build-exec-report.mjs</code> from <code>specs/exec_scorecard_rules.json</code> exec-scorecard-1.0
+    and <code>reports/exec-weekly/2026-09-25_2026-10-26/data.json</code>. Re-run the command to regenerate; never edit this page by hand.
+  </div>
+</div>
+</body>
+</html>
