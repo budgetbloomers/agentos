@@ -7,7 +7,8 @@
     "asAt": "17 September 2026",
     "audience": "EXCO · The Chatterbox",
     "roster": "129 agents on the 15 Sep Agent List",
-    "headline": "The selling floor is performing — GWP is on the engine's own target and the average sale is running well above the R89 planning value. Volume is the gap: 3,093 sales against 3,600. Everything around the floor is the real risk: 17 agents came off the 14 Sep list unreconciled, not one registered system is live and controlled, and three-quarters of this score still rests on placeholders rather than measured numbers. Fix the feeds before anyone quotes the overall figure outside this room."
+    "headline": "The selling floor is performing — GWP is on the engine's own target and the average sale is running well above the R89 planning value. Volume is the gap: 3,093 sales against 3,600. Everything around the floor is the real risk: 17 agents came off the 14 Sep list unreconciled, not one registered system is live and controlled, and three-quarters of this score still rests on placeholders rather than measured numbers. Fix the feeds before anyone quotes the overall figure outside this room.",
+    "headlineMeasured": "This is the report with the placeholders taken out. Only a reading an engine computed or a named person supplied is scored; everything else prints Missing. FIVE OF TEN SECTIONS CANNOT BE SCORED AT ALL — Recruitment, Training, Finance, Facilities and Marketing, together 40% of the declared weight. Of what is left, only Performance and Workforce stand on more than half their own evidence. The overall figure is directional and nothing in it should be quoted outside this room."
   },
   "summary": [
     "WORKS — Money: September GWP is R367,387 incl VAT against an engine target of R368,460, and the average sale is R119 against a R89 plan. Value per sale is not the problem.",
@@ -22,7 +23,7 @@
       "section": "performance",
       "issue": "Sales volume is 14% behind plan while value per sale is ahead",
       "impact": "≈507 sales short month-to-date. At the R119 average sale actually being written, that is roughly R60,000 of GWP not booked in fourteen days.",
-      "evidence": "3,093 cases net of cancellation vs a 3,600 target (BI Active Cases, MTD to 14 Sep). SPD 2.1 vs 2.6.",
+      "evidence": "3,093 cases net of cancellation vs a 3,600 target (BI Active Cases, MTD to 14 Sep). Both measured.",
       "owner": "Leon — Sales Ops (P10)",
       "action": "Campaign-level dial plan for Courtesy: attempts per lead and contact rate reviewed daily with the four TLs carrying the gap.",
       "due": "Mon 22 Sep",
@@ -50,8 +51,8 @@
     },
     {
       "section": "finance",
-      "issue": "Finance is reported against an unsigned budget",
-      "impact": "Revenue is a real number; 'revenue vs budget', cost per seat, contribution and payroll ratio are all modelled. No profitability statement in this report may be quoted externally.",
+      "issue": "Finance cannot be scored at all",
+      "impact": "Fifteen points of the business score — the largest single block — produce no number. Revenue is exact to the rand; cost per agent, contribution, payroll ratio and commission accuracy have nothing measured behind them.",
       "evidence": "No budget, payroll or ledger feed exists in AgentOS. KB module 07 figures are model, not actual; agent basic salary is itself in conflict (R5,000 vs R5,250).",
       "owner": "Mekaeel — CFO (P03)",
       "action": "Sign the September budget and nominate the monthly Xero/Payscale extract that feeds this section.",
@@ -829,5 +830,75 @@
       "analytics": 78.6,
       "marketing": 74.9
     }
-  }
+  },
+  "summaryMeasured": [
+    "WORKS — Money: September GWP is R367,387 incl VAT against an engine target of R368,460, and the average sale is R119 against a R89 plan. Both sides of that comparison are measured.",
+    "BROKEN — Volume: 3,093 sales against a 3,600 target. Measured on both sides, and the only sales figure in this report that is.",
+    "BROKEN — People leaving: 17 agents came off the 14 Sep Agent List against an opening 146. Measured; the REASONS are not recorded, so read it as an upper bound.",
+    "BROKEN — Control: zero of thirteen registered systems are live and controlled, with 27 open actions. That single measured zero is the whole of LRC's score, which is why the section reads 0 and is marked indicative rather than treated as a verdict on the department.",
+    "CANNOT SAY — Finance (15%), Recruitment (8%), Training (8%), Marketing (5%) and Facilities (4%) have no measured reading at all. Not a bad score: no score. Forty points of the business score are simply dark.",
+    "NEXT — Performance is one wiring job from 100% measured. Everything else needs the twenty-five requests in the ask list, six of which carry most of the weight."
+  ],
+  "redIssuesMeasured": [
+    {
+      "section": "performance",
+      "issue": "Sales volume is 14% behind plan while value per sale is ahead",
+      "impact": "≈507 sales short month-to-date. At the R119 average sale actually being written, that is roughly R60,000 of GWP not booked in fourteen days.",
+      "evidence": "3,093 cases net of cancellation vs a 3,600 target (BI Active Cases, MTD to 14 Sep). Both measured.",
+      "owner": "Leon — Sales Ops (P10)",
+      "action": "Campaign-level dial plan for Courtesy: attempts per lead and contact rate reviewed daily with the four TLs carrying the gap.",
+      "due": "Mon 22 Sep",
+      "escalation": "MANCO → CTTO if the gap is still above 10% at month end"
+    },
+    {
+      "section": "workforce",
+      "issue": "17 agents removed by the 14 Sep Agent List, unreconciled",
+      "impact": "11.6% of the opening roster in one month against a 4.5% planning assumption. At R16,000 all-in cost per seat the replacement cost alone is material, and every removal resets a nesting investment.",
+      "evidence": "agent_sync_logs, 14 Sep publish; roster 146 → 129. Removals are not yet split into resignations, dismissals and campaign transfers.",
+      "owner": "Claudell Panday — People Executive (P05)",
+      "action": "Reason code on every removal at the point of publish, then a fortnightly attrition read with Keshree and Abigail.",
+      "due": "Fri 26 Sep",
+      "escalation": "EXCO — this is the single largest unmeasured cost in the report"
+    },
+    {
+      "section": "lrc",
+      "issue": "Not one registered system is live and controlled",
+      "impact": "Zero of thirteen systems sit at G4 with 27 open actions against them. The commission calculator runs on rules no one has signed, and the legal and risk registers this section is supposed to read do not exist — so the business cannot state its own exposure.",
+      "evidence": "Canonical system register (Operating System Governance v1.1, 2026-07-02): 10 red, 2 amber, 1 grey, 0 at G4. SYS-003 Commission Calculator G1, unsigned rules. No legal register, no risk register feed.",
+      "owner": "Jared — Risk & Compliance Executive (P04)",
+      "action": "Re-date the register this month, then name where the legal and risk registers live and get one weekly export into this report.",
+      "due": "Fri 26 Sep",
+      "escalation": "EXCO if unresolved at the October pack"
+    },
+    {
+      "section": "finance",
+      "issue": "Finance cannot be scored at all",
+      "impact": "Fifteen points of the business score — the largest single block — produce no number. Revenue is exact to the rand; cost per agent, contribution, payroll ratio and commission accuracy have nothing measured behind them.",
+      "evidence": "No budget, payroll or ledger feed exists in AgentOS. KB module 07 figures are model, not actual; agent basic salary is itself in conflict (R5,000 vs R5,250).",
+      "owner": "Mekaeel — CFO (P03)",
+      "action": "Sign the September budget and nominate the monthly Xero/Payscale extract that feeds this section.",
+      "due": "Wed 30 Sep",
+      "escalation": "EXCO — required before any investor-facing use of this pack"
+    },
+    {
+      "section": "facilities",
+      "issue": "Facilities is unowned",
+      "impact": "4% of the business score has no accountable executive; a power or seat failure has no route into this report.",
+      "evidence": "P18 COO / Delivery Executive vacant_or_unresolved (KB module 03).",
+      "owner": "[INPUT REQUIRED — EXCO to nominate]",
+      "action": "Name an interim owner for facilities reporting pending the P18 appointment.",
+      "due": "Fri 19 Sep",
+      "escalation": "CEO"
+    },
+    {
+      "section": "recruitment",
+      "issue": "Five sections produce no score on measured data",
+      "impact": "Recruitment, Training, Finance, Facilities and Marketing are 40% of the declared business score and all read Missing. The overall figure therefore describes the 60% that can be seen, not the business.",
+      "evidence": "0% measured coverage in each (coverage probe, 27 Oct). 25 named data requests exist; none has been delivered.",
+      "owner": "Nicholas Pillay — CTTO (P02), with each section's owner",
+      "action": "Work the ask list by priority — BUDGET, LEAVER_REASON, GHL_PIPELINE_MAP, LEAD_ATTRIBUTION, BLUE_ACTIONS, SEAT_PLAN.",
+      "due": "Fri 13 Nov",
+      "escalation": "EXCO — until these land the weekly report cannot carry a defensible overall score"
+    }
+  ]
 }

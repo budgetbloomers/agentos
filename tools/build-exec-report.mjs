@@ -257,13 +257,13 @@ function factorRows(sec) {
     const basis = rd.basis || 'absent';
     return `<tr class="${basis === 'simulated' ? 'sim' : ''}">
       <td class="fx"><b>${esc(f.label)}</b><div class="src">${esc(rd.source || f.source || '')}</div></td>
-      <td class="num">${fmt(rd.value, f.unit)}</td>
+      <td class="num">${r.counts ? fmt(rd.value, f.unit) : '<span class="miss">Missing</span>'}</td>
       <td class="num muted">${rd.target === undefined || rd.target === null ? '—' : fmt(rd.target, f.unit)}</td>
-      <td class="mt">${meter(score, b.rag)}</td>
-      <td class="num sc"><b>${score === null ? '—' : score}</b></td>
+      <td class="mt">${r.counts ? meter(score, b.rag) : ''}</td>
+      <td class="num sc"><b>${r.counts ? score : '—'}</b></td>
       <td class="num muted">${f.w}${r.counts && r.effW !== f.w ? `<span class="eff">→${r.effW}</span>` : ''}</td>
-      <td><span class="pill ${basis}">${BASIS_LABEL[basis] || basis}</span></td>
-      <td><span class="bl ${b.rag}">${esc(b.label)}</span></td>
+      <td><span class="pill ${r.counts ? basis : 'absent'}">${r.counts ? (BASIS_LABEL[basis] || basis) : (basis === 'simulated' ? 'No metric' : BASIS_LABEL[basis] || basis)}</span></td>
+      <td><span class="bl ${r.counts ? b.rag : 'grey'}">${r.counts ? esc(b.label) : 'Not measured'}</span></td>
     </tr>`;
   }).join('');
 }
@@ -295,6 +295,14 @@ function renderHTML(model) {
   const { meta, business, sections, data, rules } = model;
   const logo = logoDataUri();
   VIZ = rules.viz || {};
+  /* In measured mode the authored narrative changes with it. The ordinary summary
+     quotes figures that this build deliberately refuses to print — a bullet saying
+     "sales per agent-day is 2.1" beside a table reading Missing would be the exact
+     dishonesty this mode exists to remove. */
+  const MO = !!meta.measuredOnly;
+  const headline = (MO && meta.headlineMeasured) || meta.headline;
+  const summary = (MO && data.summaryMeasured) || data.summary;
+  const redIssues = (MO && data.redIssuesMeasured) || data.redIssues || [];
   const V = VIZ;
   /* One place decides a colour: the rule book. The template only names the token. */
   const vizVars = [
@@ -309,10 +317,10 @@ function renderHTML(model) {
     return `<a class="kpi" href="#sec-${s.k}">
       <div class="kpi-top"><span class="kpi-w">${s.weight}% of business</span>${ragDot(s.band.rag)}</div>
       <div class="kpi-name">${esc(s.label)}</div>
-      <div class="kpi-val">${s.score === null ? '—' : s.score}<span class="unit">/100</span>
+      <div class="kpi-val${s.score === null ? ' none' : s.thin ? ' thin' : ''}">${s.score === null ? 'Missing' : s.score}${s.score === null ? '' : '<span class="unit">/100</span>'}
         ${delta === null ? '' : `<span class="delta ${deltaCls(delta)}">${arrow(delta)} ${Math.abs(delta)}</span>`}</div>
       ${meter(s.score, s.band.rag)}
-      <div class="kpi-sub"><span class="bl ${s.band.rag}">${esc(s.band.label)}</span></div>
+      <div class="kpi-sub"><span class="bl ${s.band.rag}">${esc(s.band.label)}</span>${s.score !== null && s.thin ? '<span class="ind">indicative</span>' : ''}</div>
       <div class="kpi-cov"><span style="width:${s.coverage}%"></span><i style="width:${s.realCoverage}%"></i></div>
       <div class="kpi-cov-l">${s.realCoverage}% measured · ${s.coverage}% scored</div>
     </a>`;
@@ -325,10 +333,10 @@ function renderHTML(model) {
           <h2>${ragDot(s.band.rag)}${esc(s.label)}</h2>
           <div class="q">${esc(s.question)}</div>
         </div>
-        <div class="sec-score">
-          <div class="ss-val">${s.score === null ? '—' : s.score}<span>/100</span></div>
+        <div class="sec-score${s.score === null ? ' none' : s.thin ? ' thin' : ''}">
+          <div class="ss-val">${s.score === null ? 'Missing' : s.score}${s.score === null ? '' : '<span>/100</span>'}</div>
           <div class="ss-b ${s.band.rag}">${esc(s.band.label)}</div>
-          <div class="ss-w">${s.weight}% of the business score</div>
+          <div class="ss-w">${s.score !== null && s.thin ? `indicative — only ${s.realCoverage}% measured · ` : ''}${s.weight}% of the business score</div>
         </div>
       </div>
       <div class="meta-row">
@@ -345,7 +353,7 @@ function renderHTML(model) {
     </section>`).join('');
 
   const secLabel = Object.fromEntries(sections.map(s => [s.k, s.label]));
-  const reds = (data.redIssues || []).map(r => `<tr>
+  const reds = redIssues.map(r => `<tr>
       <td><b>${esc(r.issue)}</b>${r.section ? `<div class="rsec">${esc(secLabel[r.section] || r.section)}</div>` : ''}</td>
       <td>${esc(r.impact)}</td><td class="ev">${esc(r.evidence)}</td>
       <td>${esc(r.owner)}</td><td>${esc(r.action)}</td><td class="num">${esc(r.due)}</td><td>${esc(r.escalation)}</td>
@@ -362,7 +370,7 @@ function renderHTML(model) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow, noarchive">
 <meta name="theme-color" content="#0A1730">
-<title>Executive Weekly Health Report — The Chatterbox</title>
+<title>Executive Weekly Health Report${MO ? ' (measured data only)' : ''} — The Chatterbox</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
@@ -432,6 +440,7 @@ th.bar-h{width:120px}
 .mast-logo{background:#fff;border-radius:11px;padding:11px 13px;flex:none}
 .mast-logo img{display:block;width:150px}
 .mast-ttl{font-size:21px;font-weight:800;letter-spacing:-.4px}
+.mast-mode{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#FCD34D;background:rgba(251,191,36,.14);border-radius:999px;padding:3px 10px;vertical-align:middle;margin-left:6px}
 .mast-sub{font-size:12.5px;color:#9FB6DA;margin-top:3px}
 .mast-right{margin-left:auto;text-align:right}
 .big-score{font-size:60px;font-weight:900;letter-spacing:-2.6px;line-height:1}
@@ -443,6 +452,8 @@ th.bar-h{width:120px}
 .big-band.grey{background:rgba(148,182,255,.14);color:#C6D3E8}
 .mast-meter{margin-top:9px;width:190px;margin-left:auto}
 .mast-meter .meter{background:rgba(255,255,255,.16)}
+.mode-strap{position:relative;margin-top:13px;font-size:12px;font-weight:600;color:#FCD34D;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);border-radius:9px;padding:8px 11px;max-width:86ch;line-height:1.5}
+.mode-strap b{color:#fff}
 .mast-note{position:relative;margin-top:14px;font-size:12.5px;color:#C7D6EE;max-width:74ch;line-height:1.55}
 .mast-note b{color:#fff}
 .mast-bar{position:relative;display:flex;gap:16px;flex-wrap:wrap;margin-top:13px;padding-top:12px;border-top:1px solid rgba(255,255,255,.13);font-size:11.5px;color:#9FB6DA}
@@ -486,6 +497,11 @@ th.bar-h{width:120px}
 .meta-row b{color:var(--body);font-weight:700}
 .warn{color:var(--amber)!important}
 .comm{font-size:13px;color:var(--body);line-height:1.6;margin-bottom:11px;max-width:92ch}
+
+.sec-score.thin .ss-val,.kpi-val.thin{color:#8FA0B8}
+.sec-score.none .ss-val,.kpi-val.none{color:var(--muted);font-size:20px;letter-spacing:-.3px}
+.ind{font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--grey-soft);padding:1px 6px;border-radius:999px}
+.miss{color:var(--muted);font-weight:700;font-size:11.5px;letter-spacing:.01em}
 
 /* ---------- tables ---------- */
 table{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -576,7 +592,7 @@ tr.sim:hover td{background:#F9F7EF}
     <div class="mast-top">
       ${logo ? `<div class="mast-logo"><img src="${logo}" alt="The Chatterbox"></div>` : ''}
       <div>
-        <div class="mast-ttl">Executive Weekly Health Report</div>
+        <div class="mast-ttl">Executive Weekly Health Report${MO ? ' <span class="mast-mode">measured data only</span>' : ''}</div>
         <div class="mast-sub">${esc(meta.periodLabel)} · issued ${esc(meta.issued)} · ${esc(meta.audience)}</div>
       </div>
       <div class="mast-right">
@@ -585,7 +601,8 @@ tr.sim:hover td{background:#F9F7EF}
         <div class="mast-meter">${meter(business.score, business.band.rag)}</div>
       </div>
     </div>
-    <div class="mast-note">${esc(meta.headline)}</div>
+    ${MO ? `<div class="mode-strap">Measured data only — every factor without a real reading prints <b>Missing</b>, and a section with nothing measured carries no score at all. ${sections.filter(s => s.score === null).length} of ${sections.length} sections cannot be scored.</div>` : ''}
+    <div class="mast-note">${esc(headline)}</div>
     <div class="mast-bar">
       <span><b>${business.evidence}%</b> of the business score rests on a measured number</span>
       <span><b>${sections.filter(s => s.score !== null).length} of ${sections.length}</b> sections carried a score</span>
@@ -606,11 +623,11 @@ tr.sim:hover td{background:#F9F7EF}
 
   <div class="kpi-grid">${kpiCards}</div>
 
-  ${data.summary?.length ? `<section class="card">
+  ${summary?.length ? `<section class="card">
     <h2>What an executive needs to do about it</h2>
     <div class="q">The 60-second test: what works, what is broken, who owns it, what action is live, where it escalates.</div>
     <ul style="margin:11px 0 0 18px;font-size:13px;line-height:1.7">
-      ${data.summary.map(s => `<li>${esc(s)}</li>`).join('')}
+      ${summary.map(s => `<li>${esc(s)}</li>`).join('')}
     </ul>
   </section>` : ''}
 
@@ -658,30 +675,32 @@ function renderMD(model) {
   L.push('');
   L.push(`## Overall business health: ${business.score ?? '—'}/100 — ${business.band.label}`);
   L.push('');
-  L.push(meta.headline);
+  L.push((meta.measuredOnly && meta.headlineMeasured) || meta.headline);
   L.push('');
   L.push(`${business.evidence}% of the business score rests on a measured number; ${business.weightScored} of ${business.weightDeclared} points of section weight were scored. ${meta.roster}`);
   L.push('');
   L.push('| Section | Weight | Score | Band | Measured | Owner |');
   L.push('|---|---:|---:|---|---:|---|');
-  sections.forEach(s => L.push(`| ${s.label} | ${s.weight}% | ${s.score ?? '—'} | ${s.band.label} | ${s.realCoverage}% | ${s.owner} |`));
+  sections.forEach(s => L.push(`| ${s.label} | ${s.weight}% | ${s.score ?? '**Missing**'} | ${s.band.label} | ${s.realCoverage}% | ${s.owner} |`));
   L.push('');
-  if (data.summary?.length) {
+  const sum2 = (meta.measuredOnly && data.summaryMeasured) || data.summary;
+  if (sum2?.length) {
     L.push('## What an executive needs to do about it');
     L.push('');
-    data.summary.forEach(s => L.push(`- ${s}`));
+    sum2.forEach(s => L.push(`- ${s}`));
     L.push('');
   }
-  if (data.redIssues?.length) {
+  const reds2 = (meta.measuredOnly && data.redIssuesMeasured) || data.redIssues;
+  if (reds2?.length) {
     L.push('## Red issues');
     L.push('');
     L.push('| Issue | Impact | Evidence | Owner | Action | Due | Escalation |');
     L.push('|---|---|---|---|---|---|---|');
-    data.redIssues.forEach(r => L.push(`| ${r.issue} | ${r.impact} | ${r.evidence} | ${r.owner} | ${r.action} | ${r.due} | ${r.escalation} |`));
+    reds2.forEach(r => L.push(`| ${r.issue} | ${r.impact} | ${r.evidence} | ${r.owner} | ${r.action} | ${r.due} | ${r.escalation} |`));
     L.push('');
   }
   sections.forEach(s => {
-    L.push(`## ${s.label} — ${s.score ?? '—'}/100 (${s.band.label}, ${s.weight}% of the business score)`);
+    L.push(`## ${s.label} — ${s.score === null ? 'Missing' : s.score + '/100'} (${s.band.label}, ${s.weight}% of the business score)${s.score !== null && s.thin ? ' — INDICATIVE' : ''}`);
     L.push('');
     L.push(`*${s.question}*`);
     L.push('');
@@ -690,7 +709,7 @@ function renderMD(model) {
     if (data.sections[s.k]?.commentary) { L.push(data.sections[s.k].commentary); L.push(''); }
     L.push('| Factor | Reading | Target | Score | Weight | Basis |');
     L.push('|---|---:|---:|---:|---:|---|');
-    s.rows.forEach(r => L.push(`| ${r.factor.label} | ${fmt(r.reading.value, r.factor.unit)} | ${r.reading.target === undefined || r.reading.target === null ? '—' : fmt(r.reading.target, r.factor.unit)} | ${r.score ?? '—'} | ${r.factor.w}${r.counts && r.effW !== r.factor.w ? ` → ${r.effW}` : ''} | ${BASIS_LABEL[r.reading.basis] || r.reading.basis} |`));
+    s.rows.forEach(r => L.push(`| ${r.factor.label} | ${r.counts ? fmt(r.reading.value, r.factor.unit) : 'Missing'} | ${r.reading.target === undefined || r.reading.target === null ? '—' : fmt(r.reading.target, r.factor.unit)} | ${r.score ?? '—'} | ${r.factor.w}${r.counts && r.effW !== r.factor.w ? ` → ${r.effW}` : ''} | ${BASIS_LABEL[r.reading.basis] || r.reading.basis} |`));
     L.push('');
     (data.sections[s.k]?.breakouts || []).forEach(bo => {
       if (!bo.rows?.length) return;
@@ -717,8 +736,19 @@ function renderMD(model) {
 
 /* ------------------------------------------------------------------- the run */
 
-export function build(dir, { write = true } = {}) {
+/* MEASURED-ONLY (Nick, 2026-10-27: "run the full report with the data we have —
+   say missing if metrics are missing"). The ordinary build lets a simulated
+   placeholder stand in so the framework can be reviewed end to end. This mode
+   turns that off: only a reading an engine computed or a named person supplied
+   is scored, and every other factor prints MISSING in the place its number would
+   have been. A section with nothing measured does not score 0 — it reads "Not
+   measured", because an absence is not a nought right up to the top of the page.
+
+   It is the same data.json and the same rule book; only `countSimulated` moves.
+   Two documents, one source, and the honest one is the one with a suffix. */
+export function build(dir, { write = true, measuredOnly = false } = {}) {
   const rules = JSON.parse(readFileSync(RULES_PATH, 'utf8'));
+  if (measuredOnly) rules.countSimulated = false;
   BANDS = rules.bands;
   const dataPath = join(dir, 'data.json');
   if (!existsSync(dataPath)) throw new Error(`no data.json in ${dir}`);
@@ -741,13 +771,15 @@ export function build(dir, { write = true } = {}) {
 
   const sections = rules.sections.map(s => scoreSection(s, data.sections?.[s.k]?.factors || {}, rules));
   const business = scoreBusiness(sections, rules);
-  const meta = { ...data.meta, dataFile: join(dir.replace(ROOT + '/', ''), 'data.json') };
+  const meta = { ...data.meta, dataFile: join(dir.replace(ROOT + '/', ''), 'data.json'), measuredOnly };
   const model = { meta, business, sections, data, rules };
 
   if (write) {
-    writeFileSync(join(dir, 'index.html'), renderHTML(model));
-    writeFileSync(join(dir, 'REPORT.md'), renderMD(model) + '\n');
-    writeFileSync(join(dir, 'scores.json'), JSON.stringify({
+    const sfx = measuredOnly ? '-measured' : '';
+    writeFileSync(join(dir, `index${sfx}.html`), renderHTML(model));
+    writeFileSync(join(dir, `REPORT${sfx}.md`), renderMD(model) + '\n');
+    writeFileSync(join(dir, `scores${sfx}.json`), JSON.stringify({
+      measuredOnly,
       generated: new Date().toISOString().slice(0, 10),
       rules: rules.version,
       period: meta.periodLabel,
@@ -764,16 +796,18 @@ export function build(dir, { write = true } = {}) {
 
 const invoked = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
 if (invoked) {
-  const dir = process.argv[2];
+  const dir = process.argv.slice(2).find(a => !a.startsWith('--'));
+  const measuredOnly = process.argv.includes('--measured-only');
   if (!dir) {
-    console.error('usage: node tools/build-exec-report.mjs <report-folder>   (folder must hold data.json)');
+    console.error('usage: node tools/build-exec-report.mjs <report-folder> [--measured-only]   (folder must hold data.json)');
     process.exit(1);
   }
-  const m = build(resolve(dir));
+  const m = build(resolve(dir), { measuredOnly });
   const pad = (s, n) => String(s).padEnd(n);
-  console.log(`\n  ${m.meta.periodLabel}`);
+  console.log(`\n  ${m.meta.periodLabel}${measuredOnly ? '   [MEASURED DATA ONLY — placeholders print as Missing]' : ''}`);
   console.log(`  OVERALL  ${m.business.score}/100  ${m.business.band.label}   (${m.business.evidence}% measured evidence)\n`);
   m.sections.forEach(s => console.log(
-    `    ${pad(s.label, 34)} ${String(s.score ?? '—').padStart(5)}  ${pad(s.band.label, 12)} w${String(s.weight).padStart(3)}%  measured ${String(s.realCoverage).padStart(5)}%${s.thin ? '  THIN' : ''}`));
-  console.log(`\n  wrote index.html · REPORT.md · scores.json in ${dir}\n`);
+    `    ${pad(s.label, 34)} ${String(s.score ?? 'MISSING').padStart(7)}  ${pad(s.band.label, 13)} w${String(s.weight).padStart(3)}%  measured ${String(s.realCoverage).padStart(5)}%${s.thin ? '  THIN' : ''}`));
+  const sfx = measuredOnly ? '-measured' : '';
+  console.log(`\n  wrote index${sfx}.html · REPORT${sfx}.md · scores${sfx}.json in ${dir}\n`);
 }

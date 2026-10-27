@@ -34,10 +34,10 @@ The selling floor is performing — GWP is on the engine's own target and the av
 
 | Issue | Impact | Evidence | Owner | Action | Due | Escalation |
 |---|---|---|---|---|---|---|
-| Sales volume is 14% behind plan while value per sale is ahead | ≈507 sales short month-to-date. At the R119 average sale actually being written, that is roughly R60,000 of GWP not booked in fourteen days. | 3,093 cases net of cancellation vs a 3,600 target (BI Active Cases, MTD to 14 Sep). SPD 2.1 vs 2.6. | Leon — Sales Ops (P10) | Campaign-level dial plan for Courtesy: attempts per lead and contact rate reviewed daily with the four TLs carrying the gap. | Mon 22 Sep | MANCO → CTTO if the gap is still above 10% at month end |
+| Sales volume is 14% behind plan while value per sale is ahead | ≈507 sales short month-to-date. At the R119 average sale actually being written, that is roughly R60,000 of GWP not booked in fourteen days. | 3,093 cases net of cancellation vs a 3,600 target (BI Active Cases, MTD to 14 Sep). Both measured. | Leon — Sales Ops (P10) | Campaign-level dial plan for Courtesy: attempts per lead and contact rate reviewed daily with the four TLs carrying the gap. | Mon 22 Sep | MANCO → CTTO if the gap is still above 10% at month end |
 | 17 agents removed by the 14 Sep Agent List, unreconciled | 11.6% of the opening roster in one month against a 4.5% planning assumption. At R16,000 all-in cost per seat the replacement cost alone is material, and every removal resets a nesting investment. | agent_sync_logs, 14 Sep publish; roster 146 → 129. Removals are not yet split into resignations, dismissals and campaign transfers. | Claudell Panday — People Executive (P05) | Reason code on every removal at the point of publish, then a fortnightly attrition read with Keshree and Abigail. | Fri 26 Sep | EXCO — this is the single largest unmeasured cost in the report |
 | Not one registered system is live and controlled | Zero of thirteen systems sit at G4 with 27 open actions against them. The commission calculator runs on rules no one has signed, and the legal and risk registers this section is supposed to read do not exist — so the business cannot state its own exposure. | Canonical system register (Operating System Governance v1.1, 2026-07-02): 10 red, 2 amber, 1 grey, 0 at G4. SYS-003 Commission Calculator G1, unsigned rules. No legal register, no risk register feed. | Jared — Risk & Compliance Executive (P04) | Re-date the register this month, then name where the legal and risk registers live and get one weekly export into this report. | Fri 26 Sep | EXCO if unresolved at the October pack |
-| Finance is reported against an unsigned budget | Revenue is a real number; 'revenue vs budget', cost per seat, contribution and payroll ratio are all modelled. No profitability statement in this report may be quoted externally. | No budget, payroll or ledger feed exists in AgentOS. KB module 07 figures are model, not actual; agent basic salary is itself in conflict (R5,000 vs R5,250). | Mekaeel — CFO (P03) | Sign the September budget and nominate the monthly Xero/Payscale extract that feeds this section. | Wed 30 Sep | EXCO — required before any investor-facing use of this pack |
+| Finance cannot be scored at all | Fifteen points of the business score — the largest single block — produce no number. Revenue is exact to the rand; cost per agent, contribution, payroll ratio and commission accuracy have nothing measured behind them. | No budget, payroll or ledger feed exists in AgentOS. KB module 07 figures are model, not actual; agent basic salary is itself in conflict (R5,000 vs R5,250). | Mekaeel — CFO (P03) | Sign the September budget and nominate the monthly Xero/Payscale extract that feeds this section. | Wed 30 Sep | EXCO — required before any investor-facing use of this pack |
 | Facilities is unowned | 4% of the business score has no accountable executive; a power or seat failure has no route into this report. | P18 COO / Delivery Executive vacant_or_unresolved (KB module 03). | [INPUT REQUIRED — EXCO to nominate] | Name an interim owner for facilities reporting pending the P18 appointment. | Fri 19 Sep | CEO |
 
 ## Performance — 87.1/100 (Strong, 25% of the business score)
@@ -166,7 +166,7 @@ Nesting is the one part of training the suite can actually see, because it is a 
 | Nesting graduation rate | 72% | 85% | 84.7 | 25 → 29.4 | Simulated |
 | Time to first sale (days) | 9 d | 6 d | 66.7 | 20 → 23.5 | Simulated |
 | Learners in nest vs required intake | 60% | 100% | 60 | 15 → 17.6 | Simulated |
-| Certification & refresher completion | — | — | — | 15 | No feed |
+| Certification & refresher completion | Missing | — | — | 15 | No feed |
 
 ## IT — Dialler & Service — 83.7/100 (Healthy, 10% of the business score)
 
@@ -181,7 +181,7 @@ The dialler is the business's only production line and it ran at 96.5% of shift 
 | Dialler uptime in shift hours | 96.5% | 99.5% | 97 | 25 → 31.3 | Simulated |
 | Talk time per agent-day vs standard | 186 min | 210 min | 88.6 | 20 → 25 | Simulated |
 | Connect rate | 22% | 30% | 73.3 | 15 → 18.8 | Simulated |
-| IT tickets resolved within SLA | — | — | — | 20 | No feed |
+| IT tickets resolved within SLA | Missing | — | — | 20 | No feed |
 | Open P1 incidents / platform alerts | 2 | — | 70 | 20 → 25 | Actual |
 
 ## Finance — 72.4/100 (Watch, 15% of the business score)
@@ -226,9 +226,9 @@ Blue is the system of record for actions and it does not reach this report — n
 
 | Factor | Reading | Target | Score | Weight | Basis |
 |---|---:|---:|---:|---:|---|
-| Blue tickets closed within SLA | — | — | — | 20 | No feed |
-| Open ticket backlog | — | — | — | 15 | No feed |
-| Tickets open over 7 days | — | — | — | 10 | No feed |
+| Blue tickets closed within SLA | Missing | — | — | 20 | No feed |
+| Open ticket backlog | Missing | — | — | 15 | No feed |
+| Tickets open over 7 days | Missing | — | — | 10 | No feed |
 | Campaign blockages closed within SLA | 74% | 90% | 82.2 | 15 → 27.3 | Simulated |
 | Source freshness (sources current, no stale feed) | 82% | — | 82 | 25 → 45.5 | Actual |
 | Governed reports delivered on time | 80% | 100% | 80 | 15 → 27.3 | Simulated |

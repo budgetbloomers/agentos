@@ -75,6 +75,7 @@ th.bar-h{width:120px}
 .mast-logo{background:#fff;border-radius:11px;padding:11px 13px;flex:none}
 .mast-logo img{display:block;width:150px}
 .mast-ttl{font-size:21px;font-weight:800;letter-spacing:-.4px}
+.mast-mode{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#FCD34D;background:rgba(251,191,36,.14);border-radius:999px;padding:3px 10px;vertical-align:middle;margin-left:6px}
 .mast-sub{font-size:12.5px;color:#9FB6DA;margin-top:3px}
 .mast-right{margin-left:auto;text-align:right}
 .big-score{font-size:60px;font-weight:900;letter-spacing:-2.6px;line-height:1}
@@ -86,6 +87,8 @@ th.bar-h{width:120px}
 .big-band.grey{background:rgba(148,182,255,.14);color:#C6D3E8}
 .mast-meter{margin-top:9px;width:190px;margin-left:auto}
 .mast-meter .meter{background:rgba(255,255,255,.16)}
+.mode-strap{position:relative;margin-top:13px;font-size:12px;font-weight:600;color:#FCD34D;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);border-radius:9px;padding:8px 11px;max-width:86ch;line-height:1.5}
+.mode-strap b{color:#fff}
 .mast-note{position:relative;margin-top:14px;font-size:12.5px;color:#C7D6EE;max-width:74ch;line-height:1.55}
 .mast-note b{color:#fff}
 .mast-bar{position:relative;display:flex;gap:16px;flex-wrap:wrap;margin-top:13px;padding-top:12px;border-top:1px solid rgba(255,255,255,.13);font-size:11.5px;color:#9FB6DA}
@@ -129,6 +132,11 @@ th.bar-h{width:120px}
 .meta-row b{color:var(--body);font-weight:700}
 .warn{color:var(--amber)!important}
 .comm{font-size:13px;color:var(--body);line-height:1.6;margin-bottom:11px;max-width:92ch}
+
+.sec-score.thin .ss-val,.kpi-val.thin{color:#8FA0B8}
+.sec-score.none .ss-val,.kpi-val.none{color:var(--muted);font-size:20px;letter-spacing:-.3px}
+.ind{font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--grey-soft);padding:1px 6px;border-radius:999px}
+.miss{color:var(--muted);font-weight:700;font-size:11.5px;letter-spacing:.01em}
 
 /* ---------- tables ---------- */
 table{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -229,6 +237,7 @@ tr.sim:hover td{background:#F9F7EF}
     <i style="width:70.5%"></i><b style="left:90.9%"></b></span></div>
       </div>
     </div>
+    
     <div class="mast-note">The selling floor is performing — GWP is on the engine&#39;s own target and the average sale is running well above the R89 planning value. Volume is the gap: 3,093 sales against 3,600. Everything around the floor is the real risk: 17 agents came off the 14 Sep list unreconciled, not one registered system is live and controlled, and three-quarters of this score still rests on placeholders rather than measured numbers. Fix the feeds before anyone quotes the overall figure outside this room.</div>
     <div class="mast-bar">
       <span><b>23.9%</b> of the business score rests on a measured number</span>
@@ -392,7 +401,7 @@ tr.sim:hover td{background:#F9F7EF}
       <th>Issue</th><th>Impact</th><th>Evidence</th><th>Owner</th><th>Action</th><th class="num">Due</th><th>Escalation</th>
     </tr></thead><tbody><tr>
       <td><b>Sales volume is 14% behind plan while value per sale is ahead</b><div class="rsec">Performance</div></td>
-      <td>≈507 sales short month-to-date. At the R119 average sale actually being written, that is roughly R60,000 of GWP not booked in fourteen days.</td><td class="ev">3,093 cases net of cancellation vs a 3,600 target (BI Active Cases, MTD to 14 Sep). SPD 2.1 vs 2.6.</td>
+      <td>≈507 sales short month-to-date. At the R119 average sale actually being written, that is roughly R60,000 of GWP not booked in fourteen days.</td><td class="ev">3,093 cases net of cancellation vs a 3,600 target (BI Active Cases, MTD to 14 Sep). Both measured.</td>
       <td>Leon — Sales Ops (P10)</td><td>Campaign-level dial plan for Courtesy: attempts per lead and contact rate reviewed daily with the four TLs carrying the gap.</td><td class="num">Mon 22 Sep</td><td>MANCO → CTTO if the gap is still above 10% at month end</td>
     </tr><tr>
       <td><b>17 agents removed by the 14 Sep Agent List, unreconciled</b><div class="rsec">Workforce</div></td>
@@ -403,8 +412,8 @@ tr.sim:hover td{background:#F9F7EF}
       <td>Zero of thirteen systems sit at G4 with 27 open actions against them. The commission calculator runs on rules no one has signed, and the legal and risk registers this section is supposed to read do not exist — so the business cannot state its own exposure.</td><td class="ev">Canonical system register (Operating System Governance v1.1, 2026-07-02): 10 red, 2 amber, 1 grey, 0 at G4. SYS-003 Commission Calculator G1, unsigned rules. No legal register, no risk register feed.</td>
       <td>Jared — Risk &amp; Compliance Executive (P04)</td><td>Re-date the register this month, then name where the legal and risk registers live and get one weekly export into this report.</td><td class="num">Fri 26 Sep</td><td>EXCO if unresolved at the October pack</td>
     </tr><tr>
-      <td><b>Finance is reported against an unsigned budget</b><div class="rsec">Finance</div></td>
-      <td>Revenue is a real number; &#39;revenue vs budget&#39;, cost per seat, contribution and payroll ratio are all modelled. No profitability statement in this report may be quoted externally.</td><td class="ev">No budget, payroll or ledger feed exists in AgentOS. KB module 07 figures are model, not actual; agent basic salary is itself in conflict (R5,000 vs R5,250).</td>
+      <td><b>Finance cannot be scored at all</b><div class="rsec">Finance</div></td>
+      <td>Fifteen points of the business score — the largest single block — produce no number. Revenue is exact to the rand; cost per agent, contribution, payroll ratio and commission accuracy have nothing measured behind them.</td><td class="ev">No budget, payroll or ledger feed exists in AgentOS. KB module 07 figures are model, not actual; agent basic salary is itself in conflict (R5,000 vs R5,250).</td>
       <td>Mekaeel — CFO (P03)</td><td>Sign the September budget and nominate the monthly Xero/Payscale extract that feeds this section.</td><td class="num">Wed 30 Sep</td><td>EXCO — required before any investor-facing use of this pack</td>
     </tr><tr>
       <td><b>Facilities is unowned</b><div class="rsec">Facilities</div></td>
@@ -899,10 +908,9 @@ tr.sim:hover td{background:#F9F7EF}
       <td><span class="bl amber">At risk</span></td>
     </tr><tr class="">
       <td class="fx"><b>Certification &amp; refresher completion</b><div class="src">LMS has never been connected. No go-live without a training pass is a confirmed rule with no evidence trail behind it — this factor leaves the denominator and the section renormalises</div></td>
-      <td class="num">—</td>
+      <td class="num"><span class="miss">Missing</span></td>
       <td class="num muted">—</td>
-      <td class="mt"><span class="meter grey" title="not measured">
-    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="mt"></td>
       <td class="num sc"><b>—</b></td>
       <td class="num muted">15</td>
       <td><span class="pill absent">No feed</span></td>
@@ -963,10 +971,9 @@ tr.sim:hover td{background:#F9F7EF}
       <td><span class="bl amber">Watch</span></td>
     </tr><tr class="">
       <td class="fx"><b>IT tickets resolved within SLA</b><div class="src">No ticketing or service-desk system exists in the system register — [INPUT REQUIRED]. Factor leaves the denominator</div></td>
-      <td class="num">—</td>
+      <td class="num"><span class="miss">Missing</span></td>
       <td class="num muted">—</td>
-      <td class="mt"><span class="meter grey" title="not measured">
-    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="mt"></td>
       <td class="num sc"><b>—</b></td>
       <td class="num muted">20</td>
       <td><span class="pill absent">No feed</span></td>
@@ -1155,30 +1162,27 @@ tr.sim:hover td{background:#F9F7EF}
         <thead><tr><th>Contributing factor</th><th class="num">Reading</th><th class="num">Target</th><th class="mt-h">Score vs target</th><th class="num">Score</th><th class="num">Weight</th><th>Basis</th><th>Band</th></tr></thead>
         <tbody><tr class="">
       <td class="fx"><b>Blue tickets closed within SLA</b><div class="src">Blue has no export into AgentOS — [INPUT REQUIRED]. Factor leaves the denominator</div></td>
-      <td class="num">—</td>
+      <td class="num"><span class="miss">Missing</span></td>
       <td class="num muted">—</td>
-      <td class="mt"><span class="meter grey" title="not measured">
-    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="mt"></td>
       <td class="num sc"><b>—</b></td>
       <td class="num muted">20</td>
       <td><span class="pill absent">No feed</span></td>
       <td><span class="bl grey">Not measured</span></td>
     </tr><tr class="">
       <td class="fx"><b>Open ticket backlog</b><div class="src">Blue open-ticket count — no feed</div></td>
-      <td class="num">—</td>
+      <td class="num"><span class="miss">Missing</span></td>
       <td class="num muted">—</td>
-      <td class="mt"><span class="meter grey" title="not measured">
-    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="mt"></td>
       <td class="num sc"><b>—</b></td>
       <td class="num muted">15</td>
       <td><span class="pill absent">No feed</span></td>
       <td><span class="bl grey">Not measured</span></td>
     </tr><tr class="">
       <td class="fx"><b>Tickets open over 7 days</b><div class="src">Blue tickets open beyond 7 days — no feed</div></td>
-      <td class="num">—</td>
+      <td class="num"><span class="miss">Missing</span></td>
       <td class="num muted">—</td>
-      <td class="mt"><span class="meter grey" title="not measured">
-    <i style="width:0.0%"></i><b style="left:90.9%"></b></span></td>
+      <td class="mt"></td>
       <td class="num sc"><b>—</b></td>
       <td class="num muted">10</td>
       <td><span class="pill absent">No feed</span></td>

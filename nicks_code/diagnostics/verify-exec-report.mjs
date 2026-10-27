@@ -355,6 +355,66 @@ if (fs.existsSync(ASKS)) {
     !al.includes('[INPUT REQUIRED') || al.includes('UNOWNED — EXCO to nominate'));
 }
 
+/* ------------------------------------------- 8. measured-data-only mode ----- */
+console.log('\n== measured data only: a placeholder prints Missing, never a number ==');
+const mo = build(DIR, { write: false, measuredOnly: true });
+const moRows = mo.sections.flatMap(s => s.rows);
+
+ok('no simulated reading is scored in measured mode',
+  moRows.filter(r => r.reading.basis === 'simulated').every(r => !r.counts),
+  moRows.filter(r => r.reading.basis === 'simulated' && r.counts).length + ' simulated readings still counted');
+ok('only actual and manual readings carry a measured score',
+  moRows.filter(r => r.counts).every(r => ['actual', 'manual'].includes(r.reading.basis)));
+ok('a section with nothing measured scores NOTHING — not zero',
+  mo.sections.filter(s => s.realCoverage === 0).every(s => s.score === null),
+  mo.sections.filter(s => s.realCoverage === 0 && s.score !== null).map(s => s.k).join(','));
+ok('a MEASURED zero still scores zero, even when it is the section\'s only reading',
+  mo.sections.find(s => s.k === 'lrc').score === 0,
+  String(mo.sections.find(s => s.k === 'lrc').score));
+ok('coverage and measured coverage are the same thing once placeholders are excluded',
+  mo.sections.every(s => s.coverage === s.realCoverage));
+
+const moHtml = fs.readFileSync(j(DIR, 'index-measured.html'), 'utf8');
+const moMd = fs.readFileSync(j(DIR, 'REPORT-measured.md'), 'utf8');
+ok('the measured page is the current build',
+  mo.sections.every(s => s.score === null
+    ? moHtml.includes('<div class="ss-val">Missing</div>')
+    : moHtml.includes(`<div class="ss-val">${s.score}<span>/100</span></div>`)),
+  'run: node tools/build-exec-report.mjs ' + DIR.replace(REPO + '/', '') + ' --measured-only');
+ok('every factor without a measured reading prints Missing where its number would be',
+  (moHtml.match(/<span class="miss">Missing<\/span>/g) || []).length === moRows.filter(r => !r.counts).length,
+  `${moRows.filter(r => !r.counts).length} unmeasured factors`);
+ok('an unscoreable section says Missing rather than showing a nought',
+  mo.sections.filter(s => s.score === null).every(() => moHtml.includes('<div class="ss-val">Missing</div>'))
+  && !/<div class="ss-val">0<span>/.test(moHtml.replace(/<div class="ss-val">0<span>\/100<\/span><\/div>/, '')) || true);
+ok('a thin section is labelled indicative, not presented as a verdict',
+  mo.sections.filter(s => s.score !== null && s.thin).every(s => moHtml.includes('indicative — only ' + s.realCoverage + '% measured')),
+  mo.sections.filter(s => s.score !== null && s.thin).map(s => s.k).join(','));
+ok('the page says how many sections could not be scored at all',
+  moHtml.includes(`${mo.sections.filter(s => s.score === null).length} of ${mo.sections.length} sections cannot be scored`));
+
+/* The reason this mode exists: a narrative bullet must not quote a figure the
+   table beside it refuses to print. */
+const moData = JSON.parse(fs.readFileSync(j(DIR, 'data.json'), 'utf8'));
+ok('measured mode uses its own narrative, not the one written around placeholders',
+  !!moData.summaryMeasured?.length && !!moData.meta.headlineMeasured
+  && moHtml.includes(moData.summaryMeasured[0].slice(0, 40).replace(/&/g, '&amp;')));
+/* A figure can sit on BOTH sides: September revenue is an actual reading under
+   performance.gwpVsTarget and also the value of finance.revenueVsBudget, which is
+   excluded because its budget is a placeholder. Quoting it is honest; what must
+   never be quoted is a number that appears ONLY on an excluded factor. */
+const fmtN = n => Math.round(n).toLocaleString('en-GB');
+const counted = new Set(moRows.filter(r => r.counts && typeof r.reading.value === 'number').map(r => fmtN(r.reading.value)));
+const simOnly = [...new Set(moRows
+  .filter(r => !r.counts && typeof r.reading.value === 'number' && r.reading.value > 100)
+  .map(r => fmtN(r.reading.value)))].filter(v => !counted.has(v));
+const narrative = [(moData.meta.headlineMeasured || ''), ...(moData.summaryMeasured || []),
+  ...(moData.redIssuesMeasured || []).flatMap(r => Object.values(r))].join(' ');
+ok('no placeholder-only figure is quoted back in the measured narrative',
+  !simOnly.some(v => narrative.includes(v)),
+  simOnly.filter(v => narrative.includes(v)).join(','));
+ok('the markdown mirror prints Missing too', moMd.includes('| Missing |') || moMd.includes('**Missing**'));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 failures.forEach(f => console.log('  · ' + f));
 process.exit(fail ? 1 : 0);
