@@ -139,6 +139,10 @@ export const MAP = {
   },
   CALLX_CALL_RECORDS: {
     table: 'callx_calls', conflict: '(row_hash)',
+    /* RETIRED (Nick, 2026-10-27: "the system will not get call x data anymore"). Both intakes refuse every CallX row
+       since 15 Sep, so the store is frozen and the lake already holds all of it — a scheduled run no longer reads it.
+       `--source CALLX_CALL_RECORDS` still loads it by name. */
+    retired: true,
     delta: { day: 'call_day', sum: 'billable_sec' },
     /* No natural id in the export; the hash is over the four fields that are unique across
        all 63 735 live rows — the same four specs/source_keys.json names. */
@@ -231,7 +235,7 @@ const isClientTimeout = (e) => /Query read timeout/i.test(String((e && e.message
  */
 export async function loadAll({ client, map = MAP, readRows, log = console.log, only = '', dry = false, chunk = CHUNK }) {
   let grandIn = 0, grandOut = 0, aborted = ''; const failed = [], reasons = {};
-  const todo = Object.keys(map).filter((src) => !only || src === only);
+  const todo = Object.keys(map).filter((src) => (only ? src === only : !map[src].retired));
   for (let i = 0; i < todo.length; i++) {
     const src = todo[i], m = map[src];
     try {

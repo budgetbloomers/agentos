@@ -5211,8 +5211,8 @@ function pageSesUploads(){
         +'<div class="slot-foot" style="display:flex;gap:6px;align-items:center"><label class="btn primary small" style="display:inline-block">File<input type="file" style="display:none" onchange="if(this.files[0]){handleFile(&#39;'+k+'&#39;,this.files[0]);this.value=&#39;&#39;}"></label>'
         +(rows?'<button class="btn small" onclick="clearSession(&#39;'+k+'&#39;)">Clear</button>':'<span class="file-note">or drop</span>')+'</div></div>'}).join('')
      +'</div></div>'};
-  return '<div class="card" style="margin-bottom:14px"><b>How sessions work:</b> upload the same exports you already pull — dialler and open cases — at each checkpoint through the day. Each slot holds exactly one file and is replaced on re-upload. Session data feeds the <b onclick="go(&#39;session&#39;)" style="color:var(--blue);cursor:pointer">Session Dashboard</b> only — it never mixes into the daily analytics, the Scorecard or any KPI tile.</div>'
-   +group('DIAL')+group('OPEN');
+  return '<div class="card" style="margin-bottom:14px"><b>How sessions work:</b> upload the same Open Cases export you already pull at each checkpoint through the day (the CallX dialler slots were retired with CallX). Each slot holds exactly one file and is replaced on re-upload. Session data feeds the <b onclick="go(&#39;session&#39;)" style="color:var(--blue);cursor:pointer">Session Dashboard</b> only — it never mixes into the daily analytics, the Scorecard or any KPI tile.</div>'
+   +group('OPEN');   // the Dialler session slots were CallX-shaped — retired with CallX (2026-10-27); stored snapshots stay readable
 }
 /* SESSION DATA IS LOADED ON DEMAND, NOT AT BOOT.
    The four session slots are 25.5 MB and 71,664 rows — measured, not guessed —
@@ -5414,8 +5414,12 @@ function coverageCard(win){
    go('leadalloc'), a page deleted on 2026-08-23 when the lead book moved to VAS, so
    the card was a duplicate upload point leading nowhere. The SOURCE itself stays:
    Open Cases is still uploaded, once, through its own slot. */
+/* CALLX HAS NO DOOR (Nick, 2026-10-27: "the system will not get call x data anymore"). Every CallX row has been refused
+   at intake since 15 Sep; the card only offered an upload that could never load. The SOURCE stays — August, the verified
+   reference month, still reads its stored rows — and a CallX file dropped anywhere is still refused, loudly. */
+const UPLOAD_HIDDEN=['CALLX_CALL_RECORDS'];
 function pageUploads(){
-  const slots=SRC_KEYS.map(k=>{
+  const slots=SRC_KEYS.filter(k=>!UPLOAD_HIDDEN.includes(k)).map(k=>{
     const s=SOURCES[k];const f=freshness(k);
     const rows=(state.facts[k]||[]).length;
     return '<div class="slot" id="slot_'+k+'" ondragover="event.preventDefault();this.classList.add(\'drag\')" ondragleave="this.classList.remove(\'drag\')" ondrop="dropFile(event,\''+k+'\')">'

@@ -1337,7 +1337,8 @@ export default {
             ? 'OK — day-level dialler coverage on at least half the days'
             : 'FAIL (VR16) — ' + campaigns[camp].covered_days + '/' + nDays + ' dialler days. ' + (camp === 'Cuddle'
               ? 'Pull EXPORT_CALL_REPORT with user groups Renolan_Matrix_WC + Sharoma_Matrix_WC ticked (or all groups); a single-day "Vici - Cuddle Agents" export per past day also counts.'
-              : 'Upload the day\'s CallX call_records export.');
+              /* CallX retired 1 Sep 2026 (no more data — Nick, 2026-10-27): Courtesy dials on ViciDial too */
+              : 'Pull EXPORT_CALL_REPORT with every user group ticked (Courtesy dials on ViciDial since 1 Sep 2026 — CallX is retired).');
         return json({ state_updated_at: S.updated_at || '', source: S.source, ...(S.stale ? { stale: true } : {}), dialler_days: nDays, campaigns, days });
       }
 

@@ -460,7 +460,9 @@ if (lake.mod) {
   const iT = qs.findIndex((q) => /^insert into sf_inactive/.test(q));
   ok('nothing else is sent on the connection after the timeout', iT >= 0 && qs.length === iT + 1, qs.join(' | '));
   ok('…the sources after it are not even read', iT >= 0 && !['VICI_CALL_REPORT', 'REFERRALS', 'CALLX_CALL_RECORDS'].some((s) => readFor.includes(s)), readFor.join());
-  ok('…the timed-out source and every remaining one are FAILED', ['SF_INACTIVE', 'VICI_CALL_REPORT', 'REFERRALS', 'CALLX_CALL_RECORDS'].every((s) => (out.failed || []).includes(s))
+  /* CallX is retired (2026-10-27) — never in a scheduled run, so never "not attempted" either */
+  ok('…the timed-out source and every remaining one are FAILED', ['SF_INACTIVE', 'VICI_CALL_REPORT', 'REFERRALS'].every((s) => (out.failed || []).includes(s))
+    && !(out.failed || []).includes('CALLX_CALL_RECORDS')
     && /not attempted/i.test((out.reasons || {}).VICI_CALL_REPORT || ''), JSON.stringify(out.failed) + ' ' + JSON.stringify((out.reasons || {}).VICI_CALL_REPORT));
   ok('…the sources before it are unaffected, and the loader says why it stopped', !(out.failed || []).includes('ATTENDANCE') && /timeout/i.test(String(out.aborted || '')), JSON.stringify(out.aborted));
   const s = src('lake-load.mjs');
@@ -574,6 +576,13 @@ if (lake.mod && lake.mod.changedDays) {
   ok('…and the log line says how many days were sent', logs.some((l) => /days sent 1 of 2/.test(l)), logs.join(' | '));
   const s = src('lake-load.mjs');
   ok('the session sets its own statement_timeout (the pooler drops the client option)', /set statement_timeout to '300s'/.test(s));
+  /* Nick 2026-10-27: "the system will not get call x data anymore" — a scheduled run never reads the frozen CallX store */
+  const read = [];
+  await loadAll({ client: { query: async () => ({ rows: [{ n: 0 }] }) }, map: MAP, readRows: async (k) => { read.push(k); return null; }, log: () => {} });
+  ok('a scheduled run never reads the retired CallX store', !read.includes('CALLX_CALL_RECORDS') && read.includes('VICI_CALL_REPORT'), read.join());
+  const read2 = [];
+  await loadAll({ client: { query: async () => ({ rows: [{ n: 0 }] }) }, map: MAP, readRows: async (k) => { read2.push(k); return null; }, log: () => {}, only: 'CALLX_CALL_RECORDS' });
+  ok('…but --source CALLX_CALL_RECORDS still loads it by name', JSON.stringify(read2) === '["CALLX_CALL_RECORDS"]', read2.join());
 } else ok('lake-load exports changedDays', false);
 
 head('node --check on every Area T tool');
