@@ -119,6 +119,7 @@ export const MAP = {
   },
   VICI_CALL_REPORT: {
     table: 'vici_calls', conflict: '(call_date, agent_login, lead_id, status)',
+    delta: { day: 'call_day', sum: 'length_in_sec' },   // only the days whose count or seconds moved (see changedDays)
     /* call_date is the FULL timestamp — see migration-016. Keyed on the day instead, 2 016
        real calls collapse and their billable seconds go with them. */
     row: (r) => ({ call_date: tsSast(r.call_dt), call_day: day(r._d) || day(r.call_dt), agent_login: s(r.user_raw) || '',
@@ -138,6 +139,7 @@ export const MAP = {
   },
   CALLX_CALL_RECORDS: {
     table: 'callx_calls', conflict: '(row_hash)',
+    delta: { day: 'call_day', sum: 'billable_sec' },
     /* No natural id in the export; the hash is over the four fields that are unique across
        all 63 735 live rows — the same four specs/source_keys.json names. */
     row: (r) => ({ row_hash: hash([s(r.call_datetime), s(r.agent), s(r.destination_number), s(r.duration_seconds)]),
@@ -188,6 +190,28 @@ export function upsertStatements(m, mapped, chunk = CHUNK) {
   return out;
 }
 
+/* ONLY THE DAYS THAT MOVED (2026-10-27). The step re-sent every row of every store on every tick: ViciDial alone is
+   ~1.19M calls → 2 381 upserts of 500, each rewriting rows that had not changed, ~18 of the 20 minutes the tick allows.
+   On 26 Oct, with the database busy (the Open Cases rewrite), one statement passed the 330 s client bound and two runs
+   in a row timed out ("chunk 2137/2381: Query read timeout"). A source with `delta` is compared per day first — row
+   count and the sum of one measure, blob against lake — and only a day whose signature differs is sent: a new day, a
+   re-pulled fuller day (fullest-day-wins only ever grows a day), a corrected one at the same count. A day the lake holds
+   MORE rows for than the blob is not sent: an upsert can only add rows, so sending it again cannot close that gap. It is
+   NAMED instead (`surplus`). On 27 Oct that was every ViciDial day 26 Aug–15 Sep: each call stored twice exactly two hours
+   apart — the batches were loaded before and after the migration-051 timezone fix, and call_date is in the key. Nothing
+   reads those lake rows (VAS, Ops and the digests read the stores); clearing them is a separate, approved step. */
+/** mapped rows + the lake's per-day {d, n, s} → { send: days to send, surplus: days the lake holds more rows for } */
+export function changedDays(mapped, lakeRows, delta) {
+  const blob = new Map();
+  for (const o of mapped) { const d = o[delta.day]; if (!d) continue;
+    const g = blob.get(d) || { n: 0, s: 0 }; g.n++; g.s += Number(o[delta.sum]) || 0; blob.set(d, g); }
+  const lake = new Map((lakeRows || []).map((r) => [String(r.d), { n: Number(r.n), s: Number(r.s) }]));
+  const send = new Set(), surplus = [];
+  for (const [d, g] of blob) { const l = lake.get(d);
+    if (!l || l.n < g.n || (l.n === g.n && l.s !== g.s)) send.add(d); else if (l.n > g.n) surplus.push(d); }
+  return { send, surplus: surplus.sort() };
+}
+
 /** a pg error as one line: message [code] — detail (hint) */
 const pgLine = (e) => String((e && e.message) || e) + (e && e.code ? ' [' + e.code + ']' : '')
   + (e && e.detail ? ' — ' + e.detail : '') + (e && e.hint ? ' (hint: ' + e.hint + ')' : '');
@@ -226,8 +250,20 @@ export async function loadAll({ client, map = MAP, readRows, log = console.log, 
       grandIn += rows.length;
 
       const before = (await client.query(`select count(*)::int n from ${m.table}`)).rows[0].n;
-      if (!dry && mapped.length) {
-        const stm = upsertStatements(m, mapped, chunk);
+      let send = mapped, dayNote = '';
+      if (m.delta && mapped.length) {
+        const deduped = dedupeByKey(mapped, keyCols).rows;
+        const days = [...new Set(deduped.map((o) => o[m.delta.day]).filter(Boolean))];
+        const sig = (await client.query(`select ${m.delta.day}::text d, count(*)::int n, coalesce(sum(${m.delta.sum}),0)::bigint s
+          from ${m.table} where ${m.delta.day} = any($1::date[]) group by 1`, [days])).rows;
+        const { send: moved, surplus } = changedDays(deduped, sig, m.delta);
+        send = deduped.filter((o) => !o[m.delta.day] || moved.has(o[m.delta.day]));
+        dayNote = '   days sent ' + moved.size + ' of ' + days.length + (moved.size < days.length ? ' (the rest unchanged)' : '')
+          + (surplus.length ? ' · the lake holds MORE rows than the store for ' + surplus.length + ' day(s) ' + surplus[0]
+            + (surplus.length > 1 ? '…' + surplus[surplus.length - 1] : '') + ' — twins an upsert cannot remove (not re-sent)' : '');
+      }
+      if (!dry && send.length) {
+        const stm = upsertStatements(m, send, chunk);
         for (let k = 0; k < stm.length; k++) {
           try { await client.query(stm[k].text, stm[k].params); }
           catch (e) { throw Object.assign(new Error('chunk ' + (k + 1) + '/' + stm.length + ': ' + ((e && e.message) || e)), { code: e && e.code, detail: e && e.detail, hint: e && e.hint }); }
@@ -240,7 +276,7 @@ export async function loadAll({ client, map = MAP, readRows, log = console.log, 
         + String(mapped.length).padStart(7) + ' mapped   table ' + String(before).padStart(6) + ' → ' + String(after).padStart(6)
         + '   new ' + String(after - before).padStart(6)
         + (unusable ? '   unusable (no key): ' + unusable : '')
-        + (twins ? '   twin rows collapsed (same key, last kept): ' + twins : ''));
+        + (twins ? '   twin rows collapsed (same key, last kept): ' + twins : '') + dayNote);
     } catch (e) {
       failed.push(src); reasons[src] = pgLine(e);
       log('  ' + src.padEnd(22) + 'FAILED — ' + reasons[src]);
@@ -301,6 +337,9 @@ async function main() {
      no source named. With it, the in-flight query rejects and its source is reported FAILED. */
   client.on('error', (e) => { console.error('FAILED: the database connection dropped — ' + pgLine(e)); process.exitCode = 1; });
   await client.connect();
+  /* the session pooler drops the client's statement_timeout option (2026-10-26: the role's 2-minute default applied
+     instead) — set it on the session, where the pooler keeps it */
+  await client.query(`set statement_timeout to '300s'`);
   try {
     console.log((DRY ? 'DRY RUN — nothing will be written' : 'LOADING') + '\n');
     const readRows = async (src) => {

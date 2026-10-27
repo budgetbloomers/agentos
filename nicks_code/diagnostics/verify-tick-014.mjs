@@ -546,6 +546,36 @@ head('lake-load after the load (2026-10-09): the duplicate report never fails th
   } else ok('lake-load exports afterLoad(): the post-load steps as one testable function', false, lkr.why);
 }
 
+head('lake-load sends only the days that moved (2026-10-27: "VICI_CALL_REPORT FAILED — chunk 2137/2381: Query read timeout")');
+if (lake.mod && lake.mod.changedDays) {
+  const { changedDays, loadAll, MAP } = lake.mod;
+  const D = { day: 'call_day', sum: 'length_in_sec' };
+  const rows = (d, n, sec) => Array.from({ length: n }, () => ({ call_day: d, length_in_sec: sec }));
+  const mapped = [...rows('2026-10-20', 3, 10), ...rows('2026-10-21', 2, 10), ...rows('2026-10-22', 4, 10), ...rows('2026-10-23', 2, 10), ...rows('2026-10-24', 1, 10)];
+  const lakeSig = [{ d: '2026-10-20', n: 3, s: 30 },   // unchanged
+    { d: '2026-10-21', n: 1, s: 10 },                   // the store re-pulled a fuller day
+    { d: '2026-10-22', n: 4, s: 35 },                   // same count, seconds corrected
+    { d: '2026-10-23', n: 4, s: 40 }];                  // the lake holds twins the store does not have
+  const { send, surplus } = changedDays(mapped, lakeSig, D);   // 2026-10-24 is new
+  ok('an unchanged day is not sent', !send.has('2026-10-20'));
+  ok('a new day, a fuller re-pull and a same-count correction are sent', ['2026-10-24', '2026-10-21', '2026-10-22'].every((d) => send.has(d)), [...send].join());
+  ok('a day the lake holds MORE rows for is not sent but named', !send.has('2026-10-23') && JSON.stringify(surplus) === '["2026-10-23"]', JSON.stringify(surplus));
+  /* through loadAll with a fake lake: ViciDial sends only the moved day's rows; the log says so */
+  const sent = [], logs = [];
+  const client = { query: async (text, params) => {
+    if (/^select count/.test(text)) return { rows: [{ n: 0 }] };
+    if (/^select call_day::text d/.test(text)) return { rows: [{ d: '2026-10-20', n: 1, s: 30 }] };
+    if (/^insert into vici_calls/.test(text)) sent.push(params.length);
+    return { rows: [] }; } };
+  const vici = (d, lead) => ({ call_dt: d + ' 09:00:00', _d: d, user_raw: 'cb1', lead_id: lead, status: 'SALE', length_in_sec: '30' });
+  await loadAll({ client, map: { VICI_CALL_REPORT: MAP.VICI_CALL_REPORT }, readRows: async () => [vici('2026-10-20', '1'), vici('2026-10-21', '2'), vici('2026-10-21', '3')], log: (x) => logs.push(x) });
+  const cols = Object.keys(MAP.VICI_CALL_REPORT.row(vici('2026-10-20', '1'))).length;
+  ok('loadAll sends the moved day only (2 of 3 rows; the unchanged day stays put)', sent.length === 1 && sent[0] === 2 * cols, JSON.stringify(sent));
+  ok('…and the log line says how many days were sent', logs.some((l) => /days sent 1 of 2/.test(l)), logs.join(' | '));
+  const s = src('lake-load.mjs');
+  ok('the session sets its own statement_timeout (the pooler drops the client option)', /set statement_timeout to '300s'/.test(s));
+} else ok('lake-load exports changedDays', false);
+
 head('node --check on every Area T tool');
 for (const t of ['tick-local.mjs', 'nba-republish.mjs', 'lake-load.mjs', 'ops-relay.mjs', 'job-status.mjs']) {
   const r = spawnSync(process.execPath, ['--check', path.join(ROOT, 'tools', t)], { encoding: 'utf8' });
