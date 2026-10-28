@@ -90,22 +90,31 @@ async function main() {
   const sast = new Date(Date.now() + 2 * 3600e3).toISOString().slice(0, 10);
   const to = flag('--to') || sast;
   const from = flag('--from') || new Date(Date.parse(to) - (Number(flag('--days')) || 120) * 864e5).toISOString().slice(0, 10);
+  const DAY = /^\d{4}-\d{2}-\d{2}$/;
+  if (!DAY.test(from) || !DAY.test(to) || from > to) { console.error(`FAILED: --from/--to must be YYYY-MM-DD with from ≤ to (got ${from} .. ${to})`); process.exitCode = 1; return; }
   const qa = readEnv('qa-ops.env');
   if (!DRY && (!qa.QA_SUPABASE_URL || !qa.QA_SUPABASE_SERVICE_KEY)) {
     console.log('SKIPPED — qa-ops.env (QA_SUPABASE_URL, QA_SUPABASE_SERVICE_KEY) is not configured on this machine; nothing sent. Run with --dry to see what would go.');
     return;
   }
 
-  /* the engine's own books, via the same headless boot the digests use */
-  const tmp = path.join(os.tmpdir(), `qa-sales-${process.pid}.json`);
-  const run = spawnSync(process.execPath, [path.join(ROOT, 'tools', 'digest-republish.mjs'), `--qa-sales=${from}..${to}`, '--out', tmp],
-    { cwd: ROOT, encoding: 'utf8', timeout: 15 * 60e3, maxBuffer: 32 * 1024 * 1024 });
-  if (run.status !== 0 || !fs.existsSync(tmp)) {
-    console.error('FAILED: the engine did not produce the sales (digest-republish --qa-sales exited ' + run.status + ') — '
-      + String(run.stderr || run.stdout || '').trim().split('\n').slice(-3).join(' | ').slice(0, 300));
-    process.exitCode = 1; return;
-  }
-  const eng = JSON.parse(fs.readFileSync(tmp, 'utf8')); fs.rmSync(tmp, { force: true });
+  /* the engine's own books, via the same headless boot the digests use — written into a private temp folder (names and
+     sales figures) that is removed whatever happens */
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-sales-'));
+  let eng;
+  try {
+    const tmp = path.join(dir, 'sales.json');
+    const run = spawnSync(process.execPath, [path.join(ROOT, 'tools', 'digest-republish.mjs'), `--qa-sales=${from}..${to}`, '--out', tmp],
+      { cwd: ROOT, encoding: 'utf8', timeout: 15 * 60e3, maxBuffer: 32 * 1024 * 1024 });
+    if (run.status !== 0 || !fs.existsSync(tmp)) {
+      /* the tail of the engine's output, with anything token-shaped blanked — it lands in the tick log */
+      const tail = String(run.stderr || run.stdout || '').trim().split('\n').slice(-3).join(' | ')
+        .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[token]').replace(/((?:key|secret|token|password)=)[^&\s]+/gi, '$1[redacted]').slice(0, 300);
+      console.error('FAILED: the engine did not produce the sales (digest-republish --qa-sales exited ' + run.status + ') — ' + tail);
+      process.exitCode = 1; return;
+    }
+    eng = JSON.parse(fs.readFileSync(tmp, 'utf8'));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   const { rows, unmapped } = toQaRows(eng.rows || []);
   if (unmapped.size) { console.error('FAILED: campaign(s) with no QA campaign key: ' + [...unmapped].join(', ') + ' — add them to CAMPAIGN_KEY'); process.exitCode = 1; return; }
 
