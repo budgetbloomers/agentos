@@ -209,7 +209,7 @@ if (typeof T.runSteps === 'function') {
   ok('…and is STAMPED with its cause', a.stamped.some(([s, k, n]) => s === 'prepare-site' && k === false && /boom/.test(n)), JSON.stringify(a.stamped));
   const b = mk({}, { rake: true, 'agent-digest': true });
   const rb = await T.runSteps({ ...b, full: true, slot: null });
-  ok('a stamp that throws never skips the steps after it', rb === true && b.ran.join() === 'prepare-site,rake,agent-digest,ops-relay,lake-load,nba-republish', b.ran.join());
+  ok('a stamp that throws never skips the steps after it', rb === true && b.ran.join() === 'prepare-site,rake,agent-digest,ops-relay,lake-load,qa-sales-sync,nba-republish', b.ran.join());   // qa-sales-sync: spec 039
   ok('every step that ran was stamped (nba-republish as nba-digest)', ['rake', 'agent-digest', 'ops-relay', 'lake-load', 'nba-digest'].every((s) => b.stamped.some((x) => x[0] === s)), b.stamped.map((x) => x[0]).join());
   const c = mk();
   await T.runSteps({ ...c, full: false, slot: '14:00' });
