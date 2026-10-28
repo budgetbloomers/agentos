@@ -263,6 +263,21 @@ const monthsAvailable = await page.evaluate(() => {
 });
 console.log('months with sales data: ' + monthsAvailable.join(' '));
 
+/* --range=FROM..TO --out=FILE (2026-10-28, the exec report's 25 Sep – 26 Oct window): the SAME engine run over any window,
+   written to a local file and NEVER published — the CM custom-range keys stay owned by their queue. Refuses --apply. */
+{ const ar = (process.argv.find((a) => /^--range=\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}$/.test(a)) || '').slice(8);
+  if (ar) {
+    const outI = process.argv.indexOf('--out'); const out = outI > 0 ? process.argv[outI + 1] : '';
+    if (APPLY || !out) { console.error('--range is local-only: give --out <file> and never --apply'); process.exit(2); }
+    const [from, to] = ar.split('..');
+    const body = await page.evaluate((j) => { window.__mtd.setRange(j.from, j.to); return JSON.stringify(agentDigestPayload()); }, { from, to });
+    if (!body || body === 'null') { console.error('the engine has no rows for ' + ar); process.exit(3); }
+    fs.writeFileSync(out, body);
+    const pj = JSON.parse(body);
+    console.log('range ' + ar + ' → ' + out + ' — ' + (pj.agents || []).length + ' agents, period ' + JSON.stringify(pj.period) + ' (local only, nothing published)');
+    await b.close(); process.exit(0);
+  } }
+
 const jobs = [];   // [monthKeyOrNull, payload] — null key = the live kv:agent-digest
 if (argMonth) {
   jobs.push([argMonth, await buildFor(argMonth)]);
