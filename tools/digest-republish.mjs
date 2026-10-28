@@ -263,6 +263,59 @@ const monthsAvailable = await page.evaluate(() => {
 });
 console.log('months with sales data: ' + monthsAvailable.join(' '));
 
+/* --qa-sales=FROM..TO --out=FILE (spec 039, 2026-10-28): sales per agent per day FOR THE QA TOOL, read from the engine's own
+   books so they match VAS to the case — never a second sales rule. Per owner-day, `n` is NET (cases created that day still
+   active — exactly what VAS counts); SALES MADE adds back the cases created that day that later cancelled (S.cancRows, dated
+   by contract create date — what the engine's gross mode adds back). Owners resolve to a CB with the engine's resolveKey
+   (aliases and all); the campaign is the Agent List segment in force that day (listSegAt). VT owners are on the roster too,
+   so VT is included. Local-only, refuses --apply. */
+{ const aq = (process.argv.find((a) => /^--qa-sales=\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}$/.test(a)) || '').slice(11);
+  if (aq) {
+    const outI = process.argv.indexOf('--out'); const out = outI > 0 ? process.argv[outI + 1] : '';
+    if (APPLY || !out) { console.error('--qa-sales is local-only: give --out <file> and never --apply'); process.exit(2); }
+    const [from, to] = aq.split('..');
+    const body = await page.evaluate((j) => {
+      const S = window.__mtd.state(); const cells = {}; const unresolved = {};
+      const add = (code, d, k, v) => { const key = code + '|' + d; (cells[key] = cells[key] || { code, day: d, net: 0, made: 0 })[k] += v; };
+      for (const d in S.sales || {}) {
+        if (d < j.from || d > j.to) continue;
+        for (const ow in S.sales[d]) {
+          const rec = S.sales[d][ow]; if (!rec || !rec.a) continue;
+          const n = typeof rec.n === 'number' ? rec.n : Object.keys(rec.a).filter(saleUnit).length;
+          if (!n) continue;
+          const code = resolveKey(ow);
+          if (!code) { unresolved[ow] = (unresolved[ow] || 0) + n; continue; }
+          add(code, d, 'net', n); add(code, d, 'made', n);
+        }
+      }
+      const seen = new Set(); let cancUnres = 0;
+      for (const k in S.cancRows || {}) {
+        const r = S.cancRows[k]; if (!r || !r.d || r.d < j.from || r.d > j.to) continue;
+        const unit = r.c || r.a; const ow = normName(r.owner); const uk = r.d + '|' + ow + '|' + unit;
+        if (!unit || seen.has(uk)) continue; seen.add(uk);
+        const code = resolveKey(ow); if (!code) { cancUnres++; continue; }
+        add(code, r.d, 'made', 1);
+      }
+      /* the campaign a VAS agent's day counted under is the engine's OWN fact for that day (movers attributed exactly as
+         VAS does); VT has no VAS facts, so it takes the Agent List segment in force that day */
+      window.__mtd.setRange(j.from, j.to);
+      const factCamp = {};
+      for (const f of (window.__mtd.model().facts || [])) if (f.code && f.date && f.campaign) factCamp[f.code + '|' + f.date] = f.campaign;
+      const byCode = Object.fromEntries((S.roster || []).map((a) => [a.code, a]));
+      const rows = Object.values(cells).map((c) => {
+        const seg = (typeof listSegAt === 'function' && listSegAt(c.code, c.day)) || {};
+        const a = byCode[c.code] || {};
+        return { ...c, campaign: factCamp[c.code + '|' + c.day] || seg.campaign || a.campaign || '', name: a.name || '' };
+      });
+      return JSON.stringify({ from: j.from, to: j.to, rows, unresolved, cancUnresolved: cancUnres });
+    }, { from, to });
+    fs.writeFileSync(out, body);
+    const pj = JSON.parse(body);
+    const t = (k) => pj.rows.reduce((s, r) => s + r[k], 0);
+    console.log(`qa-sales ${aq} → ${out} — ${pj.rows.length} agent-days · ${t('made')} sales made · ${t('net')} net · ${Object.keys(pj.unresolved).length} owner(s) on no roster (local only, nothing published)`);
+    await b.close(); process.exit(0);
+  } }
+
 /* --range=FROM..TO --out=FILE (2026-10-28, the exec report's 25 Sep – 26 Oct window): the SAME engine run over any window,
    written to a local file and NEVER published — the CM custom-range keys stay owned by their queue. Refuses --apply. */
 { const ar = (process.argv.find((a) => /^--range=\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}$/.test(a)) || '').slice(8);
