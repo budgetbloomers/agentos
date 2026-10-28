@@ -67,3 +67,17 @@ Repos: **A** = AgentOS (`agentos/`), **Q** = QA tool (`budgetbloomers/qa-ops`). 
 ### T9 · Handover — XS
 - [ ] One-page note for Jared (what each column means, the definitions D1/D4/D5, freshness); AgentOS memory note
 - **Depends on:** T8
+
+---
+
+## Build log — 2026-10-28 ("build it")
+
+- [x] **T1 reconcile** — the lake's `bi_active_cases` is NOT usable as the source: it held nothing for 20–25 Oct (batches jump from 19 Oct to 26 Oct), it counts uncased feature lines, and cancellations there are keyed by owner name. The sales therefore come from the **VAS engine's own books** (`digest-republish --qa-sales`, local only): net = the engine's `n` (exactly VAS), made = net + cases created that day that later cancelled (`S.cancRows`). 25 Sep – 26 Oct: Cuddle 5,153 · Courtesy 4,472 · Training Gr 17 62 net — **equal to VAS to the case**; CB19 269 = VAS. **D2 answered: VT sales ARE in BI** — VT 2,010 net / 2,125 made, 44 agents. 24 owners on no Agent List (Panimax partners, 376 sales) are counted and not sent.
+- [x] **T2** `qa-ops/supabase/08_agent_sales_daily.sql` — columns are `sales_made` and `sales_net` (not sales/cancellations); applied twice in PGlite, constraints refuse net > made / negatives / no campaign; RLS on, no anon/authenticated grants.
+- [x] **T3** `agentos/tools/qa-sales-sync.mjs` + `verify-qa-sales-sync.mjs` (12 ok); dry run 25 Sep – 26 Oct = 12,384 made · 11,697 net · 116 agents.
+- [x] **T4** tick step `qa-sales-sync` after lake-load; SKIPPED (green) until `qa-ops.env` exists. verify-tick-014 128 ok, verify-health-loud 30 ok.
+- [x] **T5** `salesCoverage` grant (Jared only) + `canViewSalesCoverage` + tests (fullAccess admins refused).
+- [x] **T6** `src/lib/eval-coverage.ts` (+11 tests) + `/api/sales-coverage` (Jared-only, not in the generic data registry). Evaluations are joined in the browser from the Dashboard's own cache, so TL / campaign / QA score are the Dashboard's.
+- [x] **T7** `/sales-coverage` page + sidebar item. The Dashboard was NOT modified (its filter bar is mirrored, not extracted — lower risk).
+- QA tool: `npm run check` (typecheck, lint 0 warnings, 66 tests) and `npm run build` green; commit f5b8eb8 on `feat/sales-coverage` (local). AgentOS: 84f5400, 914b6d7.
+- [ ] **T8 go live** — needs: the QA project's Supabase access (apply 08 in its SQL editor; its URL + service-role key into `agentos/qa-ops.env` as QA_SUPABASE_URL / QA_SUPABASE_SERVICE_KEY), a push of the branch, and Nick's "deploy" for the Vercel deploy.
