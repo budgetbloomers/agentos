@@ -275,7 +275,7 @@ console.log('months with sales data: ' + monthsAvailable.join(' '));
     if (APPLY || !out) { console.error('--qa-sales is local-only: give --out <file> and never --apply'); process.exit(2); }
     const [from, to] = aq.split('..');
     const body = await page.evaluate((j) => {
-      const S = window.__mtd.state(); const cells = {}; const unresolved = {};
+      const S = window.__mtd.state(); const cells = {}; const unresolved = {}; const unresolvedDays = {};
       const add = (code, d, k, v) => { const key = code + '|' + d; (cells[key] = cells[key] || { code, day: d, net: 0, made: 0 })[k] += v; };
       for (const d in S.sales || {}) {
         if (d < j.from || d > j.to) continue;
@@ -284,7 +284,7 @@ console.log('months with sales data: ' + monthsAvailable.join(' '));
           const n = typeof rec.n === 'number' ? rec.n : Object.keys(rec.a).filter(saleUnit).length;
           if (!n) continue;
           const code = resolveKey(ow);
-          if (!code) { unresolved[ow] = (unresolved[ow] || 0) + n; continue; }
+          if (!code) { unresolved[ow] = (unresolved[ow] || 0) + n; const u = (unresolvedDays[ow + '|' + d] = unresolvedDays[ow + '|' + d] || { net: 0, made: 0 }); u.net += n; u.made += n; continue; }
           add(code, d, 'net', n); add(code, d, 'made', n);
         }
       }
@@ -293,7 +293,9 @@ console.log('months with sales data: ' + monthsAvailable.join(' '));
         const r = S.cancRows[k]; if (!r || !r.d || r.d < j.from || r.d > j.to) continue;
         const unit = r.c || r.a; const ow = normName(r.owner); const uk = r.d + '|' + ow + '|' + unit;
         if (!unit || seen.has(uk)) continue; seen.add(uk);
-        const code = resolveKey(ow); if (!code) { cancUnres++; continue; }
+        const code = resolveKey(ow);
+        /* an off-list owner's cancelled case still adds to THEIR sales made — the sync may match them to the QA tool's CB */
+        if (!code) { cancUnres++; const u = (unresolvedDays[ow + '|' + r.d] = unresolvedDays[ow + '|' + r.d] || { net: 0, made: 0 }); u.made += 1; continue; }
         add(code, r.d, 'made', 1);
       }
       /* the campaign a VAS agent's day counted under is the engine's OWN fact for that day (movers attributed exactly as
@@ -312,7 +314,7 @@ console.log('months with sales data: ' + monthsAvailable.join(' '));
       });
       /* the earliest day the engine holds sales for — the sync never zeroes a QA day older than what was looked at */
       const firstDay = Object.keys(S.sales || {}).filter((d) => Object.keys(S.sales[d] || {}).length).sort()[0] || '';
-      return JSON.stringify({ from: j.from, to: j.to, rows, unresolved, cancUnresolved: cancUnres, rosterFallback, firstDay });
+      return JSON.stringify({ from: j.from, to: j.to, rows, unresolved, unresolvedDays, cancUnresolved: cancUnres, rosterFallback, firstDay });
     }, { from, to });
     fs.writeFileSync(out, body);
     const pj = JSON.parse(body);

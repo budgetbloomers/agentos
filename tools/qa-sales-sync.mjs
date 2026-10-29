@@ -92,6 +92,72 @@ export function rowsToSend(want, have, { coveredFrom = '', hold = new Set() } = 
   return out;
 }
 
+/* ── OWNERS ON NO AGENT LIST (Nick, 29 Oct: "include them") ─────────────────────────────────────────────────────────
+   VAS leaves an owner the Agent List does not carry out of every report (his 15 Sep rule) — but the QA tool evaluates
+   them: Jeremiah Govindsamy had 39 October evaluations and showed 0 sales here. So an owner the engine cannot resolve is
+   matched BY NAME to the people the QA tool itself knows (its evaluations' agent name + CB, its Add People roster), and
+   sent under that CB. Jared's tab is then complete; VAS is untouched, and the tab can exceed VAS by exactly these. */
+
+/** The engine's owner key — normName in nicks_code/index.html, kept identical so the two sides key a person the same */
+export const ownerKey = (s) => String(s || '').toLowerCase().replace(/-\s*panimax/g, '').replace(/panimax/g, '')
+  .replace(/cb[\s-]*\d+/g, '').replace(/[^a-z]/g, '');
+
+/** The QA tool's renamed campaign keys → the current ones (LEGACY_CAMPAIGN_KEYS in its constants.ts) */
+const LEGACY_CAMPAIGN = { cuddle_calls: 'matrix_cuddle', courtesy_calls: 'matrix_courtesy', tracker: 'matrix_tracker', downloads: 'upsell', test: 'upsell' };
+/** Campaigns that only win when nothing else is there: Nesting (the training phase) and the retired VAS campaign */
+const LAST_RESORT = new Set(['sales_lab', 'vas']);
+
+/** QA's people [{name, cb, campaign, day?}] (one entry per evaluation or roster row) → Map ownerKey → {cb, campaign_key,
+ *  name}. The campaign is the one QA evaluates them on most SINCE `since` (a mover takes their current one), then over
+ *  all time; renamed keys read as current; Nesting and the retired VAS campaign only when nothing else is there. A name
+ *  two CBs share, or a person with no campaign, is left out — never guessed. Pure. */
+export function qaPeople(list, { since = '' } = {}) {
+  const by = new Map();
+  for (const p of list) {
+    const k = ownerKey(p.name); const cb = qaCb(p.cb); if (!k || !cb) continue;
+    const e = by.get(k) || { cbs: new Set(), recent: {}, all: {}, name: String(p.name).trim().replace(/\s+/g, ' ') };
+    e.cbs.add(cb);
+    const c = LEGACY_CAMPAIGN[p.campaign] || p.campaign;
+    if (c) { e.all[c] = (e.all[c] || 0) + 1; if (since && String(p.day || '') >= since) e.recent[c] = (e.recent[c] || 0) + 1; }
+    by.set(k, e);
+  }
+  const out = new Map();
+  for (const [k, e] of by) {
+    if (e.cbs.size !== 1) continue;
+    const ranked = Object.keys(e.all).sort((a, b) => (e.recent[b] || 0) - (e.recent[a] || 0) || e.all[b] - e.all[a]);
+    const campaign_key = ranked.find((c) => !LAST_RESORT.has(c)) || ranked.find((c) => c === 'sales_lab') || ranked[0];
+    if (campaign_key && campaign_key !== 'vas') out.set(k, { cb: [...e.cbs][0], campaign_key, name: e.name });
+  }
+  return out;
+}
+
+/** The engine's unresolved owner-days {'owner|YYYY-MM-DD': {net, made}} → QA rows for the owners QA knows. Pure.
+ *  `listed` (CB → name, the Agent List's agents in this run): a QA CB the list gives to a DIFFERENT person is a stale or
+ *  reused CB on one side — those sales are never put on someone else's row; the owner is counted as a clash instead. */
+export function offListRows(unresolvedDays, people, listed = new Map()) {
+  const rows = []; const matched = new Set(); const unknown = new Set(); const clashes = new Set();
+  for (const [key, v] of Object.entries(unresolvedDays || {})) {
+    const [owner, day] = key.split('|'); const p = people.get(owner);
+    if (!p) { unknown.add(owner); continue; }
+    const listedName = listed.get(p.cb);
+    if (listedName && ownerKey(listedName) !== owner) { clashes.add(owner); continue; }
+    matched.add(owner);
+    rows.push({ cb: p.cb, sale_date: day, sales_made: Number(v.made) || 0, sales_net: Number(v.net) || 0, campaign_key: p.campaign_key, agent_name: p.name });
+  }
+  return { rows, matched, unknown, clashes };
+}
+
+/** Two row sets → one row per (cb, day), summed; the first set's campaign and name win. Pure. */
+export function mergeRows(a, b) {
+  const m = new Map();
+  for (const r of [...a, ...b]) {
+    const k = r.cb + '|' + r.sale_date; const c = m.get(k);
+    if (!c) { m.set(k, { ...r }); continue; }
+    c.sales_made += r.sales_made; c.sales_net += r.sales_net;
+  }
+  return [...m.values()].sort((x, y) => (x.sale_date + x.cb).localeCompare(y.sale_date + y.cb));
+}
+
 /** The share of the QA tool's non-zero agent-days one run may zero. Above it the run refuses: that is an engine that
  *  booted on an empty or partial state, not a corrected upload (silent-failure review, 29 Oct). */
 export const MAX_ZERO_SHARE = 0.3;
@@ -106,6 +172,32 @@ export function zeroingRefusal(want, have, send) {
   if (zeroed > MIN_ZERO_REFUSE && zeroed / live > MAX_ZERO_SHARE)
     return `this run would zero ${zeroed} of ${live} agent-day(s) (${Math.round((zeroed / live) * 100)}% > ${MAX_ZERO_SHARE * 100}%) — check the engine's state, then re-run with --force-zero if it is right`;
   return null;
+}
+
+/** The QA tool's roster queue → its campaign key (QUEUE_CAMPAIGN in the QA tool's constants.ts) */
+const QUEUE_CAMPAIGN = { 'Vehicle Tracking': 'matrix_tracker', 'Courtesy Calls': 'matrix_courtesy', 'Cuddle Calls': 'matrix_cuddle',
+  Nesting: 'sales_lab', 'Motor Warranty Direct': 'motor_warranty_direct' };
+
+/** Everyone the QA tool knows as a sales agent: each evaluation's (agent name, CB, campaign) and each Add People roster
+ *  row — read-only, three fields, paged. The people in its code roster (agents.ts) all have evaluations, so they come in
+ *  through the first source. */
+async function readQaPeople(qa) {
+  const H = { apikey: qa.QA_SUPABASE_SERVICE_KEY, Authorization: 'Bearer ' + qa.QA_SUPABASE_SERVICE_KEY };
+  const base = qa.QA_SUPABASE_URL.replace(/\/+$/, '') + '/rest/v1/';
+  const out = [];
+  const pageAll = async (q) => {
+    const rows = [];
+    for (;;) {
+      const r = await fetch(`${base}${q}&limit=1000&offset=${rows.length}`, { headers: H, signal: AbortSignal.timeout(REQUEST_MS) });
+      if (!r.ok) throw new Error(`HTTP ${r.status} on ${q.split('?')[0]}`);
+      /* until an EMPTY page — a project capping max-rows below 1000 would otherwise end the read after its first page */
+      const page = await r.json(); if (!page.length) return rows; rows.push(...page);
+    }
+  };
+  for (const e of await pageAll('evaluations?select=name:data->>salesAgentName,cb:data->>salesAgentCb,campaign:data->>campaign,day:data->>dateOfCall,qa_close_decision&order=id'))
+    if (e.qa_close_decision !== 'admin_deleted') out.push({ name: e.name, cb: e.cb, campaign: e.campaign, day: String(e.day || '').slice(0, 10) });
+  for (const a of await pageAll('roster_agents?select=name,cb,queue&order=cb,name')) out.push({ name: a.name, cb: a.cb, campaign: QUEUE_CAMPAIGN[a.queue] || '' });
+  return out;
 }
 
 const readEnv = (f) => { const p = path.join(ROOT, f); if (!fs.existsSync(p)) return {};
@@ -146,17 +238,39 @@ async function main() {
     }
     eng = JSON.parse(fs.readFileSync(tmp, 'utf8'));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-  const { rows, unmapped, unmappedKeys } = toQaRows(eng.rows || []);
+  const listed = toQaRows(eng.rows || []);
+  const { unmapped, unmappedKeys } = listed;
+
+  /* owners on no Agent List that the QA tool knows by name go in under its CB (Nick, 29 Oct) — without qa-ops.env (a
+     --dry on another machine) there is nobody to match against, and they stay out as before */
+  let people = new Map();
+  if (qa.QA_SUPABASE_URL && qa.QA_SUPABASE_SERVICE_KEY) {
+    try { people = qaPeople(await readQaPeople(qa), { since: from }); }
+    catch (e) { console.error('FAILED: reading the QA tool\'s people to match owners on no Agent List — ' + (e && e.message || e)); process.exitCode = 1; return; }
+  }
+  /* an empty answer is not "nobody": it would zero every off-list row sent before — so with owners to match it fails */
+  if (!DRY && Object.keys(eng.unresolvedDays || {}).length && !people.size) {
+    console.error('FAILED: the QA tool returned no people to match owners on no Agent List against — nothing sent (a key or permission change on its side?)');
+    process.exitCode = 1; return;
+  }
+  const listedNames = new Map(listed.rows.map((r) => [r.cb, r.agent_name || '']));
+  const off = offListRows(eng.unresolvedDays, people, listedNames);
+  const rows = mergeRows(listed.rows, off.rows);
 
   const tot = (k) => rows.reduce((t, r) => t + r[k], 0);
-  const un = Object.entries(eng.unresolved || {}).sort((a, b) => b[1] - a[1]);
-  const unSales = un.reduce((t, x) => t + x[1], 0);
+  const unknownDays = Object.entries(eng.unresolvedDays || {}).filter(([k]) => off.unknown.has(k.split('|')[0]));
+  const unNet = unknownDays.reduce((t, [, v]) => t + (Number(v.net) || 0), 0);
+  const unMade = unknownDays.reduce((t, [, v]) => t + (Number(v.made) || 0), 0);
+  const unTop = Object.entries(unknownDays.reduce((m, [k, v]) => { const o = k.split('|')[0]; m[o] = (m[o] || 0) + (Number(v.made) || 0); return m; }, {}))
+    .sort((a, b) => b[1] - a[1]);
   /* what was NOT sent, in one phrase — it ends the final line, the only part of the output the tick keeps */
-  const notSent = [un.length && `${un.length} owner(s) on no Agent List (${unSales} net sales) not sent`,
-    eng.cancUnresolved && `${eng.cancUnresolved} cancelled case(s) with no agent not in "made"`,
+  const notSent = [off.matched.size && `${off.matched.size} owner(s) on no Agent List matched to the QA tool's people (${off.rows.reduce((t, r) => t + r.sales_net, 0)} net sales) and sent`,
+    off.unknown.size && `${off.unknown.size} owner(s) nobody knows (${unNet} net · ${unMade} made) not sent`,
+    off.clashes.size && `${off.clashes.size} owner(s) whose QA CB the Agent List gives to someone else not sent (${[...off.clashes].slice(0, 3).join(', ')})`,
     eng.rosterFallback && `${eng.rosterFallback} agent-day(s) took today's roster campaign`].filter(Boolean).join(' · ');
   console.log(`engine ${from} → ${to}: ${rows.length} agent-days · ${tot('sales_made')} sales made · ${tot('sales_net')} net · ${new Set(rows.map((r) => r.cb)).size} agents · first sales day ${eng.firstDay || '?'}`
-    + (un.length ? `\n  owners on no Agent List (not sent): ${un.length} owner(s), ${unSales} sales — ${un.slice(0, 5).map(([n, k]) => n + ' ' + k).join(', ')}` : ''));
+    + (off.matched.size ? `\n  on no Agent List but known to the QA tool (sent): ${[...off.matched].slice(0, 8).join(', ')}` : '')
+    + (unTop.length ? `\n  on no Agent List and unknown to the QA tool (not sent): ${unTop.length} owner(s) — ${unTop.slice(0, 5).map(([n, k]) => n + ' ' + k).join(', ')}` : ''));
   if (unmapped.size) console.error(`  campaign(s) with no QA campaign key: ${[...unmapped].join(', ')} — ${unmappedKeys.size} agent-day(s) held as they are; add them to CAMPAIGN_KEY`);
   const byCamp = {};
   for (const r of rows) { const b = byCamp[r.campaign_key] = byCamp[r.campaign_key] || { made: 0, net: 0, agents: new Set() }; b.made += r.sales_made; b.net += r.sales_net; b.agents.add(r.cb); }

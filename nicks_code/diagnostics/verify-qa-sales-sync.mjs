@@ -68,5 +68,40 @@ const mixed = S.toQaRows(eng);
 ok('the unmapped (cb, day) is named so it can be held', Boolean(mixed.unmappedKeys?.has('CB-9904|2026-10-21')));
 ok('every mapped agent-day is still produced', mixed.rows.length === 3);
 
+console.log('\nF · agents QA knows but the Agent List does not (Nick, 29 Oct: "include them")');
+const has = (fn) => typeof S[fn] === 'function';
+ok('names are keyed the engine\'s way (normName)', has('ownerKey') && S.ownerKey('Jeremiah  Govindsamy - Panimax CB-206') === 'jeremiahgovindsamy');
+const people = has('qaPeople') ? S.qaPeople([
+  { name: 'Test Off List', cb: 'CB9950', campaign: 'matrix_cuddle' }, { name: 'Test Off List', cb: 'CB-9950', campaign: 'matrix_cuddle' },
+  { name: 'Test Off List', cb: 'CB-9950', campaign: 'sales_lab' },
+  { name: 'Twin Name', cb: 'CB-9960', campaign: 'matrix_courtesy' }, { name: 'Twin Name', cb: 'CB-9961', campaign: 'matrix_courtesy' },
+  { name: 'Only Nesting', cb: 'CB-9970', campaign: 'sales_lab' },
+  { name: 'No Campaign', cb: 'CB-9980', campaign: '' },
+]) : new Map();
+ok('one person per name, CB in the QA format', people.get('testofflist')?.cb === 'CB-9950');
+ok('their campaign is the one QA evaluates them on most, nesting only when it is all there is',
+  people.get('testofflist')?.campaign_key === 'matrix_cuddle' && people.get('onlynesting')?.campaign_key === 'sales_lab');
+ok('a name two CBs share is never guessed', has('qaPeople') && !people.has('twinname'));
+ok('a person with no campaign at all is not matched', has('qaPeople') && !people.has('nocampaign'));
+const old = has('qaPeople') ? S.qaPeople([
+  { name: 'Old Keys', cb: 'CB-9990', campaign: 'cuddle_calls' }, { name: 'Old Keys', cb: 'CB-9990', campaign: 'cuddle_calls' },
+  { name: 'Was Vas', cb: 'CB-9991', campaign: 'vas' }, { name: 'Was Vas', cb: 'CB-9991', campaign: 'vas' }, { name: 'Was Vas', cb: 'CB-9991', campaign: 'matrix_courtesy' },
+  { name: 'Mover', cb: 'CB-9992', campaign: 'matrix_courtesy', day: '2026-06-01' }, { name: 'Mover', cb: 'CB-9992', campaign: 'matrix_courtesy', day: '2026-06-02' },
+  { name: 'Mover', cb: 'CB-9992', campaign: 'matrix_courtesy', day: '2026-06-03' }, { name: 'Mover', cb: 'CB-9992', campaign: 'matrix_cuddle', day: '2026-10-20' },
+], { since: '2026-07-01' }) : new Map();
+ok('a renamed campaign key is read as the current one (cuddle_calls → matrix_cuddle)', old.get('oldkeys')?.campaign_key === 'matrix_cuddle');
+ok('the retired VAS campaign never wins over a live one', old.get('wasvas')?.campaign_key === 'matrix_courtesy');
+ok('a mover takes the campaign QA evaluates them on in the window, not their old one', old.get('mover')?.campaign_key === 'matrix_cuddle');
+const off = has('offListRows') ? S.offListRows({ 'testofflist|2026-10-20': { net: 5, made: 6 }, 'twinname|2026-10-20': { net: 2, made: 2 }, 'stranger|2026-10-20': { net: 1, made: 1 } }, people)
+  : { rows: [], unknown: new Set(), matched: new Set() };
+ok('an off-list owner QA knows becomes a row under their QA CB', off.rows.length === 1 && off.rows[0].cb === 'CB-9950' && off.rows[0].sales_net === 5 && off.rows[0].sales_made === 6 && off.rows[0].campaign_key === 'matrix_cuddle', J(off.rows));
+ok('owners QA does not know (or cannot tell apart) stay out, and are counted', off.unknown.has('twinname') && off.unknown.has('stranger') && off.matched.has('testofflist'));
+const clash = has('offListRows') ? S.offListRows({ 'testofflist|2026-10-20': { net: 5, made: 5 } }, people, new Map([['CB-9950', 'Somebody Else']])) : { rows: [1], clashes: new Set() };
+ok('a QA CB the Agent List gives to a DIFFERENT person is never used (no sales onto someone else)', clash.rows.length === 0 && clash.clashes?.has('testofflist'), J(clash));
+const same = has('offListRows') ? S.offListRows({ 'testofflist|2026-10-20': { net: 5, made: 5 } }, people, new Map([['CB-9950', 'Test  Off-List']])) : { rows: [] };
+ok('the same person under another spelling still merges', same.rows.length === 1);
+const merged = has('mergeRows') ? S.mergeRows([{ cb: 'CB-9950', sale_date: '2026-10-20', sales_made: 1, sales_net: 1, campaign_key: 'matrix_cuddle', agent_name: 'Test Off List' }], off.rows) : [];
+ok('a CB with sales under both spellings that day is one row, summed', merged.length === 1 && merged[0].sales_made === 7 && merged[0].sales_net === 6, J(merged));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
