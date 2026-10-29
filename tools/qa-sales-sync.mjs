@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /** AgentOS campaign → the QA tool's campaign key (qa-ops src/lib/data/constants.ts). Unknown = loud failure. */
-export const CAMPAIGN_KEY = { Cuddle: 'matrix_cuddle', Courtesy: 'matrix_courtesy', VT: 'matrix_tracker', Nesting: 'sales_lab', 'Download & Test': 'download_test_upsell' };
+export const CAMPAIGN_KEY = { Cuddle: 'matrix_cuddle', Courtesy: 'matrix_courtesy', VT: 'matrix_tracker', Nesting: 'sales_lab', 'Download & Test': 'upsell' };   // the live QA tool's merged "Downloads, Test & Upsell" key
 export function campaignKey(c) {
   const s = String(c || '').trim();
   if (CAMPAIGN_KEY[s]) return CAMPAIGN_KEY[s];

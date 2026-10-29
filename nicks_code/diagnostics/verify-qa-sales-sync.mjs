@@ -20,7 +20,7 @@ console.log('\nA · the QA tool\'s formats');
 ok('CB123, cb 123 and CB-0123 all become CB-123', ['CB123', 'cb 123', 'CB-0123'].every((v) => S.qaCb(v) === 'CB-123'));
 ok('a value with no digits is no CB', S.qaCb('Jolene') === null);
 ok('every campaign the Agent List has carried has a QA key', ['Cuddle', 'Courtesy', 'VT', 'Nesting', 'Download & Test', 'Training Gr 17']
-  .map(S.campaignKey).join() === 'matrix_cuddle,matrix_courtesy,matrix_tracker,sales_lab,download_test_upsell,sales_lab');
+  .map(S.campaignKey).join() === 'matrix_cuddle,matrix_courtesy,matrix_tracker,sales_lab,upsell,sales_lab');
 ok('an unknown campaign has none (the run fails loudly rather than inventing one)', S.campaignKey('Upsell 2027') === null);
 
 console.log('\nB · the rows');

@@ -40,7 +40,7 @@ The QA tool and AgentOS are **two separate Supabase databases** (checked 28 Oct:
 - The QA tool's generic read API (`/api/data/[table]`) lets **any** signed-in user read every registered table — sales must NOT be registered there; the tab gets its own server route that checks Jared's grant.
 - `fullAccess` also covers Shameem, Aarav, Nicholas and others — too broad for "Jared only"; a dedicated grant flag is needed.
 - CB formats differ: AgentOS `CB123`, the QA tool `CB-123`. The Dashboard groups by agent NAME; CB can be blank on old ("Ex Agent") evaluations.
-- Campaign keys differ: QA tool `matrix_cuddle · matrix_courtesy · matrix_tracker · sales_lab (Nesting) · download_test_upsell`; AgentOS `Cuddle · Courtesy · VT · Training Gr … · Download & Test`.
+- Campaign keys differ: QA tool `matrix_cuddle · matrix_courtesy · matrix_tracker · sales_lab (Nesting) · upsell` (Downloads, Test & Upsell); AgentOS `Cuddle · Courtesy · VT · Training Gr … · Download & Test`.
 - QA score on the Dashboard is `calcAvgScore`: a plain mean over evaluations whose assessment type is sale or partner escalation, 0% kept, rounded to one decimal.
 - BI in the lake, 25 Sep – 26 Oct: 9,387 sale cases attributed to 122 agents; 335 more belong to Panimax (external, correctly unattributed).
 - QA evaluations in the same window: Courtesy 2,418 · Cuddle 2,354 · Tracker (VT) 1,499 · Nesting 192.
