@@ -302,12 +302,17 @@ console.log('months with sales data: ' + monthsAvailable.join(' '));
       const factCamp = {};
       for (const f of (window.__mtd.model().facts || [])) if (f.code && f.date && f.campaign) factCamp[f.code + '|' + f.date] = f.campaign;
       const byCode = Object.fromEntries((S.roster || []).map((a) => [a.code, a]));
+      let rosterFallback = 0;
       const rows = Object.values(cells).map((c) => {
         const seg = (typeof listSegAt === 'function' && listSegAt(c.code, c.day)) || {};
         const a = byCode[c.code] || {};
-        return { ...c, campaign: factCamp[c.code + '|' + c.day] || seg.campaign || a.campaign || '', name: a.name || '' };
+        const fact = factCamp[c.code + '|' + c.day] || seg.campaign;
+        if (!fact && a.campaign) rosterFallback++;   // no fact and no list segment that day: today's roster campaign, counted
+        return { ...c, campaign: fact || a.campaign || '', name: a.name || '' };
       });
-      return JSON.stringify({ from: j.from, to: j.to, rows, unresolved, cancUnresolved: cancUnres });
+      /* the earliest day the engine holds sales for — the sync never zeroes a QA day older than what was looked at */
+      const firstDay = Object.keys(S.sales || {}).filter((d) => Object.keys(S.sales[d] || {}).length).sort()[0] || '';
+      return JSON.stringify({ from: j.from, to: j.to, rows, unresolved, cancUnresolved: cancUnres, rosterFallback, firstDay });
     }, { from, to });
     fs.writeFileSync(out, body);
     const pj = JSON.parse(body);

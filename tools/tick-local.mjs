@@ -250,8 +250,8 @@ export async function runSteps({ run, stamp: stampRaw, say: log = () => {}, full
     /* THE LAKE FOLLOWS THE RELAY (plan: "after every relay"). lake-load only ever ran from the GitHub
        workflow, so with Actions off the lake froze on 14 Sep while files arrived daily (2026-09-21). */
     const lake = await run('lake-load', ['tools/lake-load.mjs']); await stamp('lake-load', lake.ok, lake.note);
-    /* SALES INTO THE QA TOOL (spec 039): per agent per day from the engine's own books, only the days that moved. Prints
-       SKIPPED and stays green until qa-ops.env is configured on this machine; once it is, a failure is a stamped step. */
+    /* SALES INTO THE QA TOOL (spec 039, live 29 Oct): per agent per day from the engine's own books, only the days that
+       moved. A missing qa-ops.env, a refused mass-zeroing or an unmapped campaign each FAIL the step, so they alert. */
     const qas = await run('qa-sales-sync', ['tools/qa-sales-sync.mjs']); await stamp('qa-sales-sync', qas.ok, qas.note);
     const nba = await run('nba-republish', ['tools/nba-republish.mjs', '--apply']); await stamp('nba-digest', nba.ok, nba.note);
   }
