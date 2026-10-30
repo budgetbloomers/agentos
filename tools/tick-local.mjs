@@ -101,7 +101,8 @@ export function npmNote(ci) {
 /** The real install: npm ci from the lockfile, then pin the folder so OneDrive's free-up-space leaves it alone.
  *  `touch` re-stamps the tick lock between the two (spawnSync blocks the heartbeat). */
 export function npmCiAndPin(dir, touch = () => {}) {
-  const ci = spawnSync('npm', ['ci', '--no-audit', '--no-fund'], { cwd: dir, encoding: 'utf8', shell: process.platform === 'win32', timeout: INSTALL_TIMEOUT_MS });
+  /* one fixed command string: npm is npm.cmd on Windows, which needs the shell, and Node warns on shell + an args array */
+  const ci = spawnSync('npm ci --no-audit --no-fund', { cwd: dir, encoding: 'utf8', shell: true, timeout: INSTALL_TIMEOUT_MS });
   touch();
   if (ci.status !== 0) return { ok: false, note: npmNote(ci) };
   return { ok: true, note: pinFolder(path.join(dir, 'node_modules')) };
