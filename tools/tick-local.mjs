@@ -50,6 +50,70 @@ const say = (s) => { const line = new Date().toISOString() + ' ' + redact(s); co
 
 export const STEP_TIMEOUT_MS = 20 * 60000;                 // one step, at most
 export const LOCK_STALE_MS = STEP_TIMEOUT_MS + 5 * 60000;  // a lock older than a whole step + slack belongs to a dead tick
+
+/* ── THE PACKAGES HEAL THEMSELVES (30 Oct 2026) ────────────────────────────────────────────────────────────────────
+   Every engine step loads Playwright / pg / duckdb from nicks_code/diagnostics/node_modules. On 30 Oct Windows' "free up
+   space" emptied that folder (it sits under OneDrive Desktop) and every step failed twice with "Cannot find module" — six
+   failures for one cause. So before any step the tick checks that every package that folder's package.json names is
+   installed; anything missing is put back from the lockfile (npm ci) and the folder pinned "always keep on this device"
+   (attrib +P, which OneDrive's free-up-space honours); if that cannot be done the tick fails ONCE with npm's reason. */
+export const DEPS_DIR = path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'nicks_code', 'diagnostics');
+export const INSTALL_TIMEOUT_MS = 10 * 60000;   // npm ci, and again the pin: both together stay under LOCK_STALE_MS
+
+/** The packages with no package.json of their own under dir/node_modules: the ones package.json names, AND every one npm
+ *  recorded installing (node_modules/.package-lock.json — transitive and platform packages such as playwright-core and
+ *  duckdb's Windows binary, which a half-deleted folder loses while the top-level ones survive). Pure. */
+export function missingDeps(pkg, dir, exists, installed = null) {
+  const names = new Set(Object.keys({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) }));
+  for (const k of Object.keys((installed && installed.packages) || {})) {
+    const m = /^node_modules\/(.+)$/.exec(k);
+    if (m && !m[1].includes('/node_modules/')) names.add(m[1]);   // top-level installs; nested copies follow their parent
+  }
+  return [...names].sort().filter((n) => !exists(path.join(dir, 'node_modules', ...n.split('/'), 'package.json')));
+}
+
+/** Check, heal once, re-check. Every effect is injected (readPkg, exists, install) so verify-deps-guard tests it dry. */
+export async function ensureDeps({ dir = DEPS_DIR, readPkg, exists, install }) {
+  let pkg;
+  try { pkg = readPkg(path.join(dir, 'package.json')); } catch (e) { return { ok: false, repaired: false, note: 'no package.json in ' + dir + ' — ' + (e && e.message || e) }; }
+  /* npm's record of what it installed; gone with the folder, which the top-level check already catches */
+  const installed = () => { try { return readPkg(path.join(dir, 'node_modules', '.package-lock.json')); } catch { return null; } };
+  const missing = missingDeps(pkg, dir, exists, installed());
+  if (!missing.length) return { ok: true, repaired: false, note: '' };
+  let r;
+  try { r = await install(dir); } catch (e) { r = { ok: false, note: 'the install threw — ' + (e && e.message || e) }; }
+  if (!r.ok) return { ok: false, repaired: false,
+    note: `packages missing (${missing.slice(0, 6).join(', ')}${missing.length > 6 ? ' …' : ''}) and npm ci failed — ${r.note || 'no output'} (npm ci removes node_modules first, so it may now be emptied)` };
+  const still = missingDeps(pkg, dir, exists, installed());
+  if (still.length) return { ok: false, repaired: false, note: `npm ci ran but ${still.join(', ')} is still missing` };
+  return { ok: true, repaired: true, note: `reinstalled missing packages (${missing.join(', ')}) from the lockfile${r.note ? ' — ' + r.note : ''}` };
+}
+
+/** What a failed npm ci said, in one line: could not run / timed out / npm's own "npm error" lines (not the log path) */
+export function npmNote(ci) {
+  if (ci.error && ci.error.code === 'ETIMEDOUT') return `npm ci timed out after ${INSTALL_TIMEOUT_MS / 60000} min`;
+  if (ci.error) return 'npm could not run (' + (ci.error.code || ci.error.message) + ') — is npm on the PATH of the scheduled task?';
+  const lines = String(ci.stderr || ci.stdout || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const errs = lines.filter((l) => /^npm (error|ERR!)/.test(l) && !/complete log/i.test(l));
+  return ((errs.length ? errs : lines).slice(0, 3).join(' | ') || 'exit ' + ci.status).slice(0, 220);
+}
+
+/** The real install: npm ci from the lockfile, then pin the folder so OneDrive's free-up-space leaves it alone.
+ *  `touch` re-stamps the tick lock between the two (spawnSync blocks the heartbeat). */
+export function npmCiAndPin(dir, touch = () => {}) {
+  const ci = spawnSync('npm', ['ci', '--no-audit', '--no-fund'], { cwd: dir, encoding: 'utf8', shell: process.platform === 'win32', timeout: INSTALL_TIMEOUT_MS });
+  touch();
+  if (ci.status !== 0) return { ok: false, note: npmNote(ci) };
+  return { ok: true, note: pinFolder(path.join(dir, 'node_modules')) };
+}
+
+/** "Always keep on this device" (+P, not online-only -U) on a folder and everything in it — Windows only; never throws */
+export function pinFolder(folder) {
+  if (process.platform !== 'win32') return '';
+  const r = spawnSync('attrib', ['+P', '-U', folder + '\\*', '/S', '/D'], { encoding: 'utf8', timeout: INSTALL_TIMEOUT_MS });
+  spawnSync('attrib', ['+P', '-U', folder], { encoding: 'utf8' });
+  return r.status === 0 ? 'pinned to this device' : 'could not pin (' + String(r.stderr || r.stdout || '').trim().slice(0, 80) + ')';
+}
 const HEARTBEAT_MS = 60000;                                // the lock is re-stamped this often while a step runs
 const STEP_LOG_KEEP = 60;                                  // failed-step output files kept
 const EXIT_GRACE_MS = 10000;                               // after main(): how long a leftover handle may hold the process (T-R1)
@@ -320,6 +384,10 @@ const run = async (label, args) => {
 };
 
 try {
+  /* the packages first: missing ones are reinstalled, or the tick stops here with ONE clear failure instead of six */
+  const deps = await ensureDeps({ readPkg: (p) => JSON.parse(fs.readFileSync(p, 'utf8')), exists: fs.existsSync, install: (d) => npmCiAndPin(d, () => touchLock(LOCK)) });
+  if (deps.repaired || !deps.ok) { say('dependencies → ' + (deps.ok ? 'ok' : 'FAILED') + ' — ' + deps.note); await stamp('dependencies', deps.ok, deps.note); }
+  if (!deps.ok) { process.exitCode = 1; return; }
   if (!(await runSteps({ run, stamp, say, full, slot }))) { process.exitCode = 1; return; }
   say('local tick done');
 } finally { try { fs.unlinkSync(LOCK); } catch {} }
