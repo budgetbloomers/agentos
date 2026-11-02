@@ -118,16 +118,39 @@
     o.innerHTML = '<div style="width:340px;max-width:92vw;background:#FFFFFF;border:1px solid #E3E9F3;border-radius:16px;padding:26px 24px;box-shadow:0 10px 30px rgba(15,30,54,.14)">' + inner + '</div>';
     return o;
   }
+  /* Cloudflare Turnstile widget. Rendered only when a site key is configured on the page
+     (window.CBX_TURNSTILE_SITEKEY), matching the server, which skips verification until its
+     secret is set. The token is captured into window.__cbxTsToken and sent with the sign-in. */
+  function ensureTurnstile(sitekey, elId) {
+    function render() {
+      try {
+        window.turnstile.render('#' + elId, { sitekey: sitekey,
+          callback: function (t) { window.__cbxTsToken = t; },
+          'error-callback': function () { window.__cbxTsToken = ''; },
+          'expired-callback': function () { window.__cbxTsToken = ''; } });
+      } catch (e) { /* widget not ready yet */ }
+    }
+    if (window.turnstile) { render(); return; }
+    if (!document.getElementById('cbxTsScript')) {
+      var s = document.createElement('script'); s.id = 'cbxTsScript';
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      s.async = true; s.defer = true; s.onload = render; document.head.appendChild(s);
+    } else { setTimeout(render, 300); }
+  }
   function loginForm(msg, err) {
+    var SITEKEY = window.CBX_TURNSTILE_SITEKEY || '';
+    window.__cbxTsToken = '';
     overlay(
       '<div style="text-align:center;margin-bottom:18px"><div style="font-size:20px;font-weight:800;letter-spacing:-.4px;color:#0F1E36">CHATTER<span style="color:#2563EB">BOX</span></div><div style="font-size:11px;color:#71809B;margin-top:2px">The Chatterbox AgentOS</div></div>'
       + (err ? '<div style="background:rgba(251,113,133,.14);border:1px solid rgba(251,113,133,.3);color:#C42D2D;font-size:12px;padding:8px 11px;border-radius:9px;margin-bottom:12px">' + esc(err) + '</div>' : '')
       + (msg ? '<div style="font-size:12px;color:#71809B;margin-bottom:12px">' + esc(msg) + '</div>' : '')
       + '<input id="cbxU" placeholder="Username" autocomplete="username" style="width:100%;box-sizing:border-box;background:#F7FAFE;border:1px solid #E3E9F3;color:#0F1E36;border-radius:10px;padding:11px 13px;margin-bottom:9px;font-size:13px">'
       + '<input id="cbxP" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;box-sizing:border-box;background:#F7FAFE;border:1px solid #E3E9F3;color:#0F1E36;border-radius:10px;padding:11px 13px;margin-bottom:14px;font-size:13px">'
+      + (SITEKEY ? '<div id="cbxTs" style="margin-bottom:12px;min-height:65px"></div>' : '')
       + '<button id="cbxGo" style="width:100%;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;background:linear-gradient(135deg,#2563EB,#38BDF8);color:#FFFFFF;cursor:pointer">Sign in</button>'
     );
     var go = document.getElementById('cbxGo'), u = document.getElementById('cbxU'), p = document.getElementById('cbxP');
+    if (SITEKEY) ensureTurnstile(SITEKEY, 'cbxTs');
     var submit = function () { doLogin(u.value.trim(), p.value); };
     go.onclick = submit;
     p.onkeydown = function (e) { if (e.key === 'Enter') submit(); };
@@ -160,13 +183,64 @@
   }
   function doLogin(username, password) {
     if (!username || !password) return;
-    api('/api/login', { username: username, password: password, page: location.pathname }).then(function (r) {
+    api('/api/login', { username: username, password: password, page: location.pathname, turnstile: window.__cbxTsToken || '' }).then(function (r) {
+      if (r.twofa) { totpForm(r, username); return; }   // management suite: second step before any token
       if (r._status === 200 && r.token) {
         sessionStorage.setItem(TKEY, r.token);
         window.CBX_USER = r.user;
         if (r.user.must_change_password) changeForm(); else authed();
       } else loginForm(null, r.error || 'Sign in failed.');
     });
+  }
+  /* Second-step screen. On enrolment it shows the setup key to add in Google Authenticator
+     (manual key entry — no external QR call) and the one-time recovery codes, shown once.
+     Returning users just enter the 6-digit code. Either way we POST /api/login/totp and only
+     then receive the real session token. */
+  function finishAuthed(r, onErr) {
+    if (r._status === 200 && r.token) {
+      sessionStorage.setItem(TKEY, r.token); window.CBX_USER = r.user;
+      if (r.user.must_change_password) changeForm(); else authed();
+      return true;
+    }
+    onErr(r.error || 'That code is not right.');
+    return false;
+  }
+  /* Lazy-load the QR renderer only on the enrolment screen. cdnjs is already allowed by the CSP
+     script-src (the app loads XLSX/Chart.js the same way). If it fails to load, the manual setup
+     key below still lets the user enrol — the QR is a convenience, not the only path. */
+  function ensureQR(cb) {
+    if (window.QRCode) { cb(); return; }
+    if (document.getElementById('cbxQRjs')) { setTimeout(cb, 300); return; }
+    var s = document.createElement('script'); s.id = 'cbxQRjs';
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    s.onload = cb; s.onerror = function () {}; document.head.appendChild(s);
+  }
+  function totpForm(ch, username) {
+    var enrol = ch.twofa === 'enroll';
+    var intro = enrol
+      ? 'Scan this with Google Authenticator (or any authenticator app). Can’t scan? Choose <b>Enter a setup key</b> and type the key below.'
+      : 'Enter the 6-digit code from your authenticator app.';
+    var qr = enrol ? '<div id="cbxQR" style="display:flex;justify-content:center;margin:12px 0"></div>' : '';
+    var key = enrol ? '<div style="font-size:11px;color:#71809B;margin:2px 0 3px">Setup key (for manual entry):</div><div style="font-family:ui-monospace,Consolas,monospace;font-size:14px;letter-spacing:1px;background:#F7FAFE;border:1px solid #E3E9F3;border-radius:9px;padding:10px;text-align:center;margin-bottom:10px;word-break:break-all">' + esc(ch.secret || '') + '</div>' : '';
+    var rec = (enrol && ch.recovery_codes) ? '<div style="font-size:11px;color:#71809B;margin:8px 0 4px">Save these one-time recovery codes — each works once if you lose your phone:</div><div style="font-family:ui-monospace,Consolas,monospace;font-size:11px;background:#F7FAFE;border:1px solid #E3E9F3;border-radius:9px;padding:10px;margin-bottom:10px;line-height:1.7">' + ch.recovery_codes.map(esc).join('<br>') + '</div>' : '';
+    overlay(
+      '<div style="font-size:15px;font-weight:800;color:#0F1E36;margin-bottom:6px">' + (enrol ? 'Set up two-step verification' : 'Two-step verification') + '</div>'
+      + '<div style="font-size:12px;color:#71809B;margin-bottom:6px">' + intro + '</div>'
+      + qr + key + rec
+      + '<input id="cbxC" inputmode="numeric" autocomplete="one-time-code" placeholder="' + (enrol ? '6-digit code to confirm' : '6-digit code') + '" style="width:100%;box-sizing:border-box;background:#F7FAFE;border:1px solid #E3E9F3;color:#0F1E36;border-radius:10px;padding:11px 13px;margin-bottom:12px;font-size:15px;letter-spacing:3px;text-align:center">'
+      + '<div id="cbxCe" style="color:#C42D2D;font-size:12px;margin-bottom:10px;display:none"></div>'
+      + '<button id="cbxCg" style="width:100%;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;background:linear-gradient(135deg,#2563EB,#38BDF8);color:#FFFFFF;cursor:pointer">' + (enrol ? 'Confirm &amp; sign in' : 'Verify') + '</button>'
+    );
+    if (enrol && ch.otpauth) ensureQR(function () { try { new window.QRCode(document.getElementById('cbxQR'), { text: ch.otpauth, width: 168, height: 168, correctLevel: window.QRCode.CorrectLevel.M }); } catch (e) {} });
+    var c = document.getElementById('cbxC'), e = document.getElementById('cbxCe');
+    var showErr = function (m) { e.style.display = 'block'; e.textContent = m; };
+    var go = function () {
+      var code = (c.value || '').trim(); if (!code) return;
+      api('/api/login/totp', { challenge: ch.challenge, code: code, page: location.pathname }).then(function (r) { finishAuthed(r, showErr); });
+    };
+    document.getElementById('cbxCg').onclick = go;
+    c.onkeydown = function (ev) { if (ev.key === 'Enter') go(); };
+    c.focus();
   }
   function authed() {
     var o = document.getElementById('cbxAuth'); if (o) o.remove();

@@ -1,3 +1,4 @@
+import { requires2FA, enforce2FAFor, startChallenge, takeChallenge, newSecret, newRecoveryCodes, otpauthURL, verifyTotp, hashRecovery } from './twofa.mjs';
 /**
  * App auth — PBKDF2 password hashing (WebCrypto), hashed session tokens,
  * lockout, per-app/per-tab permissions. Backed by app_users / app_sessions /
@@ -182,7 +183,7 @@ async function checkPassword(DB, u, username, password, ip, defer, via) {
  * Failure paths keep awaiting the counter update, because lockout must not race.
  */
 const LOGIN_NET_MAX = 100, LOGIN_NET_MIN = 10;   // the main door's per-network limit (stability plan, 2026-10-26)
-export async function login(DB, req, body, ctx) {
+export async function login(DB, req, body, ctx, opts = {}) {
   const defer = (p) => { try { ctx && ctx.waitUntil(p); } catch { /* no ctx: let it run detached */ } return p; };
   const ip = req.headers.get('cf-connecting-ip') || '';
   /* ONE NETWORK, A HUNDRED FAILURES IN TEN MINUTES, THEN STOP (stability plan, 2026-10-26) — the limit the Wimpy door has
@@ -199,6 +200,31 @@ export async function login(DB, req, body, ctx) {
   const checked = await checkPassword(DB, u, username, body.password, ip, defer, '');
   if (!checked.ok) return checked;
 
+  /* SECOND STEP for the AgentOS management suite only (2FA, migration-065). Portal roles
+     (Agent Analytics / Coaching Hub / KPI hub) fall straight through to a full session
+     exactly as before — requires2FA() in twofa.mjs is the one place that decides scope. */
+  if (enforce2FAFor(u, opts.enforce)) {
+    const needEnroll = !u.totp_enabled;
+    const ch = await startChallenge(DB, u.id, needEnroll ? 'enroll' : 'totp');
+    const out = { ok: true, twofa: needEnroll ? 'enroll' : 'required', challenge: ch.challenge };
+    if (needEnroll) {
+      // first time in: hand back a secret to scan and one-time recovery codes, shown ONCE.
+      const secret = newSecret();
+      const rc = await newRecoveryCodes();
+      await DB.update(`app_users?id=eq.${u.id}`, { totp_secret: secret, totp_enabled: false, totp_recovery: rc.hashes });
+      out.secret = secret;
+      out.otpauth = otpauthURL(secret, u.username);
+      out.recovery_codes = rc.plain;
+    }
+    return out;   // NO token yet — /api/login/totp issues it after the code checks out
+  }
+
+  return mintSession(DB, u, req, ip, username, defer);
+}
+
+/* Mint the full 12-hour session and return the login payload. Shared by the single-step
+   sign-in and by completeTotp() after the second step passes, so the two can never drift. */
+async function mintSession(DB, u, req, ip, username, defer) {
   const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
   await DB.insert('app_sessions', [{
     token_hash: await sha256hex(token),
@@ -209,13 +235,63 @@ export async function login(DB, req, body, ctx) {
   // Neither of these gates the response: the token above is already valid.
   defer(DB.update(`app_users?id=eq.${u.id}`, { failed_attempts: 0, locked_until: null, last_login: new Date().toISOString() }).catch(() => {}));
   defer(log(DB, u.id, username, 'login_ok', ip));
-  /* user_id is for the Worker's own records (the usage report's app open, Spec Kit 028) — the route never puts it in
-     the answer the page receives */
   return {
     ok: true, token, user_id: u.id,
     user: { username: u.username, full_name: u.full_name, role: u.role, apps: u.apps, tabs: u.tabs,
       pii_unmask: u.pii_unmask, must_change_password: u.must_change_password, cb: u.cb || '', team: u.team || '' },
   };
+}
+
+/* THE SECOND STEP — POST /api/login/totp {challenge, code}. `code` is a 6-digit authenticator
+   code or (not during enrolment) a one-time recovery code. The challenge is single-use and
+   expires in five minutes; the password was already proven at /api/login. A wrong code counts
+   toward the SAME account lock as a wrong password, so password + code-guessing cannot run
+   unbounded. Enrolment is confirmed by the first correct code (totp_enabled → true). */
+const TWOFA_FAIL = 'login_fail:2fa:';
+export async function completeTotp(DB, req, body, ctx) {
+  const defer = (p) => { try { ctx && ctx.waitUntil(p); } catch { /* detached */ } return p; };
+  const ip = (req && req.headers && req.headers.get('cf-connecting-ip')) || '';
+  const b = body || {};
+  const ch = await takeChallenge(DB, b.challenge);   // consumed here, pass or fail
+  if (!ch) return { ok: false, status: 401, error: 'Your sign-in request expired — please start again.' };
+  const rows = await DB.select(`app_users?id=eq.${ch.user_id}&select=id,username,full_name,role,apps,tabs,pii_unmask,must_change_password,cb,team,active,totp_secret,totp_enabled,totp_recovery,locked_until,failed_attempts&limit=1`);
+  const u = rows && rows[0];
+  if (!u || !u.active) return { ok: false, status: 401, error: 'Invalid username or password.' };
+  if (u.locked_until && new Date(u.locked_until) > new Date()) return { ok: false, status: 423, error: LOCKED_MSG };
+
+  const code = String(b.code || '').trim();
+  let good = await verifyTotp(u.totp_secret, code);
+  let usedRecovery = null;
+  if (!good && ch.kind === 'totp' && Array.isArray(u.totp_recovery) && u.totp_recovery.length) {
+    const h = await hashRecovery(code);               // recovery codes are not accepted during enrolment
+    if (u.totp_recovery.includes(h)) { good = true; usedRecovery = h; }
+  }
+  if (!good) { await twofaFail(DB, u, ip); return { ok: false, status: 401, error: 'That code is not right.' }; }
+
+  const patch = {};
+  if (ch.kind === 'enroll') patch.totp_enabled = true;                        // first correct code activates
+  if (usedRecovery) patch.totp_recovery = u.totp_recovery.filter((x) => x !== usedRecovery);  // burn the used one
+  if (Object.keys(patch).length) await DB.update(`app_users?id=eq.${u.id}`, patch);
+  return mintSession(DB, u, req, ip, u.username, defer);
+}
+
+/* Count 2FA failures the same append-only way the password lock does (audit round 4), and
+   lock the account after MAX_FAILS. The lock field is shared with the password door. */
+async function twofaFail(DB, u, ip) {
+  let logged = true;
+  try { await DB.insert('auth_log', [{ user_id: u.id, username: u.username, event: TWOFA_FAIL + 'bad_code', ip }]); }
+  catch { logged = false; }
+  let recent = (u.failed_attempts || 0) + 1;
+  if (logged) try {
+    const since = new Date(Date.now() - LOCK_MIN * 60000).toISOString();
+    const rows = await DB.select(`auth_log?user_id=eq.${u.id}&at=gte.${since}&select=event,at&order=at.desc&limit=60`);
+    let n = 0;
+    for (const r of (rows || [])) { const ev = String(r.event || ''); if (ev === 'login_ok') break; if (ev.startsWith(TWOFA_FAIL)) n++; }
+    recent = n;
+  } catch { /* log unreadable — keep the fail-closed counter */ }
+  const patch = { failed_attempts: Math.max(recent, (u.failed_attempts || 0) + 1) };
+  if (recent >= MAX_FAILS) patch.locked_until = new Date(Date.now() + LOCK_MIN * 60000).toISOString();
+  await DB.update(`app_users?id=eq.${u.id}`, patch);
 }
 
 /* SHARED-AUTH:session BEGIN (Spec Kit 018 — see the hashing block) */

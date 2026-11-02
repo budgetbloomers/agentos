@@ -5,7 +5,8 @@
  * IRON RULE: the LLM explains numbers, it never computes them.
  */
 import { db } from './db.mjs';
-import { login, logout, session, hashPassword, changePassword } from './auth.mjs';
+import { login, completeTotp, logout, session, hashPassword, changePassword } from './auth.mjs';
+import { verifyTurnstile } from './twofa.mjs';
 import { retrieveKB } from './kb.mjs';
 import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWave } from './coaching.mjs';
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, reportsRequest, listDigestMonths, overview, overviewRequest, cmCoaching, coachingOthers, agentDetail, normCb } from './portal.mjs';
@@ -757,12 +758,28 @@ export default {
       if (stale && (path === '/api/me' || (path === '/api/login' && req.method === 'POST'))) return json(OUTDATED, 426);
       if (path === '/api/login' && req.method === 'POST') {
         const lb = await req.json();
-        const r = await login(DB, req, lb, ctx);   // ctx lets the audit writes finish after the response
+        /* HUMAN CHECK FIRST (Cloudflare Turnstile): verified server-side before any password work,
+           so automated spraying of the start passwords is stopped at the door. Dark until
+           TURNSTILE_SECRET is set in the Worker env — verifyTurnstile() skips cleanly when unset. */
+        const ts = await verifyTurnstile(env, lb && (lb['cf-turnstile-response'] || lb.turnstile), req.headers.get('cf-connecting-ip') || '');
+        if (!ts.ok) return json({ error: 'Human check failed — please reload the page and try again.' }, 403);
+        const r = await login(DB, req, lb, ctx, { enforce: env.TWOFA_ENFORCE });   // ctx: audit writes finish after the response; enforce: 2FA rollout switch
         if (!r.ok) return json({ error: r.error }, r.status);
+        /* SECOND STEP for the AgentOS management suite: the password is proven but NO token is issued
+           yet — the page completes /api/login/totp with the authenticator code. Agent Analytics / the
+           hubs never reach this branch (login() only sets twofa for TWOFA_ROLES). */
+        if (r.twofa) return json({ twofa: r.twofa, challenge: r.challenge, secret: r.secret, otpauth: r.otpauth, recovery_codes: r.recovery_codes });
         /* the sign-in itself reaches the usage report through auth_log's trigger; what only this route knows is WHICH
            app it happened in (the page sends `page`) — recorded as that app's first open */
         recordOpen(track, { user_id: r.user_id, username: r.user.username, role: r.user.role, team: r.user.team }, lb && lb.page, 'login');
         // token also in body: cross-origin pages use Bearer (cookie is same-origin only)
+        return json({ user: r.user, token: r.token });
+      }
+      if (path === '/api/login/totp' && req.method === 'POST') {
+        const b = await req.json();
+        const r = await completeTotp(DB, req, b, ctx);   // consumes the challenge, verifies the code, mints the session
+        if (!r.ok) return json({ error: r.error }, r.status);
+        recordOpen(track, { user_id: r.user_id, username: r.user.username, role: r.user.role, team: r.user.team }, b && b.page, 'login');
         return json({ user: r.user, token: r.token });
       }
       /* WIMPY ORDERING LEFT THIS WORKER (Spec Kit 018, 2026-10-09): the sign-in, the menu, the order, My orders and the

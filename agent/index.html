@@ -1132,7 +1132,7 @@ var API_EPOCH=0;
    writes on a 401 (an error card in HUB, MYHELP…) is wiped by the reset, and a reply after it is dropped by the epoch; a
    caller that already called sessionExpired() is not handled twice (the epoch has moved, and sessionExpired is once).
    Not sign-in (a 401 there is a wrong password) and not sign-out (fire-and-forget). */
-var API_NO_EXPIRE=/^\/api\/(login|logout)(\?|$)/;
+var API_NO_EXPIRE=/^\/api\/(login(\/totp)?|logout)(\?|$)/;
 function api(path, body){
   var ep=API_EPOCH;
   var o={method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-Cbx-Client':'v5'}};
@@ -4345,6 +4345,7 @@ function loginScreen(msg){
     if(!u||!p) return fail('Enter your CB number and your password.');
     go.disabled=true; go.textContent='Signing in…';
     api('/api/login',{username:u,password:p,page:location.pathname}).then(function(r){
+      if(r.json&&r.json.twofa){ return totpScreen(r.json); }   // TL / CM: second step before any token
       if(r.status===200&&r.json.token){
         try{ sessionStorage.setItem(TKEY,r.json.token); }catch(e){}
         U=r.json.user;
@@ -4357,6 +4358,53 @@ function loginScreen(msg){
   pw.onkeydown=function(e){ if(e.key==='Enter') submit(); };
   cb.onkeydown=function(e){ if(e.key==='Enter') pw.focus(); };
   setTimeout(function(){ try{cb.focus();}catch(e){} },80);
+}
+
+/* Lazy-load the QR renderer only on the enrolment screen (cdnjs is already allowed by the CSP;
+   the suite loads its other libraries the same way). If it fails, the setup key below still works. */
+function ensureQR(cb){
+  if(window.QRCode){ cb(); return; }
+  if(document.getElementById('cbxQRjs')){ setTimeout(cb,300); return; }
+  var s=document.createElement('script'); s.id='cbxQRjs';
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+  s.onload=cb; s.onerror=function(){}; document.head.appendChild(s);
+}
+/* SECOND STEP for the team-leader and campaign-manager views (2FA, migration-065). Plain agents
+   never reach here — the Worker only issues a challenge for the in-scope roles. Mirrors the
+   management gate (site/auth-gate.js): enrol shows a QR + setup key + one-time recovery codes;
+   a returning person just enters the 6-digit code; the token arrives only after it checks out. */
+function totpScreen(ch){
+  var enrol = ch.twofa==='enroll';
+  var qr  = enrol ? '<div id="cbxQR" style="display:flex;justify-content:center;margin:12px 0"></div>' : '';
+  var key = enrol ? '<div class="why" style="margin:2px 0 3px">Setup key (for manual entry):</div><div style="font-family:ui-monospace,Consolas,monospace;font-size:14px;letter-spacing:1px;background:rgba(0,0,0,.05);border-radius:9px;padding:10px;text-align:center;margin-bottom:10px;word-break:break-all">'+esc(ch.secret||'')+'</div>' : '';
+  var rec = (enrol&&ch.recovery_codes) ? '<div class="why" style="margin:8px 0 4px">Save these one-time recovery codes — each works once if you lose your phone:</div><div style="font-family:ui-monospace,Consolas,monospace;font-size:12px;background:rgba(0,0,0,.05);border-radius:9px;padding:10px;margin-bottom:10px;line-height:1.7">'+ch.recovery_codes.map(esc).join('<br>')+'</div>' : '';
+  preShell('<div class="greet">'+(enrol?'Set up two-step verification':'Two-step verification')+'</div>'
+    +'<div class="greet-sub">'+(enrol?'Scan this with Google Authenticator, or enter the setup key below. Then type the 6-digit code to confirm.':'Enter the 6-digit code from your authenticator app.')+'</div>'
+    +'<div class="card">'
+    +'<div class="err" id="lerr" style="display:none"></div>'
+    + qr + key + rec
+    +'<label for="c2">6-digit code</label>'
+    +'<input id="c2" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" aria-label="6-digit code">'
+    +'<button class="primary" id="go2">'+(enrol?'Confirm and sign in':'Verify')+'</button>'
+    +'</div>');
+  if(enrol&&ch.otpauth) ensureQR(function(){ try{ new window.QRCode(document.getElementById('cbxQR'),{text:ch.otpauth,width:168,height:168,correctLevel:window.QRCode.CorrectLevel.M}); }catch(e){} });
+  var c=$('c2'), go=$('go2');
+  var fail=function(m){ var e=$('lerr'); if(e){ e.textContent=m; e.style.display='block'; } go.disabled=false; go.textContent=enrol?'Confirm and sign in':'Verify'; };
+  var submit=function(){
+    var code=(c.value||'').trim(); if(!code) return;
+    go.disabled=true; go.textContent='Checking…';
+    api('/api/login/totp',{challenge:ch.challenge,code:code,page:location.pathname}).then(function(r){
+      if(r.status===200&&r.json.token){
+        try{ sessionStorage.setItem(TKEY,r.json.token); }catch(e){}
+        U=r.json.user;
+        if(U.must_change_password) return changePassword();
+        loadPortal();
+      } else fail((r.json&&r.json.error)||'That code is not right.');
+    });
+  };
+  go.onclick=submit;
+  c.onkeydown=function(e){ if(e.key==='Enter') submit(); };
+  setTimeout(function(){ try{c.focus();}catch(e){} },80);
 }
 
 /* Only reached when an account is issued with --force-change. The rule (10
