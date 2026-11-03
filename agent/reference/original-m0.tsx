@@ -88,7 +88,7 @@ function M0Calculator() {
               <span className="font-bold text-primary">box</span>
             </h1>
             <p className="text-muted-foreground font-medium uppercase tracking-widest text-sm">
-              Matrix VAS Commission Calculator — August (M0)
+              Matrix VAS Commission Calculator — November (M0)
             </p>
           </div>
 

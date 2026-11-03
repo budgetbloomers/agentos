@@ -139,7 +139,7 @@ async function freshPage() {
 
 const SEPT = ['2026-09-01', '2026-09-02', '2026-09-03'];
 const OCT = ['2026-10-06', '2026-10-07', '2026-10-08'];
-const NOV = ['2026-11-03', '2026-11-04'];
+const NOV = ['2026-11-03', '2026-11-05'];   // not 4 Nov: the elections public holiday (spec 040) is a data-only day with no target
 /* code, campaign, tl, tenure, September list cell (recorded pre-build: NO target in history), October list cell */
 const AG = [
   ['CB911', 'Courtesy', 'Leader Alpha', 'M1', 3, '4'],
@@ -302,10 +302,10 @@ try {
   const nov = await perDay(page, '2026-11');
   const oct2 = await perDay(page, '2026-10');
   const sept3 = await perDay(page, '2026-09');
-  ok('November uses the November list\'s 5 for CB911', nov.CB911 && nov.CB911['2026-11-04'] === 5, J(nov.CB911));
+  ok('November uses the November list\'s 5 for CB911', nov.CB911 && nov.CB911['2026-11-05'] === 5, J(nov.CB911));
   ok('…October keeps 4', oct2.CB911 && oct2.CB911['2026-10-07'] === 4, J(oct2.CB911));
   ok('…September keeps 3', sept3.CB911 && sept3.CB911['2026-09-02'] === 3, J(sept3.CB911));
-  ok('…an unchanged cell carries on (CB912 5 in November)', nov.CB912 && nov.CB912['2026-11-04'] === 5, J(nov.CB912));
+  ok('…an unchanged cell carries on (CB912 5 in November)', nov.CB912 && nov.CB912['2026-11-05'] === 5, J(nov.CB912));
   ok('PULSE: no page errors (engine run)', !P.errs.length, P.errs.join(' | '));
 } finally { await P.page.close(); }
 

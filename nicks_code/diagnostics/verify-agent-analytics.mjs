@@ -68,7 +68,8 @@ const FORMULAS = [
   ['next bracket = first above the projection',  /if \(projected < bracket\.gwp\) \{\s*nextBracket = bracket;/],
   ['gap is measured against ACTUAL gwp',         /const gap = nextBracket\.gwp - gwp;/],
   ['needed per day = gap ÷ remaining days',      /const neededPerDay = metrics\.remainingDays > 0 \? gap \/ metrics\.remainingDays : null;/],
-  ['what-if adds sale value × remaining days',   /const extraGWP = extraSales \* SALE_VALUE \* remDays;/],
+  ['what-if uses the plan\'s own sale value',     /const saleValue = \(tenure \? SALE_VALUES\[tenure\] : undefined\) \?\? SALE_VALUE;/],
+  ['what-if adds sale value × remaining days',   /const extraGWP = extraSales \* saleValue \* remDays;/],
   ['what-if projection = projected + extra',     /const newProjected = metrics\.premiumProjected \+ extraGWP;/],
   ['bracket gap per remaining day',              /const gwpGapPerRemainingDay = remDays > 0 \? gwpGapTotal \/ remDays : null;/],
 ];
@@ -95,7 +96,7 @@ function extractBrackets(src) {
   }
   const body = src.slice(open, end + 1);
   const out = {};
-  const planRe = /(M1|M2|EXP_COURTESY|EXP_CUDDLE|EXP_DOWNUP):\s*\[([\s\S]*?)\]/g;
+  const planRe = /\b(M1|M2|EXP_COURTESY|EXP_CUDDLE|EXP_DOWNUP|MOW_M1|MOW_M2|MOW_EXP):\s*\[([\s\S]*?)\]/g;   // \b: MOW_M1 is not M1
   let m;
   while ((m = planRe.exec(body))) {
     out[m[1]] = [...m[2].matchAll(/\{\s*gwp:\s*([\d.]+),\s*comm:\s*([\d.]+)\s*\}/g)]
@@ -113,15 +114,16 @@ const ORIG_SALE_VALUE = (() => {
 const ORIG_SALE_VALUES = (() => {
   const out = {};
   const blk = TSX.match(/const SALE_VALUES[^=]*=\s*\{([^}]*)\}/);
-  if (blk) for (const m of blk[1].matchAll(/([A-Z0-9_]+):\s*([\d.]+)\s*\/\s*([\d.]+)/g)) out[m[1]] = parseFloat(m[2]) / parseFloat(m[3]);
+  if (blk) for (const m of blk[1].matchAll(/([A-Z0-9_]+):\s*([\d.]+)\s*([\/*])\s*([\d.]+)/g))
+    out[m[1]] = m[3] === '/' ? parseFloat(m[2]) / parseFloat(m[4]) : parseFloat(m[2]) * parseFloat(m[4]);   // 40 / 1.15, 0.6 * 425
   return out;
 })();
 const saleValueFor = (plan) => ORIG_SALE_VALUES[plan] ?? ORIG_SALE_VALUE;
 
-const PLANS = ['M1', 'M2', 'EXP_COURTESY', 'EXP_CUDDLE', 'EXP_DOWNUP'];
+const PLANS = ['M1', 'M2', 'EXP_COURTESY', 'EXP_CUDDLE', 'EXP_DOWNUP', 'MOW_M1', 'MOW_M2', 'MOW_EXP'];
 /* September 2026: EXP_CUDDLE grew to 10 brackets (SPD 6–15); EXP_DOWNUP (Download & Test,
    R40 product) joined with 8; the rest stay at 8. */
-const PLAN_SIZES = { M1: 8, M2: 8, EXP_COURTESY: 8, EXP_CUDDLE: 10, EXP_DOWNUP: 8 };
+const PLAN_SIZES = { M1: 8, M2: 8, EXP_COURTESY: 8, EXP_CUDDLE: 10, EXP_DOWNUP: 8, MOW_M1: 8, MOW_M2: 8, MOW_EXP: 8 };   // Motor Warranty joined 2026-11-03 (spec 040)
 for (const p of PLANS) {
   (ORIG_BRACKETS[p] || []).length === PLAN_SIZES[p]
     ? ok(`${p}: ${PLAN_SIZES[p]} brackets read from the original`)
@@ -143,6 +145,16 @@ const pulseComm = (() => {
   // eslint-disable-next-line no-eval
   return eval('(' + PULSE.slice(open, end + 1) + ')');
 })();
+/* any other object PULSE declares the same way (the pinned month models) */
+function pulseObj(marker) {
+  const i = PULSE.indexOf(marker); if (i < 0) return null;
+  const open = PULSE.indexOf('{', i); let d = 0;
+  for (let j = open; j < PULSE.length; j++) {
+    if (PULSE[j] === '{') d++;
+    else if (PULSE[j] === '}') { d--; if (d === 0) return eval('(' + PULSE.slice(open, j + 1) + ')'); }   // eslint-disable-line no-eval
+  }
+  return null;
+}
 if (!pulseComm) bad('COMM_RULES not found in nicks_code/index.html');
 else {
   let drift = [];
@@ -156,14 +168,14 @@ else {
   }
   drift.length
     ? bad('COMM_RULES has drifted from the original brackets', drift.join('\n      '))
-    : ok('COMM_RULES brackets match the original exactly (42 values)');
+    : ok('COMM_RULES brackets match the original exactly (' + PLANS.reduce((t, p) => t + (ORIG_BRACKETS[p] || []).length, 0) + ' brackets, every plan)');
   Math.abs(pulseComm.saleValue - ORIG_SALE_VALUE) < 1e-12
     ? ok('COMM_RULES.saleValue matches the original (89 ÷ 1.15)')
     : bad(`COMM_RULES.saleValue ${pulseComm.saleValue} vs original ${ORIG_SALE_VALUE}`);
   const svDrift = Object.keys({ ...ORIG_SALE_VALUES, ...(pulseComm.saleValues || {}) })
     .filter((k) => Math.abs((ORIG_SALE_VALUES[k] ?? -1) - ((pulseComm.saleValues || {})[k] ?? -2)) > 1e-12);
   svDrift.length ? bad('COMM_RULES.saleValues drifted from the original: ' + svDrift.join(', '))
-                 : ok('COMM_RULES.saleValues matches the original (Download & Test = 40 ÷ 1.15)');
+                 : ok('COMM_RULES.saleValues matches the original (Download & Test = 40 ÷ 1.15, Motor Warranty = 0.6 × 425)');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -377,7 +389,7 @@ const CODE = PAGE
      shared-link digest route is gone from this page and the portal routes take its
      place. Every one of these is scoped by the Worker from the SESSION — not one of
      them accepts an identity supplied by the page. */
-  const allowed = new Set(['/api/login', '/api/logout', '/api/password',
+  const allowed = new Set(['/api/login', '/api/login/totp', '/api/logout', '/api/password',
     '/api/portal/me', '/api/portal/overview', '/api/portal/agent', '/api/portal/ask',
     /* The team leader's Variance and Lead management slices (2026-09-21): cut by the Worker's
        authorise() from the SESSION, refused to agents and campaign managers. */
@@ -1247,11 +1259,13 @@ try {
   const nf2 = new Intl.NumberFormat('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const flat = (h) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   const money = (v) => ('R ' + nf2.format(v)).replace(/\s+/g, ' ');
-  const OCT_FIRST = pulseComm.brackets.EXP_CUDDLE[0];                       // read from COMM_RULES, never retyped
+  const OCT_MODEL = pulseObj('const COMM_RULES_2026_10=');                // October, pinned since November became current (spec 040)
+  if (!OCT_MODEL) throw new Error('COMM_RULES_2026_10 not found in PULSE');
+  const OCT_FIRST = OCT_MODEL.brackets.EXP_CUDDLE[0];                       // read from the pinned model, never retyped
   const SEP_FIRST = { gwp: 9751.30, comm: 4000 };
   if (Math.abs(OCT_FIRST.gwp - 10215.65) > 1e-9) throw new Error('fixture assumption: October EXP_CUDDLE first bracket is 10215.65, source says ' + OCT_FIRST.gwp);
   const SEP_COMM = { saleValue: ORIG_SALE_VALUE, brackets: { EXP_CUDDLE: [SEP_FIRST, { gwp: 11000, comm: 6000 }] } };
-  const OCT_COMM = { month: '2026-10', ...pulseComm };
+  const OCT_COMM = { month: '2026-10', ...OCT_MODEL };
   const SEPD = { ...DIGEST, period: { from: '2026-09-01', to: '2026-09-30' }, workingDays: 21, diallingDays: 2,
     dates: ['2026-09-01', '2026-09-02'], daysWithData: 2, role: 'agent', updatedAt: new Date().toISOString(),
     comm: SEP_COMM, coaching: { stale: true, agents: [] } };
@@ -1333,6 +1347,60 @@ try {
   if (text.indexOf(money(SEP_FIRST.gwp)) < 0) throw new Error('a digest with no commNow lost September\'s calculator');
   ok('a digest without commNow on 1 Oct keeps today\'s behaviour and does not throw');
 } catch (e) { bad('new-month calculator (commNow)', e.message); }
+P.setView('month'); P.setTeam(null);
+delete W.__agentToday;
+
+/* ═══ THE NOVEMBER ROLLOVER (spec 040, 2026-11-03) ═══
+   The closed October digest carries commNow = the November model. November has 20 dialling days because 4 Nov is
+   the elections public holiday, which reaches the page as the digest's extraHolidays — exactly as PULSE publishes
+   MTD_RULES.extraHolidays. November's first Cuddle bracket is 6 a day × 20 days = 120 sales; a plain ceil said 121
+   because the bracket is published to the cent (9286.96) a fraction above 120 × 77.3913 = 9286.9565. */
+head('Projected Commission on 3 November: November model, 20 working days, 120 sales (commNow)');
+try {
+  const flat = (h) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const OCT_MODEL = pulseObj('const COMM_RULES_2026_10=');
+  const NOV_FIRST = pulseComm.brackets.EXP_CUDDLE[0];                        // read from COMM_RULES, never retyped
+  if (pulseComm.version !== '2026-11') throw new Error('fixture assumption: COMM_RULES is November, source says ' + pulseComm.version);
+  const PUBLISHED_HOLIDAYS = (PULSE.match(/extraHolidays:\s*(\[[^\]]*\])/) || [])[1];
+  // eslint-disable-next-line no-eval
+  const extraHolidays = PUBLISHED_HOLIDAYS ? eval(PUBLISHED_HOLIDAYS) : [];
+  if (extraHolidays.indexOf('2026-11-04') < 0) throw new Error('MTD_RULES.extraHolidays does not carry 4 Nov 2026');
+  const OCTD = { ...DIGEST, period: { from: '2026-10-01', to: '2026-10-31' }, workingDays: 22, diallingDays: 2,
+    dates: ['2026-10-01', '2026-10-02'], daysWithData: 2, role: 'agent', updatedAt: new Date().toISOString(),
+    comm: OCT_MODEL, extraHolidays, coaching: { stale: true, agents: [] } };
+  const ENOCH = { code: 'CB70', name: 'Enoch Pillay', campaign: 'Cuddle', tenure: 'Exp', plan: 'EXP_CUDDLE',
+    gwpEx: 1800, sales: 20, target: 24, pctT: 0.83, spd: 6.7, att: 1, qa: 0.98, aveG: 90, ref: 2,
+    act: 2, emp: 2, rankCo: 1, nCo: 62, rankTeam: 1, nTeam: 15, trend: 'up', trendPct: 0.1, badges: [], spark: [8, 12],
+    days: [ { d: '2026-10-01', s: 8, x: 600, t: 8, act: 1 }, { d: '2026-10-02', s: 12, x: 900, t: 8, act: 1 } ] };
+  P.setTeam(null);
+  W.__agentToday = '2026-11-03';
+  P.setD({ ...OCTD, commNow: { month: '2026-11', ...pulseComm }, agents: [ENOCH] }); P.setMe(ENOCH); P.setView('calc'); P.show(ENOCH);
+  const text = flat(N.root.innerHTML);
+  if (!/Projected commission — November/.test(text)) throw new Error('the calculator does not name November');
+  if (!/20 working days/.test(text)) throw new Error('November\'s 20 working days are not shown: ' + (text.match(/\d+ working days/g) || ['none']).join(' | '));
+  const heroEl = (N.root.innerHTML.match(/<div class="coms-hero" id="comsHero">[\s\S]*?<\/div><\/div>(?=\s*<|$)/) || [''])[0];
+  const hero = flat(heroEl || '');
+  if (!heroEl) throw new Error('the calculator page has no #comsHero');
+  if (hero.indexOf('R 4 000') < 0) throw new Error('first payout under the November model is not R4 000: ' + hero.slice(0, 200));
+  if (/121 sales/.test(hero)) throw new Error('cent rounding of ' + NOV_FIRST.gwp + ' tipped 120 sales into 121: ' + hero);
+  if (!/120 sales/.test(hero)) throw new Error('first payout is not 120 sales (6 a day × 20 days): ' + hero);
+  if (!/about 6 a day/.test(hero)) throw new Error('first payout has no "about 6 a day" over 20 days: ' + hero);
+  if (/undefined|NaN/.test(text)) throw new Error('placeholder value on the November calculator');
+  ok('3 Nov: November model, 20 working days (4 Nov holiday from the digest), first payout R4 000 = 120 sales, about 6 a day');
+  /* salesToClose itself, read out of the page: never one too many, never ZERO while a gap remains (review 2026-11-03) */
+  const stcSrc = (PAGE.match(/function salesToClose\([^)]*\)\{[^\n]*\}/) || [])[0];
+  if (!stcSrc) throw new Error('salesToClose not found in agent/index.html');
+  // eslint-disable-next-line no-new-func
+  const salesToClose = new Function(stcSrc + '\nreturn salesToClose;')();
+  const SV = 89 / 1.15;
+  const cases = [[NOV_FIRST.gwp, 120, 'the 120-sale bracket, published a fraction above 120 × R77.39'],
+    [0.0035, 1, 'a R0.0035 gap (120 sales written, bracket not yet paid) — one more sale, never 0'],
+    [3 * SV, 3, 'exactly three sales of premium'], [0, 0, 'no gap'], [-50, 0, 'past the bracket']];
+  const wrongStc = cases.filter(([p, want]) => salesToClose(p, SV) !== want).map(([p, want, why]) => why + ': ' + salesToClose(p, SV) + ' not ' + want);
+  if (wrongStc.length) throw new Error('salesToClose: ' + wrongStc.join('; '));
+  if (Math.ceil(salesToClose(NOV_FIRST.gwp, SV) / 20) !== 6) throw new Error('per-day ask over 20 days is not 6');
+  ok('salesToClose: 120 for the 120-sale bracket, 1 (never 0) on a half-cent gap, 0 past it; per day = total ÷ days left = 6');
+} catch (e) { bad('November rollover (commNow, 20 working days, 120 sales)', e.message); }
 P.setView('month'); P.setTeam(null);
 delete W.__agentToday;
 
@@ -1428,12 +1496,12 @@ try {
   /* Figures recomputed for the September 2026 brackets (thresholds rebased 20→21
      dial days) AND holiday-aware working days: August 2026's fallback counts 20
      (21 weekdays − Women's Day observed Mon 10 Aug), so this fixture projects
-     18,090.00 — recomputed 2026-10-01 for the OCTOBER brackets (Matrix Vas Comm Model_October26.xlsx,
-     22 dial days): 18,090.00 lands in the 17,026.09 bracket → R12,218.60; the elapsed-days bug
-     (14 days → 12,663.00, the 11,918.26 bracket) would show ~R6,374.92. September's pair was
-     R6,678 wrong / R14,166 right; August's R7,670 / R17,896. */
-  if (/R\s?6\s?37\d/.test(text)) throw new Error('still showing the elapsed-days commission (~R6,375)');
-  if (!/R\s?12\s?21\d/.test(text)) throw new Error('the corrected commission (R12,219) is not shown');
+     18,090.00 — recomputed 2026-11-03 for the NOVEMBER brackets (Matrix Vas Comm Model_November26.xlsx,
+     20 dial days): 18,090.00 lands in the 17,026.09 bracket (R14,000) → R14,874.82; the elapsed-days bug
+     (14 days → 12,663.00, the 12,382.61 bracket) would show ~R7,669.83. October's pair was R6,375 wrong /
+     R12,219 right; September's R6,678 / R14,166; August's R7,670 / R17,896. */
+  if (/R\s?7\s?67\d/.test(text)) throw new Error('still showing the elapsed-days commission (~R7,670)');
+  if (!/R\s?14\s?87\d/.test(text)) throw new Error('the corrected commission (R14,875) is not shown');
   if (/R\s?0\b.{0,24}away/i.test(text)) throw new Error('"R 0 away from the next bracket" is back');
   if (/first bracket/i.test(text)) throw new Error('an agent mid-ladder is told he cannot clear the FIRST bracket');
   ok('a stale digest self-corrects: weekdays counted from the period, commission right, no false messages');
@@ -1677,9 +1745,11 @@ head('Campaign manager Coaching Hub tab (Spec Kit 033) — the Pages CSP frames 
      else in the policy moves, connect-src stays as it was (NN10). */
   const csp = (rd('site', '_headers').match(/Content-Security-Policy:([^\n]*)/) || [])[1] || '';
   const frameSrc = ((csp.match(/frame-src([^;]*)/) || [])[1] || '').trim();
-  frameSrc === 'https://coaching-hub-psi.vercel.app'
-    ? ok('site/_headers: frame-src names the Coaching Hub origin and nothing else')
-    : bad('site/_headers: frame-src is not exactly the Coaching Hub origin', JSON.stringify(frameSrc));
+  /* …plus, since the sign-in CAPTCHA (4993b89, 2026-11-03), Cloudflare Turnstile's challenge frame — and nothing else */
+  const frames = frameSrc.split(/\s+/).filter(Boolean).sort().join(' ');
+  frames === 'https://challenges.cloudflare.com https://coaching-hub-psi.vercel.app'
+    ? ok('site/_headers: frame-src names the Coaching Hub and the Turnstile challenge frame, nothing else')
+    : bad('site/_headers: frame-src is not exactly the Coaching Hub + Turnstile origins', JSON.stringify(frameSrc));
   /frame-ancestors 'self'/.test(csp) ? ok('frame-ancestors \'self\' still there (this site is not framed by others)') : bad('frame-ancestors changed');
   /connect-src 'self' https:\/\/chatterbox-agentos-api\.chatterbox-agentos\.workers\.dev https:\/\/fxvnjhfdenycxxuklord\.supabase\.co;/.test(csp)
     ? ok('connect-src unchanged — the browser still talks only to the Worker and the storage host')

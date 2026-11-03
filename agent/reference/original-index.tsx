@@ -5,7 +5,10 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -30,70 +33,114 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-// October 2026 model (Matrix Vas Comm Model_October26.xlsx): gwp thresholds are ex-VAT totals
-// (SPD × average premium × 22 dial days ÷ 1.15). Courtesy SPD steps rise one notch with the same
-// comm amounts; Cuddle and Download/Upsell keep their steps. Generated from the workbook (2026-10-01).
+// November 2026 model (Matrix Vas Comm Model_November26.xlsx + Motor Warranty Comm Model_November26.xlsx),
+// generated from the workbooks by tools/gen-comm-model.mjs — never retyped (spec 040, 2026-11-03).
+// Matrix VAS: gwp thresholds are ex-VAT totals (SPD × average premium × 20 dial days ÷ 1.15) — November has
+// 20 dialling days (4 Nov is a public holiday, the elections); same comm amounts as October.
+// Motor Warranty (MOW_*): gwp is the workbook's Net Premium Collected (gross sales × 60% FTC × R425), so the
+// same pro-rata maths runs on it; the agent types gross SALES and each one is worth MOW_SALE_VALUE of premium.
 const BRACKETS: Record<string, { gwp: number; comm: number }[]> = {
+  EXP_DOWNUP: [
+    { gwp: 4173.91, comm: 1250 }, // SPD 6
+    { gwp: 4869.57, comm: 1750 }, // SPD 7
+    { gwp: 5565.22, comm: 2500 }, // SPD 8
+    { gwp: 6260.87, comm: 3500 }, // SPD 9
+    { gwp: 6956.52, comm: 5000 }, // SPD 10
+    { gwp: 8347.83, comm: 6250 }, // SPD 12
+    { gwp: 9739.13, comm: 7500 }, // SPD 14
+    { gwp: 11130.43, comm: 9000 }, // SPD 16
+  ],
   M1: [
-    { gwp: 5107.83, comm: 1250 },
-    { gwp: 5959.13, comm: 1833.33 },
-    { gwp: 6810.43, comm: 3000 },
-    { gwp: 7661.74, comm: 4136.36 },
-    { gwp: 8513.04, comm: 5000 },
-    { gwp: 9364.35, comm: 5785.71 },
-    { gwp: 10215.65, comm: 6875 },
-    { gwp: 11066.96, comm: 8087.39 },
+    { gwp: 4643.48, comm: 1250 }, // SPD 3
+    { gwp: 5417.39, comm: 1833.33 }, // SPD 3.5
+    { gwp: 6191.3, comm: 3000 }, // SPD 4
+    { gwp: 6965.22, comm: 4136.36 }, // SPD 4.5
+    { gwp: 7739.13, comm: 5000 }, // SPD 5
+    { gwp: 8513.04, comm: 5785.71 }, // SPD 5.5
+    { gwp: 9286.96, comm: 6875 }, // SPD 6
+    { gwp: 10060.87, comm: 8087.39 }, // SPD 6.5
   ],
   M2: [
-    { gwp: 6810.43, comm: 1500 },
-    { gwp: 7661.74, comm: 2333.33 },
-    { gwp: 8513.04, comm: 4000 },
-    { gwp: 9364.35, comm: 5318.18 },
-    { gwp: 10215.65, comm: 6250 },
-    { gwp: 11066.96, comm: 7071.43 },
-    { gwp: 11918.26, comm: 8250 },
-    { gwp: 12769.57, comm: 10293.04 },
+    { gwp: 6191.3, comm: 1500 }, // SPD 4
+    { gwp: 6965.22, comm: 2333.33 }, // SPD 4.5
+    { gwp: 7739.13, comm: 4000 }, // SPD 5
+    { gwp: 8513.04, comm: 5318.18 }, // SPD 5.5
+    { gwp: 9286.96, comm: 6250 }, // SPD 6
+    { gwp: 10060.87, comm: 7071.43 }, // SPD 6.5
+    { gwp: 10834.78, comm: 8250 }, // SPD 7
+    { gwp: 11608.7, comm: 10293.04 }, // SPD 7.5
   ],
   EXP_COURTESY: [
-    { gwp: 8513.04, comm: 2000 },
-    { gwp: 9364.35, comm: 3000 },
-    { gwp: 10215.65, comm: 5000 },
-    { gwp: 11066.96, comm: 6500 },
-    { gwp: 11918.26, comm: 7500 },
-    { gwp: 13620.87, comm: 9000 },
-    { gwp: 15323.48, comm: 11000 },
-    { gwp: 17026.09, comm: 17026.09 },
+    { gwp: 7739.13, comm: 2000 }, // SPD 5
+    { gwp: 8513.04, comm: 3000 }, // SPD 5.5
+    { gwp: 9286.96, comm: 5000 }, // SPD 6
+    { gwp: 10060.87, comm: 6500 }, // SPD 6.5
+    { gwp: 10834.78, comm: 7500 }, // SPD 7
+    { gwp: 12382.61, comm: 9000 }, // SPD 8
+    { gwp: 13930.43, comm: 11000 }, // SPD 9
+    { gwp: 15478.26, comm: 15478.26 }, // SPD 10
   ],
   EXP_CUDDLE: [
-    { gwp: 10215.65, comm: 4000 },
-    { gwp: 11918.26, comm: 6000 },
-    { gwp: 13620.87, comm: 7500 },
-    { gwp: 15323.48, comm: 10000 },
-    { gwp: 17026.09, comm: 11500 },
-    { gwp: 18728.7, comm: 14000 },
-    { gwp: 20431.3, comm: 17500 },
-    { gwp: 22133.91, comm: 22133.91 },
-    { gwp: 23836.52, comm: 23836.52 },
-    { gwp: 25539.13, comm: 25539.13 },
+    { gwp: 9286.96, comm: 4000 }, // SPD 6
+    { gwp: 10834.78, comm: 6000 }, // SPD 7
+    { gwp: 12382.61, comm: 7500 }, // SPD 8
+    { gwp: 13930.43, comm: 10000 }, // SPD 9
+    { gwp: 15478.26, comm: 11500 }, // SPD 10
+    { gwp: 17026.09, comm: 14000 }, // SPD 11
+    { gwp: 18573.91, comm: 17500 }, // SPD 12
+    { gwp: 20121.74, comm: 20121.74 }, // SPD 13
+    { gwp: 21669.57, comm: 21669.57 }, // SPD 14
+    { gwp: 23217.39, comm: 23217.39 }, // SPD 15
   ],
-  EXP_DOWNUP: [
-    { gwp: 4591.3, comm: 1250 },
-    { gwp: 5356.52, comm: 1750 },
-    { gwp: 6121.74, comm: 2500 },
-    { gwp: 6886.96, comm: 3500 },
-    { gwp: 7652.17, comm: 5000 },
-    { gwp: 9182.61, comm: 6250 },
-    { gwp: 10713.04, comm: 7500 },
-    { gwp: 12243.48, comm: 9000 },
+  MOW_M1: [
+    { gwp: 5100, comm: 1600 }, // SPD 1
+    { gwp: 7650, comm: 3272.73 }, // SPD 1.5
+    { gwp: 10200, comm: 5000 }, // SPD 2
+    { gwp: 12750, comm: 7307.69 }, // SPD 2.5
+    { gwp: 15300, comm: 9857.14 }, // SPD 3
+    { gwp: 17850, comm: 12250 }, // SPD 3.5
+    { gwp: 20400, comm: 14666.67 }, // SPD 4
+    { gwp: 22950, comm: 18000 }, // SPD 4.5
+  ],
+  MOW_M2: [
+    { gwp: 7650, comm: 2400 }, // SPD 1.5
+    { gwp: 10200, comm: 4363.64 }, // SPD 2
+    { gwp: 12750, comm: 6250 }, // SPD 2.5
+    { gwp: 15300, comm: 8769.23 }, // SPD 3
+    { gwp: 16575, comm: 10678.57 }, // SPD 3.25
+    { gwp: 17850, comm: 12250 }, // SPD 3.5
+    { gwp: 20400, comm: 14666.67 }, // SPD 4
+    { gwp: 22950, comm: 18000 }, // SPD 4.5
+  ],
+  MOW_EXP: [
+    { gwp: 12750, comm: 4000 }, // SPD 2.5
+    { gwp: 14025, comm: 6000 }, // SPD 2.75
+    { gwp: 15300, comm: 7500 }, // SPD 3
+    { gwp: 16575, comm: 9500 }, // SPD 3.25
+    { gwp: 17850, comm: 11500 }, // SPD 3.5
+    { gwp: 20400, comm: 14000 }, // SPD 4
+    { gwp: 22950, comm: 16500 }, // SPD 4.5
+    { gwp: 25500, comm: 20000 }, // SPD 5
   ],
 };
 // One sale is worth R89 ÷ 1.15 on every plan except Download & Test, whose average premium
-// is R40 — the what-if ("one more sale a day") must add THAT plan's sale value.
-const SALE_VALUES: Record<string, number> = { EXP_DOWNUP: 40 / 1.15 };
+// is R40, and Motor Warranty, where one gross sale collects 60% × R425 — the what-if ("one more
+// sale a day") must add THAT plan's sale value.
+const MOW_SALE_VALUE = 0.6 * 425;
+const SALE_VALUES: Record<string, number> = { EXP_DOWNUP: 40 / 1.15, MOW_M1: 0.6 * 425, MOW_M2: 0.6 * 425, MOW_EXP: 0.6 * 425 };
 
+// "If Average Premium is under R425 then 20% of total earnings" (Motor Warranty workbook). Read as a 20%
+// DEDUCTION — the VT workbook writes the same rule's penalty tier as -0.2 of total comm earnings
+// (spec 040 §4). Commission figures are multiplied by `keep` while the entered average premium is under `under`.
+const PREMIUM_FLOOR: Record<string, { under: number; keep: number }> = {
+  MOW_M1: { under: 425, keep: 0.8 },
+  MOW_M2: { under: 425, keep: 0.8 },
+  MOW_EXP: { under: 425, keep: 0.8 },
+};
 
-const TenureType = ["M1", "M2", "EXP_COURTESY", "EXP_CUDDLE"] as const;
+const TenureType = ["M1", "M2", "EXP_COURTESY", "EXP_CUDDLE", "EXP_DOWNUP", "MOW_M1", "MOW_M2", "MOW_EXP"] as const;
 type TenureType = (typeof TenureType)[number];
+const isMowPlan = (t: string) => t.startsWith("MOW_");
 
 
 function Index() {
@@ -101,22 +148,46 @@ function Index() {
   const [completedDays, setCompletedDays] = useState<string>("");
   const [totalDays, setTotalDays] = useState<string>("20");
   const [totalGWP, setTotalGWP] = useState<string>("");
+  const [grossSales, setGrossSales] = useState<string>("");
+  const [avgPremium, setAvgPremium] = useState<string>("425");
   const [extraSales, setExtraSales] = useState<number>(1);
+
+  // Motor Warranty: the agent types gross SALES; the formulas below run on their collected premium.
+  const isMow = isMowPlan(tenure);
+  const salesTyped = parseFloat(grossSales);
+  // premium to the cent (no float noise at a bracket edge); a negative or blank sales count is no input
+  const gwpInput = isMow
+    ? (grossSales.trim() === "" || isNaN(salesTyped) || salesTyped < 0 ? "" : String(Math.round(salesTyped * MOW_SALE_VALUE * 100) / 100))
+    : totalGWP;
+  const floor = PREMIUM_FLOOR[tenure];
+  const premiumEntered = parseFloat(avgPremium);
+  const premiumKnown = !isNaN(premiumEntered) && premiumEntered > 0;
+  const floorApplies = !!floor && premiumKnown && premiumEntered < floor.under;
+  const pay = (amount: number) => (floorApplies && floor ? amount * floor.keep : amount);   // commission after the R425 rule
+  const floorRule = floor ? `An average premium under R${floor.under} reduces commission by ${Math.round((1 - floor.keep) * 100)}%.` : "";
 
   const formatCurrency = (value: number) =>
     `R ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatSales = (sales: number) =>
+    `${sales.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} sales`;
+  // A premium figure on screen: rand on Matrix VAS, gross sales on Motor Warranty (premium ÷ MOW_SALE_VALUE).
+  const formatWritten = (value: number) => (isMow ? formatSales(value / MOW_SALE_VALUE) : formatCurrency(value));
+  // What is still NEEDED: on Motor Warranty rounded UP to the tenth of a sale, so a target never reads short
+  // (17.647 sales needed must not show as 17.6).
+  const formatNeeded = (value: number) =>
+    isMow ? formatSales(Math.ceil((value / MOW_SALE_VALUE) * 10 - 1e-9) / 10) : formatCurrency(value);
 
   const metrics = useMemo(() => {
     const cDays = parseFloat(completedDays);
     const tDays = parseFloat(totalDays);
-    const gwp = parseFloat(totalGWP);
+    const gwp = parseFloat(gwpInput);
     if (isNaN(cDays) || isNaN(tDays) || isNaN(gwp) || cDays <= 0) return null;
     return {
       averageGWP: gwp / cDays,
       premiumProjected: (gwp / cDays) * tDays,
       remainingDays: tDays - cDays,
     };
-  }, [completedDays, totalDays, totalGWP]);
+  }, [completedDays, totalDays, gwpInput]);
 
   const getCommissionForProjected = (projected: number) => {
     if (!tenure) return 0;
@@ -141,7 +212,7 @@ function Index() {
     if (!tenure || !metrics) return null;
     const brackets = BRACKETS[tenure];
     if (!brackets) return null;
-    const gwp = parseFloat(totalGWP);
+    const gwp = parseFloat(gwpInput);
     const projected = metrics.premiumProjected;
     let nextBracket = null;
     for (const bracket of brackets) {
@@ -155,26 +226,28 @@ function Index() {
     const neededPerDay = metrics.remainingDays > 0 ? gap / metrics.remainingDays : null;
     const extraComm = nextBracket.comm - (projection ?? 0);
     return { nextComm: nextBracket.comm, gap, neededPerDay, extraComm };
-  }, [tenure, metrics, totalGWP, projection]);
+  }, [tenure, metrics, gwpInput, projection]);
 
   const SALE_VALUE = 89 / 1.15; // R89 avg premium inc VAT — what-if adds its ex-VAT value onto the ex-VAT projection
+  // the selected plan's own sale value (SALE_VALUES), else R89 ÷ 1.15 — Download & Test and Motor Warranty differ
+  const saleValue = (tenure ? SALE_VALUES[tenure] : undefined) ?? SALE_VALUE;
 
   const whatIfData = useMemo(() => {
     if (!metrics || !tenure) return null;
-    const gwp = parseFloat(totalGWP);
+    const gwp = parseFloat(gwpInput);
     const remDays = metrics.remainingDays;
-    const extraGWP = extraSales * SALE_VALUE * remDays;
+    const extraGWP = extraSales * saleValue * remDays;
     const newProjected = metrics.premiumProjected + extraGWP;
     const newComm = getCommissionForProjected(newProjected);
     const extraVsCurrent = newComm - (projection ?? 0);
     return { newPremium: newProjected, newComm, extraVsCurrent };
-  }, [metrics, tenure, extraSales, projection, totalGWP]);
+  }, [metrics, tenure, extraSales, projection, gwpInput]);
 
   const finalAnalysis = useMemo(() => {
     if (!tenure || !metrics) return null;
     const brackets = BRACKETS[tenure];
     if (!brackets) return null;
-    const gwp = parseFloat(totalGWP);
+    const gwp = parseFloat(gwpInput);
     const remDays = metrics.remainingDays;
     const projected = metrics.premiumProjected;
 
@@ -202,7 +275,7 @@ function Index() {
         status,
       };
     });
-  }, [tenure, metrics, totalGWP]);
+  }, [tenure, metrics, gwpInput]);
 
   const nextTargetData = useMemo(() => {
     if (!tenure || !metrics || !finalAnalysis) return null;
@@ -222,7 +295,7 @@ function Index() {
       return { kind: "top" as const };
     }
     const nextBracket = brackets[activeIndex + 1];
-    const gap = nextBracket.gwp - parseFloat(totalGWP);
+    const gap = nextBracket.gwp - parseFloat(gwpInput);
     const perDay = remDays > 0 ? gap / remDays : null;
     const extra = nextBracket.comm - (projection ?? 0);
     return {
@@ -232,9 +305,9 @@ function Index() {
       nextComm: nextBracket.comm,
       extra,
     };
-  }, [tenure, metrics, finalAnalysis, totalGWP, projection]);
+  }, [tenure, metrics, finalAnalysis, gwpInput, projection]);
 
-  const isValid = tenure && completedDays && totalGWP && metrics;
+  const isValid = tenure && completedDays && gwpInput && metrics;
   const closeToPayout = nextMoveData && nextMoveData.neededPerDay !== null;
 
   return (
@@ -251,7 +324,7 @@ function Index() {
             <span className="text-primary">BOX</span>
           </h1>
           <p className="text-muted-foreground font-medium uppercase tracking-[0.25em] text-[11px]">
-            Matrix VAS Commission Calculator — August
+            Matrix VAS &amp; Motor Warranty Commission Calculator — November
           </p>
           <div className="w-24 h-0.5 bg-gradient-to-r from-transparent via-primary/50 to-transparent mx-auto mt-2" />
         </header>
@@ -280,10 +353,22 @@ function Index() {
                       <SelectValue placeholder="Select Tenure" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="M1">M1</SelectItem>
-                      <SelectItem value="M2">M2</SelectItem>
-                      <SelectItem value="EXP_COURTESY">Exp — Courtesy</SelectItem>
-                      <SelectItem value="EXP_CUDDLE">Exp Cuddle</SelectItem>
+                      <SelectGroup>
+                        <SelectLabel>Matrix VAS</SelectLabel>
+                        <SelectItem value="M1">M1</SelectItem>
+                        <SelectItem value="M2">M2</SelectItem>
+                        <SelectItem value="EXP_COURTESY">Exp — Courtesy</SelectItem>
+                        <SelectItem value="EXP_CUDDLE">Exp Cuddle</SelectItem>
+                        <SelectItem value="EXP_DOWNUP">Exp — Download &amp; Test</SelectItem>
+                      </SelectGroup>
+                      <SelectSeparator />
+                      <SelectGroup>
+                        <SelectLabel>Motor Warranty</SelectLabel>
+                        <SelectItem value="MOW_M1">Motor Warranty — Month 1</SelectItem>
+                        <SelectItem value="MOW_M2">Motor Warranty — Month 2</SelectItem>
+                        <SelectItem value="MOW_EXP">Motor Warranty — Exp</SelectItem>
+                      </SelectGroup>
+                      <SelectSeparator />
                       <Link to="/m0" className="block">
                         <div className="relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-primary font-medium hover:bg-primary/10 outline-none">
                           M0 Calculator →
@@ -315,24 +400,66 @@ function Index() {
                   />
                   <p className="text-[11px] text-muted-foreground">
                     {totalDays === "20"
-                      ? "August 2026 — 20 working days"
+                      ? "November 2026 — 20 working days (4 Nov is a public holiday)"
                       : "Custom — adjusted from 20 working days"}
                   </p>
 
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="totalGWP" className="text-muted-foreground text-xs font-medium">
-                    Total GWP (<span className="font-bold text-destructive">EX VAT</span>)
-                  </Label>
-                  <Input
-                    id="totalGWP"
-                    type="number"
-                    placeholder="e.g. 14960"
-                    value={totalGWP}
-                    onChange={(e) => setTotalGWP(e.target.value)}
-                    className="bg-muted/50 border-border backdrop-blur-sm focus:ring-primary focus:border-primary/40"
-                  />
-                </div>
+                {isMow ? (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="grossSales" className="text-muted-foreground text-xs font-medium">Gross sales written so far</Label>
+                      <Input
+                        id="grossSales"
+                        type="number"
+                        inputMode="decimal"
+                        min={0}
+                        step="any"
+                        aria-describedby="grossSalesHint"
+                        placeholder="e.g. 18"
+                        value={grossSales}
+                        onChange={(e) => setGrossSales(e.target.value)}
+                        className="bg-muted/50 border-border backdrop-blur-sm focus:ring-primary focus:border-primary/40"
+                      />
+                      <p id="grossSalesHint" className="text-[11px] text-muted-foreground">Each gross sale counts as 60% collected × R425 = {formatCurrency(MOW_SALE_VALUE)} net premium.</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="avgPremium" className="text-muted-foreground text-xs font-medium">Average premium (R)</Label>
+                      <Input
+                        id="avgPremium"
+                        type="number"
+                        inputMode="decimal"
+                        min={0}
+                        step="any"
+                        aria-describedby="avgPremiumHint"
+                        value={avgPremium}
+                        onChange={(e) => setAvgPremium(e.target.value)}
+                        className="bg-muted/50 border-border backdrop-blur-sm focus:ring-primary focus:border-primary/40"
+                      />
+                      <p id="avgPremiumHint" aria-live="polite" className={cn("text-[11px]", floorApplies || !premiumKnown ? "text-destructive font-semibold" : "text-muted-foreground")}>
+                        {floorApplies && floor
+                          ? `Under R${floor.under}: commission is reduced by ${Math.round((1 - floor.keep) * 100)}% — every amount below already shows it.`
+                          : !premiumKnown
+                            ? `Enter your average premium. ${floorRule} Amounts below are shown before that rule.`
+                            : floorRule}
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="totalGWP" className="text-muted-foreground text-xs font-medium">
+                      Total GWP (<span className="font-bold text-destructive">EX VAT</span>)
+                    </Label>
+                    <Input
+                      id="totalGWP"
+                      type="number"
+                      placeholder="e.g. 14960"
+                      value={totalGWP}
+                      onChange={(e) => setTotalGWP(e.target.value)}
+                      className="bg-muted/50 border-border backdrop-blur-sm focus:ring-primary focus:border-primary/40"
+                    />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -344,8 +471,8 @@ function Index() {
               </h2>
               <div className="space-y-4">
                 {[
-                  { label: <>Average GWP / day (<span className="font-bold text-destructive">EX VAT</span>)</>, value: metrics ? formatCurrency(metrics.averageGWP) : "—" },
-                  { label: <>Premium Projected <span className="font-bold text-destructive">EX VAT</span></>, value: metrics ? formatCurrency(metrics.premiumProjected) : "—" },
+                  { label: isMow ? "Average gross sales / day" : <>Average GWP / day (<span className="font-bold text-destructive">EX VAT</span>)</>, value: metrics ? formatWritten(metrics.averageGWP) : "—" },
+                  { label: isMow ? "Gross sales projected" : <>Premium Projected <span className="font-bold text-destructive">EX VAT</span></>, value: metrics ? formatWritten(metrics.premiumProjected) : "—" },
                   { label: "Remaining days", value: metrics ? metrics.remainingDays.toFixed(0) : "—" },
                 ].map((item, i) => (
                   <div key={i} className="flex justify-between items-center py-2 border-b border-border/50 last:border-0">
@@ -388,11 +515,21 @@ function Index() {
               </h2>
               <p className="text-5xl md:text-6xl font-black text-center my-6 relative font-mono">
                 <span className="text-success">
-                  {projection !== null ? formatCurrency(projection) : "—"}
+                  {projection !== null ? formatCurrency(pay(projection)) : "—"}
                 </span>
               </p>
               {isValid && closeToPayout && (
                 <p className="text-muted-foreground text-sm text-center relative">You are close to the next payout jump.</p>
+              )}
+              {isValid && isMow && floor && !premiumKnown && (
+                <p className="text-destructive text-xs text-center relative mt-2">
+                  Average premium not entered — shown before the R{floor.under} rule.
+                </p>
+              )}
+              {isValid && floorApplies && floor && (
+                <p className="text-destructive text-xs text-center relative mt-2">
+                  Average premium under R{floor.under} — shown after the {Math.round((1 - floor.keep) * 100)}% reduction.
+                </p>
               )}
             </div>
 
@@ -407,9 +544,9 @@ function Index() {
                   <p className="text-accent text-sm font-medium mb-4">This next push could lift your payout.</p>
                   <div className="grid grid-cols-3 gap-3">
                     {[
-                      { label: "Next Bracket Comm", value: formatCurrency(nextMoveData.nextComm) },
-                      { label: "Gap to Next Bracket", value: formatCurrency(nextMoveData.gap) },
-                      { label: "Needed / Rem. Day", value: nextMoveData.neededPerDay !== null ? formatCurrency(nextMoveData.neededPerDay) : "N/A" },
+                      { label: "Next Bracket Comm", value: formatCurrency(pay(nextMoveData.nextComm)) },
+                      { label: "Gap to Next Bracket", value: formatNeeded(nextMoveData.gap) },
+                      { label: "Needed / Rem. Day", value: nextMoveData.neededPerDay !== null ? formatNeeded(nextMoveData.neededPerDay) : "N/A" },
                     ].map((item, i) => (
                       <div key={i} className="bg-muted/40 backdrop-blur-sm rounded-xl p-3 text-center border border-border/50">
                         <p className="text-muted-foreground text-[10px] uppercase font-bold mb-1 tracking-wider">{item.label}</p>
@@ -419,7 +556,7 @@ function Index() {
                   </div>
                   {nextMoveData.extraComm > 0 && (
                     <div className="mt-4 bg-gradient-to-r from-primary/10 to-accent/10 border border-primary/20 rounded-xl px-4 py-2.5 text-sm text-primary text-center font-medium">
-                      Extra commission available: <span className="font-mono font-bold">{formatCurrency(nextMoveData.extraComm)}</span>
+                      Extra commission available: <span className="font-mono font-bold">{formatCurrency(pay(nextMoveData.extraComm))}</span>
                     </div>
                   )}
                 </>
@@ -456,9 +593,9 @@ function Index() {
                 <>
                   <div className="grid grid-cols-3 gap-3">
                     {[
-                      { label: "New Projected", value: formatCurrency(whatIfData.newPremium), highlight: false },
-                      { label: "New Commission", value: formatCurrency(whatIfData.newComm), highlight: true },
-                      { label: "Extra vs Current", value: `${whatIfData.extraVsCurrent >= 0 ? "+" : ""}${formatCurrency(whatIfData.extraVsCurrent)}`, highlight: true },
+                      { label: "New Projected", value: formatWritten(whatIfData.newPremium), highlight: false },
+                      { label: "New Commission", value: formatCurrency(pay(whatIfData.newComm)), highlight: true },
+                      { label: "Extra vs Current", value: `${whatIfData.extraVsCurrent >= 0 ? "+" : ""}${formatCurrency(pay(whatIfData.extraVsCurrent))}`, highlight: true },
                     ].map((item, i) => (
                       <div key={i} className="bg-muted/40 backdrop-blur-sm rounded-xl p-3 text-center border border-border/50">
                         <p className="text-muted-foreground text-[10px] uppercase font-bold mb-1 tracking-wider">{item.label}</p>
@@ -493,11 +630,11 @@ function Index() {
                   <p className="text-base md:text-lg font-medium text-white/95">
                     Write{" "}
                     <span className="font-mono font-bold text-white">
-                      {nextTargetData.perDay !== null ? formatCurrency(nextTargetData.perDay) : "N/A"}
+                      {nextTargetData.perDay !== null ? formatNeeded(nextTargetData.perDay) : "N/A"}
                     </span>{" "}
                     more per remaining day to earn{" "}
                     <span className="font-mono font-bold text-white">
-                      {formatCurrency(nextTargetData.nextComm)}
+                      {formatCurrency(pay(nextTargetData.nextComm))}
                     </span>
                   </p>
                 </div>
@@ -509,7 +646,7 @@ function Index() {
                     className="text-3xl md:text-4xl font-black font-mono leading-none"
                     style={{ color: "#F5A623", textShadow: "0 0 20px rgba(245,166,35,0.4)" }}
                   >
-                    +{formatCurrency(nextTargetData.extra)}
+                    +{formatCurrency(pay(nextTargetData.extra))}
                   </p>
                 </div>
               </div>
@@ -529,7 +666,7 @@ function Index() {
                     className="font-mono font-black"
                     style={{ color: "#F5A623" }}
                   >
-                    {nextTargetData.perDay !== null ? formatCurrency(nextTargetData.perDay) : "N/A"}
+                    {nextTargetData.perDay !== null ? formatNeeded(nextTargetData.perDay) : "N/A"}
                   </span>{" "}
                   per day to hit your first bracket
                 </p>
@@ -545,7 +682,7 @@ function Index() {
             Bracket Gap Analysis
           </h2>
           <p className="text-muted-foreground text-xs mb-4 ml-3">
-            GWP needed per remaining day to reach each bracket
+            {isMow ? "Gross sales needed per remaining day to reach each bracket" : "GWP needed per remaining day to reach each bracket"}
           </p>
 
           {!isValid ? (
@@ -558,10 +695,10 @@ function Index() {
                 <TableHeader className="bg-muted/30">
                   <TableRow className="hover:bg-muted/30 border-border/50">
                     <TableHead className="text-muted-foreground font-bold text-xs">#</TableHead>
-                    <TableHead className="text-muted-foreground font-bold text-xs">Bracket GWP (<span className="text-destructive font-bold">EX VAT</span>)</TableHead>
+                    <TableHead className="text-muted-foreground font-bold text-xs">{isMow ? "Bracket gross sales" : <>Bracket GWP (<span className="text-destructive font-bold">EX VAT</span>)</>}</TableHead>
                     <TableHead className="text-muted-foreground font-bold text-xs">Bracket comm</TableHead>
-                    <TableHead className="text-muted-foreground font-bold text-xs">GWP gap total</TableHead>
-                    <TableHead className="text-muted-foreground font-bold text-xs">GWP gap / remaining day</TableHead>
+                    <TableHead className="text-muted-foreground font-bold text-xs">{isMow ? "Sales gap total" : "GWP gap total"}</TableHead>
+                    <TableHead className="text-muted-foreground font-bold text-xs">{isMow ? "Sales gap / remaining day" : "GWP gap / remaining day"}</TableHead>
                     <TableHead className="text-muted-foreground font-bold text-xs">Status</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -574,13 +711,13 @@ function Index() {
                       row.status === "next_target" && "bg-primary/5",
                     )}>
                       <TableCell className="font-mono font-medium text-muted-foreground">{idx + 1}</TableCell>
-                      <TableCell className="text-primary font-mono font-medium">{formatCurrency(row.targetIncVat)}</TableCell>
-                      <TableCell className="font-mono">{formatCurrency(row.comm)}</TableCell>
+                      <TableCell className="text-primary font-mono font-medium">{formatWritten(row.targetIncVat)}</TableCell>
+                      <TableCell className="font-mono">{formatCurrency(pay(row.comm))}</TableCell>
                       <TableCell className={cn("font-mono", row.gwpGapTotal <= 0 && "text-success font-bold")}>
-                        {formatCurrency(row.gwpGapTotal)}
+                        {formatNeeded(row.gwpGapTotal)}
                       </TableCell>
                       <TableCell className={cn("font-mono", row.gwpGapPerRemainingDay !== null && row.gwpGapPerRemainingDay <= 0 && "text-success")}>
-                        {row.gwpGapPerRemainingDay !== null ? formatCurrency(row.gwpGapPerRemainingDay) : "N/A"}
+                        {row.gwpGapPerRemainingDay !== null ? formatNeeded(row.gwpGapPerRemainingDay) : "N/A"}
                       </TableCell>
                       <TableCell>
                         {row.status === "beat" && (

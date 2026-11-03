@@ -6434,6 +6434,14 @@ function calcMonth(){
 function saleFor(rules){
   return (rules&&((rules.saleValues&&rules.saleValues[ME.plan])||rules.saleValue))||(89/1.15);
 }
+/* SALES TO CLOSE A PREMIUM GAP — never one too many (spec 040, 2026-11-03). Brackets are published to the cent, so a
+   bracket that is exactly N sales can sit a fraction ABOVE N × the sale value once rounded: November's first Cuddle
+   bracket is 6 a day × 20 days = 120 sales, published as 9286.96 against 120 × 77.3913 = 9286.9565, and a plain ceil
+   said 121. Half a cent is the rounding the table carries, so it is the tolerance — but while ANY gap remains the
+   engine (commissionFor's exact >=) has not paid the bracket, so the answer is never below 1 (review, 2026-11-03:
+   at exactly 120 sales the gap is R0.0035 and the tolerance alone said "0 more"). Per-day asks are this total ÷ the
+   days left, never a ceil of the per-day rand (that ceil said 7 a day for a 6-a-day bracket). */
+function salesToClose(prem,sale){ return prem>0?Math.max(1,Math.ceil((prem-0.005)/sale)):0; }
 /* commCalc for the month being projected. A new month has no worked day, which commCalc refuses (cDays<=0),
    so the baseline is ONE virtual day with no premium over the month's days + 1: average 0, projection 0,
    remaining days = the month's working days, every bracket's gap = its full premium. */
@@ -6681,7 +6689,7 @@ function freshHeroInner(c){
   if(c.plan==='M0') return lab+'<div class="amt">Full premium</div>'
     +'<div class="line">On M0 your commission is the full premium you write, so every sale lands straight in your pocket.</div>'+started;
   if(!c.nextMove) return lab+'<div class="amt">—</div><div class="line">No bracket table is on file for your plan under the '+L+' model yet.</div>'+started;
-  var sale=saleFor(m.rules), gap=Math.max(0,c.nextMove.gap), needSales=Math.ceil(gap/sale);
+  var sale=saleFor(m.rules), gap=Math.max(0,c.nextMove.gap), needSales=salesToClose(gap,sale);
   var rem=Math.max(0,c.metrics.remainingDays), aDay=rem>0?Math.ceil(needSales/rem):null;
   return lab+'<div class="amt num">'+R(c.nextMove.nextComm)+'<small>your first payout in '+L+'</small></div>'
     +'<div class="line">It needs <b>'+R(gap)+'</b> of premium, excluding VAT — about <b>'+num(needSales)+' sales</b>'
@@ -6719,9 +6727,9 @@ function heroHTML(c){
 
   if(ME.plan!=='M0'&&!(c.projection>0)&&c.nextMove){
     var gap=Math.max(0,c.nextMove.gap);
-    var needSales=Math.ceil(gap/sale);
+    var needSales=salesToClose(gap,sale);
     var rem=Math.max(0,c.metrics.remainingDays);
-    var aDay=rem>0?perDaySales(c.nextMove.neededPerDay):null;
+    var aDay=rem>0?Math.ceil(needSales/rem):null;
     return '<div class="card hero"><div class="lab">Your first payout</div>'
       +'<div class="amt num" style="color:var(--amber);text-shadow:0 0 34px rgba(251,191,36,.26)">'+R(c.nextMove.nextComm)+'</div>'
       +'<div class="note">That is what lands when you reach the first bracket. You need <b>'
@@ -6740,7 +6748,7 @@ function heroHTML(c){
   } else if(c.nextTarget&&c.nextTarget.kind==='top'){
     line='<b>You are at the top bracket.</b> That is the maximum — hold it to the end of the month.';
   } else if(c.nextMove&&c.nextMove.extraComm>0&&c.nextMove.neededPerDay!=null&&c.nextMove.neededPerDay>0){
-    var s=Math.ceil(perDaySales(c.nextMove.neededPerDay));
+    var s=Math.ceil(salesToClose(c.nextMove.gap,sale)/Math.max(1,c.metrics.remainingDays));
     line='Write <b>'+R(c.nextMove.neededPerDay)+' more a day</b> — about <b>'+num(s)+' sale'+(s===1?'':'s')+' a day</b> — '
       +'and you move up to <b>'+R(c.nextMove.nextComm)+'</b>, which is <b>'+R(c.nextMove.extraComm)+'</b> extra in your pocket.';
   } else if(c.nextMove&&c.nextMove.gap<=0){
@@ -8233,7 +8241,11 @@ function wireWhatIf(){
    PAGE by that instruction — the hero now reads R 0.00 · below the first bracket,
    with the bracket-1 payout named right under it as the number to chase. The Today
    page hero (heroHTML) keeps the first-payout framing. */
-var PLAN_LAB={M1:'M1',M2:'M2',EXP_COURTESY:'Experienced — Courtesy',EXP_CUDDLE:'Experienced — Cuddle',EXP_DOWNUP:'Experienced — Download & Test',M0:'M0'};
+/* Motor Warranty (spec 040, 2026-11-03): its brackets ride COMM_RULES from November, but no agent is on it yet —
+   commPlanOf() in PULSE maps no campaign to MOW_* until a Motor Warranty sales feed exists (gross sales, not VAS
+   premium, are its input), so these labels wait for that. The live Motor Warranty calculator is comms-calc-five. */
+var PLAN_LAB={M1:'M1',M2:'M2',EXP_COURTESY:'Experienced — Courtesy',EXP_CUDDLE:'Experienced — Cuddle',EXP_DOWNUP:'Experienced — Download & Test',
+  MOW_M1:'Motor Warranty — Month 1',MOW_M2:'Motor Warranty — Month 2',MOW_EXP:'Motor Warranty — Experienced',M0:'M0'};
 function comsDaysNow(){
   var w=$('cDays'),t=$('tDays'),g=$('cGwp'), m=calcMonth();
   return { worked:parseFloat(w?w.value:m.worked)||0,
