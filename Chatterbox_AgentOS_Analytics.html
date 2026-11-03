@@ -1854,9 +1854,18 @@ async function syncReferralsFromAPI(quiet){
     const u=referralsApiUrl();
     if(!t||!u){if(!quiet)toast('Sign in first — the HighLevel sync runs through the API Worker.','err');return}
     if(!quiet)toast('Pulling referrals from HighLevel…','ok');
-    const r=await fetch(u,{headers:{'Authorization':'Bearer '+t,'X-Cbx-Client':'v5'}});
-    if(!r.ok){const e=await r.json().catch(()=>({}));if(!quiet)toast('Referrals sync failed ('+r.status+'): '+esc(e.error||''),'err');return}
-    const d=await r.json();
+    /* The Worker hands HighLevel back in parts (paged=1 + a `next` cursor) — the free plan allows 50 subrequests per
+       call and the contact book outgrew one call on 2 Nov 2026. Walk every part; the rows are only whole at the end. */
+    const d={rows:[],contacts:0,pulled_at:null};let next=null,parts=0;
+    do{
+      const q=u+'?paged=1'+(next?'&after='+encodeURIComponent(next.after)+'&afterT='+encodeURIComponent(next.afterT):'');
+      const r=await fetch(q,{headers:{'Authorization':'Bearer '+t,'X-Cbx-Client':'v5'}});
+      if(!r.ok){const e=await r.json().catch(()=>({}));if(!quiet)toast('Referrals sync failed ('+r.status+'): '+esc(e.error||''),'err');return}
+      const p=await r.json();
+      d.rows.push(...(p.rows||[]));d.contacts+=p.contacts||0;d.pulled_at=d.pulled_at||p.pulled_at;
+      next=p.next;
+      if(++parts>50){if(!quiet)toast('Referrals sync stopped: HighLevel did not finish after 50 parts.','err');return}
+    }while(next);
     if(!d.rows||!d.rows.length){if(!quiet)toast('HighLevel returned no referral rows.','err');return}
     const parsed={headers:['Contact Id','Created','Agent Name','Referrer','Referral Count'],
       data:d.rows.map(x=>({'Contact Id':x.id,'Created':x.created,'Agent Name':x.agent,'Referrer':x.referrer,'Referral Count':x.count})),

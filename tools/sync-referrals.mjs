@@ -115,12 +115,21 @@ async function main() {
     const mint = await tf(REST + 'app_sessions', { method: 'POST', headers: { ...H, Prefer: 'return=minimal' },
       body: JSON.stringify([{ token_hash: tokenHash, user_id: admin.id, expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(), user_agent: 'sync-referrals', scope: 'referrals' }]) });
     if (!mint.ok) { tokenHash = null; throw new Error('could not mint a session: HTTP ' + mint.status); }
-    const res = await tf(API + '/api/referrals?fresh=1', { headers: { Authorization: 'Bearer ' + token, 'x-cbx-client': 'v5' } });
-    if (!res.ok) throw new Error('/api/referrals answered HTTP ' + res.status);
-    const d = await res.json();
-    if (!d || !Array.isArray(d.rows) || !d.rows.length) throw new Error('HighLevel returned no referral rows');
-    const rows = d.rows.map((x) => ({ id: x.id, created: x.created, agent: x.agent, referrer: x.referrer, count: x.count }));
-    const latest = { rows, contacts: d.contacts || 0, pulled_at: d.pulled_at || new Date().toISOString(), slot: slotArg, by: 'tick' };
+    /* the Worker hands HighLevel back in parts (paged=1, `next` cursor — the free plan's 50-subrequest cap); walk them
+       all, and say the Worker's own reason when one fails — a bare "HTTP 500" once cost a day to diagnose */
+    const all = []; let contacts = 0, pulledAt = null, next = null, parts = 0;
+    do {
+      const q = '/api/referrals?fresh=1&paged=1' + (next ? '&after=' + encodeURIComponent(next.after) + '&afterT=' + encodeURIComponent(next.afterT) : '');
+      const res = await tf(API + q, { headers: { Authorization: 'Bearer ' + token, 'x-cbx-client': 'v5' } });
+      if (!res.ok) { const why = ((await res.json().catch(() => ({}))) || {}).error; throw new Error('/api/referrals answered HTTP ' + res.status + (why ? ' — ' + why : '')); }
+      const d = await res.json();
+      all.push(...((d && d.rows) || [])); contacts += (d && d.contacts) || 0; pulledAt = pulledAt || (d && d.pulled_at);
+      next = d && d.next;
+      if (++parts > 50) throw new Error('referrals pull did not finish after 50 parts — stopped');
+    } while (next);
+    if (!all.length) throw new Error('HighLevel returned no referral rows');
+    const rows = all.map((x) => ({ id: x.id, created: x.created, agent: x.agent, referrer: x.referrer, count: x.count }));
+    const latest = { rows, contacts, pulled_at: pulledAt || new Date().toISOString(), slot: slotArg, by: 'tick' };
     const put = await tf(env.SUPABASE_URL + '/storage/v1/object/raw/kv/referrals-latest', { method: 'PUT',
       headers: { ...H, 'Content-Type': 'application/json', 'x-upsert': 'true' }, body: JSON.stringify(latest) });
     if (!put.ok) throw new Error('referrals-latest storage write failed: HTTP ' + put.status);

@@ -805,7 +805,8 @@ export default {
             if (cf.ok) out.hl_fields = ((await cf.json()).customFields || []).length;
           } catch (e) { out.hl_error = String(e.message || e).slice(0, 200); }
         }
-        out.cache = globalThis.__hlCache ? { age_s: Math.round((Date.now() - globalThis.__hlCache.t) / 1000), rows: (globalThis.__hlCache.d.rows || []).length } : null;
+        const first = globalThis.__hlPages && globalThis.__hlPages['|'];   // the first page of the paged pull
+        out.cache = first ? { age_s: Math.round((Date.now() - first.t) / 1000), rows: (first.d.rows || []).length } : null;
         return json(out);
       }
 
@@ -1826,12 +1827,26 @@ export default {
       // the Worker only fetches and shapes, it never computes report numbers.
       if (path === '/api/referrals' && req.method === 'GET') {
         if (!env.HL_API_KEY || !env.HL_LOCATION_ID) return json({ error: 'HighLevel is not configured — set Worker secrets HL_API_KEY and HL_LOCATION_ID.' }, 503);
+        /* PAGED (3 Nov 2026). One call used to walk EVERY HighLevel contact page — 100 a fetch — and the free plan
+           allows 50 external subrequests per invocation. At 4,829 contacts (49 pages + custom fields + the session
+           lookup) it went over and every pull answered 500. Now one call walks at most HL_PAGES_PER_CALL pages and
+           hands back `next` (HighLevel's own startAfterId/startAfter cursor); the caller asks again until next is
+           null. Callers must say paged=1 — an out-of-date page that does not loop gets told to reload instead of
+           silently publishing the first slice as if it were everything. */
+        if (url.searchParams.get('paged') !== '1')
+          return json({ error: 'This page is out of date — reload it, then sync referrals again.' }, 409);
+        const HL_PAGES_PER_CALL = 20;   // 2,000 contacts ≈ 23 subrequests a call, well under the 50
+        const after = String(url.searchParams.get('after') || '').replace(/[^\w-]/g, '').slice(0, 64);
+        const afterT = String(url.searchParams.get('afterT') || '').replace(/\D/g, '').slice(0, 16);
         const now = Date.now();
-        if (!url.searchParams.get('fresh') && globalThis.__hlCache && now - globalThis.__hlCache.t < 600000)
-          return json(globalThis.__hlCache.d, 200, { 'X-Cbx-Cache': 'hit' });
+        const pageKey = after + '|' + afterT;
+        const cached = globalThis.__hlPages && globalThis.__hlPages[pageKey];
+        if (!url.searchParams.get('fresh') && cached && now - cached.t < 600000)
+          return json(cached.d, 200, { 'X-Cbx-Cache': 'hit' });
         const H = { Authorization: 'Bearer ' + env.HL_API_KEY, Version: '2021-07-28', Accept: 'application/json' };
         const base = 'https://services.leadconnectorhq.com';
         const hl = async (q) => { const r = await fetch(base + q, { headers: H }); if (!r.ok) throw new Error('HighLevel ' + q.split('?')[0] + ' → ' + r.status); return r.json(); };
+        try {
         const cf = await hl(`/locations/${env.HL_LOCATION_ID}/customFields`);
         const fieldName = {}; (cf.customFields || []).forEach(f => fieldName[f.id] = f.name);
         const fids = n => Object.keys(fieldName).filter(id => fieldName[id] === n);
@@ -1843,16 +1858,17 @@ export default {
           ['Referral 4 Full Name', 'Referral 4 Contact Number'],
           ['Referral 5 Full Name', 'Referral 5 Contact Number'],
         ].map(pair => pair.flatMap(fids));
-        const contacts = []; let said = null, sa = null, guard = 0;
+        const contacts = []; let said = after || null, sa = afterT || null, pages = 0, next = null;
         for (;;) {
           let q = `/contacts/?locationId=${env.HL_LOCATION_ID}&limit=100`;
           if (said) q += `&startAfterId=${said}&startAfter=${sa}`;
           const r = await hl(q);
           const batch = r.contacts || [];
           contacts.push(...batch);
-          if (batch.length < 100 || ++guard > 300) break;
+          if (batch.length < 100) break;
           said = (r.meta && r.meta.startAfterId) || batch[batch.length - 1].id;
           sa = (r.meta && r.meta.startAfter) || new Date(batch[batch.length - 1].dateAdded || 0).getTime();
+          if (++pages >= HL_PAGES_PER_CALL) { next = { after: String(said), afterT: String(sa) }; break; }
         }
         const fval = (c, ids) => { for (const f of (c.customFields || [])) if (ids.includes(f.id) && String(f.value ?? '').trim() !== '') return String(f.value).trim(); return ''; };
         const rows = [];
@@ -1862,9 +1878,14 @@ export default {
           if (!n) continue;
           rows.push({ id: c.id, created: String(c.dateAdded || '').slice(0, 10), agent: fval(c, AGENT), referrer: c.contactName || '', count: n });
         }
-        const d = { rows, contacts: contacts.length, pulled_at: new Date().toISOString() };
-        globalThis.__hlCache = { t: now, d };
+        const d = { rows, contacts: contacts.length, pulled_at: new Date().toISOString(), next };
+        globalThis.__hlPages = globalThis.__hlPages || {};
+        globalThis.__hlPages[pageKey] = { t: now, d };
         return json(d, 200, { 'X-Cbx-Cache': 'miss' });
+        } catch (e) {
+          // say WHY in the answer (a HighLevel status, or a platform limit) — a bare 500 cost a day to diagnose
+          return json({ error: 'Referrals pull failed: ' + String((e && e.message) || e).slice(0, 200) }, 502);
+        }
       }
 
       // ---------- shared app state (multi-user persistence for both dashboards) ----------
