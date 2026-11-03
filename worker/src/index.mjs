@@ -758,12 +758,10 @@ export default {
       if (stale && (path === '/api/me' || (path === '/api/login' && req.method === 'POST'))) return json(OUTDATED, 426);
       if (path === '/api/login' && req.method === 'POST') {
         const lb = await req.json();
-        /* HUMAN CHECK FIRST (Cloudflare Turnstile): verified server-side before any password work,
-           so automated spraying of the start passwords is stopped at the door. Dark until
-           TURNSTILE_SECRET is set in the Worker env — verifyTurnstile() skips cleanly when unset. */
-        const ts = await verifyTurnstile(env, lb && (lb['cf-turnstile-response'] || lb.turnstile), req.headers.get('cf-connecting-ip') || '');
-        if (!ts.ok) return json({ error: 'Human check failed — please reload the page and try again.' }, 403);
-        const r = await login(DB, req, lb, ctx, { enforce: env.TWOFA_ENFORCE });   // ctx: audit writes finish after the response; enforce: 2FA rollout switch
+        /* HUMAN CHECK (Cloudflare Turnstile): login() runs it for the management-suite staff roles only, before any
+           password work. Dark until TURNSTILE_SECRET is set — verifyTurnstile() skips cleanly when unset. */
+        const turnstile = () => verifyTurnstile(env, lb && (lb['cf-turnstile-response'] || lb.turnstile), req.headers.get('cf-connecting-ip') || '');
+        const r = await login(DB, req, lb, ctx, { enforce: env.TWOFA_ENFORCE, turnstile });   // ctx: audit writes finish after the response; enforce: 2FA rollout switch
         if (!r.ok) return json({ error: r.error }, r.status);
         /* SECOND STEP for the AgentOS management suite: the password is proven but NO token is issued
            yet — the page completes /api/login/totp with the authenticator code. Agent Analytics / the
@@ -775,6 +773,10 @@ export default {
         // token also in body: cross-origin pages use Bearer (cookie is same-origin only)
         return json({ user: r.user, token: r.token });
       }
+      /* The sign-in page's public settings: the Turnstile SITE key (public by design — it is in every page that shows
+         the widget). Served here so the human check is switched on/off with Worker settings alone, no page redeploy. */
+      if (path === '/api/login-config' && req.method === 'GET')
+        return json({ turnstile_sitekey: env.TURNSTILE_SITEKEY || '' });
       if (path === '/api/login/totp' && req.method === 'POST') {
         const b = await req.json();
         const r = await completeTotp(DB, req, b, ctx);   // consumes the challenge, verifies the code, mints the session

@@ -1,4 +1,4 @@
-import { requires2FA, enforce2FAFor, startChallenge, takeChallenge, newSecret, newRecoveryCodes, otpauthURL, verifyTotp, hashRecovery } from './twofa.mjs';
+import { requires2FA, enforce2FAFor, needsTurnstile, startChallenge, takeChallenge, newSecret, newRecoveryCodes, otpauthURL, verifyTotp, hashRecovery } from './twofa.mjs';
 /**
  * App auth — PBKDF2 password hashing (WebCrypto), hashed session tokens,
  * lockout, per-app/per-tab permissions. Backed by app_users / app_sessions /
@@ -197,6 +197,13 @@ export async function login(DB, req, body, ctx, opts = {}) {
   }
   const username = loginKey(body.username);
   const u = await findAccount(DB, username);
+  /* HUMAN CHECK (Cloudflare Turnstile) for the management-suite staff roles, BEFORE any password work, so spraying
+     the start passwords at a staff account is stopped at the door. opts.turnstile is the route's verifier; it skips
+     cleanly while TURNSTILE_SECRET is unset. Agent Analytics roles never reach it (needsTurnstile in twofa.mjs). */
+  if (opts.turnstile && needsTurnstile(u)) {
+    const ts = await opts.turnstile();
+    if (!ts.ok) return { ok: false, status: 403, error: 'Human check failed — please reload the page and try again.' };
+  }
   const checked = await checkPassword(DB, u, username, body.password, ip, defer, '');
   if (!checked.ok) return checked;
 

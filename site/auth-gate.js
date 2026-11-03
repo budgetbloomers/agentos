@@ -137,8 +137,16 @@
       s.async = true; s.defer = true; s.onload = render; document.head.appendChild(s);
     } else { setTimeout(render, 300); }
   }
+  /* The Turnstile SITE key comes from the Worker (GET /api/login-config), so the human check is switched on with
+     Worker settings alone — no page redeploy. Asked once per page load; window.CBX_TURNSTILE_SITEKEY still overrides.
+     If the Worker cannot be reached the form shows without the widget, and the Worker decides as always. */
+  var loginCfg = null;
   function loginForm(msg, err) {
-    var SITEKEY = window.CBX_TURNSTILE_SITEKEY || '';
+    if (window.CBX_TURNSTILE_SITEKEY || loginCfg) return loginFormNow(msg, err);
+    api('/api/login-config').then(function (r) { loginCfg = (r && r.ok) ? r : {}; loginFormNow(msg, err); });
+  }
+  function loginFormNow(msg, err) {
+    var SITEKEY = window.CBX_TURNSTILE_SITEKEY || (loginCfg && loginCfg.turnstile_sitekey) || '';
     window.__cbxTsToken = '';
     overlay(
       '<div style="text-align:center;margin-bottom:18px"><div style="font-size:20px;font-weight:800;letter-spacing:-.4px;color:#0F1E36">CHATTER<span style="color:#2563EB">BOX</span></div><div style="font-size:11px;color:#71809B;margin-top:2px">The Chatterbox AgentOS</div></div>'

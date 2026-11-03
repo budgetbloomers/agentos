@@ -14,6 +14,12 @@
 export const TWOFA_ROLES = new Set(["admin", "exec", "tl", "qa", "viewer", "team_leader", "campaign_manager"]);
 export const requires2FA = (user) => !!user && TWOFA_ROLES.has(user.role);
 
+// WHO MUST PASS THE HUMAN CHECK (Turnstile). The management-suite staff roles only — they all sign in through
+// site/auth-gate.js, which carries the widget. Agent Analytics (agents, team leaders, CMs) has its own sign-in page
+// with no widget, so its roles are never asked for a token (TLs/CMs still have the second step above).
+export const TURNSTILE_ROLES = new Set(["admin", "exec", "tl", "qa", "viewer"]);
+export const needsTurnstile = (user) => !!user && TURNSTILE_ROLES.has(user.role);
+
 /* ROLLOUT SWITCH. Worker env TWOFA_ENFORCE decides WHO the role-scoped 2-step is actually
    enforced for, so it can be turned on for one account first and then everyone:
      unset / ''      → nobody yet (ships dark, like Turnstile)
