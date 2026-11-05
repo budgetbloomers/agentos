@@ -69,16 +69,12 @@ export function otpauthURL(secret, username, issuer = "AgentOS") {
   return `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=${DIGITS}&period=${STEP}`;
 }
 
-async function hmacSha1(keyBytes, msgBytes) {
-  const k = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
-  return new Uint8Array(await crypto.subtle.sign("HMAC", k, msgBytes));
-}
-async function totpAt(secret, counter) {
-  const key = b32decode(secret);
+const totpKey = (secret) => crypto.subtle.importKey("raw", b32decode(secret), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+async function totpAt(key, counter) {
   const msg = new Uint8Array(8);
   let c = counter;
   for (let i = 7; i >= 0; i--) { msg[i] = c & 0xff; c = Math.floor(c / 256); }
-  const h = await hmacSha1(key, msg);
+  const h = new Uint8Array(await crypto.subtle.sign("HMAC", key, msg));
   const off = h[h.length - 1] & 0x0f;
   const bin = ((h[off] & 0x7f) << 24) | ((h[off + 1] & 0xff) << 16) | ((h[off + 2] & 0xff) << 8) | (h[off + 3] & 0xff);
   return String(bin % 10 ** DIGITS).padStart(DIGITS, "0");
@@ -88,11 +84,27 @@ async function totpAt(secret, counter) {
 export async function verifyTotp(secret, code, now = Date.now()) {
   const clean = String(code || "").replace(/\D/g, "");
   if (clean.length !== DIGITS || !secret) return false;
-  const counter = Math.floor(now / 1000 / STEP);
+  const counter = Math.floor(now / 1000 / STEP), key = await totpKey(secret);
   for (let w = -SKEW; w <= SKEW; w++) {
-    if (clean === (await totpAt(secret, counter + w))) return true;
+    if (clean === (await totpAt(key, counter + w))) return true;
   }
   return false;
+}
+
+export const TOTP_STEP_MS = STEP * 1000;
+const FIND_STEPS = 60;   // ±30 minutes
+
+/** How far out is the clock that made this code? Steps from now, nearest first, or null if it matches nowhere near.
+    Used to accept a phone with the wrong time during setup and to say so afterwards — never to accept a code at sign-in. */
+export async function findTotpOffset(secret, code, now = Date.now()) {
+  const clean = String(code || "").replace(/\D/g, "");
+  if (clean.length !== DIGITS || !secret) return null;
+  const counter = Math.floor(now / 1000 / STEP), key = await totpKey(secret);   // one key: this runs up to 121 HMACs
+  for (let w = 0; w <= FIND_STEPS; w++) {
+    if (clean === (await totpAt(key, counter + w))) return w;
+    if (w && clean === (await totpAt(key, counter - w))) return -w;
+  }
+  return null;
 }
 
 /** Ten one-time recovery codes. Returns {plain:[...] shown once, hashes:[...] stored}. */

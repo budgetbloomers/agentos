@@ -1,4 +1,4 @@
-import { requires2FA, enforce2FAFor, needsTurnstile, startChallenge, readChallenge, claimAttempt, spendChallenge, CHALLENGE_TRIES, PENDING_SECRET_MIN, newSecret, newRecoveryCodes, otpauthURL, verifyTotp, hashRecovery } from './twofa.mjs';
+import { requires2FA, enforce2FAFor, needsTurnstile, startChallenge, readChallenge, claimAttempt, spendChallenge, CHALLENGE_TRIES, PENDING_SECRET_MIN, TOTP_STEP_MS, findTotpOffset, newSecret, newRecoveryCodes, otpauthURL, verifyTotp, hashRecovery } from './twofa.mjs';
 /**
  * App auth — PBKDF2 password hashing (WebCrypto), hashed session tokens,
  * lockout, per-app/per-tab permissions. Backed by app_users / app_sessions /
@@ -270,7 +270,7 @@ export async function completeTotp(DB, req, body, ctx) {
   const b = body || {};
   const ch = await readChallenge(DB, b.challenge);   // spent below only by a correct code; a wrong one may retry
   if (!ch) return { ok: false, status: 401, error: 'Your sign-in request expired — please start again.' };
-  const rows = await DB.select(`app_users?id=eq.${ch.user_id}&select=id,username,full_name,role,apps,tabs,pii_unmask,must_change_password,cb,team,active,totp_secret,totp_enabled,totp_recovery,locked_until,failed_attempts&limit=1`);
+  const rows = await DB.select(`app_users?id=eq.${ch.user_id}&select=id,username,full_name,role,apps,tabs,pii_unmask,must_change_password,cb,team,active,totp_secret,totp_enabled,totp_recovery,totp_drift,locked_until,failed_attempts&limit=1`);
   const u = rows && rows[0];
   if (!u || !u.active) return { ok: false, status: 401, error: 'Invalid username or password.' };
   if (u.locked_until && new Date(u.locked_until) > new Date()) return { ok: false, status: 423, error: LOCKED_MSG };
@@ -283,17 +283,34 @@ export async function completeTotp(DB, req, body, ctx) {
   if (!(await claimAttempt(DB, b.challenge, ch.attempts))) return { ok: false, status: 429, error: 'One moment — please try that code again.' };
 
   const code = String(b.code || '').trim();
-  let good = await verifyTotp(u.totp_secret, code);
+  /* A PHONE'S CLOCK CAN BE WRONG (Denise, 2026-11-05: every code refused, fresh scans included). Sign-in checks around
+     the offset remembered for this phone, then around true time in case the phone has since been corrected. During
+     setup alone a code up to 30 minutes out is accepted and its offset remembered (RFC 6238 §6): the secret is on the
+     screen at that moment, so this proves no less than a code on time. */
+  const drift = u.totp_drift || 0;
+  let good = await verifyTotp(u.totp_secret, code, Date.now() + drift * TOTP_STEP_MS);
+  let newDrift = null;                                 // null = leave the remembered offset as it is
+  if (!good && drift && await verifyTotp(u.totp_secret, code)) { good = true; newDrift = 0; }
+  if (!good && ch.kind === 'enroll') {
+    const off = await findTotpOffset(u.totp_secret, code);
+    if (off !== null) { good = true; newDrift = off; }
+  }
   let usedRecovery = null;
   if (!good && ch.kind === 'totp' && Array.isArray(u.totp_recovery) && u.totp_recovery.length) {
     const h = await hashRecovery(code);               // recovery codes are not accepted during enrolment
     if (u.totp_recovery.includes(h)) { good = true; usedRecovery = h; }
   }
-  if (!good) { await twofaFail(DB, u, ip); return { ok: false, status: 401, error: 'That code is not right.' }; }
+  if (!good) {
+    await twofaFail(DB, u, ip);
+    if (ch.kind === 'enroll') return { ok: false, status: 401, error: 'That code is not right for this QR code. In your app, delete every AgentOS entry, scan the QR code on this screen, then type the new code.' };
+    const off = await findTotpOffset(u.totp_secret, code);   // words only: this can never sign anyone in
+    return { ok: false, status: 401, error: off === null ? 'That code is not right.' : 'That code is not right because your phone’s clock is wrong. Set its date and time to automatic, then try again.' };
+  }
 
   await spendChallenge(DB, b.challenge);   // before anything is granted, so this request can never be replayed
   const patch = {};
-  if (ch.kind === 'enroll') patch.totp_enabled = true;                        // first correct code activates
+  if (ch.kind === 'enroll') { patch.totp_enabled = true; patch.totp_drift = newDrift || 0; }   // first correct code activates
+  else if (newDrift !== null) patch.totp_drift = newDrift;
   if (usedRecovery) patch.totp_recovery = u.totp_recovery.filter((x) => x !== usedRecovery);  // burn the used one
   if (Object.keys(patch).length) await DB.update(`app_users?id=eq.${u.id}`, patch);
   return mintSession(DB, u, req, ip, u.username, defer);

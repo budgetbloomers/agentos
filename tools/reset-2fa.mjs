@@ -23,7 +23,7 @@ await client.connect();
 try {
   const { rows } = await client.query(
     `update app_users
-        set totp_secret = null, totp_enabled = false, totp_recovery = '[]'::jsonb,
+        set totp_secret = null, totp_enabled = false, totp_recovery = '[]'::jsonb, totp_drift = 0, totp_pending_at = null,
             failed_attempts = 0, locked_until = null
       where username = $1 or upper(cb) = upper($1)
       returning username, role, cb`,
