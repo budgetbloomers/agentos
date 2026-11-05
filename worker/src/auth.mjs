@@ -1,4 +1,4 @@
-import { requires2FA, enforce2FAFor, needsTurnstile, startChallenge, takeChallenge, newSecret, newRecoveryCodes, otpauthURL, verifyTotp, hashRecovery } from './twofa.mjs';
+import { requires2FA, enforce2FAFor, needsTurnstile, startChallenge, readChallenge, claimAttempt, spendChallenge, CHALLENGE_TRIES, PENDING_SECRET_MIN, newSecret, newRecoveryCodes, otpauthURL, verifyTotp, hashRecovery } from './twofa.mjs';
 /**
  * App auth — PBKDF2 password hashing (WebCrypto), hashed session tokens,
  * lockout, per-app/per-tab permissions. Backed by app_users / app_sessions /
@@ -215,10 +215,19 @@ export async function login(DB, req, body, ctx, opts = {}) {
     const ch = await startChallenge(DB, u.id, needEnroll ? 'enroll' : 'totp');
     const out = { ok: true, twofa: needEnroll ? 'enroll' : 'required', challenge: ch.challenge };
     if (needEnroll) {
-      // first time in: hand back a secret to scan and one-time recovery codes, shown ONCE.
-      const secret = newSecret();
+      /* first time in: hand back a secret to scan and one-time recovery codes. An unfinished setup keeps its secret
+         for PENDING_SECRET_MIN (Denise, 2026-11-05): a new one on every sign-in left the phone holding a code that
+         could never match, on a screen that looked the same. Only for that long, measured from when the secret was
+         made and never extended (security review): reused forever, a secret copied by anyone who knows the password
+         would become a hidden permanent factor the moment the real owner finished setup with it. Recovery codes are
+         hashed, so they can only be shown by replacing them. */
+      const madeAt = u.totp_pending_at ? new Date(u.totp_pending_at).getTime() : 0;
+      const keep = !!u.totp_secret && Date.now() - madeAt < PENDING_SECRET_MIN * 60000;
+      const secret = keep ? u.totp_secret : newSecret();
       const rc = await newRecoveryCodes();
-      await DB.update(`app_users?id=eq.${u.id}`, { totp_secret: secret, totp_enabled: false, totp_recovery: rc.hashes });
+      const patch = { totp_secret: secret, totp_enabled: false, totp_recovery: rc.hashes };
+      if (!keep) patch.totp_pending_at = new Date().toISOString();
+      await DB.update(`app_users?id=eq.${u.id}`, patch);
       out.secret = secret;
       out.otpauth = otpauthURL(secret, u.username);
       out.recovery_codes = rc.plain;
@@ -259,12 +268,19 @@ export async function completeTotp(DB, req, body, ctx) {
   const defer = (p) => { try { ctx && ctx.waitUntil(p); } catch { /* detached */ } return p; };
   const ip = (req && req.headers && req.headers.get('cf-connecting-ip')) || '';
   const b = body || {};
-  const ch = await takeChallenge(DB, b.challenge);   // consumed here, pass or fail
+  const ch = await readChallenge(DB, b.challenge);   // spent below only by a correct code; a wrong one may retry
   if (!ch) return { ok: false, status: 401, error: 'Your sign-in request expired — please start again.' };
   const rows = await DB.select(`app_users?id=eq.${ch.user_id}&select=id,username,full_name,role,apps,tabs,pii_unmask,must_change_password,cb,team,active,totp_secret,totp_enabled,totp_recovery,locked_until,failed_attempts&limit=1`);
   const u = rows && rows[0];
   if (!u || !u.active) return { ok: false, status: 401, error: 'Invalid username or password.' };
   if (u.locked_until && new Date(u.locked_until) > new Date()) return { ok: false, status: 423, error: LOCKED_MSG };
+
+  if (ch.attempts >= CHALLENGE_TRIES) {
+    await spendChallenge(DB, b.challenge);
+    return { ok: false, status: 401, error: 'Your sign-in request expired — please start again.' };
+  }
+  // no code is checked without a claimed attempt: parallel requests lose here, before they can guess
+  if (!(await claimAttempt(DB, b.challenge, ch.attempts))) return { ok: false, status: 429, error: 'One moment — please try that code again.' };
 
   const code = String(b.code || '').trim();
   let good = await verifyTotp(u.totp_secret, code);
@@ -275,6 +291,7 @@ export async function completeTotp(DB, req, body, ctx) {
   }
   if (!good) { await twofaFail(DB, u, ip); return { ok: false, status: 401, error: 'That code is not right.' }; }
 
+  await spendChallenge(DB, b.challenge);   // before anything is granted, so this request can never be replayed
   const patch = {};
   if (ch.kind === 'enroll') patch.totp_enabled = true;                        // first correct code activates
   if (usedRecovery) patch.totp_recovery = u.totp_recovery.filter((x) => x !== usedRecovery);  // burn the used one

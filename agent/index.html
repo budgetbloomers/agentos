@@ -4379,7 +4379,7 @@ function totpScreen(ch){
   var key = enrol ? '<div class="why" style="margin:2px 0 3px">Setup key (for manual entry):</div><div style="font-family:ui-monospace,Consolas,monospace;font-size:14px;letter-spacing:1px;background:rgba(0,0,0,.05);border-radius:9px;padding:10px;text-align:center;margin-bottom:10px;word-break:break-all">'+esc(ch.secret||'')+'</div>' : '';
   var rec = (enrol&&ch.recovery_codes) ? '<div class="why" style="margin:8px 0 4px">Save these one-time recovery codes — each works once if you lose your phone:</div><div style="font-family:ui-monospace,Consolas,monospace;font-size:12px;background:rgba(0,0,0,.05);border-radius:9px;padding:10px;margin-bottom:10px;line-height:1.7">'+ch.recovery_codes.map(esc).join('<br>')+'</div>' : '';
   preShell('<div class="greet">'+(enrol?'Set up two-step verification':'Two-step verification')+'</div>'
-    +'<div class="greet-sub">'+(enrol?'Scan this with Google Authenticator, or enter the setup key below. Then type the 6-digit code to confirm.':'Enter the 6-digit code from your authenticator app.')+'</div>'
+    +'<div class="greet-sub">'+(enrol?'Scan this with Google Authenticator, or enter the setup key below. Then type the 6-digit code to confirm. If your code is not accepted, delete any older AgentOS entry in the app and scan this one.':'Enter the 6-digit code from your authenticator app.')+'</div>'
     +'<div class="card">'
     +'<div class="err" id="lerr" style="display:none"></div>'
     + qr + key + rec

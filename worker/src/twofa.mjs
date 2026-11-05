@@ -37,7 +37,9 @@ export function enforce2FAFor(user, enforceEnv) {
   return list.has(uname) || (!!cb && list.has(cb));
 }
 
-const CHALLENGE_MIN = 5;          // a pending 2-step challenge is valid 5 minutes, single use
+const CHALLENGE_MIN = 5;          // a pending 2-step challenge is valid 5 minutes, spent by its first correct code
+export const CHALLENGE_TRIES = 5;     // …and takes this many code attempts at most
+export const PENDING_SECRET_MIN = 30; // an unfinished setup keeps its secret this long, from when it was made
 const STEP = 30, DIGITS = 6, SKEW = 1; // standard TOTP: 30s step, 6 digits, ±1 step clock skew
 
 const toHex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -109,20 +111,38 @@ export const hashRecovery = (code) => sha256hex(String(code || "").trim().toLowe
 export async function startChallenge(DB, user_id, kind) {
   const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
   await DB.insert("app_login_challenges", [{
-    challenge_hash: await sha256hex(token), user_id, kind,
+    challenge_hash: await sha256hex(token), user_id, kind, attempts: 0,
     expires_at: new Date(Date.now() + CHALLENGE_MIN * 60000).toISOString(),
   }]);
   return { challenge: token };
 }
-/** Consume a challenge: returns {user_id, kind} or null. Always deletes it (single use). */
-export async function takeChallenge(DB, token) {
+/* A WRONG CODE MUST NOT END THE ATTEMPT (Denise, 2026-11-05): the screen stays open after "That code is not right",
+   but the challenge used to die with the first try, so the retry only said "expired". A challenge now lives until a
+   correct code spends it or its 5 minutes run out. Retrying must not cheapen guessing, so every try first claims an
+   attempt by compare-and-set (claimAttempt): parallel requests on one challenge cannot all be checked, whatever the
+   lockout has or has not written yet, and one sign-in buys at most CHALLENGE_TRIES guesses. */
+/** Look up a live challenge without using it: {user_id, kind, attempts}, or null if unknown or expired. */
+export async function readChallenge(DB, token) {
   if (!token) return null;
   const th = await sha256hex(token);
-  const rows = await DB.select(`app_login_challenges?challenge_hash=eq.${th}&select=user_id,kind,expires_at&limit=1`);
+  const rows = await DB.select(`app_login_challenges?challenge_hash=eq.${th}&select=user_id,kind,expires_at,attempts&limit=1`);
   const row = rows && rows[0];
-  await DB.del(`app_login_challenges?challenge_hash=eq.${th}`).catch(() => {});
-  if (!row || new Date(row.expires_at) < new Date()) return null;
-  return { user_id: row.user_id, kind: row.kind };
+  if (!row) return null;
+  if (new Date(row.expires_at) < new Date()) {
+    await DB.del(`app_login_challenges?challenge_hash=eq.${th}`).catch(() => {});
+    return null;
+  }
+  return { user_id: row.user_id, kind: row.kind, attempts: row.attempts || 0 };
+}
+/** Take one attempt: true for exactly one caller at each count, false for anyone who lost the race. */
+export async function claimAttempt(DB, token, attempts) {
+  const th = await sha256hex(token);
+  const won = await DB.updateReturning(`app_login_challenges?challenge_hash=eq.${th}&attempts=eq.${attempts}`, { attempts: attempts + 1 });
+  return !!(won && won.length);
+}
+/** Spend a challenge once its code is proven: not caught, so a failed delete can never leave it replayable. */
+export async function spendChallenge(DB, token) {
+  await DB.del(`app_login_challenges?challenge_hash=eq.${await sha256hex(token)}`);
 }
 
 /**

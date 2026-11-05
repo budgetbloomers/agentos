@@ -226,7 +226,7 @@
   function totpForm(ch, username) {
     var enrol = ch.twofa === 'enroll';
     var intro = enrol
-      ? 'Scan this with Google Authenticator (or any authenticator app). Can’t scan? Choose <b>Enter a setup key</b> and type the key below.'
+      ? 'Scan this with Google Authenticator (or any authenticator app). Can’t scan? Choose <b>Enter a setup key</b> and type the key below. If your code is not accepted, delete any older AgentOS entry in the app and scan this one.'
       : 'Enter the 6-digit code from your authenticator app.';
     var qr = enrol ? '<div id="cbxQR" style="display:flex;justify-content:center;margin:12px 0"></div>' : '';
     var key = enrol ? '<div style="font-size:11px;color:#71809B;margin:2px 0 3px">Setup key (for manual entry):</div><div style="font-family:ui-monospace,Consolas,monospace;font-size:14px;letter-spacing:1px;background:#F7FAFE;border:1px solid #E3E9F3;border-radius:9px;padding:10px;text-align:center;margin-bottom:10px;word-break:break-all">' + esc(ch.secret || '') + '</div>' : '';
