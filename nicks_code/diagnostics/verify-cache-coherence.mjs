@@ -63,7 +63,7 @@ const boot = async state => {
       const txt = (document.querySelector('#page') || document.body).innerText;
       res({ kept: localStorage.getItem('vas_mtd_tracker_v1') !== null,
         files: (st.files || []).length, sales: Object.keys(st.sales || {}).length,
-        noData: /No data for/.test(txt), loading: /Loading your data|not signed in/i.test(txt),
+        noData: /No sales or calls for/.test(txt), loading: /Loading your data|not signed in/i.test(txt),
         hasKpis: /Total GWP|Policies Sold/i.test(txt) });
     }, 1000));
   });

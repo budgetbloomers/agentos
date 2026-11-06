@@ -16,7 +16,7 @@
  * assertion waits long enough for the double-rAF re-render (900 ms), because a shorter wait
  * flagged the Agent Performance risk chips that work.
  */
-import fs from 'node:fs'; import path from 'node:path'; import http from 'node:http';
+import fs from 'node:fs'; import path from 'node:path'; import http from 'node:http'; import zlib from 'node:zlib';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
@@ -25,7 +25,9 @@ let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.log('  FAIL ' + n + (d ? ' — ' + d : '')); } };
 const env = Object.fromEntries(fs.readFileSync(path.join(REPO, 'supabase.env'), 'utf8').split(/\r?\n/).filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]));
 const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY };
-const get = async (key) => { const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/${key}`, { headers: H, signal: AbortSignal.timeout(120000) }); return r.ok ? r.text() : null; };
+const get = async (key) => { const r = await fetch(`${env.SUPABASE_URL}/storage/v1/object/raw/kv/${key}`, { headers: H, signal: AbortSignal.timeout(120000) }); if (!r.ok) return null;
+  const b = Buffer.from(await r.arrayBuffer());   // state is gzipped at rest since 11 Oct (Spec Kit 031); this suite crashed on it until 6 Nov
+  return (b[0] === 0x1f && b[1] === 0x8b ? zlib.gunzipSync(b) : b).toString('utf8'); };
 const serve = (map, port) => new Promise((res) => { const s = http.createServer((q, r) => { const p = map[q.url.split('?')[0]];
   if (!p || !fs.existsSync(p)) { r.writeHead(404); r.end(); return; } r.writeHead(200, { 'Content-Type': p.endsWith('.js') ? 'text/javascript' : 'text/html' }); fs.createReadStream(p).pipe(r); });
   s.listen(port, '127.0.0.1', () => res(s)); });

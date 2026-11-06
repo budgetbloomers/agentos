@@ -389,7 +389,7 @@ const CODE = PAGE
      shared-link digest route is gone from this page and the portal routes take its
      place. Every one of these is scoped by the Worker from the SESSION — not one of
      them accepts an identity supplied by the page. */
-  const allowed = new Set(['/api/login', '/api/login/totp', '/api/logout', '/api/password',
+  const allowed = new Set(['/api/login', '/api/login/totp', '/api/login-config', '/api/logout', '/api/password',
     '/api/portal/me', '/api/portal/overview', '/api/portal/agent', '/api/portal/ask',
     /* The team leader's Variance and Lead management slices (2026-09-21): cut by the Worker's
        authorise() from the SESSION, refused to agents and campaign managers. */
@@ -798,7 +798,7 @@ const CODE = PAGE
 head('C · The page renders for every shape of agent');
 
 function loadPage(fetchImpl) {
-  const m = PAGE.match(/<script>\n"use strict";([\s\S]*?)<\/script>/);
+  const m = PAGE.match(/<script>\r?\n"use strict";([\s\S]*?)<\/script>/);   // git checks this file out as CRLF on Windows
   if (!m) throw new Error('could not find the page script');
   const src = m[1].replace(/\nboot\(\);\s*$/, '\n');            // do not auto-run the fetch
   const nodes = {};

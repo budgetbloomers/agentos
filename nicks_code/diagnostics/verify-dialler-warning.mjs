@@ -93,7 +93,7 @@ for (const [tab, label] of [['weekly','Weekly'],['daily','Daily'],['mtd','MTD']]
   /* The banner's heading is "Talk time is incomplete for this period"; the detail beneath it
      names either the uncovered days or a skipped ViciDial range, depending on what is missing.
      Match the heading, and skip a page that is legitimately in its global empty state. */
-  const empty = /No data for .* yet|Nothing uploaded yet/i.test(r);
+  const empty = /No sales or calls for |Nothing uploaded yet/i.test(r);
   if (empty) console.log('  --   ' + label + ' page is in its empty state, warning not applicable');
   else ok(label + ' page carries the dialler-coverage warning',
     /* since 71ac7e9 (17 Sep) a period with every dialling day loaded titles the same card "Talk time
