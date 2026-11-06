@@ -607,14 +607,15 @@ const CODE = PAGE
   /no shift credited/.test(PAGE.slice(PAGE.indexOf('function pageDailyTeam')))
     ? ok('the daily view keeps the talk-with-no-shift anomaly flag')
     : bad('the daily anomaly flag is missing');
-  /* ---- 2026-08-26 (Nick), REVERSED the same day: no month filter ----
-     The portal always opens on the LIVE month - Month to Date, Weekly and Daily read the
-     current month from its 1st to the latest published day, and there is nothing to pick.
-     The Worker keeps understanding ?month= and VAS keeps freezing each month's digest, so
-     a look-back later is a UI change only; the page itself must send no month anywhere. */
-  (!/monthQS/.test(PAGE) && !/monthPick/.test(PAGE) && !/var MONTH=/.test(PAGE))
-    ? ok('no month filter: no picker, no month state, no month parameter')
-    : bad('a remnant of the month filter is still in the page');
+  /* ---- 2026-08-26 (Nick): no month filter. REVERSED for team leaders 2026-11-06 (Denise) ----
+     The portal still OPENS on the live month, and an agent's own view has nothing to pick. The Reports bar is the one
+     way back for a team leader: repMonthPicker is drawn from reportsTabs alone, and never on the manager's bar, which
+     has its own period picker. verify-tl-past-months.mjs opens real months through it. */
+  (!/monthQS/.test(PAGE) && !/var MONTH=/.test(PAGE)
+    && (PAGE.match(/repMonthPicker\(\)/g) || []).length === 2
+    && /\(tabs\?'':repMonthPicker\(\)\)/.test(PAGE))
+    ? ok('the only month picker is the team leader\'s, on the Reports bar')
+    : bad('a month picker is somewhere other than the team leader\'s Reports bar');
   /* SPEC 002 (2026-10-01) changes ONE thing here: the overview is still requested plain — the live month — except in
      the empty month, where "<Month> (final)" asks ?month=YYYY-MM. Every call goes through ovPath(), which is plain
      unless askMonth() pinned a month, and askMonth is wired to nothing but the empty-state card and its way back. */

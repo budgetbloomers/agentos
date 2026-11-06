@@ -32,7 +32,7 @@ const IMG = 'data:image/png;base64,TEST';
 
 /* ------------------------------------------------------------------ the page, in a stubbed DOM with drawable canvases */
 function loadPage() {
-  const m = PAGE.match(/<script>\n"use strict";([\s\S]*?)<\/script>/);
+  const m = PAGE.match(/<script>\r?\n"use strict";([\s\S]*?)<\/script>/);
   if (!m) throw new Error('could not find the page script');
   const src = m[1].replace(/\nboot\(\);\s*$/, '\n');
   const nodes = {}, sel = {}, winL = {}, canvases = [];

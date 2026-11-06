@@ -331,6 +331,8 @@ details.tool summary .chev{margin-left:auto;color:var(--muted);font-size:11px}
 .rep-bar .seg{margin-bottom:0}
 .rep-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .rep-stamp{font-size:11.5px;font-weight:700;color:var(--muted);white-space:nowrap}
+.rep-month{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:var(--muted)}
+.rep-month select{font:inherit;color:inherit;padding:6px 8px;border:1px solid var(--line,#E3E9F3);border-radius:8px;background:transparent;cursor:pointer}
 .rep-tools .btn2{padding:7px 12px;cursor:pointer}
 .rep-tools .btn2[disabled]{opacity:.6;cursor:default}
 .chip2{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;border-radius:14px;padding:4px 10px;white-space:nowrap}
@@ -1367,6 +1369,21 @@ function lmNoteHTML(){
   var when=m?' (from '+(+m[3])+' '+(LONG_MONTHS[+m[2]-1]||m[2])+' '+m[1]+')':'';
   return '<p class="why lm-note">Lead management does not cover '+ex.map(esc).join(', ')+when+'</p>';
 }
+/* LOOKING BACK (2026-11-06, Denise on the floor: "she cant filter passed months for the month to date"). This reverses
+   the 26 Aug "no month filter" for the Reports bar only: a team leader picks any published month here and askMonth() opens
+   its frozen digest, with the "(final)" bar and the way back it already had. An agent's own view stays on the live month,
+   and a campaign manager keeps the period picker. The list is what was published, so a month with no figures is not offered. */
+function repMonthPicker(){
+  /* the live label follows the figures, not the clock: last month can stay live after the 1st until the new one publishes */
+  var live=(!VIEWMONTH&&D&&D.period&&D.period.from)?String(D.period.from).slice(0,7):nowDay().slice(0,7);
+  var past=((D&&D.months)||[]).filter(function(m){ return /^\d{4}-\d{2}$/.test(m)&&m<live; });
+  if(!past.length) return '';
+  var label=function(m){ return monthNameOf(m)+' '+m.slice(0,4); };
+  return '<label class="rep-month">Month <select id="repMonth" aria-label="Month to show">'
+    +'<option value=""'+(VIEWMONTH?'':' selected')+'>'+esc(label(live))+' (this month)</option>'
+    +past.map(function(m){ return '<option value="'+esc(m)+'"'+(VIEWMONTH===m?' selected':'')+'>'+esc(label(m))+'</option>'; }).join('')
+    +'</select></label>';
+}
 function reportsTabs(active,tabs){
   if(tabs) LAST_CM_REPORT=active; else LAST_REPORT=active;
   var list=tabs||visibleReportTabs();
@@ -1379,6 +1396,7 @@ function reportsTabs(active,tabs){
       return '<button class="pill'+(t[0]===active?' on':'')+'" role="tab" aria-selected="'+(t[0]===active)+'" data-report="'+t[0]+'">'+esc(t[1])+'</button>';
     }).join('')+'</div>'
     +'<div class="rep-tools">'
+    +(tabs?'':repMonthPicker())
     +'<span class="rep-stamp" title="When the management dashboard last published these figures">Published '+esc(repKind(active)?repStamp(repKind(active)):stamp())+'</span>'
     +'<button class="btn2" id="repRefresh" title="Ask for the latest published figures now">&#8635; Refresh</button>'
     +'<button class="btn2" data-export="'+active+'" title="Download this report as an Excel workbook">&#8595; Export</button>'
@@ -4242,6 +4260,7 @@ function wireReports(){
      so any Reports page asks for it once, in the background (spec 001, US5) */
   if(liveTeamScope()&&!D.empty&&isReport(VIEW)&&!REP.leads.d&&!REP.leads.busy&&!REP.leads.err) repLoad('leads',false);
   /* the Reports toolbar (2026-09-11): Refresh asks the Worker now; Export builds the workbook */
+  var rm=$('repMonth'); if(rm) rm.onchange=function(){ askMonth(rm.value); };
   var rr=$('repRefresh'); if(rr) rr.onclick=function(){ refreshPortal(true); var rk2=repKind(VIEW); if(rk2){ REP[rk2].err=''; repLoad(rk2,true); } };
   Array.prototype.forEach.call(document.querySelectorAll('[data-export]'),function(b){
     b.onclick=function(){ exportReports(b.getAttribute('data-export')); };
@@ -4489,11 +4508,9 @@ function fatal(title,body,retry){
 }
 
 /* ===================== loading what you are allowed to see ===================== */
-/* NO MONTH FILTER, ON PURPOSE (Nick 2026-08-26, reversing the same morning's request):
-   the portal always opens on the LIVE month and nothing else - Month to Date, Weekly and
-   Daily all read the current month from its 1st to the latest published day. The Worker
-   still understands ?month= and VAS still files a frozen copy of each month as it ends,
-   so if a look-back is ever wanted again it is a UI change only; nothing here sends it. */
+/* THE PORTAL OPENS ON THE LIVE MONTH (Nick 2026-08-26) - Month to Date, Weekly and Daily read the current
+   month from its 1st to the latest published day. A team leader can look back from the Reports bar since
+   2026-11-06 (repMonthPicker): the Worker answers ?month= from the frozen copy VAS files of each month. */
 function loadPortal(){
   $('root').innerHTML='<div class="msg"><div class="spin"></div><div class="d">Loading your numbers…</div></div>';
   api(ovPath()).then(function(r){
@@ -4586,9 +4603,11 @@ function refreshPortal(manual){
   LIVE.busy=true; LIVE.at=Date.now();
   var b=$('repRefresh'); if(b){ b.disabled=true; b.textContent='Refreshing…'; }
   var restore=function(){ var x=$('repRefresh'); if(x){ x.disabled=false; x.innerHTML='&#8635; Refresh'; } };
+  var seq=MONTH_SEQ;
   return api(ovPath()).then(function(r){
     LIVE.busy=false;
     if(r.status===401) return sessionExpired();
+    if(seq!==MONTH_SEQ){ restore(); return; }   // the month changed while this was on its way: its figures belong to the old one
     if(!r.ok){ restore(); if(manual) toast('Could not refresh — '+(r.json.error||'please try again in a minute.'),5000); return; }
     var fresh=r.json;
     if(!liveTeamScope()){ restore(); return; }                 // the leader drilled into an agent meanwhile
@@ -6320,8 +6339,8 @@ function monthLabel(){
    The live view is ALWAYS the current calendar month, even before its first day of data. Until then the engine
    publishes an honest empty payload (D.empty === true, every figure null) and the page names the month, says what
    is coming, and offers the closed month as "<Month> (final)". The page paints that; it computes nothing.
-   Agents and team leaders have no month filter — the button exists ONLY here, and while a closed month is on screen
-   a "Back to <Month>" control is the way home. VIEWMONTH is the month being looked at ('' = the live month); every
+   Agents have no month filter: this button is their only way to a closed month. Team leaders also have the Reports bar's
+   picker (repMonthPicker, 2026-11-06). While a closed month is on screen a "Back to <Month>" control is the way home. VIEWMONTH is the month being looked at ('' = the live month); every
    re-ask (sign-in, the live refreshes) goes through ovPath() so a refresh never snaps the person back. */
 var VIEWMONTH='', LIVE_MONTH_NAME='', MONTH_SEQ=0;
 function monthNameOf(key){ var m=/^(\d{4})-(\d{2})$/.exec(String(key||'')); return m?(LONG_MONTHS[+m[2]-1]||''):''; }
@@ -6376,12 +6395,14 @@ function askMonth(key){
   var prev=VIEWMONTH, prevName=LIVE_MONTH_NAME, seq=++MONTH_SEQ;
   if(key&&!VIEWMONTH) LIVE_MONTH_NAME=monthLabel();   // the live month's name, for the way back — read before D changes
   VIEWMONTH=key;
+  LIVE.pending=null;   // a parked refresh is the old month's figures
   return api(ovPath()).then(function(r){
     if(seq!==MONTH_SEQ) return;   // a newer choice is already on its way
     if(r.status===401) return sessionExpired();
     ensureEmptyMe(r.json);
     if(!r.ok||!r.json||(!r.json.me&&r.json.scope!=='team'&&r.json.role!=='team_leader'&&r.json.scope!=='all')){
       VIEWMONTH=prev; LIVE_MONTH_NAME=prevName;
+      var rm=$('repMonth'); if(rm) rm.value=VIEWMONTH;   // the picker must never name a month the page is not showing
       toast('That month could not be opened — '+((r.json&&r.json.error)||'please try again in a minute.'),5000);
       return;
     }

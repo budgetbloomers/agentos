@@ -54,7 +54,7 @@ function classList() {
 }
 function loadPage(routes, opts) {
   opts = opts || {};
-  const m = PAGE.match(/<script>\n"use strict";([\s\S]*?)<\/script>/);
+  const m = PAGE.match(/<script>\r?\n"use strict";([\s\S]*?)<\/script>/);
   if (!m) throw new Error('could not find the page script');
   const src = m[1].replace(/\nboot\(\);\s*$/, '\n');
   const nodes = {}, removed = [], cmovs = [];
@@ -531,7 +531,7 @@ const nonEs5 = (code) => {
     if (bad2.length) throw new Error(bad2.join(' · '));
   });
   const vm = await import('node:vm');
-  check('agent/index.html: the inline script still parses', () => { new vm.Script(html.match(/<script>\n"use strict";([\s\S]*?)<\/script>/)[1]); });
+  check('agent/index.html: the inline script still parses', () => { new vm.Script(html.match(/<script>\r?\n"use strict";([\s\S]*?)<\/script>/)[1]); });
 }
 console.log('\n' + (checks - fails) + '/' + checks + ' checks passed' + (fails ? ' — ' + fails + ' FAILED' : ''));
 process.exitCode = fails ? 1 : 0;

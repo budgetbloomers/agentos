@@ -306,7 +306,7 @@ try {
   /* =================================================================== B / D / E (page) */
   head('B · D · E — the page: drafts, a locked list, and signatures that clear');
   {
-    const m = PAGE.match(/<script>\n"use strict";([\s\S]*?)<\/script>/);
+    const m = PAGE.match(/<script>\r?\n"use strict";([\s\S]*?)<\/script>/);
     const src = m[1].replace(/\nboot\(\);\s*$/, '\n');
     const nodes = {}, sel = {};
     const mkEl = () => ({ innerHTML: '', value: '', textContent: '', className: '', style: {}, classList: { add() {}, remove() {}, contains: () => false },

@@ -49,7 +49,7 @@ const noFigures = (h) => {
 
 /* ------------------------------------------------------------------ the page, in a stubbed DOM */
 function loadPage(routes) {
-  const m = PAGE.match(/<script>\n"use strict";([\s\S]*?)<\/script>/);
+  const m = PAGE.match(/<script>\r?\n"use strict";([\s\S]*?)<\/script>/);
   if (!m) throw new Error('could not find the page script');
   const src = m[1].replace(/\nboot\(\);\s*$/, '\n');
   const nodes = {};

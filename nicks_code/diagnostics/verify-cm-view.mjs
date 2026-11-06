@@ -47,7 +47,7 @@ const clean = (h) => { if (/undefined|NaN|\[object Object\]/.test(h)) throw new 
 
 /* ------------------------------------------------------------------ the page, in a stubbed DOM */
 function loadPage(routes) {
-  const m = PAGE.match(/<script>\n"use strict";([\s\S]*?)<\/script>/);
+  const m = PAGE.match(/<script>\r?\n"use strict";([\s\S]*?)<\/script>/);
   if (!m) throw new Error('could not find the page script');
   const src = m[1].replace(/\nboot\(\);\s*$/, '\n');
   const nodes = {};
@@ -776,7 +776,7 @@ head('F · Team leader Month to date — KPI states and coaching analysis (US6)'
 /* ═════════════════════════ G · ES5 + escaping ═════════════════════════ */
 head('G · The page stays ES5, and new copy escapes data');
 {
-  const m = PAGE.match(/<script>\n"use strict";([\s\S]*?)<\/script>/);
+  const m = PAGE.match(/<script>\r?\n"use strict";([\s\S]*?)<\/script>/);
   check('the inline script still parses', () => { new vm.Script(m[1]); });
   const added = ['cmCoachPage', 'cmAsk', 'cmCoachLoad', 'cmCoachPick', 'coachLine', 'agentKpiStates', 'cmPeriodSelect', 'cmTenureSelect', 'cmHM', 'cmValidPeriod', 'cmValidTenure', 'cmSave', 'cmStored',
     'cmReset', 'cmOpen', 'cmMonthLabel', 'cmPeriodOptions', 'cmTenLabel', 'cmTenureKeys', 'cmSelect', 'cmSelectionLine', 'cmSliceEmpty', 'cmGateCard', 'cmConvTile', 'cmContactTile', 'cmHelpRows',
