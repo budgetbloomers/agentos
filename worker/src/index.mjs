@@ -762,7 +762,7 @@ export default {
            password work. Dark until TURNSTILE_SECRET is set — verifyTurnstile() skips cleanly when unset. */
         const turnstile = () => verifyTurnstile(env, lb && (lb['cf-turnstile-response'] || lb.turnstile), req.headers.get('cf-connecting-ip') || '');
         const r = await login(DB, req, lb, ctx, { enforce: env.TWOFA_ENFORCE, turnstile });   // ctx: audit writes finish after the response; enforce: 2FA rollout switch
-        if (!r.ok) return json({ error: r.error }, r.status);
+        if (!r.ok) return json(r.human_check ? { error: r.error, human_check: true } : { error: r.error }, r.status);   // human_check: Agent Analytics shows the widget only when asked
         /* SECOND STEP for the AgentOS management suite: the password is proven but NO token is issued
            yet — the page completes /api/login/totp with the authenticator code. Agent Analytics / the
            hubs never reach this branch (login() only sets twofa for TWOFA_ROLES). */

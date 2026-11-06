@@ -1884,7 +1884,8 @@ function uiWho(){ var u=(typeof window!=='undefined'&&window.CBX_USER)||{};
   return String(u.id||u.username||'anon').toLowerCase(); }
 function uiKey(){ return STORE_KEY+':ui:'+uiWho(); }
 function saveUI(){
-  try{ localStorage.setItem(uiKey(), JSON.stringify(S.ui)); }catch(e){}
+  const {mtdMonth,...kept}=S.ui;   // a past month under Month to date lasts until the page reloads (periodRangeRaw)
+  try{ localStorage.setItem(uiKey(), JSON.stringify(kept)); }catch(e){}
 }
 /* Read the signed-in person's own saved view, if they have one. Returns whether it applied,
    so the caller can decide whether a re-render is warranted. */
@@ -3828,17 +3829,18 @@ const INGEST={
     const tm=(t,rt)=>{const c=s=>s.replace(/[^a-z0-9]/g,'');return t===rt||lev1(c(t),c(rt))};
     const rn=[];S.roster.forEach(a=>{const cd=String(a.code||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       [a.name,a.sf].forEach(nm=>{if(nm)rn.push({toks:nrm(nm).split(' '),code:cd})})});
-    const fuzzy=raw=>{const toks=nrm(raw).split(' ');if(!toks[0])return '';
+    const fuzzy=(raw,known)=>{const toks=nrm(raw).split(' ');if(!toks[0])return '';
       const hits=new Set();
       for(const r of rn){if(toks.every(t=>r.toks.some(x=>tm(t,x)))||r.toks.every(x=>toks.some(t=>tm(t,x))))hits.add(r.code)}
-      return hits.size===1?[...hits][0]:''};
+      if(hits.size) return hits.size===1?[...hits][0]:'';   // ambiguity stays unmatched: the next tier never settles it
+      return known?'':refShortName(toks,rn)};   // a leaver's spelling or a "not the same man" (S.map) is never re-read as someone else
     const by={},un={},byDay={};let noAgent=0,total=0,dated=0;
     for(const r of recs){
       const p=pick(r); if(!p.cnt) continue;
       total+=p.cnt;
       let code=p.code.toUpperCase().replace(/[^A-Z0-9]/g,'');
       if(!codes.has(code)) code=(p.agent&&typeof resolveKey==='function'?resolveKey(p.agent):null)||'';
-      if(!(code&&codes.has(code))&&p.agent) code=fuzzy(p.agent);
+      if(!(code&&codes.has(code))&&p.agent) code=fuzzy(p.agent,code||S.map[p.agent]);
       if(code&&codes.has(code)){ by[code]=(by[code]||0)+p.cnt;
         /* KEEP THE DATE. The HighLevel rows carry the contact's created day, and dropping it
            here was the only reason Daily and Weekly referrals could not show real numbers —
@@ -4037,6 +4039,30 @@ function removeFile(idx){
 /* ================= identity resolution ================= */
 let IDX=null;
 const normFull = s => (s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+/* A SHORTENED FIRST NAME (2026-11-06). HighLevel's "Kuben Govender" is the list's "Kubenderan Govender" (CB328): five
+   letters apart, so the one-edit tiers refused him and 15 referrals read as 0. Runs only when those tiers found NOBODY,
+   and only for referrals. Same surname and a clear short form: 5+ letters that start a first name at least twice as
+   long. That is deliberately strict, because Dean is not Deanne and Joan is not Joanna: a person who left must not be
+   credited to a namesake on the list. Or the same letters run together ("lungelo.mnikathi", "loyisojuta").
+   UNIQUE-OR-NOTHING. The block is byte-identical in PULSE, Ops and
+   tools/fetch-referrals.mjs; verify-referrals-short-names.mjs fails if the copies drift. */
+/*REF-SHORT-NAME-BEGIN*/
+function refShortName(toks,people){
+  const sq=s=>String(s||'').replace(/[^a-z0-9]/g,'');
+  const joined=toks.map(sq).join('');
+  if(!joined) return '';
+  const hits=new Set();
+  for(const p of people){
+    if(p.toks.map(sq).join('')===joined){ hits.add(p.code); continue; }
+    if(toks.length<2||p.toks.length<2) continue;
+    const a=sq(toks[0]),b=sq(p.toks[0]);
+    const shorter=a.length<b.length?a:b,longer=a.length<b.length?b:a;
+    const sameSurname=sq(toks[toks.length-1])===sq(p.toks[p.toks.length-1]);
+    if(sameSurname&&shorter.length>=5&&longer.length>=shorter.length*2&&longer.startsWith(shorter)) hits.add(p.code);
+  }
+  return hits.size===1?[...hits][0]:'';
+}
+/*REF-SHORT-NAME-END*/
 function buildIndex(){
   __rkMemo=Object.create(null);   // identity may have changed — every cached resolveKey answer is void
   IDX={byCode:{},byName:{},byCallx:{},tok:[],ruleLabel:{},ruleAlias:{},byAlias:{},near:{},ambig:{}};
@@ -4236,7 +4262,16 @@ function periodRangeRaw(p){
   if(p==='yesterday'){ const y=addDays(today,-1); return mk(y,y); }
   if(p==='7d') return mk(addDays(today,-6),today);
   if(p==='30d') return mk(addDays(today,-29),today);
-  if(p==='mtd') return mk(today.slice(0,7)+'-01',today);
+  if(p==='mtd'){
+    /* A PAST MONTH UNDER MONTH TO DATE (2026-11-06, "they cant filter for the month to date past months"): the picker
+       sat on Calendar month and Cycle only, so this preset could never leave the current month. A past month is complete,
+       so it runs to its last day. mtdMonth is its own field, never S.ui.month, and saveUI() leaves it out: a reload must
+       not quietly show an old month under the words "Month to date". */
+    const mo=S.ui.mtdMonth, now=today.slice(0,7);
+    if(!mo||mo>=now) return mk(now+'-01',today);
+    const [y,m]=mo.split('-').map(Number);
+    return mk(mo+'-01',dkey(new Date(Date.UTC(y,m,0))));
+  }
   if(p==='prevMonth'){ const [y,m]=today.split('-').map(Number);
     return mk(dkey(new Date(Date.UTC(y,m-2,1))),dkey(new Date(Date.UTC(y,m-1,0)))); }
   if(p==='custom'&&S.ui.from&&S.ui.to) return S.ui.from<=S.ui.to?mk(S.ui.from,S.ui.to):mk(S.ui.to,S.ui.from);
@@ -6547,6 +6582,7 @@ function renderTop(){
       ${[['month','Calendar month'],['cycle','Cycle (26th–25th)'],['mtd','Month to date'],['today','Today'],['yesterday','Yesterday'],['7d','Last 7 days'],['30d','Last 30 days'],['prevMonth','Previous month'],['custom','Custom range']]
         .map(([v,l])=>`<option value="${v}" ${preset===v?'selected':''}>${l}</option>`).join('')}</select></div>
     ${(preset==='month'||preset==='cycle')?`<div class="ctl"><input type="month" id="pMonth" value="${S.ui.month}"></div>`:''}
+    ${preset==='mtd'?`<div class="ctl"><input type="month" id="pMtdMonth" aria-label="Month to date: month" max="${sastToday().slice(0,7)}" value="${S.ui.mtdMonth||sastToday().slice(0,7)}"></div>`:''}
     ${preset==='custom'?`<div class="ctl"><input type="date" id="pFrom" value="${S.ui.from||''}"><span class="lab">→</span><input type="date" id="pTo" value="${S.ui.to||''}"></div>`:''}
     ${preset!=='custom'?`<div class="ctl" title="Stop the period on this day. Use it to line the dashboard up with a tracker that was cut earlier — the month keeps its shape, it just ends where you say."><span class="lab">as at</span><input type="date" id="pAsAt" value="${S.ui.asAt||''}">${S.ui.asAt?`<button class="btn ghost" id="pAsAtClear" style="padding:2px 8px" title="show every day again">✕</button>`:''}</div>`:''}
     <div class="ctl"><span class="lab">Campaign</span><select id="fCampG">
@@ -6554,13 +6590,14 @@ function renderTop(){
     <div class="ctl"><span class="lab">Team</span><select id="fTeamG"><option value="">All</option>
       ${tls.map(t=>`<option ${S.ui.team===t?'selected':''}>${esc(t)}</option>`).join('')}</select></div>
     <button class="btn primary" id="btnExportAll" style="margin-left:auto">${I.download}<span>Export report</span></button>`;
-  $('#pPreset').onchange=e=>{ S.ui.preset=e.target.value;
+  $('#pPreset').onchange=e=>{ S.ui.preset=e.target.value; S.ui.mtdMonth='';
     if(e.target.value==='custom'&&!S.ui.from&&M){ S.ui.from=M.range.from; S.ui.to=M.range.to; }
     /* A VIEW CHANGE, NOT A DATA CHANGE (spec 014 V8, 2026-10-07): save() re-stamped _rev and pushed the whole
        multi-MB state to the cloud to remember a preset that lives only in the per-person view (S.ui never
        travels in the shared blob). saveUI, like every other control on this bar. */
     saveUI(); rebuild(); renderAll(); };
   const pm=$('#pMonth'); if(pm) pm.onchange=e=>{ S.ui.month=e.target.value; saveUI(); rebuild(); renderAll(); };
+  const pmd=$('#pMtdMonth'); if(pmd) pmd.onchange=e=>{ S.ui.mtdMonth=e.target.value; rebuild(); renderAll(); };
   const pf=$('#pFrom'), pt=$('#pTo');
   if(pf) pf.onchange=e=>{ S.ui.from=e.target.value; saveUI(); rebuild(); renderAll(); };
   if(pt) pt.onchange=e=>{ S.ui.to=e.target.value; saveUI(); rebuild(); renderAll(); };
@@ -6738,8 +6775,20 @@ function emptyState(){
         : `<b>You are not signed in on this tab.</b> Sign in and the data loads automatically — nothing has been lost.`)
       +`</div></div>`;
   }
-  return `<div class="card"><div class="empty"><div class="big">No data for ${S.ui.month} yet</div>
-    Upload the day's exports in <a class="linky" onclick="go('data')">Data &amp; Uploads</a> — money (Power BI - Active Cases), call records, attendance and QA evaluations.</div></div>`;
+  const mo=((periodRange()||{}).from||S.ui.month||'').slice(0,7);
+  return `<div class="card"><div class="empty"><div class="big">No sales or calls for ${monthLabel(mo)}</div>
+    ${monthCoverage(mo)} To add a month, upload its exports in <a class="linky" onclick="go('data')">Data &amp; Uploads</a> — money (Power BI - Active Cases), call records, attendance and QA evaluations.</div></div>`;
+}
+const monthLabel=mo=>/^\d{4}-\d{2}$/.test(mo||'')?new Date(mo+'-15T00:00:00Z').toLocaleDateString('en-ZA',{month:'long',year:'numeric',timeZone:'UTC'}):'this period';
+/* WHAT IS HELD FOR A MONTH (2026-11-06). January read "No data yet" though its attendance is on file, and it never said
+   why nothing would ever appear: sales and calls start months later. Say what is held and where each source begins. */
+function monthCoverage(mo){
+  const dates=o=>Object.keys(o||{}).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+  const held=[['attendance',S.att],['QA evaluations',S.evals]].filter(([,o])=>dates(o).some(d=>d.startsWith(mo))).map(([n])=>n);
+  const starts=[['sales',S.sales],['calls',S.calls]].map(([n,o])=>({n,first:dates(o)[0]})).filter(s=>s.first&&s.first.slice(0,7)>mo)
+    .map(s=>s.n+' start in '+monthLabel(s.first.slice(0,7)));
+  return (held.length?'AgentOS holds '+held.join(' and ')+' for this month, but a report needs sales or calls. ':'')
+    +(starts.length?starts.join(' and ').replace(/^./,c=>c.toUpperCase())+'.':'');
 }
 
 /* ---------- dashboard ---------- */
@@ -9966,7 +10015,7 @@ window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
   syncMoves:()=>syncCampaignMoves(),        // the campaign move feed (D4), for the harness
   setPeriod:(m,mode)=>{ S.ui.month=m; S.ui.preset=(mode==='cycle')?'cycle':'month'; if(mode)S.ui.mode=mode; saveUI(); rebuild(); renderAll(); },
   setRange:(from,to)=>{ S.ui.preset='custom'; S.ui.from=from; S.ui.to=to; saveUI(); rebuild(); renderAll(); },
-  setPreset:p=>{ S.ui.preset=p; saveUI(); rebuild(); renderAll(); },
+  setPreset:p=>{ S.ui.preset=p; S.ui.mtdMonth=''; saveUI(); rebuild(); renderAll(); },
   setAsAt:d=>{ S.ui.asAt=d||''; saveUI(); rebuild(); renderAll(); },
   sourceEnds,
   orgAt, orgHist:()=>S.orgHist,             // historical attribution, for the harness

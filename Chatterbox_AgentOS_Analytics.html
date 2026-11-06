@@ -2375,6 +2375,27 @@ function _refLev1(a,b){if(a===b)return true;if(a.length<4||b.length<4||Math.abs(
     if(a.length>b.length)i++;else if(b.length>a.length)j++;else{i++;j++}}
   return e+(a.length-i)+(b.length-j)<=1}
 function _refTokMatch(t,rt){if(t===rt)return true;const c=s=>s.replace(/[^a-z0-9]/g,'');return _refLev1(c(t),c(rt))}
+/* A SHORTENED FIRST NAME (2026-11-06). HighLevel's "Kuben Govender" is the list's "Kubenderan Govender" (CB328): five
+   letters apart, so the one-edit tiers refused him and 15 referrals read as 0. Runs only when those tiers found NOBODY,
+   and only for referrals: _ownerCandidates also serves Salesforce owners, so it is left alone. The block is byte-identical
+   in PULSE, Ops and tools/fetch-referrals.mjs; verify-referrals-short-names.mjs fails if the copies drift. */
+/*REF-SHORT-NAME-BEGIN*/
+function refShortName(toks,people){
+  const sq=s=>String(s||'').replace(/[^a-z0-9]/g,'');
+  const joined=toks.map(sq).join('');
+  if(!joined) return '';
+  const hits=new Set();
+  for(const p of people){
+    if(p.toks.map(sq).join('')===joined){ hits.add(p.code); continue; }
+    if(toks.length<2||p.toks.length<2) continue;
+    const a=sq(toks[0]),b=sq(p.toks[0]);
+    const shorter=a.length<b.length?a:b,longer=a.length<b.length?b:a;
+    const sameSurname=sq(toks[toks.length-1])===sq(p.toks[p.toks.length-1]);
+    if(sameSurname&&shorter.length>=5&&longer.length>=shorter.length*2&&longer.startsWith(shorter)) hits.add(p.code);
+  }
+  return hits.size===1?[...hits][0]:'';
+}
+/*REF-SHORT-NAME-END*/
 function refCbOf(row){
   const exact=normCB(row.employee_code)||cbOf(row.agent);
   if(exact&&state.cbInfo[exact])return exact;
@@ -2384,7 +2405,10 @@ function refCbOf(row){
   if(n in _refCache)return _refCache[n];
   // sfOwnerMap already carries every roster identity normalised (Agent Name + Sales Force name → CB)
   const cands=_ownerCandidates(n);   // shared with ownerMatch — one tiered matcher, one doctrine
-  return (_refCache[n]=cands.size===1?[...cands][0]:null);
+  if(cands.size)return (_refCache[n]=cands.size===1?[...cands][0]:null);   // ambiguity stays unmatched
+  if(state.ownerAmbig&&state.ownerAmbig[n])return (_refCache[n]=null);   // two agents carry this exact name: sfOwnerMap leaves it out, so say so here
+  const people=Object.keys(state.sfOwnerMap||{}).map(nm=>({toks:nm.split(' '),code:state.sfOwnerMap[nm]}));
+  return (_refCache[n]=refShortName(n.split(' '),people)||null);
 }
 /* Auto-suggest dialler agent -> CB code by name match against attendance */
 function autoMapAgents(){

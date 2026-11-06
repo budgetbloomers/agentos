@@ -145,6 +145,25 @@ function lev1(a, b) { // edit distance ≤1 for typo'd tokens (len ≥4 both sid
 const tokMatch = (t, rt) => t === rt || lev1(clean(t), clean(rt));
 const rosterNames = Object.keys(nameToCB).map(n => ({ n, toks: n.split(' '), cb: nameToCB[n] }));
 const matchCache = {};
+/* A shortened first name (2026-11-06): HighLevel's "Kuben Govender" is the list's "Kubenderan Govender". Same block in
+   PULSE and Ops; verify-referrals-short-names.mjs fails if the copies drift. */
+/*REF-SHORT-NAME-BEGIN*/
+function refShortName(toks,people){
+  const sq=s=>String(s||'').replace(/[^a-z0-9]/g,'');
+  const joined=toks.map(sq).join('');
+  if(!joined) return '';
+  const hits=new Set();
+  for(const p of people){
+    if(p.toks.map(sq).join('')===joined){ hits.add(p.code); continue; }
+    if(toks.length<2||p.toks.length<2) continue;
+    const a=sq(toks[0]),b=sq(p.toks[0]);
+    const shorter=a.length<b.length?a:b,longer=a.length<b.length?b:a;
+    const sameSurname=sq(toks[toks.length-1])===sq(p.toks[p.toks.length-1]);
+    if(sameSurname&&shorter.length>=5&&longer.length>=shorter.length*2&&longer.startsWith(shorter)) hits.add(p.code);
+  }
+  return hits.size===1?[...hits][0]:'';
+}
+/*REF-SHORT-NAME-END*/
 function matchAgent(raw) {
   const n = normName(raw);
   if (!n) return null;
@@ -158,6 +177,7 @@ function matchAgent(raw) {
       const one = rosterNames.filter(r => r.toks.some(rt => tokMatch(toks[0], rt)));
       if (new Set(one.map(r => r.cb)).size === 1) cb = one[0].cb;
     }
+    if (!cb && !subset.length) cb = refShortName(toks, rosterNames.map(r => ({ toks: r.toks, code: r.cb }))) || null;   // ambiguity stays unmatched
   }
   return (matchCache[n] = cb);
 }

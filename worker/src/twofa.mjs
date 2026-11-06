@@ -157,6 +157,18 @@ export async function spendChallenge(DB, token) {
   await DB.del(`app_login_challenges?challenge_hash=eq.${await sha256hex(token)}`);
 }
 
+const SITEVERIFY_MS = 8000;   // Cloudflare slower than this answers as verify_error, not a sign-in that hangs
+const TOKEN_MAX = 2048;       // Cloudflare's own limit on a Turnstile token; anything longer is not one, so it is not forwarded
+
+/* WHAT THE PERSON IS TOLD (2026-11-06). One sentence used to cover every reason and told them all to reload, which fixes
+   only some. Cloudflare's own code goes to auth_log, never to the page. */
+export function humanCheckMessage(reason) {
+  if (reason === "missing") return "Finish the human check, then press Sign in.";
+  if (/timeout-or-duplicate/.test(String(reason || ""))) return "That human check has expired. It has reset, so wait for it to finish and press Sign in again.";
+  if (reason === "verify_error") return "The human check could not be confirmed just now. Wait a moment and try again.";
+  return "The human check did not pass. Reload the page and try again. If it keeps failing, tell your administrator.";
+}
+
 /**
  * Cloudflare Turnstile verification. Rollout switch: with no TURNSTILE_SECRET configured it
  * is skipped (so the feature ships dark and is turned on by setting the secret). Once the
@@ -165,12 +177,14 @@ export async function spendChallenge(DB, token) {
 export async function verifyTurnstile(env, token, ip, fetchImpl) {
   if (!env || !env.TURNSTILE_SECRET) return { ok: true, skipped: true };
   if (!token) return { ok: false, reason: "missing" };
+  if (String(token).length > TOKEN_MAX) return { ok: false, reason: "token_too_long" };
   const doFetch = fetchImpl || fetch;
   try {
     const form = new URLSearchParams({ secret: env.TURNSTILE_SECRET, response: String(token) });
     if (ip) form.set("remoteip", ip);
     const r = await doFetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
       method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form.toString(),
+      signal: AbortSignal.timeout(SITEVERIFY_MS),
     });
     const d = await r.json();
     return { ok: !!d.success, reason: (d["error-codes"] || []).join(",") };

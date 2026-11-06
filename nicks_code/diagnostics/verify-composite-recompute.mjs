@@ -51,7 +51,7 @@ const stats = { window: {}, groups: {}, bands: {}, driversOff: {} };
 for (const a of rated) {
   const id = a.code + ' ' + (a.name || '');
   const days = (a.days || []).slice().sort((x, y) => x.d.localeCompare(y.d));
-  const win = days.filter((r) => r.act > 0).slice(-N);
+  const win = days.filter((r) => r.act > 0 && !r.p).slice(-N);   // CONFIRMED sessions only (rule windowConfirmedOnly): a provisional day is shown, not rated
   const sched = days.filter((r) => r.emp > 0).slice(-N);
   const c = a.composite; const P = Object.fromEntries(c.parts.map((p) => [p.k, p]));
   stats.window[win.length] = (stats.window[win.length] || 0) + 1;
@@ -126,7 +126,7 @@ for (const a of rated) {
   if (a.leads > 0 && P.conv && P.conv.measured) ok(id + ': conversion = period sales ÷ unique leads', near(P.conv.value, (+a.sales || 0) / a.leads * 100, 0.051), P.conv.value + ' vs ' + ((+a.sales || 0) / a.leads * 100));
 }
 const unrated = D.agents.filter((a) => a.composite && a.composite.rated === false);
-ok('every unrated agent has no worked session (nothing to rate is not a zero)', unrated.every((a) => !(a.days || []).some((r) => r.act > 0)), unrated.filter((a) => (a.days || []).some((r) => r.act > 0)).map((a) => a.code).join(' '));
+ok('every unrated agent has no confirmed worked session (nothing to rate is not a zero)', unrated.every((a) => !(a.days || []).some((r) => r.act > 0 && !r.p)), unrated.filter((a) => (a.days || []).some((r) => r.act > 0 && !r.p)).map((a) => a.code).join(' '));
 
 console.log('\nwindows (sessions → agents): ' + JSON.stringify(stats.window) + '\ngroups: ' + JSON.stringify(stats.groups) + '\nbands: ' + JSON.stringify(stats.bands) + (Object.keys(stats.driversOff).length ? '\nDRIVERS OFF: ' + JSON.stringify(stats.driversOff) : ''));
 for (const f of failures.slice(0, 60)) console.log('  FAIL ' + f);

@@ -1,4 +1,4 @@
-import { requires2FA, enforce2FAFor, needsTurnstile, startChallenge, readChallenge, claimAttempt, spendChallenge, CHALLENGE_TRIES, PENDING_SECRET_MIN, TOTP_STEP_MS, findTotpOffset, newSecret, newRecoveryCodes, otpauthURL, verifyTotp, hashRecovery } from './twofa.mjs';
+import { requires2FA, enforce2FAFor, needsTurnstile, humanCheckMessage, startChallenge, readChallenge, claimAttempt, spendChallenge, CHALLENGE_TRIES, PENDING_SECRET_MIN, TOTP_STEP_MS, findTotpOffset, newSecret, newRecoveryCodes, otpauthURL, verifyTotp, hashRecovery } from './twofa.mjs';
 /**
  * App auth — PBKDF2 password hashing (WebCrypto), hashed session tokens,
  * lockout, per-app/per-tab permissions. Backed by app_users / app_sessions /
@@ -191,7 +191,7 @@ export async function login(DB, req, body, ctx, opts = {}) {
      guess per CB never trips a per-account lock; this does. It counts only main-door failures from this address. */
   if (ip) {
     const since = new Date(Date.now() - LOGIN_NET_MIN * 60000).toISOString();
-    const recent = await DB.select(`auth_log?ip=eq.${encodeURIComponent(ip)}&event=like.${encodeURIComponent('login_fail*')}&event=not.like.${encodeURIComponent('login_fail:wimpy:*')}&at=gte.${since}&select=event&limit=${LOGIN_NET_MAX + 1}`).catch(() => []);
+    const recent = await DB.select(`auth_log?ip=eq.${encodeURIComponent(ip)}&or=${encodeURIComponent('(event.like.login_fail*,event.like.human_check_fail*)')}&event=not.like.${encodeURIComponent('login_fail:wimpy:*')}&at=gte.${since}&select=event&limit=${LOGIN_NET_MAX + 1}`).catch(() => []);
     const mine = (recent || []).filter((r) => !String(r.event || '').startsWith('login_fail:wimpy:'));
     if (mine.length >= LOGIN_NET_MAX) return { ok: false, status: 429, error: 'Too many failed sign-ins from this network — wait ten minutes and try again.' };
   }
@@ -202,7 +202,15 @@ export async function login(DB, req, body, ctx, opts = {}) {
      cleanly while TURNSTILE_SECRET is unset. Agent Analytics roles never reach it (needsTurnstile in twofa.mjs). */
   if (opts.turnstile && needsTurnstile(u)) {
     const ts = await opts.turnstile();
-    if (!ts.ok) return { ok: false, status: 403, error: 'Human check failed — please reload the page and try again.' };
+    if (!ts.ok) {
+      /* KEEP THE REASON (2026-11-06): it used to be thrown away, so a failed check left no trace and could not be told
+         from a blocked widget. A separate event name, deliberately not `login_fail…`: failOf() and the per-network limit
+         count those, and a failed human check says nothing about the password, so it must never lock anyone out. */
+      /* An empty token is not logged: anyone can send one in a loop for free, and a blocked widget says so on screen. Every
+         other reason counts toward the per-network limit above, so this table cannot be flooded through this door. */
+      if (ts.reason !== 'missing') defer(log(DB, u.id, u.username, 'human_check_fail:' + String(ts.reason || 'unknown').replace(/[^\w,-]/g, '').slice(0, 80), ip));
+      return { ok: false, status: 403, error: humanCheckMessage(ts.reason), human_check: true };
+    }
   }
   const checked = await checkPassword(DB, u, username, body.password, ip, defer, '');
   if (!checked.ok) return checked;

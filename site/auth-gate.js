@@ -121,26 +121,66 @@
   /* Cloudflare Turnstile widget. Rendered only when a site key is configured on the page
      (window.CBX_TURNSTILE_SITEKEY), matching the server, which skips verification until its
      secret is set. The token is captured into window.__cbxTsToken and sent with the sign-in. */
+  var TS_BLOCKED = 'The human check could not load on this network. A firewall or ad blocker may be stopping it. Turn that off or try another network.';
+  var TS_WAIT_MS = 8000, TS_POLL_MS = 100, TS_SCRIPT_TRIES = 50;
+  var tsPending = null;        // the latest form's render: a re-drawn form replaces it, so only one widget ever appears
+  var tsDead = false;          // the script failed to load, so no token will arrive on this form
+  function tsNote(text) {
+    var n = document.getElementById('cbxTsNote');
+    if (!n) return;
+    n.textContent = text || '';
+    n.style.display = text ? 'block' : 'none';
+  }
   function ensureTurnstile(sitekey, elId) {
-    function render() {
+    tsDead = false;
+    tsPending = function () {
+      tsPending = null;
       try {
         window.turnstile.render('#' + elId, { sitekey: sitekey,
-          callback: function (t) { window.__cbxTsToken = t; },
-          'error-callback': function () { window.__cbxTsToken = ''; },
+          callback: function (t) { window.__cbxTsToken = t; tsNote(''); },
+          'error-callback': function (code) {
+            window.__cbxTsToken = '';
+            tsNote('The human check hit a problem' + (code ? ' (code ' + code + ')' : '') + '. It is trying again. If this stays, reload the page.');
+          },
           'expired-callback': function () { window.__cbxTsToken = ''; } });
-      } catch (e) { /* widget not ready yet */ }
-    }
-    if (window.turnstile) { render(); return; }
+      } catch (e) { tsNote(TS_BLOCKED); }
+    };
+    if (window.turnstile) { tsPending(); return; }
     if (!document.getElementById('cbxTsScript')) {
       var s = document.createElement('script'); s.id = 'cbxTsScript';
       s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-      s.async = true; s.defer = true; s.onload = render; document.head.appendChild(s);
-    } else { setTimeout(render, 300); }
+      s.async = true; s.defer = true;
+      s.onload = function () { if (tsPending) tsPending(); };
+      s.onerror = function () { s.remove(); tsDead = true; tsNote(TS_BLOCKED); };   // removed so the next form tries again
+      document.head.appendChild(s);
+      return;
+    }
+    var tries = 0;
+    (function wait() {
+      if (window.turnstile) { if (tsPending) tsPending(); return; }
+      if (++tries > TS_SCRIPT_TRIES) { tsNote(TS_BLOCKED); return; }
+      setTimeout(wait, TS_POLL_MS * 2);
+    })();
+  }
+  /* SEND ONCE, AND NOT BEFORE THE CHECK IS READY (2026-11-06). A token works once, so a double click or Enter-plus-click
+     spent it twice and the second answer painted "human check failed" over a good sign-in. Sign in stays pressable while
+     the widget works, because a campaign manager comes through this page and needs no token: a hard-disabled button
+     would lock them out on a network that blocks the widget. So it waits a few seconds, then lets the Worker decide. */
+  function whenTokenReady(sitekey, then) {
+    if (!sitekey || tsDead || window.__cbxTsToken) { then(); return; }   // no widget is coming: do not make them wait for it
+    var n = document.getElementById('cbxTsNote');
+    if (n && n.style.display === 'none') tsNote('Finishing the human check…');
+    var waited = 0;
+    (function wait() {
+      if (window.__cbxTsToken || waited >= TS_WAIT_MS) { then(); return; }
+      waited += TS_POLL_MS;
+      setTimeout(wait, TS_POLL_MS);
+    })();
   }
   /* The Turnstile SITE key comes from the Worker (GET /api/login-config), so the human check is switched on with
      Worker settings alone — no page redeploy. Asked once per page load; window.CBX_TURNSTILE_SITEKEY still overrides.
      If the Worker cannot be reached the form shows without the widget, and the Worker decides as always. */
-  var loginCfg = null;
+  var loginCfg = null, loginBusy = false;
   function loginForm(msg, err) {
     if (window.CBX_TURNSTILE_SITEKEY || loginCfg) return loginFormNow(msg, err);
     api('/api/login-config').then(function (r) { loginCfg = (r && r.ok) ? r : {}; loginFormNow(msg, err); });
@@ -154,12 +194,18 @@
       + (msg ? '<div style="font-size:12px;color:#71809B;margin-bottom:12px">' + esc(msg) + '</div>' : '')
       + '<input id="cbxU" placeholder="Username" autocomplete="username" style="width:100%;box-sizing:border-box;background:#F7FAFE;border:1px solid #E3E9F3;color:#0F1E36;border-radius:10px;padding:11px 13px;margin-bottom:9px;font-size:13px">'
       + '<input id="cbxP" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;box-sizing:border-box;background:#F7FAFE;border:1px solid #E3E9F3;color:#0F1E36;border-radius:10px;padding:11px 13px;margin-bottom:14px;font-size:13px">'
-      + (SITEKEY ? '<div id="cbxTs" style="margin-bottom:12px;min-height:65px"></div>' : '')
+      + (SITEKEY ? '<div id="cbxTs" style="margin-bottom:6px;min-height:65px"></div><div id="cbxTsNote" role="status" style="display:none;font-size:12px;color:#71809B;margin-bottom:10px"></div>' : '')
       + '<button id="cbxGo" style="width:100%;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;background:linear-gradient(135deg,#2563EB,#38BDF8);color:#FFFFFF;cursor:pointer">Sign in</button>'
     );
     var go = document.getElementById('cbxGo'), u = document.getElementById('cbxU'), p = document.getElementById('cbxP');
+    loginBusy = false;
     if (SITEKEY) ensureTurnstile(SITEKEY, 'cbxTs');
-    var submit = function () { doLogin(u.value.trim(), p.value); };
+    var submit = function () {
+      var name = u.value.trim(), pass = p.value;
+      if (loginBusy || !name || !pass) return;
+      loginBusy = true; go.disabled = true; go.textContent = 'Signing in…'; go.style.opacity = '.7';
+      whenTokenReady(SITEKEY, function () { doLogin(name, pass); });
+    };
     go.onclick = submit;
     p.onkeydown = function (e) { if (e.key === 'Enter') submit(); };
     u.focus();
@@ -190,8 +236,10 @@
       .catch(function () { return { ok: false, error: 'Cannot reach the server.' }; });
   }
   function doLogin(username, password) {
-    if (!username || !password) return;
-    api('/api/login', { username: username, password: password, page: location.pathname, turnstile: window.__cbxTsToken || '' }).then(function (r) {
+    var token = window.__cbxTsToken || '';
+    window.__cbxTsToken = '';   // single use: it never goes out twice
+    api('/api/login', { username: username, password: password, page: location.pathname, turnstile: token }).then(function (r) {
+      loginBusy = false;
       if (r.twofa) { totpForm(r, username); return; }   // management suite: second step before any token
       if (r._status === 200 && r.token) {
         sessionStorage.setItem(TKEY, r.token);
