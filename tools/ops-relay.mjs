@@ -42,7 +42,10 @@ export function relayDone({ manifestSeen, busy, pulls, quietMs, inflight = 0 }) 
 /** every reason this run failed, as one line ('ops-relay ok' when there is none) */
 export function relayVerdict({ writes = [], busyAtDeadline = false, manifestSeen = false, manifestStatus = 0, maxWaitS = 0 }) {
   const causes = [];
-  for (const w of writes) if (w.status >= 400) causes.push('save refused: ' + w.key + ' ' + w.status + (w.body ? ' ' + w.body : ''));
+  /* A store is judged by its LAST write (2026-11-09). The page retries a refused compare-and-set save, so a 409 followed
+     by a 200 for the same key is a save that landed; reading it as FAILED made a healthy run look broken. */
+  const last = new Map(); for (const w of writes) last.set(w.key, w);
+  for (const w of last.values()) if (w.status >= 400) causes.push('save refused: ' + w.key + ' ' + w.status + (w.body ? ' ' + w.body : ''));
   if (busyAtDeadline) causes.push('DEADLINE: the relay was still loading at ' + maxWaitS + ' s — files left undecided for the next run (raise --wait)');
   if (manifestSeen && manifestStatus >= 400) causes.push('the upload manifest could not be read (HTTP ' + manifestStatus + ')');
   if (!manifestSeen) causes.push('the page never asked for the upload manifest — the relay did not run (boot or sign-in failed?)');

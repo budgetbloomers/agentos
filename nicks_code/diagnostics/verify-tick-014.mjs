@@ -358,6 +358,14 @@ if (relay.mod) {
   ok('files pulled: leave only after 30 s of quiet', relayDone({ manifestSeen: true, busy: false, pulls: 2, quietMs: 20000 }) === false && relayDone({ manifestSeen: true, busy: false, pulls: 2, quietMs: 31000 }) === true);
   const v1 = relayVerdict({ writes: [{ key: 'cb-facts-QA_EVALUATIONS', status: 200, body: '' }, { key: 'cb-facts-VICI_CALL_REPORT', status: 400, body: '{"error":"could not decompress the upload: Memory limit exceeded before EOF."}' }], busyAtDeadline: false, manifestSeen: true, manifestStatus: 200, maxWaitS: 600 });
   ok('a refused save fails the run and the cause names the store, status and reason', v1.failed && /FAILED/.test(v1.line) && /VICI_CALL_REPORT/.test(v1.line) && /400/.test(v1.line) && /Memory limit exceeded/.test(v1.line), v1.line);
+  /* 9 Nov 2026: the relay saved cb-facts-AGENT_LIST, its second save hit its own first one (409), the page retried and
+     saved (200), and the run still read FAILED. A store is judged by its LAST write; a refusal nobody recovered still fails. */
+  const recovered = relayVerdict({ writes: [{ key: 'cb-facts-AGENT_LIST', status: 409, body: '{"error":"version_conflict"}' }, { key: 'cb-facts-AGENT_LIST', status: 200, body: '' }], busyAtDeadline: false, manifestSeen: true, manifestStatus: 200, maxWaitS: 600 });
+  ok('a refused save that a later save of the same store recovered is not a failure', !recovered.failed && recovered.line === 'ops-relay ok', recovered.line);
+  const lost = relayVerdict({ writes: [{ key: 'cb-facts-AGENT_LIST', status: 200, body: '' }, { key: 'cb-facts-AGENT_LIST', status: 409, body: '{"error":"version_conflict"}' }], busyAtDeadline: false, manifestSeen: true, manifestStatus: 200, maxWaitS: 600 });
+  ok('…but a refusal after the last good save still fails the run', lost.failed && /AGENT_LIST 409/.test(lost.line), lost.line);
+  const other = relayVerdict({ writes: [{ key: 'cb-facts-A', status: 409, body: '' }, { key: 'cb-facts-B', status: 200, body: '' }], busyAtDeadline: false, manifestSeen: true, manifestStatus: 200, maxWaitS: 600 });
+  ok('…and another store saving does not recover it', other.failed && /cb-facts-A 409/.test(other.line), other.line);
   const v2 = relayVerdict({ writes: [], busyAtDeadline: true, manifestSeen: true, manifestStatus: 200, maxWaitS: 600 });
   ok('a deadline fails the run and says so', v2.failed && /DEADLINE|still loading/.test(v2.line), v2.line);
   const v3 = relayVerdict({ writes: [], busyAtDeadline: false, manifestSeen: true, manifestStatus: 401, maxWaitS: 600 });

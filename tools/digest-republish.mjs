@@ -130,7 +130,9 @@ await new Promise(r => server.listen(8185, '127.0.0.1', r));
 const b = await chromium.launch({ args: ['--js-flags=--max-old-space-size=8192'] });
 const page = await b.newPage();
 const errs = []; page.on('pageerror', e => errs.push(e.message));
-await page.goto('http://127.0.0.1:8185/index.html', { waitUntil: 'domcontentloaded' });
+/* 90 s, not the 30 s default (2026-11-09): the tick fires a minute after the laptop wakes, while Windows and OneDrive are
+   still busy, and a 1 MB local page missed 30 s once and cost that run's publish. It loads in seconds otherwise. */
+await page.goto('http://127.0.0.1:8185/index.html', { waitUntil: 'domcontentloaded', timeout: 90000 });
 await page.waitForFunction(() => window.__mtd && window.__mtd.state(), null, { timeout: 30000 });
 await page.evaluate(x => { const S = window.__mtd.state(); const o = JSON.parse(x);
   for (const k of Object.keys(o)) S[k] = o[k]; window.__mtd.rebuild(); }, blob);
