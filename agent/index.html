@@ -6120,6 +6120,32 @@ function coachAgreed(s){
   var t=(s&&(s.agentFeedback||s.agreedPlanAgentFeedback||s.wayForward))||'';
   return t?esc(t):'';
 }
+/* Every written field of a session, labelled, in the order the Hub form asks them. Empty fields are left out; a session
+   with no written content at all (a team leader's drill-in) returns '' so it stays a line. Everything is escaped. */
+var COACH_FIELDS={
+  qualityAssuranceCoaching:[['callDate','Call date','date'],['developmentAreas','Development areas'],['teamLeaderComments','Team leader comments'],['agentFeedback','Your feedback']],
+  formalCoachingCalls:[['callNotes','Call notes','list'],['supportProvided','Support provided'],['agreedPlanAgentFeedback','Agreed plan']],
+  informalCoaching:[['teamLeaderFeedback','Team leader feedback'],['wayForward','Way forward'],['agentFeedback','Your feedback']],
+  groupCoaching:[['coachingDetails','What was covered']],
+  leadManagementCoaching:[['developmentAreas','Development areas'],['sosComments','SOS comments'],['agentFeedback','Your feedback']]
+};
+var COACH_ANY=[['callNotes','Call notes','list'],['supportProvided','Support provided'],['agreedPlanAgentFeedback','Agreed plan'],['teamLeaderFeedback','Team leader feedback'],
+  ['wayForward','Way forward'],['developmentAreas','Development areas'],['teamLeaderComments','Team leader comments'],['sosComments','SOS comments'],['coachingDetails','What was covered'],['agentFeedback','Your feedback']];
+function coachFull(s){
+  if(!s) return '';
+  var fields=COACH_FIELDS[s.collection]||COACH_ANY, text=false;
+  var out=fields.map(function(f){
+    var v=s[f[0]];
+    if(f[2]==='list'){ var items=(Array.isArray(v)?v:[v]).filter(function(x){return x!=null&&String(x).trim()!=='';});
+      if(!items.length) return ''; text=true;
+      return '<div class="sblk"><label>'+f[1]+'</label><ul style="margin:4px 0 0;padding-left:18px">'+items.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul></div>'; }
+    if(v==null||String(v).trim()==='') return '';
+    if(f[2]==='date') return '<div class="sblk"><label>'+f[1]+'</label><p>'+esc(coachDate(v))+'</p></div>';
+    text=true;
+    return '<div class="sblk"><label>'+f[1]+'</label><p>'+esc(v).replace(/\n/g,'<br>')+'</p></div>';
+  }).join('');
+  return text?out:'';
+}
 function coachHTML(c,quiet){
   if(!c) return '';
   if(c.error) return '<div class="card"><h3>Coaching</h3><p class="why" style="margin:0">'
@@ -6137,16 +6163,22 @@ function coachHTML(c,quiet){
     : '';
   var anyScored=(mine.themes||[]).some(function(t){return t.scored>0;});
 
-  var list=sess.slice(0,6).map(function(s){
-    var said=coachSaid(s), agreed=coachAgreed(s);
+  /* EVERY SESSION, ALL OF IT, ON THE AGENT'S OWN COACHING TAB (2026-11-10: "allow them to open and view only what they
+     were coached on"). The Worker already sends an agent only their own sessions, with the written content, and group
+     sessions without the other attendees. The page showed the newest six and one or two fields of each. The quiet
+     preview (the not-yet-reported page) keeps its six lines and its two-field wording. */
+  var list=(quiet?sess.slice(0,6):sess).map(function(s){
     var head='<b>'+esc(s.typeLabel)+'</b>'
       +'<span class="sdate">'+esc(coachDate(s.date))+(s.qaScore?' · QA '+esc(s.qaScore):'')+(coachByLine(s)?' · '+coachByLine(s):'')+'</span>';
+    var body;
+    if(quiet){
+      var said=coachSaid(s), agreed=coachAgreed(s);
+      body=(said?'<div class="sblk"><label>What was discussed</label><p>'+said+'</p></div>':'')
+        +(agreed?'<div class="sblk"><label>What you agreed</label><p>'+agreed+'</p></div>':'');
+    } else body=coachFull(s);
     /* No written content travels to a team leader (spec 004): their drill-in gets the line, not an expander with nothing in it. */
-    if(!said&&!agreed) return '<div class="sess"><div class="srow">'+head+'</div></div>';
-    return '<details class="sess"><summary>'+head+'</summary>'
-      +(said?'<div class="sblk"><label>What was discussed</label><p>'+said+'</p></div>':'')
-      +(agreed?'<div class="sblk"><label>What you agreed</label><p>'+agreed+'</p></div>':'')
-      +'</details>';
+    if(!body) return '<div class="sess"><div class="srow">'+head+'</div></div>';
+    return '<details class="sess"><summary>'+head+'</summary>'+body+'</details>';
   }).join('');
 
   return '<div class="card"><h3>Your coaching <span class="cnt">'+sess.length+'</span></h3>'

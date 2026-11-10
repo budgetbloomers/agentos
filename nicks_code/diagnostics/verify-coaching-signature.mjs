@@ -216,7 +216,9 @@ try {
     const informal = { type: 'Informal Coaching', collection: 'informalCoaching', teamLeaderFeedback: 'Good energy.', agentFeedback: 'Thanks.', wayForward: 'Keep it up.' };
     ok('informal is unchanged: discussed = team leader feedback, agreed = agent feedback', /Good energy/.test(text(P.coachSaid(informal))) && /Thanks/.test(text(P.coachAgreed(informal))));
     const card = P.coachHTML({ windowDays: 90, coachingAt: '2026-10-05T06:00:00Z', agents: [{ code: 'CB1', sessions: [formal], themes: [] }] });
-    ok('the agent card shows "What was discussed" for a formal session', /What was discussed/.test(text(card)) && /Rushed the close/.test(text(card)), text(card).slice(0, 300));
+    /* 10 Nov 2026: the agent's own card shows every field under its own label (verify-agent-coaching-open), so a formal
+       session reads "Call notes" and "Support provided" where it read "What was discussed". The point stands: the notes show. */
+    ok('the agent card shows a formal session\'s call notes and support, labelled', /Call notes/i.test(text(card)) && /Rushed the close/.test(text(card)) && /Support provided/i.test(text(card)), text(card).slice(0, 300));
     ok('…and escapes what it prints', !P.coachSaid({ collection: 'formalCoachingCalls', callNotes: ['<img src=x onerror=alert(1)>'] }).includes('<img'));
   }
   /* =================================================================== E */
