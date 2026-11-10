@@ -759,6 +759,12 @@ textarea.cc{font-weight:500;line-height:1.5;resize:vertical}
 .login input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.14)}
 .login .primary{width:100%;margin-top:18px;border:none;border-radius:10px;padding:13px;font-weight:800;font-size:14px;background:var(--blue);color:#fff}
 .login .primary:disabled{opacity:.6}
+/* SEE WHAT YOU TYPED (10 Nov 2026): a Show button inside the password box, and an amber line for Caps Lock / Num Lock */
+.login .pwrow{position:relative}
+.login .pwrow input{padding-right:72px}
+.login .pwshow{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:none;background:transparent;color:var(--blue);font-weight:800;font-size:12.5px;padding:8px 10px;border-radius:8px;cursor:pointer}
+.login .pwshow:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.login .pwwarn{background:var(--amber-soft);border:1px solid #EDD9A3;color:var(--amber);font-size:12.5px;font-weight:700;line-height:1.45;padding:8px 11px;border-radius:9px;margin-top:8px}
 .err{background:var(--red-soft);border:1px solid #F2B8B8;color:var(--red);font-size:12.5px;padding:9px 12px;border-radius:10px;margin-bottom:12px;font-weight:600}
 
 /* ============ STATES ============ */
@@ -4352,12 +4358,51 @@ function loginScreen(msg){
     +'<input id="cb" type="text" inputmode="text" autocomplete="username" autocapitalize="characters" '
     +'placeholder="CB123" aria-label="CB number">'
     +'<label for="pw">Password</label>'
-    +'<input id="pw" type="password" autocomplete="current-password" placeholder="Your password" aria-label="Password">'
+    +'<div class="pwrow"><input id="pw" type="password" autocomplete="current-password" placeholder="Your password" aria-label="Password" aria-describedby="pwWarn">'
+    +'<button type="button" class="pwshow" id="pwShow" aria-pressed="false" aria-controls="pw">Show</button></div>'
+    +'<div class="pwwarn" id="pwWarn" role="status" aria-live="polite" style="display:none"></div>'
     +'<div id="hc" style="display:none;margin:10px 0"></div>'
     +'<button class="primary" id="go">Sign in</button>'
     +'</div>'
     +'<p class="why" style="text-align:center;margin-top:14px">Not sure of your CB number or password? Ask your team leader.</p>');
-  var cb=$('cb'), pw=$('pw'), go=$('go');
+  var cb=$('cb'), pw=$('pw'), go=$('go'), show=$('pwShow'), warnEl=$('pwWarn');
+  /* SEE WHAT YOU TYPED (10 Nov 2026). Twelve people were refused 39 times between 15:00 and 15:53 on new Linux PCs while
+     agentos123 was right for every one of them: what arrived was not what they meant, and a box of dots cannot show why.
+     Show reveals it; the amber line names Caps Lock, and Num Lock the moment a keypad digit fails to go in (Linux PCs
+     often start with Num Lock off: the keypad then sends End/Down/PgDn and "123" never arrives). The same facts go to the
+     server as `hints` (four yes/no words, never the password) and land on the audit row (worker/src/signin-client.mjs).
+     The password itself is sent exactly as it is in the box: never trimmed, never changed. */
+  var typing={caps:false,capsNow:false,numpad:false,numNow:false,typed:0};
+  var drawWarn=function(){ var t=[];
+    if(typing.capsNow) t.push('Caps Lock is on.');
+    if(typing.numNow) t.push('Num Lock is off, so the numbers on the keypad are not going in. Press Num Lock, or use the number keys above the letters.');
+    warnEl.textContent=t.join(' '); warnEl.style.display=t.length?'block':'none'; };
+  pw.addEventListener('keydown',function(e){
+    if(e.getModifierState){ typing.capsNow=!!e.getModifierState('CapsLock'); if(typing.capsNow) typing.caps=true;
+      if(e.getModifierState('NumLock')) typing.numNow=false; }                 // a key that reports Num Lock on clears it
+    if(e.key==='NumLock') typing.numNow=false;                               // they are pressing it: take the warning down
+    /* a keypad digit that arrives as End/ArrowDown/PageDown… means Num Lock is off — unless Shift is held, which sends
+       the same keys with Num Lock ON */
+    else if(/^Numpad[0-9]$/.test(e.code||'')&&!e.shiftKey){ typing.numNow=!/^[0-9]$/.test(e.key||''); if(typing.numNow) typing.numpad=true; }
+    drawWarn();
+  });
+  /* TYPED vs FILLED is counted from input events, not key presses: phone keyboards and IMEs send keydown 'Unidentified' /
+     'Process', and AltGr characters come with ctrlKey set, but all of them arrive as insertText / insertCompositionText.
+     A saved password or a paste arrives as anything else (insertReplacementText, insertFromPaste, or no inputType). */
+  pw.addEventListener('input',function(e){
+    if(!pw.value){ typing.caps=typing.numpad=false; typing.typed=0; return; }   // an emptied box starts afresh
+    var t=(e&&e.inputType)||'';
+    if(t==='insertText'||t==='insertCompositionText') typing.typed+=((e.data||'').length||1);
+  });
+  show.onclick=function(){ var on=pw.type==='password'; pw.type=on?'text':'password';
+    show.textContent=on?'Hide':'Show'; show.setAttribute('aria-pressed',on?'true':'false'); try{pw.focus();}catch(e){} };
+  var hintsFor=function(p){ var h=[];
+    if(typing.caps) h.push('caps'); if(typing.numpad) h.push('numpad_off');
+    if(p.length>typing.typed) h.push('filled');          // more in the box than was typed: the browser's saved password, or a paste
+    if(p!==p.trim()) h.push('space');
+    return h; };
+  var tipsFor=function(p){ return (p!==p.trim()?'Your password starts or ends with a space. Remove it. ':'')
+    +'Check that Caps Lock is off and that the numbers went in (use the number keys above the letters, or turn Num Lock on). Press Show to see exactly what you typed.'; };
   var fail=function(m){ var e=$('lerr'); if(e){ e.textContent=m; e.style.display='block'; }
     go.disabled=false; go.textContent='Sign in'; };
   /* THE HUMAN CHECK SHOWS ONLY WHEN THE WORKER ASKS (2026-11-06). Agents, team leaders and campaign managers never need
@@ -4393,7 +4438,7 @@ function loginScreen(msg){
     if(!u||!p) return fail('Enter your CB number and your password.');
     if(hc.shown&&!hc.token) return fail('Finish the human check, then press Sign in.');
     go.disabled=true; go.textContent='Signing in…';
-    var body={username:u,password:p,page:location.pathname};
+    var body={username:u,password:p,page:location.pathname,hints:hintsFor(p)};
     if(hc.shown){ body.turnstile=hc.token; hc.token=''; }
     api('/api/login',body).then(function(r){
       if(r.json&&r.json.twofa){ return totpScreen(r.json); }   // TL / CM: second step before any token
@@ -4404,7 +4449,8 @@ function loginScreen(msg){
         loadPortal();
       } else {
         if(r.json&&r.json.human_check||hc.shown) hcShow();
-        fail(r.json.error||'Sign in failed.');
+        var said=(r.json&&r.json.error)||'Sign in failed.';
+        fail(r.status===401?said+' '+tipsFor(p):said);   // 401 = the password did not match; a lock, a limit or an outdated page get no typing tips
       }
     });
   };

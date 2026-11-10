@@ -1,7 +1,10 @@
-/** Minimal Supabase PostgREST client for Workers (service key, RLS bypass). */
-export function db(env) {
+/** Minimal Supabase PostgREST client for Workers (service key, RLS bypass).
+ *  `headers` (optional) go on every request this client makes. Used once: /api/login sends x-cbx-signin, which
+ *  migration-070's column default copies onto the auth_log rows of that sign-in (worker/src/signin-client.mjs). */
+export function db(env, headers = {}) {
   const base = env.SUPABASE_URL + '/rest/v1/';
   const H = {
+    ...headers,                     // first: an extra header can never replace the key or the content type
     apikey: env.SUPABASE_SECRET_KEY,
     Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY,
     'Content-Type': 'application/json',

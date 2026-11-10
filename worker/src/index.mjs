@@ -5,6 +5,7 @@
  * IRON RULE: the LLM explains numbers, it never computes them.
  */
 import { db } from './db.mjs';
+import { signinClient } from './signin-client.mjs';
 import { login, completeTotp, logout, session, hashPassword, changePassword } from './auth.mjs';
 import { verifyTurnstile } from './twofa.mjs';
 import { retrieveKB } from './kb.mjs';
@@ -761,7 +762,10 @@ export default {
         /* HUMAN CHECK (Cloudflare Turnstile): login() runs it for the management-suite staff roles only, before any
            password work. Dark until TURNSTILE_SECRET is set — verifyTurnstile() skips cleanly when unset. */
         const turnstile = () => verifyTurnstile(env, lb && (lb['cf-turnstile-response'] || lb.turnstile), req.headers.get('cf-connecting-ip') || '');
-        const r = await login(DB, req, lb, ctx, { enforce: env.TWOFA_ENFORCE, turnstile });   // ctx: audit writes finish after the response; enforce: 2FA rollout switch
+        /* WHICH BROWSER, PAGE AND TYPING FACTS (10 Nov 2026, worker/src/signin-client.mjs): this one client sends them as
+           x-cbx-signin, and migration-070's column default copies them onto every auth_log row of this sign-in. */
+        const LDB = db(env, { 'x-cbx-signin': signinClient(req.headers.get('user-agent'), lb) });
+        const r = await login(LDB, req, lb, ctx, { enforce: env.TWOFA_ENFORCE, turnstile });   // ctx: audit writes finish after the response; enforce: 2FA rollout switch
         if (!r.ok) return json(r.human_check ? { error: r.error, human_check: true } : { error: r.error }, r.status);   // human_check: Agent Analytics shows the widget only when asked
         /* SECOND STEP for the AgentOS management suite: the password is proven but NO token is issued
            yet — the page completes /api/login/totp with the authenticator code. Agent Analytics / the
@@ -779,7 +783,7 @@ export default {
         return json({ turnstile_sitekey: env.TURNSTILE_SITEKEY || '' });
       if (path === '/api/login/totp' && req.method === 'POST') {
         const b = await req.json();
-        const r = await completeTotp(DB, req, b, ctx);   // consumes the challenge, verifies the code, mints the session
+        const r = await completeTotp(db(env, { 'x-cbx-signin': signinClient(req.headers.get('user-agent'), { page: b && b.page }) }), req, b, ctx);   // consumes the challenge, verifies the code, mints the session
         if (!r.ok) return json({ error: r.error }, r.status);
         recordOpen(track, { user_id: r.user_id, username: r.user.username, role: r.user.role, team: r.user.team }, b && b.page, 'login');
         return json({ user: r.user, token: r.token });

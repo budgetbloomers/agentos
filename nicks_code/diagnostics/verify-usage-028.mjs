@@ -473,9 +473,10 @@ head('D · pages send their path; no new CORS header');
 {
   const gate = read('site/auth-gate.js'), agent = read('agent/index.html'), widget = read('site/ask-widget.js'), idx = read('worker/src/index.mjs');
   ok(/api\('\/api\/me\?page=' \+ encodeURIComponent\(location\.pathname\)\)/.test(gate), "auth-gate.js boots with /api/me?page=<location.pathname>");
-  ok(/api\('\/api\/login', \{ username: username, password: password, page: location\.pathname \}\)/.test(gate), 'auth-gate.js sends page with the sign-in');
+  /* the sign-in body grew a turnstile token (6 Nov) and the typing hints (10 Nov): what matters here is that page is still in it */
+  ok(/api\('\/api\/login', \{ username: username, password: password, page: location\.pathname[,} ]/.test(gate), 'auth-gate.js sends page with the sign-in');
   ok(/api\('\/api\/portal\/me\?page='\+encodeURIComponent\(location\.pathname\)\)/.test(agent), 'Agent Analytics boots with /api/portal/me?page=<location.pathname>');
-  ok(/api\('\/api\/login',\{username:u,password:p,page:location\.pathname\}\)/.test(agent), 'Agent Analytics sends page with the sign-in');
+  ok(/var body=\{username:u,password:p,page:location\.pathname[,}]/.test(agent) && /api\('\/api\/login',body\)/.test(agent), 'Agent Analytics sends page with the sign-in');
   ok(/"\/api\/ask\?page=" \+ encodeURIComponent\(location\.pathname\)/.test(widget), 'the Ask AgentOS widget sends page');
   ok(idx.includes("'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Cbx-Client,Content-Encoding,X-Cbx-Base'"), 'the CORS header list is unchanged (a query param needs no preflight change)');
 }
