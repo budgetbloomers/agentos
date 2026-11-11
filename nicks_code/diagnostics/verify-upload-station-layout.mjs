@@ -218,6 +218,33 @@ try {
     ok('no page errors (toggle)', page.__errs.length === 0, page.__errs.join(' | '));
     await page.close();
   }
+
+  /* ------------------------------------------------------------------ E ---- */
+  /* THE GREEN CHIP SAYS HOW FAR THE DATA REACHES (11 Nov 2026). At 09:00 a QA export reaching 11 Nov read "up to date —
+     covers 2026-11-09": the chip printed the day the source was EXPECTED to reach (before 13:00 that is two days back),
+     not the day it reaches, so every up-to-date card showed the same date and a fresh upload looked like it had not landed. */
+  {
+    console.log('\nE · the status chip names the day the data reaches');
+    const page = await open(b, 1440, 'light');
+    const r = await page.evaluate(() => {
+      const S = window.__mtd.state();
+      const exp = expectedReach(Date.now(), false);
+      const ahead = new Date(Date.parse(exp + 'T00:00:00Z') + 2 * 864e5).toISOString().slice(0, 10);   // reaches past what is expected
+      S.evals[ahead] = {}; S.sales = { [exp]: {} };                                                  // QA ahead; sales exactly on time
+      renderAll();
+      return { exp, ahead };
+    });
+    await paint(page);
+    Object.assign(r, await page.evaluate(() => {
+      const chip = (t) => (document.querySelector('.slot[data-slot="' + t + '"] .sfoot > .sf-status') || {}).innerText || '';
+      return { evals: chip('evals'), bi: chip('bi') };
+    }));
+    ok('QA reaching past the expected day says the day it reaches', r.evals.startsWith('up to date — covers ' + r.ahead), JSON.stringify(r));
+    ok('…and not the expected day', !r.evals.includes('covers ' + r.exp), JSON.stringify(r));
+    ok('a source exactly on the expected day says that day', r.bi.startsWith('up to date — covers ' + r.exp), JSON.stringify(r));
+    ok('no page errors (chip)', page.__errs.length === 0, page.__errs.join(' | '));
+    await page.close();
+  }
 } finally { await b.close(); srv.close(); }
 
 console.log(`\n${pass} passed, ${fail} failed`);

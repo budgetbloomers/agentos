@@ -8059,7 +8059,9 @@ PAGES.data=()=>{
     const exp=expectedReach(Date.now(),sat), reach=dataReach()[k];
     const behind=!reach||reach<exp;
     const days=reach?Math.round((Date.parse(exp)-Date.parse(reach))/86400000):null;
-    return `<span class="pill ${behind?'pcrit':'pgood'}" title="The day this source should cover by now: by 13:00 SAST it carries yesterday; there is no Sunday data">${behind?'behind — covers '+(reach||'nothing')+', expected '+exp+(days!=null&&days>0?' ('+days+'d short)':''):'up to date — covers '+exp}</span>${cad.owner?`<span class="smuted">owner ${esc(String(cad.owner))}${cad.grace_hours?' · grace '+esc(String(cad.grace_hours))+'h':''}</span>`:''}`;
+    /* up to date names the day the data REACHES, not the day it was expected to (11 Nov 2026: a QA export reaching
+       11 Nov read "covers 2026-11-09" at 09:00, the expected day, and looked like it had not landed) */
+    return `<span class="pill ${behind?'pcrit':'pgood'}" title="${behind?'The day this source should cover by now: by 13:00 SAST it carries yesterday; there is no Sunday data':'Reaches '+reach+'; expected by now: '+exp+' (by 13:00 SAST a source carries yesterday; there is no Sunday data)'}">${behind?'behind — covers '+(reach||'nothing')+', expected '+exp+(days!=null&&days>0?' ('+days+'d short)':''):'up to date — covers '+reach}</span>${cad.owner?`<span class="smuted">owner ${esc(String(cad.owner))}${cad.grace_hours?' · grace '+esc(String(cad.grace_hours))+'h':''}</span>`:''}`;
   }catch(e){ return ''; } };
   /* WHY IT IS BEHIND (2026-10-01). The pill above says how far the register reaches; this says what
      the newest attendance upload actually did, naming the file (attUploadReport) — "behind" with no
