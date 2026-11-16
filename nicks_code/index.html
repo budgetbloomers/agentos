@@ -3088,14 +3088,17 @@ const INGEST={
        the SAME day — so when an evaluation's filing day moves (the call-date -> assessment-
        date change, or QA amending a date at source), the copy on the old day would survive
        and the evaluation would be counted twice. Sweep the incoming Record IDs out of every
-       OTHER day first: the upload then MOVES the evaluation rather than duplicating it. */
+       OTHER day first: the upload then MOVES the evaluation rather than duplicating it.
+       ...AND ONE AGENT (VAS audit, 2026-11-16). QA also moves an evaluation to a different agent
+       on the SAME day (two Stephanies, two Mandisas); the per-agent merge kept the old agent's
+       copy, so 91 evaluations sat under two CBs. The home is (day, agent), not just day. */
     {
       const target={};
-      for(const d of dates) for(const c in byDate[d]) for(const e of byDate[d][c]) if(e.rid) target[e.rid]=d;
+      for(const d of dates) for(const c in byDate[d]) for(const e of byDate[d][c]) if(e.rid) target[e.rid]=d+'|'+c;
       for(const d in S.evals){
         const bk=S.evals[d];
         for(const c in bk){
-          const keep=(bk[c]||[]).filter(e=>{const rid=e&&e.rid; return !(rid&&target[rid]&&target[rid]!==d)});
+          const keep=(bk[c]||[]).filter(e=>{const rid=e&&e.rid; return !(rid&&target[rid]&&target[rid]!==d+'|'+c)});
           if(keep.length) bk[c]=keep; else delete bk[c];
         }
         if(!Object.keys(bk).length) delete S.evals[d];

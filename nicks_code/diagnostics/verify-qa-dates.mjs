@@ -88,6 +88,19 @@ console.log('\n— a re-dated evaluation MOVES, never copies —');
     JSON.stringify(m.R4) + ' — a copy left on the call-date day would double-count the evaluation');
 }
 
+console.log('\n— an evaluation moved to ANOTHER AGENT on the same day MOVES, never copies —');
+{
+  /* VAS audit 2026-11-16: QA re-attributed CB57's 0% to CB21 (same day); the old agent kept a copy,
+     so 91 evaluations sat under two CBs and CB432 read 66.7 instead of 100. */
+  await reset();
+  await ingest('qa-g.csv', HDR + '\n' + row('R7', '2026-11-05', '2026-11-06', '', '0%', 'CB-57'));
+  await ingest('qa-h.csv', HDR + '\n' + row('R7', '2026-11-05', '2026-11-06', '', '0%', 'CB-21'));
+  const m = await evalMap();
+  ok('one copy survives, under the agent the QA tool now names',
+    m.R7 && m.R7.length === 1 && m.R7[0] === '2026-11-06|CB21|0',
+    JSON.stringify(m.R7) + ' — a copy left on CB57 scores a 0% he no longer owns');
+}
+
 console.log('\n— duplicates inside one file count once —');
 {
   await reset();
