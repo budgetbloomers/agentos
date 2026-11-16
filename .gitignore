@@ -53,3 +53,7 @@ specs/team_leader_cbs.json
 # regenerated locally and hold company data; never in the repo.
 reports/tmp/
 reports/*.log
+
+# Usage report output + the SQL export it reads: staff/agent sign-in history, never in git.
+reports/usage/out/
+reports/usage/*.json

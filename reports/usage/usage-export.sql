@@ -1,6 +1,8 @@
 -- AgentOS usage export — READ-ONLY. Paste into the Supabase SQL editor and run.
--- Returns ONE row, ONE column (usage_export): a JSON document. Copy that cell (or
--- "Download CSV") and hand it to Claude to build the usage report.
+-- Returns ONE row, ONE column (usage_export): a JSON document. Save that cell as
+-- reports/usage/usage-export.json (gitignored) and run
+--   node tools/usage-report.mjs --export reports/usage/usage-export.json
+-- to get the PDF in reports/usage/out/ (or hand the file to Claude).
 --
 -- Nothing here writes, and password hashes / session tokens are never selected.
 -- Dates are bucketed in Africa/Johannesburg (SAST), not UTC.
