@@ -1855,6 +1855,10 @@ export default {
         const fieldName = {}; (cf.customFields || []).forEach(f => fieldName[f.id] = f.name);
         const fids = n => Object.keys(fieldName).filter(id => fieldName[id] === n);
         const AGENT = fids('Agent Name');
+        /* "CB Number" (on the form since 9 Nov 2026) is the agent's own code — exact where the free-text name is a guess.
+           Sent as-is when it is a well-formed CB; the consumers decide it against the Agent List (name wins a clash). */
+        const CBNUM = fids('CB Number');
+        const cbOfField = (c) => { const m = /^CB(\d{1,4})$/.exec(fval(c, CBNUM).toUpperCase().replace(/[^A-Z0-9]/g, '')); return m ? 'CB' + parseInt(m[1], 10) : ''; };
         const BLOCKS = [
           ['Full Name and Surname', 'Referral Contact Number'],
           ['Referral 2 Full Name', 'Referral 2 Contact Number'],
@@ -1880,7 +1884,7 @@ export default {
           let n = BLOCKS.filter(ids => fval(c, ids) !== '').length;
           if (!n && (c.tags || []).some(t => /referral/i.test(t))) n = 1;   // tagged referral with empty blocks still counts once
           if (!n) continue;
-          rows.push({ id: c.id, created: String(c.dateAdded || '').slice(0, 10), agent: fval(c, AGENT), referrer: c.contactName || '', count: n });
+          rows.push({ id: c.id, created: String(c.dateAdded || '').slice(0, 10), agent: fval(c, AGENT), referrer: c.contactName || '', count: n, cb: cbOfField(c) });
         }
         const d = { rows, contacts: contacts.length, pulled_at: new Date().toISOString(), next };
         globalThis.__hlPages = globalThis.__hlPages || {};

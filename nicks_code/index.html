@@ -3842,6 +3842,11 @@ const INGEST={
       const p=pick(r); if(!p.cnt) continue;
       total+=p.cnt;
       let code=p.code.toUpperCase().replace(/[^A-Z0-9]/g,'');
+      /* THE CB IS THE ANSWER, UNLESS THE NAME SAYS OTHERWISE (2026-11-16). HighLevel's "CB Number" is exact where the
+         free-text name is a guess — but it is typed by hand, so a CB that is a DIFFERENT list agent from the one the name
+         exactly names is a typo: the name wins the clash, as it does on the Agent List. */
+      const byName=(code&&codes.has(code)&&p.agent&&typeof resolveKey==='function')?resolveKey(p.agent):null;
+      if(byName&&codes.has(byName)&&byName!==code) code=byName;
       if(!codes.has(code)) code=(p.agent&&typeof resolveKey==='function'?resolveKey(p.agent):null)||'';
       if(!(code&&codes.has(code))&&p.agent) code=fuzzy(p.agent,code||S.map[p.agent]);
       if(code&&codes.has(code)){ by[code]=(by[code]||0)+p.cnt;
@@ -10903,7 +10908,7 @@ var SRC=[
    below AND the adoption of the scheduled pull (kv:referrals-latest, written by tools/sync-referrals.mjs)
    both go through it, and so does the headless digest tool (tools/digest-republish.mjs). */
 function referralRecsFromRows(rows){
-  return (rows||[]).map(function(x){return {'Agent Name':x.agent||'','Referral Count':x.count,'Employee Code':'','Created':x.created||'','Contact Id':x.id}});
+  return (rows||[]).map(function(x){return {'Agent Name':x.agent||'','Referral Count':x.count,'Employee Code':x.cb||'','Created':x.created||'','Contact Id':x.id}});   // cb = HighLevel's "CB Number" (2026-11-16)
 }
 /* Is a pull stamped `pulledAt` NEWER than the snapshot already held? S.refs.at is minute-grained ("YYYY-MM-DD HH:MM",
    UTC), so it is read as the END of that minute — a manual sync in the same minute is never overwritten by an older

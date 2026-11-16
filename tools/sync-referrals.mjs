@@ -128,7 +128,7 @@ async function main() {
       if (++parts > 50) throw new Error('referrals pull did not finish after 50 parts — stopped');
     } while (next);
     if (!all.length) throw new Error('HighLevel returned no referral rows');
-    const rows = all.map((x) => ({ id: x.id, created: x.created, agent: x.agent, referrer: x.referrer, count: x.count }));
+    const rows = all.map((x) => ({ id: x.id, created: x.created, agent: x.agent, referrer: x.referrer, count: x.count, cb: x.cb || '' }));
     const latest = { rows, contacts, pulled_at: pulledAt || new Date().toISOString(), slot: slotArg, by: 'tick' };
     const put = await tf(env.SUPABASE_URL + '/storage/v1/object/raw/kv/referrals-latest', { method: 'PUT',
       headers: { ...H, 'Content-Type': 'application/json', 'x-upsert': 'true' }, body: JSON.stringify(latest) });

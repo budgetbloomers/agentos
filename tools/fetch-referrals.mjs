@@ -97,6 +97,7 @@ const cf = await get(`/locations/${LOC}/customFields`);
 const fieldName = {}; (cf.customFields || []).forEach(f => fieldName[f.id] = f.name);
 const fid = name => Object.keys(fieldName).filter(id => fieldName[id] === name);
 const AGENT_IDS = fid('Agent Name');
+const CB_IDS = fid('CB Number');
 const BLOCKS = [
   fid('Full Name and Surname').concat(fid('Referral Contact Number')),
   fid('Referral 2 Full Name').concat(fid('Referral 2 Contact Number')),
@@ -196,7 +197,10 @@ for (const c of contacts) {
   if (!n) { noBlocks++; n = (c.tags || []).some(t => /referral/i.test(t)) ? 1 : 0; } // tagged referral with empty blocks still counts once — flagged below
   if (!n) continue;
   refRows += n;
-  const cb = matchAgent(agentRaw);
+  /* "CB Number" wins when it is on the list, unless the name EXACTLY names a different agent (a typo'd CB) — same rule as PULSE/Ops */
+  const cbM = /^CB(\d{1,4})$/.exec(fval(c, CB_IDS).toUpperCase().replace(/[^A-Z0-9]/g, ''));
+  const cbField = cbM ? 'CB' + parseInt(cbM[1], 10) : '', byName = nameToCB[normName(agentRaw)];
+  const cb = (cbField && cbName[cbField] && !(byName && byName !== cbField)) ? cbField : matchAgent(agentRaw);
   if (!agentRaw) noAgent++;
   const key = cb || ('RAW::' + (normName(agentRaw) || '(no agent)'));
   const e = perAgent.get(key) || { cb, raw: agentRaw || '(no agent)', contacts: 0, refs: 0 };

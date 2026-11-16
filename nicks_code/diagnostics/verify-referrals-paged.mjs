@@ -19,7 +19,7 @@ const ok = (c, s) => { if (c) { pass++; console.log('  ok   ' + s); } else { fai
 
 /* ── a HighLevel contact book shaped like the real one ── */
 const FIELDS = [
-  { id: 'f_agent', name: 'Agent Name' },
+  { id: 'f_agent', name: 'Agent Name' }, { id: 'f_cb', name: 'CB Number' },
   { id: 'f_n1', name: 'Full Name and Surname' }, { id: 'f_c1', name: 'Referral Contact Number' },
   { id: 'f_n2', name: 'Referral 2 Full Name' }, { id: 'f_c2', name: 'Referral 2 Contact Number' },
   { id: 'f_n3', name: 'Referral 3 Full Name' }, { id: 'f_c3', name: 'Referral 3 Contact Number' },
@@ -28,6 +28,7 @@ const FIELDS = [
 ];
 const makeBook = (n) => Array.from({ length: n }, (_, i) => {
   const cf = [{ id: 'f_agent', value: 'Agent ' + (i % 37) }];
+  if (i % 3 === 0) cf.push({ id: 'f_cb', value: i % 9 === 0 ? 'cb-0' + (i % 37) : '0821234567' });   // a CB (any spelling) on some, a phone number typed in the box on others
   const blocks = i % 4;                                        // 0..3 filled referral blocks
   for (let b = 1; b <= blocks; b++) cf.push({ id: 'f_n' + b, value: 'Ref ' + i + '-' + b });
   return { id: 'c' + String(i).padStart(5, '0'), dateAdded: new Date(Date.UTC(2026, 0, 1) + i * 60000).toISOString(),
@@ -38,7 +39,7 @@ const expected = (book) => book.map((c) => {
   const has = (ids) => c.customFields.some((f) => ids.includes(f.id) && String(f.value).trim() !== '');
   let n = [1, 2, 3, 4, 5].filter((b) => has(['f_n' + b, 'f_c' + b])).length;
   if (!n && c.tags.some((t) => /referral/i.test(t))) n = 1;
-  return n ? { id: c.id, created: c.dateAdded.slice(0, 10), agent: c.customFields[0].value, referrer: c.contactName, count: n } : null;
+  return n ? { id: c.id, created: c.dateAdded.slice(0, 10), agent: c.customFields[0].value, referrer: c.contactName, count: n, cb: c.id && (Number(c.id.slice(1)) % 9 === 0) ? 'CB' + (Number(c.id.slice(1)) % 37) : '' } : null;
 }).filter(Boolean);
 
 let BOOK = makeBook(4829);

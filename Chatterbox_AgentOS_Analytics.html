@@ -1868,7 +1868,7 @@ async function syncReferralsFromAPI(quiet){
     }while(next);
     if(!d.rows||!d.rows.length){if(!quiet)toast('HighLevel returned no referral rows.','err');return}
     const parsed={headers:['Contact Id','Created','Agent Name','Referrer','Referral Count'],
-      data:d.rows.map(x=>({'Contact Id':x.id,'Created':x.created,'Agent Name':x.agent,'Referrer':x.referrer,'Referral Count':x.count})),
+      data:d.rows.map(x=>({'Contact Id':x.id,'Created':x.created,'Agent Name':x.agent,'Employee Code':x.cb||'','Referrer':x.referrer,'Referral Count':x.count})),
       textHash:hashStr('hl-referrals|'+d.rows.length+'|'+hashStr(JSON.stringify(d.rows)))};
     const res=applyLoad('REFERRALS',{name:'HighLevel API'},parsed,'HighLevel API sync '+(d.pulled_at||'').slice(0,16));
     (async()=>{try{await saveFacts('REFERRALS');await saveAudit()}catch(e){}})();
@@ -2397,8 +2397,11 @@ function refShortName(toks,people){
 }
 /*REF-SHORT-NAME-END*/
 function refCbOf(row){
-  const exact=normCB(row.employee_code)||cbOf(row.agent);
-  if(exact&&state.cbInfo[exact])return exact;
+  /* HighLevel's "CB Number" arrives as employee_code (2026-11-16). It wins, unless the name EXACTLY names a different
+     list agent — a hand-typed CB is the likelier typo, and the name wins a clash on the Agent List too (same rule as PULSE). */
+  const byCode=normCB(row.employee_code), byName=cbOf(row.agent);
+  if(byCode&&state.cbInfo[byCode]&&!(byName&&state.cbInfo[byName]&&byName!==byCode))return byCode;
+  if(byName&&state.cbInfo[byName])return byName;
   const n=normName(row.agent);
   if(!n)return null;
   if(_refCacheVer!==_dataVer){_refCache={};_refCacheVer=_dataVer}
