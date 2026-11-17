@@ -1069,6 +1069,10 @@ export async function overview(env, DB, user, digest, months, extra) {
     const blockPanelByCamp = {};
     for (const key of auth.campaigns || []) blockPanelByCamp[key] = blockPanelFor(reqs.filter((r) => campKey(r.campaign) === key), (cmCtx && cmCtx.blockages) || [], Date.now());
     return { status: 200, body: { ...base, scope: 'campaign', staff: false,
+      /* THE MANAGER'S OWN COACHING HUB WORKSPACE (17 Nov 2026: "when the users login into agent os they have access to the
+         coaching hub with their name"). Same rule as the team leader's: from the SESSION's app_users.hub_ids, never from the
+         request; '' when the account is not linked, and the tab then shows the Hub's own sign-in as before. */
+      hubId: user.hub_ids && user.hub_ids.coaching ? String(user.hub_ids.coaching) : '',
       campaigns: auth.campaigns, cm: body, agents, tlAgg, campAgg, summary,
       assist: assist.error ? { error: assist.error } : { stages: assist.stages, requests: assist.requests,
         kpis: assist.kpis, blockPanel: assist.blockPanel, truncated: assist.truncated, blockPanelByCamp } } };

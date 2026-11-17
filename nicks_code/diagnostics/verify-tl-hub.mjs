@@ -37,8 +37,13 @@ const HUB_URL = 'https://coaching-hub-psi.vercel.app/';
 try {
   /* =================================================================== A */
   head('A · Worker: the team overview carries the leader\'s Coaching Hub id, from the session');
-  const hubLine = PORTAL.match(/^\s*hubId: (.+)$/m);
-  ok('portal.mjs team body has a hubId line', !!hubLine, 'no hubId: in portal.mjs');
+  /* two hubId lines since 17 Nov 2026: the team leader's (team scope only) and the campaign manager's own workspace */
+  const hubLines = [...PORTAL.matchAll(/^\s*hubId: (.+)$/gm)].map((m) => m[1]);
+  const hubLine = hubLines.find((l) => /auth\.scope === 'team'/.test(l)) ? [null, hubLines.find((l) => /auth\.scope === 'team'/.test(l))] : null;
+  const cmLine = hubLines.find((l) => !/auth\.scope/.test(l));
+  ok('portal.mjs team body has a hubId line', !!hubLine, 'no team hubId: in portal.mjs');
+  ok('the campaign body has its own hubId line, from the SESSION, never the request', !!cmLine && /user\.hub_ids\.coaching/.test(cmLine) && !/req\b|url\.|searchParams|query/.test(cmLine) && /: ''/.test(cmLine), cmLine || 'missing');
+  ok('…and it sits in the campaign-scope body', /scope: 'campaign', staff: false,[\s\S]{0,600}?hubId: user\.hub_ids/.test(PORTAL));
   if (hubLine) {
     ok('…read from the SESSION (user.hub_ids.coaching), team scope only', /auth\.scope === 'team'/.test(hubLine[1]) && /user\.hub_ids\.coaching/.test(hubLine[1]), hubLine[1]);
     ok('…never from the request', !/req\b|url\.|searchParams|query/.test(hubLine[1]), hubLine[1]);
@@ -51,7 +56,8 @@ try {
 
   /* =================================================================== B */
   head('B · page, static: the frame\'s address per role; one frame; the native page is off the tab');
-  ok('hubTabUrl() = HUB_APP_URL + ?theme=agentos&leader=<encoded id>', /function hubTabUrl\(\)\{[\s\S]{0,400}?'\?theme=agentos&leader='\+encodeURIComponent\(leader\)/.test(PAGE));
+  ok('hubTabUrl() = HUB_APP_URL + ?theme=agentos&leader=<encoded id>', /function hubTabUrl\(\)\{[\s\S]{0,1200}?'\?theme=agentos&leader='\+encodeURIComponent\(leader\)/.test(PAGE));
+  ok('…a manager\'s own id comes from D.hubId on a CAMPAIGN scope only', /var manager=\(D&&D\.scope==='campaign'&&D\.hubId\)\?String\(D\.hubId\):'';/.test(PAGE));
   ok('…the id comes from D.hubId on a TEAM scope only', /var leader=\(D&&D\.scope==='team'&&D\.hubId\)\?String\(D\.hubId\):'';/.test(PAGE));
   ok('the frame\'s src is assigned from hubTabUrl() and nowhere else', (PAGE.match(/\.src=hubTabUrl\(\)/g) || []).length === 2 && !/\.src=HUB_TAB_URL/.test(PAGE) && !/var HUB_TAB_URL=/.test(PAGE));
   ok('one frame outside #root (document.body.appendChild), dropped on sign-out (cmHubDrop in resetClientState)',
@@ -115,8 +121,12 @@ try {
     P.setD({ scope: 'campaign', campaigns: ['courtesy'] }); P.setView('cm_hub');
     ok('manager: hubTabUrl() is the whole Hub with leader= EMPTY (clears a leader mode left in the tab\'s session storage)', P.hubTabUrl() === HUB_URL + '?theme=agentos&leader=', P.hubTabUrl());
     ok('…isHubView() true on cm_hub, false on coach_team', P.isHubView() === true && (P.setView('coach_team'), P.isHubView() === false));
-    P.setD({ scope: 'campaign', hubId: 'SHOULD_BE_IGNORED' });
-    ok('…a hubId on a non-team payload is ignored', P.hubTabUrl().endsWith('&leader='), P.hubTabUrl());
+    /* 17 Nov 2026: a LINKED manager opens their own workspace (&manager=), never leader mode */
+    P.setD({ scope: 'campaign', hubId: 'jx71jqkctzdrw2t3' });
+    ok('…a linked manager: leader= stays EMPTY and &manager=<their id> opens their own workspace', P.hubTabUrl() === HUB_URL + '?theme=agentos&leader=&manager=jx71jqkctzdrw2t3', P.hubTabUrl());
+    P.setD({ scope: 'team', hubId: 'jx7leader0001' }); P.setView('coach_team');
+    ok('…a team leader never gets &manager= (their lock stays)', !/manager=/.test(P.hubTabUrl()) && /leader=jx7leader0001$/.test(P.hubTabUrl()), P.hubTabUrl());
+    P.setView('cm_hub');
     P.setD({ scope: 'all', staff: true, hubId: 'X' }); P.setView('coach_team');
     ok('staff preview (scope all): no frame either', P.tlHubLinked() === false && P.isHubView() === false);
 

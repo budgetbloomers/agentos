@@ -5390,7 +5390,11 @@ var CMC={d:null,busy:false,err:null,tl:'',key:'',seq:0};
    session's app_users.hub_ids), never typed or chosen here. Read when the frame is created (once per sign-in). */
 function hubTabUrl(){
   var leader=(D&&D.scope==='team'&&D.hubId)?String(D.hubId):'';
-  return HUB_APP_URL+'?theme=agentos&leader='+encodeURIComponent(leader);
+  /* A LINKED CAMPAIGN MANAGER OPENS THEIR OWN WORKSPACE, signed in by their AgentOS session (17 Nov 2026). `manager=` pins the
+     Hub to it like leader mode but WITHOUT the team-leader lock — exactly what their Hub password gave them. `leader=` stays
+     empty on this tab, so a leader's frame earlier in the same browser tab can never leak in. */
+  var manager=(D&&D.scope==='campaign'&&D.hubId)?String(D.hubId):'';
+  return HUB_APP_URL+'?theme=agentos&leader='+encodeURIComponent(leader)+(manager?'&manager='+encodeURIComponent(manager):'');
 }
 function tlHubLinked(){ return !!(D&&D.scope==='team'&&D.hubId); }
 /* the views that ARE the Hub frame: the manager's tab, and the team leader's once their account is linked */
