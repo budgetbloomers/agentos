@@ -37,7 +37,9 @@ const env = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'supabase.env'), 
 const H = { apikey: env.SUPABASE_SECRET_KEY, Authorization: 'Bearer ' + env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json' };
 const REST = env.SUPABASE_URL + '/rest/v1/';
 const API = 'https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
-const WHO = process.argv.includes('--ryan') ? 'ryan' : 'dalwin';
+/* --user=<username> checks any campaign manager (e.g. a newly granted one); --ryan kept for old runbooks */
+const WHO = (process.argv.find((a) => a.startsWith('--user=')) || '').slice(7).toLowerCase().replace(/[^a-z0-9._-]/g, '')
+  || (process.argv.includes('--ryan') ? 'ryan' : 'dalwin');
 
 let pass = 0, fail = 0;
 const ok = (c, n, extra) => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.log('  FAIL ' + n + (extra ? '  → ' + extra : '')); } };
@@ -103,8 +105,9 @@ try {
   const cs = (D.cm ? D.cm.campaigns : []);
   ok(cs.every((c) => c.kpis.pitches === null && c.kpis.checks === null),
     'pitches and both-checks stay null — no source exists for either');
-  ok(cs.every((c) => c.kpis.conv && c.kpis.conv.leads > 0),
-    'conversion reads, on a real unique-lead denominator',
+  /* conversion = Σsales ÷ Σ CLOSED leads since the CM sign-off (Spec Kit 001, 1 Oct) — the old unique-lead field is gone */
+  ok(cs.every((c) => c.kpis.conv && c.kpis.conv.closed > 0 && /closed/.test(c.kpis.conv.basis || '')),
+    'conversion reads, on a real closed-lead denominator',
     cs.map((c) => c.label + ' ' + (c.kpis.conv ? (c.kpis.conv.v * 100).toFixed(1) + '%' : 'null')).join(' · '));
   ok(cs.every((c) => c.kpis.contactRate && c.kpis.attempts && c.kpis.leads),
     'contact rate, attempts per lead and lead volume all read');
@@ -182,7 +185,10 @@ try {
   }
   const pg = await fetch('https://chatterbox-agentos.pages.dev/agent/', { method: 'GET' }).catch(() => null);
   const pcsp = (pg && pg.headers.get('content-security-policy')) || '';
-  ok(/frame-src https:\/\/coaching-hub-psi\.vercel\.app(;|$)/.test(pcsp), 'the deployed /agent/ CSP frames the Hub origin only' + (pcsp ? '' : ' (no CSP header read)'));
+  /* frame-src = the Hub + Cloudflare's human check (Turnstile, sign-in page, since 3 Nov) — and nothing else */
+  const fsrc = ((/frame-src ([^;]*)/.exec(pcsp) || [])[1] || '').trim().split(/\s+/).filter(Boolean);
+  ok(fsrc.includes('https://coaching-hub-psi.vercel.app') && fsrc.every((o) => ['https://coaching-hub-psi.vercel.app', 'https://challenges.cloudflare.com'].includes(o)),
+    'the deployed /agent/ CSP frames the Hub (and only the Hub + the human check)' + (pcsp ? ' — ' + fsrc.join(' ') : ' (no CSP header read)'));
   ok(/frame-ancestors 'self'/.test(pcsp) && /connect-src 'self' /.test(pcsp), 'frame-ancestors and connect-src are as before');
   const html = hh ? await (await fetch(HUB).catch(() => ({ text: async () => '' }))).text() : '';
   const cssPath = (html.match(/href="(\/assets\/[^"]+\.css)"/) || [])[1];
