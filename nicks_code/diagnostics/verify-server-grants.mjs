@@ -56,6 +56,7 @@ const NO = {
   'HR with Ops Workforce only': { username: 'keshree', role: 'hr', apps: ['ops', 'wimpy'], tabs: { ops: ['workforce'] } },
   'vas data tab but no vas app': { username: 'odd', role: 'viewer', apps: ['wimpy'], tabs: { vas: ['data'] } },
   'Wimpy-only support staff': { username: 'cb99', role: 'viewer', apps: ['wimpy'], tabs: {} },
+  'VT report reader (the three VT tabs only, spec 071)': { username: 'vtreader', role: 'viewer', apps: ['vas', 'wimpy'], tabs: { vas: ['vt_mtd', 'vt_weekly', 'vt_daily'] } },
 };
 const YES = {
   'admin (every tab)': { username: 'nicholas', role: 'admin', apps: ['ops', 'vas', 'wimpy'], tabs: null },

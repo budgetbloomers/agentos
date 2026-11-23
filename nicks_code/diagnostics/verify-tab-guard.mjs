@@ -18,6 +18,7 @@ const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } el
 const J = JSON.stringify;
 
 const srv = http.createServer((q, r) => { const u = q.url.split('?')[0];
+  if (u === '/vt-engine.js' || u === '/vt-pages.js') { r.writeHead(200, { 'Content-Type': 'text/javascript' }); fs.createReadStream(path.join(ROOT, 'nicks_code', u.slice(1))).pipe(r); return; }   // the source page's companions (spec 071)
   if (u !== '/' && u !== '/index.html') { r.writeHead(404); r.end(); return; }
   r.writeHead(200, { 'Content-Type': 'text/html' }); fs.createReadStream(PULSE_HTML).pipe(r); });
 await new Promise((res) => srv.listen(8306, '127.0.0.1', res));
@@ -47,6 +48,10 @@ try {
     out.star = await as({ role: 'viewer', tabs: { vas: ['*'] } }, 'adjust', 'go');
     out.admin = await as({ role: 'admin', tabs: {} }, 'adjust', 'go');
     out.dataOnly = await as({ role: 'viewer', tabs: { vas: ['data'] } }, 'dashboard', 'render');
+    /* spec 071 Phase D: the Vehicle Tracking pages are VAS tabs like any other — vt_mtd, vt_weekly, vt_daily */
+    out.vtNone = await as({ role: 'viewer', tabs: { vas: NO_ADJ } }, 'vt_mtd', 'go');
+    out.vtWeekly = await as({ role: 'viewer', tabs: { vas: ['vt_mtd', 'vt_daily'] } }, 'vt_weekly', 'render');
+    out.vtOwn = await as({ role: 'viewer', tabs: { vas: ['vt_mtd', 'vt_weekly', 'vt_daily'] } }, 'vt_daily', 'go');
     window.CBX_USER = undefined; out.anon = await as(undefined, 'adjust', 'render');
     return out;
   });
@@ -58,6 +63,9 @@ try {
   ok('an admin still opens Adjustments', R.admin.tab === 'adjust', J(R.admin));
   ok('an Upload-Station-only account lands on the Upload Station, not the dashboard', R.dataOnly.tab === 'data', J(R.dataOnly));
   ok('before sign-in resolves nothing is decided (the gate overlay covers the page)', R.anon.tab === 'adjust', J(R.anon));
+  ok('VT: an account without the VT tabs does not open vt_mtd', R.vtNone.tab === 'dashboard' && !/Vehicle Tracking/.test(R.vtNone.head), J(R.vtNone));
+  ok('VT: holding vt_mtd + vt_daily, a saved vt_weekly view moves to the first granted page', R.vtWeekly.tab === 'vt_mtd', J(R.vtWeekly));
+  ok('VT: holding the three VT tabs opens VT Daily', R.vtOwn.tab === 'vt_daily' && /Vehicle Tracking/.test(R.vtOwn.head), J(R.vtOwn));
   ok('no page errors', errs.length === 0, errs.join(' | '));
 } finally { await b.close(); srv.close(); }
 console.log(`\n${pass} passed, ${fail} failed`);

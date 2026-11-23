@@ -236,6 +236,7 @@ async function ingest(name, buf, hash, expected, found, opts) {
       banner(null); showReceipt(r);
       toast(LABEL[kind] + ' loaded: ' + num(plan.merged.counts.cases) + ' cases, ' + num(plan.events.length) + ' status changes · VAS money unchanged', '', 9000);
       root.__vtBook = plan.merged.book; root.__vtRoster = roster;
+      if (root.VTPages && typeof root.VTPages.adopt === 'function') { try { root.VTPages.adopt(r, plan.merged.book, roster); } catch (e) { /* the pages re-read the book on their next open */ } }
       if (typeof root.VTStation.afterCommit === 'function') { try { root.VTStation.afterCommit(r, plan.merged.book, roster); } catch (e) { /* the publish (Phase E) reports its own failures */ } }
       return true;
     }
@@ -249,6 +250,413 @@ function retryQuiet() { return root.__vtQuietRetry ? root.__vtQuietRetry() : nul
 return { API: API, LABEL: LABEL, DB_KIND: DB_KIND, REFUSE_OPENING_FIRST: REFUSE_OPENING_FIRST,
   caseRowToDb: caseRowToDb, eventToDb: eventToDb, batches: batches, rosterFromRpc: rosterFromRpc, rosterFromPulse: rosterFromPulse,
   headerOf: headerOf, kindOfSheets: kindOfSheets, workbookAoa: workbookAoa, parseFor: parseFor, lastCountFor: lastCountFor, planCommit: planCommit,
-  receiptLines: receiptLines, slotsHtml: slotsHtml, pick: pick, drop: drop, ingest: ingest, retryQuiet: retryQuiet, afterCommit: null };
+  receiptLines: receiptLines, slotsHtml: slotsHtml, pick: pick, drop: drop, ingest: ingest, retryQuiet: retryQuiet, call: call, must: must, afterCommit: null };
 });
 /* ================= report half (Phase D) below this line ================= */
+/* VT REPORT PAGES — Vehicle Tracking → Month to date / Weekly / Daily in VAS Analytics (spec 071 US5, FR-030..FR-033).
+ *
+ * ENGINE DECIDES, PAGE PAINTS. Every figure on these pages is a field of VTEngine.model() (one call, modelFor below,
+ * the same call the digest publish must use): this half only picks which rows a filter shows, formats them and writes
+ * the same rows to .xlsx. Absent figures read "—", never 0 (Cancelled: no upload carries one, A8). Totals are the
+ * engine's own aggregates (sums of counts, ratios of sums) — never a mean of the rows on screen.
+ * The book is read from GET /api/vt/book?from=<business month start>, the Agent List in force from
+ * /api/vt/roster?on=<month end> (the whole-month rule); a station commit hands both over directly (adopt).
+ * Window: window.VTPages (PULSE: PAGES.vt_mtd|vt_weekly|vt_daily → VTPages.render(view)); Node: require(...).Pages.
+ */
+(function (root, factory) {
+  var node = typeof module === 'object' && module.exports && module.exports.ingest;
+  var api = factory(root, node ? module.exports : root.VTStation);
+  if (node) module.exports.Pages = api; else root.VTPages = api;
+})(typeof self !== 'undefined' ? self : this, function (root, ST) {
+'use strict';
+
+var VIEWS = { mtd: 'Month to date', weekly: 'Weekly', daily: 'Daily' };
+var TAB = { mtd: 'vt_mtd', weekly: 'vt_weekly', daily: 'vt_daily' };
+var PORTAL_ROLES = ['agent', 'team_leader', 'campaign_manager'];   // unmatched sellers' names are for staff only (plan §P)
+var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+var DL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>';
+function E() { return root.VTEngine || (typeof require === 'function' ? require('./vt-engine.js') : null); }
+function R() { return E().VT_RULES; }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function jsq(s) { return esc(String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")); }
+var NF = {};
+function nf(d) { return NF[d] || (NF[d] = new Intl.NumberFormat('en-ZA', { minimumFractionDigits: d, maximumFractionDigits: d })); }
+/* one formatter for the screen and the export check: n count · p percent · d2 two decimals · r rand · s text */
+function fmtCell(t, v) {
+  if (t === 's') return v == null || v === '' ? '—' : String(v);
+  if (v == null || typeof v !== 'number' || !isFinite(v)) return '—';
+  if (t === 'p') return (v * 100).toFixed(1) + '%';
+  if (t === 'd2') return nf(2).format(v);
+  if (t === 'r') return 'R ' + nf(2).format(v);
+  return nf(0).format(v);
+}
+var XFMT = { p: '0.0%', d2: '0.00', r: '"R "#,##0.00', n: '#,##0' };
+function longDay(d) { return d ? (+d.slice(8, 10)) + ' ' + MONTHS[+d.slice(5, 7) - 1].slice(0, 3) + ' ' + d.slice(0, 4) : '—'; }
+function shortDay(d) { return d ? (+d.slice(8, 10)) + ' ' + MONTHS[+d.slice(5, 7) - 1].slice(0, 3) : '—'; }
+function dayName(d) { return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(d + 'T00:00:00Z').getUTCDay()] + ' ' + shortDay(d); }
+function monthOf(key) { return MONTHS[+key.slice(11, 13) - 1] + ' ' + key.slice(6, 10); }
+function sastToday() { return new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 10); }
+function subLabel(s) { var K = R().teams.keys; for (var k in K) if (K[k] === s) return k; return s ? String(s) : 'No sub-campaign'; }
+function subKeys() { var K = R().teams.keys; return Object.keys(K).map(function (k) { return K[k]; }); }
+
+/* ---------------------------------------------------------------- state ---- */
+var C = { book: null, bookFrom: null, bookAt: null, bookId: 0, rosters: {}, fallback: {}, receipts: null, recErr: false,
+  status: 'idle', error: null, pending: null, memo: null, ui: {} };
+function host() { return root.__mtd && typeof root.__mtd.state === 'function' ? root.__mtd.state() : null; }
+function ui() { var S = host(); if (S && S.ui) { S.ui.vt = S.ui.vt || {}; return S.ui.vt; } return C.ui; }
+function saveUi() { if (typeof root.saveUI === 'function') { try { root.saveUI(); } catch (e) { /* a view setting only */ } } }
+function onTab(re) { var S = host(); return !S || !S.ui || re.test(String(S.ui.tab || '')); }
+function repaint() { if (typeof root.renderPage === 'function' && onTab(/^vt_|^data$/)) root.renderPage(); }
+function isStaff() { var u = root.CBX_USER || null; return !!u && PORTAL_ROLES.indexOf(u.role) < 0; }
+function pulseRoster() { var S = host(); return (S && S.roster) || []; }
+function DO() { return typeof root.dataOnlyDay === 'function' ? root.dataOnlyDay : undefined; }   // PULSE's calendar: the VT working days are the VAS ones
+
+/* THE one model call (Phase E's digest publish must use it too, so the screen and the published figures are one set) */
+function modelFor(book, roster, cycleKey) { return E().model(book, roster, { cycleKey: cycleKey, isDataOnlyDay: DO(), aliases: {} }); }
+function latestExtract() {
+  var d = null; (C.receipts || []).forEach(function (u) { if (u.state === 'committed' && u.kind !== 'opening_book' && (!d || u.extract_on > d)) d = u.extract_on; });
+  if (C.book) for (var cn in C.book.cases) { var l = C.book.cases[cn].lastSeen; if (l && (!d || l > d)) d = l; }
+  return d;
+}
+function cycleKeys() {
+  var P = E().periods, first = C.book && C.book.openedOn, out = [];
+  (C.receipts || []).forEach(function (u) { if (u.state === 'committed' && (!first || u.extract_on < first)) first = u.extract_on; });
+  var last = P.cycleOf(sastToday()).key, l = latestExtract(); if (l && P.cycleOf(l).key > last) last = P.cycleOf(l).key;
+  for (var k = first ? P.cycleOf(first).key : last, i = 0; k <= last && i < 60; i++) { out.push(k); k = P.cycleOf(P.addDays(P.cycleByKey(k).to, 1)).key; }
+  return out.reverse();
+}
+function currentCycle() {
+  var P = E().periods, u = ui();
+  if (u.cycle && /^cycle-\d{4}-\d{2}$/.test(u.cycle)) return P.cycleByKey(u.cycle);
+  return P.cycleOf(latestExtract() || sastToday());
+}
+
+/* ---------------------------------------------------------------- loading ---- */
+function env() { return { fetch: root.__vtFetch || undefined }; }
+function fetchReceipts() {
+  return ST.call(env(), 'GET', '/api/vt/uploads?limit=100').then(function (r) { C.receipts = ST.must(r, 'Reading the VT receipts').uploads || []; C.recErr = false; })
+    .catch(function () { C.receipts = C.receipts || []; C.recErr = true; });
+}
+function fetchBook(from) {
+  return ST.call(env(), 'GET', '/api/vt/book?from=' + encodeURIComponent(from)).then(function (r) {
+    C.book = E().bookFromRpc(ST.must(r, 'Reading the Vehicle Tracking book')); C.bookFrom = from; C.bookAt = Date.now(); C.bookId++; C.memo = null; });
+}
+function fetchRoster(cyc) {
+  return ST.call(env(), 'GET', '/api/vt/roster?on=' + cyc.to).then(function (r) { C.rosters[cyc.key] = ST.rosterFromRpc(ST.must(r, 'Reading the Agent List')); C.fallback[cyc.key] = false; })
+    .catch(function () { C.rosters[cyc.key] = ST.rosterFromPulse(pulseRoster()); C.fallback[cyc.key] = true; })
+    .then(function () { C.memo = null; });
+}
+/* what the shown business month still needs: one load at a time, a repaint when it lands */
+function ensure() {
+  if (C.pending || C.status === 'error') return;
+  var job = null, cyc = currentCycle();
+  if (!C.receipts) job = fetchReceipts();
+  else if (!C.book || C.bookFrom > cyc.from) job = fetchBook(cyc.from);
+  else if (!C.rosters[cyc.key]) job = fetchRoster(cyc);
+  if (!job) return;
+  C.status = 'loading';
+  C.pending = job.then(function () { C.status = 'ready'; C.error = null; }, function (e) { C.status = 'error'; C.error = String((e && e.message) || e); })
+    .then(function () { C.pending = null; ensure(); if (!C.pending) repaint(); });
+}
+function ready() { var cyc = currentCycle(); return !!(C.receipts && C.book && C.bookFrom <= cyc.from && C.rosters[cyc.key]); }
+function retry() { C.status = 'idle'; C.error = null; ensure(); repaint(); }
+/* a station commit hands over the merged book (read from the extract's business month) and the roster it used */
+function adopt(receipt, book, roster) {
+  var cyc = E().periods.cycleOf(receipt.extractOn);
+  C.book = book; C.bookFrom = cyc.from; C.bookAt = Date.now(); C.bookId++; C.rosters[cyc.key] = roster; C.fallback[cyc.key] = !!receipt.rosterFallback;
+  C.receipts = null; C.memo = null; C.status = 'idle';
+  if (onTab(/^vt_/)) { ensure(); repaint(); }
+}
+function model() {
+  var cyc = currentCycle(), key = C.bookId + '|' + cyc.key;
+  if (!C.memo || C.memo.key !== key) C.memo = { key: key, M: modelFor(C.book, C.rosters[cyc.key], cyc.key) };
+  return C.memo.M;
+}
+/* working days (the engine's calendar) with no committed upload of a kind, from the first upload to the figures' date */
+function uploadGaps(receipts, M, isDataOnlyDay) {
+  var P = E().periods, have = { bi_fitted: {}, sched_missed: {} }, first = null, out = [];
+  (receipts || []).forEach(function (u) { if (u.state !== 'committed' || !have[u.kind]) return; have[u.kind][u.extract_on] = 1; if (!first || u.extract_on < first) first = u.extract_on; });
+  if (!first || !M || !M.period.asOf) return out;
+  for (var d = first > M.period.from ? first : M.period.from; d <= M.period.asOf; d = P.addDays(d, 1)) {
+    if (!P.isWorkingDay(d, isDataOnlyDay)) continue;
+    var miss = []; if (!have.bi_fitted[d]) miss.push('BI Active Fitted'); if (!have.sched_missed[d]) miss.push('Scheduled & Missed');
+    if (miss.length) out.push({ date: d, missing: miss });
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------- columns ---- */
+function col(h, k, t, l) { return { h: h, k: k, t: t || 'n', l: !!l }; }
+function figCols(view, M) {
+  var c = [col('Sales', 'sales')];
+  if (view === 'mtd') c.push(col('Current', 'current'), col('Rollover', 'rollover'));
+  c.push(col('Fitted', 'fitted'), col('Scheduled', 'scheduled'), col('Missed', 'missed'), col('Cancelled', 'cancelled'),
+    col('Fitted %', 'fitRate', 'p'), col('Missed %', 'missRate', 'p'), col('Scheduled %', 'schedRate', 'p'),
+    col('Fitments done', 'fitDone'), col('Missed appointments', 'missAppt'), col('Due to fit', 'due'));
+  if (view === 'mtd') c.push(col('Working days', 'workingDays'));
+  if (view === 'weekly') c.push(col('Working days', 'wd'));
+  if (view !== 'daily') c.push(col('SPD', 'spd', 'd2'));
+  c.push(col('Target SPD', 'target', 'd2'));
+  if (view !== 'daily') c.push(col('% to target', 'toTarget', 'p'));
+  if (view === 'mtd') c.push(col('Fitment budget %', 'fitBudget', 'p'));
+  c.push(col('Fitted value (incl VAT)', 'value', 'r'));
+  if (view === 'mtd' && M.floor.mtd && M.floor.mtd.noSaleDay > 0) c.push(col('Sales without a sale day', 'noSaleDay'));
+  return c;
+}
+function cellOf(c, row) {
+  if (c.k === 'rating') return row.rating;
+  if (c.t === 's') return row.meta[c.k];
+  var w = row.w || {}; return w[c.k] == null ? null : w[c.k];
+}
+function ratingText(a) {
+  if (!a || !a.rating) return null;
+  if (a.rating.why === 'scheduling') return 'not rated in v1';
+  return a.rating.rated ? a.rating.score.toFixed(1) + ' · ' + a.rating.band : null;
+}
+
+/* ---------------------------------------------------------------- rows: model + filters → tables (no arithmetic) ---- */
+function winOf(obj, view, idx) { if (!obj) return null; return view === 'mtd' ? obj.mtd : view === 'weekly' ? (obj.weeks || [])[idx] : (obj.days || [])[idx]; }
+function agentWin(a, view, idx, f) {
+  if (f.lead) return view === 'mtd' ? (a.leads || {})[f.lead] || null : null;
+  var w = winOf(a, view, idx); if (w && view === 'daily') { w = Object.assign({}, w); w.target = a.target; }   // the list's target, as read (C18)
+  return w;
+}
+function leadOptions(M) { return Object.keys(M.leadAgg).sort(function (a, b) { return (!!M.leadAgg[a].members - !!M.leadAgg[b].members) || String(M.leadAgg[a].label).localeCompare(M.leadAgg[b].label); }); }
+function tlRow(M, code) { return M.tlAgg.filter(function (x) { return x.tlCode === code; })[0] || null; }
+function tlName(M, code) { var t = tlRow(M, code); return t ? t.tl : code; }
+function tlsShown(M, f) { return M.tlAgg.filter(function (t) { return (!f.tl || t.tlCode === f.tl) && (!f.sub || t.subs.indexOf(f.sub) > -1); }); }
+/* the engine aggregate that IS this view's total: lead source → team leader → sub-campaign → floor */
+function totalOf(M, f) {
+  if (f.lead) return { obj: M.leadAgg[f.lead], label: M.leadAgg[f.lead].label + ' total' };
+  if (f.tl) { var t = tlRow(M, f.tl); return { obj: t, label: (t ? t.tl : f.tl) + ' total' + (f.sub && t && t.subs.join() !== f.sub ? ' (all their sub-campaigns)' : '') }; }
+  if (f.sub) return { obj: M.subAgg[f.sub], label: subLabel(f.sub) + ' total' };
+  return { obj: M.floor, label: 'Floor total' };
+}
+function agentTable(view, M, f, idx) {
+  var rows = [], notes = [], groupLead = f.lead && M.leadAgg[f.lead].members;
+  if (f.lead && (view !== 'mtd' || groupLead)) notes.push(view !== 'mtd'
+    ? 'Agent rows by lead source are on Month to date only: the engine splits each agent by lead source for the whole business month. The total row is the lead source\'s own figure.'
+    : 'Agent rows are split by single lead sources; ' + esc(M.leadAgg[f.lead].label) + ' is a group, so only its total is shown.');
+  else {
+    var groups = {};
+    M.agents.forEach(function (a) { if ((!f.tl || a.tlCode === f.tl) && (!f.sub || a.sub === f.sub)) (groups[a.tlCode || ''] = groups[a.tlCode || ''] || []).push(a); });
+    Object.keys(groups).sort(function (x, y) { return String(tlName(M, x) || '~').localeCompare(String(tlName(M, y) || '~')); }).forEach(function (k) {
+      var shown = 0;
+      groups[k].slice().sort(function (x, y) { return String(x.sub).localeCompare(String(y.sub)) || String(x.name).localeCompare(String(y.name)); }).forEach(function (a) {
+        var w = agentWin(a, view, idx, f); if (f.lead && !w) return; shown++;
+        rows.push({ cls: '', code: a.code, meta: { tl: a.tl, sub: subLabel(a.sub), agent: a.name || a.code }, w: w, rating: view === 'mtd' ? ratingText(a) : undefined });
+      });
+      var t = tlRow(M, k);
+      if (t && shown && !f.lead && !f.tl && !f.sub) rows.push({ cls: 'subtotal', meta: { tl: t.tl + ' total', sub: t.subs.map(subLabel).join(', '), agent: '' }, w: winOf(t, view, idx) });
+    });
+  }
+  var un = M.floor.unmatched;   // FR-032: one line, never agent rows; its in-play cases are inside the floor total
+  if (!f.tl && !f.sub && !f.lead && un && un.sellers) rows.push({ cls: 'subtotal', meta: { tl: 'Unmatched sellers (' + un.sellers + ')', sub: '', agent: '' }, w: view === 'mtd' ? { sales: un.cases } : {} });
+  var tot = totalOf(M, f);
+  rows.push({ cls: 'total', meta: { tl: tot.label, sub: '', agent: '' }, w: winOf(tot.obj, view, idx) });
+  var cols = [col('Team leader', 'tl', 's', 1), col('Sub-campaign', 'sub', 's', 1), col('Agent', 'agent', 's', 1)].concat(figCols(view, M));
+  if (view === 'mtd') cols.push(col('Rating', 'rating', 's'));
+  return { cols: cols, rows: rows, notes: notes };
+}
+function aggTable(M, label, items) {
+  return { cols: [col(label, 'name', 's', 1)].concat(figCols('mtd', M)), notes: [],
+    rows: items.map(function (it) { return { cls: it.cls || '', meta: { name: it.name }, w: winOf(it.obj, 'mtd', 0) }; }) };
+}
+function hrsTable(M, f) {
+  var B = R().periods.hrsAheadBuckets, bud = (M.budgets && M.budgets.hrsShare) || {}, cols = [col('Level', 'name', 's', 1), col('Open scheduled', 'total')];
+  B.forEach(function (b) { var lab = b.k === 'past' ? b.label : b.label + ' h';
+    cols.push(col(lab, 'n_' + b.k)); if (b.k !== 'past') cols.push(col(lab + ' share', 's_' + b.k, 'p'), col(lab + ' budget', 'b_' + b.k, 'p')); });
+  var mk = function (name, obj, cls) { var h = (obj && obj.hrsAhead) || {}, w = { total: h.total };
+    B.forEach(function (b) { w['n_' + b.k] = h[b.k]; w['s_' + b.k] = (h.share || {})[b.k]; w['b_' + b.k] = bud[b.k] == null ? null : bud[b.k]; });
+    return { cls: cls || '', meta: { name: name }, w: w }; };
+  var rows = tlsShown(M, f).map(function (t) { return mk(t.tl + ' (team)', t); });
+  if (!f.tl) subKeys().filter(function (s) { return !f.sub || s === f.sub; }).forEach(function (s) { rows.push(mk(subLabel(s) + ' (sub-campaign)', M.subAgg[s], 'subtotal')); });
+  if (!f.tl && !f.sub) rows.push(mk('Floor', M.floor, 'total'));
+  return { cols: cols, rows: rows, notes: [] };
+}
+/* every table a view shows, in order — the screen AND the export are drawn from this one list */
+function tables(view, M, f) {
+  var out = [];
+  if (view === 'mtd') {
+    out.push(Object.assign(agentTable('mtd', M, f, 0), { title: 'Agents', sheet: 'MTD agents' }));
+    if (!f.lead) out.push(Object.assign(aggTable(M, 'Team leader', tlsShown(M, f).map(function (t) { return { name: t.tl, obj: t }; })), { title: 'Team leaders', sheet: 'MTD team leaders' }));
+    if (!f.tl && !f.lead) {
+      var subs = subKeys().filter(function (s) { return !f.sub || s === f.sub; }).map(function (s) { return { name: subLabel(s), obj: M.subAgg[s] }; });
+      if (!f.sub) { if (M.floor.unmatched && M.floor.unmatched.sellers) subs.push({ name: 'Unmatched sellers (' + M.floor.unmatched.sellers + ')', obj: { mtd: { sales: M.floor.unmatched.cases } }, cls: 'subtotal' });
+        subs.push({ name: 'Floor total', obj: M.floor, cls: 'total' }); }
+      out.push(Object.assign(aggTable(M, 'Sub-campaign', subs), { title: 'Sub-campaigns', sheet: 'MTD sub-campaigns' }));
+    }
+    if (!f.tl && !f.sub) {
+      var leads = leadOptions(M).filter(function (l) { return !f.lead || l === f.lead; })
+        .map(function (l) { return { name: M.leadAgg[l].label + (M.leadAgg[l].members ? ' (group)' : ''), obj: M.leadAgg[l], cls: M.leadAgg[l].members ? 'subtotal' : '' }; });
+      if (!f.lead) leads.push({ name: 'Floor total', obj: M.floor, cls: 'total' });
+      out.push(Object.assign(aggTable(M, 'Lead source', leads), { title: 'Lead sources', sheet: 'MTD lead sources',
+        notes: ['Lead source is the Salesforce Source Partner. "Panimax - New Sales" counts as Referral when the seller is on the Referral team, otherwise Predictive; Sales Enablement keeps its own line.'] }));
+    }
+    if (!f.lead) out.push(Object.assign(hrsTable(M, f), { title: 'Hrs Ahead — open Scheduled cases', sheet: 'MTD hrs ahead',
+      notes: ['Hours ahead = appointment day against ' + esc(longDay(M.period.hrsAsAt)) + ' (the day after the latest extract). Each share sits beside its scheduling budget; teams, sub-campaigns and the floor only.'] }));
+  } else if (view === 'weekly') {
+    M.weeks.map(function (w, i) { return { w: w, i: i }; }).filter(function (x) { return x.w.from <= M.period.asOf; }).reverse().forEach(function (x) {
+      out.push(Object.assign(agentTable('weekly', M, f, x.i), { title: 'Week of ' + x.w.label, sub: x.w.from + ' → ' + (x.w.to < M.period.asOf ? x.w.to : M.period.asOf), sheet: 'Week ' + x.w.label }));
+    });
+  } else {
+    var d = dayOf(M, f);
+    out.push(Object.assign(agentTable('daily', M, f, M.dates.indexOf(d)), { title: dayName(d), sub: d, sheet: 'Daily ' + d }));
+  }
+  return out;
+}
+function dayOf(M, f) { return f.day && M.dates.indexOf(f.day) > -1 ? f.day : M.dates[M.dates.length - 1]; }
+function filters() { var u = ui(); return { tl: u.tl || '', sub: u.sub || '', lead: u.lead || '', day: u.day || '' }; }
+function validFilters(M) {   // a saved filter this month does not carry is dropped, never left silently emptying the page
+  var u = ui(), f = filters();
+  if (f.tl && !tlRow(M, f.tl)) f.tl = '';
+  if (f.sub && subKeys().indexOf(f.sub) < 0) f.sub = '';
+  if (f.lead && !M.leadAgg[f.lead]) f.lead = '';
+  u.tl = f.tl; u.sub = f.sub; u.lead = f.lead; return f;
+}
+
+/* ---------------------------------------------------------------- HTML (PULSE's own classes) ---- */
+function tableHtml(t) {
+  var th = t.cols.map(function (c) { return '<th class="' + (c.l ? 'l' : '') + '">' + esc(c.h) + '</th>'; }).join('');
+  var body = t.rows.map(function (r) { return '<tr class="' + r.cls + '"' + (r.code ? ' data-code="' + esc(r.code) + '"' : '') + '>' + t.cols.map(function (c) {
+    return '<td class="' + (c.l ? 'l' : '') + '">' + esc(fmtCell(c.t, cellOf(c, r))) + '</td>'; }).join('') + '</tr>'; }).join('');
+  return '<div class="tablewrap"><table class="data vt-table"><thead><tr>' + th + '</tr></thead><tbody>' + body + '</tbody></table></div>';
+}
+function card(t) {
+  return '<div class="card mt vt-card" data-sheet="' + esc(t.sheet) + '"><div class="cardhead"><div><h3>' + esc(t.title) + '</h3>' + (t.sub ? '<div class="sub">' + esc(t.sub) + '</div>' : '') + '</div></div>'
+    + tableHtml(t) + (t.notes || []).map(function (n) { return '<p class="note" style="margin:10px 0 0;max-width:none">' + n + '</p>'; }).join('') + '</div>';
+}
+function warn(title, sub, body, tone) {
+  return '<div class="card mt vt-state" data-tone="' + (tone || 'warn') + '" style="border-left:3px solid var(' + (tone === 'crit' ? '--crit' : tone === 'info' ? '--accent' : '--amber') + ')"><div class="cardhead"><div><h3>' + title + '</h3>'
+    + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div></div>' + (body ? '<p class="note" style="max-width:none">' + body + '</p>' : '') + '</div>';
+}
+function updatedAt() {
+  var t = null; (C.receipts || []).forEach(function (u) { if (u.state === 'committed' && u.committed_at && (!t || u.committed_at > t)) t = u.committed_at; });
+  var ms = t ? Date.parse(t) : C.bookAt; if (!ms) return '—';
+  return new Date(ms).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function headHtml(view, M) {
+  var cyc = currentCycle();
+  var sub = 'Business month <b>' + esc(monthOf(cyc.key)) + '</b> · ' + esc(shortDay(cyc.from)) + ' – ' + esc(longDay(cyc.to))
+    + (M ? ' · figures to ' + esc(longDay(M.period.asOf)) + ' · updated ' + esc(updatedAt()) : '') + (view === 'weekly' ? ' · weeks run Monday–Saturday' : '');
+  return '<div class="page-head"><h2>Vehicle Tracking — ' + esc(VIEWS[view]) + '</h2><div class="sub vt-period">' + sub + '</div><div class="spacer"></div>'
+    + (M ? '<button class="btn small" id="vtExport" onclick="VTPages.exportView(\'' + view + '\')">' + DL + '<span>Export .xlsx</span></button>' : '') + '</div>';
+}
+function controlsHtml(view, M, f) {
+  var opt = function (v, label, on) { return '<option value="' + esc(v) + '"' + (on ? ' selected' : '') + '>' + esc(label) + '</option>'; };
+  var html = '<select aria-label="Business month" data-vt="cycle" onchange="VTPages.set(\'cycle\',this.value)">'
+    + cycleKeys().map(function (k) { return opt(k, monthOf(k) + ' (26th–25th)', k === currentCycle().key); }).join('') + '</select>';
+  if (M) {
+    html += '<select aria-label="Team leader" data-vt="tl" onchange="VTPages.set(\'tl\',this.value)">' + opt('', 'All team leaders', !f.tl)
+      + M.tlAgg.map(function (t) { return opt(t.tlCode, t.tl, f.tl === t.tlCode); }).join('') + '</select>'
+      + '<select aria-label="Lead source" data-vt="lead" onchange="VTPages.set(\'lead\',this.value)">' + opt('', 'All lead sources', !f.lead)
+      + leadOptions(M).map(function (l) { return opt(l, M.leadAgg[l].label + (M.leadAgg[l].members ? ' (group)' : ''), f.lead === l); }).join('') + '</select>';
+    if (view === 'daily' && M.dates.length) { var d = dayOf(M, f);
+      html += '<button class="btn small" title="Previous day" onclick="VTPages.step(-1)">‹</button><select aria-label="Day" data-vt="day" onchange="VTPages.set(\'day\',this.value)">'
+        + M.dates.slice().reverse().map(function (x) { return opt(x, dayName(x), x === d); }).join('') + '</select><button class="btn small" title="Next day" onclick="VTPages.step(1)">›</button>'; }
+  }
+  html = '<div class="filters vt-filters">' + html + '</div>';
+  if (!M) return html;
+  var on = [f.tl ? 'team leader <b>' + esc(tlName(M, f.tl)) + '</b>' : '', f.sub ? 'sub-campaign <b>' + esc(subLabel(f.sub)) + '</b>' : '', f.lead ? 'lead source <b>' + esc(M.leadAgg[f.lead].label) + '</b>' : ''].filter(Boolean);
+  return html + '<div class="chiprow" style="margin-bottom:6px">' + [['', 'All sub-campaigns']].concat(subKeys().map(function (s) { return [s, subLabel(s)]; })).map(function (c) {
+    return '<button class="chip' + (f.sub === c[0] ? ' on' : '') + '" onclick="VTPages.set(\'sub\',\'' + jsq(c[0]) + '\')">' + esc(c[1]) + '</button>'; }).join('')
+    + (on.length ? '<span class="note" style="margin-left:10px">filtered by ' + on.join(' and ') + ' — <a href="#" onclick="VTPages.clear();return false">clear filters</a></span>' : '') + '</div>';
+}
+function statesHtml(M) {
+  var out = [], cyc = currentCycle(), un = M.floor.unmatched;
+  if (C.fallback[cyc.key]) out.push(warn('Agent List read from this page', 'the server roster could not be reached', 'Sub-campaigns are unknown until the Worker answers, so agents sit under "No sub-campaign" and the fitment budgets read "—". Refresh to try again.'));
+  if (C.recErr) out.push(warn('Upload receipts could not be read', '', 'Missing-day warnings are not checked on this screen until the receipts load again.'));
+  var gaps = uploadGaps(C.receipts, M, DO());
+  if (gaps.length) out.push(warn('A day\'s upload is missing', gaps.length + ' working day' + (gaps.length === 1 ? '' : 's') + ' in this business month',
+    gaps.map(function (g) { return '<b>' + esc(dayName(g.date)) + '</b>: no ' + esc(g.missing.join(' or ')); }).join(' · ')
+    + '. No file carries a sale date, so a sale first seen on the next upload is counted on that later day. Load the missing day\'s files in the Upload Station.'));
+  if (M.trackFrom > M.period.from && !(C.book && C.book.openingBookOn)) out.push(warn('This business month started before the first upload', 'tracked from ' + esc(longDay(M.trackFrom)),
+    'Cases already open on ' + esc(longDay(C.book && C.book.openedOn)) + ' have no sale day: their statuses count, but they are no day\'s sales'
+    + (M.floor.mtd && M.floor.mtd.noSaleDay ? ' (' + fmtCell('n', M.floor.mtd.noSaleDay) + ' in play)' : '') + ', and Target Achievement waits for 5 tracked working days. Loading the opening book once (Upload Station → VT · Opening book) supplies their sale days.'));
+  if (un && un.sellers) out.push(warn('Unmatched sellers (' + un.sellers + ')', fmtCell('n', un.cases) + ' case' + (un.cases === 1 ? '' : 's') + ' in play',
+    'They count in the floor total, never as agent rows. ' + (isStaff() ? 'As Salesforce spells them: <b>' + un.names.map(esc).join('</b>, <b>') + '</b>. ' : '')
+    + 'Add or correct them on the Agent List and they resolve on the next upload.'));
+  var sch = M.notRated.filter(function (n) { return n.why === 'scheduling'; });
+  if (sch.length) out.push(warn('Scheduling agents are listed, not rated in v1', sch.length + ' agent' + (sch.length === 1 ? '' : 's'),
+    'The uploads do not say which scheduler handled a sale, so scheduling agents carry no sales and no rating yet. The Hrs Ahead table is the scheduling-speed view.', 'info'));
+  out.push('<p class="note vt-cancel-note" style="margin:8px 0 0;max-width:none">Cancelled reads "—": no upload carries a cancellation yet, so it is unknown, not zero. Fitted value is the Charge Amount × VAT, not the bundle price.</p>');
+  return out.join('');
+}
+function render(view) {
+  if (!VIEWS[view]) view = 'mtd';
+  if (!E() || !ST) return '<div class="card"><div class="empty"><div class="big">Vehicle Tracking did not load</div>Refresh the page.</div></div>';
+  ensure();
+  if (C.status === 'error') return headHtml(view, null) + warn('The Vehicle Tracking book could not be read', esc(C.error || ''),
+    'Nothing on this page is shown from an old copy. <button class="btn small primary" onclick="VTPages.retry()">Retry</button>', 'crit');
+  if (!ready()) return headHtml(view, null) + '<div class="card vt-loading"><div class="empty"><div class="big">Reading the Vehicle Tracking book…</div>The case book and the Agent List for this business month are loading.</div></div>';
+  var committed = C.receipts.filter(function (u) { return u.state === 'committed'; }).length;
+  if (!Object.keys(C.book.cases).length && !committed) return headHtml(view, null) + '<div class="card vt-empty"><div class="empty"><div class="big">No Vehicle Tracking uploads yet</div>'
+    + 'Load the day\'s <b>BI Active Fitted</b> and <b>Scheduled &amp; Missed</b> exports in the Upload Station; these reports build themselves from them.'
+    + (typeof root.tabAllowed !== 'function' || root.tabAllowed('data') ? '<p style="margin:12px 0 0"><button class="btn small primary" onclick="go(\'data\')">Open the Upload Station</button></p>' : '') + '</div></div>';
+  var M = model(), f = validFilters(M);
+  if (!M.dates.length || !M.period.asOf || M.period.asOf < M.period.from) {
+    var prev = cycleKeys().filter(function (k) { return k < currentCycle().key; })[0];
+    return headHtml(view, null) + controlsHtml(view, null, f) + '<div class="card vt-empty"><div class="empty"><div class="big">No ' + esc(monthOf(currentCycle().key)) + ' figures yet</div>No Vehicle Tracking upload falls in this business month yet.'
+      + (prev ? '<p style="margin:12px 0 0"><button class="btn small" onclick="VTPages.set(\'cycle\',\'' + prev + '\')">' + esc(monthOf(prev)) + ' (final)</button></p>' : '') + '</div></div>';
+  }
+  return headHtml(view, M) + controlsHtml(view, M, f) + statesHtml(M) + tables(view, M, f).map(card).join('');
+}
+
+/* ---------------------------------------------------------------- actions + export ---- */
+function set(k, v) { var u = ui(); u[k] = v == null ? '' : String(v); if (k === 'cycle') u.day = ''; saveUi(); repaint(); }
+function clear() { var u = ui(); u.tl = ''; u.sub = ''; u.lead = ''; saveUi(); repaint(); }
+function step(dir) { if (!ready()) return; var M = model(), i = M.dates.indexOf(dayOf(M, filters())) + dir; if (i >= 0 && i < M.dates.length) set('day', M.dates[i]); }
+function exportValue(c, r) { var v = cellOf(c, r); if (c.t === 's') return v == null || v === '' ? '—' : String(v); return typeof v === 'number' && isFinite(v) ? v : '—'; }
+/* the workbook of a view: one sheet per table on screen, the same rows and columns, generated now from the model */
+function workbookFor(view) {
+  if (!ready() || !VIEWS[view]) return null;
+  var M = model(); if (!M.dates.length) return null;
+  var f = validFilters(M), used = {};
+  var sheets = tables(view, M, f).map(function (t) {
+    var nm = String(t.sheet).replace(/[:\\\/?*\[\]]/g, '-').slice(0, 31), i = 1; while (used[nm]) nm = (String(t.sheet).slice(0, 27) + ' ~' + (i++)).slice(0, 31); used[nm] = 1;
+    return { name: nm, cols: t.cols, aoa: [t.cols.map(function (c) { return c.h; })].concat(t.rows.map(function (r) { return t.cols.map(function (c) { return exportValue(c, r); }); })) };
+  });
+  var tag = [f.tl ? tlName(M, f.tl) : '', f.sub ? subLabel(f.sub) : '', f.lead ? M.leadAgg[f.lead].label : ''].filter(Boolean).join(' ') || 'All';
+  return { sheets: sheets, name: ('VT ' + VIEWS[view] + ' - ' + tag + ' - ' + monthOf(M.period.key) + ' to ' + shortDay(view === 'daily' ? dayOf(M, f) : M.period.asOf)).replace(/[\\\/:*?"<>|]+/g, '-') + '.xlsx' };
+}
+function exportView(view) {
+  var X = root.XLSX, wb = workbookFor(view), say = typeof root.toast === 'function' ? root.toast : function () {};
+  if (!wb) { say('Nothing to export yet'); return null; }
+  if (!X || !X.writeFile) { say('Spreadsheet library not loaded - refresh and retry'); return null; }
+  var book = X.utils.book_new();
+  wb.sheets.forEach(function (s) {
+    var ws = X.utils.aoa_to_sheet(s.aoa);
+    s.cols.forEach(function (c, ci) { if (XFMT[c.t]) for (var ri = 1; ri < s.aoa.length; ri++) { var a = X.utils.encode_cell({ r: ri, c: ci }); if (ws[a] && ws[a].t === 'n') ws[a].z = XFMT[c.t]; } });
+    X.utils.book_append_sheet(book, ws, s.name);
+  });
+  root.__vtLastExport = { name: wb.name, sheets: wb.sheets.map(function (s) { return { name: s.name, aoa: s.aoa, types: s.cols.map(function (c) { return c.t; }) }; }) };
+  X.writeFile(book, wb.name);
+  say('Vehicle Tracking ' + VIEWS[view] + ' exported (.xlsx)');
+  return root.__vtLastExport;
+}
+
+/* ---------------------------------------------------------------- Upload Station: the last 10 VT receipts (D3) ---- */
+function receiptsCardHtml() {
+  var top = '<div class="card mt" id="vtReceipts"><div class="cardhead"><div><h3>Vehicle Tracking uploads</h3><div class="sub">the last 10 files committed to the VT case book</div></div></div>';
+  if (!C.receipts) {
+    if (!C.pending) C.pending = fetchReceipts().then(function () { C.pending = null; repaint(); });
+    return top + '<p class="note">Reading the receipts…</p></div>';
+  }
+  var rows = C.receipts.filter(function (u) { return u.state === 'committed'; }).slice(0, 10);
+  if (!rows.length) return top + '<p class="note">' + (C.recErr ? 'The receipts could not be read.' : 'No Vehicle Tracking file has been uploaded yet.') + '</p></div>';
+  var KIND = { bi_fitted: 'BI Active Fitted', sched_missed: 'Scheduled & Missed', opening_book: 'Opening book' };
+  var H = ['Committed', 'Kind', 'File', 'Extract date', 'Cases', 'New', 'To Fitted', 'To Missed', 'To Scheduled', 'Unmatched sellers', 'Warnings'];
+  return top + '<div class="tablewrap"><table class="data"><thead><tr>' + H.map(function (h, i) { return '<th class="' + (i < 4 ? 'l' : '') + '">' + h + '</th>'; }).join('') + '</tr></thead><tbody>'
+    + rows.map(function (u) { var c = u.counts || {};
+      return '<tr><td class="l">' + esc(u.committed_at ? new Date(u.committed_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', hour12: false }).slice(0, 17) : '—')
+        + '</td><td class="l">' + esc(KIND[u.kind] || u.kind) + '</td><td class="l">' + esc(u.file_name) + '</td><td class="l">' + esc(u.extract_on) + '</td>'
+        + [c.cases, c['new'], c.toFitted, c.toMissed, c.toScheduled, (u.unmatched || []).length].map(function (v) { return '<td>' + esc(fmtCell('n', v)) + '</td>'; }).join('')
+        + '<td>' + esc(fmtCell('n', (u.warnings || []).length) + (u.quiet_day_ack ? ' · quiet day' : '')) + '</td></tr>'; }).join('')
+    + '</tbody></table></div></div>';
+}
+
+return { VIEWS: VIEWS, TAB: TAB, render: render, set: set, clear: clear, step: step, retry: retry, adopt: adopt, exportView: exportView, workbookFor: workbookFor,
+  receiptsCardHtml: receiptsCardHtml, modelFor: modelFor, uploadGaps: uploadGaps, fmtCell: fmtCell, tables: tables,
+  state: function () { return { status: C.status, error: C.error, ready: ready(), cycle: currentCycle().key, model: ready() ? model() : null, book: C.book, receipts: C.receipts, filters: filters() }; },
+  _reset: function () { C.book = null; C.bookFrom = null; C.bookId++; C.rosters = {}; C.fallback = {}; C.receipts = null; C.recErr = false; C.status = 'idle'; C.error = null; C.pending = null; C.memo = null; C.ui = {}; } };
+});

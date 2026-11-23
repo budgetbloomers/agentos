@@ -6551,6 +6551,12 @@ const NAV=[
     ['variance','Variance Report',I.scale],
     ['leads','Lead Management',I.db],
   ]},
+  /* VEHICLE TRACKING (spec 071, Phase D): its own reports, painted from VTEngine.model by vt-pages.js — never the VAS model */
+  {lab:'Vehicle Tracking',items:[
+    ['vt_mtd','VT Month to Date',I.cal],
+    ['vt_weekly','VT Weekly Reports',I.week],
+    ['vt_daily','VT Daily Reports',I.day],
+  ]},
   {lab:'People',items:[
     ['agents','Agent Performance',I.users],
     ['leaderboard','Leaderboards',I.trophy],
@@ -6725,6 +6731,7 @@ function filteredAgents(){
 
 /* ================= pages ================= */
 const PAGES={};
+['mtd','weekly','daily'].forEach(v=>{ PAGES['vt_'+v]=()=>typeof VTPages!=='undefined'?VTPages.render(v):emptyState(); });   // spec 071 Phase D
 /* A HIDDEN TAB IS A CLOSED TAB (Nick, 2026-10-26: "remove the access to adjustments for ashton"). auth-gate only hides
    the nav item; the page itself still opened from a saved view (S.ui.tab is per person) or a go() call. A page this
    account is not granted (app_users.tabs.vas) never renders — they land on their first granted page instead. Before
@@ -6738,7 +6745,7 @@ function renderPage(){
   if(!tabAllowed(S.ui.tab)){ S.ui.tab=NAV.flatMap(g=>g.items.map(i=>i[0])).find(tabAllowed)||'dashboard'; renderSide(); }
   const fn=PAGES[S.ui.tab]||PAGES.dashboard;
   /* the header's report filters stand down on the Upload Station (see header.top.filters-off) */
-  const tb=$('#topbar'); if(tb) tb.classList.toggle('filters-off',S.ui.tab==='data');
+  const tb=$('#topbar'); if(tb) tb.classList.toggle('filters-off',S.ui.tab==='data'||/^vt_/.test(S.ui.tab));   // VT pages carry their own filters (spec 071)
   /* A SEARCH BOX KEEPS ITS FOCUS (spec 014 V9, 2026-10-07). Each search box re-renders the page after a 320 ms
      pause; the skeleton below replaces it at once and the real page only lands two frames later, so the old
      re-focus (run straight after renderPage) found no input and the next keystrokes went nowhere. The box is
@@ -8186,7 +8193,7 @@ PAGES.data=()=>{
     <div class="sub">one slot per file — drop the file on its slot or click Choose file. Renamed files are fine: the type is confirmed from the file's own columns, and anything dropped on the wrong slot gets filed correctly with a heads-up.</div></div>
   <div class="slots">${slotCards}</div>
   ${largeFileCard()}
-  ${typeof VTStation!=='undefined'?VTStation.slotsHtml():''}
+  ${typeof VTStation!=='undefined'?VTStation.slotsHtml():''}${typeof VTPages!=='undefined'?VTPages.receiptsCardHtml():''}
   <div class="card"><div class="cardhead"><div><h3>Uploaded files</h3></div></div>${reg}
     <p class="note" style="margin:10px 0 0">Files are recognised by their <b>content</b> — re-uploading a file that's already loaded (even renamed) is skipped automatically, so you can safely upload your whole export folder every day and only new files are added. Daily sources (sales, calls, attendance, QA) <b>append</b> — each file adds to the history as the month builds up; re-uploading the same day/month refreshes it. The <b>Agent List replaces the roster</b> — upload a fresh one as often as agents join, leave or move. Everything saves to the cloud database, and <b>removing a file here removes it from the database too</b>.</p></div>
   ${cov}${ruleChecksCard()}${unHtml}${nrHtml}`;
