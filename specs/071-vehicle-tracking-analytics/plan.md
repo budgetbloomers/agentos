@@ -403,3 +403,30 @@ account silently becomes portal-only.
 | Companion `.js` files + build inliner | keep PULSE/Agent Analytics from growing past their ceilings while staying file:// and single-file deployed | inlining by hand into PULSE adds ~2,000 lines to an 11k-line file; a plain separate deploy file risks build skew |
 | New tables instead of a KV blob | owner's D12; per-case upsert, trim, no snapshots | a blob is rewritten whole per upload, has no trim point, and races |
 | Business-month digest fence (26th–25th) instead of the calendar month | every VT budget and the report are on the 26th cycle (F2) | a calendar-month VT digest would never match a Sales Review figure |
+
+## Review fixes (Phase C, 2026-11-23)
+
+Security and database review of f9aee56, applied to the UNAPPLIED migrations 071/072 in place, `worker/src/vt.mjs`,
+`verify-vt-db` (R1–R10) and `verify-vt-worker`. Each fix is described where it lives: the 071/072 headers and the
+`vt.mjs` header. Contract changes:
+
+- **RPCs:** `vt_upload_stage(p_id, p_kind, p_from_ord, p_rows, p_user)`, `vt_upload_commit(…, p_events, p_user)`, and
+  `vt_upload_abandon(p_id, p_user)`. `vt_upload_begin`'s `p_user` is now required. The Worker appends `p_user` from the
+  session to all four. `vt_trim` returns `skipped_open`. `vt_roster_at` adds `list_as_of`.
+- **Worker answers:** a POST without a numeric Content-Length → 411. `POST /api/vt/book` is capped at 256 KB.
+  `begin` on a live upload of the same bytes → 409 `{error:'busy', id, since}`. Named refusals → 409 `{error:code, detail}`
+  (`not_owner, upload_too_large, too_many_uploads, bad_extract_on, bad_cycle_key, bad_date, bad_file_name, bad_user,
+  duplicate_case, duplicate_event, bad_receipt, commit_too_large`). A check violation → 409 `{error:'bad_row',
+  detail:<constraint>}`. Anything else → 502 `{error:'vt_<step>_failed'}`.
+- **Station follow-ups (`nicks_code/vt-pages.js`, next phase):** (1) on a commit `version_conflict` (409), call
+  `/api/vt/upload/abandon` for its own `b.id` BEFORE re-beginning. A re-begin within 15 minutes is otherwise `busy`.
+  (2) Handle 409 `busy` in words ("this file is being loaded by another station/tab — try again in a few minutes").
+  Do not stage into the returned id. (3) Name the new refusal codes in words, at least `bad_extract_on`
+  (the file-name date is out of range), `duplicate_case`, `bad_date`, `too_many_uploads` and `bad_row`.
+  (4) Chunk `p_also` above ~15,000 case numbers: union the books by case number and require the same `rev`.
+  (5) Use `list_as_of ≠ as_of` from `/api/vt/roster` to warn that a newer Agent List without VT rows exists.
+  (6) Never send `p_user`, because it is overridden anyway.
+- **Kept on purpose:** an ABANDONED upload may be restarted by any account, which then owns it. Restricting that to
+  the account that abandoned it would strand the file's hash for 13 months. The concurrent-staging cap (4) is a soft
+  bound, checked without a lock. No multi-part commit: 20k cases + 20k events commit in one call in ~1.7 s in PGlite.
+  The per-commit cap is 60,000 rows of each kind.

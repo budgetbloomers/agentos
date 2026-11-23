@@ -8,9 +8,13 @@
  *       a scoped session, a viewer without the grant and an outdated tab (writes) are refused — and reach no RPC
  *   W2  GET/POST /api/vt/book stream vt_book's body untouched (byte-identical), with p_from / p_also passed through
  *   W3  begin/stage/commit/abandon pass the body through; begin's uploaded-by is the SESSION user, never the client's
- *   W4  stage is capped at 512 KB (413), the other bodies at 64 KB (413); a body without a length is refused (411)
+ *   W3b the session uploader is appended to stage/commit/abandon as the LAST key (a client p_user is overridden); a body
+ *       that is not a JSON object is refused (review S-M3)
+ *   W4  stage is capped at 512 KB, the book read at 256 KB, the other bodies at 64 KB (413); a body without a numeric
+ *       length is refused (411); a body longer than it declared is counted and stopped at the cap (review S-M1, S-L2)
  *   W5  commit's version_conflict → 409 {error:'version_conflict'}; the opening-book-first refusal → 409 in words;
- *       any other RPC failure → 502 with a short reason
+ *       every named refusal → 409 {error:code}; a check violation → 409 bad_row; any other RPC failure → 502 with a
+ *       short stable code, the database's words only in the Worker log (review S-L1); begin busy → 409 (review D-H2)
  *   W6  GET /api/vt/uploads (≤ 100, newest first) and GET /api/vt/roster?on= (a date, else 400)
  *   W7  the four write routes are in GATED_WRITES; vt routes are not on the portal allow-list
  *   W8  CPU: handing a 0.6 MB and a 4 MB book to the browser costs the Worker well under the 10 ms FREE-plan budget,
@@ -30,6 +34,7 @@ const done = () => { console.log(`\n==== ${pass} passed, ${fail} failed ====`); 
 const VT = path.join(ROOT, 'worker', 'src', 'vt.mjs');
 ok(fs.existsSync(VT), 'worker/src/vt.mjs exists');
 if (!fs.existsSync(VT)) done();
+const ERRS = []; const err0 = console.error; console.error = (...a) => { ERRS.push(a.map(String).join(' ')); };
 /* the router logs one cbx_heavy object per heavy request (Workers Logs); keep this suite's output to its checks */
 const log0 = console.log; console.log = (...a) => { if (a.length === 1 && a[0] && typeof a[0] === 'object' && a[0].ev === 'cbx_heavy') return; log0(...a); };
 const imp = (rel) => import(pathToFileURL(path.join(ROOT, 'worker', 'src', rel)).href);
@@ -118,8 +123,12 @@ head('W3 · the intake bodies pass through; uploaded-by is the session');
   ok(sent.p_user === 'uploader' && sent.p_sha256 === b.p_sha256 && sent.p_file_name === b.p_file_name, 'uploaded-by is the SESSION user, whatever the client says', JSON.stringify(sent));
   const st = '{"p_id":5,"p_kind":"case","p_from_ord":0,"p_rows":[{"case_number":"90000001"}]}';
   const s = await call('POST', '/api/vt/upload/stage', st);
-  ok(s.status === 200 && s.rpcs[0].fn === 'vt_upload_stage' && s.rpcs[0].body === st, 'stage passes its body through untouched');
-  for (const fn of ['commit', 'abandon']) { const c = await call('POST', '/api/vt/upload/' + fn, '{"p_id":5}'); ok(c.status === 200 && c.rpcs[0].fn === 'vt_upload_' + fn && c.rpcs[0].body === '{"p_id":5}', fn + ' passes through to vt_upload_' + fn); }
+  ok(s.status === 200 && s.rpcs[0].fn === 'vt_upload_stage' && s.rpcs[0].body === st.slice(0, -1) + ',"p_user":"uploader"}', 'stage passes its body through, only the SESSION uploader appended (S-M3)', s.rpcs[0] && s.rpcs[0].body.slice(-60));
+  for (const fn of ['commit', 'abandon']) { const c = await call('POST', '/api/vt/upload/' + fn, '{"p_id":5}'); ok(c.status === 200 && c.rpcs[0].fn === 'vt_upload_' + fn && c.rpcs[0].body === '{"p_id":5,"p_user":"uploader"}', fn + ' passes through to vt_upload_' + fn + ' with the session uploader', c.rpcs[0] && c.rpcs[0].body); }
+  { const c = await call('POST', '/api/vt/upload/commit', '{"p_id":5,"p_user":"someone-else"}');
+    ok(c.status === 200 && JSON.parse(c.rpcs[0].body).p_user === 'uploader' && /"p_user":"uploader"\}$/.test(c.rpcs[0].body), 'a client-sent p_user is overridden: the session uploader is the LAST key (Postgres reads the last of two)', c.rpcs[0] && c.rpcs[0].body);
+    const e = await call('POST', '/api/vt/upload/abandon', '{}'); ok(e.status === 200 && e.rpcs[0].body === '{"p_user":"uploader"}', 'an empty object still carries the uploader', e.rpcs[0] && e.rpcs[0].body);
+    const n = await call('POST', '/api/vt/upload/stage', '[1,2]'); ok(n.status === 400 && n.rpcs.length === 0, 'a body that is not a JSON object is refused (400), nothing sent on', n.status); }
   const u = await call('POST', '/api/vt/upload/merge', '{}'); ok(u.status === 404 || u.status === 400, 'an unknown step is refused', u.status);
   const g = await call('GET', '/api/vt/upload/begin'); ok(g.status === 405 || g.status === 404, 'GET on a write route is refused', g.status); }
 
@@ -128,8 +137,13 @@ head('W4 · body caps');
   const r = await call('POST', '/api/vt/upload/stage', big); ok(r.status === 413 && r.rpcs.length === 0, 'a stage body over 512 KB → 413, nothing sent on', r.status);
   const fine = '{"p_rows":["' + 'x'.repeat(480 * 1024) + '"]}'; const f = await call('POST', '/api/vt/upload/stage', fine); ok(f.status === 200, 'a 480 KB stage body is accepted');
   const c = await call('POST', '/api/vt/upload/commit', '{"p_warnings":["' + 'x'.repeat(65 * 1024) + '"]}'); ok(c.status === 413 && c.rpcs.length === 0, 'a commit body over 64 KB → 413', c.status);
-  const bk = await call('POST', '/api/vt/book', '{"p_also":["' + 'x'.repeat(65 * 1024) + '"]}'); ok(bk.status === 413, 'a book request over 64 KB → 413', bk.status);
-  const lie = await call('POST', '/api/vt/upload/stage', '{"p_id":5}', { 'content-length': '' }); ok([411, 200].includes(lie.status), 'a body with no declared length is refused or measured (411 / 200 within the cap)', lie.status); }
+  const lie = await call('POST', '/api/vt/upload/stage', '{"p_id":5}', { 'content-length': '' }); ok(lie.status === 411 && lie.rpcs.length === 0, 'S-M1: a POST with no declared length is refused (411) before a byte is read', lie.status);
+  const nan = await call('POST', '/api/vt/upload/commit', '{"p_id":5}', { 'content-length': 'abc' }); ok(nan.status === 411 && nan.rpcs.length === 0, 'S-M1: a non-numeric Content-Length is refused (411)', nan.status);
+  const under = await call('POST', '/api/vt/upload/stage', '{"p_rows":["' + 'x'.repeat(600 * 1024) + '"]}', { 'content-length': '100' });
+  ok(under.status === 413 && under.rpcs.length === 0, 'S-M1: a body longer than it declared is counted while read and stopped at the cap (413)', under.status);
+  ok(vt.VT_BOOK_MAX === 256 * 1024, 'S-L2: the book read is capped at 256 KB (~20k case numbers in p_also)');
+  const bk2 = await call('POST', '/api/vt/book', '{"p_also":[' + Array.from({ length: 20000 }, (_, i) => 90000000 + i).join(',') + ']}'); ok(bk2.status === 200, 'S-L2: a 20,000-case p_also (' + Math.round(bk2.rpcs[0] ? bk2.rpcs[0].body.length / 1024 : 0) + ' KB) is accepted', bk2.status);
+  const bk3 = await call('POST', '/api/vt/book', '{"p_also":["' + 'x'.repeat(257 * 1024) + '"]}'); ok(bk3.status === 413, 'S-L2: a book request over 256 KB → 413', bk3.status); }
 
 head('W5 · RPC refusals in words');
 { RPC_ANSWER.vt_upload_commit = { status: 400, body: { code: 'P0001', message: 'version_conflict: the book is at rev 8, this upload was merged on rev 7' } };
@@ -140,8 +154,23 @@ head('W5 · RPC refusals in words');
   ok(o.status === 409 && /first day/.test(o.j.error), 'the opening book before the first day → 409, in words', o.t);
   RPC_ANSWER.vt_upload_commit = { status: 500, body: { message: 'canceling statement due to statement timeout' } };
   const x = await call('POST', '/api/vt/upload/commit', '{"p_id":5}');
-  ok(x.status === 502 && /commit/.test(x.j.error), 'any other failure → 502 naming the step', x.t);
-  delete RPC_ANSWER.vt_upload_commit; }
+  ok(x.status === 502 && x.j.error === 'vt_commit_failed', 'any other failure → 502 with a short stable code naming the step', x.t);
+  ok(!/timeout|canceling/.test(x.t), 'S-L1: the database words never reach the client', x.t);
+  ok(ERRS.some((l) => /vt commit failed: 500 .*statement timeout/.test(l)), 'S-L1: ...they are logged server-side instead', ERRS.join(' | '));
+  for (const code of ['not_owner', 'upload_too_large', 'too_many_uploads', 'bad_extract_on', 'bad_cycle_key', 'bad_date', 'bad_file_name', 'bad_user', 'duplicate_case', 'duplicate_event', 'bad_receipt', 'commit_too_large']) {
+    RPC_ANSWER.vt_upload_commit = { status: 400, body: { code: 'P0001', message: code + ': words' } };
+    const c = await call('POST', '/api/vt/upload/commit', '{"p_id":5}');
+    ok(c.status === 409 && c.j.error === code, 'the refusal ' + code + ' → 409 {error:"' + code + '"}', c.status + ' ' + c.t); }
+  RPC_ANSWER.vt_upload_commit = { status: 400, body: { code: '23514', message: 'new row for relation "vt_cases" violates check constraint "vt_cases_seller_name_check"' } };
+  const ck = await call('POST', '/api/vt/upload/commit', '{"p_id":5}');
+  ok(ck.status === 409 && ck.j.error === 'bad_row' && ck.j.detail === 'vt_cases_seller_name_check', 'a check violation → 409 {error:"bad_row", detail:<constraint>} (S-L3)', ck.t);
+  delete RPC_ANSWER.vt_upload_commit;
+  RPC_ANSWER.vt_upload_begin = { busy: true, id: 5, since: '2026-11-23T08:00:00Z' };
+  const bz = await call('POST', '/api/vt/upload/begin', '{"p_sha256":"' + 'a'.repeat(64) + '"}');
+  ok(bz.status === 409 && bz.j.error === 'busy' && bz.j.id === 5, 'D-H2: begin on a live upload of the same bytes → 409 {error:"busy", id} (the station must not stage into it)', bz.status + ' ' + bz.t);
+  RPC_ANSWER.vt_upload_begin = { id: 6 };
+  const nb = await call('POST', '/api/vt/upload/begin', '{"p_sha256":"' + 'a'.repeat(64) + '"}'); ok(nb.status === 200 && nb.j.id === 6, '...a normal begin still answers its value');
+  delete RPC_ANSWER.vt_upload_begin; }
 
 head('W6 · receipts and roster');
 { const r = await call('GET', '/api/vt/uploads?limit=500');

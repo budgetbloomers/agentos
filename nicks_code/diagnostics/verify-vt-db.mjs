@@ -26,6 +26,13 @@
  *   D14 vt_roster_at (072): the latest accepted VT snapshot dated on or before the day, TL code joined, "-" target null;
  *       nothing for a day before any list; the partial index exists; 072 never touches publish_agent_list or sync_*
  *
+ *   R1–R10 the Phase C review fixes: vt_cases has only its PK + fillfactor 70 and a re-see is a HOT update (D-H1);
+ *       begin never wipes a live staging upload (D-H2); uploads belong to their uploader (S-M3); staged-row, concurrent
+ *       and receipt caps (S-M2); the date window and cycle key (S-M4); free-text lengths (S-L3); stage after finish,
+ *       duplicate case/event, same-day event update (D-LOW); a 20k-row commit TIMED (D-H3); trim locks first, keeps
+ *       open cases and whole histories, drops old receipts (D-M4..D-M7, in D12); roster CB join + list_as_of
+ *       (D-M8, D-M9); every signature's EXECUTE grants; 072's lock timeout and both migrations' schema reload
+ *
  *   node nicks_code/diagnostics/verify-vt-db.mjs
  */
 import fs from 'node:fs';
@@ -57,7 +64,10 @@ await db.exec(`do $$ begin create role service_role bypassrls; exception when du
   do $$ begin create role anon; exception when duplicate_object then null; end $$;
   do $$ begin create role authenticated; exception when duplicate_object then null; end $$;`);
 for (const st of [...pick('migration-020-publish-agent-list.sql', /^create table if not exists agent_list_raw|^create index if not exists agent_list_raw_asof_idx/i),
-  ...pick('migration-018-team-leader-accounts.sql', /^create table if not exists team_leader_cbs/i)]) await db.exec(st);
+  ...pick('migration-018-team-leader-accounts.sql', /^create table if not exists team_leader_cbs/i),
+  ...pick('migration-014-agent-list-sync.sql', /^create or replace function norm_cb/i)]) await db.exec(st);
+/* as in production after migration-049: norm_cb is not PUBLIC-executable, service_role keeps it (072 relies on that) */
+await db.exec(`revoke execute on function norm_cb(text) from public; grant execute on function norm_cb(text) to service_role;`);
 for (const [f, text] of [['071', M71], ['072', M72]]) {
   let bad = 0;
   for (const st of splitSql(text)) { try { await db.exec(st); } catch (e) { bad++; ok(false, 'migration-' + f + ' statement applies: ' + strip(st).slice(0, 80), e.message); } }
@@ -65,8 +75,11 @@ for (const [f, text] of [['071', M71], ['072', M72]]) {
 }
 const one = async (q, p = []) => (await db.query(q, p)).rows[0];
 const all = async (q, p = []) => (await db.query(q, p)).rows;
-const rpc = async (fn, args) => (await one(`select ${fn}(${args.map((_, i) => '$' + (i + 1)).join(',')}) v`, args)).v;
+/* stage / commit / abandon take the uploader (S-M3); the Worker injects it from the session. The suite's uploader is 'tester'. */
+const NEEDS_USER = { vt_upload_stage: 4, vt_upload_commit: 8, vt_upload_abandon: 1 };
+const rpc = async (fn, args) => (args = NEEDS_USER[fn] === args.length ? [...args, 'tester'] : args, await one(`select ${fn}(${args.map((_, i) => '$' + (i + 1)).join(',')}) v`, args)).v;
 const err = async (fn) => { try { await fn(); return null; } catch (e) { return String(e.message || e); } };
+await db.exec(`set vt.today = '2026-11-23'`);   // the suite's clock: begin's date window (S-M4) is judged against it
 const TABLES = ['vt_cases', 'vt_case_events', 'vt_uploads', 'vt_upload_stage', 'vt_book_rev'];
 
 head('D1 · tables, RLS, no policies');
@@ -248,7 +261,7 @@ await db.exec(`insert into vt_cases (case_number, status, status_on, sold_on, so
   analyze;`);
 await db.exec('set role service_role');
 await rpc('vt_book', [null, null]);
-let big = null, ms = Infinity; for (let i = 0; i < 3; i++) { const t0 = performance.now(); big = await rpc('vt_book', [null, null]); ms = Math.min(ms, performance.now() - t0); }
+let big = null, ms = Infinity; for (let i = 0; i < 5; i++) { const t0 = performance.now(); big = await rpc('vt_book', [null, null]); ms = Math.min(ms, performance.now() - t0); }
 ok(big.cases.length > 20000 && big.events.length > 20000, 'vt_book returns the 20k-case book as one value (' + big.cases.length + ' cases, ' + big.events.length + ' events, ' + Math.round(JSON.stringify(big).length / 1024) + ' KB)');
 ok(ms < 300, 'vt_book at 20k cases answers in < 300 ms (PGlite/WASM, an upper bound for Postgres): ' + Math.round(ms) + ' ms');
 
@@ -258,13 +271,32 @@ await db.exec(`insert into vt_uploads (sha256, kind, file_name, extract_on, cycl
   insert into vt_uploads (sha256, kind, file_name, extract_on, cycle_key, state, started_at) values ('${'cd'.repeat(32)}', 'bi_fitted', 'stuck.xlsx', '2026-11-01', 'cycle-2026-11', 'staging', now() - interval '2 days');
   insert into vt_upload_stage (upload_id, kind, ord, row, staged_at) select id, 'case', 0, '{}'::jsonb, now() - interval '2 days' from vt_uploads where file_name = 'stuck.xlsx';
   update vt_cases set first_seen = '2025-09-01', sold_on = '2025-09-01', last_seen = '2025-09-01', status_on = '2025-09-01' where case_number = 80000002;
+  insert into vt_cases (case_number, status, status_on, sold_on, sold_basis, first_seen, last_seen, products, last_upload, rev)
+    values (80000003, 'fitted', '2025-09-02', '2025-09-01', 'first_seen', '2025-09-01', '2025-09-02', '{MXV}', ${u1.b.id}, 1);
+  insert into vt_case_events values (80000003, '2025-09-01', null, 'scheduled', null, ${u1.b.id}), (80000003, '2025-09-02', 'scheduled', 'fitted', null, ${u1.b.id});
+  insert into vt_uploads (sha256, kind, file_name, extract_on, cycle_key, state, started_at, committed_at, uploaded_by) values
+    ('${'ef'.repeat(32)}', 'bi_fitted', 'old committed unreferenced.xlsx', '2025-08-02', 'cycle-2025-08', 'committed', '2025-08-02', '2025-08-02', 'tester'),
+    ('${'fa'.repeat(32)}', 'bi_fitted', 'old committed referenced.xlsx', '2025-08-03', 'cycle-2025-08', 'committed', '2025-08-03', '2025-08-03', 'tester');
+  insert into vt_cases (case_number, status, status_on, sold_on, sold_basis, first_seen, last_seen, products, last_upload, rev)
+    select 80000004, 'fitted', '2026-11-01', '2026-11-01', 'first_seen', '2026-11-01', '2026-11-01', '{MXV}', id, 1 from vt_uploads where file_name = 'old committed referenced.xlsx';
   update vt_case_events set on_date = '2025-09-20' where case_number = 80000001 and to_status = 'scheduled';`);
 await db.exec('set role service_role');
 const tr = await rpc('vt_trim', [13, '2026-11-23']);
 ok(tr && tr.cutoff === '2025-10-26', 'the cutoff keeps 13 business months: cycle-2025-11 (from 26 Oct 2025) through cycle-2026-11', JSON.stringify(tr));
-ok(!(await one('select 1 x from vt_cases where case_number = 80000002')), 'a case last seen before the cutoff is trimmed (with its events)');
+ok(!(await one('select 1 x from vt_cases where case_number = 80000003')), 'a CLOSED case last seen before the cutoff is trimmed');
+eq('...with its events', (await one('select count(*)::int n from vt_case_events where case_number = 80000003')).n, 0);
+ok(!!(await one('select 1 x from vt_cases where case_number = 80000002')), 'D-M5: a still-OPEN (scheduled) case last seen before the cutoff is NOT trimmed');
+eq('D-M5: ...and vt_trim says how many open cases it skipped', tr.skipped_open, 1);
 ok(!!(await one('select 1 x from vt_cases where case_number = 80000001')), 'a case seen inside the window stays');
-ok(!(await one(`select 1 x from vt_case_events where case_number = 80000001 and on_date < '2025-10-26'`)), 'events older than the cutoff are trimmed');
+eq('D-M6: a retained case keeps its WHOLE history (an event older than the cutoff stays with it: no partial history)',
+  (await all('select on_date::text d from vt_case_events where case_number = 80000001 order by on_date')).map((x) => x.d), ['2025-09-20', '2026-06-01']);
+eq('vt_trim counts the events it removed (those of trimmed cases)', tr.events, 2);
+ok(!(await one(`select 1 x from vt_uploads where file_name = 'old committed unreferenced.xlsx'`)), 'D-M7: a COMMITTED receipt older than the cutoff that nothing references is removed');
+ok(!!(await one(`select 1 x from vt_uploads where file_name = 'old committed referenced.xlsx'`)), 'D-M7: ...one a case still references is kept');
+{ const body = strip(M71).replace(/\s+/g, ' ');
+  const tb = body.slice(body.search(/create or replace function vt_trim/i));
+  const afterBegin = tb.slice(tb.search(/\bbegin\b/i) + 5).trim();
+  ok(/^perform 1 from vt_book_rev where id = 1 for update;/i.test(afterBegin), 'D-M4: vt_trim takes the revision row lock FIRST (cannot race or deadlock a commit)', afterBegin.slice(0, 80)); }
 ok(!(await one(`select 1 x from vt_uploads where file_name = 'old abandoned.xlsx'`)), 'an abandoned upload older than the cutoff is removed');
 eq('a staging upload untouched for a day is abandoned and its stage rows purged', [(await one(`select state from vt_uploads where file_name = 'stuck.xlsx'`)).state,
   (await one(`select count(*)::int n from vt_upload_stage s join vt_uploads u on u.id = s.upload_id where u.file_name = 'stuck.xlsx'`)).n], ['abandoned', 0]);
@@ -296,4 +328,170 @@ eq('nothing for a day before any list', (await rpc('vt_roster_at', ['2026-01-01'
 ok(!!(await one(`select 1 x from pg_indexes where indexname = 'agent_list_raw_vt_idx'`)), 'the partial index agent_list_raw_vt_idx exists');
 ok(!/publish_agent_list|sync_agent_list|sync_team_leaders|sync_campaigns/i.test(strip(M72)), 'migration-072 never touches publish_agent_list or any sync_* function');
 ok(!/\b(insert|update|delete)\b/i.test(strip(M72).replace(/\$\$[\s\S]*?\$\$/g, (b) => b.replace(/\bupdate[d]?_/g, ''))), 'migration-072 writes nothing (read-only)');
+/* ===================================================================================================== review fixes */
+head('R0 · review fixes (Phase C security + database review) — helpers');
+await db.exec('set role service_role');
+const H = (n) => n.toString(16).padStart(4, '0').repeat(16);
+const cyc = (on) => E.periods.cycleOf(on).key;
+const curRev = async () => (await one('select rev::int r from vt_book_rev')).r;
+const crow = (cn, on, o = {}) => ({ case_number: String(cn), status: 'fitted', status_on: on, sold_on: on, sold_basis: 'first_seen', first_seen: on, last_seen: on,
+  appt_on: null, fitted_on: on, sm_attempt: null, products: ['MXV'], bundle: null, charge_ex: 100, partner_raw: null, lead_source: 'revx',
+  seller_name: 'alpha test', seller_cb: 'CB9101', seller_match: 'exact', ...o });
+const erow = (cn, on, o = {}) => ({ case_number: String(cn), on_date: on, from_status: null, to_status: 'fitted', appt_on: null, ...o });
+const beginAs = (sha, on, user = 'tester', o = {}) => rpc('vt_upload_begin', [sha, o.kind || 'bi_fitted', o.name || 'review.xlsx', on, o.cycle || cyc(on), user]);
+const stageAll = async (id, cases, events, user = 'tester') => {
+  for (const [k, rows] of [['case', cases], ['event', events]]) for (let i = 0; i < rows.length; i += 1000) await rpc('vt_upload_stage', [id, k, i, JSON.stringify(rows.slice(i, i + 1000)), user]); };
+const commitAs = async (id, nc, ne, user = 'tester', o = {}) => rpc('vt_upload_commit', [id, o.base == null ? await curRev() : o.base, JSON.stringify(o.counts || {}),
+  JSON.stringify(o.unmatched || []), JSON.stringify(o.warnings || []), false, nc, ne, user]);
+async function load(sha, on, cases, events = [], user = 'tester', o = {}) {
+  const b = await beginAs(sha, on, user, o); await stageAll(b.id, cases, events, user);
+  const t0 = performance.now(); const res = await commitAs(b.id, cases.length, events.length, user, o); return { b, res, ms: performance.now() - t0 }; }
+const asOwner = async (sql) => { await db.exec('reset role'); await db.exec(sql); await db.exec('set role service_role'); };
+const sweep = () => asOwner(`update vt_uploads set state = 'abandoned' where state = 'staging'; delete from vt_upload_stage;`);
+ok(true, 'helpers ready (uploader "tester"; a second account "barry")');
+
+head('R1 · D-H1 vt_cases has only its primary key, fillfactor 70, and a re-seen case is a HOT update');
+eq('vt_cases carries ONLY its primary key (no index a daily re-see would churn)', (await all(`select indexname from pg_indexes where tablename = 'vt_cases' order by 1`)).map((x) => x.indexname), ['vt_cases_pkey']);
+eq('vt_case_events keeps its insert-only indexes (trim by day, FK by upload)', (await all(`select indexname from pg_indexes where tablename = 'vt_case_events' order by 1`)).map((x) => x.indexname),
+  ['vt_case_events_on_idx', 'vt_case_events_pkey', 'vt_case_events_upload_idx']);
+ok(((await one(`select array_to_string(reloptions, ',') o from pg_class where relname = 'vt_cases'`)).o || '').includes('fillfactor=70'), 'vt_cases is created with fillfactor = 70');
+{ const cs = Array.from({ length: 50 }, (_, i) => crow(61500000 + i, '2026-11-20'));
+  await load(H(0x150), '2026-11-20', cs);
+  const b = await beginAs(H(0x151), '2026-11-21'); await stageAll(b.id, cs.map((c) => ({ ...c, last_seen: '2026-11-21' })), []);
+  const rv = await curRev();
+  await db.exec('begin');
+  await rpc('vt_upload_commit', [b.id, rv, '{}', '[]', '[]', false, 50, 0]);
+  const st = await one(`select pg_stat_get_xact_tuples_updated('vt_cases'::regclass)::int u, pg_stat_get_xact_tuples_hot_updated('vt_cases'::regclass)::int h`);
+  await db.exec('commit');
+  /* a HOT update needs room on the SAME page: these 50 rows were just packed onto one page at 70%, so only some fit in
+     this one-shot test (in production each page is pruned between days). With the old last_seen / last_upload indexes
+     the count was 0 whatever the room: any HOT update at all proves no index blocks it. */
+  ok(st.u >= 50 && st.h >= 25, 'an upload that only moves last_seen updates its 50 cases as HOT updates (' + st.h + ' of ' + st.u + ' HOT; with the old indexes 0)', JSON.stringify(st)); }
+
+head('R2 · D-H2 begin never wipes a live staging upload');
+{ const s = H(0x200);
+  const a1 = await beginAs(s, '2026-11-21');
+  await rpc('vt_upload_stage', [a1.id, 'case', 0, JSON.stringify([crow(61000001, '2026-11-21')])]);
+  const a2 = await beginAs(s, '2026-11-21');
+  ok(a2.busy === true && a2.id === a1.id, 'the same bytes begun again while staging (< 15 min) answer {busy:true, id}', JSON.stringify(a2));
+  eq('...and its staged rows are untouched', (await one('select count(*)::int n from vt_upload_stage where upload_id = $1', [a1.id])).n, 1);
+  ok((await beginAs(s, '2026-11-21', 'barry')).busy === true, 'another account beginning the same bytes is busy too');
+  await asOwner(`update vt_uploads set started_at = now() - interval '20 minutes' where id = ${a1.id}`);
+  ok((await beginAs(s, '2026-11-21', 'barry')).busy === true, 'a STALE staging upload is never reset for ANOTHER account (S-M3)');
+  const a5 = await beginAs(s, '2026-11-21');
+  ok(a5.reused === true && a5.id === a1.id, 'its own account may reset a stale (> 15 min) staging upload', JSON.stringify(a5));
+  eq('...which clears its stage rows', (await one('select count(*)::int n from vt_upload_stage where upload_id = $1', [a1.id])).n, 0);
+  await rpc('vt_upload_abandon', [a1.id]);
+  const a6 = await beginAs(s, '2026-11-21', 'barry');
+  ok(a6.reused === true && (await one('select uploaded_by u from vt_uploads where id = $1', [a1.id])).u === 'barry', 'an ABANDONED upload may be started again by anyone (it becomes theirs)', JSON.stringify(a6));
+  await rpc('vt_upload_abandon', [a1.id, 'barry']); }
+
+head('R3 · S-M3 stage / commit / abandon belong to the account that began the upload');
+{ const b = await beginAs(H(0x300), '2026-11-21');
+  ok(/not_owner/.test(await err(() => rpc('vt_upload_stage', [b.id, 'case', 0, JSON.stringify([crow(61000002, '2026-11-21')]), 'barry'])) || ''), 'another account may not stage into it');
+  await rpc('vt_upload_stage', [b.id, 'case', 0, JSON.stringify([crow(61000002, '2026-11-21')])]);
+  ok(/not_owner/.test(await err(async () => commitAs(b.id, 1, 0, 'barry')) || ''), 'another account may not commit it');
+  ok(/not_owner/.test(await err(() => rpc('vt_upload_abandon', [b.id, 'barry'])) || ''), 'another account may not abandon it');
+  eq('...it is still staging with its row', [(await one('select state from vt_uploads where id = $1', [b.id])).state, (await one('select count(*)::int n from vt_upload_stage where upload_id = $1', [b.id])).n], ['staging', 1]);
+  ok(/bad_user/.test(await err(() => rpc('vt_upload_begin', [H(0x301), 'bi_fitted', 'x.xlsx', '2026-11-21', cyc('2026-11-21'), null])) || ''), 'begin without an uploader is refused (bad_user)');
+  await rpc('vt_upload_abandon', [b.id]); }
+
+head('R4 · S-M2 totals: concurrent uploads, staged rows, receipts');
+await sweep();   // the earlier sections leave nothing they need staging
+{ const ids = [];
+  for (let i = 0; i < 4; i++) ids.push((await beginAs(H(0x400 + i), '2026-11-21')).id);
+  ok(/too_many_uploads/.test(await err(() => beginAs(H(0x404), '2026-11-21')) || ''), 'a fifth upload staging at once is refused (too_many_uploads)');
+  await asOwner(`update vt_uploads set started_at = now() - interval '2 hours' where id = ${ids[0]}`);
+  const b5 = await beginAs(H(0x404), '2026-11-21');
+  ok(b5.id && (await one('select state from vt_uploads where id = $1', [ids[0]])).state === 'abandoned', 'a staging upload untouched for an hour is reclaimed (abandoned) so the floor is never locked out', JSON.stringify(b5));
+  for (const id of [...ids.slice(1), b5.id]) await rpc('vt_upload_abandon', [id]); }
+{ const b = await beginAs(H(0x410), '2026-11-21');
+  await asOwner(`insert into vt_upload_stage (upload_id, kind, ord, row) select ${b.id}, 'case', g, '{}'::jsonb from generate_series(0, 59999) g`);
+  ok(/upload_too_large/.test(await err(() => rpc('vt_upload_stage', [b.id, 'case', 60000, JSON.stringify([crow(61000003, '2026-11-21')])])) || ''), 'staging past 60,000 case rows in one upload is refused (upload_too_large)');
+  await asOwner(`insert into vt_upload_stage (upload_id, kind, ord, row) values (${b.id}, 'case', 60000, '{}'::jsonb)`);
+  ok(/commit_too_large/.test(await err(() => commitAs(b.id, 60001, 0)) || ''), 'a commit over 60,000 case rows is refused before any write (commit_too_large)');
+  await rpc('vt_upload_abandon', [b.id]); }
+{ const big = Array.from({ length: 2001 }, (_, i) => ({ name: 's' + i, cases: 1 }));
+  const b = await beginAs(H(0x420), '2026-11-21'); await stageAll(b.id, [crow(61000004, '2026-11-21')], []);
+  ok(/bad_receipt/.test(await err(() => commitAs(b.id, 1, 0, 'tester', { unmatched: big })) || ''), 'an unmatched list over 2,000 names is refused (bad_receipt)');
+  ok(/bad_receipt/.test(await err(() => commitAs(b.id, 1, 0, 'tester', { warnings: ['x'.repeat(20000)] })) || ''), 'warnings over 16 KB are refused (bad_receipt)');
+  ok(/bad_receipt/.test(await err(() => commitAs(b.id, 1, 0, 'tester', { counts: ['not', 'an', 'object'] })) || ''), 'counts that are not an object are refused (bad_receipt)');
+  ok(!(await one('select 1 x from vt_cases where case_number = 61000004')), '...and nothing was written');
+  await rpc('vt_upload_abandon', [b.id]); }
+
+head('R5 · S-M4 dates are bounded');
+ok(/bad_extract_on/.test(await err(() => beginAs(H(0x500), '2026-11-25')) || ''), 'an extract dated after tomorrow (SAST) is refused');
+ok(/bad_extract_on/.test(await err(() => beginAs(H(0x501), '2025-10-01')) || ''), 'an extract older than 400 days is refused');
+{ const t = await beginAs(H(0x502), '2026-11-24'); ok(t.id && !t.busy, 'tomorrow is allowed (a late-evening pull)'); await rpc('vt_upload_abandon', [t.id]); }
+ok(/bad_cycle_key/.test(await err(() => beginAs(H(0x503), '2026-11-21', 'tester', { cycle: 'cycle-2026-12' })) || ''), 'a cycle_key that disagrees with the extract (26th to 25th) is refused');
+{ const t = await beginAs(H(0x504), '2026-10-26', 'tester', { cycle: 'cycle-2026-11' }); ok(t.id, 'the 26th opens the next business month (cycle-2026-11 from 26 Oct)'); await rpc('vt_upload_abandon', [t.id]); }
+ok(/bad_date/.test(await err(() => load(H(0x505), '2026-11-21', [crow(61000005, '2026-11-21', { last_seen: '2027-06-01' })])) || ''), 'a far-future last_seen is refused at commit (bad_date)');
+ok(/bad_date/.test(await err(() => load(H(0x506), '2026-11-21', [crow(61000006, '2026-11-21')], [erow(61000006, '2030-01-01')])) || ''), 'a far-future event day is refused at commit (bad_date)');
+ok(/bad_date/.test(await err(() => load(H(0x507), '2026-11-21', [crow(61000007, '2026-11-21', { appt_on: '2031-01-01' })])) || ''), 'an appointment years ahead is refused (bad_date)');
+ok(!(await one('select 1 x from vt_cases where case_number in (61000005, 61000006, 61000007)')), '...and none of them was written');
+await sweep();
+
+head('R6 · S-L3 free-text lengths');
+ok(/check|violat/i.test(await err(() => load(H(0x600), '2026-11-21', [crow(61000008, '2026-11-21', { seller_name: 'x'.repeat(500) })])) || ''), 'a 500-character seller name is refused');
+await sweep();
+ok(/check|violat/i.test(await err(() => load(H(0x601), '2026-11-21', [crow(61000009, '2026-11-21', { products: Array.from({ length: 40 }, (_, i) => 'P' + i) })])) || ''), 'more than 32 products is refused');
+await sweep();
+{ let k0 = 0x602;
+  for (const [k, n] of [['bundle', 201], ['partner_raw', 201], ['sm_attempt', 61]]) {
+    ok(/check|violat/i.test(await err(() => load(H(k0++), '2026-11-21', [crow(61000010, '2026-11-21', { [k]: 'y'.repeat(n) })])) || ''), 'an over-long ' + k + ' (' + n + ' characters) is refused');
+    await sweep(); } }
+{ const e = await err(() => rpc('vt_upload_begin', [H(0x610), 'bi_fitted', 'f'.repeat(301), '2026-11-21', cyc('2026-11-21'), 'tester']));
+  ok(e && /^bad_file_name/.test(e), 'a 301-character file name is a clear refusal (bad_file_name), not a raw check violation', e); }
+
+head('R7 · D-LOW lifecycle, duplicates, same-day events');
+{ const r = await load(H(0x700), '2026-11-21', [crow(61000011, '2026-11-21')]);
+  ok(/not_staging/.test(await err(() => rpc('vt_upload_stage', [r.b.id, 'case', 1, JSON.stringify([crow(61000012, '2026-11-21')])])) || ''), 'a stage call after commit is refused (not_staging)');
+  const b = await beginAs(H(0x701), '2026-11-21'); await rpc('vt_upload_abandon', [b.id]);
+  ok(/not_staging/.test(await err(() => rpc('vt_upload_stage', [b.id, 'case', 0, '[]'])) || ''), 'a stage call after abandon is refused (not_staging)'); }
+{ const e = await err(() => load(H(0x702), '2026-11-21', [crow(61000100, '2026-11-21'), crow(61000100, '2026-11-21', { status: 'missed' })]));
+  ok(e && /^duplicate_case/.test(e) && e.includes('61000100'), 'a case twice in one upload is refused, naming the case', e);
+  await sweep();
+  const e2 = await err(() => load(H(0x703), '2026-11-21', [crow(61000101, '2026-11-21')], [erow(61000101, '2026-11-21'), erow(61000101, '2026-11-21', { from_status: 'scheduled' })]));
+  ok(e2 && /^duplicate_event/.test(e2) && e2.includes('61000101'), 'an event twice in one upload is refused, naming the case', e2);
+  await sweep(); }
+{ await load(H(0x704), '2026-11-21', [crow(61000102, '2026-11-21', { status: 'scheduled', appt_on: '2026-11-25' })], [erow(61000102, '2026-11-21', { to_status: 'scheduled', appt_on: '2026-11-25' })]);
+  const r2 = await load(H(0x705), '2026-11-21', [crow(61000102, '2026-11-21', { status: 'scheduled', appt_on: '2026-11-27' })], [erow(61000102, '2026-11-21', { to_status: 'scheduled', from_status: 'missed', appt_on: '2026-11-27' })]);
+  const ev = await one(`select appt_on::text a, from_status f, upload_id::int u from vt_case_events where case_number = 61000102`);
+  eq('a same-day event whose appt_on / from_status differ UPDATES the row (never silently dropped)', [ev.a, ev.f, ev.u], ['2026-11-27', 'missed', Number(r2.b.id)]); }
+
+head('R8 · D-H3 a 20k-row first load commits in one call, timed');
+{ const cs = Array.from({ length: 20000 }, (_, i) => crow(62000000 + i, '2026-11-20', { status: i % 3 ? 'fitted' : 'scheduled' }));
+  const ev = cs.map((c) => erow(c.case_number, '2026-11-20', { to_status: c.status }));
+  const r = await load(H(0x800), '2026-11-20', cs, ev);
+  ok(r.res.cases === 20000 && r.res.events === 20000, 'a 20,000-case + 20,000-event first load commits');
+  ok(r.ms < 20000, 'MEASURED: the 20k + 20k first-load commit took ' + Math.round(r.ms) + ' ms in PGlite (WASM; an upper bound for Postgres)');
+  const r2 = await load(H(0x801), '2026-11-21', cs.map((c) => ({ ...c, last_seen: '2026-11-21' })), []);
+  ok(r2.res.cases === 20000 && r2.ms < 20000, 'MEASURED: the steady-state daily re-see of 20,000 cases took ' + Math.round(r2.ms) + ' ms in PGlite'); }
+
+head('R9 · D-M8 / D-M9 vt_roster_at: one row per agent, house CB join, list_as_of');
+await asOwner(`insert into team_leader_cbs (leader_name, employee_code) values ('leader one ', 'CB9999'), ('Leader Three', 'cb-77');
+  insert into agent_list_raw (as_of, ord, sheet, code, name, sf, tl, campaign_raw, campaign, tenure, target, start_date, accepted) values
+  ('2026-11-02', 5, 'VT', 'CB9105', 'Golf Hotel', null, 'Leader Three', 'Matrix Vehicle Tracking - Digital', 'VT', 'Exp', 2, '2026-01-05', true),
+  ('2026-11-20', 1, 'VAS', 'CB9150', 'Vas Person', null, 'Leader One', 'Courtesy', 'Courtesy', 'Exp', 3, null, true);`);
+{ const ro = await rpc('vt_roster_at', ['2026-11-25']);
+  eq('two spellings of a leader in team_leader_cbs never duplicate a roster row', ro.rows.map((r) => r.code), ['CB9101', 'CB9104', 'CB9105']);
+  eq('...the exact (btrim) spelling wins and the code goes through norm_cb', ro.rows.map((r) => r.tl_code), ['CB9190', null, 'CB77']);
+  eq('D-M9: list_as_of names the newest accepted list of ANY campaign on or before the day (the page can warn)', [ro.as_of, ro.list_as_of], ['2026-11-02', '2026-11-20']); }
+
+head('R10 · signatures, grants, applying');
+{ const sigs = (await all(`select p.oid::regprocedure::text sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname like 'vt\\_%' order by 1`)).map((x) => x.sig);
+  eq('the VT function signatures, exactly (no stale overload left behind)', sigs, ['vt_book(date,bigint[])', 'vt_db_size()', 'vt_roster_at(date)', 'vt_trim(integer,date,integer)',
+    'vt_upload_abandon(bigint,text)', 'vt_upload_begin(text,text,text,date,text,text)', 'vt_upload_commit(bigint,bigint,jsonb,jsonb,jsonb,boolean,integer,integer,text)',
+    'vt_upload_stage(bigint,text,integer,jsonb,text)']);
+  for (const r of ['public', 'anon', 'authenticated']) {
+    const can = [];
+    for (const sg of sigs) if (r === 'public' ? (await one(`select coalesce(array_to_string(proacl, ','), '') ~ '(^|,)=X' x from pg_proc where oid = $1::regprocedure`, [sg])).x
+      : (await one(`select has_function_privilege('${r}', $1::regprocedure, 'execute') e`, [sg])).e) can.push(sg);
+    ok(can.length === 0, r + ' may EXECUTE none of the ' + sigs.length + ' VT signatures (p_user ones included)', can.join(', '));
+  }
+  for (const sg of sigs) ok((await one(`select has_function_privilege('service_role', $1::regprocedure, 'execute') e`, [sg])).e, 'service_role may EXECUTE ' + sg); }
+{ const first = splitSql(M72).map(strip).filter(Boolean)[0];
+  ok(/^set local lock_timeout = '3s';?$/i.test(first), 'migration-072 starts with set local lock_timeout = 3s', first);
+  for (const [f, t] of [['071', M71], ['072', M72]]) { const l = splitSql(t).map(strip).filter(Boolean).pop();
+    ok(/^notify pgrst, 'reload schema';?$/i.test(l), 'migration-' + f + ' ends by asking PostgREST to reload its schema', l); } }
 done();

@@ -41,13 +41,43 @@ management app is `tracker` would become portal-only the moment that Worker is l
 
 No builder applied anything; every database test ran in PGlite (in-process). At deploy, the owner, in this order:
 
-1. **Migrations, before the Worker that calls them:**
+0. **Ship the station follow-up first.** The review fixes changed the intake contract (`p_user` on every write,
+   `busy` → 409, 411 without a Content-Length, new refusal codes). Phase C's `vt-pages.js` does not yet abandon its
+   own upload before retrying a `version_conflict`, so until that client change lands a conflict ends in a "busy"
+   refusal (nothing is written; dropping the file again works). Deploy only with the client follow-ups in
+   `plan.md` → "Review fixes" done.
+1. **Migrations, before the Worker that calls them.** Apply OUTSIDE the upload window (not while anyone is on the
+   Upload Station) and not while an Agent List publish runs: 072 builds an index on `agent_list_raw` under a SHARE lock.
+   It sets `lock_timeout = '3s'`, so if a publish holds the table it fails fast and changes nothing. Re-run it later.
+   `apply-migration.mjs` runs each file in ONE transaction, so `set local` covers the whole file.
    `node tools/apply-migration.mjs supabase/migration-071-vt-facts.sql` (five `vt_*` tables, RLS with no policy, the
    intake / book / trim / size functions, EXECUTE revoked from public, anon and authenticated), then
    `node tools/apply-migration.mjs supabase/migration-072-vt-roster-read.sql` (read-only `vt_roster_at()` + the partial
-   index `agent_list_raw_vt_idx`; it touches neither `publish_agent_list()` nor any `sync_*` function).
-   Then re-run the floor-wide anon-EXECUTE audit (memory: "Agent List check 22 Sep"): no `vt_*` function may be
-   executable by anon.
+   index `agent_list_raw_vt_idx`; it touches neither `publish_agent_list()` nor any `sync_*` function; it needs
+   `norm_cb()` from migration-014, which is live).
+   Then, in the SQL editor:
+   - **The index is valid:** `select indisvalid from pg_index where indexrelid = 'agent_list_raw_vt_idx'::regclass;` → `t`.
+   - **EXECUTE is still revoked on EVERY VT function** (the review added `p_user` to four signatures). This must return
+     exactly 8 rows, every flag `f`:
+     ```sql
+     select p.oid::regprocedure as fn,
+            has_function_privilege('anon', p.oid, 'execute')          as anon,
+            has_function_privilege('authenticated', p.oid, 'execute') as authenticated,
+            coalesce(array_to_string(p.proacl, ','), '') ~ '(^|,)=X'  as public
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname like 'vt\_%' order by 1;
+     ```
+     Then re-run the floor-wide anon-EXECUTE audit (memory: "Agent List check 22 Sep").
+   - **PostgREST can see the new functions.** Both migrations end with `notify pgrst, 'reload schema';`. This project
+     had never used it before. It only asks PostgREST to refresh its cache and does nothing if no listener is attached.
+     Check with one call using the service key: `POST /rest/v1/rpc/vt_db_size` with `{}` must answer 200. A 404 /
+     `PGRST202` means the cache is stale: run `notify pgrst, 'reload schema';` again, or reload it from the dashboard.
+   - **service_role's statement timeout, before the FIRST opening-book or first-day load:**
+     `select rolname, rolconfig from pg_roles where rolname in ('service_role', 'authenticator', 'authenticated');`.
+     A 20,000-case + 20,000-event first load committed in ~1.7 s in PGlite, and a 20,000-case daily re-see in ~1.0 s
+     (verify-vt-db R8). PGlite is an upper bound, but the margin must still hold. If the effective timeout for the
+     Worker's role is under ~15 s, raise it for `service_role` (`alter role service_role set statement_timeout = '60s';`),
+     or load the first day after hours. One commit is capped at 60,000 rows of each kind.
 2. **Build:** `node tools/prepare-site.js` — it now inlines `nicks_code/vt-engine.js` and `nicks_code/vt-pages.js` into
    `site/pulse/index.html` and fails if a `data-inline` file is missing. Then `node nicks_code/diagnostics/verify-vt-build.mjs --no-build`.
 3. **Deploy** the Worker (new `worker/src/vt.mjs`, mounted in `index.mjs`) and Pages together.
@@ -56,6 +86,25 @@ No builder applied anything; every database test ran in PGlite (in-process). At 
    `BI Active Fitted <ddmmyy>.xlsx` on the **VT · BI Active Fitted** slot and check the receipt says "VAS money unchanged".
 5. **Order of the first files:** the two daily files first (either order). The **opening book** (`Schedulers Data` sheet of
    the hand-built report) only AFTER the first day's two files — the station and the database both refuse it on an empty book.
+
+### Rollback (Phase C)
+
+Work backwards: first stop the callers, then 072, then 071.
+
+1. Roll the Worker back to the build without `worker/src/vt.mjs`, and Pages to the build without the VT slots. Nothing
+   calls the functions after that.
+2. **072:** `drop function if exists vt_roster_at(date); drop index if exists agent_list_raw_vt_idx;` 072 changed
+   nothing else. The `grant select … to service_role` matches Supabase's default, so leave it.
+3. **071.** The tables hold the VT book (no customer field). Export it first if any real file was loaded:
+   `select vt_book(null);` and `select * from vt_uploads;`. Then:
+   ```sql
+   drop function if exists vt_upload_begin(text, text, text, date, text, text), vt_upload_stage(bigint, text, int, jsonb, text),
+     vt_upload_commit(bigint, bigint, jsonb, jsonb, jsonb, boolean, int, int, text), vt_upload_abandon(bigint, text),
+     vt_book(date, bigint[]), vt_trim(int, date, int), vt_db_size();
+   drop table if exists vt_upload_stage, vt_case_events, vt_cases, vt_book_rev, vt_uploads;   -- FK order; the sequence goes with vt_uploads
+   notify pgrst, 'reload schema';
+   ```
+4. Re-run the anon-EXECUTE audit.
 
 Not yet wired (later phases): the VT pages (D), the digest publish after a commit (E2, `VTStation.afterCommit` is the
 hook), the weekly `vt_trim()` call and the VT health alerts (F3).
