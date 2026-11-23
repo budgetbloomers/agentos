@@ -163,9 +163,23 @@ for (let d0 = '2026-10-26'; d0 <= '2026-11-25'; d0 = ENG.periods.addDays(d0, 1))
     big.cases[cn] = { caseNumber: cn, status: st, statusOn: d0, soldOn: d0, soldBasis: 'first_seen', firstSeen: d0, lastSeen: '2026-11-25', apptOn: ENG.periods.addDays(d0, 2), fittedOn: st === 'fitted' ? ENG.periods.addDays(d0, 2) : null,
       products: ['MXV'], chargeEx: 150, leadSource: LS[n % 6], partnerRaw: 'RevX', sellerName: a.name.toLowerCase(), sellerCb: a.code, sellerMatch: 'exact', smAttempt: null, bundle: null }; } }
 const BD = JSON.stringify(ENG.digest(ENG.model(big, ros, { cycleKey: CYCLE, asOf: '2026-11-25' }), { updatedAt: 'x' }));
-const t0 = process.hrtime.bigint(); for (let i = 0; i < 20; i++) JSON.parse(BD); const parseMs = Number(process.hrtime.bigint() - t0) / 1e6 / 20;
 ok(BD.length < 400 * 1024, 'a full business month (48 agents, ' + n.toLocaleString('en-ZA') + ' cases): ' + Math.round(BD.length / 1024) + ' KB raw / ' + Math.round(zlib.gzipSync(BD).length / 1024) + ' KB gzip — far under the 32 MiB the Worker unpacks (KV_INFLATE_MAX)');
-ok(parseMs < 5, 'its parse costs ' + parseMs.toFixed(2) + ' ms here — paid once a minute per isolate (the 60 s cache), not per request', parseMs);
+/* ROWS, NOT CASES: what keeps the digest's size (and so its parse) bounded is that it grows by AGENT, never by case —
+   one agents row per agent on the list, and not one case number of the ~3,000-case book inside it. */
+{ const PD = JSON.parse(BD), cnIn = Object.keys(big.cases).filter((cn) => BD.includes(cn)).length;
+  ok(PD.agents.length === ros.length && cnIn === 0, 'it grows by agent, not by case: ' + PD.agents.length + ' agent rows for ' + ros.length + ' agents, ' + cnIn + ' of ' + n.toLocaleString('en-ZA') + ' case numbers in it', PD.agents.length + ' / ' + cnIn); }
+/* PARSE COST IS RELATIVE, NOT A WALL-CLOCK NUMBER. An absolute "< 5 ms" read ~3 ms normally and 6.17 ms on a busy
+   laptop, so the daily tick went red from load alone. The budget it stands for — "about one ordinary 200 KB JSON
+   parse, once a minute per isolate" — is judged against a REFERENCE parsed in this run: a FIXED ~210 KB array of flat
+   objects (it does not grow with the digest, so a fatter digest still reads as dearer). Load slows both alike; the two
+   are interleaved, best of 15 batches each. The digest measures ~0.9–1.2× the reference here; the bound is 2.5×, which
+   a digest that grew by case, or into a deeply nested / many-tiny-values shape, would blow straight through. The byte
+   budget above stays absolute and strict. */
+const REF_JSON = JSON.stringify(Array.from({ length: 2600 }, (_, i) => ({ c: 'CB' + i, n: 'Fict ' + i, a: i, b: i / 7, d: [i, i + 1], s: 'x' })));
+const bestParse = (str) => { const t = process.hrtime.bigint(); for (let j = 0; j < 5; j++) JSON.parse(str); return Number(process.hrtime.bigint() - t) / 1e6 / 5; };
+let parseMs = Infinity, refParseMs = Infinity; bestParse(BD); bestParse(REF_JSON);
+for (let r = 0; r < 15; r++) { parseMs = Math.min(parseMs, bestParse(BD)); refParseMs = Math.min(refParseMs, bestParse(REF_JSON)); }
+ok(parseMs < 2.5 * refParseMs, 'its parse costs ' + parseMs.toFixed(2) + ' ms here, ' + (parseMs / refParseMs).toFixed(2) + '× a plain ' + Math.round(REF_JSON.length / 1024) + ' KB JSON parse (bound 2.5×) — paid once a minute per isolate (the 60 s cache), not per request', parseMs.toFixed(2) + ' / ' + refParseMs.toFixed(2));
 
 /* ======================= D8 · the Phase E security review fixes (2026-11-23) ======================= */
 head('D8 · security review: who writes, how big, in what order, who reads');

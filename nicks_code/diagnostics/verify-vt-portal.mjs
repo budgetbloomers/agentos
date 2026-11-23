@@ -159,9 +159,17 @@ publish();
 globalThis.__vtDigestCaches = {}; globalThis.__vtPointerCache = null;
 r = await get(U.vtAgent, '/api/portal/vt/overview');
 const coldSubs = r.subs;
-const c0 = process.cpuUsage(); r = await get(U.vtAgent, '/api/portal/vt/overview'); const cpu = process.cpuUsage(c0); const cpuMs = (cpu.user + cpu.system) / 1000;
+/* CPU PER CALL, AVERAGED AND LOAD-PROOF. process.cpuUsage ticks at ~15.6 ms on Windows, so ONE call read 0 or ~16 ms
+   against the 10 ms line — the check failed whenever a tick landed inside it (it "failed once under full-run load").
+   Each batch is the average of 40 warm calls, and the figure is the BEST of 3 batches (GC and V8 helper threads count
+   as process CPU, so one batch on a busy machine reads high). A warm overview that re-read or re-parsed the digest per
+   request would still cost more than the line in every batch. */
+const cpuPerCall = async (who, route, n = 40) => { let best = Infinity, last = null;
+  for (let b = 0; b < 3; b++) { const c = process.cpuUsage(); for (let i = 0; i < n; i++) last = await get(who, route); const u = process.cpuUsage(c); best = Math.min(best, (u.user + u.system) / 1000 / n); }
+  return { ms: best, r: last }; };
+let cpuMs; ({ ms: cpuMs, r } = await cpuPerCall(U.vtAgent, '/api/portal/vt/overview'));
 ok(r.subs <= coldSubs && r.subs <= 4, 'a warm VT overview: ' + r.subs + ' subrequests (cold ' + coldSubs + ') — the digest is read once a minute per isolate', r.subs);
-ok(cpuMs < 10, 'a warm VT overview costs ' + cpuMs.toFixed(2) + ' ms of CPU here (harness included) — under the FREE plan\'s 10 ms', cpuMs);
+ok(cpuMs < 10, 'a warm VT overview costs ' + cpuMs.toFixed(2) + ' ms of CPU a call here (best of 3 × 40 calls, harness included) — under the FREE plan\'s 10 ms', cpuMs);
 const VTSRC = fs.readFileSync(path.join(ROOT, 'worker', 'src', 'vt.mjs'), 'utf8');
 ok(!/vt_book|VTEngine|model\(/.test(VTSRC.slice(VTSRC.indexOf('portal half (Phase E) below this line'))), 'the portal half never reads the case book or calls the engine (no recomputation)');
 const PORTAL = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'portal.mjs')).href);
@@ -190,8 +198,7 @@ r = await get(U.vasAgent, '/api/portal/overview');
 const vasCold = r.subs, vasColdBlob = W.log.slice(-r.subs).some((l) => l.includes(VTP));
 ok(r.status === 200 && !r.j.scorecard && !vasColdBlob, 'H2 a VAS agent\'s overview reads the VT POINTER only, never the VT digest blob (cold: ' + vasCold + ' subrequests in all)');
 /* averaged over 40 calls — process.cpuUsage ticks at ~15.6 ms on Windows, so one call reads 0 or 16 */
-const c1 = process.cpuUsage(); for (let i = 0; i < 40; i++) r = await get(U.vasAgent, '/api/portal/overview'); const c1u = process.cpuUsage(c1);
-const vasWarmMs = (c1u.user + c1u.system) / 1000 / 40;
+let vasWarmMs; ({ ms: vasWarmMs, r } = await cpuPerCall(U.vasAgent, '/api/portal/overview'));   // best of 3 × 40 calls (see S6)
 const VTS = JSON.stringify(VT), t1 = process.hrtime.bigint(); for (let i = 0; i < 20; i++) JSON.parse(VTS); const vtParseMs = Number(process.hrtime.bigint() - t1) / 1e6 / 20;
 say('       measured: VAS agent overview, warm, VT digest published — ' + r.subs + ' subrequests, ' + vasWarmMs.toFixed(2) + ' ms CPU a call (harness included); the VT parse it no longer pays when cold: ' + vtParseMs.toFixed(2) + ' ms (' + Math.round(VTS.length / 1024) + ' KB)');
 ok(vasWarmMs < 10, 'H2 a warm VAS agent overview beside a VT digest: ' + vasWarmMs.toFixed(2) + ' ms CPU a call, under the 10 ms line', vasWarmMs);
@@ -291,11 +298,26 @@ async function pageAs(who, viewport = { width: 1400, height: 1000 }) {
     await route.fulfill({ status: res.status, headers: cors, contentType: 'application/json', body: res.t });
   });
   await page.addInitScript((t) => { sessionStorage.setItem('cbx_agent_token', t); }, 'tok-' + who);
+  /* test instrumentation only: count the page's fetches in flight, so settle() knows when its reads have landed */
+  await page.addInitScript(() => { const f = window.fetch; window.__inflight = 0;
+    window.fetch = function () { window.__inflight++; return f.apply(this, arguments).finally(() => { setTimeout(() => { window.__inflight--; }, 0); }); }; });
   await page.goto('http://127.0.0.1:8291/agent/', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.D && document.querySelector('.main'), null, { timeout: 30000 }).catch(() => {});
-  await page.waitForTimeout(600);
+  await settle(page);
   return { page, errs };
 }
+/* SETTLE, NOT SLEEP. The browser checks used fixed pauses (600 ms after load, 150–400 ms after a click or render), so a
+   busy machine read the page before its fetch landed or its render ran. settle() waits for the page's own quiet state:
+   no fetch in flight (counted by the init script above) and the document unchanged across three consecutive frames.
+   Under load the frames slow down with everything else, so it waits longer exactly when it must. */
+const settle = (page) => page.evaluate(() => new Promise((done, fail) => {
+  const t0 = Date.now(); let last = null, quiet = 0;
+  const tick = () => { const h = window.__inflight ? null : document.body.innerHTML;
+    if (h !== null && h === last) quiet++; else quiet = 0;
+    last = h; if (quiet >= 3) return done(true);
+    if (Date.now() - t0 > 30000) return fail(new Error('the page never settled (30 s)'));
+    requestAnimationFrame(() => setTimeout(tick, 0)); };
+  tick(); }));
 const txt = (page, sel = '#root') => page.evaluate((s) => (document.querySelector(s) || {}).innerText || '', sel).then((t) => t.replace(/\s+/g, ' '));
 const nf = (v, d) => new Intl.NumberFormat('en-ZA', { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
 const allErrs = [];
@@ -332,18 +354,18 @@ publish();
   ok(card && card.btns.join('|') === '★ How the score works|Open my session brief|Ask Leader to help with ' + VT.drivers.find((d) => d.k === rt.weakest).label.toLowerCase(), 'the three buttons, the help one naming the leader and the weakest driver', card && card.btns.join('|'));
   ok(/Your help requests/.test(await txt(page)) && /Explain my result/.test(await txt(page)), '"Your help requests" shows below the card');
   await page.screenshot({ path: path.join(SHOTS, 'vt-agent-card.png'), fullPage: true });
-  await page.click('[data-vthow]'); await page.waitForTimeout(150);
+  await page.click('[data-vthow]'); await settle(page);
   const how = await txt(page, '#vtOv');
   ok(VT.drivers.every((d) => how.includes(d.label + ' — ' + d.w + ' points')) && /half of the target/.test(how) && /never ranked/.test(how) && how.includes('at least ' + VT.minima.cases + ' sales'), '"How the score works" explains the VT score in words, from the payload', how.slice(0, 200));
   await page.evaluate(() => document.getElementById('vtOv').remove());
-  await page.click('[data-vthelp]'); await page.waitForTimeout(150);
+  await page.click('[data-vthelp]'); await settle(page);
   ok(await page.evaluate(() => !!document.getElementById('helpOv') && /Send to Leader/.test(document.getElementById('helpOv').textContent)), 'Ask the team leader opens the Help Center form addressed to their leader');
   await page.evaluate(() => document.getElementById('helpOv').remove());
 
   head('B3 · the VT agent\'s nav and My month');
   const nav = await page.evaluate(() => [...document.querySelectorAll('.nav-item')].map((n) => n.textContent.trim()));
   ok(nav.some((x) => /Today/.test(x)) && nav.some((x) => /My month/.test(x)) && !nav.some((x) => /Projected Commission|Links|My Progress/.test(x)), 'nav: Today + My month; Projected Commission, Links and My Progress are hidden', nav.join(','));
-  await page.click('[data-vtview="brief"]'); await page.waitForTimeout(150);
+  await page.click('[data-vtview="brief"]'); await settle(page);
   const wk1 = await page.evaluate(() => [...document.querySelectorAll('.vt-weeks tbody tr')].map((r) => r.innerText.replace(/\s+/g, ' ')));
   const weeksWant = me.weeks.filter((w) => w.from <= VT.period.asOf);
   ok(wk1.length === weeksWant.length && wk1[0].includes(nf(weeksWant[weeksWant.length - 1].sales, 0)), 'My month: one row per week so far, newest first, the engine\'s weekly figures', wk1.join(' / '));
@@ -380,27 +402,27 @@ head('B2 · honest states');
   ok(DEC.empty === true && /No December 2026 figures yet/.test(t) && !(await page.$('.pg-score')), 'the empty month: "No December 2026 figures yet", no score', t.slice(0, 200));
   const fin = await page.$('[data-vtcycle="cycle-2026-11"]');
   ok(!!fin && /November 2026 \(final\)/.test(await fin.innerText()), '…with a "November 2026 (final)" link');
-  if (fin) { await fin.click(); await page.waitForTimeout(400); }
+  if (fin) { await fin.click(); await settle(page); }
   ok(!!(await page.$('.pg-score')) && /Back to December 2026/.test(await txt(page)), 'the link opens November\'s card, with "Back to December 2026"');
-  await page.click('[data-vtcycle=""]').catch(() => {}); await page.waitForTimeout(200);
+  await page.click('[data-vtcycle=""]').catch(() => {}); await settle(page);
   ok(/No December 2026 figures yet/.test(await txt(page)), '…and back');
   allErrs.push(...errs); await page.close(); }
 
 head('B4 · the VT team leader (Leader One)');
 publish();
 { const { page, errs } = await pageAs('tlOne');
-  await page.waitForFunction(() => window.VTView && window.VTView.state().team, null, { timeout: 8000 }).catch(() => {});
-  await page.evaluate(() => { VIEW = 'results'; render(); }); await page.waitForTimeout(200);
+  await page.waitForFunction(() => window.VTView && window.VTView.state().team, null, { timeout: 30000 }).catch(() => {});
+  await page.evaluate(() => { VIEW = 'results'; render(); }); await settle(page);
   const vrows = await page.evaluate(() => [...document.querySelectorAll('tr.vt-teamrow')].map((r) => r.dataset.vtrow));
   ok(JSON.stringify(vrows.sort()) === '["CB9101","CB9106"]' && !/Not reported on this page/.test(await txt(page)), 'Team Results: the VT agents on the VAS list paint their VT figures, never "Not reported"', vrows.join(','));
-  await page.click('button[data-vtcb="CB9101"]'); await page.waitForTimeout(400);
+  await page.click('button[data-vtcb="CB9101"]'); await settle(page);
   const ov = await txt(page, '#vtOv');
   ok(/Agent rating/.test(ov) && ov.includes(nf(VT.agents.find((a) => a.code === 'CB9101').rating.adj, 1)) && !/Ask Leader/.test(ov), 'Open VT card: the agent\'s VT card (no "Ask" button on a leader\'s view)', ov.slice(0, 120));
   await page.evaluate(() => document.getElementById('vtOv').remove());
   const navs = await page.evaluate(() => { VIEW = 'mtd_team'; render(); return [...document.querySelectorAll('[data-report]')].map((b) => b.textContent); });
   ok(['VT Month to date', 'VT Weekly', 'VT Daily'].every((x) => navs.includes(x)) && navs.includes('Month to date'), 'Reports: the VAS tabs AND VT Month to date / VT Weekly / VT Daily', navs.join(','));
   for (const [view, v] of [['vt_mtd_team', 'mtd'], ['vt_weekly_team', 'weekly'], ['vt_daily_team', 'daily']]) {
-    await page.evaluate((x) => { VIEW = x; render(); }, view); await page.waitForTimeout(150);
+    await page.evaluate((x) => { VIEW = x; render(); }, view); await settle(page);
     const tb = await page.evaluate(() => { const t = document.querySelector('table.vt-rep'); if (!t) return null;
       const h = [...t.querySelectorAll('thead th')].map((x) => x.textContent); return { h, rows: [...t.querySelectorAll('tbody tr')].map((r) => [...r.children].map((c) => c.innerText.replace(/\s+/g, ' ').trim())) }; });
     const team = VT.agents.filter((a) => a.tlCode === 'CB9190');
@@ -411,7 +433,7 @@ publish();
     ok(ar && ar[si] === nf(w.sales, 0) && ar[tb.h.indexOf('Fitted')] === nf(w.fitted, 0), view + ': Alpha Test\'s sales and fitted are the digest\'s', ar && ar.join(' | '));
     if (v === 'mtd') ok(ar && ar[tb.h.indexOf('Cancelled')] === '—' && ar[tb.h.indexOf('Rating')] === nf(a1.rating.adj, 1) + ' · ' + a1.rating.band, 'mtd: Cancelled "—" (never 0), the rating column', ar && ar.join(' | '));
     await page.evaluate(() => { window.XLSX.writeFile = () => {}; });
-    await page.click('[data-vtexport]'); await page.waitForTimeout(150);
+    await page.click('[data-vtexport]'); await settle(page);
     const ex = await page.evaluate(() => window.__vtLastExport);
     const label = { mtd: 'Month to date', weekly: 'Weekly', daily: 'Daily' }[v];
     ok(ex && ex.name.startsWith('TL VT ' + label + ' - Leader One - ') && ex.name.endsWith('.xlsx') && ex.sheets.length === 1, view + ': export "' + (ex && ex.name) + '" (TL VT <report> - <team> - <period>.xlsx), one sheet');
@@ -422,20 +444,20 @@ publish();
 
 head('B5 · the campaign manager');
 { const { page, errs } = await pageAs('cm');
-  await page.waitForFunction(() => window.VTView && window.VTView.state().team, null, { timeout: 8000 }).catch(() => {});
-  await page.evaluate(() => { render(); }); await page.waitForTimeout(150);
+  await page.waitForFunction(() => window.VTView && window.VTView.state().team, null, { timeout: 30000 }).catch(() => {});
+  await page.evaluate(() => { render(); }); await settle(page);
   const nav = await page.evaluate(() => [...document.querySelectorAll('.nav-item')].map((n) => n.textContent.trim()));
   ok(nav.some((x) => /Vehicle Tracking/.test(x)) && nav.some((x) => /Campaign$/.test(x)), 'the manager\'s nav: Vehicle Tracking beside the VAS campaign tabs', nav.join(','));
-  await page.evaluate(() => { VIEW = 'cm_vt'; render(); }); await page.waitForTimeout(200);
+  await page.evaluate(() => { VIEW = 'cm_vt'; render(); }); await settle(page);
   const t = await txt(page);
   ok(/In-play sales/.test(t) && t.includes(nf(VT.floor.mtd.sales, 0)) && /Sub-campaigns/.test(t) && /Digital/.test(t) && /Predictive/.test(t) && /Referral/.test(t) && /Lead sources/.test(t) && /Lead Gen \(group\)/.test(t), 'the VT campaign view: floor tiles, sub-campaigns, lead sources (Lead Gen group)', t.slice(0, 200));
   ok(/Unmatched sellers \(1\)/.test(t) && !/nobody on the list/i.test(t), 'unmatched sellers: the count, never the names');
   const rows = await page.evaluate(() => document.querySelectorAll('table.vt-rep tbody tr').length);
   ok(rows === VT.agents.length + VT.tlAgg.length + 2, 'every VT agent, each team total, unmatched and the floor total', rows);
   await page.screenshot({ path: path.join(SHOTS, 'vt-cm-view.png'), fullPage: true });
-  await page.evaluate(() => { VIEW = 'cm_vt_weekly'; render(); }); await page.waitForTimeout(150);
+  await page.evaluate(() => { VIEW = 'cm_vt_weekly'; render(); }); await settle(page);
   ok(await page.$('table.vt-rep[data-vtrep="weekly"]') !== null, 'the Weekly sub-tab renders');
-  await page.evaluate(() => { VIEW = 'cm'; render(); }); await page.waitForTimeout(150);
+  await page.evaluate(() => { VIEW = 'cm'; render(); }); await settle(page);
   ok(!(await page.$('table.vt-rep')) && /Sales this month so far/.test(await txt(page)), 'the VAS Campaign tab is the VAS one (its own tiles, no VT table)');
   allErrs.push(...errs); await page.close(); }
 

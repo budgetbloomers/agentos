@@ -188,9 +188,14 @@ ok(!/['"]\/api\/vt\//.test(PORTAL.slice(PORTAL.indexOf('PORTAL_ALLOWED'), PORTAL
 
 head('W8 · CPU and subrequests');
 /* process.cpuUsage ticks at ~15 ms on Windows, so each figure is the AVERAGE of 25 calls (the stub's own work included,
-   so it is an upper bound on the Worker's share) */
-const avgCpu = async (mk, n = 25) => { const t0 = process.cpuUsage(); let last = null; for (let i = 0; i < n; i++) { sub = 0; rpcs = []; last = await worker.fetch(mk(), ENV, ctx); if (i < n - 1) await last.body?.cancel?.(); }
+   so it is an upper bound on the Worker's share). LOAD-PROOF: process CPU also counts GC and V8's helper threads, so one
+   batch on a busy machine can read high; each figure is the BEST of 3 batches (the bound is the 10 ms budget itself —
+   a Worker that started parsing a 4 MB book would cost tens of ms in every batch, so the minimum still catches it). */
+const avgCpu1 = async (mk, n = 25) => { const t0 = process.cpuUsage(); let last = null; for (let i = 0; i < n; i++) { sub = 0; rpcs = []; last = await worker.fetch(mk(), ENV, ctx); if (i < n - 1) await last.body?.cancel?.(); }
   const u = process.cpuUsage(t0); return { ms: (u.user + u.system) / 1000 / n, res: last }; };
+const avgCpu = async (mk, n = 25) => { let best = Infinity, res = null;
+  for (let b = 0; b < 3; b++) { if (res) await res.body?.cancel?.(); const r = await avgCpu1(mk, n); best = Math.min(best, r.ms); res = r.res; }
+  return { ms: best, res }; };
 { const row = '["90000001","scheduled","2026-11-09","2026-11-09","first_seen","2026-11-09","2026-11-10","2026-11-12",null,["MXV"],null,"revx","alpha test","CB9101","exact","New","Bundle Q","RevX"]';
   for (const [label, n] of [['0.6 MB', 5000], ['4 MB', 33000]]) {
     BOOK_BODY = '{"rev":1,"cases":[' + Array(n).fill(row).join(',') + '],"events":[]}';
@@ -198,8 +203,9 @@ const avgCpu = async (mk, n = 25) => { const t0 = process.cpuUsage(); let last =
     const subs = sub, body = await res.text();
     ok(body.length === BOOK_BODY.length, label + ' book (' + Math.round(BOOK_BODY.length / 1024) + ' KB) reaches the browser whole');
     /* the same body straight from the stub, with no Worker in between: what Node itself spends producing it */
-    const t0 = process.cpuUsage(); for (let i = 0; i < 25; i++) { const r = await globalThis.fetch(ENV.SUPABASE_URL + '/rest/v1/rpc/vt_book', { method: 'POST', body: '{}' }); if (i < 24) await r.body.cancel(); else await r.text(); }
-    const u = process.cpuUsage(t0), stubMs = (u.user + u.system) / 1000 / 25;
+    let stubMs = Infinity;
+    for (let b = 0; b < 3; b++) { sub = 0; const t0 = process.cpuUsage(); for (let i = 0; i < 25; i++) { const r = await globalThis.fetch(ENV.SUPABASE_URL + '/rest/v1/rpc/vt_book', { method: 'POST', body: '{}' }); if (i < 24) await r.body.cancel(); else await r.text(); }
+      const u = process.cpuUsage(t0); stubMs = Math.min(stubMs, (u.user + u.system) / 1000 / 25); }
     ok(ms - stubMs < 10, label + ' book: ' + ms.toFixed(2) + ' ms CPU per request, of which the stub itself ' + stubMs.toFixed(2) + ' ms; the Worker share is under the 10 ms budget (nothing is parsed)');
     ok(subs === 2, label + ' book: one subrequest beyond the session lookup', subs);
   }

@@ -130,8 +130,10 @@ await page.waitForFunction(() => window.__mtd && window.__mtd.state() && window.
 await page.evaluate(() => { window.__cloudPush = function () {}; window.CBX_USER = { role: 'admin', username: 'tester', tabs: {} };
   window.__xl = []; const X = window.XLSX; X.writeFile = (wb, name) => { window.__xl.push({ name, sheets: wb.SheetNames.map((n) => ({ name: n, aoa: X.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null }) })) }); }; });
 
+/* settle(): wait for the VT page's own settled state (not loading, its page head painted). The cap is TIME (30 s), not
+   a count of polls: 80 polls was ~5 s of frames, which a busy machine could use up and then read a half-painted page. */
 const settle = () => page.evaluate(async () => { const paint = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0))));
-  for (let i = 0; i < 80; i++) { await paint(); const st = window.VTPages.state(); if (!/^vt_/.test(window.__mtd.state().ui.tab) || (st.status !== 'loading' && !document.querySelector('#view .vt-loading') && document.querySelector('#view .page-head'))) break; await new Promise((r) => setTimeout(r, 25)); }
+  for (const t0 = Date.now(); Date.now() - t0 < 30000;) { await paint(); const st = window.VTPages.state(); if (!/^vt_/.test(window.__mtd.state().ui.tab) || (st.status !== 'loading' && !document.querySelector('#view .vt-loading') && document.querySelector('#view .page-head'))) break; await new Promise((r) => setTimeout(r, 25)); }
   await paint(); });
 const open = async (tab, ui) => { await page.evaluate(([t, u]) => { const S = window.__mtd.state(); if (u) S.ui.vt = Object.assign({}, u); S.ui.tab = t; renderPage(); }, [tab, ui || null]); await settle(); };
 const reset = (ui) => page.evaluate((u) => { window.VTPages._reset(); window.__mtd.state().ui.vt = u || {}; }, ui || {});
@@ -156,12 +158,14 @@ try {
   ok(['mtd', 'weekly', 'daily'].every((v) => nav.nav.includes(v)), 'the VAS Month to Date / Weekly / Daily pages are still in the nav');
 
   head('P2 · tab grants');
-  const g = await page.evaluate(async () => { const S = window.__mtd.state(); const paint = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 30))));
-    const as = async (u, t) => { window.CBX_USER = u; S.ui.tab = t; renderPage(); await paint(); return { tab: S.ui.tab, h: (document.querySelector('#view .page-head h2') || {}).textContent || '' }; };
-    const out = { none: await as({ role: 'viewer', tabs: { vas: ['dashboard', 'mtd'] } }, 'vt_mtd'), daily: await as({ role: 'viewer', tabs: { vas: ['dashboard', 'mtd'] } }, 'vt_daily'),
-      one: await as({ role: 'viewer', tabs: { vas: ['vt_mtd'] } }, 'vt_mtd'), oneOther: await as({ role: 'viewer', tabs: { vas: ['vt_mtd'] } }, 'vt_weekly'),
-      star: await as({ role: 'viewer', tabs: { vas: ['*'] } }, 'vt_weekly') };
-    window.CBX_USER = { role: 'admin', username: 'tester', tabs: {} }; return out; });
+  /* each account's page is read once it has SETTLED (settle() above), not after a fixed "two frames + 30 ms": a VT page
+     that is still loading repaints itself, and a read inside that repaint saw renderPage's skeleton instead of the page */
+  const as = async (u, t) => { await page.evaluate(([uu, tt]) => { window.CBX_USER = uu; window.__mtd.state().ui.tab = tt; renderPage(); }, [u, t]); await settle();
+    return page.evaluate(() => ({ tab: window.__mtd.state().ui.tab, h: (document.querySelector('#view .page-head h2') || {}).textContent || '' })); };
+  const g = { none: await as({ role: 'viewer', tabs: { vas: ['dashboard', 'mtd'] } }, 'vt_mtd'), daily: await as({ role: 'viewer', tabs: { vas: ['dashboard', 'mtd'] } }, 'vt_daily'),
+    one: await as({ role: 'viewer', tabs: { vas: ['vt_mtd'] } }, 'vt_mtd'), oneOther: await as({ role: 'viewer', tabs: { vas: ['vt_mtd'] } }, 'vt_weekly'),
+    star: await as({ role: 'viewer', tabs: { vas: ['*'] } }, 'vt_weekly') };
+  await page.evaluate(() => { window.CBX_USER = { role: 'admin', username: 'tester', tabs: {} }; });
   ok(g.none.tab === 'dashboard' && !/Vehicle Tracking/.test(g.none.h) && g.daily.tab === 'dashboard', 'an account without the VT tabs never renders them (lands on its first granted page)', JSON.stringify(g.none));
   ok(g.one.tab === 'vt_mtd' && g.oneOther.tab === 'vt_mtd', 'holding vt_mtd only: Month to date opens, Weekly does not', JSON.stringify([g.one, g.oneOther]));
   ok(g.star.tab === 'vt_weekly', 'vas:["*"] opens every VT page');
@@ -328,7 +332,7 @@ try {
 
   head('P15 · Upload Station receipts and laptop width');
   await reset(); await page.evaluate(() => { go('data'); }); await settle();
-  await page.waitForFunction(() => document.querySelectorAll('#vtReceipts tbody tr').length > 0, null, { timeout: 10000 }).catch(() => {});
+  await page.waitForFunction(() => document.querySelectorAll('#vtReceipts tbody tr').length > 0, null, { timeout: 30000 }).catch(() => {});
   const rc = await page.evaluate(() => ({ n: document.querySelectorAll('#vtReceipts tbody tr').length, first: (document.querySelector('#vtReceipts tbody tr') || {}).textContent || '' }));
   ok(rc.n === 10 && /Scheduled & Missed101126\.xlsx|Scheduled & Missed 101126\.xlsx/.test(rc.first.replace(/Scheduled & MissedScheduled/, 'Scheduled & Missed Scheduled')), 'the Upload Station lists the last 10 VT receipts, newest first', rc.n + ' ' + rc.first.slice(0, 120));
   for (const tab of ['vt_mtd', 'vt_weekly', 'vt_daily']) {

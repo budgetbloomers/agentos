@@ -135,7 +135,7 @@ try {
   ok(W.log.find((x) => x.p === '/api/vt/book').body.p_also.length === 3, 'the merge read names the file\'s cases (p_also)');
 
   head('S1b · the commit publishes the VT digest (Phase E, E2)');
-  await page.waitForFunction(() => window.VTPublish && window.VTPublish.state().last, null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => window.VTPublish && window.VTPublish.state().last, null, { timeout: 30000 }).catch(() => {});
   const keys = W.kv.map((x) => x.key);
   ok(keys.includes('vt-digest') && keys.includes('vt-digest-cycle-2026-11') && !keys.some((k) => /^agent-/.test(k)), 'after the commit: kv:vt-digest and kv:vt-digest-cycle-2026-11 are posted — never a VAS key', keys.join(','));
   const pub = W.kv.length ? JSON.parse(W.kv[0].body) : {};
@@ -212,8 +212,18 @@ try {
   ok(rr.map((r) => r.sub).join() === 'digital,referral' && rr[0].tlCode === 'CB9190', 'rosterFromRpc: the sub-campaign from the list\'s own cell, the TL\'s CB carried', JSON.stringify(rr[0]));
 
   head('S10 · the Upload Station');
-  const slots = await page.evaluate(async () => { go('data'); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 80))));
-    return { vas: [...document.querySelectorAll('.slot[data-slot]')].map((c) => c.dataset.slot), vt: [...document.querySelectorAll('.slot[data-vtslot]')].map((c) => c.dataset.vtslot + ':' + c.querySelector('b').innerText) }; });
+  /* WAIT FOR THE SETTLED PAGE, NOT A FIXED PAUSE. The station's first paint starts the VT receipts read
+     (VTPages.receiptsCardHtml) and, when it lands, re-renders the whole page — which puts renderPage's skeleton back for
+     two frames. A fixed "two frames + 80 ms" read caught that skeleton whenever the read landed inside the window
+     (~1 run in 3; proven by logging #view: the skeleton, and a second renderPage from vt-pages.js repaint). So wait for
+     the state the check is about: the slot cards painted AND the receipts card past "Reading the receipts…" (after
+     which nothing re-renders the page), then read in that same frame. */
+  await page.evaluate(() => go('data'));
+  const slots = await (await page.waitForFunction(() => {
+    const vas = [...document.querySelectorAll('#view .slot[data-slot]')], vt = [...document.querySelectorAll('#view .slot[data-vtslot]')], rc = document.getElementById('vtReceipts');
+    if (!vas.length || !vt.length || !rc || /Reading the receipts/.test(rc.innerText)) return false;
+    return { vas: vas.map((c) => c.dataset.slot), vt: vt.map((c) => c.dataset.vtslot + ':' + c.querySelector('b').innerText) };
+  }, null, { timeout: 30000 })).jsonValue();
   ok(slots.vas.join(',') === 'bi,attendance,evals,roster,inactive,vici,board,opencasesLM,closedcases,referrals', 'the ten VAS slot cards are unchanged, in order', slots.vas.join(','));
   ok(slots.vt.join(' | ') === 'vtBiFitted:VT · BI Active Fitted | vtSchedMissed:VT · Scheduled & Missed | vtOpeningBook:VT · Opening book (once)', 'the three VT slots, in their own group', slots.vt.join(' | '));
   await dismiss(); resetWorker();

@@ -19,7 +19,7 @@
  *   D9  abandon clears the stage rows; the same hash may begin again (reuses the row)
  *   D10 checks: bad status, bad sha, case number out of range, batch over 1,000 rows
  *   D11 vt_book(p_from, p_also): old fitted cases out, open cases in, p_also brings a named old case, every event of a
- *       returned case comes with it; < 300 ms at 20k cases
+ *       returned case comes with it; at 20k cases < 4× a plain serialisation of the same rows (measured in the run)
  *   D12 vt_trim: 13 business months kept, older events / stale cases / abandoned uploads go, stage rows > 1 day purged;
  *       its start day equals VT_RULES.periods.periodStartDay
  *   D13 vt_db_size names every vt_* table
@@ -261,9 +261,22 @@ await db.exec(`insert into vt_cases (case_number, status, status_on, sold_on, so
   analyze;`);
 await db.exec('set role service_role');
 await rpc('vt_book', [null, null]);
-let big = null, ms = Infinity; for (let i = 0; i < 5; i++) { const t0 = performance.now(); big = await rpc('vt_book', [null, null]); ms = Math.min(ms, performance.now() - t0); }
+/* THE SPEED GUARD IS RELATIVE, NOT A WALL-CLOCK NUMBER. An absolute "< 300 ms" read ~150 ms normally and 314 ms on a
+   busy laptop, so the daily tick went red from load alone. What the guard is FOR is a structural regression — an
+   accidental O(n²) (a correlated per-case events subquery, a nested loop over the join) or a lost primary-key path —
+   and those cost 100× or more at 20k cases, not 2×. So vt_book is timed against a REFERENCE built in this run on the
+   same rows: the plainest possible serialisation of both tables (json_agg of every row, no filter, join or sort).
+   Load slows both alike, so the ratio holds; the queries are INTERLEAVED and each takes its best of 7 so a burst of load
+   cannot land on one side only. vt_book does the reference's work plus a filter, a hash join and two sorts, which
+   measures ~1–1.5× here; the bound is 4×. A loose absolute ceiling (2 s, ~13× the normal time) stays as a backstop. */
+const REF_SQL = `select (select json_agg(to_json(c)) from vt_cases c)::text a, (select json_agg(to_json(e)) from vt_case_events e)::text b`;
+await one(REF_SQL);
+let big = null, ms = Infinity, refMs = Infinity;
+for (let i = 0; i < 7; i++) {
+  let t0 = performance.now(); big = await rpc('vt_book', [null, null]); ms = Math.min(ms, performance.now() - t0);
+  t0 = performance.now(); await one(REF_SQL); refMs = Math.min(refMs, performance.now() - t0); }
 ok(big.cases.length > 20000 && big.events.length > 20000, 'vt_book returns the 20k-case book as one value (' + big.cases.length + ' cases, ' + big.events.length + ' events, ' + Math.round(JSON.stringify(big).length / 1024) + ' KB)');
-ok(ms < 300, 'vt_book at 20k cases answers in < 300 ms (PGlite/WASM, an upper bound for Postgres): ' + Math.round(ms) + ' ms');
+ok(ms < 4 * refMs && ms < 2000, 'vt_book at 20k cases costs ' + (ms / refMs).toFixed(2) + '× a plain serialisation of the same rows (bound 4×): ' + Math.round(ms) + ' ms against ' + Math.round(refMs) + ' ms (PGlite/WASM, an upper bound for Postgres)', Math.round(ms) + ' / ' + Math.round(refMs));
 
 head('D12 · vt_trim keeps 13 business months');
 await db.exec('reset role');
@@ -346,6 +359,8 @@ const commitAs = async (id, nc, ne, user = 'tester', o = {}) => rpc('vt_upload_c
 async function load(sha, on, cases, events = [], user = 'tester', o = {}) {
   const b = await beginAs(sha, on, user, o); await stageAll(b.id, cases, events, user);
   const t0 = performance.now(); const res = await commitAs(b.id, cases.length, events.length, user, o); return { b, res, ms: performance.now() - t0 }; }
+/* best-of-N wall time of an async call (the commit-speed reference in R8) */
+const bestOf = async (n, f) => { let m = Infinity; for (let i = 0; i < n; i++) { const t0 = performance.now(); await f(); m = Math.min(m, performance.now() - t0); } return m; };
 const asOwner = async (sql) => { await db.exec('reset role'); await db.exec(sql); await db.exec('set role service_role'); };
 const sweep = () => asOwner(`update vt_uploads set state = 'abandoned' where state = 'staging'; delete from vt_upload_stage;`);
 ok(true, 'helpers ready (uploader "tester"; a second account "barry")');
@@ -462,11 +477,26 @@ head('R7 · D-LOW lifecycle, duplicates, same-day events');
 head('R8 · D-H3 a 20k-row first load commits in one call, timed');
 { const cs = Array.from({ length: 20000 }, (_, i) => crow(62000000 + i, '2026-11-20', { status: i % 3 ? 'fitted' : 'scheduled' }));
   const ev = cs.map((c) => erow(c.case_number, '2026-11-20', { to_status: c.status }));
+  /* RELATIVE, like D11: a single commit's wall time is at the mercy of machine load, so each commit is judged against a
+     REFERENCE measured in this run, before and after it — the same rows written the plainest way (one insert … select
+     from a jsonb array into column copies of vt_cases (keyed on case_number) / vt_case_events, best of 3, taken just before
+     and just after the commit; the LARGER of the two is the reference, so a burst of load during the one-shot commit
+     is most likely in its bracket too). The commit does that write plus the
+     stage read, the merge, the events upsert and the bookkeeping, measured at ~2–5× here; an O(n²) merge or a lost
+     primary-key path costs orders of magnitude at 20k. Bound 15×, plus a 60 s absolute backstop. */
+  await asOwner(`create temp table ref_cases as select * from vt_cases limit 0; alter table ref_cases add primary key (case_number); create temp table ref_events as select * from vt_case_events limit 0; grant all on ref_cases, ref_events to service_role;`);
+  const CJ = JSON.stringify(cs), EJ = JSON.stringify(ev);
+  const refWrite = () => bestOf(3, async () => { await db.query(`delete from ref_cases`); await db.query(`delete from ref_events`);
+    await db.query(`insert into ref_cases select * from jsonb_populate_recordset(null::ref_cases, $1::jsonb)`, [CJ]);
+    await db.query(`insert into ref_events select * from jsonb_populate_recordset(null::ref_events, $1::jsonb)`, [EJ]); });
+  const ref1 = await refWrite();
   const r = await load(H(0x800), '2026-11-20', cs, ev);
+  const ref = Math.max(ref1, await refWrite());
   ok(r.res.cases === 20000 && r.res.events === 20000, 'a 20,000-case + 20,000-event first load commits');
-  ok(r.ms < 20000, 'MEASURED: the 20k + 20k first-load commit took ' + Math.round(r.ms) + ' ms in PGlite (WASM; an upper bound for Postgres)');
+  ok(r.ms < 15 * ref && r.ms < 60000, 'MEASURED: the 20k + 20k first-load commit took ' + Math.round(r.ms) + ' ms, ' + (r.ms / ref).toFixed(1) + '× a plain 20k + 20k insert (' + Math.round(ref) + ' ms; bound 15×) in PGlite (WASM; an upper bound for Postgres)', Math.round(r.ms) + ' / ' + Math.round(ref));
   const r2 = await load(H(0x801), '2026-11-21', cs.map((c) => ({ ...c, last_seen: '2026-11-21' })), []);
-  ok(r2.res.cases === 20000 && r2.ms < 20000, 'MEASURED: the steady-state daily re-see of 20,000 cases took ' + Math.round(r2.ms) + ' ms in PGlite'); }
+  const refB = Math.max(ref1, await refWrite());
+  ok(r2.res.cases === 20000 && r2.ms < 15 * refB && r2.ms < 60000, 'MEASURED: the steady-state daily re-see of 20,000 cases took ' + Math.round(r2.ms) + ' ms, ' + (r2.ms / refB).toFixed(1) + '× the same plain insert (bound 15×) in PGlite', Math.round(r2.ms) + ' / ' + Math.round(refB)); }
 
 head('R9 · D-M8 / D-M9 vt_roster_at: one row per agent, house CB join, list_as_of');
 await asOwner(`insert into team_leader_cbs (leader_name, employee_code) values ('leader one ', 'CB9999'), ('Leader Three', 'cb-77');
