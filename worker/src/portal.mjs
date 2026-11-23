@@ -24,7 +24,7 @@ import { cycleRange, cyclesNow } from './cycle.mjs';   // the billing month (26t
 import { rangeOf, rangeFilling, queueList, enqueueRange, RANGE_QUEUE_KEY } from './range.mjs';   // the custom range, spec 006-cm-custom-range
 import { withFloorEx, checksFor, VAT } from './rules.mjs';
 import { drillFor } from './drill.mjs';
-import { vtAgentOverview } from './vt.mjs';   // spec 071 Phase E: a CB on the published VT digest gets the VT card   // the KPI drill-down verdicts (sprint 2026-09-29, item 3)
+import { vtAgentOverview, vtTeamFallback } from './vt.mjs';   // spec 071 Phase E: a CB on the published VT digest gets the VT card   // the KPI drill-down verdicts (sprint 2026-09-29, item 3)
 /* what drillFor needs beyond the agent row: the floor's ex-VAT twin and how far the month has run */
 const drillCtx = (digest, nba) => ({ floorEx: withFloorEx(nba && nba.thresholds).gwpFloorEx,
   workingDays: digest.workingDays, daysWithData: digest.daysWithData, dates: digest.dates, period: digest.period });   // one number, one verdict (2026-09-07): the floor and the two checks are decided once
@@ -380,13 +380,21 @@ export async function overviewRequest(env, DB, user, q, opts) {
   if (user.role !== 'campaign_manager') {
     /* WHICH CARD (spec 071, FR-041): an agent whose CB is on the PUBLISHED Vehicle Tracking digest (built from the Agent
        List's VT sheet) gets the VT answer, scorecard:'vt'. Everyone else — every VAS agent, every team leader — falls
-       through to the VAS answer below, byte for byte (verify-vt-vas-golden.mjs). */
-    if (user.role === 'agent') { const vt = await vtAgentOverview(DB, user); if (vt) return vt; }
+       through to the VAS answer below, byte for byte (verify-vt-vas-golden.mjs).
+       A CB ON BOTH DIGESTS (review LOW-4, 2026-11-23): the VT card wins the LIVE overview — the Agent List says which campaign an
+       agent is on NOW, and the VT digest is built from its VT sheet. An explicit ?month=YYYY-MM is a VAS-history question and is
+       answered from that month's VAS digest for every role, a VT agent included (their own VAS row, or the honest notice); the
+       VT card's own history is /api/portal/vt/overview?cycle=. */
     const mq = String(q.month || '');
     const month = /^\d{4}-\d{2}$/.test(mq) ? mq : null;
+    if (user.role === 'agent' && !month) { const vt = await vtAgentOverview(DB, user); if (vt) return vt; }
     const digest = await loadDigest(DB, month);
     if (!digest) return { status: 404, body: { error: month ? 'No figures were published for ' + month + '.' : 'Nothing has been published yet. Check again a little later.' } };
-    return overview(env, DB, user, digest, await listDigestMonths(DB), undefined);
+    const months = await listDigestMonths(DB);
+    const r = await overview(env, DB, user, digest, months, undefined);
+    /* a VT-only team leader (no VAS row at all) gets their team page instead of the VAS 409 — vt.mjs vtTeamFallback */
+    if (r.status === 409 && user.role === 'team_leader' && !month) { const vd = await vtTeamFallback(DB, user, digest); if (vd) return overview(env, DB, user, vd, months, undefined); }
+    return r;
   }
   const per = resolvePeriod(q, nowMs);
   if (per.error) return { status: 400, body: { error: 'bad_period' } };

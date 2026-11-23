@@ -310,6 +310,7 @@ export function vtInScope(ctx, username) {
   const named = (x) => (x && Array.isArray(x.campaigns) ? x.campaigns : []).some((c) => VT_KEYS.has(campKey(c)));
   if (named(a)) return true;
   if (Object.values(assign).some(named)) return false;   // another manager owns VT
+  /* nobody owns VT → every assigned manager has it: deliberate, effectiveCamps' 3 Sep new-campaign rule (review: not a bug; pinned in verify-vt-portal S7) */
   return ((ctx && ctx.campaigns) || []).some((c) => VT_KEYS.has(campKey(c.key || c.label)));
 }
 const cmCampsFor = (ctx, user) => {

@@ -148,6 +148,11 @@ jobs:
             node nicks_code/diagnostics/$s.mjs > /tmp/$s.log 2>&1 || fails="$fails $s($(grep -oE '[0-9]+ failed' /tmp/$s.log | head -1 || true): $(grep -E 'FAIL|Error' /tmp/$s.log | head -2 | cut -c1-120 | tr '\n' ';'))"
           done
           node nicks_code/diagnostics/verify-live-save.mjs --live > /tmp/live.log 2>&1 || fails="$fails verify-live-save"
+          # spec 071: every VT agent's card on the deployed page vs the published kv:vt-digest, and the VT pages over the live
+          # book (read-only; verify-all-tabs / verify-controls above also drive the three VT pages)
+          CBX_VT=1 node nicks_code/diagnostics/verify-agent-card.mjs > /tmp/vt-card.log 2>&1 || fails="$fails verify-agent-card(VT)"
+          node nicks_code/diagnostics/verify-vt-tabs.mjs --live > /tmp/vt-tabs.log 2>&1 || fails="$fails verify-vt-tabs"
+          node nicks_code/diagnostics/verify-vt-health.mjs > /tmp/vt-health.log 2>&1 || fails="$fails verify-vt-health"
           mkdir -p suite-logs && cp /tmp/*.log suite-logs/ || true
           echo "fails=$fails" >> "$GITHUB_OUTPUT"
           [ -z "$fails" ]

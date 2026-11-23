@@ -71,6 +71,7 @@ function banner(text) {
   if (!el) { el = d.createElement('div'); el.id = 'vtDigestBanner'; el.setAttribute('role', 'alert');
     el.style.cssText = 'position:fixed;left:16px;right:16px;bottom:12px;z-index:9998;background:#b42318;color:#fff;padding:12px 16px;border-radius:10px;font:14px/1.4 system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.25)';
     d.body.appendChild(el); }
+  el.style.background = '#b42318';
   el.innerHTML = '<b>Vehicle Tracking figures not published to Agent Analytics.</b> ' + esc(text)
     + ' <button type="button" class="btn small" style="margin-left:8px" onclick="VTPublish.retry()">Publish now</button>';
 }
@@ -83,24 +84,64 @@ function schedule() {
   var ms = RETRY_MS[Math.min(S.tries - 1, RETRY_MS.length - 1)];
   S.timer = setTimeout(function () { S.timer = null; if (S.pending) send(S.pending); }, ms);
 }
-/** post one digest under every key it belongs to. Resolves {ok, results:[{key,status,error}]}. */
-function send(d, nowMs) {
+/* an information line in the banner's place (not red, no retry button): the server took nothing because it did not need to */
+function notice(text) {
+  var d = root.document; if (!d) return;
+  banner('x'); var el = d.getElementById('vtDigestBanner'); if (!el) return;
+  el.style.background = '#1d4ed8';
+  el.innerHTML = '<b>Vehicle Tracking figures not sent.</b> ' + esc(text);
+}
+/* COMPARE-AND-SET (security review M1, 2026-11-23): each key's version is read first (GET ?meta=1 → updated_at, or 'none') and
+   sent as X-Cbx-Base; the Worker refuses a write without one (428). A version_conflict (another tab or station wrote meanwhile)
+   RE-READS the version and asks again — so the fence re-checks the order against what is now stored (never a blind resend);
+   after two conflicts it is a failed save and the normal retries take over (each one re-reads too). */
+var CAS_TRIES = 3;
+function versionOf(k, H) {
+  return doFetch(base() + '/api/kv?key=' + k + '&meta=1', { headers: H }).then(function (r) {
+    if (r.status === 404) return 'none';
+    return r.ok ? r.json().then(function (j) { return j && j.found ? String(j.updated_at || '') : 'none'; }) : null;
+  }, function () { return null; });
+}
+function postKey(k, body, H, n) {
+  return versionOf(k, H).then(function (ver) {
+    if (ver == null) return { key: k, status: 0, error: 'the published version could not be read' };
+    var h = {}; for (var x in H) h[x] = H[x]; h['X-Cbx-Base'] = ver;
+    return doFetch(base() + '/api/kv?key=' + k, { method: 'POST', headers: h, body: body })
+      .then(function (r) { return r.text().then(function (t) { var j = null; try { j = JSON.parse(t); } catch (e) { j = null; } return { key: k, status: r.status, error: j && j.error }; }); },
+        function (e) { return { key: k, status: 0, error: String((e && e.message) || e) }; });
+  }).then(function (res) {
+    return res.status === 409 && /^version_conflict/.test(res.error || '') && n + 1 < CAS_TRIES ? postKey(k, body, H, n + 1) : res;
+  });
+}
+/** post one digest under every key it belongs to. Resolves {ok, newer?, denied?, results:[{key,status,error}]}.
+ *  o.quiet: the page-open republish (onPageReady) — an account without the Upload Station (403) is not a failed save there. */
+function send(d, nowMs, o) {
+  o = o || {};
   var tk = token(), keys = keysFor(d, nowMs);
   if (!tk) return Promise.resolve({ ok: false, results: [], why: 'not signed in' });
   if (!keys.length) return Promise.resolve({ ok: true, results: [], why: 'no key: ' + ((d && d.period && d.period.key) || 'no period') + ' is not a business month this page may publish' });
-  S.pending = d; dirty(true); S.busy = true;
+  S.pending = d; if (!o.quiet) dirty(true); S.busy = true;
   var body = JSON.stringify(d), H = { 'Content-Type': 'text/plain', Authorization: 'Bearer ' + tk, 'X-Cbx-Client': 'v5' };
-  return Promise.all(keys.map(function (k) {
-    return doFetch(base() + '/api/kv?key=' + k, { method: 'POST', headers: H, body: body })
-      .then(function (r) { return r.text().then(function (t) { var j = null; try { j = JSON.parse(t); } catch (e) { j = null; } return { key: k, status: r.status, error: j && j.error }; }); },
-        function (e) { return { key: k, status: 0, error: String((e && e.message) || e) }; });
-  })).then(function (results) {
+  return Promise.all(keys.map(function (k) { return postKey(k, body, H, 0); })).then(function (results) {
     S.busy = false;
-    /* a 409 is the fence's verdict, not a failed save: an older month offered to the live key, or an empty month over data —
-       nothing to retry. Anything else that is not a 200 is a failed save and stays dirty. */
-    var failed = results.filter(function (x) { return x.status !== 200 && x.status !== 409; });
-    if (!failed.length) { S.pending = null; S.tries = 0; S.last = { at: Date.now(), results: results }; dirty(false); return { ok: true, results: results }; }
-    S.tries++; schedule();
+    /* a 409 is the fence's verdict, not a failed save: an older month offered to the live key, an empty month over data, a closed
+       month, or NEWER figures already published (said in words, and the page re-reads) — nothing to retry. A version_conflict that
+       outlived its re-reads is a failed save. A 403 means this account may not publish (it needs the Upload Station): retrying
+       cannot help, so it is said once (never on a page-open republish) and not retried. Anything else is a failed save. */
+    var is = function (x, re) { return x.status === 409 && re.test(x.error || ''); };
+    var newer = results.filter(function (x) { return is(x, /^newer_published/); });
+    var denied = results.filter(function (x) { return x.status === 403; });
+    var failed = results.filter(function (x) { return (x.status !== 200 && x.status !== 409 && x.status !== 403) || is(x, /^version_conflict/); });
+    if (!failed.length) {
+      S.pending = null; S.tries = 0; S.last = { at: Date.now(), results: results }; dirty(false);
+      if (newer.length) {
+        notice('Newer Vehicle Tracking figures are already published (by another tab or station), so this page\'s older copy was not sent. The page is re-reading the book now — reload it if the figures do not change.');
+        try { if (root.dispatchEvent) root.dispatchEvent(typeof CustomEvent === 'function' ? new CustomEvent('vt-digest-newer', { detail: newer[0] }) : { type: 'vt-digest-newer', detail: newer[0] }); } catch (e) { /* the notice already says it */ }
+        try { if (root.VTPages && root.VTPages._reset && root.VTPages.retry) { root.VTPages._reset(); root.VTPages.retry(); } } catch (e) { /* the notice says to reload */ }
+      } else if (denied.length && !o.quiet) notice('This account may not publish them to Agent Analytics (it needs the Upload Station). An uploader\'s next upload publishes them.');
+      return { ok: !denied.length, newer: newer.length > 0, denied: denied.length > 0, results: results };
+    }
+    S.tries++; schedule(); dirty(true);
     banner('The server did not take ' + failed.map(function (x) { return x.key; }).join(' and ') + ' (' + (failed[0].error || 'HTTP ' + failed[0].status)
       + '). Agent Analytics still shows the previous figures. Retrying automatically.');
     return { ok: false, results: results };
@@ -125,7 +166,7 @@ function onPageReady(book, roster, cycleKey, receipts) {
   checked[book.rev + '|' + cycleKey] = 1;
   return doFetch(base() + '/api/kv?key=vt-digest&meta=1', { headers: { Authorization: 'Bearer ' + token(), 'X-Cbx-Client': 'v5' } })
     .then(function (r) { return r.ok ? r.json() : { found: false }; }, function () { return null; })
-    .then(function (m) { if (m == null) return null; if (!stale(receipts, m.found ? m.updated_at : null)) return null; return send(buildDigest(book, roster, cycleKey, receipts)); });
+    .then(function (m) { if (m == null) return null; if (!stale(receipts, m.found ? m.updated_at : null)) return null; return send(buildDigest(book, roster, cycleKey, receipts), undefined, { quiet: true }); });
 }
 if (root.addEventListener) root.addEventListener('beforeunload', function (e) { if (root.__vtDigestDirtySince) { e.preventDefault(); e.returnValue = ''; } });
 if (root.VTStation) root.VTStation.afterCommit = afterCommit;   // the station calls it after every commit

@@ -89,6 +89,19 @@ export const kvKeyValid = (key) => typeof key === 'string' && KV_KEY.test(key) &
 export function referralsReadAllowed(user) {
   return isFullScope(user) && STAFF_ROLES.has(user.role);
 }
+/* WHO MAY READ A VT DIGEST THROUGH GET /api/kv (review M3, 2026-11-23). The raw digest carries floor.unmatched.names (Salesforce
+   spellings of people not on the Agent List — staff material) and every VT agent's row; the portal routes slice it per session.
+   Mirrors referralsReadAllowed (a full-scope session with a staff role from the allow-list — never agent / team_leader /
+   campaign_manager, whatever management app they also hold) and narrows it: admin or exec, a staff account holding the VAS app
+   with at least one page (every VT page lives there), or the Upload Station (the publisher's own compare-and-set read).
+   Reads of every other key are untouched. */
+export function vtDigestReadAllowed(user) {
+  if (!referralsReadAllowed(user)) return false;
+  if (user.role === 'admin' || user.role === 'exec' || canUpload(user)) return true;
+  const apps = Array.isArray(user.apps) ? user.apps : [];
+  const t = user.tabs && typeof user.tabs === 'object' ? user.tabs.vas : null;
+  return apps.includes('vas') && (t === '*' || (Array.isArray(t) && t.length > 0));
+}
 
 /* WHO MAY WRITE THE DIGEST AND REFERRAL KEYS (review M1, 2026-10-01). POST/DELETE /api/kv was open to any session that
    gets past the portal lockdown — which a team leader or campaign manager who also holds a management app does. The
@@ -106,9 +119,14 @@ export const isGuardedKvKey = (key) => GUARDED_KV.test(String(key || ''));
    it straight to the database. Through /api/kv any staff session could overwrite or clear it — fake or hide an outage. */
 const SYSTEM_KV = /^(health-alerts|db-size-history)$/;
 export const isSystemKvKey = (key) => SYSTEM_KV.test(String(key || ''));
+/* THE VT DIGEST IS AN UPLOAD STATION WRITE (spec 071 Phase E security review H1, 2026-11-23). It decides who gets the VT card
+   and every VT rating, so "any staff role" is too wide: writing or deleting any vt-digest* key needs canUpload (admin, or the
+   VAS Upload Station 'data' / Ops 'uploads' tab, or '*'). Every other key keeps its rule byte for byte — the VAS digest's
+   wider staff rule is a separate, known audit item. */
 export function kvWriteAllowed(key, user) {
   if (!user) return false;
   if (isSystemKvKey(key)) return false;
+  if (isVtDigestKey(key)) return canUpload(user);
   if (!isGuardedKvKey(key)) return true;
   return isFullScope(user) && !PORTAL_ONLY_ROLES.has(user.role);
 }
@@ -165,6 +183,12 @@ export function expectedReachFor(nowMs, saturday = true) {
      · an empty payload never replaces a non-empty one of the same business month (emptiness derived, never trusted).
    Pure: the Worker's POST /api/kv and tools/digest-republish.mjs both ask these. */
 const VT_LIVE_KEY = 'vt-digest';
+/* THE VT DIGEST'S SIZE CAP (review H2, 2026-11-23). A real business month is ~260 KB raw; 2 MB decoded is ~8x that. A body over
+   it is refused at POST (plain or gzip — decided before it is unpacked past the line), its stored size is stamped on the pointer,
+   and the Worker's reader never parses a stored digest over it (vt.mjs loadVtDigest): a multi-MB parse would spend the FREE
+   plan's 10 ms of CPU on every overview that reads it, and that kill cannot be caught. */
+export const VT_DIGEST_MAX = 2 * 1024 * 1024;
+const vtCode = (v) => { const d = String(v == null ? '' : v).toUpperCase().replace(/[^0-9]/g, ''); return d ? 'CB' + String(parseInt(d, 10)) : ''; };
 const VT_CYCLE_KEY = /^vt-digest-(cycle-\d{4}-(0[1-9]|1[0-2]))$/;
 export const isVtDigestKey = (key) => /^vt-digest(-|$)/.test(String(key || ''));
 export const vtCycleOfDay = (dayIso) => cycleKeyOf(dayIso);   // cycle.mjs is the one definition of the business month
@@ -177,18 +201,35 @@ export function liveVtDigestAllowed(periodKey, liveKey, nowMs) {
   if (periodKey === cur) return true;
   return periodKey === prevCycle(cur) && String(liveKey || '') !== cur;
 }
-/** emptiness DERIVED from the body: {error} | {empty:boolean}. A VT digest says scorecard:'vt'; empty = no in-play sale anywhere. */
+/** emptiness DERIVED from the body: {error} | {empty:boolean, agents:n}. A VT digest says scorecard:'vt'; empty = no in-play sale
+ *  anywhere. A payload is non-empty only with at least one agent row (review H2a): no agent rows is the engine's emptyCyclePayload
+ *  (the rollover) — it carries no figure at all, so one that claims floor sales with no agent row is refused (empty_digest). */
 export function vtDigestEmptiness(body) {
   if (!body || body.scorecard !== 'vt' || !Array.isArray(body.agents)) return { error: 'not_vt_digest' };
   const sold = (w) => !!(w && Number(w.sales) > 0);
+  const n = body.agents.filter((a) => a && typeof a === 'object').length;
+  if (!n) return sold(body.floor && body.floor.mtd) ? { error: 'empty_digest' } : { empty: true, agents: 0 };
   const hasFigures = sold(body.floor && body.floor.mtd) || body.agents.some((a) => a && sold(a.mtd));
   if (body.empty === true && hasFigures) return { error: 'bad_empty' };
-  return { empty: !hasFigures };
+  return { empty: !hasFigures, agents: n };
 }
 /** the whole fence for one POST: {status, error} to refuse, or {pointer} (what the pointer row is stamped with).
  *  live = the pointer row of the key being written ({period, empty} or null). Asked with the key's OWN pointer: the live key
- *  and each history key are separate rows, and "empty over data" is about the row being replaced. */
-export function vtDigestFence(key, body, live, nowMs) {
+ *  and each history key are separate rows, and "empty over data" is about the row being replaced.
+ *  live may also carry {agents, asOf, updatedAt} (vtPointerView). opts.liveKey = the business month the LIVE key holds ('' =
+ *  nothing; asked by the Worker for a closed month's history key); opts.tool = the republish tool's path (tools/digest-republish).
+ *  SECURITY REVIEW FIXES (2026-11-23):
+ *    · ORDER (M1): for the same business month, a payload older than the stored one — (period.asOf, updatedAt), compared in that
+ *      order — is 409 newer_published. A stale tab rebuilds with a fresh updatedAt, but its book's as-at day is older; a retry
+ *      carries its original updatedAt. The same (asOf, updatedAt) is the same digest again and passes (an idempotent resend).
+ *      A pointer without the stamps (written before this fix) has nothing to compare and does not block.
+ *    · A CLOSED MONTH'S HISTORY KEY (M1): through /api/kv it takes its own month while that month is current, or the month just
+ *      closed while the live key does not hold the current one yet — the same rollover grace as the live key; nothing older.
+ *      The republish tool (opts.tool) may refresh a closed month's "(final)" — the plan's path — still ordered, never empty.
+ *    · NO AGENT ROWS (H2a): never on a history key; never over a same-month pointer that listed agents (a pointer with no agent
+ *      count is read as "listed agents" — the safe side). */
+export function vtDigestFence(key, body, live, nowMs, opts) {
+  opts = opts || {};
   const k = String(key || '');
   const hist = VT_CYCLE_KEY.exec(k);
   if (k !== VT_LIVE_KEY && !hist) return { status: 400, error: 'bad_vt_key: the Vehicle Tracking digest is kv:vt-digest or kv:vt-digest-cycle-YYYY-MM' };
@@ -204,7 +245,30 @@ export function vtDigestFence(key, body, live, nowMs) {
   const liveKey = live && typeof live.period === 'string' ? live.period : '';
   if (!hist && !liveVtDigestAllowed(pk, liveKey, nowMs))
     return { status: 409, error: 'stale_cycle: the live Vehicle Tracking digest is the current business month (' + cur + ') — or the one just closed until ' + cur + ' publishes; got ' + pk + '. Publish it under kv:vt-digest-' + pk + ' instead.' };
-  if (em.empty && live && liveKey === pk && live.empty !== true)
+  if (hist && em.agents === 0)
+    return { status: 409, error: 'empty_history: ' + k + ' is a business month\'s final copy; a payload with no agent rows is never filed there.' };
+  if (hist && pk !== cur && !opts.tool && !liveVtDigestAllowed(pk, String(opts.liveKey || ''), nowMs))
+    return { status: 409, error: 'closed_cycle: ' + pk + ' is closed (the current business month ' + cur + ' is live); its final copy is refreshed only by the republish tool.' };
+  const same = !!(live && liveKey === pk);
+  if (em.empty && same && live.empty !== true)
     return { status: 409, error: 'empty_over_data: ' + k + ' already holds ' + pk + ' figures; an empty payload never replaces them.' };
-  return { pointer: { period: pk, ...(em.empty ? { empty: true } : {}), kind: 'vt' } };
+  if (em.agents === 0 && same && live.agents !== 0)
+    return { status: 409, error: 'empty_over_data: ' + k + ' already lists ' + pk + '\'s agents; a payload with no agent rows never replaces it.' };
+  const asOf = String(p.asOf || ''), upd = String((body && body.updatedAt) || '');
+  if (same && (live.asOf || live.updatedAt)) {
+    const la = String(live.asOf || ''), lu = String(live.updatedAt || '');
+    if (asOf < la || (asOf === la && upd < lu))
+      return { status: 409, error: 'newer_published: newer Vehicle Tracking figures are already published for ' + pk + ' (as at ' + (la || 'no day yet') + ', built ' + (lu || '?') + '); this copy (as at ' + (asOf || 'no day yet') + ', built ' + (upd || '?') + ') is older and was not stored. Re-read the page.' };
+  }
+  /* the live pointer carries the VT roster index: a VAS agent's overview decides "not a VT agent" from it, never reading the digest */
+  const codes = hist ? null : [...new Set(body.agents.map((a) => vtCode(a && a.code)).filter(Boolean))];
+  return { pointer: { period: pk, ...(em.empty ? { empty: true } : {}), kind: 'vt', agents: em.agents, asOf: asOf || null, updatedAt: upd || null, ...(codes ? { codes } : {}) } };
+}
+/** the fence's view of a stored pointer row's value: {period, empty, agents?, asOf, updatedAt}, or null (no row). A row written
+ *  before the period stamp reads as "holding data" (period '', the safe side). One reading for the Worker and the republish tool. */
+export function vtPointerView(v) {
+  if (!v) return null;
+  if (typeof v.period !== 'string') return { period: '', empty: false };
+  return { period: v.period, empty: v.empty === true, ...(Number.isFinite(v.agents) ? { agents: v.agents } : {}),
+    asOf: typeof v.asOf === 'string' ? v.asOf : '', updatedAt: typeof v.updatedAt === 'string' ? v.updatedAt : '' };
 }

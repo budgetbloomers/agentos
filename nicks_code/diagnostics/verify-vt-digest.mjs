@@ -91,7 +91,13 @@ const W = await workerHarness();
 Date.now = () => N23;
 const quiet = console.log; console.log = (...a) => { if (a.length === 1 && a[0] && typeof a[0] === 'object') return; quiet(...a); };
 const err0 = console.error, warn0 = console.warn; console.error = () => {}; console.warn = () => {};
-const post = (u, key, body) => W.call(u, 'POST', '/api/kv?key=' + key, typeof body === 'string' ? body : JSON.stringify(body));
+/* a VT key is written the way the publisher writes it since the security review (M1): the key's version read first (?meta=1),
+   then the POST with X-Cbx-Base. VAS keys are posted exactly as before (no base). o.base: force a base (null = send none). */
+const post = async (u, key, body, o = {}) => {
+  let base = o.base;
+  if (base === undefined && /^vt-digest/.test(key)) { const m = await W.call(u, 'GET', '/api/kv?key=' + key + '&meta=1'); base = m.status === 200 && m.j ? m.j.updated_at : 'none'; }
+  return W.call(u, 'POST', '/api/kv?key=' + key, typeof body === 'string' || body instanceof Uint8Array ? body : JSON.stringify(body), base == null ? o.headers : { 'X-Cbx-Base': base, ...(o.headers || {}) });
+};
 const STAFF = userRow({ username: 'uploader', role: 'exec', apps: ['vas'], tabs: { vas: ['data'] } });
 W.rules = {}; W.storage = {};
 let r = await post(STAFF, 'vt-digest', D);
@@ -140,7 +146,8 @@ const fn = new Function(blk + '\nreturn { vtJobsFor, vtKeysFor };')();
 const J = fn.vtJobsFor(N26, C.cycleKeyOf, C.cycleRange);
 ok(J.length === 2 && J[0].key === 'cycle-2026-12' && J[0].live && J[1].key === 'cycle-2026-11' && !J[1].live, 'on the 26th: December live (empty until its first upload), November its (final)', JSON.stringify(J.map((x) => x.key)));
 ok(JSON.stringify(fn.vtKeysFor({ job: J[0], empty: true })) === '["vt-digest"]' && JSON.stringify(fn.vtKeysFor({ job: J[1], empty: false })) === '["vt-digest-cycle-2026-11"]' && JSON.stringify(fn.vtKeysFor({ job: J[1], empty: true })) === '[]', 'keys per job: the empty current month takes the live key only; the closed month its history key, never empty');
-ok(/vtDigestFence\(key, JSON\.parse\(vb\.body\), await vtPointerOf\(key\), Date\.now\(\)\)/.test(TOOL) && /--no-vt/.test(TOOL), 'the tool asks the Worker\'s own fence per key, and can be told --no-vt');
+/* (security review LOW-3: the call now passes the key's pointer view and the republish-path flag — the same fence, asked per key) */
+ok(/const body = JSON\.parse\(vb\.body\)/.test(TOOL) && /vtDigestFence\(key, body, own\.view, Date\.now\(\), \{ liveKey, tool: true \}\)/.test(TOOL) && /--no-vt/.test(TOOL), 'the tool asks the Worker\'s own fence per key (with that key\'s pointer, as the republish path), and can be told --no-vt');
 ok(/window\.VTPublish\.buildDigest/.test(TOOL), 'the tool builds through the page\'s VTPublish.buildDigest (one set of numbers)');
 
 head('D7 · size');
@@ -159,6 +166,155 @@ const BD = JSON.stringify(ENG.digest(ENG.model(big, ros, { cycleKey: CYCLE, asOf
 const t0 = process.hrtime.bigint(); for (let i = 0; i < 20; i++) JSON.parse(BD); const parseMs = Number(process.hrtime.bigint() - t0) / 1e6 / 20;
 ok(BD.length < 400 * 1024, 'a full business month (48 agents, ' + n.toLocaleString('en-ZA') + ' cases): ' + Math.round(BD.length / 1024) + ' KB raw / ' + Math.round(zlib.gzipSync(BD).length / 1024) + ' KB gzip — far under the 32 MiB the Worker unpacks (KV_INFLATE_MAX)');
 ok(parseMs < 5, 'its parse costs ' + parseMs.toFixed(2) + ' ms here — paid once a minute per isolate (the 60 s cache), not per request', parseMs);
+
+/* ======================= D8 · the Phase E security review fixes (2026-11-23) ======================= */
+head('D8 · security review: who writes, how big, in what order, who reads');
+Date.now = () => N23;
+console.log = (...a) => { if (a.length === 1 && a[0] && typeof a[0] === 'object') return; quiet(...a); };
+console.error = () => {}; console.warn = () => {};
+W.applyWrites = true; W.rules = {}; W.storage = {}; W.at = {};
+globalThis.__vtDigestCaches = {}; globalThis.__vtPointerCache = null; globalThis.__vtCycles = null;
+const ADMIN = userRow({ username: 'boss', role: 'admin', apps: ['vas'], tabs: { vas: '*' } });
+const OPSUP = userRow({ username: 'opsup', role: 'tl', apps: ['ops'], tabs: { ops: ['uploads'] } });
+const NOGRANT = [['a viewer with VAS pages but no Upload Station', userRow({ username: 'view', role: 'viewer', apps: ['vas'], tabs: { vas: ['mtd', 'vt_mtd'] } })],
+  ['a QA account without the Upload Station', userRow({ username: 'qa1', role: 'qa', apps: ['vas'], tabs: { vas: ['qa'] } })],
+  ['an Ops tl (management role) without the uploads tab', userRow({ username: 'opstl', role: 'tl', apps: ['ops'], tabs: { ops: ['session'] } })]];
+// H1
+for (const [who, u] of NOGRANT) {
+  r = await post(u, 'vt-digest', D, { base: 'none' });
+  ok(r.status === 403 && !W.rules['kv:vt-digest'], 'H1 ' + who + ': POST kv:vt-digest refused (403)', r.status + ' ' + r.t.slice(0, 80));
+  r = await W.call(u, 'DELETE', '/api/kv?key=vt-digest');
+  ok(r.status === 403, 'H1 ' + who + ': DELETE kv:vt-digest refused (403)', r.status);
+  ok(R.kvWriteAllowed('vt-digest-cycle-2026-11', u) === false && R.kvWriteAllowed('agent-digest', u) === true && R.kvWriteAllowed('cb-config', u) === true,
+    'H1 ' + who + ': every vt-digest* key refused, the VAS keys keep their rule byte for byte');
+}
+for (const [who, u] of [['admin', ADMIN], ['staff with the VAS Upload Station', STAFF], ['staff with the Ops uploads tab', OPSUP]]) {
+  W.rules = {}; W.at = {};
+  r = await post(u, 'vt-digest', D);
+  ok(r.status === 200, 'H1 ' + who + ': POST kv:vt-digest allowed', r.status + ' ' + r.t.slice(0, 120));
+}
+for (const role of ['agent', 'team_leader', 'campaign_manager'])
+  ok(R.kvWriteAllowed('vt-digest', { role, apps: ['vas', 'ops'], tabs: { vas: '*', ops: ['uploads'] } }) === false, 'H1 a ' + role + ' holding the Upload Station is still refused');
+// H2 (a) — emptiness needs an agent row
+ok(R.vtDigestEmptiness({ scorecard: 'vt', agents: [], floor: { mtd: { sales: 9 } } }).error === 'empty_digest', 'H2a no agent rows but floor sales → 400 empty_digest (it could only be a forged "non-empty" payload)');
+ok(R.vtDigestEmptiness(X).empty === true && R.vtDigestEmptiness(X).agents === 0, 'H2a the engine\'s emptyCyclePayload is empty with 0 agents');
+const XN = ENG.emptyCyclePayload(CYCLE, { updatedAt: '2026-11-23T09:00:00Z' });
+ok(/^empty_over_data/.test(F('vt-digest', XN, { period: CYCLE, empty: false, agents: 7 }).error || ''), 'H2a an empty-cycle payload over the same month with figures → 409');
+ok(/^empty_over_data/.test(F('vt-digest', XN, { period: CYCLE, empty: true, agents: 7 }).error || ''), 'H2a …and over the same month that LISTS agents but has no sale yet → 409 (the cards would vanish)');
+ok(/^empty_over_data/.test(F('vt-digest', XN, { period: CYCLE, empty: true }).error || ''), 'H2a …and over a same-month pointer with no agent count (the safe side)');
+ok(!!F('vt-digest', XN, { period: CYCLE, empty: true, agents: 0 }).pointer && !!F('vt-digest', XN, { period: 'cycle-2026-10', empty: false, agents: 7 }).pointer, 'H2a allowed over another empty-cycle payload, or over the month just closed (rollover)');
+ok(/^empty_history/.test(F('vt-digest-cycle-2026-11', XN, null).error || ''), 'H2a a history key never takes a payload with no agent rows');
+// H2 (b) — the size cap at POST
+W.rules = {}; W.at = {};
+const BIGD = JSON.stringify({ ...D, pad: 'x'.repeat(R.VT_DIGEST_MAX + 1024) });
+r = await post(STAFF, 'vt-digest', BIGD);
+ok(r.status === 413 && /Vehicle Tracking digest/.test(r.t) && /2 MB/.test(r.t) && !W.rules['kv:vt-digest'], 'H2b a plain body over 2 MB → 413 in words, nothing stored', r.status + ' ' + r.t.slice(0, 160));
+const GZ = new Uint8Array(zlib.gzipSync(BIGD));
+r = await post(STAFF, 'vt-digest', GZ);
+ok(r.status === 413 && /Vehicle Tracking digest/.test(r.t) && !W.rules['kv:vt-digest'], 'H2b a gzip body that unpacks past 2 MB → 413 (decided from the gzip trailer, nothing unpacked)', r.status + ' ' + r.t.slice(0, 160));
+const LIE = new Uint8Array(GZ); LIE.set([0, 0, 1, 0], LIE.length - 4);   // the trailer claims 64 KB
+r = await post(STAFF, 'vt-digest', LIE);
+ok(r.status === 413 && !W.rules['kv:vt-digest'], 'H2b a gzip whose trailer lies (claims 64 KB) → 413 when the counted unpack passes 2 MB', r.status + ' ' + r.t.slice(0, 160));
+// H2 (c) — the pointer carries the stored size; M1 ordering stamps
+r = await post(STAFF, 'vt-digest', D);
+const ptr = (W.rules['kv:vt-digest'] || {}).__raw || {};
+ok(r.status === 200 && ptr.size === JSON.stringify(D).length && ptr.agents === D.agents.length && ptr.asOf === D.period.asOf && ptr.updatedAt === D.updatedAt,
+  'H2c/M1 the live pointer is stamped {size, agents, asOf, updatedAt}', JSON.stringify({ ...ptr, codes: undefined }));
+ok(Array.isArray(ptr.codes) && ptr.codes.length === D.agents.length && ptr.codes.includes('CB9101') && !ptr.codes.includes('CB9201'), 'H2 the live pointer carries the VT roster index (codes) a VAS agent\'s overview decides on');
+// M1 — compare-and-set and ordering through the Worker
+r = await post(STAFF, 'vt-digest', D, { base: null });
+ok(r.status === 428 && /X-Cbx-Base/.test(r.t), 'M1 a VT digest POST without X-Cbx-Base → 428 (compare-and-set is required)', r.status + ' ' + r.t.slice(0, 120));
+r = await post(STAFF, 'vt-digest', D, { base: '2026-11-10T06:30:00.000Z' });
+ok(r.status === 409 && /version_conflict/.test(r.t), 'M1 a stale base → 409 version_conflict', r.status + ' ' + r.t.slice(0, 120));
+const OLDER = { ...D, period: { ...D.period, asOf: '2026-11-06' }, updatedAt: '2026-11-23T11:00:00Z' };
+r = await post(STAFF, 'vt-digest', OLDER);
+ok(r.status === 409 && /newer_published/.test(r.t) && /Re-read the page/.test(r.t), 'M1 a stale tab\'s rebuild (older as-at day, fresh timestamp) over newer figures → 409 newer_published', r.status + ' ' + r.t.slice(0, 160));
+const RETRY = { ...D, updatedAt: '2026-11-10T06:00:00Z' };
+r = await post(STAFF, 'vt-digest', RETRY);
+ok(r.status === 409 && /newer_published/.test(r.t), 'M1 a retry of an older build (same day, earlier updatedAt) → 409 newer_published');
+r = await post(STAFF, 'vt-digest', D); ok(r.status === 200, 'M1 the same digest again (same as-at, same updatedAt) → 200 (idempotent)', r.t.slice(0, 120));
+const NEWER = { ...D, updatedAt: '2026-11-23T11:30:00Z' };
+r = await post(STAFF, 'vt-digest', NEWER); ok(r.status === 200, 'M1 a newer build of the same month → 200', r.t.slice(0, 120));
+// M1 — the closed month's history key
+const N27 = at('2026-11-27T08:00:00Z');
+const NOVD = { ...D };
+ok(!!F('vt-digest-cycle-2026-11', NOVD, null, N26).pointer, 'M1 on the 26th, November\'s history key takes November while the live key is still November');
+ok(/^closed_cycle/.test(R.vtDigestFence('vt-digest-cycle-2026-11', NOVD, null, N27, { liveKey: 'cycle-2026-12' }).error || ''), 'M1 once December is live, November\'s history key is closed to /api/kv → 409 closed_cycle');
+ok(!!R.vtDigestFence('vt-digest-cycle-2026-11', NOVD, null, N27, { liveKey: 'cycle-2026-11' }).pointer, 'M1 …but open while the live key still holds November (the rollover grace)');
+ok(/^closed_cycle/.test(R.vtDigestFence('vt-digest-cycle-2026-10', OCT, null, N26, { liveKey: '' }).error || ''), 'M1 a month two back is closed to /api/kv, whatever is live');
+ok(!!R.vtDigestFence('vt-digest-cycle-2026-11', NOVD, null, N27, { liveKey: 'cycle-2026-12', tool: true }).pointer, 'M1 the republish tool may refresh a closed month\'s (final)');
+ok(/^newer_published/.test(R.vtDigestFence('vt-digest-cycle-2026-11', OLDER, { period: CYCLE, empty: false, agents: 7, asOf: D.period.asOf, updatedAt: D.updatedAt }, N27, { tool: true }).error || ''), 'M1 …still in order: never older figures over newer');
+Date.now = () => N27;
+W.rules = { 'kv:vt-digest': { __raw: { store: 'raw/kv/vt-digest', period: 'cycle-2026-12', kind: 'vt', agents: 7, asOf: '2026-11-26', updatedAt: '2026-11-27T06:00:00Z' } } }; W.at = {};
+r = await post(STAFF, 'vt-digest-cycle-2026-11', D);
+ok(r.status === 409 && /closed_cycle/.test(r.t), 'M1 through the Worker: November\'s history key after December is live → 409 closed_cycle', r.status + ' ' + r.t.slice(0, 120));
+Date.now = () => N23;
+// M2 — the VT payload guard on the VAS keys reads the parsed body
+W.rules = {}; W.at = {};
+const REORD = '{"agents":' + JSON.stringify(D.agents) + ',"period":' + JSON.stringify(D.period) + ',"scorecard":"vt"}';
+const SPACED = '{\n  "period" : ' + JSON.stringify(D.period) + ' ,\n  "scorecard"  :\t"vt", "agents": ' + JSON.stringify(D.agents) + ' }';
+for (const [what, b] of [['scorecard last', REORD], ['whitespace and another key first', SPACED]])
+  for (const k of ['agent-digest', 'agent-digest-2026-11', 'agent-reports-variance']) {
+    r = await post(STAFF, k, b);
+    ok(r.status === 400 && /vt_payload/.test(r.t), 'M2 a VT payload (' + what + ') on kv:' + k + ' → 400 vt_payload', r.status + ' ' + r.t.slice(0, 100));
+  }
+// M3 — generic GET /api/kv of a VT key is staff-only
+W.rules = { 'kv:vt-digest': D, 'kv:agent-digest': vasDigest() }; W.at = {};
+for (const [who, u, want] of [
+  ['an agent', userRow({ username: 'cb9101', role: 'agent', cb: 'CB9101' }), 403],
+  ['a team leader who also holds VAS', userRow({ username: 'tl', role: 'team_leader', cb: 'CB9190', team: 'Leader One', apps: ['agent', 'vas'], tabs: { vas: ['mtd'] } }), 403],
+  ['a campaign manager who also holds VAS', userRow({ username: 'dalwin', role: 'campaign_manager', apps: ['agent', 'vas'], tabs: { vas: '*' } }), 403],
+  ['an Ops tl with no VAS app and no Upload Station', NOGRANT[2][1], 403],
+  ['a viewer with VAS pages', NOGRANT[0][1], 200], ['staff with the Ops uploads tab (the publisher)', OPSUP, 200], ['exec', userRow({ username: 'ex', role: 'exec', apps: [] }), 200], ['admin', ADMIN, 200]]) {
+  r = await W.call(u, 'GET', '/api/kv?key=vt-digest');
+  const r2 = await W.call(u, 'GET', '/api/kv?key=vt-digest&meta=1');
+  ok(r.status === want && r2.status === want && (want !== 200 || /Nobody On The List|nobody on the list/i.test(r.t)), 'M3 ' + who + ': GET kv:vt-digest (and ?meta=1) → ' + want, r.status + '/' + r2.status);
+}
+ok(R.vtDigestReadAllowed({ role: 'team_leader', apps: ['vas'], tabs: { vas: '*' } }) === false && R.vtDigestReadAllowed({ role: 'viewer', apps: ['vas'], tabs: { vas: ['vt_mtd'] }, scope: 'wimpy' }) === false, 'M3 the rule: never a portal role, never a scoped session');
+r = await W.call(userRow({ username: 'tl', role: 'team_leader', cb: 'CB9190', team: 'Leader One', apps: ['agent', 'vas'], tabs: { vas: ['mtd'] } }), 'GET', '/api/kv?key=agent-digest');
+ok(r.status === 200, 'M3 reads of other keys are unchanged (the same team leader still reads kv:agent-digest: ' + r.status + ')');
+// LOW-3 — the republish tool's VT write is ordered and compare-and-set
+const TOOL2 = fs.readFileSync(path.join(ROOT, 'tools', 'digest-republish.mjs'), 'utf8');
+const vtw = TOOL2.slice(TOOL2.indexOf('const vtRowOf'), TOOL2.indexOf('if (!APPLY) {'));
+ok(/vtPointerView\(/.test(TOOL2) && /\{ liveKey, tool: true \}/.test(vtw), 'LOW-3 the tool reads each pointer through the shared vtPointerView and asks the fence as the republish path ({tool:true})');
+ok(/updated_at=eq\./.test(vtw) && /writing/.test(vtw) && /version_conflict|moved while this ran/.test(vtw), 'LOW-3 the tool claims the pointer by compare-and-set on its updated_at before it writes the blob, and re-checks on a lost race');
+ok(!/merge-duplicates/.test(vtw.slice(vtw.indexOf('claim'))) || /resolution=ignore-duplicates|return=representation/.test(vtw), 'LOW-3 a pointer that appeared meanwhile is never overwritten blind');
+console.log = quiet; console.error = err0; console.warn = warn0;
+
+/* the publisher (vt-publish.js) in Node with a stubbed fetch: base read first, conflict re-checked, "newer" said in words */
+head('D9 · the publisher sends X-Cbx-Base, re-checks on conflict, stops on newer figures');
+{
+  const calls = []; let meta = '2026-11-10T06:30:00.000Z', plan = [];
+  const el = { style: {}, setAttribute() {}, remove() { FAKE.document._el = null; }, innerHTML: '' };
+  const FAKE = { sessionStorage: { getItem: () => 'tok' }, __vtApiBase: 'https://api.test',
+    document: { _el: null, getElementById() { return this._el; }, createElement() { this._el = el; return el; }, body: { appendChild() {} } },
+    __vtFetch: async (u, o = {}) => { calls.push({ u, method: o.method || 'GET', base: o.headers && o.headers['X-Cbx-Base'] });
+      if (/meta=1/.test(u)) return new Response(JSON.stringify({ found: true, updated_at: meta }), { status: 200 });
+      const [st, err] = plan.shift() || [200, null]; if (st === 200) meta = '2026-11-23T10:00:0' + calls.length + '.000Z';
+      return new Response(JSON.stringify(st === 200 ? { ok: true } : { error: err }), { status: st }); } };
+  const savedSelf = globalThis.self; globalThis.self = FAKE;
+  const p = path.join(ROOT, 'nicks_code', 'vt-publish.js'); delete require.cache[require.resolve(p)];
+  const PUB2 = require(p); globalThis.self = savedSelf;
+  PUB2._reset();
+  let res = await PUB2.send(D, N23);
+  const posts = calls.filter((c) => c.method === 'POST');
+  ok(res.ok && posts.length === 2 && posts.every((c) => c.base === '2026-11-10T06:30:00.000Z' || /^2026-11-23/.test(c.base)), 'M1 each key is posted with X-Cbx-Base = the version just read (?meta=1)', JSON.stringify(calls.map((c) => c.method + ' ' + c.u.replace('https://api.test', '') + ' ' + (c.base || ''))));
+  calls.length = 0; PUB2._reset(); plan = [[409, 'version_conflict'], [200, null], [200, null]];
+  res = await PUB2.send(D, N23);
+  const metas = calls.filter((c) => /meta=1/.test(c.u) && /key=vt-digest&/.test(c.u)).length;
+  ok(res.ok && metas >= 2, 'M1 a version_conflict re-reads the version (and the fence re-checks) before sending again — never a blind resend', JSON.stringify(calls.map((c) => c.method + ' ' + c.u.replace('https://api.test', ''))));
+  calls.length = 0; PUB2._reset(); plan = [[409, 'newer_published: newer Vehicle Tracking figures are already published for cycle-2026-11 … Re-read the page.'], [200, null]];
+  let reread = 0; FAKE.dispatchEvent = (e) => { if (e && e.type === 'vt-digest-newer') reread++; };
+  res = await PUB2.send(OLDER, N23);
+  const st = PUB2.state();
+  ok(res.newer === true && !st.pending && st.tries === 0 && !st.dirtySince, 'M1 newer figures already published: not a failed save — not dirty, no retry scheduled', JSON.stringify(st));
+  ok(/newer/i.test(el.innerHTML) && /reload|re-read/i.test(el.innerHTML), 'M1 …said in words on the page ("newer figures … re-read")', el.innerHTML.slice(0, 200));
+  ok(reread === 1, 'M1 …and the page is asked to re-read (event vt-digest-newer)', reread);
+  calls.length = 0; PUB2._reset(); plan = [[403, 'Not permitted.'], [403, 'Not permitted.']];
+  res = await PUB2.onPageReady(Object.assign(ENG.bookFromRpc(bookRpc('2026-10-26')), { rev: 99 }), ROSTER, CYCLE, [{ state: 'committed', committed_at: '2026-11-23T09:00:00Z' }]).catch((e) => ({ err: String(e) }));
+  ok(!PUB2.state().dirtySince && !PUB2.state().pending, 'H1 a VT page opened by an account without the Upload Station never turns red: its 403 is not a failed save', JSON.stringify(PUB2.state()));
+  PUB2._reset();
+}
 
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 process.exit(fail ? 1 : 0);

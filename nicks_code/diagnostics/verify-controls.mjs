@@ -64,6 +64,11 @@ console.log('\nPULSE · header filters and in-page controls, every page');
     const b = await chromium.launch({ args: ['--js-flags=--max-old-space-size=8192'] });
     const page = await b.newPage({ viewport: { width: 1600, height: 1000 } });
     const errs = []; page.on('pageerror', (e) => errs.push(String(e.message).slice(0, 160))); page.on('dialog', (d) => d.dismiss().catch(() => {}));
+    /* the VT pages' book comes from the Worker; answer it here — live (read-only) once 071/072 are applied, else the
+       fictional floor (spec 071). The header filters stand down on a VT page, so only its own controls are probed. */
+    const { vtSource, installVtRoutes, probeVtControls } = await import('./vt-tab-source.mjs');
+    const VT_SRC = (!process.env.CBX_VT_FIXTURE && await vtSource({ live: true }).catch(() => null)) || await vtSource();
+    await installVtRoutes(page, VT_SRC);
     await page.goto('http://127.0.0.1:8271/index.html', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__mtd && window.__mtd.state(), null, { timeout: 30000 });
     await page.evaluate((x) => { const S = window.__mtd.state(); const o = JSON.parse(x); for (const k of Object.keys(o)) S[k] = o[k]; window.__mtd.rebuild();
@@ -84,6 +89,8 @@ console.log('\nPULSE · header filters and in-page controls, every page');
       await render(tab);
       await probeControls(page, 'view', tab, async () => { await page.evaluate(() => { const S = window.__mtd.state(); S.ui.agentQ = ''; S.ui.risk = ''; S.ui.dailyFilter = {}; S.ui.lbQ = ''; S.ui.varOnly = false; }); await render(tab); });
     }
+    console.log('  --   Vehicle Tracking source: ' + VT_SRC.label);
+    await probeVtControls(page, ok, VT_SRC, WAIT);
     ok('PULSE: no page errors', errs.length === 0, [...new Set(errs)].join(' | '));
     await b.close(); srv.close();
   }

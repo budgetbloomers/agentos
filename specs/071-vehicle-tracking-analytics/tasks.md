@@ -203,26 +203,26 @@ it. Run D before E, or let E1 land first and then D.
 
 ## Phase F · Permissions, guards, health, database hygiene, docs · one builder
 
-- [ ] **F1** `tools/audit-permissions.mjs`: read the VT NAV ids (`vt_mtd`,`vt_weekly`,`vt_daily`) from PULSE `NAV`, report
+- [x] **F1** `tools/audit-permissions.mjs`: read the VT NAV ids (`vt_mtd`,`vt_weekly`,`vt_daily`) from PULSE `NAV`, report
   MISSING/DEAD for them, and drop `tracker` as a known app (report stale `tabs.tracker` as DEAD-INERT). `verify-tab-guard` +
   `verify-server-grants` cases for the VT ids.
-- [ ] **F2** `tools/upload-station-validate.mjs`: replace the stale "VT sheet has no Target column" finding (≈654) with a check
+- [x] **F2** `tools/upload-station-validate.mjs`: replace the stale "VT sheet has no Target column" finding (≈654) with a check
   that VT Target equals the cycle's SPD budget (warn on mismatch, A1). Add VT file checks (signatures, extract date, thin share).
-- [ ] **F3** `worker/src/health.mjs`: alerts `vt-upload-gap` (no S&M or BI commit for > 1 working day while the floor works),
+- [x] **F3** `worker/src/health.mjs`: alerts `vt-upload-gap` (no S&M or BI commit for > 1 working day while the floor works),
   `vt-staging-stuck` (a staging upload > 1 h), `vt-digest-stale` (VT book rev newer than the published digest by > 15 min),
   and `vt-budget-missing` (the live cycle has no budget row). The weekly slot calls `vt_trim()` and logs counts. `db_health`
   consumers include `vt_db_size()`. Tests: extend `verify-store-freshness` / a new `verify-vt-health.mjs` (pure logic). Alerts
   clear themselves.
-- [ ] **F4** [P] `tools/vt-db-size.mjs` (read-only): rows/MB per `vt_*` table and month-on-month growth vs plan §DB-5, plus
+- [x] **F4** [P] `tools/vt-db-size.mjs` (read-only): rows/MB per `vt_*` table and month-on-month growth vs plan §DB-5, plus
   `--agent-list-raw` (rows by sheet, oldest as_of). Acceptance: runs against the test DB; prints PASS when growth ≤ 5 MB/cycle.
-- [ ] **F5** [P] `specs/vt_engine_rules.json` `_changes[]`: record any value a builder had to adjust (with evidence). `verify-vt-rules` stays GREEN.
-- [ ] **F6** [P] DB hygiene review (plan §DB-7.2): run `vt-db-size --agent-list-raw` against a test copy or a read-only
+- [x] **F5** [P] `specs/vt_engine_rules.json` `_changes[]`: record any value a builder had to adjust (with evidence). `verify-vt-rules` stays GREEN.
+- [x] **F6** [P] DB hygiene review (plan §DB-7.2): run `vt-db-size --agent-list-raw` against a test copy or a read-only
   query the owner runs. ONLY if `agent_list_raw` > 250k rows, write `supabase/migration-073-agent-list-raw-retention.sql`
   (90-day retention for non-roster sheets; roster sheets never trimmed; dry-run function first) + `verify-agent-list-raw-retention.mjs`
   (rolled back). Otherwise record "not needed (n rows)" in `deploy-checklist.md`. Never applied by a builder.
-- [ ] **F7** Register the F suites in `verify.yml`. Final run: the A0 baseline list + every `verify-vt-*` + `verify-tracker-removed` +
+- [x] **F7** Register the F suites in `verify.yml`. Final run: the A0 baseline list + every `verify-vt-*` + `verify-tracker-removed` +
   `verify-wimpy-removal` + `verify-wimpy-service-drift` + `verify-rule-constants` + `verify-save-acks` (Ops half on the generated site).
-- [ ] **F8** Docs: CLAUDE.md (remove the `tracker/` row; add a `VT Analytics` row and one non-negotiable paragraph: VT rule
+- [x] **F8** Docs: CLAUDE.md (remove the `tracker/` row; add a `VT Analytics` row and one non-negotiable paragraph: VT rule
   book two copies + drift guard, its own tables, business-month fence, engine decides). Update the constitution only if a
   principle wording changes (it should not). `specs/071-…/deploy-checklist.md` final order: apply 071 → 072 (→ 073 if
   approved) → `vt-grant-tabs --apply` → `prepare-site` → deploy → `verify-cors-headers --live` + `verify-live-save --live` +

@@ -38,11 +38,19 @@ function monthOf(key) { return key ? MONTHS[+String(key).slice(11, 13) - 1] + ' 
 function subLabel(s) { return SUBS[s] || (s ? String(s) : 'No sub-campaign'); }
 function isVt(d) { return !!(d && d.scorecard === 'vt'); }
 function drv(d, k) { var l = (d && d.drivers) || []; for (var i = 0; i < l.length; i++) if (l[i].k === k) return l[i]; return { k: k, label: k, w: null, dir: 'higher', note: '' }; }
-/* the digest's day rows are columnar (dayCols): back into objects, by name — values carried, nothing computed */
+/* the digest's day rows are columnar (dayCols): back into objects, by name — values carried, nothing computed.
+   The names come from the payload, so only plain field names are taken (security review LOW-2): letters and digits, starting
+   with a letter, onto an object with no prototype — never __proto__ or a name the page would not read. */
+var COL_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
 function dayRow(d, cells) {
   if (!Array.isArray(cells)) return cells || null;
-  var o = {}; (d.dayCols || []).forEach(function (k, i) { o[k] = cells[i]; }); return o;
+  var o = Object.create(null);
+  (d.dayCols || []).forEach(function (k, i) { if (typeof k === 'string' && COL_NAME.test(k) && k !== 'constructor') o[k] = cells[i]; });
+  return o;
 }
+/* a row's class is one of the page's own names (security review LOW-2): anything else is dropped, never written into class="" */
+var CLS_NAME = /^[a-z][a-z0-9_-]{0,39}( [a-z][a-z0-9_-]{0,39}){0,3}$/;
+function clsAttr(c) { return c && CLS_NAME.test(String(c)) ? ' class="' + esc(c) + '"' : ''; }
 function daysOf(d, obj) { return ((obj && obj.days) || []).map(function (c) { return dayRow(d, c); }); }
 function fmtDrv(p) {
   if (p.value == null) return '—';
@@ -139,7 +147,7 @@ function dayTable(d, me) {
 }
 function table(cols, rows, cls) {
   return '<div class="scroller"><table class="tbl ' + cls + '"><thead><tr>' + cols.map(function (c, i) { return '<th' + (i ? '' : ' class="l"') + '>' + esc(c[0]) + '</th>'; }).join('') + '</tr></thead><tbody>'
-    + rows.map(function (r) { return '<tr' + (r.__cls ? ' class="' + r.__cls + '"' : '') + '>' + cols.map(function (c, i) { return '<td class="' + (i ? 'num' : 'l') + '">' + cell(c, r) + '</td>'; }).join('') + '</tr>'; }).join('')
+    + rows.map(function (r) { return '<tr' + clsAttr(r.__cls) + '>' + cols.map(function (c, i) { return '<td class="' + (i ? 'num' : 'l') + '">' + cell(c, r) + '</td>'; }).join('') + '</tr>'; }).join('')
     + '</tbody></table></div>';
 }
 function cell(c, r) { if (typeof c[1] === 'function') return c[1](r); var v = r ? r[c[1]] : null; return (c[2] || n0)(v == null ? null : v); }
@@ -192,7 +200,7 @@ function report(d, view, scope) {
 }
 function reportTable(rep, scope) {
   var head = ['Agent', 'Team leader', 'Sub-campaign'].concat(rep.cols.map(function (c) { return c[0]; })).concat(rep.view === 'mtd' ? ['Rating'] : []);
-  var line = function (r) { return '<tr' + (r.cls ? ' class="' + r.cls + '"' : '') + (r.code ? ' data-vtcb="' + esc(r.code) + '"' : '') + '><td class="l">' + (r.code ? '<button class="lnk" data-vtcb="' + esc(r.code) + '">' + esc(r.label) + '</button>' : '<b>' + esc(r.label) + '</b>') + '</td>'
+  var line = function (r) { return '<tr' + clsAttr(r.cls) + (r.code ? ' data-vtcb="' + esc(r.code) + '"' : '') + '><td class="l">' + (r.code ? '<button class="lnk" data-vtcb="' + esc(r.code) + '">' + esc(r.label) + '</button>' : '<b>' + esc(r.label) + '</b>') + '</td>'
     + '<td class="l">' + esc(r.tl || '') + '</td><td class="l">' + esc(r.sub || '') + '</td>' + rep.cols.map(function (c) { return '<td class="num">' + cell(c, r.w || {}) + '</td>'; }).join('')
     + (rep.view === 'mtd' ? '<td class="l">' + esc(r.rating || '') + '</td>' : '') + '</tr>'; };
   return '<div class="scroller"><table class="tbl vastbl vt-rep" data-vtrep="' + rep.view + '"><thead><tr>' + head.map(function (h, i) { return '<th' + (i < 3 ? ' class="l"' : '') + '>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>'
@@ -376,6 +384,6 @@ window.VTView = {
   boot: function () { ensureScope(false); },
   exportReport: exportReport,
   state: function () { return { team: VT.team, cycle: VT.cycle, back: VT.back || '' }; },
-  _cardHTML: cardHTML, _howHTML: howHTML, _report: report
+  _cardHTML: cardHTML, _howHTML: howHTML, _report: report, _table: table, _dayRow: dayRow
 };
 })();

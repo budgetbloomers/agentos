@@ -73,7 +73,7 @@ function publish(o = {}) {
   if (o.vt !== false) { W.rules['kv:vt-digest'] = o.live || VT; W.rules['kv:vt-digest-cycle-2026-11'] = VT; W.rules['kv:vt-digest-cycle-2026-10'] = VTOCT; }
   if (o.assign) W.rules['cm:assignments'] = o.assign;
   W.tables = { active_campaigns: [{ key: 'courtesy', label: 'Courtesy' }, { key: 'VT', label: 'VT' }] };
-  globalThis.__digestCaches = {}; globalThis.__vtDigestCaches = {}; globalThis.__vtCycles = null; globalThis.__cmCtx = null;
+  globalThis.__digestCaches = {}; globalThis.__vtDigestCaches = {}; globalThis.__vtPointerCache = null; globalThis.__vtCycles = null; globalThis.__cmCtx = null;
 }
 const get = async (u, p) => { globalThis.__cmCtx = null; return W.call(u, 'GET', p); };
 const codesIn = (t) => [...new Set((String(t).match(/CB9\d{3}/g) || []))].sort();
@@ -156,7 +156,7 @@ ok(r.status === 200 && r.j.none === true && r.j.published === false, 'an unpubli
 
 head('S6 · cost');
 publish();
-globalThis.__vtDigestCaches = {};
+globalThis.__vtDigestCaches = {}; globalThis.__vtPointerCache = null;
 r = await get(U.vtAgent, '/api/portal/vt/overview');
 const coldSubs = r.subs;
 const c0 = process.cpuUsage(); r = await get(U.vtAgent, '/api/portal/vt/overview'); const cpu = process.cpuUsage(c0); const cpuMs = (cpu.user + cpu.system) / 1000;
@@ -166,6 +166,97 @@ const VTSRC = fs.readFileSync(path.join(ROOT, 'worker', 'src', 'vt.mjs'), 'utf8'
 ok(!/vt_book|VTEngine|model\(/.test(VTSRC.slice(VTSRC.indexOf('portal half (Phase E) below this line'))), 'the portal half never reads the case book or calls the engine (no recomputation)');
 const PORTAL = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'portal.mjs')).href);
 ok(PORTAL.PORTAL_ALLOWED.has('/api/portal/vt/overview') && PORTAL.PORTAL_ALLOWED.has('/api/portal/vt/agent') && !PORTAL.PORTAL_ALLOWED.has('/api/vt/book'), 'PORTAL_ALLOWED: the two VT portal reads, never an intake route');
+
+/* ======================= S7 · the Phase E security review fixes (2026-11-23) ======================= */
+head('S7 · security review: a bad VT digest, history lookups, both digests, VT-only leaders, the page\'s own escaping');
+const RULES = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'rules.mjs')).href);
+const VTP = '/storage/v1/object/raw/kv/vt-digest';
+const stored = (d, extra = {}) => { const s = JSON.stringify(d); W.rules['kv:vt-digest'] = { __raw: { store: 'raw/kv/vt-digest', ...RULES.vtDigestFence('vt-digest', d, null, NOW).pointer, size: s.length, ...extra } }; W.storage = { [VTP]: s }; };
+const fresh = () => { globalThis.__digestCaches = {}; globalThis.__vtDigestCaches = {}; globalThis.__vtPointerCache = null; globalThis.__vtCycles = null; };
+// H2d — an over-cap or unparsable VT digest is "not published": a VT agent gets the honest notice, never an error
+for (const [what, setup] of [['over the 2 MB cap', () => { publish(); stored(VT, { size: RULES.VT_DIGEST_MAX + 1 }); }],
+  ['that does not parse', () => { publish(); W.rules['kv:vt-digest'] = { __raw: { store: 'raw/kv/vt-digest', period: CYCLE, kind: 'vt' } }; W.storage = { [VTP]: '{"scorecard":"vt","agents":[{' }; }]]) {
+  setup(); fresh();
+  r = await get(U.vtAgent, '/api/portal/overview');
+  ok(r.status === 200 && !r.j.scorecard && r.j.notReported && r.j.notReported.why === 'campaign', 'H2d a VT digest ' + what + ': the VT agent gets the VAS answer\'s "different scheme" notice (200, no error)', r.status + ' ' + r.t.slice(0, 120));
+  const s0 = W.log.length; r = await get(U.vtAgent, '/api/portal/overview');
+  ok(!W.log.slice(s0).some((l) => l.includes(VTP)), 'H2d …and the bad copy is not re-read on the next request (cached as "not published" for the minute)');
+  r = await get(U.tlOne, '/api/portal/vt/overview');
+  ok(r.status === 200 && r.j.none === true && r.j.published === false, 'H2d …a team leader\'s VT view says "not published"', r.t.slice(0, 120));
+}
+// the measured cost of a VAS agent's overview beside a published VT digest (the pointer decides; the blob is never read)
+publish(); stored(VT); fresh();
+r = await get(U.vasAgent, '/api/portal/overview');
+const vasCold = r.subs, vasColdBlob = W.log.slice(-r.subs).some((l) => l.includes(VTP));
+ok(r.status === 200 && !r.j.scorecard && !vasColdBlob, 'H2 a VAS agent\'s overview reads the VT POINTER only, never the VT digest blob (cold: ' + vasCold + ' subrequests in all)');
+/* averaged over 40 calls — process.cpuUsage ticks at ~15.6 ms on Windows, so one call reads 0 or 16 */
+const c1 = process.cpuUsage(); for (let i = 0; i < 40; i++) r = await get(U.vasAgent, '/api/portal/overview'); const c1u = process.cpuUsage(c1);
+const vasWarmMs = (c1u.user + c1u.system) / 1000 / 40;
+const VTS = JSON.stringify(VT), t1 = process.hrtime.bigint(); for (let i = 0; i < 20; i++) JSON.parse(VTS); const vtParseMs = Number(process.hrtime.bigint() - t1) / 1e6 / 20;
+say('       measured: VAS agent overview, warm, VT digest published — ' + r.subs + ' subrequests, ' + vasWarmMs.toFixed(2) + ' ms CPU a call (harness included); the VT parse it no longer pays when cold: ' + vtParseMs.toFixed(2) + ' ms (' + Math.round(VTS.length / 1024) + ' KB)');
+ok(vasWarmMs < 10, 'H2 a warm VAS agent overview beside a VT digest: ' + vasWarmMs.toFixed(2) + ' ms CPU a call, under the 10 ms line', vasWarmMs);
+r = await get(U.vtAgent, '/api/portal/overview');
+ok(r.status === 200 && r.j.scorecard === 'vt' && r.j.me.code === 'CB9101', 'H2 a VT agent on the pointer\'s roster index still gets the VT card from the stored digest');
+// LOW-1 — ?cycle= only looks up a published month; the cache is bounded
+publish(); fresh();
+const l0 = W.log.length;
+r = await get(U.vtAgent, '/api/portal/vt/overview?cycle=cycle-2025-03');
+ok(r.status === 200 && r.j.none === true && r.j.published === false && !W.log.slice(l0).some((l) => /vt-digest-cycle-2025-03/.test(decodeURIComponent(l))), 'LOW-1 an unpublished cycle answers "not published" without a database lookup of that key');
+r = await get(U.tlOne, '/api/portal/vt/agent?cb=CB9105&cycle=cycle-2025-03'); ok(r.status === 404, 'LOW-1 …the drill-down too (404 not published)', r.status);
+for (let y = 2000; y < 2040; y++) await get(U.vtAgent, '/api/portal/vt/overview?cycle=cycle-' + y + '-01');
+ok(Object.keys(globalThis.__vtDigestCaches || {}).length <= 1, 'LOW-1 forty unknown cycles add nothing to the per-isolate cache (' + Object.keys(globalThis.__vtDigestCaches || {}).length + ' key)');
+{ const VTM = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'vt.mjs')).href); fresh();
+  const DBS = { select: async () => [], storageGet: async () => null };
+  for (let m = 1; m <= 12; m++) await VTM.loadVtDigest(DBS, 'cycle-2026-' + String(m).padStart(2, '0'));
+  ok(Object.keys(globalThis.__vtDigestCaches).length <= 8, 'LOW-1 the digest cache itself is bounded: twelve months read → ' + Object.keys(globalThis.__vtDigestCaches).length + ' kept (≤ 8, oldest dropped)'); }
+r = await get(U.vtAgent, '/api/portal/vt/overview?cycle=cycle-2026-10'); ok(r.status === 200 && r.j.period.key === 'cycle-2026-10', 'LOW-1 a published history month still serves');
+// LOW-4 — a CB on BOTH digests; ?month= for a VT agent
+publish();
+const BOTH = JSON.parse(JSON.stringify(VT)); BOTH.agents.push({ ...JSON.parse(JSON.stringify(VT.agents[0])), code: 'CB9201', name: 'Kilo Lima', tl: 'Leader One', tlCode: 'CB9190' });
+W.rules['kv:vt-digest'] = BOTH; W.rules['kv:agent-digest-2026-11'] = vasDigest(); fresh();
+r = await get(U.vasAgent, '/api/portal/overview');
+ok(r.status === 200 && r.j.scorecard === 'vt' && r.j.me.code === 'CB9201', 'LOW-4 a CB on both digests: the live overview is the VT card (the Agent List has them on the VT sheet now)');
+r = await get(U.vasAgent, '/api/portal/overview?month=2026-11');
+ok(r.status === 200 && !r.j.scorecard && r.j.me && r.j.me.code === 'CB9201' && r.j.me.checks, 'LOW-4 …and ?month=2026-11 is their VAS history (the VAS row, checks and all)');
+r = await get(U.tlVas, '/api/portal/agent?cb=CB9201');
+ok(r.status === 200 && !r.j.scorecard && r.j.me && r.j.me.code === 'CB9201', 'LOW-4 …their VAS team leader still drills into the VAS row');
+r = await get(U.admin, '/api/portal/overview?month=2026-11');
+ok(r.status === 200 && Array.isArray(r.j.agents) && r.j.agents.some((a) => a.code === 'CB9201'), 'LOW-4 …staff still read the VAS month with them on it');
+r = await get(U.vtAgent, '/api/portal/overview?month=2026-11');
+ok(r.status === 200 && !r.j.scorecard && r.j.notReported && r.j.notReported.why === 'campaign', 'LOW-4 ?month= for a VT agent: that month\'s VAS answer — the "different scheme" notice (their VT history is ?cycle=)', r.t.slice(0, 140));
+// the VT-only team leader (no VAS row at all)
+publish(); fresh();
+const tlThree = userRow({ username: 'leaderthree', role: 'team_leader', cb: 'CB9192', team: 'Leader Three', full_name: 'Leader Three' });
+r = await get(tlThree, '/api/portal/overview');
+ok(r.status === 200 && Array.isArray(r.j.agents) && r.j.agents.some((a) => a.code === 'CB9103' && a.covered === false), 'VT-only team leader (Leader Three, no VAS row): their team page, the VT agent listed (was 409 "No agents are currently assigned…")', r.status + ' ' + r.t.slice(0, 160));
+ok(!codesIn(r.t).some((c) => ['CB9101', 'CB9102', 'CB9104', 'CB9105', 'CB9201', 'CB9202'].includes(c)), 'VT-only team leader: nobody else\'s CB in the answer', codesIn(r.t).join(','));
+r = await get(tlThree, '/api/portal/vt/overview'); ok(r.status === 200 && r.j.scope === 'team' && r.j.agents.length === 1 && r.j.agents[0].code === 'CB9103', '…and their VT team view');
+publish({ vt: false }); fresh();
+r = await get(tlThree, '/api/portal/overview'); ok(r.status === 409, 'with no VT digest the VAS 409 stands for them (nothing to show)', r.status);
+// vtInScope pinned (NOT a bug — effectiveCamps' new-campaign rule of 3 Sep, without the VT drop)
+const CAMP = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'campaign.mjs')).href);
+const ctxA = { assign: { dalwin: { campaigns: ['courtesy'] }, ryan: { campaigns: ['cuddle'] } }, campaigns: [{ key: 'courtesy' }, { key: 'VT', label: 'VT' }] };
+ok(CAMP.vtInScope(ctxA, 'dalwin') && CAMP.vtInScope(ctxA, 'ryan'), 'vtInScope: nobody owns VT and the list carries it → every assigned manager has it (the 3 Sep new-campaign rule)');
+ok(!CAMP.vtInScope({ ...ctxA, assign: { ...ctxA.assign, preshen: { campaigns: ['vt'] } } }, 'dalwin') && CAMP.vtInScope({ ...ctxA, assign: { ...ctxA.assign, preshen: { campaigns: ['vt'] } } }, 'preshen'), 'vtInScope: once a manager is assigned VT, only they have it');
+ok(!CAMP.vtInScope(ctxA, 'stranger') && !CAMP.vtInScope({ ...ctxA, campaigns: [{ key: 'courtesy' }] }, 'dalwin'), 'vtInScope: no assignment row → nothing; the list carries no VT → nothing');
+ok(!CAMP.effectiveCamps(ctxA, 'dalwin').includes('vt'), 'effectiveCamps still drops VT for every VAS card');
+// LOW-2 — the page escapes a row class and whitelists the day columns (agent/vt-view.js in a VM)
+{
+  const vm = await import('node:vm');
+  const escF = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const ctx = { num: (v) => String(v), R: (v) => String(v), esc: escF, ICON: {}, TL_VIEWS: [], LIVE_SAFE_VIEWS: [], CM_VIEWS: [], console };
+  ctx.window = ctx; vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'agent', 'vt-view.js'), 'utf8'), ctx);
+  const V = ctx.VTView;
+  ok(V && typeof V._table === 'function' && typeof V._dayRow === 'function', 'LOW-2 vt-view.js exposes _table / _dayRow for this check');
+  if (V && V._table) {
+    const h = V._table([['A', 'x']], [{ x: 1, __cls: 'totrow" onmouseover="alert(1)' }, { x: 2, __cls: 'totrow' }], 'c');
+    ok(!/onmouseover=/.test(h) && /class="totrow"/.test(h), 'LOW-2 a row class is whitelisted: an injected attribute never reaches the HTML, a real class does', h.slice(0, 200));
+    const o = V._dayRow({ dayCols: ['d', 'sales', '__proto__', 'x"y', 'constructor'] }, ['2026-11-02', 3, { polluted: true }, 5, 9]);
+    ok(o.d === '2026-11-02' && o.sales === 3 && !('x"y' in o) && o.polluted === undefined && ({}).polluted === undefined && Object.getPrototypeOf(o) === null,
+      'LOW-2 day columns are whitelisted names on a prototype-free object (no __proto__, no odd keys)', JSON.stringify(Object.keys(o)));
+  }
+}
 
 if (process.argv.includes('--worker-only')) { say(`\n==== ${pass} passed, ${fail} failed ====`); process.exit(fail ? 1 : 0); }
 

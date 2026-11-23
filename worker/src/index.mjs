@@ -13,7 +13,7 @@ import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWa
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, reportsRequest, listDigestMonths, overview, overviewRequest, cmCoaching, coachingOthers, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn, helpConfirm, helpPulse } from './help.mjs';
 import { campaignMoves, setCampaignMove } from './moves.mjs';
-import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness, kvKeyValid, isFullScope, canUpload, isVtDigestKey, vtDigestFence } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
+import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness, kvKeyValid, isFullScope, canUpload, isVtDigestKey, vtDigestFence, vtDigestReadAllowed, VT_DIGEST_MAX } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { draftsGet, draftsPost } from './drafts.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, rosterTargets, listTargetGroups, listTargetGroupValues } from './campaign.mjs';
@@ -2010,6 +2010,9 @@ export default {
         /* THE REFERRALS SNAPSHOT IS STAFF-ONLY (spec 002 C3): every agent's referral counts. PULSE reads it; a portal role never does,
            even one that also holds a management app (portalOnly() above only closes portal-only logins). */
         if (key === 'referrals-latest' && !referralsReadAllowed(user)) return json({ error: 'Not permitted.' }, 403);
+        /* THE RAW VT DIGEST IS STAFF MATERIAL (spec 071 review M3): it carries floor.unmatched.names and every VT row; a portal role
+           reads its own slice through /api/portal/vt/*, never this key — whatever management app it also holds (rules.mjs). */
+        if (isVtDigestKey(key) && !vtDigestReadAllowed(user)) return json({ error: 'Not permitted.' }, 403);
         if (key === 'vas-state' && !url.searchParams.get('meta')) stampAppOpen(DB, ctx, 'vas');   // the PULSE boot
         else if (key === 'cb-config' && !url.searchParams.get('meta')) stampAppOpen(DB, ctx, 'ops');
         const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:' + key)}&select=value,updated_at`);
@@ -2052,6 +2055,12 @@ export default {
         if (!kvKeyValid(qk)) return json({ error: qk ? 'invalid key: a plain name only (letters, digits . _ : -)' : 'key required' }, 400);   // W1: never a path
         /* the digest, report and referral keys are staff-written only (review M1) — a team leader or campaign manager that also holds a management app is refused */
         if (!kvWriteAllowed(qk, user)) return json({ error: 'Not permitted.' }, 403);
+        /* THE VT DIGEST IS WRITTEN BY COMPARE-AND-SET ONLY (spec 071 review M1): the publisher reads the key's version (?meta=1)
+           and sends it as X-Cbx-Base, so two tabs, a retry or a slow station can never silently overwrite each other — the loser
+           is told version_conflict, re-reads and asks the fence again (which also refuses older figures, rules.mjs). */
+        const isVt = isVtDigestKey(qk);
+        if (isVt && req.headers.get('X-Cbx-Base') == null)
+          return json({ error: 'base_required: a Vehicle Tracking digest is written by compare-and-set — send X-Cbx-Base (the version from GET /api/kv?key=' + qk + '&meta=1, or none)' }, 428);
         // raw mode: body is the payload itself, streamed into Storage. A Storage
         // refusal (e.g. bucket missing) fails loudly — that is a misconfiguration
         // to fix, not to paper over with an inline-row fallback.
@@ -2135,6 +2144,10 @@ export default {
             rawBytes = u8; body = '';
           } else if (qk === 'vas-summary' && ((u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b) ? ((gzipIsize(u8) ?? Infinity) > SUMMARY_MAX) : u8.length > SUMMARY_MAX)) {
             return json({ error: 'too large: a VAS summary is at most ' + Math.round(SUMMARY_MAX / 1048576) + ' MB' }, 413);
+          } else if (isVt && ((u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b) ? ((gzipIsize(u8) ?? Infinity) > VT_DIGEST_MAX) : u8.length > VT_DIGEST_MAX)) {
+            /* THE VT DIGEST'S CAP (spec 071 review H2b): decided from the byte length or the gzip trailer, before anything is unpacked;
+               a trailer that lies is caught by the counted unpack below (countCap at the same line) */
+            return json({ error: 'too large: a Vehicle Tracking digest is at most ' + Math.round(VT_DIGEST_MAX / 1048576) + ' MB unpacked (a business month is about 0.3 MB) — this one was not stored' }, 413);
           } else if (u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
             /* A STORE TOO BIG TO UNPACK IS KEPT COMPRESSED (Spec Kit 013, 2026-10-07). Ops' ViciDial store — a row per
                call — reached 132.7 MB, and unpacking the whole of it here ran out of memory ("Memory limit exceeded
@@ -2154,9 +2167,9 @@ export default {
             } else {
               try {
                 /* counted and capped (review F1d): a trailer can lie, so the unpack stops at the line it claims to be under */
-                body = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip')).pipeThrough(countCap(qk === 'vas-summary' ? SUMMARY_MAX : KV_INFLATE_MAX))).text();
+                body = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip')).pipeThrough(countCap(qk === 'vas-summary' ? SUMMARY_MAX : isVt ? VT_DIGEST_MAX : KV_INFLATE_MAX))).text();
               } catch (e) {
-                if (/too_large/.test(String((e && e.message) || e))) return json({ error: 'too large: ' + qk + ' unpacks past what the server reads' }, 413);
+                if (/too_large/.test(String((e && e.message) || e))) return json({ error: 'too large: ' + (isVt ? 'a Vehicle Tracking digest is at most ' + Math.round(VT_DIGEST_MAX / 1048576) + ' MB unpacked — ' + qk + ' unpacks past it and was not stored' : qk + ' unpacks past what the server reads') }, 413);
                 return json({ error: 'could not decompress the upload: ' + (e && e.message || e) }, 400);
               }
             }
@@ -2183,16 +2196,24 @@ export default {
           if (!sameStamp(String(sj.state_version), stateAt)) return json({ error: 'stale_summary: it describes another version of the VAS state', current: stateAt }, 409);
           summaryOf = String(sj.state_version);
         }
-        /* a Vehicle Tracking digest (it opens {"scorecard":"vt") never lands on any VAS digest or report key (spec 071): its rows
-           carry no VAS figure, so the VAS emptiness rule would read it as an empty month and the rollover grace could let it in */
-        if (/^agent-(digest|reports)/.test(qk) && /^\s*\{\s*"scorecard"\s*:\s*"vt"/.test(String(body || '').slice(0, 64)))
+        /* a Vehicle Tracking digest (scorecard:'vt') never lands on any VAS digest or report key (spec 071): its rows carry no VAS
+           figure, so the VAS emptiness rule would read it as an empty month and the rollover grace could let it in.
+           REVIEW M2 (2026-11-23): decided from the PARSED body wherever the key sits — for the live keys the fence below parses
+           anyway, so the body is parsed ONCE here and that object is reused. A history / range key is not parsed today (a VAS month
+           is ~1 MB and a parse would put its publish near the 10 ms CPU line), so its body is scanned for the key/value pair
+           instead — any order, any whitespace; no VAS payload carries a "scorecard" key. */
+        const vasFenced = qk === 'agent-digest' || /^agent-reports-(variance|leads)$/.test(qk);   // the report keys are fenced to the live month too (2026-09-21)
+        let pj0;   // undefined = not JSON
+        if (vasFenced) { try { pj0 = JSON.parse(body); } catch (e) { pj0 = undefined; } }
+        if (vasFenced ? !!(pj0 && typeof pj0 === 'object' && pj0.scorecard === 'vt')
+          : /^agent-(digest|reports)/.test(qk) && /"scorecard"\s*:\s*"vt"/.test(String(body || '')))
           return json({ error: 'vt_payload: a Vehicle Tracking digest goes to kv:vt-digest, never to ' + qk }, 400);
         let digestFrom = null;   // the live digest's period, stamped on its pointer row below (rollover grace)
         let digestEmpty = false;   // an `empty:true` payload (spec 002 C2): its pointer row is stamped `empty` beside `period`
-        if (qk === 'agent-digest' || /^agent-reports-(variance|leads)$/.test(qk)) {   // the report keys are fenced to the live month too (2026-09-21)
+        if (vasFenced) {
           let from = '', payloadEmpty = false;
           let pj = null;
-          try { pj = JSON.parse(body); from = String((pj.period || {}).from || ''); }
+          try { if (pj0 === undefined) throw new Error('not JSON'); pj = pj0; from = String((pj.period || {}).from || ''); }
           catch (e) { return json({ error: 'agent-digest body is not JSON with a period' }, 400); }          /* EMPTINESS IS DERIVED HERE, never taken from the client's flag (review M1): no agents → 400 empty_digest; flagged empty
              over figures → 400 bad_empty; unflagged with every figure null → empty all the same. The pointer stamp uses this value. */
           if (qk === 'agent-digest') {
@@ -2315,7 +2336,7 @@ export default {
         const newAt = new Date().toISOString();
         /* the VAS state's pointer carries its unpacked size (the wipe guard's yardstick) and, when kept compressed, gz:true */
         const pointer = digestFrom ? { store: objPath, period: digestFrom, ...(digestEmpty ? { empty: true } : {}) }
-          : vtPointer ? { store: objPath, ...vtPointer }   // the VT digest's pointer carries its business month (spec 071)
+          : vtPointer ? { store: objPath, ...vtPointer, size: newSize }   // the VT digest's pointer: its business month, order stamps, roster index and stored size (spec 071, review H2/M1)
           : keepAsSent ? { store: objPath, size: newSize, ...(gzRaw ? { gz: true } : {}) }
           : summaryOf ? { store: objPath, state_version: summaryOf } : { store: objPath };
         await DB.insert('rules', [{ key: 'kv:' + qk, value: pointer, updated_by: user.username, updated_at: newAt }], true);

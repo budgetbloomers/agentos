@@ -12,8 +12,16 @@
  *   VT_GRANT_APPLY=owner node tools/vt-grant-tabs.mjs --apply    the OWNER, at deploy time, writes the plan
  *
  * --apply refuses unless VT_GRANT_APPLY=owner, and never runs against a fixture. People are printed by username and CB
- * only. A team leader gaining 'vas' becomes a manager in the Worker's eyes (MANAGEMENT_APPS) — the plan says so per row,
- * so the owner decides with that in view.
+ * only.
+ *
+ * PORTAL ROLES STAY PORTAL-ONLY (spec 071 Phase F decision, 2026-11-23). Phase E put the VT team leader's and the VT
+ * campaign manager's reports INSIDE Agent Analytics (worker/src/vt.mjs vtScope: team_leader → their own team,
+ * campaign_manager → the VT scope from cm:assignments; /api/portal/tl/reports?kind=vt-mtd|vt-weekly|vt-daily). So an agent,
+ * team leader or campaign manager is NEVER given the management 'vas' app by this tool — granting it would make them a
+ * manager in the Worker's eyes (MANAGEMENT_APPS) for no VT reason. A portal role that already holds 'vas' gets the three
+ * VT tab ids like anyone else. A portal role whose only management app was 'tracker' becomes portal-only on the deploy
+ * that drops 'tracker' — intended now, and named per row (losesTracker) so the owner sees it; a campaign manager without
+ * VT in cm:assignments is told the VT card needs that assignment.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,8 +30,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const VT_TABS = ['vt_mtd', 'vt_weekly', 'vt_daily'];
 export const VT_TL_CBS = ['CB194', 'CB104', 'CB360', 'CB358'];
 const VT_CAMP_KEYS = new Set(['vt', 'matrix tracker', 'vehicle tracking', 'tracker']);
-const MANAGEMENT_AFTER = new Set(['ops', 'vas']);          // the Worker's set once 'tracker' is dropped
-const PORTAL_ROLES = new Set(['agent', 'tl', 'campaign_manager']);
+const MANAGEMENT_AFTER = new Set(['ops', 'vas']);          // the Worker's set once 'tracker' is dropped (index.mjs MANAGEMENT_APPS)
+export const PORTAL_ROLES = new Set(['agent', 'team_leader', 'campaign_manager']);   // = worker/src/portal.mjs PORTAL_ROLES ('tl' was wrong)
 export const normCB = (v) => { const m = String(v == null ? '' : v).toUpperCase().replace(/[^A-Z0-9]/g, '').match(/^CB0*(\d+)$/); return m ? 'CB' + m[1] : ''; };
 
 /** Who needs the VT grant, and why. Pure: the inputs are never mutated; each change is a NEW apps/tabs value. */
@@ -43,16 +51,34 @@ export function planGrants(users, assignments = {}) {
     if (!why.length) continue;
     const vas = Array.isArray(tabs.vas) ? tabs.vas : [];
     const seesAll = u.role === 'admin' || vas.includes('*');
-    const addApps = apps.includes('vas') ? [] : ['vas'];
-    const addTabs = seesAll ? [] : VT_TABS.filter((t) => !vas.includes(t));
+    const portal = PORTAL_ROLES.has(u.role);
+    const hasVas = apps.includes('vas');
+    const portalOnly = portal && !hasVas;                  // VT lives in Agent Analytics for them: no vas, no VAS tab ids
+    const addApps = hasVas || portal ? [] : ['vas'];
+    const addTabs = seesAll || portalOnly ? [] : VT_TABS.filter((t) => !vas.includes(t));
     const nextApps = apps.concat(addApps);
-    const nextTabs = { ...tabs, vas: vas.concat(addTabs) };
-    const wasManager = !PORTAL_ROLES.has(u.role) || apps.some((a) => MANAGEMENT_AFTER.has(a));
+    const nextTabs = addTabs.length ? { ...tabs, vas: vas.concat(addTabs) } : { ...tabs };
+    const losesTracker = portal && apps.includes('tracker') && !apps.some((a) => MANAGEMENT_AFTER.has(a));
+    const notes = [];
+    if (portalOnly) notes.push('portal-only: their VT figures are in Agent Analytics (' + (u.role === 'team_leader' ? 'Reports, VT tabs, their own team' : u.role === 'campaign_manager' ? 'the VT card and VT reports' : 'their own VT card') + ')');
+    if (losesTracker) notes.push("was a manager only through 'tracker' — after the deploy this account is portal-only (intended)");
+    if (u.role === 'campaign_manager' && !vtCms.has(String(u.username || '').toLowerCase())) notes.push('no VT in cm:assignments — the VT card stays empty until VT is assigned to them');
     plan.push({ id: u.id, username: u.username, cb: normCB(u.cb) || null, role: u.role, why,
       addApps, addTabs, nextApps, nextTabs, noop: !addApps.length && !addTabs.length,
-      becomesManager: PORTAL_ROLES.has(u.role) && !wasManager && addApps.includes('vas') });
+      portalOnly, losesTracker, note: notes.join('; ') || null,
+      becomesManager: portal && !hasVas && addApps.includes('vas') });   // always false since the Phase F decision; the guard holds it there
   }
   return plan;
+}
+
+/** counts by role — what the deploy checklist records (no names) */
+export function summarise(plan) {
+  const by = {};
+  for (const p of plan) {
+    const r = (by[p.role] = by[p.role] || { role: p.role, listed: 0, change: 0, portalOnly: 0, losesTracker: 0 });
+    r.listed++; if (!p.noop) r.change++; if (p.portalOnly) r.portalOnly++; if (p.losesTracker) r.losesTracker++;
+  }
+  return Object.values(by).sort((a, b) => a.role.localeCompare(b.role));
 }
 
 function printPlan(plan) {
@@ -65,8 +91,10 @@ function printPlan(plan) {
     if (p.addTabs.length) console.log('      tabs.vas += ' + p.addTabs.join(', '));
     if (p.becomesManager) console.log('      NOTE: a ' + p.role + " gaining 'vas' becomes a manager (MANAGEMENT_APPS) — no longer portal-only");
   }
+  for (const p of plan.filter((x) => x.note)) console.log('  i ' + p.username + (p.cb ? ' (' + p.cb + ')' : '') + ' — ' + p.note);
   const todo = plan.filter((p) => !p.noop).length;
   console.log(`\n${todo} account(s) to change, ${plan.length - todo} already granted. Nothing is ever removed.`);
+  console.log('by role: ' + summarise(plan).map((r) => `${r.role} ${r.listed} listed / ${r.change} to change / ${r.portalOnly} portal-only / ${r.losesTracker} lose tracker`).join(' · '));
 }
 
 async function main(argv) {

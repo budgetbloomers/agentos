@@ -33,7 +33,7 @@
  * that accepts it, so nothing is added here for that (review D-M10).
  * The portal half (Phase E: scoped digest slices, unmatched seller names stripped for non-staff) is added below.
  */
-import { canUpload, isFullScope } from './rules.mjs';
+import { canUpload, isFullScope, VT_DIGEST_MAX, vtPointerView } from './rules.mjs';
 import { cycleRange } from './cycle.mjs';
 import { vtInScope } from './campaign.mjs';   // VT in a manager's scope — for the VT cards only (E6)
 
@@ -163,21 +163,45 @@ const CYCLE_RE = /^cycle-\d{4}-(0[1-9]|1[0-2])$/;
 const normCode = (v) => { const d = String(v == null ? '' : v).toUpperCase().replace(/[^0-9]/g, ''); return d ? 'CB' + String(parseInt(d, 10)) : ''; };
 const trim = (v) => String(v == null ? '' : v).trim();
 
-/** The published VT digest: live (no cycle) or one business month's history. null when nothing is published. */
-export async function loadVtDigest(DB, cycleKey) {
+/* THE READER'S LIMITS (security review H2c/d, LOW-1, 2026-11-23). A stored digest over VT_DIGEST_MAX — by the size its pointer
+   carries, or by its own length for a pointer without one — is never parsed; it and a digest that does not parse are cached as
+   "no VT digest" (the 60 s negative cache), so a bad digest costs one read a minute per isolate, never one per request, and every
+   reader degrades to "nothing published" (a VAS agent gets the VAS answer, a VT agent the honest notice). At most VT_CACHE_KEYS
+   keys are kept per isolate (the live key and the history months asked for; the oldest entry goes first). */
+const VT_CACHE_KEYS = 8;
+function cachePut(cc, key, d) {
+  cc[key] = { t: Date.now(), d };
+  const ks = Object.keys(cc);
+  if (ks.length > VT_CACHE_KEYS) ks.sort((a, b) => cc[a].t - cc[b].t).slice(0, ks.length - VT_CACHE_KEYS).forEach((k) => { delete cc[k]; });
+}
+/** The live key's POINTER row value (small: {store, period, size, agents, asOf, updatedAt, codes}), {} when nothing is published,
+ *  cached 60 s per isolate like the digest. A failed read throws (the caller decides). */
+export async function loadVtPointer(DB) {
+  const c = globalThis.__vtPointerCache;
+  if (c && Date.now() - c.t < VT_CACHE_MS) return c.v;
+  const r = await DB.select('rules?key=eq.' + encodeURIComponent('kv:vt-digest') + '&select=value');
+  const v = (r && r[0] && r[0].value) || {};
+  globalThis.__vtPointerCache = { t: Date.now(), v };
+  return v;
+}
+/** The published VT digest: live (no cycle) or one business month's history. null when nothing is published — or when what is
+ *  stored is over the cap or is not a VT digest. ptr: the live key's pointer value when the caller already read it. */
+export async function loadVtDigest(DB, cycleKey, ptr) {
   if (cycleKey != null && cycleKey !== '' && !CYCLE_RE.test(String(cycleKey))) return null;
   const key = cycleKey ? 'kv:vt-digest-' + cycleKey : 'kv:vt-digest';
   const cc = (globalThis.__vtDigestCaches = globalThis.__vtDigestCaches || {});
   const c = cc[key];
   if (c && Date.now() - c.t < VT_CACHE_MS) return c.d;
-  const r = await DB.select('rules?key=eq.' + encodeURIComponent(key) + '&select=value');
-  const v = (r && r[0] && r[0].value) || {};
+  let v = !cycleKey && ptr ? ptr : null;
+  if (!v) { const r = await DB.select('rules?key=eq.' + encodeURIComponent(key) + '&select=value'); v = (r && r[0] && r[0].value) || {}; }
+  if (Number(v.size) > VT_DIGEST_MAX) { console.warn(key + ' is ' + v.size + ' bytes, over the ' + VT_DIGEST_MAX + ' the portal reads — served as not published'); cachePut(cc, key, null); return null; }
   let payload = String(v.data || '');
   if (!payload && v.store) payload = (await DB.storageGet('raw', String(v.store).replace(/^raw\//, ''))) || '';
   let d = null;
-  if (payload) { try { d = JSON.parse(payload); } catch (e) { d = null; } }
-  if (d && d.scorecard !== 'vt') d = null;
-  cc[key] = { t: Date.now(), d };
+  if (payload.length > VT_DIGEST_MAX) console.warn(key + ' reads ' + payload.length + ' bytes, over the cap — served as not published');
+  else if (payload) { try { d = JSON.parse(payload); } catch (e) { console.warn(key + ' does not parse — served as not published'); d = null; } }
+  if (d && (typeof d !== 'object' || d.scorecard !== 'vt' || !Array.isArray(d.agents))) d = null;
+  cachePut(cc, key, d);
   return d;
 }
 /** The business months with a published history key, newest first (found by key prefix, like the VAS months). */
@@ -246,14 +270,26 @@ function teamBody(d, s, user) {
 }
 
 /** /api/portal/overview's question for an AGENT: is this CB on the published VT digest? → the VT answer, else null (VAS). */
+/* A VAS AGENT NEVER READS THE VT DIGEST (security review H2, 2026-11-23). The live pointer row carries the VT roster index
+   (`codes`, stamped by the fence from the published digest); a CB not on it is decided from that small row alone — one
+   primary-key read a minute per isolate, no Storage read, no parse — so nothing about the VT digest (its size, a bad copy, a
+   slow Storage) can touch a VAS agent's answer. A pointer without the index (written before this fix) falls back to the digest.
+   Any failure → null → the VAS answer. */
 export async function vtAgentOverview(DB, user) {
   if (!user || user.role !== 'agent' || !isFullScope(user)) return null;
+  const cb = normCode(user.cb);
+  if (!cb) return null;
   let d = null;
-  try { d = await loadVtDigest(DB, null); } catch (e) { console.warn('vt-digest read failed — the VAS answer is served', String((e && e.message) || e)); return null; }
+  try {
+    const ptr = await loadVtPointer(DB);
+    if (!ptr || (!ptr.store && !ptr.data)) return null;                     // nothing published
+    if (Array.isArray(ptr.codes) && !ptr.codes.includes(cb)) return null;   // not a VT agent: decided from the pointer
+    d = await loadVtDigest(DB, null, ptr);
+  } catch (e) { console.warn('vt-digest read failed — the VAS answer is served', String((e && e.message) || e)); return null; }
   if (!d) return null;
   const s = vtScope(user, d, null);
   if (s.none || s.error) return null;
-  const cycles = await listVtCycles(DB);
+  const cycles = await listVtCycles(DB).catch(() => []);
   return { status: 200, body: agentBody(d, s.rows[0], { role: 'agent', name: user.full_name || user.username, cb: s.cb, cycles, months: [] }) };
 }
 
@@ -261,8 +297,10 @@ export async function vtAgentOverview(DB, user) {
 export async function vtOverview(DB, user, q, cmCtx) {
   const cyc = trim(q && q.cycle);
   if (cyc && !CYCLE_RE.test(cyc)) return { status: 400, body: { error: 'bad_cycle' } };
-  const d = await loadVtDigest(DB, cyc || null);
+  /* LOW-1: a history month is looked up only when it is one of the published months (the 60 s list) — any other well-formed
+     cycle answers "not published" without a database read or a cache entry */
   const cycles = await listVtCycles(DB);
+  const d = cyc && !cycles.includes(cyc) ? null : await loadVtDigest(DB, cyc || null);
   if (!d) return { status: 200, body: { scorecard: null, none: true, published: false, cycles, period: cyc ? cycleRange(cyc) : null } };
   const s = vtScope(user, d, cmCtx);
   if (s.error) return { status: s.status, body: { error: s.error } };
@@ -279,7 +317,7 @@ export async function vtAgentDetail(DB, user, wantCb, q, cmCtx) {
   const cb = normCode(wantCb);
   if (!cb) return { status: 400, body: { error: 'No agent specified.' } };
   if (!user || user.role === 'agent') return { status: 403, body: { error: 'That agent is not on your team.' } };
-  const d = await loadVtDigest(DB, cyc || null);
+  const d = cyc && !(await listVtCycles(DB)).includes(cyc) ? null : await loadVtDigest(DB, cyc || null);   // LOW-1, as vtOverview
   if (!d) return { status: 404, body: { error: 'No Vehicle Tracking figures have been published yet.' } };
   const s = vtScope(user, d, cmCtx);
   if (s.error) return { status: s.status, body: { error: s.error } };
@@ -318,16 +356,36 @@ export async function vtPortalRoute(req, url, DB, user, cmCtx) {
 export async function vtKvFence(DB, key, body, nowMs, fence) {
   let pj = null;
   try { pj = JSON.parse(body); } catch (e) { return { status: 400, error: 'the Vehicle Tracking digest is not JSON' }; }
-  let live = null;
+  let live = null, liveKey = '';
+  const pointerOf = async (k) => vtPointerView(((((await DB.select('rules?key=eq.' + encodeURIComponent('kv:' + k) + '&select=value')) || [])[0]) || {}).value || null);
   try {
-    const row = ((await DB.select('rules?key=eq.' + encodeURIComponent('kv:' + key) + '&select=value')) || [])[0];
-    const v = (row && row.value) || null;
-    if (v && typeof v.period === 'string') live = { period: v.period, empty: v.empty === true };
-    else if (v) live = { period: '', empty: false };   // a row written before the stamp: treated as holding data (the safe side)
+    live = await pointerOf(key);   // a row written before the stamp reads as holding data (the safe side) — vtPointerView
+    /* a history key of a CLOSED month asks what the live key holds (the rollover grace, review M1) */
+    if (key !== 'vt-digest') { const lv = await pointerOf('vt-digest'); liveKey = lv ? lv.period : ''; }
   } catch (e) { return { status: 503, error: 'the ' + key + ' pointer could not be read — refused until it can (' + String((e && e.message) || e).slice(0, 100) + ')' }; }
-  const f = fence(key, pj, live, nowMs);
+  const f = fence(key, pj, live, nowMs, { liveKey });
   if (f.error) return f;
   if (globalThis.__vtDigestCaches) delete globalThis.__vtDigestCaches['kv:' + key];
+  if (key === 'vt-digest') globalThis.__vtPointerCache = null;
   globalThis.__vtCycles = null;
   return f;
+}
+
+/* A VT-ONLY TEAM LEADER (review, 2026-11-23). /api/portal/overview answers a team leader from the VAS digest, and one whose team
+   is on NO VAS row (not even a notCovered row) got the VAS 409 "No agents are currently assigned…" before VT was ever asked —
+   reproduced in verify-vt-portal (Leader Three). When that is the only reason, and the published VT digest has their team, the
+   VAS page is built over the VAS digest plus their VT agents as notCovered rows ({why:'campaign', campaign:'VT'}) — exactly the
+   shape a team leader whose VT agents the VAS digest already lists gets today — so the page opens on their team and the VT rows,
+   card and report tabs load beside it (agent/vt-view.js). Names and CBs only, no VT figure enters the VAS answer; a VAS team
+   leader never reaches here (only after their own 409). null = no VT team either (the 409 stands). */
+export async function vtTeamFallback(DB, user, digest) {
+  if (!user || user.role !== 'team_leader' || !digest) return null;
+  let d = null;
+  try { d = await loadVtDigest(DB, null); } catch (e) { return null; }
+  if (!d) return null;
+  const s = vtScope(user, d, null);
+  if (s.none || s.error || !s.rows.length) return null;
+  const team = trim(user.team), have = new Set((digest.notCovered || []).map((n) => n && n.code));
+  const add = s.rows.filter((a) => a && !have.has(normCode(a.code))).map((a) => ({ code: normCode(a.code), name: a.name || '', tl: team, why: 'campaign', campaign: 'VT' }));
+  return { ...digest, notCovered: [...(digest.notCovered || []), ...add] };
 }

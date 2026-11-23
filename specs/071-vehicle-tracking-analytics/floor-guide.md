@@ -1,0 +1,75 @@
+# Vehicle Tracking in AgentOS — a one-page guide for the floor
+
+## What to upload each day, and in what order
+
+Use the **VAS Upload Station** (VAS Analytics → Upload Station). Never the Ops one: Ops refuses VT files.
+
+1. **The two daily files.** Load them in either order, on their own VT slots:
+   - `BI Active Fitted <ddmmyy>.xlsx` on **VT · BI Active Fitted**
+   - `Scheduled & Missed <ddmmyy>.xlsx` on **VT · Scheduled & Missed**
+
+   Keep the date in the file name (ddmmyy, the day you pulled it). A file without it is dated "today".
+2. **The Agent List, when it changes.** It goes in the usual place. The VT sheet's Target column is each agent's sales-per-day target.
+3. **The opening book. This is a one-off, at go-live only.** Load it after the first day's two files, never before. It is the
+   `Schedulers Data` sheet of the hand-kept report, and it carries sale dates only.
+
+Load the files every working day. No file carries a sale date, so a sale is counted on the day it first appears in an upload.
+If a day is missed, that day's sales land on the next upload's day.
+
+## What the receipts mean
+
+Each upload shows a receipt card:
+
+| It says | Meaning |
+|---|---|
+| VT lines n of N rows · cases n | how much of the file was Vehicle Tracking (the rest is VAS and is ignored here) |
+| Sellers matched / unmatched | sellers the Agent List could place. The unmatched names are listed. Fix the Sales Force name on the list. |
+| VAS money unchanged | the VT file never touches VAS sales or GWP |
+| Already uploaded | the same file was loaded before. Nothing changed. |
+| Refused as a thin pull | the file has far fewer cases than the last one (BI under 90 %). Pull it again. |
+| Missing day | a working day with no file. See above. |
+
+## What each VT page shows (VAS Analytics → Vehicle Tracking)
+
+- **Month to date**: the business month (26th to 25th) by agent, team leader, sub-campaign and lead source. It shows Sales
+  (Current + Rollover), Fitted, Scheduled, Missed, the rates, Fitments done, Missed appointments, Due to fit, SPD against
+  target, Fitted value, and Hrs Ahead (24 / 48 / 72 / 72+ / past due) against the 80 / 10 / 5 / 5 % budget.
+- **Weekly**: the same figures, one card per week (Monday to Saturday).
+- **Daily**: one day at a time, with a day picker.
+
+Every page exports to .xlsx exactly as shown. Team and floor totals are sums, and their rates are ratios of the sums.
+
+## How the VT agent rating is worked out
+
+Agents see it in Agent Analytics. It covers **your business month to date**. It does not use the last five sessions, because a
+sale is often fitted days later.
+
+| Driver | What it measures | Target | Points |
+|---|---|---|---|
+| Target Achievement | your sales per working day | your Target on the Agent List | 35 |
+| Fitment Rate | fitted ÷ your sales | the Sales Review budget (e.g. 85 % Digital) | 30 |
+| Missed Rate | missed ÷ your sales (lower is better) | 5 % | 20 |
+| Fitted vs target | fitments done this month | target × working days × fitment budget | 15 |
+
+- **Points start at half of target.** At half of the target or below you score 0 for that driver. At the target you get all
+  of its points. In between, the points rise evenly.
+- A driver without enough data yet (fewer than 5 sales, fewer than 5 working days, or no target) is **not measured**. It is
+  left out, and the other drivers count for more. It never counts as zero.
+- The score is out of 100. The bands are **Elite 90+ · Strong 80+ · On track 70+ · Building 60+ · Needs support** below 60.
+- **"Not rated yet"** means there is nothing to rate this business month (no sale in play yet). Scheduling agents are not
+  rated in this version.
+- If this month's Sales Review budgets have not been entered yet, the card uses last month's budgets and names that month.
+
+## What "—" means
+
+**"—" means no figure, never zero.** Under **Cancelled** it is always "—", because none of the uploads carries
+cancellations yet. The column will fill once a file does. Anywhere else, "—" means the figure cannot be worked out yet (for
+example, % to target with no target).
+
+## Why a figure can differ from the hand-kept report
+
+The system follows Salesforce and the Agent List, so a few things differ on purpose:
+- **Cancelled is missing.** No upload carries it.
+- **Manual credits are not copied.** 11 sales that the hand-kept report credited by hand go to the seller Salesforce names.
+- **Lead sources follow Salesforce.** About 6.6 % of cases had their lead source relabelled by hand in the hand-kept report.
+- **A missed daily upload shifts sale days** to the next upload's day.

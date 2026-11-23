@@ -551,28 +551,61 @@ const describe = (mk, body) => { const pj = JSON.parse(body); const per = pj.per
     : 'kv:agent-digest (LIVE) — ' + (pj.empty ? 'EMPTY ' : '') + pj.agents.length + ' agents, ' + per; };
 /* THE VT KEYS' FENCE is the Worker's own rule (rules.mjs vtDigestFence) asked against each key's own pointer row — this tool
    writes Storage directly, so the Worker's 409 never sees it. A pointer that cannot be read refuses ("could not tell"). */
-const { vtDigestFence } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'rules.mjs')).href);
-const vtPointerOf = async (key) => {
-  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?key=eq.${encodeURIComponent('kv:' + key)}&select=value`, { headers: H });
+/* ORDERED AND COMPARE-AND-SET (spec 071 security review LOW-3, 2026-11-23) — the same rule as the Worker's POST /api/kv:
+   the fence is asked with the key's pointer (vtPointerView: its month, agent count, as-at day and build time) as the REPUBLISH
+   PATH ({tool:true} — the one writer that may refresh a closed month's "(final)"), so this tool never files older figures over
+   newer ones; then the pointer is CLAIMED by a PATCH filtered on the updated_at it was read at (or created, when there was none)
+   BEFORE the blob is written, and only then turned into the new version. A pointer that moved in between (a station published
+   while this ran) is re-read and the fence asked again, up to three times; a claim that is never released expires after 2 min. */
+const { vtDigestFence, vtPointerView } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'rules.mjs')).href);
+const VT_CLAIM_TTL_MS = 120000;   // KV_WRITING_TTL_MS in worker/src/index.mjs
+const vtRowOf = async (key) => {
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?key=eq.${encodeURIComponent('kv:' + key)}&select=value,updated_at`, { headers: H });
   if (!r.ok) throw new Error('kv:' + key + ' pointer not read (HTTP ' + r.status + ')');
-  const row = (await r.json())[0]; if (!row) return null;
+  const row = (await r.json())[0]; if (!row) return { row: null, value: null, view: null, at: '' };
   let v = row.value || {}; if (typeof v === 'string') { try { v = JSON.parse(v); } catch { v = {}; } }
-  return typeof v.period === 'string' ? { period: v.period, empty: v.empty === true } : { period: '', empty: false };
+  return { row, value: v, view: vtPointerView(v), at: String(row.updated_at || '') };
 };
+const vtRules = (q, method, body, prefer) => fetch(`${env.SUPABASE_URL}/rest/v1/rules${q}`, { method, headers: { ...H, 'Content-Type': 'application/json', Prefer: prefer }, body: JSON.stringify(body) });
+async function vtPublishOne(vb, key, apply) {
+  const body = JSON.parse(vb.body);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const own = await vtRowOf(key);
+    const liveKey = key === 'vt-digest' ? '' : (((await vtRowOf('vt-digest')).view) || {}).period || '';
+    const f = vtDigestFence(key, body, own.view, Date.now(), { liveKey, tool: true });
+    if (f.error) { console.log((apply ? '' : 'would NOT write ') + 'kv:' + key + ' NOT written — ' + f.error); return; }
+    if (!apply) { console.log('would write kv:' + key + ' — Vehicle Tracking ' + vb.job.key + (vb.empty ? ' (EMPTY)' : '') + ', ' + vb.n + ' agents, ' + Math.round(vb.body.length / 1024) + ' KB'); return; }
+    const pq = '?key=eq.' + encodeURIComponent('kv:' + key), mark = new Date().toISOString();
+    let claimed = false;
+    if (own.row) {   // the claim: only if the pointer is still the version read above and nobody holds a live claim
+      const cutoff = new Date(Date.now() - VT_CLAIM_TTL_MS).toISOString();
+      const c = await vtRules(pq + '&updated_at=eq.' + encodeURIComponent(own.at) + '&or=' + encodeURIComponent('(value->>writing.is.null,value->>writing.lt.' + cutoff + ')'),
+        'PATCH', { value: { ...(own.value || {}), writing: mark } }, 'return=representation');
+      if (!c.ok) throw new Error('claim failed: ' + c.status + ' ' + (await c.text()).slice(0, 160));
+      claimed = ((await c.json()) || []).length > 0;
+    } else {         // no row yet: a plain insert — a row created meanwhile makes it fail (409), never overwritten blind
+      const c = await vtRules('', 'POST', [{ key: 'kv:' + key, value: { writing: mark }, updated_by: 'digest-republish', updated_at: mark }], 'return=minimal');
+      claimed = c.ok;
+    }
+    if (!claimed) { console.log('kv:' + key + ' moved while this ran (version_conflict) — re-reading and asking the fence again (attempt ' + (attempt + 1) + ' of 3)'); continue; }
+    const store = 'raw/kv/' + key;
+    const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json', 'x-upsert': 'true' }, body: vb.body });
+    if (!put.ok) {
+      try { const v = { ...(own.value || {}) }; delete v.writing; await vtRules(pq, 'PATCH', { value: own.row ? v : { writing: null } }, 'return=minimal'); } catch { /* the claim expires */ }
+      throw new Error('storage write failed: ' + put.status + ' ' + (await put.text()).slice(0, 160));
+    }
+    const now = new Date().toISOString();
+    const r = await vtRules(pq, 'PATCH', { value: { store, ...f.pointer, size: vb.body.length, updated_at: now }, updated_by: 'digest-republish', updated_at: now }, 'return=minimal');
+    if (!r.ok) throw new Error('rules write failed: ' + r.status + ' ' + (await r.text()).slice(0, 160));
+    console.log('published ' + key + ' — Vehicle Tracking ' + vb.job.key + (vb.empty ? ' (EMPTY)' : '') + ', ' + vb.n + ' agents');
+    return;
+  }
+  console.error('kv:' + key + ' NOT published — it kept moving (version_conflict three times); the next run publishes it');
+}
 async function vtPublishAll(apply) {
   for (const vb of vtBuilt) for (const key of vtKeysFor(vb)) {
-    try {
-      const f = vtDigestFence(key, JSON.parse(vb.body), await vtPointerOf(key), Date.now());
-      if (f.error) { console.log((apply ? '' : 'would NOT write ') + 'kv:' + key + ' NOT written — ' + f.error); continue; }
-      if (!apply) { console.log('would write kv:' + key + ' — Vehicle Tracking ' + vb.job.key + (vb.empty ? ' (EMPTY)' : '') + ', ' + vb.n + ' agents, ' + Math.round(vb.body.length / 1024) + ' KB'); continue; }
-      const store = 'raw/kv/' + key;
-      const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json', 'x-upsert': 'true' }, body: vb.body });
-      if (!put.ok) throw new Error('storage write failed: ' + put.status + ' ' + (await put.text()).slice(0, 160));
-      const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?on_conflict=key`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: JSON.stringify([{ key: 'kv:' + key, value: { store, ...f.pointer, updated_at: new Date().toISOString() } }]) });
-      if (!r.ok) throw new Error('rules write failed: ' + r.status + ' ' + (await r.text()).slice(0, 160));
-      console.log('published ' + key + ' — Vehicle Tracking ' + vb.job.key + (vb.empty ? ' (EMPTY)' : '') + ', ' + vb.n + ' agents');
-    } catch (e) { console.error('kv:' + key + ' NOT published — ' + String(e && e.message || e)); }   // VT never fails the VAS publish
+    try { await vtPublishOne(vb, key, apply); }
+    catch (e) { console.error('kv:' + key + ' NOT published — ' + String(e && e.message || e)); }   // VT never fails the VAS publish
   }
 }
 if (!APPLY) {

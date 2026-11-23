@@ -69,6 +69,24 @@ jobs:
             echo "== $t =="; node nicks_code/diagnostics/$t.mjs
           done
 
+      # SPEC 071 (2026-11-23): Vehicle Tracking Analytics — the old Tracker app is gone, the VT rule book + engine, the intake
+      # (migrations 071/072 run in PGlite, rolled back), the Worker routes, the VAS Analytics pages, the digest + Agent
+      # Analytics card, the permissions tools, the health checks and the validator. All credential-free. verify-vt-oracle
+      # needs the November reference files OUTSIDE the repo (../reference/zips/vt/) and skips with a notice without them.
+      # verify-tracker-removed / verify-vt-build / -pages / -portal build the site themselves; the tabs run is last so it
+      # reads the build those leave.
+      - name: Vehicle Tracking suites (spec 071)
+        run: |
+          set -e
+          for t in verify-tracker-removed verify-grant-tabs-071 verify-audit-permissions-071 \
+                   verify-vt-rules verify-vt-periods verify-vt-rating verify-vt-engine verify-vt-oracle \
+                   verify-vt-db verify-vt-worker verify-vt-station verify-vt-isolation verify-vt-build verify-vt-pages \
+                   verify-vt-digest verify-vt-portal verify-vt-vas-golden verify-vt-station-fixes \
+                   verify-vt-health verify-vt-validate verify-vt-tabs; do
+            echo "== $t =="; node nicks_code/diagnostics/$t.mjs
+          done
+          echo "== verify-agent-card (VT fixture mode) =="; CBX_VT_FIXTURE=1 node nicks_code/diagnostics/verify-agent-card.mjs
+
       - name: Wimpy service tests (wimpy-service/ — its own suites, no credentials; Chromium from nicks_code/diagnostics)
         working-directory: wimpy-service
         run: npm test

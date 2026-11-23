@@ -47,6 +47,11 @@ if (process.env.CBX_VT || process.env.CBX_VT_FIXTURE) {
   else {
     const r0 = await fetch(env.SUPABASE_URL + '/storage/v1/object/raw/kv/vt-digest', { headers: H });
     if (r0.ok) { let buf = Buffer.from(await r0.arrayBuffer()); if (buf[0] === 0x1f && buf[1] === 0x8b) buf = zlib.gunzipSync(buf); vd = JSON.parse(buf.toString()); }
+    else {   /* a digest under the in-row threshold lives in the rules row itself ({data}), not in Storage (Phase F: this read 404'd and passed with "nothing to check") */
+      const rr = await fetch(REST + 'rules?key=eq.' + encodeURIComponent('kv:vt-digest') + '&select=value', { headers: H });
+      const v = rr.ok ? ((await rr.json())[0] || {}).value : null;
+      if (v && typeof v.data === 'string') vd = JSON.parse(v.data);
+    }
   }
   if (!vd || !Array.isArray(vd.agents) || !vd.agents.length) { console.log('VT mode: no Vehicle Tracking digest published — nothing to check'); process.exit(0); }
   const site = VTFIX ? pathToFileURL(path.join(ROOT, 'site', 'agent', 'index.html')).href : SITE;

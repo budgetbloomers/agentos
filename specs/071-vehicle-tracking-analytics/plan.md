@@ -430,3 +430,57 @@ Security and database review of f9aee56, applied to the UNAPPLIED migrations 071
   the account that abandoned it would strand the file's hash for 13 months. The concurrent-staging cap (4) is a soft
   bound, checked without a lock. No multi-part commit: 20k cases + 20k events commit in one call in ~1.7 s in PGlite.
   The per-commit cap is 60,000 rows of each kind.
+
+### Review fixes (Phase E, security review of 8aa9cef, 2026-11-23)
+
+Applied in `worker/src/{rules,vt,index,portal,campaign}.mjs`, `agent/vt-view.js`, `nicks_code/vt-publish.js` and
+`tools/digest-republish.mjs`. Pinned in `verify-vt-digest` D8/D9, `verify-vt-portal` S7 and `verify-vt-vas-golden` (H2 + G7).
+
+- **Who writes `vt-digest*` (H1):** POST and DELETE need `canUpload` (admin, or VAS `data` / Ops `uploads` / `*`). A viewer,
+  QA or Ops `tl` without that grant gets 403, and so does any portal role. Every non-VT key keeps its write rule unchanged.
+- **Who reads `vt-digest*` through `GET /api/kv` (M3):** `vtDigestReadAllowed`. It starts from `referralsReadAllowed`
+  (full scope, a staff role), then allows admin, exec, the Upload Station, or the VAS app with at least one page.
+  `team_leader`, `campaign_manager` and `agent` are refused, whatever apps they hold.
+- **Size (H2):** `VT_DIGEST_MAX` = 2 MB decoded. A business month is about 0.3 MB. The POST checks the plain length or the
+  gzip trailer before it unpacks anything, and the counted unpack stops at the same line, so a lying trailer is also 413.
+  The pointer stores `size`. `loadVtDigest` will not parse a digest whose stamp or length is over the cap. An over-cap
+  digest, or one that does not parse, is cached as "not published" for 60 s. At most 8 keys are cached per isolate.
+- **Emptiness (H2a):** a digest counts as non-empty only if it has at least one agent row. A payload with no agent rows
+  is the engine's `emptyCyclePayload`. If it claims floor sales it is refused (400 `empty_digest`). It is never filed under a
+  history key (409 `empty_history`). It never replaces a pointer for the same month that listed agents: the pointer stores
+  `agents`, and a pointer without that count is treated as having agents.
+- **Order (M1):** a VT POST must send `X-Cbx-Base`, or it gets 428 `base_required`. That turns on the existing /api/kv
+  compare-and-set. For the same business month, the fence refuses a payload whose `(period.asOf, updatedAt)` is older
+  than the pointer's (409 `newer_published`). An identical pair is accepted, so a resend is idempotent. The publisher reads
+  `?meta=1` before each key. On `version_conflict` it reads the version again and asks again, up to 3 times. Each later
+  retry reads it again too. On `newer_published` it shows a blue notice ("newer figures are already published … re-reading")
+  and reloads the VT book (`VTPages._reset()` + `retry()`). It also fires the `vt-digest-newer` event. That is not a
+  failed save. A 403 does not turn the page red, and the page-open republish never shows it at all.
+- **A closed month's history key (M1):** `/api/kv` accepts a history key for the current month, or for the month just
+  closed while the live key does not yet hold the current month (the live key's rollover grace). It refuses anything
+  older: 409 `closed_cycle`. After that only `digest-republish.mjs` can refresh the "(final)" copy (`{tool:true}`),
+  and it is still ordered and never empty. The tool reads the pointer through `vtPointerView`, claims it with compare-and-set
+  on `updated_at`, then writes the blob, then the pointer. If the pointer moved, it reads it again (3 tries).
+- **The VAS guard (M2):** the live VAS keys parse the body once, and the fence reuses that parse. `scorecard === 'vt'`
+  is refused whatever the key order or whitespace. History and range keys are not parsed (a VAS month is about 1 MB), so
+  their whole body is scanned for the `"scorecard":"vt"` pair. No VAS payload has that key.
+- **A VAS agent never reads the VT digest (H2):** the live pointer stores the VT roster index (`codes`). A CB that is not
+  in it is answered from that row alone: no Storage read and no parse. A pointer without `codes` falls back to reading the
+  digest.
+- **`?cycle=` (LOW-1):** the Worker looks up only a published history month (the 60 s `listVtCycles` list). Any other month
+  answers "not published" without reading the database.
+- **The page (LOW-2):** a row class must be on a whitelist, and day columns must be plain names on a prototype-free object.
+- **A CB on both digests (LOW-4):** the live overview is the VT card, because the Agent List puts them on the VT sheet now.
+  `?month=YYYY-MM` is a VAS-history question for every role, a VT agent included. It returns their VAS row or the
+  "different scheme" notice. The VT card's own history is `?cycle=`. A team leader's drill-down and staff reads of a VAS
+  month are unchanged. The notReported change for a non-VT `why:'campaign'` agent is pinned as intentional: golden G7.
+- **A VT-only team leader:** this was real. A team on no VAS row got the VAS 409. If the VT digest has their team, the
+  page is now built over the VAS digest plus their VT agents as `notCovered` rows (`vtTeamFallback`). This only runs after
+  their own 409, so a VAS team leader gets the same answer as before.
+- **Recorded, not changed:** `vtInScope` gives VT to every assigned manager when nobody owns VT. That is the 3 Sep
+  `effectiveCamps` rule, now commented and pinned.
+- **Left open:** a deliberate rollback to an older as-at day (for example after removing an upload) is refused by the
+  ordering rule everywhere, the tool included. It needs the pointer's `asOf` and `updatedAt` stamps cleared by hand first
+  (a runbook step). The text scan on VAS history keys does not
+  catch a `\u`-escaped key name (only staff can write those keys). A VT-only team leader still gets the VAS 404 when no
+  VAS digest is published at all.

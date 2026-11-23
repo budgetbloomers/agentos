@@ -530,6 +530,7 @@ function budgetFor(cycleKey) {
 function pick(tbl, sub, tenure) { var t = tbl && (tbl[sub] || tbl['*']); if (t == null) return null; if (typeof t === 'number') return t; return t[tenure] != null ? t[tenure] : (t['*'] != null ? t['*'] : null); }
 function fitBudget(bud, sub, tenure) { return bud ? pick(bud.b.fitment, sub, tenure) : null; }
 function missBudget(bud, sub) { return bud ? pick(bud.b.missed, sub, null) : null; }
+function spdBudget(bud, sub, tenure) { return bud ? pick(bud.b.spd, sub, tenure) : null; }   // the Sales Review SPD budget (the list's Target should equal it — the validator checks, F2)
 
 /* ---------------------------------------------------------------- counts → rates ---- */
 function rates(c, wd) {
@@ -769,6 +770,7 @@ return {
   detect: detect, extractDate: extractDate, parseBi: parseBi, parseSm: parseSm, parseOpeningBook: parseOpeningBook, parseRoster: parseRoster,
   normSeller: normSeller, resolveSeller: resolveSeller, leadSourceOf: leadSourceOf, leadGroupOf: leadGroupOf, subOf: subOf,
   emptyBook: emptyBook, merge: merge, bookFromRpc: bookFromRpc, guardUpload: guardUpload,
-  rates: rates, model: model, rating: rating, bandOf: bandOf, digest: digest, emptyCyclePayload: emptyCyclePayload, uploadGaps: uploadGaps
+  rates: rates, model: model, rating: rating, bandOf: bandOf, digest: digest, emptyCyclePayload: emptyCyclePayload, uploadGaps: uploadGaps,
+  budgetFor: budgetFor, spdBudget: spdBudget
 };
 });

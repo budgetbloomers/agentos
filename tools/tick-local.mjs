@@ -298,7 +298,7 @@ export function runStep(args, { cwd, env, timeoutMs = STEP_TIMEOUT_MS, heartbeat
  * The steps, in the workflow's order. `run(label, args)` → {ok, note}; `stamp(step, ok, note)` writes
  * kv:jobs-status. Returns false when the site could not be built (nothing else may run).
  */
-export async function runSteps({ run, stamp: stampRaw, say: log = () => {}, full, slot }) {
+export async function runSteps({ run, stamp: stampRaw, say: log = () => {}, full, slot, vtVerify = false }) {
   /* a stamp is bookkeeping: whatever it does, the next step still runs (T5) */
   const stamp = async (step, ok, note) => { try { await stampRaw(step, ok, note); } catch (e) { log('stamp ' + step + ' NOT written — ' + ((e && e.message) || e)); } };
   const build = await run('prepare-site', ['tools/prepare-site.js']);
@@ -320,6 +320,10 @@ export async function runSteps({ run, stamp: stampRaw, say: log = () => {}, full
     const qas = await run('qa-sales-sync', ['tools/qa-sales-sync.mjs']); await stamp('qa-sales-sync', qas.ok, qas.note);
     const nba = await run('nba-republish', ['tools/nba-republish.mjs', '--apply']); await stamp('nba-digest', nba.ok, nba.note);
   }
+  /* THE VEHICLE TRACKING PROOFS, ONCE A DAY (spec 071, Phase F). GitHub's nightly verify is off, so this is where a red VT
+     guard is noticed: the pure suites only (no browser, no network, ~20 s), on the first full tick of the SAST day, LAST so
+     nothing the floor waits for is delayed. Stamped 'verify-vt' — a red one raises the "verification-failed" banner. */
+  if (full && vtVerify) { const vt = await run('verify-vt', ['tools/vt-verify.mjs']); await stamp('verify-vt', vt.ok, vt.note); }
   return true;
 }
 
@@ -389,7 +393,12 @@ try {
   const deps = await ensureDeps({ readPkg: (p) => JSON.parse(fs.readFileSync(p, 'utf8')), exists: fs.existsSync, install: (d) => npmCiAndPin(d, () => touchLock(LOCK)) });
   if (deps.repaired || !deps.ok) { say('dependencies → ' + (deps.ok ? 'ok' : 'FAILED') + ' — ' + deps.note); await stamp('dependencies', deps.ok, deps.note); }
   if (!deps.ok) { process.exitCode = 1; return; }
-  if (!(await runSteps({ run, stamp, say, full, slot }))) { process.exitCode = 1; return; }
+  /* once per SAST day (spec 071): a marker in reports/tmp/ (gitignored) holds the day the VT proofs last ran */
+  const VT_MARK = path.join(ROOT, 'reports', 'tmp', 'vt-verify-day.txt');
+  const sastDay = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 10);
+  let vtVerify = false; try { vtVerify = fs.readFileSync(VT_MARK, 'utf8').trim() !== sastDay; } catch { vtVerify = true; }
+  if (!(await runSteps({ run, stamp, say, full, slot, vtVerify }))) { process.exitCode = 1; return; }
+  if (full && vtVerify) { try { fs.mkdirSync(path.dirname(VT_MARK), { recursive: true }); fs.writeFileSync(VT_MARK, sastDay); } catch {} }
   say('local tick done');
 } finally { try { fs.unlinkSync(LOCK); } catch {} }
 }

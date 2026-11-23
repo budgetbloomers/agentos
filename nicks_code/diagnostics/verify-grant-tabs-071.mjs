@@ -18,7 +18,9 @@ const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } el
 const users = [
   { id: '1', username: 'fx-viewer', role: 'viewer', apps: ['ops', 'tracker'], tabs: { ops: ['exec'], tracker: ['*'] }, cb: null },
   { id: '2', username: 'fx-onlytracker', role: 'campaign_manager', apps: ['agent', 'tracker'], tabs: { tracker: ['*'] }, cb: null },
-  { id: '3', username: 'fx-tl', role: 'tl', apps: ['agent'], tabs: {}, cb: 'cb-194' },
+  { id: '3', username: 'fx-tl', role: 'team_leader', apps: ['agent'], tabs: {}, cb: 'cb-194' },
+  { id: '8', username: 'fx-tl-vas', role: 'team_leader', apps: ['agent', 'vas'], tabs: { vas: ['dashboard'] }, cb: 'CB104' },
+  { id: '9', username: 'fx-cm-novt', role: 'campaign_manager', apps: ['agent', 'tracker'], tabs: { tracker: ['*'] }, cb: null },
   { id: '4', username: 'fx-cm', role: 'campaign_manager', apps: ['agent', 'vas'], tabs: { vas: ['dashboard', 'vt_mtd'] }, cb: null },
   { id: '5', username: 'fx-exec', role: 'exec', apps: ['ops', 'vas', 'tracker'], tabs: { ops: ['*'], vas: ['*'], tracker: ['*'] }, cb: null },
   { id: '6', username: 'fx-agent', role: 'agent', apps: ['agent'], tabs: {}, cb: 'CB9101' },
@@ -37,11 +39,21 @@ ok('an agent with no tracker grant is not listed', !by['fx-agent']);
 
 console.log('\n2 · what it proposes');
 ok("tracker holder gets apps += vas and the three VT tabs", JSON.stringify(by['fx-viewer'].addApps) === '["vas"]' && JSON.stringify(by['fx-viewer'].addTabs) === JSON.stringify(VT_TABS));
-ok('a tab already held is not added twice', JSON.stringify(by['fx-cm'].addTabs) === '["vt_weekly","vt_daily"]' && by['fx-cm'].addApps.length === 0);
+ok('a tab already held is not added twice (a CM who already holds vas)', JSON.stringify(by['fx-cm'].addTabs) === '["vt_weekly","vt_daily"]' && by['fx-cm'].addApps.length === 0);
 ok("vas:'*' needs no tab ids", by['fx-exec'].addTabs.length === 0 && by['fx-exec'].noop);
 ok('an account already fully granted is a no-op', by['fx-done'].noop);
-ok('a tracker-only campaign manager is flagged as becoming a manager', by['fx-onlytracker'].becomesManager === true);
-ok('a team leader gaining vas is flagged as becoming a manager', by['fx-tl'].becomesManager === true);
+/* F2 decision (spec 071 Phase F): Phase E put the VT team leader and campaign manager reports INSIDE Agent Analytics
+   (worker/src/vt.mjs vtScope: team_leader → own team, campaign_manager → VT scope). A portal role therefore never needs
+   the management 'vas' app for VT, and granting it would make them a manager in the Worker's eyes (MANAGEMENT_APPS). */
+ok('a portal role (team leader) is NEVER given the vas app', by['fx-tl'].addApps.length === 0 && !by['fx-tl'].nextApps.includes('vas'), JSON.stringify(by['fx-tl'].addApps));
+ok('…and gets no VAS tab ids it cannot open', by['fx-tl'].addTabs.length === 0 && by['fx-tl'].noop, JSON.stringify(by['fx-tl'].addTabs));
+ok('…its VT reports are named as living in Agent Analytics', by['fx-tl'].portalOnly === true && /Agent Analytics/.test(by['fx-tl'].note || ''), by['fx-tl'].note);
+ok('a tracker-only campaign manager is NOT given vas (stays portal-only)', by['fx-onlytracker'].addApps.length === 0 && by['fx-onlytracker'].becomesManager === false);
+ok('…and is flagged: it was a manager only through tracker and is portal-only after the deploy', by['fx-onlytracker'].losesTracker === true, JSON.stringify(by['fx-onlytracker']));
+ok('a tracker-holding campaign manager with no VT in cm:assignments is told VT must be assigned', /cm:assignments/.test(by['fx-cm-novt'].note || ''), by['fx-cm-novt'].note);
+ok('a VT campaign manager with VT in scope is not told to assign VT', !/cm:assignments/.test(by['fx-cm'].note || ''), by['fx-cm'].note);
+ok('a team leader who ALREADY holds vas gets the VT tab ids (no new app)', JSON.stringify(by['fx-tl-vas'].addTabs) === JSON.stringify(VT_TABS) && by['fx-tl-vas'].addApps.length === 0);
+ok('no row in the plan ever becomes a manager', plan.every((p) => p.becomesManager === false), plan.filter((p) => p.becomesManager).map((p) => p.username).join());
 ok('a viewer is not flagged (already a manager)', by['fx-viewer'].becomesManager === false);
 
 console.log('\n3 · never removes anything');
@@ -64,6 +76,7 @@ const fx = path.join(dir, 'fixture.json'); fs.writeFileSync(fx, JSON.stringify({
 const dry = spawnSync(process.execPath, [TOOL, '--fixture', fx], { encoding: 'utf8' });
 ok('the fixture dry run exits 0', dry.status === 0, dry.stderr);
 ok('the dry run prints the plan', /fx-viewer/.test(dry.stdout) && /tabs\.vas \+= vt_mtd, vt_weekly, vt_daily/.test(dry.stdout));
+ok('the dry run prints counts by role', /by role: /.test(dry.stdout) && /team_leader/.test(dry.stdout), dry.stdout.slice(-400));
 ok('the dry run says nothing was written', /nothing written/.test(dry.stdout));
 const noOwner = spawnSync(process.execPath, [TOOL, '--apply'], { encoding: 'utf8', env: { ...process.env, VT_GRANT_APPLY: '' } });
 ok('--apply refuses without VT_GRANT_APPLY=owner', noOwner.status === 2 && /refused/.test(noOwner.stderr));

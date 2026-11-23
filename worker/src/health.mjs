@@ -31,6 +31,7 @@ const sast = (ms) => new Date(+ms + 2 * HOUR).toISOString().slice(0, 16).replace
 /* THE DAY EACH SOURCE SHOULD REACH RIGHT NOW (never-stale plan, Phase 2). The daily drop lands
    by 13:00 SAST carrying yesterday; there is no Sunday data. Mirrors expectedReach() in PULSE. */
 import { expectedReachFor } from './rules.mjs';
+import { gatherVt, evaluateVtHealth } from './vt-health.mjs';   // spec 071 F3: the Vehicle Tracking checks (silent until migration 071 is applied)
 export { expectedReachFor };                              // lives in rules.mjs since 2026-09-07 (one source); re-exported for the suites
 const SATURDAY_SOURCES = new Set(['sales', 'calls']);
 /* The Help Center's HighLevel location, read once: {ok, status, help, assist, error}. `help` and
@@ -493,7 +494,7 @@ export function evaluateFreshness(t) {
  */
 export async function runHealthChecks(DB, opts = {}) {
   const rows = await DB.select(
-    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching,kv:referrals-sync-log,kv:wimpy-hl-status,kv:wimpy-ledger-failed,' + SIZE_KEY)})&select=key,updated_at,value`);
+    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching,kv:referrals-sync-log,kv:wimpy-hl-status,kv:wimpy-ledger-failed,kv:vt-digest,kv:vt-trim-log,' + SIZE_KEY)})&select=key,updated_at,value`);
   const at = {}; let opened = null;
   const sizeRow = ((rows || []).find((r) => r.key === SIZE_KEY) || {}).value || null;
   /* spec 015: the Wimpy cron's status and the last lost ledger row ride this same select — no extra subrequest */
@@ -599,6 +600,10 @@ export async function runHealthChecks(DB, opts = {}) {
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
     staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster, db: dbh, dbUnreadable, dbHistory, runnerExpected: !!opts.runnerExpected,
   });
+  /* VEHICLE TRACKING (spec 071, F3): its own module, its own try — a VT failure never costs the VAS alerts above, and before
+     migration 071 is applied vt_uploads cannot be read, so it says nothing. kv:vt-digest and kv:vt-trim-log rode the first select. */
+  try { alerts.push(...evaluateVtHealth(await gatherVt(DB, rows))); }
+  catch (e) { console.warn('[health] VT checks failed: ' + String((e && e.message) || e).slice(0, 120)); }
 
   const prev = await DB.select(`rules?key=eq.${encodeURIComponent(ALERTS_KEY)}&select=value`).catch(() => null);
   let prevAlerts = [];

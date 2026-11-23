@@ -16,6 +16,7 @@
  */
 import { createRequire } from 'module';
 import fs from 'fs';
+import { validateVtPackage } from './vt-validate.mjs';   // spec 071 F2: the three Vehicle Tracking files, through the VT engine's own detection
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -202,6 +203,21 @@ for (const sn of wbAgents.SheetNames) {
     if (!register.has(cb)) register.set(cb, { name, title: cellv(r, hm, 'Employee Title') || cellv(r, hm, 'Title') || null, sheet: sn });
   }
 }
+/* ---------------- 1b. VEHICLE TRACKING files (spec 071, F2) ----------------
+   BI Active Fitted / Scheduled & Missed / the opening book are VALIDATED here, never mistaken for VAS sources: every .xlsx
+   the VAS checks do not claim is offered to the VT engine's own detection (tools/vt-validate.mjs). A VT file is never the
+   VAS money source — NAMES.active only ever matches "Active.xlsx". The Agent List's VT sheet has a Target column now: its
+   Targets are checked against the business month's Sales Review SPD budgets. */
+const VAS_NAMES = new Set(Object.values(NAMES).filter(Boolean));
+const VT_CANDIDATES = fs.readdirSync(UPLOAD_DIR).filter(n => /\.xlsx?$/i.test(n) && !VAS_NAMES.has(n) && !n.startsWith('~$'));
+const VTV = validateVtPackage({
+  periodEnd: P_END,
+  agentList: Object.fromEntries(wbAgents.SheetNames.map(sn => [sn, sheetRows(wbAgents.Sheets[sn])])),
+  files: VT_CANDIDATES.map(n => { try { const wb = XLSX.read(fs.readFileSync(rawPath(n)), { type: 'buffer' }); return { name: n, sheets: Object.fromEntries(wb.SheetNames.map(sn => [sn, sheetRows(wb.Sheets[sn])])) }; } catch (e) { finding('MEDIUM', 'VT', `${n}: could not be read as a workbook (${String(e.message || e).slice(0, 80)})`); return null; } }).filter(Boolean),
+});
+VTV.findings.forEach(x => finding(x.sev, x.area, x.msg));
+const isVtAgent = a => a.source_sheet === 'VT' || /vehicle tracking|^vt$/i.test(String(a.campaign || ''));
+
 /* identity maps (dashboard buildIdentity) */
 const agentMap = {}, sfOwnerMap = {}, cbInfo = {};
 for (const a of roster.values()) {
@@ -651,7 +667,11 @@ sim(3, 'Duplicate detection', (cxDupes + qaDupes + attDupes + openDupes + biDupe
   cover('CALLX_CALL_RECORDS', CX.map(c => c.day));
   cover('QA (Date of Call)', QA.map(q => q.day));
   cover('VICI report', VICI.map(v => v.day));
-  if (noTarget) finding('HIGH', 'AGENT_LIST', `${noTarget} roster agents carry no Target (the VT sheet has no Target column) — Target Ach % reads N/A for them, never guessed.`);
+  /* spec 071 F2: the VT sheet HAS a Target column (VT sales per day; "-" on the Scheduling agents, who are not rated in v1).
+     VT Targets are checked against the Sales Review budgets by tools/vt-validate.mjs (the VT findings above); this line
+     now counts the VAS agents only. */
+  const noTargetVas = [...roster.values()].filter(a => !isVtAgent(a) && (a.target === '' || a.target == null)).length;
+  if (noTargetVas) finding('HIGH', 'AGENT_LIST', `${noTargetVas} VAS roster agents carry no Target — Target Ach % reads N/A for them, never guessed.`);
 }
 /* Sim 5 — date boundary */
 {
@@ -807,6 +827,7 @@ md.push(`| ${NAMES.active} | BI_ACTIVE_CASES | ${BI.length} | ${biWin.length} | 
 md.push(`| ${NAMES.inactive} | SF_INACTIVE | ${INACT.length} | ${inactWin.length} | windowed by Contract Create |`);
 md.push(`| ${NAMES.sfOpen} | SF_OPEN_CASES | ${OPEN.length} | snapshot | HTML .xls parsed as table |`);
 md.push(`| ${NAMES.sfClosed} | SF_CLOSED_CASES | **${CLOSED.length}** | — | **frameset shell — NO DATA** |`);
+for (const s of VTV.sources) md.push(`| ${s.name} | VT · ${s.label} | ${s.rows} | ${s.cases} case(s) | extract ${s.extractOn || '—'}${s.assumed ? ' (ASSUMED — no date in the name)' : ''} · Vehicle Tracking only, never VAS money (spec 071) |`);
 md.push(`\n## Findings (severity-ordered)\n`);
 for (const sev of ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']) for (const f of findings.filter(x => x.sev === sev)) md.push(`- **${sev}** [${f.area}] ${f.msg}`);
 md.push(`\n## Simulations\n\n| # | Simulation | Status | Detail |\n|---|---|---|---|`);

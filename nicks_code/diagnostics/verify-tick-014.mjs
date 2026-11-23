@@ -214,6 +214,13 @@ if (typeof T.runSteps === 'function') {
   const c = mk();
   await T.runSteps({ ...c, full: false, slot: '14:00' });
   ok('outside a full tick only referrals + agent-digest run', c.ran.join() === 'prepare-site,referrals,agent-digest', c.ran.join());
+  /* spec 071: the VT proofs run once a day, LAST, only on a full tick, stamped verify-vt */
+  const v = mk();
+  await T.runSteps({ ...v, full: true, slot: null, vtVerify: true });
+  ok('the daily VT proofs run last on a full tick and are stamped verify-vt', v.ran[v.ran.length - 1] === 'verify-vt' && v.stamped.some((x) => x[0] === 'verify-vt'), v.ran.join());
+  const v2 = mk();
+  await T.runSteps({ ...v2, full: false, slot: '08:00', vtVerify: true });
+  ok('…never on a referrals-only tick', !v2.ran.includes('verify-vt'), v2.ran.join());
 } else ok('runSteps exists', false, tick.why);
 
 const js = await safeImport('job-status.mjs', ['stampJob', 'withStep', 'parseJobsDoc']);

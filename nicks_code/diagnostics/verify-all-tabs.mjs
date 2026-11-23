@@ -50,6 +50,12 @@ const browser = await chromium.launch({ args: ['--js-flags=--max-old-space-size=
 const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
 const errors = []; page.on('pageerror', e => errors.push(e.message));
 page.on('dialog', d => d.accept());
+/* THE VEHICLE TRACKING PAGES (spec 071, F item 5) read the VT book from the Worker, which a 127.0.0.1 page cannot reach:
+   answer /api/vt/* with the LIVE book (read-only, when migrations 071/072 are applied) or, offline / CBX_VT_FIXTURE=1 /
+   before the deploy, the fictional VT floor — section 3c checks the pages against the engine either way. */
+const { vtSource, installVtRoutes, checkVtTabs } = await import('./vt-tab-source.mjs');
+const VT_SRC = (!process.env.CBX_VT_FIXTURE && !process.argv[2] && await vtSource({ live: true }).catch(() => null)) || await vtSource();
+await installVtRoutes(page, VT_SRC);
 await page.goto('http://127.0.0.1:8175/index.html', { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__mtd && window.__mtd.state(), null, { timeout: 30000 });
 await page.evaluate(b => { const S = window.__mtd.state(); const blob = JSON.parse(b);
@@ -172,6 +178,11 @@ for (const tab of NAV) {
   }, tab);
   ok(`tab "${tab}" renders`, r.len > 40 && !r.err && errors.length === before, `${r.len} chars | ${r.head}`);
 }
+
+/* ---------- 3c. the Vehicle Tracking pages paint the VT engine (spec 071) ---------- */
+console.log('  --   Vehicle Tracking source: ' + VT_SRC.label);
+await checkVtTabs(page, ok, VT_SRC);
+await page.evaluate(() => { const S = window.__mtd.state(); S.ui.vt = {}; S.ui.tab = 'dashboard'; renderPage(); });
 
 /* ---------- 4. Lead Management renders from its own book; Lead Allocation is GONE ---------- */
 /* Lead Allocation was removed 2026-08-27 (page, slot and book). The check here is the
