@@ -1,7 +1,7 @@
 # One rule set for the whole site. Cloudflare Pages applies EVERY matching rule, so /*
-# already covers the app shells, auth-gate.js, build.txt and the embedded VT report —
-# the eight enumerated blocks that used to sit here all repeated this one Cache-Control
-# line and still missed /tracker/vt-mtd-report.html, which was served cacheable.
+# already covers the app shells, auth-gate.js and build.txt — the eight enumerated
+# blocks that used to sit here all repeated this one Cache-Control line and still
+# missed a page, which was served cacheable.
 # Nothing here wants caching: every app is a single self-contained HTML file whose
 # libraries come from the CDN, and a cached shell serves stale data behind a live login.
 /*

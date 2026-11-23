@@ -15,7 +15,7 @@ const ROOT = process.env.AGENTOS || decodeURIComponent(new URL('../../site', imp
 const APPS = [
   ['Ops', ROOT + '/index.html'],
   ['VAS (PULSE)', ROOT + '/pulse/index.html'],
-  ['Tracker', ROOT + '/tracker/index.html'],
+  // Tracker Analytics was removed by spec 071 (Phase A) — verify-tracker-removed.mjs guards its absence.
 ];
 
 const lum = (rgb) => {

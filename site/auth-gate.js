@@ -3,7 +3,7 @@
    and per-tab hiding. The Worker API is the real enforcer; this is the UX. */
 (function () {
   var WORKER = 'https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
-  var APP = location.pathname.indexOf('/pulse') !== -1 ? 'vas' : (location.pathname.indexOf('/tracker') !== -1 ? 'tracker' : 'ops');
+  var APP = location.pathname.indexOf('/pulse') !== -1 ? 'vas' : 'ops';
   var TKEY = 'cbx_token';
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
 
@@ -321,8 +321,8 @@
      Say so plainly, and point at the app they DO have. */
   function noAccessNotice() {
     var u = window.CBX_USER || {};
-    var NAMES = { vas: 'VAS Analytics', ops: 'Ops Analytics', tracker: 'Tracker Analytics' };
-    var PATHS = { vas: '/pulse/', ops: '/', tracker: '/tracker/' };
+    var NAMES = { vas: 'VAS Analytics', ops: 'Ops Analytics' };
+    var PATHS = { vas: '/pulse/', ops: '/' };
     var mine = (u.apps || []).filter(function (a) { return a !== APP && NAMES[a]; });
     overlay(
       '<div style="text-align:center"><div style="font-size:20px;font-weight:800;letter-spacing:-.4px;color:#0F1E36">CHATTER<span style="color:#2563EB">BOX</span></div>'

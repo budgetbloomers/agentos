@@ -1,0 +1,196 @@
+{
+  "_source": "DRAFT 1 of specs/vt_engine_rules.json (Spec Kit 071). Every value cites a file+cell (files in ../reference/zips/vt/) or a decision id in spec.md §9. SR = Sales_Review_YTD 2026.xlsx, AL = Matrix - Agent List.xlsx, RPT = November 2026 - VT Report.xlsx, BI = BI Active Fitted 101126.xlsx, SM = Scheduled & Missed 101126.xlsx, WR = specs/vt-analytics/workbook-rules.md.",
+  "_generated": "2026-11-23",
+  "version": "vt-1.0",
+  "_changes": [
+    { "date": "2026-11-23", "by": "Spec Kit 071 planner", "key": "*", "from": null, "to": "first draft", "why": "new module; owner: 'you will get all the answers from the files I gave you'" }
+  ],
+
+  "detection": {
+    "vtBiFitted": {
+      "requireHeaders": ["installation status", "vehicle reg number", "box number", "unit type", "case number", "created by"],
+      "runBefore": ["bi", "inactive"],
+      "footerPattern": "^Applied filters:",
+      "_evidence": "BI row 1 headers C, T, V, Y, AS, L; footer A19406. VAS BI has none of C/T/V (current-state B3)."
+    },
+    "vtSchedMissed": {
+      "requireHeaders": ["missedandscheduledfitment", "fitment date", "case number", "created by"],
+      "footerPattern": "^No filters applied",
+      "_evidence": "SM row 1 headers U, R, C, S; footer row 1080."
+    },
+    "vtOpeningBook": {
+      "sheetName": "Schedulers Data",
+      "requireHeaders": ["month", "date", "agent", "case number", "result"],
+      "takeOnly": ["case number", "date"],
+      "optional": true,
+      "_evidence": "RPT 'Schedulers Data'!A1:K1. Decision A6 (sale dates only; Result/GWP/Scheduler/contact never stored)."
+    },
+    "filenameDate": { "pattern": "(\\d{2})(\\d{2})(\\d{2})(?=\\D*\\.xlsx?$)", "order": "ddmmyy", "century": 2000, "fallback": "todaySAST+warning", "_evidence": "file names '101126' = 10 Nov 2026 (WR 1.1)" },
+    "refuseIn": ["ops.detectSource", "pulse.rakeDetect", "relay.archiveUpload"]
+  },
+
+  "columns": {
+    "bi": { "byPosition": true, "caseNumber": "AS", "unitType": "Y", "bundle": "Z", "chargeEx": "X", "chargeCheck": "AD", "installedOn": "Q", "contractCreatedOn": "O", "createdBy": "L", "sourcePartner": "AP",
+      "_evidence": "duplicate headers B/R, X/AD, Y/AK (WR 1.1); X==AD on 1,107/1,107 VT lines; O==Q on 1,103/1,107" },
+    "sm": { "caseNumber": "C", "productType": "J", "attempt": "L", "bundle": "M", "apptOn": "R", "createdBy": "S", "outcome": "U", "sourcePartner": "A" },
+    "discardAll": "every column not listed above (customer name, mobile, registration, chassis, box, account/contract numbers, consultants, fitment partner, last modified by)",
+    "dateSerial": "Excel 1900 serial, integer part; text dates refused"
+  },
+
+  "vtUnitTypes": ["BEAME", "MXV", "Matrix Vision"],
+  "_vtUnitTypesEvidence": "BI Y in this set = 1,107 lines / 1,104 cases = RPT Q paste column exactly (WR 1.1). 'Recovery Service' excluded (A9).",
+
+  "status": {
+    "values": ["scheduled", "missed", "fitted", "cancelled"],
+    "fromBi": "fitted",
+    "fromSm": { "Scheduled Fitment": "scheduled", "Missed Fitment": "missed" },
+    "sameExtractPrecedence": ["fitted", "missed", "scheduled"],
+    "acrossExtracts": "newer extract decides between missed and scheduled",
+    "terminal": ["fitted"],
+    "sticky": true,
+    "olderExtractMayChangeStatus": false,
+    "cancelledFrom": null,
+    "_evidence": "WR 3.1: 1,756/1,756 cases; 3 SM-Missed∩BI and 1 SM-Scheduled∩BI shown Fitted; 178 rows keep earlier statuses. A7, A8."
+  },
+
+  "saleDay": {
+    "basis": "first_seen",
+    "openingBook": "takes RPT 'Schedulers Data'!B for its cases",
+    "openingWithoutDate": "null — in play, never counted as a sale on any day",
+    "saleDateColumn": null,
+    "_evidence": "F8: Case Number order vs sale date has 5 inversions in 2,024; all 1,309 non-cancelled Current sales are present in the day's inputs. A5, A6."
+  },
+  "fittedDay": { "from": ["bi.installedOn", "bi.contractCreatedOn"], "_evidence": "F7" },
+  "apptDay": { "from": "sm.apptOn", "_evidence": "RPT M = SM R for 499/499 (WR 3.1)" },
+
+  "identity": {
+    "sellerFrom": ["sm.createdBy", "bi.createdBy"],
+    "stripSuffixes": [" - Panimax"],
+    "collapseWhitespace": true,
+    "caseFold": true,
+    "chain": ["exact", "alias", "near_one_typo", "first_last_token_unique_in_VT"],
+    "unmatched": "excluded from agent rows; counted on the receipt and in floor.unmatched",
+    "creditOverrides": {},
+    "_evidence": "WR 3.2 and 4.1: 38 exact + 3 first+last (CB14, CB346, CB354) + 1 one-letter (CB342); 7 on no sheet (49 BI + 17 SM cases). A10."
+  },
+
+  "leadSources": {
+    "map": {
+      "RevX": "revx",
+      "Tracking Empire / Shawn Langley": "tracking_empire",
+      "Jag Web Marketing- Panimax": "jag",
+      "Afrilead- Panimax": "afrilead",
+      "Sales Enablement": "sales_enablement",
+      "Panimax - New Sales": { "ifSellerTeam": { "referral": "referral" }, "else": "predictive" }
+    },
+    "unknown": "other",
+    "groups": { "lead_gen": ["revx", "tracking_empire", "jag", "afrilead"], "predictive": ["predictive"], "referral": ["referral"], "other": ["sales_enablement", "other"] },
+    "labels": { "revx": "Revx", "tracking_empire": "Tracking Empire", "jag": "Jag", "afrilead": "Afrilead", "predictive": "Predictive", "referral": "Referral", "sales_enablement": "Sales Enablement", "other": "Other", "lead_gen": "Lead Gen" },
+    "_evidence": "WR 3.3 (partner table; Referral split 177/179; PD - Lead Gen hidden items = the 4 partners). A11."
+  },
+
+  "teams": {
+    "fromCampaignRaw": "^Matrix Vehicle Tracking - (Digital|Predictive|Referral|Scheduling)\\s*$",
+    "keys": { "Digital": "digital", "Predictive": "predictive", "Referral": "referral", "Scheduling": "scheduling" },
+    "notRated": ["scheduling"],
+    "noTarget": "Target <= 0, '-' or blank",
+    "_evidence": "AL VT!E (Predictive 22, Digital 17, Scheduling 6, Referral 3); VT!I '-' on the 6 Scheduling rows; D7-d."
+  },
+
+  "periods": {
+    "periodStartDay": 26,
+    "cycleKeyBy": "month the cycle ends in (cycle-YYYY-MM, worker/src/cycle.mjs)",
+    "weekStart": "Mon",
+    "weekEnd": "Sat",
+    "sundayJoins": "week of the preceding Monday",
+    "weeksClippedToCycle": true,
+    "workingDay": "Mon-Fri and not dataOnlyDay (SA public holidays + extraHolidays)",
+    "saturday": "data, not a working day",
+    "hrsAheadAsAtOffsetDays": 1,
+    "hrsAheadBuckets": [ { "k": "h24", "label": "24", "days": 0 }, { "k": "h48", "label": "48", "days": 1 }, { "k": "h72", "label": "72", "days": 2 }, { "k": "h72p", "label": "72+", "minDays": 3 }, { "k": "past", "label": "Past due", "maxDays": -1 } ],
+    "_evidence": "SR row 2 ('26 Oct to 25 Nov 2026'); RPT A boundary 26 Oct; SR 'Last 5 Days Run Rate' 19/10-24/10, 02/11-07/11 (Mon-Sat); SR dialing days Sep 22 / Oct 20 = weekdays minus holidays (Nov 22 vs 23 recorded, A4); RPT L formula and TODAY=11 Nov on 101126 files (F12)."
+  },
+
+  "guards": { "thinBiShare": 0.9, "thinSmShare": 0.4, "uploadGapWorkingDays": 1, "_evidence": "decision FR-006 (BI is cumulative within a cycle per its footer 'CurrentSalesMonth is Current'; S&M is a live snapshot)" },
+
+  "vat": 0.15,
+  "_vatNote": "must equal MTD_RULES.vat (verify-vt-rules); used only for C21 Fitted value",
+
+  "reports": {
+    "inPlay": "sold in cycle OR (sold earlier AND (open at any time in cycle OR fitted in cycle))",
+    "columns": [
+      { "id": "sales", "label": "Sales", "f": "count(set)", "basis": "saleDay; MTD = inPlay" },
+      { "id": "current", "label": "Current", "f": "count(set where saleDay >= cycle.from)", "basis": "saleDay", "mtdOnly": true },
+      { "id": "rollover", "label": "Rollover", "f": "count(set where saleDay < cycle.from or saleDay null)", "basis": "saleDay", "mtdOnly": true },
+      { "id": "fitted", "label": "Fitted", "f": "count(set where status=fitted)", "basis": "status as at" },
+      { "id": "scheduled", "label": "Scheduled", "f": "count(set where status=scheduled)", "basis": "status as at" },
+      { "id": "missed", "label": "Missed", "f": "count(set where status=missed)", "basis": "status as at" },
+      { "id": "cancelled", "label": "Cancelled", "f": "count(set where status=cancelled) or null when cancelledFrom is null", "basis": "status as at" },
+      { "id": "fitRate", "label": "Fitted Rate %", "f": "fitted / sales", "_evidence": "RPT PD sheets col I (GETPIVOTDATA ratio over all rows)" },
+      { "id": "missRate", "label": "Missed Rate %", "f": "missed / sales", "_evidence": "RPT PD col H" },
+      { "id": "schedRate", "label": "Scheduled Rate %", "f": "scheduled / sales", "_evidence": "RPT PD col J" },
+      { "id": "fitDone", "label": "Fitments done", "f": "count(events to=fitted, on fittedDay in window)", "basis": "fittedDay" },
+      { "id": "missAppt", "label": "Missed appointments", "f": "count(events to=missed, apptDay in window)", "basis": "apptDay" },
+      { "id": "due", "label": "Due to fit", "f": "count(open scheduled, apptDay in window)", "basis": "apptDay" },
+      { "id": "hrsAhead", "label": "Hrs Ahead 24/48/72/72+/Past due", "f": "bucket(apptDay - asAt) over open scheduled", "basis": "asAt", "mtdOnly": true },
+      { "id": "hrsShare", "label": "Hrs Ahead share vs budget", "f": "bucket / open scheduled", "mtdOnly": true, "levels": ["team", "sub", "floor"] },
+      { "id": "workingDays", "label": "Working days", "f": "working days from max(cycle.from, agent start) to last extract" },
+      { "id": "spd", "label": "SPD", "f": "current / workingDays", "_evidence": "SR SPD = Sales/Headcount/Dialing Days (WR 6)" },
+      { "id": "target", "label": "Target SPD", "f": "Agent List Target; team = sum" },
+      { "id": "toTarget", "label": "% to target", "f": "spd / target" },
+      { "id": "fitBudget", "label": "Fitment budget %", "f": "budgets[cycle].fitment[sub][tenure]" },
+      { "id": "value", "label": "Fitted value (incl VAT, Charge Amount basis)", "f": "sum(chargeEx of fitted) * (1+vat)", "basis": "fittedDay", "_evidence": "F9: not the bundle-price GWP; labelled" },
+      { "id": "noSaleDay", "label": "Sales without a sale day", "f": "count(set where saleDay null)", "mtdOnly": true, "showWhenPositive": true }
+    ],
+    "totals": "sum of counts; rates = ratio of sums",
+    "absent": "—",
+    "schedulerPivots": { "built": false, "why": "no upload names the scheduler (WR 3.4)" }
+  },
+
+  "rating": {
+    "floor": 0.5,
+    "window": "cycle-to-date (cycle.from → last extract)",
+    "minCases": 5,
+    "minTrackedDays": 5,
+    "renormalise": true,
+    "lowerIsBetter": "att = clamp(target / value, 0, 1); value 0 → 1",
+    "points": "round(w * clamp((att - floor) / (1 - floor), 0, 1), 1)",
+    "score": "round(min(100, raw / sum(measured w) * 100), 1)",
+    "penalties": 0,
+    "drivers": [
+      { "k": "targetAch", "label": "Target Achievement", "w": 35, "dir": "higher", "value": "reports.spd", "target": "Agent List Target (AL VT!I) for the cycle's list", "note": "How close your sales per working day come to your target." },
+      { "k": "fitRate", "label": "Fitment Rate", "w": 30, "dir": "higher", "value": "reports.fitRate (MTD in play)", "target": "budgets[cycle].fitment[sub][tenure]", "note": "Out of every 100 of your sales in play this month, how many are fitted." },
+      { "k": "missRate", "label": "Missed Rate", "w": 20, "dir": "lower", "value": "reports.missRate (MTD in play)", "target": "budgets[cycle].missed[sub]", "note": "How many of your sales missed their fitment appointment. Lower is better." },
+      { "k": "fitted", "label": "Fitted vs target", "w": 15, "dir": "higher", "value": "reports.fitDone (MTD)", "target": "target * workingDays * budgets[cycle].fitment[sub][tenure]", "note": "Fitments done this month against what your target would fit." }
+    ],
+    "_weightsWhy": "volume first as in VAS; fitment is the revenue event; missed is the main avoidable loss; fitted count is a cross-check (partly double-counts) so it carries the least. Total 100. spec §6.",
+    "notScored": {
+      "gwp": "D7-a: Charge Amount x VAT equals RPT GWP on 328/1,104; budget Avg GWP (SR VT Digital!N35 166, VT Referrals!N15 R199, VT Predictive!N60 169) is on the bundle-price basis; SM has no amount",
+      "hrsAhead": "D7-b: scheduler's queue, not the seller's",
+      "attendance_talk_qa_conversion_optins": "D7-c: not in the VT files",
+      "schedulers": "D7-d"
+    },
+    "bands": [ { "label": "Elite", "min": 90 }, { "label": "Strong", "min": 80 }, { "label": "On track", "min": 70 }, { "label": "Building", "min": 60 }, { "label": "Needs support", "min": 0 } ],
+    "_bandsEvidence": "same as specs/composite_rules.json bands ('it must match vas analytics')"
+  },
+
+  "budgetFallback": "latest earlier cycle; the card names the cycle used",
+  "budgets": {
+    "cycle-2026-11": {
+      "spd": { "digital": { "*": 6.5 }, "referral": { "*": 3 }, "predictive": { "Exp": 2, "M2": 1.5, "M1": 1 } },
+      "fitment": { "digital": { "*": 0.85 }, "referral": { "*": 0.85 }, "predictive": { "*": 0.8, "Exp": 0.8, "M2": 0.75, "M1": 0.7 }, "floor": 0.8 },
+      "missed": { "*": 0.05 },
+      "cancelled": { "*": 0.05 },
+      "hrsShare": { "h24": 0.8, "h48": 0.1, "h72": 0.05, "h72p": 0.05 },
+      "avgGwpShownNotScored": { "digital": 166, "referral": 199, "predictive": 169 },
+      "_cells": {
+        "spd": "SR 'VT Digital'!N20; 'VT Referrals'!N12; 'VT Predictive'!N46:N48 — equal AL VT!I (F1)",
+        "fitment": "SR 'VT Digital'!N45; 'VT Referrals'!N17; 'VT Predictive'!N70:N73; 'VT Scheduling'!N16",
+        "missed": "SR 'VT Scheduling'!N22/N7=103.3/2066, N24/N9=8.95/179, N25/N10=39.25/785 (5% each)",
+        "cancelled": "SR 'VT Digital'!N55, 'VT Referrals'!N19, 'VT Predictive'!N80",
+        "hrsShare": "SR 'VT Scheduling'!A41, A46, A51, A56 labels",
+        "avgGwp": "SR 'VT Digital'!N35, 'VT Referrals'!N15, 'VT Predictive'!N60"
+      }
+    }
+  }
+}

@@ -32,7 +32,7 @@ const head = (t) => console.log('\n' + t);
 const APPS = [
   ['Ops', 'Chatterbox_AgentOS_Analytics.html'],
   ['VAS (PULSE)', 'nicks_code/index.html'],
-  ['Tracker', 'tracker/index.html'],
+  // Tracker Analytics was removed by spec 071 (Phase A) — verify-tracker-removed.mjs guards its absence.
 ];
 const css = (s) => (s.match(/<style[^>]*>[\s\S]*?<\/style>/g) || []).join('\n');
 

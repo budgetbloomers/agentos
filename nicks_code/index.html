@@ -4385,9 +4385,11 @@ function rebuild(){
   CAMPS.length=0; CAMPS.push(...campsNow);
   /* a header filter left on a campaign the list no longer carries would show an empty app —
      cleared, and SAID, so it never reads as "my filter didn't stick" */
-  if(S.ui&&S.ui.camp&&S.ui.camp!=='VT'&&!CAMPS.includes(S.ui.camp)){
+  /* 'VT' included (spec 071): the old Matrix Tracker view is retired from these pages, so a header filter saved on it is
+     cleared like any other unreported campaign. The hidden VT branch in buildModel/aggCols is left untouched. */
+  if(S.ui&&S.ui.camp&&!CAMPS.includes(S.ui.camp)){
     const was=S.ui.camp; S.ui.camp=''; try{ saveUI(); }catch(e){}
-    setTimeout(()=>{ try{ toast('Campaign filter cleared: "'+was+'" is not on the Agent List for this period'); }catch(e){} },0);
+    setTimeout(()=>{ try{ toast(was==='VT'?'Campaign filter cleared: Matrix Tracker is no longer reported on these pages':'Campaign filter cleared: "'+was+'" is not on the Agent List for this period'); }catch(e){} },0);
   }
   VCHK=M?validateMTD(M):null;      // rule checks run on every rebuild, so every upload is checked
   /* THE LIST MUST HAVE TAKEN EFFECT — checked on every build (Nick, 2026-08-27: "everytime
@@ -6570,7 +6572,6 @@ function renderSide(){
       <select aria-label="Switch app" onchange="if(this.value)location.href=this.value" style="flex:1;width:100%;border:none;border-radius:8px;padding:8px 10px;font-family:inherit;font-size:11.5px;font-weight:800;background:var(--accent-grad);color:var(--on-accent);cursor:pointer">
         <option value="../index.html" style="background:#0A1730;color:#EAF1FB">Ops Analytics</option>
         <option value="" selected style="background:#0A1730;color:#EAF1FB">VAS Analytics</option>
-        <option value="../tracker/index.html" style="background:#0A1730;color:#EAF1FB">Tracker Analytics</option>
       </select>
     </div>
     ${NAV.map(g=>`<div class="navgroup"><span class="lab">${g.lab}</span>
@@ -6679,7 +6680,7 @@ function sideChevrons(){
 /* global filter helpers */
 function gFilter(f){
   // "All" is the VAS view (Cuddle+Courtesy) — tracker units are a separate product with no GWP,
-  // so VT only shows when Matrix Tracker is explicitly selected.
+  // so VT only shows when the filter holds 'VT' — no longer offered, and a saved 'VT' is cleared in rebuild() (spec 071).
   if(S.ui.camp ? f.campaign!==S.ui.camp : f.campaign==='VT') return false;
   return (!S.ui.team||f.tl===S.ui.team); }
 /* NAME THE FILTER THAT EMPTIED THE PAGE, and give it a way out.
@@ -10056,7 +10057,7 @@ window.__mtd={ ingest:ingestText, state:()=>S, model:()=>M, prevModel:()=>MP,
    anyone holding the share link. Agent-facing facts only: name, campaign,
    tenure, their own headline numbers, their rank and badges. Never case rows,
    contact details, QA critical fails, coaching themes, risk tiers, disciplinary
-   state, or anything belonging to Ops or Tracker Analytics. Adding a field here
+   state, or anything belonging to Ops Analytics. Adding a field here
    publishes it — think before you do.
 
    Agents that never reach the digest, by construction rather than by filter:

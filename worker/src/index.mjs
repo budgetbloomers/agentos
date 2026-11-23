@@ -58,7 +58,7 @@ COMPOSITE SCORE (max 100). Weights: Avg GWP/Sale (Value) 25, Target Achievement 
 // The software itself — apps, tabs, and the Manual tab's content — so the
 // assistant can answer "how do I use this" and "what does X tab / colour mean".
 const SOFTWARE_GUIDE = `THE CHATTERBOX AGENTOS — THE SOFTWARE ITSELF.
-The AgentOS is one suite with three apps, switched with the [Ops Analytics | VAS Analytics | Tracker Analytics] toggle at the top. Users log in each time a tab opens; each user sees only the tabs they have permission for. All three apps share: the same logo, a Data Trust bar (source freshness — read it before trusting any number), an Upload Station, clickable agent names that open a full agent card with AI coaching, and this Ask AgentOS chat widget (bottom-right).
+The AgentOS is one suite with two analytics apps, switched with the [Ops Analytics | VAS Analytics] toggle at the top. Users log in each time a tab opens; each user sees only the tabs they have permission for. Both apps share: the same logo, a Data Trust bar (source freshness — read it before trusting any number), an Upload Station, clickable agent names that open a full agent card with AI coaching, and this Ask AgentOS chat widget (bottom-right).
 
 OPS ANALYTICS TABS:
 - Command: Executive (command centre: production, quality, people, one controlled view) · Visual Brain (the floor as a living graph — agents, teams, campaigns, NBA rules coloured by priority; hover for info, it cannot be clicked).
@@ -68,8 +68,6 @@ OPS ANALYTICS TABS:
 - Data: Upload Station (manual source uploads, validation, batch audit, exceptions) · Session Uploads (intraday snapshot slots 08:00/10:00/12:00/15:00/16:30) · Dictionary, Rules & Thresholds (every KPI definition, RAG threshold and rule — live-editable) · Training Guide (run the system in 20 min/week).
 
 VAS ANALYTICS TABS: Dashboard · Month to Date · Weekly Reports · Daily Reports · Workforce · Agent Performance · Leaderboards · Coaching · Manual · Open Cases · Upload Station · Adjustments · Settings.
-
-TRACKER ANALYTICS (Matrix EOD Daily Tracker): manual end-of-day capture, one row per date — Employed HC, Present HC, Afrilead/JAG/VT Sales, Avg GWP, Agents-to-Target; Attendance % (present÷employed) and SPD (VT sales÷present) calculate automatically, with day-on-day movement columns. Entries are stored in the shared database and visible to every user. Tabs: Input · Daily Tracker.
 
 THE MANUAL TAB (both apps carry this content):
 1. READ THE COLOURS FIRST — one traffic-light system everywhere: GREEN = on target (metric at or better than goal). AMBER = watch (slipping toward a problem). RED = act (below target; needs an owner and an action today). GREY = informational, no target set. Every KPI card shows value, target (e.g. "target >= 90%"), a trend arrow vs the previous period and a mini-sparkline; click a KPI for its full definition.
@@ -533,10 +531,12 @@ function stampAppOpen(DB, ctx, app) {
    Nick had granted them Ops and VAS Analytics: Dalwin signed in and PULSE sat on "Loading
    your data from Supabase…" forever (the 403s never reach the screen). The lock now follows
    the GRANT: a portal role with no management app is locked exactly as before (every agent,
-   every team leader), while one that has been given 'ops', 'vas' or 'tracker' is a manager
+   every team leader), while one that has been given 'ops' or 'vas' is a manager
    who also has a portal view. Deny-by-default is unchanged — the allow-list still decides
    which routes a locked user may call. */
-const MANAGEMENT_APPS = new Set(['ops', 'vas', 'tracker']);
+/* 'tracker' left with the old tracker app (spec 071, Phase A). tools/vt-grant-tabs.mjs grants 'vas' + the VT tabs
+   to every former tracker holder FIRST, so no account turns portal-only on this deploy. */
+const MANAGEMENT_APPS = new Set(['ops', 'vas']);
 function portalOnly(user) {
   if (!user || !PORTAL_ROLES.has(user.role)) return false;
   const apps = Array.isArray(user.apps) ? user.apps : [];
@@ -841,7 +841,7 @@ export default {
          /api/eod, /api/ask and the rest. What it returns is not the dataset — it is the
          agent-safe digest PULSE publishes (see "AGENT ANALYTICS — THE DIGEST" in
          nicks_code/index.html): no case rows, no contact details, no coaching, nothing
-         from Ops or Tracker.
+         from Ops.
 
          KNOWN AND ACCEPTED: anyone holding the link can look up any colleague on the
          roster. That is the trade for zero-friction access. Rotating the key in `rules`
@@ -2351,11 +2351,12 @@ export default {
         return json({ ok: true, deleted: qk });
       }
 
-      // ---------- Tracker Analytics: daily_eod rows (one row per date) ----------
+      // ---------- daily_eod rows (one row per date) — DORMANT since spec 071 ----------
+      // The Tracker app that called this was removed (spec 071, Phase A). The route, its GATED_WRITES entry and the
+      // table stay so no data is deleted (D9); dropping them is a later, separate owner decision.
       // Row-level storage: per-date upserts mean two users editing DIFFERENT
       // dates can never clobber each other.
-      // LOAD-BEARING 503 — do not simplify to the top-level 500. tracker/index.html
-      // hydrate() branches on `r.status === 503` to fall back to the kv blob.
+      // The 503 below was load-bearing for the removed tracker page's hydrate() (it fell back to its kv blob).
       if (path === '/api/eod' && req.method === 'GET') {
         try {
           const rows = await DB.select('daily_eod?select=*&order=eod_date.asc');
@@ -2527,7 +2528,7 @@ export default {
         const question = String(b.question || '').slice(0, 2000);
         const context = String(b.context || '').slice(0, 40000);
         const kb = retrieveKB(question);
-        let sys = 'You are Ask AgentOS, the DATA ANALYST for The Chatterbox call centre. You have the entire software in front of you: all three analytics apps (Ops Analytics, VAS Analytics, Tracker Analytics), their full stored datasets, the live daily-EOD table, the live rules Dictionary, the operator notes, the NBA scoring framework and the company knowledge base. ANY question about agents, teams, sales, GWP, QA, attendance, leads, cancellations, campaigns, uploads, trends, or any tab of any app is IN SCOPE.\n'
+        let sys = 'You are Ask AgentOS, the DATA ANALYST for The Chatterbox call centre. You have the entire software in front of you: both analytics apps (Ops Analytics, VAS Analytics), their full stored datasets, the live rules Dictionary, the operator notes, the NBA scoring framework and the company knowledge base. ANY question about agents, teams, sales, GWP, QA, attendance, leads, cancellations, campaigns, uploads, trends, or any tab of any app is IN SCOPE.\n'
           + 'WORK LIKE AN ANALYST: (1) answer with the number first, then the insight — compare against targets, previous days and peers when the data is present; compute differences and percentages from figures given in context; (2) cite where each figure comes from (which app/section of the context and the date window) so the reader can verify it; (3) name metric twins explicitly — "conversion" has two definitions (Card = sales ÷ total leads; Lead-Mgmt = sales ÷ total closed) — say which one you are using; (4) if a figure is not in the context, do not refuse: answer what you can and name exactly which tab or upload would hold the missing figure; (5) never invent a number — every figure you state must appear in, or be arithmetically derived from, the context below; (6) flag data-quality caveats you can see (stale digests, missing uploads, unmapped agents) like an analyst would. Only decline questions clearly unrelated to The Chatterbox or its operations (general trivia, news, personal advice, coding help). Be direct and executive; use short paragraphs or tight bullet lists.\n\n'
           + '=== THE SOFTWARE (apps, tabs, manual) ===\n' + SOFTWARE_GUIDE + '\n\n'
           + '=== NBA SCORING FRAMEWORK ===\n' + KB + '\n\n'
@@ -2542,7 +2543,7 @@ export default {
         // whichever widget the user asks from.
         let cloud = '';
         try {
-          for (const [k, label] of [['ai-digest-ops', 'OPS ANALYTICS'], ['ai-digest-vas', 'VAS ANALYTICS'], ['ai-digest-tracker', 'TRACKER ANALYTICS']]) {
+          for (const [k, label] of [['ai-digest-ops', 'OPS ANALYTICS'], ['ai-digest-vas', 'VAS ANALYTICS']]) {
             try {
               const r = await DB.select(`rules?key=eq.${encodeURIComponent('kv:' + k)}&select=value,updated_at`);
               const v = r?.[0]?.value || {};
@@ -2552,21 +2553,6 @@ export default {
               if (d) cloud += '\n--- ' + label + ' — full stored digest (saved ' + (r[0].updated_at || 'unknown') + ') ---\n' + d + '\n';
             } catch (e) {}
           }
-          // Tracker Analytics — live daily_eod rows straight from the database
-          // (never stale, independent of any open tab). Att%/SPD computed here in
-          // code — the model explains numbers, it never computes the canon.
-          try {
-            const eod = await DB.select('daily_eod?select=*&order=eod_date.desc&limit=60');
-            if (eod?.length) cloud += '\n--- TRACKER ANALYTICS — Matrix EOD daily table (LIVE from the database, newest first) ---\n'
-              + eod.map(r => {
-                  const att = (r.employed > 0 && r.present != null) ? Math.round(r.present / r.employed * 100) + '%' : '-';
-                  const spd = (r.present > 0 && r.vt != null) ? Math.round(r.vt / r.present * 100) / 100 : '-';
-                  return '- ' + r.eod_date + ': employed ' + (r.employed ?? '-') + ' · present ' + (r.present ?? '-')
-                    + ' · attendance ' + att + ' · Afrilead ' + (r.afrilead ?? '-') + ' · JAG ' + (r.jag ?? '-') + ' · VT ' + (r.vt ?? '-')
-                    + ' · SPD ' + spd + ' · avg GWP ' + (r.gwp != null ? 'R' + r.gwp : '-') + ' · agents-to-target ' + (r.target ?? '-')
-                    + ' (entered by ' + (r.updated_by || '?') + ')';
-                }).join('\n') + '\n';
-          } catch (e) {}
           // BI - Active Cases — THE money source, aggregated LIVE from the row table
           // (migration-008 views). Never depends on any app being open. GWP incl =
           // Σ charge_amount per account × 1.15; sales = distinct accounts.
@@ -2642,8 +2628,8 @@ export default {
           } catch (e) {}
         } catch (e) {}
         if (cloud) {
-          sys += '\n\n=== CLOUD DATA (the entire software: all three apps’ stored datasets, the live daily-EOD table, the live rules Dictionary, upload history, operator notes) ===' + cloud
-            + '=== end cloud data ===\nThe data above covers the FULL datasets of all three apps — Ops Analytics, VAS Analytics and Tracker Analytics — whichever app the user is currently in. Use them for any question about the other app, past uploads, or data not on the current screen. The blocks marked "LIVE from the database" (BI Active Cases money by month/agent/total, VAS sales & GWP by month, the Matrix EOD table) are read straight from Supabase on THIS request — they are always current and AUTHORITATIVE: prefer them over any stored digest figure for money, sales or GWP. IMPORTANT: if a stored digest conflicts with a LIVE block or the LIVE DASHBOARD DIGEST (e.g. the stored one shows zeros or is missing an agent the live one lists), the LIVE figure is the truth — a stored digest may simply be stale.';
+          sys += '\n\n=== CLOUD DATA (the entire software: both apps’ stored datasets, the live rules Dictionary, upload history, operator notes) ===' + cloud
+            + '=== end cloud data ===\nThe data above covers the FULL datasets of both apps — Ops Analytics and VAS Analytics — whichever app the user is currently in. Use them for any question about the other app, past uploads, or data not on the current screen. The blocks marked "LIVE from the database" (BI Active Cases money by month/agent/total, VAS sales & GWP by month) are read straight from Supabase on THIS request — they are always current and AUTHORITATIVE: prefer them over any stored digest figure for money, sales or GWP. IMPORTANT: if a stored digest conflicts with a LIVE block or the LIVE DASHBOARD DIGEST (e.g. the stored one shows zeros or is missing an agent the live one lists), the LIVE figure is the truth — a stored digest may simply be stale.';
         }
         const mrow = await DB.select("rules?key=eq.ai_model&select=value");
         let model = (mrow?.[0]?.value?.value) || DEFAULT_MODEL;

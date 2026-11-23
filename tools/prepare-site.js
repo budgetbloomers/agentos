@@ -242,14 +242,14 @@ fs.writeFileSync(path.join(outDir, 'build.txt'), BUILD);
 console.log('Wrote ' + out + ' (' + (html.length / 1024).toFixed(0) + ' KB), shim + stale-guard injected, build ' + BUILD + '.');
 
 // Companion apps, copied verbatim (self-contained; these files have no <head>,
-// so the stale-guard anchors on <title>). Pulse serves at /pulse/, Tracker at /tracker/.
+// so the stale-guard anchors on <title>). Pulse serves at /pulse/.
 /* agent-preview is the Chatterbox AgentOS PROTOTYPE served behind the same CB
    login, for review only. It runs on the prototype's own fourteen sample people,
    so it is deliberately NOT at /agent/ — putting invented commission figures in
    front of 130 real agents would be worse than showing them nothing. */
 /* The Wimpy lunch app left this site on 2026-10-09 (Spec Kit 018) — it is its own service (wimpy-service/, on Vercel or
    as a container). site/_redirects forwards /wimpy/ to it so bookmarks keep working. */
-for (const [srcDir, urlDir, label] of [['nicks_code', 'pulse', 'VAS'], ['tracker', 'tracker', 'Tracker Analytics'], ['agent', 'agent', 'Agent Analytics'], ['agent-preview', 'agent-preview', 'Agent Analytics (prototype)']]) {
+for (const [srcDir, urlDir, label] of [['nicks_code', 'pulse', 'VAS'], ['agent', 'agent', 'Agent Analytics'], ['agent-preview', 'agent-preview', 'Agent Analytics (prototype)']]) {
   const src = path.join(root, srcDir, 'index.html');
   if (!fs.existsSync(src)) { console.warn('NOTE: ' + srcDir + '/index.html not found — suite deploys without ' + label + '.'); continue; }
   fs.mkdirSync(path.join(outDir, urlDir), { recursive: true });
@@ -260,13 +260,9 @@ for (const [srcDir, urlDir, label] of [['nicks_code', 'pulse', 'VAS'], ['tracker
   console.log('Wrote site/' + urlDir + '/index.html (' + label + ') with stale-guard.');
 }
 
-// Extra self-contained pages served alongside a companion app (e.g. the VT MTD report
-// embedded as the Tracker's third tab via <iframe src="vt-mtd-report.html">). Copied
-// verbatim — no shim, no gate; access is controlled by the parent (already-gated) tab.
-const VT_REL = 'tracker/vt-mtd-report.html';
-fs.mkdirSync(path.join(outDir, 'tracker'), { recursive: true });
-fs.copyFileSync(path.join(root, VT_REL), path.join(outDir, VT_REL));
-console.log('Wrote site/' + VT_REL + ' (embedded page).');
+// The old Tracker Analytics app (/tracker/, with its seeded VT MTD Report) was retired by spec 071 (Phase A). site/ is
+// uploaded as it stands on disk, so a site/tracker/ left by an earlier build would ship again — remove it.
+fs.rmSync(path.join(outDir, 'tracker'), { recursive: true, force: true });
 
 // BUILD CONSISTENCY IS VERIFIED, NOT ASSUMED (2026-09-02). A run that died between
 // writing build.txt and rewriting an app shell left site/agent on the previous build
@@ -277,7 +273,7 @@ console.log('Wrote site/' + VT_REL + ' (embedded page).');
 // back everything it wrote and refuses to finish unless every shell carries THIS
 // run's build id — a partial site/ exits nonzero and names the file.
 {
-  const shells = ['index.html', 'pulse/index.html', 'tracker/index.html',
+  const shells = ['index.html', 'pulse/index.html',
     'agent/index.html', 'agent-preview/index.html'];
   const bad = [];
   for (const rel of shells) {
