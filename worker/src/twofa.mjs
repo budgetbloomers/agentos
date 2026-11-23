@@ -26,8 +26,18 @@ export const needsTurnstile = (user) => !!user && TURNSTILE_ROLES.has(user.role)
      'all'           → every in-scope staff role
      'nick,cb145'    → only these usernames / CB numbers (and only if they are an in-scope role)
    A person is never in scope unless requires2FA() is already true for their role. */
-export function enforce2FAFor(user, enforceEnv) {
+export function enforce2FAFor(user, enforceEnv, exemptEnv) {
   if (!requires2FA(user)) return false;
+  /* A named test account may be exempted from the second step WITHOUT weakening anyone else: TWOFA_EXEMPT is a
+     SEPARATE Worker secret (a comma list of usernames/CBs). It is subtracted here while TWOFA_ENFORCE stays `all`,
+     so everyone unlisted still gets 2FA — never reuse TWOFA_ENFORCE as a list, which flips it to "enforce only
+     these" and silently drops everyone else. Deleting TWOFA_EXEMPT restores 2FA instantly, no deploy. */
+  const exempt = new Set(String(exemptEnv == null ? "" : exemptEnv).split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+  if (exempt.size) {
+    const eu = String(user.username || "").toLowerCase();
+    const ecb = String(user.cb || "").toLowerCase();
+    if (exempt.has(eu) || (!!ecb && exempt.has(ecb))) return false;
+  }
   const cfg = String(enforceEnv == null ? "" : enforceEnv).trim();
   if (cfg === "") return false;
   if (cfg.toLowerCase() === "all") return true;

@@ -765,7 +765,7 @@ export default {
         /* WHICH BROWSER, PAGE AND TYPING FACTS (10 Nov 2026, worker/src/signin-client.mjs): this one client sends them as
            x-cbx-signin, and migration-070's column default copies them onto every auth_log row of this sign-in. */
         const LDB = db(env, { 'x-cbx-signin': signinClient(req.headers.get('user-agent'), lb) });
-        const r = await login(LDB, req, lb, ctx, { enforce: env.TWOFA_ENFORCE, turnstile });   // ctx: audit writes finish after the response; enforce: 2FA rollout switch
+        const r = await login(LDB, req, lb, ctx, { enforce: env.TWOFA_ENFORCE, exempt: env.TWOFA_EXEMPT, turnstile });   // ctx: audit writes finish after the response; enforce: 2FA rollout switch; exempt: named test accounts that skip the second step
         if (!r.ok) return json(r.human_check ? { error: r.error, human_check: true } : { error: r.error }, r.status);   // human_check: Agent Analytics shows the widget only when asked
         /* SECOND STEP for the AgentOS management suite: the password is proven but NO token is issued
            yet — the page completes /api/login/totp with the authenticator code. Agent Analytics / the

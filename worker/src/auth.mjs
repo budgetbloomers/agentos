@@ -218,7 +218,7 @@ export async function login(DB, req, body, ctx, opts = {}) {
   /* SECOND STEP for the AgentOS management suite only (2FA, migration-065). Portal roles
      (Agent Analytics / Coaching Hub / KPI hub) fall straight through to a full session
      exactly as before — requires2FA() in twofa.mjs is the one place that decides scope. */
-  if (enforce2FAFor(u, opts.enforce)) {
+  if (enforce2FAFor(u, opts.enforce, opts.exempt)) {
     const needEnroll = !u.totp_enabled;
     const ch = await startChallenge(DB, u.id, needEnroll ? 'enroll' : 'totp');
     const out = { ok: true, twofa: needEnroll ? 'enroll' : 'required', challenge: ch.challenge };
