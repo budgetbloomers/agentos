@@ -1,0 +1,235 @@
+#!/usr/bin/env node
+/* verify-vt-station.mjs — THE VT UPLOAD STATION, INTAKE HALF (Spec Kit 071, Phase C tasks C5–C7, C10; the pages half is D).
+ *
+ * The real PULSE page (nicks_code/index.html + its companion vt-engine.js / vt-pages.js) in a real Chromium; the Worker
+ * is a stub inside the test (Playwright route) that keeps a case book the way vt_book / vt_upload_* do. Fictional
+ * files (CB91xx, invented case numbers); the real sample files are read at run time ONLY for the receipt check and are
+ * skipped cleanly when ../reference/zips/vt/ is absent — no value from them is printed or written.
+ *   S1  a BI Active Fitted drop: GET receipts → roster → book → begin → stage → commit; the receipt card says file,
+ *       extract date, VT lines of rows, cases, changes, unmatched sellers by name, and "VAS money unchanged"
+ *   S2  no customer field (name, phone, registration, chassis, box, account / contract number) is in ANY request
+ *   S3  the same bytes again → "already uploaded", nothing begun
+ *   S4  thin BI pull (< 90 % of the cycle's last BI) → refused in words with both counts, nothing begun
+ *   S5  thin S&M (< 40 %) → refused unless "genuine quiet day" is clicked; then it loads and the receipt says so
+ *   S6  a version conflict re-reads, re-merges and commits ONCE (one receipt); three conflicts → a persistent red
+ *       banner, no receipt
+ *   S7  the server unreachable → a persistent banner, nothing saved
+ *   S8  the opening book on an empty book → refused in plain words (after the first day's files it applies sale dates)
+ *   S9  roster (C7): read from /api/vt/roster; when that fails, PULSE's own VT roster rows are used and the receipt says so
+ *   S10 the Upload Station shows the three VT slots in their own group; the ten VAS slot cards are untouched
+ *   S11 stage batches stay ≤ 1,000 rows and under the 512 KB cap (unit)
+ *   S12 the real BI Active Fitted 101126: 1,107 VT lines of 19,404 rows, 1,104 cases (spec US1-1), no reg / chassis /
+ *       box value in any request
+ *
+ *   node nicks_code/diagnostics/verify-vt-station.mjs
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import http from 'node:http';
+import crypto from 'node:crypto';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+import { biFile, smFile, openFile, xlsxBytes, PII } from './vt-fixtures.mjs';
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(HERE, '..', '..');
+const require = createRequire(import.meta.url);
+const req = createRequire(path.join(HERE, 'node_modules', 'x.js'));
+const { chromium } = await import(pathToFileURL(path.join(HERE, 'node_modules', 'playwright', 'index.mjs')).href);
+const ST = require(path.join(ROOT, 'nicks_code', 'vt-pages.js'));
+let pass = 0, fail = 0;
+const ok = (c, m, d) => { if (c) { pass++; console.log('  ok   ' + m); } else { fail++; console.log('  FAIL ' + m + (d !== undefined ? ' — ' + String(d).slice(0, 400) : '')); } };
+const head = (t) => console.log('\n' + t);
+const API = 'https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
+const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
+
+/* ---- the stub Worker: a case book kept the way migration-071 keeps it ---- */
+const COLS = ['case_number', 'status', 'status_on', 'sold_on', 'sold_basis', 'first_seen', 'last_seen', 'appt_on', 'fitted_on', 'products', 'charge_ex', 'lead_source', 'seller_name', 'seller_cb', 'seller_match', 'sm_attempt', 'bundle', 'partner_raw'];
+const ROSTER_RPC = { as_of: '2026-11-02', rows: [
+  { code: 'CB9101', name: 'Alpha Test', sf: 'Alpha Test', tl: 'Leader One', tl_code: 'CB9190', campaign_raw: 'Matrix Vehicle Tracking - Digital', tenure: 'Exp', target: 6.5, start_date: '2026-01-05' },
+  { code: 'CB9102', name: 'Bravo Middle Tester', sf: null, tl: 'Leader Two', tl_code: 'CB9191', campaign_raw: 'Matrix Vehicle Tracking - Referral', tenure: 'Exp', target: 3, start_date: '2026-01-05' }] };
+let W;
+function resetWorker(o = {}) { W = { rev: 0, openedOn: null, openingBookOn: null, cases: {}, events: [], uploads: [], stage: {}, log: [], conflicts: 0, rosterFails: false, down: false, ...o }; }
+function answer(method, p, body) {
+  const J = (b, s = 200) => ({ status: s, body: JSON.stringify(b) });
+  if (p.startsWith('/api/vt/uploads')) return J({ uploads: W.uploads.slice().reverse() });
+  if (p.startsWith('/api/vt/roster')) return W.rosterFails ? J({ error: 'boom' }, 502) : J(ROSTER_RPC);
+  if (p === '/api/vt/book') {
+    const also = new Set((body.p_also || []).map(String)), from = body.p_from;
+    const cs = Object.values(W.cases).filter((c) => !from || c.last_seen >= from || ['scheduled', 'missed'].includes(c.status) || also.has(String(c.case_number)));
+    const keep = new Set(cs.map((c) => String(c.case_number)));
+    return J({ rev: W.rev, openedOn: W.openedOn, openingBookOn: W.openingBookOn, cases: cs.map((c) => COLS.map((k) => (c[k] === undefined ? null : c[k]))),
+      events: W.events.filter((e) => keep.has(String(e.case_number))).map((e) => [e.case_number, e.on_date, e.from_status, e.to_status, e.appt_on]) });
+  }
+  if (p === '/api/vt/upload/begin') {
+    const hit = W.uploads.find((u) => u.sha256 === body.p_sha256);
+    if (hit && hit.state === 'committed') return J({ duplicate: true, id: hit.id });
+    const u = hit || { id: W.uploads.length + 1, sha256: body.p_sha256 }; Object.assign(u, { kind: body.p_kind, file_name: body.p_file_name, extract_on: body.p_extract_on, cycle_key: body.p_cycle_key, state: 'staging' });
+    if (!hit) W.uploads.push(u); W.stage[u.id] = { case: [], event: [] }; return J({ id: u.id });
+  }
+  if (p === '/api/vt/upload/stage') { W.stage[body.p_id][body.p_kind].push(...body.p_rows); return J({ staged: body.p_rows.length }); }
+  if (p === '/api/vt/upload/abandon') { const u = W.uploads.find((x) => x.id === body.p_id); if (u && u.state === 'staging') u.state = 'abandoned'; return J({ ok: true }); }
+  if (p === '/api/vt/upload/commit') {
+    if (W.conflicts > 0) { W.conflicts--; W.rev++; return J({ error: 'version_conflict' }, 409); }
+    if (body.p_base_rev !== W.rev) return J({ error: 'version_conflict' }, 409);
+    const u = W.uploads.find((x) => x.id === body.p_id), s = W.stage[body.p_id];
+    if (s.case.length !== body.p_cases || s.event.length !== body.p_events) return J({ error: 'stage_incomplete' }, 409);
+    if (u.kind === 'opening_book' && !W.openedOn) return J({ error: 'Load the opening book after the first day\'s two files' }, 409);
+    for (const c of s.case) W.cases[c.case_number] = { ...c };
+    for (const e of s.event) if (!W.events.some((x) => x.case_number === e.case_number && x.on_date === e.on_date && x.to_status === e.to_status)) W.events.push(e);
+    W.rev++; if (u.kind !== 'opening_book') W.openedOn = W.openedOn || u.extract_on; else W.openingBookOn = W.openingBookOn || u.extract_on;
+    Object.assign(u, { state: 'committed', counts: body.p_counts, unmatched: body.p_unmatched, warnings: body.p_warnings, quiet_day_ack: body.p_quiet_ack, rev_after: W.rev });
+    return J({ rev: W.rev, cases: s.case.length, events: s.event.length });
+  }
+  return J({ error: 'not found' }, 404);
+}
+
+/* ---- PULSE, served from the source folder ---- */
+const SERVE = { '/': 'nicks_code/index.html', '/index.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js' };
+const server = http.createServer((q, s) => { const rel = SERVE[q.url.split('?')[0]]; const p = rel && path.join(ROOT, rel);
+  if (!p || !fs.existsSync(p)) { s.writeHead(404); s.end(); return; }
+  s.writeHead(200, { 'Content-Type': p.endsWith('.js') ? 'text/javascript' : 'text/html' }); fs.createReadStream(p).pipe(s); });
+await new Promise((r) => server.listen(8271, '127.0.0.1', r));
+const browser = await chromium.launch();
+const page = await browser.newPage();
+const errs = []; page.on('pageerror', (e) => errs.push(String(e.message).slice(0, 160)));
+await page.route(API + '/**', async (route) => {
+  const r = route.request(), u = new URL(r.url()), p = u.pathname + (u.search || '');
+  if (W.down && p.startsWith('/api/vt/')) return route.abort('connectionrefused');
+  let body = {}; try { body = r.postData() ? JSON.parse(r.postData()) : {}; } catch (e) { body = {}; }
+  if (u.pathname.startsWith('/api/vt/')) W.log.push({ m: r.method(), p: u.pathname, raw: r.postData() || '', body });
+  const a = u.pathname.startsWith('/api/vt/') ? answer(r.method(), u.pathname, body) : { status: 404, body: '{}' };
+  return route.fulfill({ status: a.status, contentType: 'application/json', body: a.body });
+});
+await page.goto('http://127.0.0.1:8271/index.html', { waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => window.__mtd && window.__mtd.state() && window.VTStation && window.XLSX, null, { timeout: 60000 });
+await page.evaluate(() => { window.__toasts = []; const t = window.toast; window.toast = function (m) { window.__toasts.push(String(m)); try { return t.apply(this, arguments); } catch (e) { return null; } }; });
+
+const drop = async (name, bytes, slot = null) => {
+  await page.evaluate(async ([n, b64, s]) => {
+    const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    window.__toasts = []; await window.handleFiles([new File([u], n)], s);
+  }, [name, Buffer.from(bytes).toString('base64'), slot]);
+  return page.evaluate(() => ({ toasts: window.__toasts.slice(), banner: (document.getElementById('vtBanner') || {}).innerText || '',
+    receipt: (document.getElementById('vtReceiptCard') || {}).innerText || '', last: (window.__vtReceipts || [])[0] || null }));
+};
+const calls = (p) => W.log.filter((x) => x.p === p).length;
+const dismiss = () => page.evaluate(() => { const b = document.getElementById('vtBanner'); if (b) b.remove(); const r = document.getElementById('vtReceiptCard'); if (r) r.remove(); window.__vtReceipts = []; });
+
+try {
+  const BI1 = xlsxBytes(biFile([{ cn: 90000001 }, { cn: 90000002, unit: 'BEAME', seller: 'Bravo Middle Tester' }, { cn: 90000009, unit: 'NOTVT' }, { cn: 90000010, seller: 'Nobody On The List' }]));
+  head('S1 · a BI Active Fitted drop');
+  resetWorker();
+  const r1 = await drop('BI Active Fitted 091126.xlsx', BI1);
+  ok(['/api/vt/uploads', '/api/vt/roster', '/api/vt/book', '/api/vt/upload/begin', '/api/vt/upload/stage', '/api/vt/upload/commit'].every((p) => calls(p) >= 1), 'receipts → roster → book → begin → stage → commit', W.log.map((x) => x.p).join(' '));
+  ok(W.rev === 1 && Object.keys(W.cases).length === 3, 'the book holds the three VT cases at rev 1 (the non-VT line is not a case)', Object.keys(W.cases).join(','));
+  ok(/VT · BI Active Fitted · BI Active Fitted 091126\.xlsx/.test(r1.receipt) && /Extract date 2026-11-09/.test(r1.receipt), 'the receipt names the kind, the file and the extract date', r1.receipt);
+  ok(/VT lines 3 of 4 rows · cases 3/.test(r1.receipt) && /New 3 · to Fitted 3/.test(r1.receipt), 'the receipt counts VT lines of rows, cases and changes', r1.receipt);
+  ok(/Sellers unmatched: nobody on the list \(1\)/.test(r1.receipt) && /VAS money unchanged/.test(r1.receipt), 'unmatched sellers by name, and "VAS money unchanged"', r1.receipt);
+  ok(r1.toasts.some((t) => /loaded: 3 cases/.test(t)), 'a toast confirms it', r1.toasts.join(' | '));
+  ok(W.log.find((x) => x.p === '/api/vt/book').body.p_also.length === 3, 'the merge read names the file\'s cases (p_also)');
+
+  head('S2 · no customer field leaves the browser');
+  const sent = W.log.map((x) => x.raw).join('\n');
+  ok(!PII.some((p) => sent.includes(p)), 'none of the fictional customer values appears in any request (' + W.log.length + ' requests)', PII.filter((p) => sent.includes(p)).join(','));
+
+  head('S3 · the same bytes again');
+  W.log = [];
+  const r3 = await drop('copy of BI.xlsx', BI1);
+  ok(r3.toasts.some((t) => /already uploaded/.test(t)) && calls('/api/vt/upload/begin') === 0, '"already uploaded", nothing begun', r3.toasts.join(' | '));
+
+  head('S4 · thin BI pull');
+  await dismiss(); W.log = [];
+  W.uploads[0].counts.cases = 100;   // the last BI of this business month had 100 cases
+  const r4 = await drop('BI Active Fitted 101126.xlsx', xlsxBytes(biFile([{ cn: 90000011 }, { cn: 90000012 }])));
+  ok(/thin pull: 2 cases against 100/.test(r4.banner) && calls('/api/vt/upload/begin') === 0, 'refused as a thin pull with both counts, nothing begun', r4.banner);
+  W.uploads[0].counts.cases = 3;
+
+  head('S5 · thin S&M and the quiet-day tick');
+  await dismiss(); resetWorker(); W.log = [];
+  await drop('Scheduled & Missed 091126.xlsx', xlsxBytes(smFile(Array.from({ length: 10 }, (_, i) => ({ cn: 90000100 + i })))));
+  const r5 = await drop('Scheduled & Missed 101126.xlsx', xlsxBytes(smFile([{ cn: 90000200 }, { cn: 90000201 }])));
+  ok(/thin pull: 2 cases against 10/.test(r5.banner) && /genuine quiet day/.test(r5.banner), 'a thin S&M is refused, with the quiet-day button', r5.banner);
+  const before = W.rev;
+  await page.evaluate(() => window.VTStation.retryQuiet());
+  await page.waitForFunction(() => (window.__vtReceipts || [])[0] && window.__vtReceipts[0].quietDay, null, { timeout: 20000 }).catch(() => {});
+  const q = await page.evaluate(() => ({ r: (window.__vtReceipts || [])[0], t: (document.getElementById('vtReceiptCard') || {}).innerText || '' }));
+  ok(W.rev === before + 1 && W.log.filter((x) => x.p === '/api/vt/upload/commit').pop().body.p_quiet_ack === true, 'after the tick it commits, and the tick is sent (logged on the receipt row)');
+  ok(/genuine quiet day/.test(q.t), 'the receipt says it was accepted as a quiet day', q.t);
+
+  head('S6 · version conflicts');
+  await dismiss(); resetWorker({ conflicts: 1 }); W.log = [];
+  const r6 = await drop('BI Active Fitted 091126.xlsx', BI1);
+  ok(calls('/api/vt/book') === 2 && calls('/api/vt/upload/commit') === 2 && W.rev === 2, 'one conflict: re-read, re-merge, commit once', W.log.map((x) => x.p).join(' '));
+  ok(r6.last && r6.last.attempts === 2 && (await page.evaluate(() => (window.__vtReceipts || []).length)) === 1, 'the user sees ONE receipt');
+  await dismiss(); resetWorker({ conflicts: 3 }); W.log = [];
+  const r6b = await drop('BI Active Fitted 091126.xlsx', BI1);
+  ok(/kept changing/.test(r6b.banner) && !r6b.receipt && calls('/api/vt/upload/commit') === 3, 'three conflicts: a persistent red banner, no receipt', r6b.banner);
+  ok(await page.evaluate(() => { const b = document.getElementById('vtBanner'); return !!b && getComputedStyle(b).position === 'fixed'; }), 'the banner stays on screen (not a toast)');
+
+  head('S7 · the server unreachable');
+  await dismiss(); resetWorker({ down: true });
+  const r7 = await drop('BI Active Fitted 091126.xlsx', BI1);
+  ok(/could not be reached, so nothing was saved/.test(r7.banner), 'a persistent banner says nothing was saved', r7.banner);
+
+  head('S8 · the opening book');
+  await dismiss(); resetWorker(); W.log = [];
+  const OB = xlsxBytes({ 'Team Split': [['Team Leader', 'Agent Name', 'Sales Force'], ['Leader One', 'Alpha Test', 'Alpha Test']], 'Schedulers Data': openFile([{ cn: 90000001, sold: '2026-11-03' }]) });
+  const r8 = await drop('November 2026 - VT Report.xlsx', OB);
+  ok(r8.banner.includes(ST.REFUSE_OPENING_FIRST.slice(0, 60)) && calls('/api/vt/upload/begin') === 0, 'on an empty book it is refused in plain words', r8.banner);
+  ok(await page.evaluate(() => !(window.__mtd.state().roster || []).some((a) => a.code === 'CB9101')), 'its other sheets were not read as a VAS Agent List');
+  await dismiss();
+  await drop('BI Active Fitted 091126.xlsx', BI1);
+  const r8b = await drop('November 2026 - VT Report.xlsx', OB);
+  ok(W.cases['90000001'].sold_on === '2026-11-03' && W.cases['90000001'].sold_basis === 'opening_book' && W.openingBookOn, 'after the first day it applies the report\'s sale date, and only that', JSON.stringify(W.cases['90000001']));
+  ok(/1 cases in the opening book · 1 sale dates applied/.test(r8b.receipt), 'its receipt counts the sale dates applied', r8b.receipt);
+  ok(!W.log.map((x) => x.raw).join('\n').includes('0839999999') && !W.log.map((x) => x.raw).join('\n').includes('Scheduler Zed'), 'the customer contact and the scheduler never leave the browser');
+
+  head('S9 · the roster (C7)');
+  ok(!/read from this page/.test(r1.receipt), 'with /api/vt/roster answering, the receipt carries no fallback note');
+  await dismiss(); resetWorker({ rosterFails: true });
+  await page.evaluate(() => { window.__mtd.state().roster = [{ code: 'CB9101', name: 'Alpha Test', sf: 'Alpha Test', tl: 'Leader One', campaign: 'VT', tenure: 'Exp', target: 6.5, start: '2026-01-05' },
+    { code: 'CB9150', name: 'Vas Person', tl: 'Leader One', campaign: 'Courtesy', tenure: 'Exp', target: 3 }]; });
+  const r9 = await drop('BI Active Fitted 091126.xlsx', BI1);
+  ok(/Agent List read from this page/.test(r9.receipt) && W.cases['90000001'].seller_cb === 'CB9101', 'the Worker roster failing → PULSE\'s VT rows are used and the receipt says so', r9.receipt);
+  const fb = ST.rosterFromPulse([{ code: 'cb-9101', campaign: 'VT', target: '-' }, { code: 'CB9150', campaign: 'Courtesy' }]);
+  ok(fb.length === 1 && fb[0].code === 'CB9101' && fb[0].sub === null && fb[0].target === null, 'rosterFromPulse: VT rows only, sub unknown, "-" target is no target', JSON.stringify(fb));
+  const rr = ST.rosterFromRpc(ROSTER_RPC);
+  ok(rr.map((r) => r.sub).join() === 'digital,referral' && rr[0].tlCode === 'CB9190', 'rosterFromRpc: the sub-campaign from the list\'s own cell, the TL\'s CB carried', JSON.stringify(rr[0]));
+
+  head('S10 · the Upload Station');
+  const slots = await page.evaluate(async () => { go('data'); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 80))));
+    return { vas: [...document.querySelectorAll('.slot[data-slot]')].map((c) => c.dataset.slot), vt: [...document.querySelectorAll('.slot[data-vtslot]')].map((c) => c.dataset.vtslot + ':' + c.querySelector('b').innerText) }; });
+  ok(slots.vas.join(',') === 'bi,attendance,evals,roster,inactive,vici,board,opencasesLM,closedcases,referrals', 'the ten VAS slot cards are unchanged, in order', slots.vas.join(','));
+  ok(slots.vt.join(' | ') === 'vtBiFitted:VT · BI Active Fitted | vtSchedMissed:VT · Scheduled & Missed | vtOpeningBook:VT · Opening book (once)', 'the three VT slots, in their own group', slots.vt.join(' | '));
+  await dismiss(); resetWorker();
+  const r10 = await drop('BI Active Fitted 091126.xlsx', BI1, 'bi');
+  ok(r10.toasts.some((t) => /actually VT · BI Active Fitted/.test(t)) && W.rev === 1, 'a VT file dropped on the VAS BI slot is filed as VT, with a heads-up', r10.toasts.join(' | '));
+
+  head('S11 · stage batches (unit)');
+  const rows = Array.from({ length: 2500 }, (_, i) => ({ case_number: String(90000000 + i), seller_name: 'x'.repeat(i % 7 ? 20 : 400) }));
+  const bs = ST.batches(rows);
+  ok(bs.length >= 3 && bs.every((b) => b.rows.length <= 1000 && JSON.stringify(b.rows).length < 512 * 1024) && bs.reduce((n, b) => n + b.rows.length, 0) === 2500 && bs.every((b, i) => i === 0 || b.from === bs[i - 1].from + bs[i - 1].rows.length), '2,500 rows → batches of ≤ 1,000 rows under 512 KB, ords contiguous', bs.map((b) => b.rows.length).join(','));
+  const fat = ST.batches(Array.from({ length: 900 }, () => ({ s: 'y'.repeat(1000) })));
+  ok(fat.length >= 2 && fat.every((b) => JSON.stringify(b.rows).length < 512 * 1024), 'wide rows split by bytes before 1,000 rows', fat.map((b) => b.rows.length).join(','));
+
+  head('S12 · the real BI Active Fitted (skipped when absent)');
+  const REAL = path.join(ROOT, '..', 'reference', 'zips', 'vt', 'BI Active Fitted 101126.xlsx');
+  if (!fs.existsSync(REAL)) console.log('  (skip) ../reference/zips/vt/BI Active Fitted 101126.xlsx is not here');
+  else {
+    await dismiss(); resetWorker(); W.log = [];
+    const bytes = fs.readFileSync(REAL);
+    const r12 = await drop('BI Active Fitted 101126.xlsx', bytes);
+    ok(/VT lines 1,107 of 19,404 rows · cases 1,104/.test(r12.receipt.replace(/ /g, ',').replace(/(\d) (\d{3})/g, '$1,$2')), 'the receipt: VT lines 1,107 of 19,404 rows, cases 1,104 (spec US1-1)', r12.receipt.split('\n').slice(0, 3).join(' / '));
+    ok(/Extract date 2026-11-10/.test(r12.receipt), 'extract date 10 Nov 2026 from the file name');
+    const XLSX = req('xlsx'); const wb = XLSX.read(bytes); const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
+    const H = aoa[0].map((h) => String(h || '').trim().toLowerCase()), pii = new Set();
+    for (const col of ['vehicle reg number', 'chassis number', 'box number', 'account name', 'account number', 'contract number']) { const i = H.indexOf(col);
+      if (i > -1) for (const r of aoa.slice(1, 400)) if (r[i] != null && String(r[i]).trim().length >= 5) pii.add(String(r[i]).trim()); }
+    const all = W.log.map((x) => x.raw).join('\n'), leaked = [...pii].filter((v) => all.includes(v)).length;
+    ok(pii.size > 50 && leaked === 0, 'none of ' + pii.size + ' sampled registration / chassis / box / account / contract values is in any request (values not printed)', leaked + ' leaked');
+  }
+  ok(!errs.length, 'no page errors', errs.join(' ; '));
+} catch (e) { ok(false, 'the suite ran', String((e && e.stack) || e).slice(0, 400)); }
+finally { await browser.close(); server.close(); }
+console.log(`\n==== ${pass} passed, ${fail} failed ====`);
+process.exit(fail ? 1 : 0);

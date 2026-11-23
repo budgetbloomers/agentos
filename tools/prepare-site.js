@@ -249,11 +249,36 @@ console.log('Wrote ' + out + ' (' + (html.length / 1024).toFixed(0) + ' KB), shi
    front of 130 real agents would be worse than showing them nothing. */
 /* The Wimpy lunch app left this site on 2026-10-09 (Spec Kit 018) — it is its own service (wimpy-service/, on Vercel or
    as a container). site/_redirects forwards /wimpy/ to it so bookmarks keep working. */
+/* COMPANION FILES ARE INLINED (spec 071, plan "companion-file pattern"). A source page may load a sibling script with
+   <script src="X.js" data-inline></script>: a relative classic script works from file://, so the source page runs
+   from disk as before, and here each tag is replaced by the file's text — the deployed shell is still ONE file with ONE
+   build id, so a cached companion can never be another build than its page, and the CSP is unchanged. A tagged file
+   that is missing, or a data-inline tag this cannot read, FAILS the build. Guarded by verify-vt-build.mjs. */
+const INLINE_APPS = new Set(['nicks_code', 'agent']);
+function inlineCompanions(app, dir, srcDir) {
+  const loose = (app.match(/<script\b[^>]*\bdata-inline\b[^>]*>/gi) || []).length;
+  const strict = (app.match(/<script\s+src="([^"]+)"\s+data-inline\s*><\/script>/g) || []).length;
+  if (loose !== strict) {
+    console.error('INLINE FAILED: ' + srcDir + '/index.html has a data-inline tag that is not <script src="X.js" data-inline></script>.');
+    process.exit(1);
+  }
+  const out = app.replace(/<script\s+src="([^"]+)"\s+data-inline\s*><\/script>/g, (tag, file) => {
+    const p = path.join(dir, file);
+    if (!/^[\w.-]+\.js$/.test(file) || !fs.existsSync(p)) {
+      console.error('INLINE FAILED: ' + srcDir + '/index.html tags ' + file + ' data-inline and ' + srcDir + '/' + file + ' is missing.');
+      process.exit(1);
+    }
+    const code = fs.readFileSync(p, 'utf8').replace(/<\/script/gi, '<\\/script');   // the file's text can never close the tag early
+    return '<script>/* inlined ' + file + ' (tools/prepare-site.js) */\n' + code + '\n</script>';
+  });
+  return out;
+}
 for (const [srcDir, urlDir, label] of [['nicks_code', 'pulse', 'VAS'], ['agent', 'agent', 'Agent Analytics'], ['agent-preview', 'agent-preview', 'Agent Analytics (prototype)']]) {
   const src = path.join(root, srcDir, 'index.html');
   if (!fs.existsSync(src)) { console.warn('NOTE: ' + srcDir + '/index.html not found — suite deploys without ' + label + '.'); continue; }
   fs.mkdirSync(path.join(outDir, urlDir), { recursive: true });
   let app = fs.readFileSync(src, 'utf8');
+  if (INLINE_APPS.has(srcDir)) app = inlineCompanions(app, path.join(root, srcDir), srcDir);
   const i = app.indexOf('<title>');
   if (i !== -1) app = app.slice(0, i) + STALE_GUARD + '\n' + app.slice(i);
   fs.writeFileSync(path.join(outDir, urlDir, 'index.html'), app);

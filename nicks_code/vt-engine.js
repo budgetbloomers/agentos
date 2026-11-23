@@ -499,8 +499,9 @@ function merge(book, parsed, opts) {
   return { book: out, cases: changed, events: events, counts: counts,
     unmatched: sortedKeys(unmatched).map(function (n) { return { name: n, cases: unmatched[n] }; }), warnings: warnings };
 }
-/* Convert the vt_book() RPC value (plan DB-3, positional arrays) into a book. */
-var BOOK_COLS = ['caseNumber', 'status', 'statusOn', 'soldOn', 'soldBasis', 'firstSeen', 'lastSeen', 'apptOn', 'fittedOn', 'products', 'chargeEx', 'leadSource', 'sellerName', 'sellerCb', 'sellerMatch'];
+/* Convert the vt_book() RPC value (plan DB-3, positional arrays) into a book. The last three columns (Phase C) carry
+   what merge and model read back — without partnerRaw a re-read book re-folded every lead source to 'other'. */
+var BOOK_COLS = ['caseNumber', 'status', 'statusOn', 'soldOn', 'soldBasis', 'firstSeen', 'lastSeen', 'apptOn', 'fittedOn', 'products', 'chargeEx', 'leadSource', 'sellerName', 'sellerCb', 'sellerMatch', 'smAttempt', 'bundle', 'partnerRaw'];
 var EVENT_COLS = ['caseNumber', 'onDate', 'from', 'to', 'apptOn'];
 function bookFromRpc(v) {
   var b = emptyBook(); if (!v) return b;

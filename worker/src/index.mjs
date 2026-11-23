@@ -25,6 +25,7 @@ import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs'
 import { usageTracker, recordOpen, recordAsk, pageOf, appFromPage } from './usage.mjs';   // the usage report (Spec Kit 028)
 import { askLabeller } from './topics.mjs';   // one topic per help ask / CM request, after the answer (Spec Kit 029)
 import { SUMMARY_MAX, summaryProblem, vasMonths, promptSafe, vasWriteAllowed } from './vas-summary.mjs';   // the Worker's small copy of the VAS state (Spec Kit 031)
+import { vtIntakeRoute } from './vt.mjs';   // Vehicle Tracking: book + upload intake (Spec Kit 071, Phase C)
 
 // Hermes 2 Pro was deprecated 2026-05-30. Default: Llama 4 Scout (131k context —
 // fits the entire software's digests without truncation). Fallback: Llama 3.3 70B.
@@ -120,7 +121,7 @@ function heavyRoute(method, path, url) {
     if (method === 'POST') return true;
     return method === 'GET' && HEAVY_KV_GET.test(url.searchParams.get('key') || '') && !url.searchParams.get('meta');
   }
-  return path.startsWith('/api/upload-archive') || path === '/api/upload-file' || path === '/api/rake/page' || path.startsWith('/api/bi');
+  return path.startsWith('/api/upload-archive') || path === '/api/upload-file' || path === '/api/rake/page' || path.startsWith('/api/bi') || path.startsWith('/api/vt/');
 }
 async function heavyLog(req, res, t0) {
   try {
@@ -753,7 +754,8 @@ export default {
       // to authenticate them, and refuse their writes — read-only until refreshed.
       const stale = req.headers.get('x-cbx-client') !== 'v5';
       const OUTDATED = { error: 'This tab is an OUTDATED copy of AgentOS. Close it, go to https://chatterbox-agentos.pages.dev and press Ctrl+Shift+R.' };
-      const GATED_WRITES = ['POST /api/kv', 'DELETE /api/kv', 'POST /api/eod', 'POST /api/bi', 'DELETE /api/bi', 'POST /api/bi/raw'];
+      const GATED_WRITES = ['POST /api/kv', 'DELETE /api/kv', 'POST /api/eod', 'POST /api/bi', 'DELETE /api/bi', 'POST /api/bi/raw',
+        'POST /api/vt/upload/begin', 'POST /api/vt/upload/stage', 'POST /api/vt/upload/commit', 'POST /api/vt/upload/abandon'];   // VT intake (spec 071)
 
       // ---------- auth ----------
       if (stale && (path === '/api/me' || (path === '/api/login' && req.method === 'POST'))) return json(OUTDATED, 426);
@@ -1766,6 +1768,9 @@ export default {
         if (!r.ok) return json({ error: 'load step ' + fn + ' failed: ' + r.status + ' ' + t.slice(0, 200) }, 502);
         return new Response(t, { status: 200, headers: { 'Content-Type': 'application/json' } });   // CORS is applied to every response on the way out
       }
+      /* VEHICLE TRACKING (Spec Kit 071): the case book and the three-step upload, passed through to SQL unparsed —
+         worker/src/vt.mjs. Staff with the Upload Station only (canUpload); portal roles are refused above (allow-list). */
+      if (path.startsWith('/api/vt/')) { const vr = await vtIntakeRoute(req, url, env, user); if (vr) return vr; }
       /* LOAD A STORED FILE FROM ANY TAB (2026-09-15). A tab that closes mid-load, or an upload made
          while the page could not load, leaves the bytes in storage and the record waiting. Any
          management tab can now pull the object through a short-lived signed URL and run the same

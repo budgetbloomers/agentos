@@ -85,6 +85,26 @@ try {
     ok('#' + id + ' accepts .csv', !acc || /\.csv/i.test(acc[1]), acc ? acc[1] : '(no accept attribute)');
     if (acc) ok('#' + id + ' also accepts the spreadsheet formats', /\.xlsx/i.test(acc[1]) && /\.txt/i.test(acc[1]), acc[1]);
   }
+  /* D · VEHICLE TRACKING (spec 071, C5): BI Active Fitted carries every column the money source keys on, so it must be
+     recognised as VT FIRST and never as VAS BI — in PULSE (the VT rule runs before 'bi') and in Ops (refused). A VAS
+     Power BI export is still VAS BI in both. verify-vt-isolation.mjs proves the full drop in a real station. */
+  console.log('\nD · VEHICLE TRACKING IS NEVER VAS BI, VAS BI IS STILL VAS BI');
+  {
+    const { BI_HDR, SM_HDR, VAS_BI_HDR } = await import('./vt-fixtures.mjs');
+    const E = req(path.join(ROOT, 'nicks_code', 'vt-engine.js'));
+    ok('VTEngine.detect: BI Active Fitted → vtBiFitted, Scheduled & Missed → vtSchedMissed', E.detect(BI_HDR, 'Export') === 'vtBiFitted' && E.detect(SM_HDR, 'Export') === 'vtSchedMissed');
+    ok('VTEngine.detect: a VAS Power BI header is not VT', E.detect(VAS_BI_HDR, 'Export') === null);
+    ok('PULSE detectType asks VTEngine.detect FIRST, before the bi rule', (() => { const i = pulse.indexOf('function detectType('); const b = pulse.slice(i, i + 2000);
+      return i > 0 && b.indexOf('VTEngine.detect(') > 0 && b.indexOf('VTEngine.detect(') < b.indexOf("has('charge amount','contract create date')"); })());
+    const q = (v) => (/[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v);
+    const d = await page.evaluate(async ([vt, sm, vas]) => {
+      const rd = async (cols, n) => detectSource(await readUpload(new File([cols + '\n' + cols.split(',').map((_, i) => 'v' + i).join(',') + '\n'], n, { type: 'text/csv' })));
+      return { vt: await rd(vt, 'BI Active Fitted 101126.csv'), sm: await rd(sm, 'Scheduled & Missed 101126.csv'), vas: await rd(vas, 'Power BI 101126.csv') }; },
+      [BI_HDR.map(q).join(','), SM_HDR.map(q).join(','), VAS_BI_HDR.map(q).join(',')]);
+    ok('Ops: a BI Active Fitted CSV is NOT read as BI_ACTIVE_CASES (refused as VT)', d.vt === null, 'detected ' + d.vt);
+    ok('Ops: a Scheduled & Missed CSV names no source', d.sm === null, 'detected ' + d.sm);
+    ok('Ops: a VAS Power BI CSV is still BI_ACTIVE_CASES (or its header twin)', TWINS.has(d.vas), 'detected ' + d.vas);
+  }
 } catch (e) { ok('the suite ran', false, String((e && e.message) || e).slice(0, 200)); }
 finally { await browser.close(); server.close(); }
 

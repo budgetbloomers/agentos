@@ -18,6 +18,9 @@
      Without it the browser stopped parsing the page to compile the whole library
      while the login box was already on screen waiting to be typed into. -->
 <script src="/xlsx.full.min.js" defer></script>
+<!-- VEHICLE TRACKING (spec 071): its own engine + intake, companion files that work from file:// and that
+     tools/prepare-site.js inlines (data-inline) so the deployed page stays one file with one build id. -->
+<script src="vt-engine.js" data-inline></script><script src="vt-pages.js" data-inline></script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -2486,6 +2489,9 @@ function wideRegisterToLong(headers,rows,label,today){
 }
 /* WIDE-REGISTER:END */
 function detectType(header, sheetName, recs){
+  /* VEHICLE TRACKING FIRST (spec 071 FR-001/002): BI Active Fitted carries every column the VAS 'bi' rule keys on, so
+     the VT signatures (columns VAS BI never has) are checked before it — a VT file must never become VAS money. */
+  if(typeof VTEngine!=='undefined'){ const vt=VTEngine.detect(header, sheetName); if(vt) return vt; }
   const H=header.map(h=>h.toLowerCase());
   const has=(...ks)=>ks.every(k=>H.some(h=>h.includes(k)));
   if(has('charge amount','contract create date')&&has('account number')){
@@ -2599,6 +2605,10 @@ async function ingestText(name, text, expected, hash){
   __curFileHash=hash||null;
   const sheets=splitSheets(text);
   const names=Object.keys(sheets);
+  /* A VEHICLE TRACKING FILE IS HANDED WHOLE TO ITS OWN INTAKE before any sheet is read here (spec 071 FR-004): it never
+     reaches INGEST, regFile, save(), the relay or the Rake, and vas-state is not touched (verify-vt-isolation). */
+  const vtk=typeof VTStation!=='undefined'?VTStation.kindOfSheets(sheets,detectType):null;
+  if(vtk){ await VTStation.ingest(name,__vtBuf,hash,expected,vtk,{pulseRoster:S.roster}); return 'vt'; }
   let ingested=[];
   rosterCovered=new Set(); rosterBestRank=-1; rosterFileCodes=null; rosterFileLoaded=false; rosterRaw=null;
   __rosterAsOf=null;      // a fresh file, a fresh snapshot date (and a fresh one-shot override)
@@ -2629,7 +2639,7 @@ async function ingestText(name, text, expected, hash){
       if(!recs.length) continue;
     }
     let type=detectType(header, sn, recs);
-    if(!type) continue;
+    if(!type||/^vt[A-Z]/.test(type)) continue;   // a VT sheet is never a VAS ingest (the whole file went to VTStation above)
     /* WHICH LEAD PAGE DOES THIS OPEN-CASES PULL BELONG TO? The two Salesforce exports are
        header-identical, so detectType cannot tell them apart and must not try. The SLOT the
        file was dropped on is the user's own declaration; a bulk drop falls back to the
@@ -2667,7 +2677,8 @@ async function ingestText(name, text, expected, hash){
     else toast('Could not recognise "'+name+'" — check the file headers'); return false; }
   if(expected){
     const SLOT_TYPES={bi:['bi'],calls:['calls'],attendance:['attendance'],inactive:['cancellations'],vici:['calls (ViciDial)','vici'],
-      evals:['evals'],roster:['roster'],trackerDaily:['tracker','roster'],referrals:['referrals'],board:['board']};
+      evals:['evals'],roster:['roster'],trackerDaily:['tracker','roster'],referrals:['referrals'],board:['board'],
+      vtBiFitted:['vt'],vtSchedMissed:['vt'],vtOpeningBook:['vt']};   // the three VT slots (spec 071): a VAS file dropped there is filed as VAS, with this heads-up
     const want=SLOT_TYPES[expected]||[expected];
     if(!ingested.some(r=>want.some(w=>r.type.startsWith(w))))
       toast('Heads up: "'+name+'" is actually '+ingested.map(r=>r.type).join(', ')+' — filed there instead');
@@ -8175,6 +8186,7 @@ PAGES.data=()=>{
     <div class="sub">one slot per file — drop the file on its slot or click Choose file. Renamed files are fine: the type is confirmed from the file's own columns, and anything dropped on the wrong slot gets filed correctly with a heads-up.</div></div>
   <div class="slots">${slotCards}</div>
   ${largeFileCard()}
+  ${typeof VTStation!=='undefined'?VTStation.slotsHtml():''}
   <div class="card"><div class="cardhead"><div><h3>Uploaded files</h3></div></div>${reg}
     <p class="note" style="margin:10px 0 0">Files are recognised by their <b>content</b> — re-uploading a file that's already loaded (even renamed) is skipped automatically, so you can safely upload your whole export folder every day and only new files are added. Daily sources (sales, calls, attendance, QA) <b>append</b> — each file adds to the history as the month builds up; re-uploading the same day/month refreshes it. The <b>Agent List replaces the roster</b> — upload a fresh one as often as agents join, leave or move. Everything saves to the cloud database, and <b>removing a file here removes it from the database too</b>.</p></div>
   ${cov}${ruleChecksCard()}${unHtml}${nrHtml}`;
@@ -8260,7 +8272,8 @@ const RAKE_SOURCES={
     cols:{call_date:'call_date',agent_login:'user',lead_id:'lead_id',status:'status',full_name:'full_name',user_group:'user_group',campaign_id:'campaign_id',length_in_sec:'length_in_sec',status_name:'status_name'}},
 };
 const rakeNorm=h=>String(h||'').replace(/\s+/g,' ').trim().toLowerCase();
-function rakeDetect(headers){ const set=new Set(headers.map(rakeNorm));
+function rakeDetect(headers){ if(typeof VTEngine!=='undefined'&&VTEngine.detect(headers)) throw new Error('This is a Vehicle Tracking file. Load it in the VAS Upload Station (the slots under Vehicle Tracking), not as a large file');   // spec 071 FR-004: never the Rake
+  const set=new Set(headers.map(rakeNorm));
   for(const [src,c] of Object.entries(RAKE_SOURCES)) if(c.required.every(h=>set.has(rakeNorm(h)))&&!(c.absent||[]).some(h=>set.has(rakeNorm(h)))) return src; return null; }
 function rakeSnapshot(name){ const m=/(\d{2})(\d{2})(\d{2})(?!\d)/.exec(name); if(m&&+m[2]>=1&&+m[2]<=12&&+m[1]>=1&&+m[1]<=31) return `20${m[3]}-${m[2]}-${m[1]}`; return dkey(new Date()); }
 /* a streaming RFC-4180 reader: fields may be quoted and carry delimiters and newlines */
@@ -9930,6 +9943,7 @@ async function routeLargeFiles(files){
     try{ await largeUpload(f); }catch(e){ toast('Could not hand '+f.name+' to the runner — '+((e&&e.message)||e)); }
   }
 }
+let __vtBuf=null;
 async function handleFilesNow(list, expected){
   let ok=0, skipped=0;
   __uploadWarns=[];
@@ -9963,7 +9977,10 @@ async function handleFilesNow(list, expected){
     let text=null;
     try{ text=await bufferToText(f.name,buf); }catch(e){ toast('Could not read '+f.name+' — '+(e.message||e)); }
     if(text==null) continue;
-    if(await ingestText(f.name,text,expected,hash)){ ok++; archiveUpload(f.name,buf,hash); }
+    __vtBuf=buf;   // the raw bytes, for a Vehicle Tracking file only (VTStation reads date serials from the workbook itself)
+    const got=await ingestText(f.name,text,expected,hash); __vtBuf=null;
+    if(got==='vt') continue;   // VT: its own receipt and toasts; never counted, saved, rebuilt or relayed as VAS (spec 071)
+    if(got){ ok++; archiveUpload(f.name,buf,hash); }
   }
   if(ok){
     if(!S.ui.month) S.ui.month=latestMonth();

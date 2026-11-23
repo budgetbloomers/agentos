@@ -36,3 +36,26 @@ management app is `tracker` would become portal-only the moment that Worker is l
 | `.gitignore` entries `site/tracker/*` | left | harmless; they keep a stale local build out of git |
 | `agent/index.html` comments naming Tracker Analytics / `/tracker/` (lines ≈50, ≈948) | left | comments only, explaining the agent page's walls; `verify-agent-analytics` checks for links, not comments |
 | CLAUDE.md layout row for `tracker/` | left for F8 | Phase F owns CLAUDE.md (tasks.md file matrix) |
+
+## Phase C — the VT case book and the Upload Station intake
+
+No builder applied anything; every database test ran in PGlite (in-process). At deploy, the owner, in this order:
+
+1. **Migrations, before the Worker that calls them:**
+   `node tools/apply-migration.mjs supabase/migration-071-vt-facts.sql` (five `vt_*` tables, RLS with no policy, the
+   intake / book / trim / size functions, EXECUTE revoked from public, anon and authenticated), then
+   `node tools/apply-migration.mjs supabase/migration-072-vt-roster-read.sql` (read-only `vt_roster_at()` + the partial
+   index `agent_list_raw_vt_idx`; it touches neither `publish_agent_list()` nor any `sync_*` function).
+   Then re-run the floor-wide anon-EXECUTE audit (memory: "Agent List check 22 Sep"): no `vt_*` function may be
+   executable by anon.
+2. **Build:** `node tools/prepare-site.js` — it now inlines `nicks_code/vt-engine.js` and `nicks_code/vt-pages.js` into
+   `site/pulse/index.html` and fails if a `data-inline` file is missing. Then `node nicks_code/diagnostics/verify-vt-build.mjs --no-build`.
+3. **Deploy** the Worker (new `worker/src/vt.mjs`, mounted in `index.mjs`) and Pages together.
+4. **Smoke:** `verify-cors-headers --live` + `verify-live-save --live` as usual. The VT intake sends no new header (only
+   `Authorization`, `Content-Type`, `X-Cbx-Client`), so the CORS allow-list is unchanged. Then drop the day's
+   `BI Active Fitted <ddmmyy>.xlsx` on the **VT · BI Active Fitted** slot and check the receipt says "VAS money unchanged".
+5. **Order of the first files:** the two daily files first (either order). The **opening book** (`Schedulers Data` sheet of
+   the hand-built report) only AFTER the first day's two files — the station and the database both refuse it on an empty book.
+
+Not yet wired (later phases): the VT pages (D), the digest publish after a commit (E2, `VTStation.afterCommit` is the
+hook), the weekly `vt_trim()` call and the VT health alerts (F3).

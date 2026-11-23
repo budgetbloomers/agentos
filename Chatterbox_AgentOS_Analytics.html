@@ -1394,6 +1394,7 @@ let pendingUpload=null;
 async function handleFile(srcKey,file){
   try{
     const parsed=await readUpload(file,srcKey);
+    if(isVtFile(parsed.headers)){toast(VT_REFUSAL+' — nothing was stored.','err');return}   // spec 071 US1-7
     const hv=validateHeaders(srcKey,parsed.headers);
     const dupe=state.batches.find(b=>b.file_hash===parsed.textHash&&b.source_type===srcKey&&b.validation_status!=='failed');
     pendingUpload={srcKey,file,parsed,hv,dupe};
@@ -1731,7 +1732,14 @@ function loadMsg(srcKey,r){
    a BI Inactive export satisfies the BI Active required set, but each matches its
    own contract 100% and the other one only partially. A tie is treated as
    unrecognised and reported — routed by hand via its slot, never guessed. */
+/* VEHICLE TRACKING FILES BELONG TO THE VAS UPLOAD STATION (spec 071 US1-7, FR-004). BI Active Fitted carries every column
+   the BI_ACTIVE_CASES contract asks for: loaded here it would become VAS money. The signatures are the VT rule book's own
+   (specs/vt_engine_rules.json detection.*.requireHeaders — verify-vt-isolation fails if they drift); nothing is stored. */
+const VT_REFUSAL='This is a Vehicle Tracking file. Load it in the VAS Upload Station';
+const VT_SIGNATURES=[["installation status","vehicle reg number","box number","unit type","case number","created by"],["missedandscheduledfitment","fitment date","case number","created by"],["month","date","agent","case number","result"]];
+function isVtFile(headers){const have=new Set((headers||[]).map(h=>String(h).toLowerCase().replace(/\s+/g,' ').trim()));return VT_SIGNATURES.some(sig=>sig.every(h=>have.has(h)))}
 function detectSource(parsed){
+  if(isVtFile(parsed.headers))return null;   // never a source here (spec 071)
   const norm=h=>h.toLowerCase().replace(/\s+/g,' ').trim();
   const have=new Set(parsed.headers.map(norm));
   let cands=[];
@@ -1776,6 +1784,7 @@ async function handleBulkFiles(files){
   for(const f of list){
     try{
       let parsed=await readUpload(f,null);
+      if(isVtFile(parsed.headers)){items.push({file:f,error:VT_REFUSAL+' — it will not be loaded here.',vt:true});continue}   // spec 071 US1-7
       let src=detectSource(parsed);
       if(src&&SOURCES[src].sheetScan)parsed=await readUpload(f,src);   // re-read: all tabs + header-row scan
       if(!src){ // multi-tab registers can hide their header row from the generic first-sheet read
@@ -1803,7 +1812,7 @@ async function handleBulkFiles(files){
     <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Sources detected from each file's headers. Files load in dependency order (roster first); every source's own dedup rules apply — re-uploads update in place, overlapping rows are superseded, never stacked.</div>
     <div class="prev-wrap" style="max-height:340px"><table><thead><tr><th>File</th><th>Detected source</th><th>Rows</th><th>Period</th><th></th></tr></thead><tbody>
     ${items.map(i=>'<tr><td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">'+esc(i.file.name)+'</td>'
-      +(i.error?'<td colspan="3" style="color:var(--red)">could not read: '+esc(i.error)+'</td>'
+      +(i.error?'<td colspan="3" style="color:var(--red)">'+(i.vt?'':'could not read: ')+esc(i.error)+'</td>'
        :i.src?'<td><b>'+esc(SOURCES[i.src].label)+'</b></td><td class="num">'+i.parsed.data.length.toLocaleString()+'</td><td>'+esc(i.dMin?i.dMin+' → '+i.dMax:'—')+'</td>'
        :'<td colspan="3" style="color:var(--amber)">unrecognised headers — load it by hand via its slot below</td>')
       +'<td>'+(i.dupe?'<span class="chip a"><span class="dot"></span>already loaded — will update in place</span>':'')+'</td></tr>').join('')}
