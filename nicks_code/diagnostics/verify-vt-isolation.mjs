@@ -36,7 +36,7 @@ const API = 'https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
 const REFUSAL = 'This is a Vehicle Tracking file. Load it in the VAS Upload Station';
 if (!process.argv.includes('--no-build')) spawnSync(process.execPath, [path.join(ROOT, 'tools', 'prepare-site.js')], { cwd: ROOT, encoding: 'utf8' });
 
-const SERVE = { '/pulse.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js', '/ops.html': 'site/index.html' };
+const SERVE = { '/pulse.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/vt-publish.js': 'nicks_code/vt-publish.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js', '/ops.html': 'site/index.html' };
 const server = http.createServer((q, s) => { const rel = SERVE[q.url.split('?')[0]]; const p = rel && path.join(ROOT, rel);
   if (!p || !fs.existsSync(p)) { s.writeHead(404); s.end(); return; }
   s.writeHead(200, { 'Content-Type': p.endsWith('.js') ? 'text/javascript' : 'text/html' }); fs.createReadStream(p).pipe(s); });

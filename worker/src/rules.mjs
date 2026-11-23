@@ -8,6 +8,7 @@
  * the pages paint it. Nothing in agent/index.html or portal.mjs divides by VAT any more —
  * verify-rule-constants fails on the literal.
  */
+import { cycleKeyOf, cycleRange } from './cycle.mjs';   // the business month (26th–25th), spec 071's VT fence
 export const VAT = 1.15;                                   // mirror of specs/mtd_engine_rules.json vat_multiplier
 export const DEFAULT_THRESHOLDS = { gwpFloor: 99, targetAch: 100 };   // NBA_THRESHOLDS: Check 1 floor (R incl), Check 2 line (%)
 
@@ -96,7 +97,10 @@ export function referralsReadAllowed(user) {
    SPEC 006 (custom ranges): a range's digest (agent-digest-range-…, already covered) AND its two report keys
    (agent-reports-variance|leads-range-YYYY-MM-DD-YYYY-MM-DD) and the request queue (cm-range-requests) are staff-written
    only too — only the engine's publisher writes figures, and the Worker writes the queue itself, never through /api/kv. */
-const GUARDED_KV = /^(agent-digest(-[a-z0-9-]+)?|agent-reports-(variance|leads)(-range-[0-9-]+)?|cm-range-requests|referrals-latest|referrals-sync-log)$/;
+/* SPEC 071 (Phase E): the Vehicle Tracking digest — kv:vt-digest (live business month) and kv:vt-digest-cycle-YYYY-MM —
+   is every VT agent's card, so it is staff-written only like the VAS digest. The whole vt-digest family is guarded; the
+   fence (vtDigestFence below) refuses any vt-digest name that is not one of those two shapes. */
+const GUARDED_KV = /^(agent-digest(-[a-z0-9-]+)?|vt-digest(-[a-z0-9-]+)?|agent-reports-(variance|leads)(-range-[0-9-]+)?|cm-range-requests|referrals-latest|referrals-sync-log)$/;
 export const isGuardedKvKey = (key) => GUARDED_KV.test(String(key || ''));
 /* KEYS ONLY THE WORKER WRITES (stability plan, 2026-10-26). health-alerts is the banner every admin reads; the cron writes
    it straight to the database. Through /api/kv any staff session could overwrite or clear it — fake or hide an outage. */
@@ -149,4 +153,58 @@ export function expectedReachFor(nowMs, saturday = true) {
   d.setUTCDate(d.getUTCDate() - (sast.getUTCHours() >= 13 ? 1 : 2));
   while (d.getUTCDay() === 0 || (!saturday && d.getUTCDay() === 6)) d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
+}
+
+/* ================= THE VEHICLE TRACKING DIGEST FENCE (spec 071, Phase E, FR-050) =================
+   The VT digest is a BUSINESS MONTH (26th → 25th, keyed by the month it ends in — cycle.mjs is the one definition), so its
+   fence is the VAS digest's fence moved onto that calendar, rule for rule:
+     · the live key kv:vt-digest holds the CURRENT SAST business month — or the one just closed while the live key does not
+       already hold the current one (the rollover grace); nothing older, nothing in the future;
+     · a history key kv:vt-digest-cycle-YYYY-MM holds exactly that business month, never a future one;
+     · the payload is the WHOLE business month (period.from = the 26th, period.to = the 25th) — never a slice;
+     · an empty payload never replaces a non-empty one of the same business month (emptiness derived, never trusted).
+   Pure: the Worker's POST /api/kv and tools/digest-republish.mjs both ask these. */
+const VT_LIVE_KEY = 'vt-digest';
+const VT_CYCLE_KEY = /^vt-digest-(cycle-\d{4}-(0[1-9]|1[0-2]))$/;
+export const isVtDigestKey = (key) => /^vt-digest(-|$)/.test(String(key || ''));
+export const vtCycleOfDay = (dayIso) => cycleKeyOf(dayIso);   // cycle.mjs is the one definition of the business month
+const prevCycle = (key) => { const r = cycleRange(key); const d = new Date(r.from + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 1); return cycleKeyOf(d.toISOString().slice(0, 10)); };
+const cycleDays = (key) => cycleRange(key);
+/** may a payload of business month `periodKey` take the LIVE key, given what the live key holds (`liveKey`, '' = nothing)? */
+export function liveVtDigestAllowed(periodKey, liveKey, nowMs) {
+  if (!/^cycle-\d{4}-\d{2}$/.test(String(periodKey || ''))) return false;
+  const cur = vtCycleOfDay(new Date(nowMs + 2 * 3600000).toISOString().slice(0, 10));
+  if (periodKey === cur) return true;
+  return periodKey === prevCycle(cur) && String(liveKey || '') !== cur;
+}
+/** emptiness DERIVED from the body: {error} | {empty:boolean}. A VT digest says scorecard:'vt'; empty = no in-play sale anywhere. */
+export function vtDigestEmptiness(body) {
+  if (!body || body.scorecard !== 'vt' || !Array.isArray(body.agents)) return { error: 'not_vt_digest' };
+  const sold = (w) => !!(w && Number(w.sales) > 0);
+  const hasFigures = sold(body.floor && body.floor.mtd) || body.agents.some((a) => a && sold(a.mtd));
+  if (body.empty === true && hasFigures) return { error: 'bad_empty' };
+  return { empty: !hasFigures };
+}
+/** the whole fence for one POST: {status, error} to refuse, or {pointer} (what the pointer row is stamped with).
+ *  live = the pointer row of the key being written ({period, empty} or null). Asked with the key's OWN pointer: the live key
+ *  and each history key are separate rows, and "empty over data" is about the row being replaced. */
+export function vtDigestFence(key, body, live, nowMs) {
+  const k = String(key || '');
+  const hist = VT_CYCLE_KEY.exec(k);
+  if (k !== VT_LIVE_KEY && !hist) return { status: 400, error: 'bad_vt_key: the Vehicle Tracking digest is kv:vt-digest or kv:vt-digest-cycle-YYYY-MM' };
+  const em = vtDigestEmptiness(body);
+  if (em.error) return { status: 400, error: em.error };
+  const p = (body && body.period) || {}, pk = String(p.key || '');
+  if (!/^cycle-\d{4}-(0[1-9]|1[0-2])$/.test(pk)) return { status: 400, error: 'bad_period: a VT digest names its business month (period.key cycle-YYYY-MM)' };
+  const days = cycleDays(pk);
+  if (p.from !== days.from || p.to !== days.to) return { status: 409, error: 'not_whole_cycle: a VT digest is the whole business month ' + days.from + ' → ' + days.to + ', got ' + p.from + ' → ' + p.to };
+  const cur = vtCycleOfDay(new Date(nowMs + 2 * 3600000).toISOString().slice(0, 10));
+  if (pk > cur) return { status: 409, error: 'future_cycle: ' + pk + ' has not started (the current business month is ' + cur + ')' };
+  if (hist && hist[1] !== pk) return { status: 409, error: 'wrong_cycle: ' + k + ' may only hold ' + hist[1] + ', got ' + pk };
+  const liveKey = live && typeof live.period === 'string' ? live.period : '';
+  if (!hist && !liveVtDigestAllowed(pk, liveKey, nowMs))
+    return { status: 409, error: 'stale_cycle: the live Vehicle Tracking digest is the current business month (' + cur + ') — or the one just closed until ' + cur + ' publishes; got ' + pk + '. Publish it under kv:vt-digest-' + pk + ' instead.' };
+  if (em.empty && live && liveKey === pk && live.empty !== true)
+    return { status: 409, error: 'empty_over_data: ' + k + ' already holds ' + pk + ' figures; an empty payload never replaces them.' };
+  return { pointer: { period: pk, ...(em.empty ? { empty: true } : {}), kind: 'vt' } };
 }

@@ -33,7 +33,7 @@ if (!process.argv.includes('--no-build')) {
 }
 const SRC = read(path.join(ROOT, 'nicks_code', 'index.html'));
 const OUT = read(path.join(ROOT, 'site', 'pulse', 'index.html'));
-for (const f of ['vt-engine.js', 'vt-pages.js']) {
+for (const f of ['vt-engine.js', 'vt-pages.js', 'vt-publish.js']) {   // vt-publish.js: Phase E (the digest publisher)
   ok(SRC.includes('<script src="' + f + '" data-inline></script>'), 'the source page loads ' + f + ' with a data-inline tag');
   const code = read(path.join(ROOT, 'nicks_code', f)).replace(/<\/script/gi, '<\\/script');
   ok(OUT.includes('/* inlined ' + f + ' (tools/prepare-site.js) */\n' + code + '\n</script>'), 'site/pulse/index.html carries ' + f + ' inlined, verbatim');

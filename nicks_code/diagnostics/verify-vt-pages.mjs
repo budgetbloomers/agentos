@@ -91,7 +91,7 @@ function bookRpc(from) {   // what vt_book(p_from) returns (migration-071): case
   return { rev: FX.book.rev, openedOn: FX.book.openedOn, openingBookOn: FX.book.openingBookOn, cases: cs.map((c) => COLS.map((k) => (c[k] === undefined ? null : c[k]))),
     events: FX.book.events.filter((e) => keep.has(String(e.caseNumber))).map((e) => [e.caseNumber, e.onDate, e.from, e.to, e.apptOn]) };
 }
-const nodeModel = (cycleKey) => ENG.model(ENG.bookFromRpc(bookRpc(ENG.periods.cycleByKey(cycleKey).from)), ROSTER, { cycleKey, aliases: {} });
+const nodeModel = (cycleKey) => ENG.model(ENG.bookFromRpc(bookRpc(ENG.periods.cycleByKey(cycleKey).from)), ROSTER, { cycleKey, aliases: {}, receipts: FX.receipts });   // receipts: the engine's missing-day list (Phase E)
 
 /* ---- the stub Worker ---- */
 let W;
@@ -110,7 +110,7 @@ if (!SOURCE && !process.argv.includes('--no-build')) {
   const r = spawnSync(process.execPath, [path.join(ROOT, 'tools', 'prepare-site.js')], { cwd: ROOT, encoding: 'utf8' });
   ok(r.status === 0 && /Build consistency verified/.test(r.stdout), 'the site builds (tools/prepare-site.js)', (r.stderr || r.stdout).slice(-300));
 }
-const SERVE = SOURCE ? { '/index.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js' }
+const SERVE = SOURCE ? { '/index.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/vt-publish.js': 'nicks_code/vt-publish.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js' }
   : { '/index.html': 'site/pulse/index.html', '/xlsx.full.min.js': 'site/xlsx.full.min.js' };
 const server = http.createServer((q, s) => { const rel = SERVE[q.url.split('?')[0]]; const p = rel && path.join(ROOT, rel);
   if (!p || !fs.existsSync(p)) { s.writeHead(404); s.end(); return; }
@@ -242,7 +242,13 @@ try {
     ok(N(last[0]) === 'Revx total' && at(t, last, 'Sales') === N(F('n', lw.sales)), tab + ': lead source → the Revx total is the engine\'s Revx figure', last.join(' | '));
     if (v === 'mtd') { const ar = t.rows.find((r) => N(r[2]) === 'Alpha Test');
       ok(ar && at(t, ar, 'Sales') === N(F('n', a1.leads.revx.sales)), 'mtd: each agent row is that agent\'s Revx split (engine agents[].leads)', ar && ar.join(' | ')); }
-    else ok(/Agent rows by lead source are on Month to date only/.test(await viewText()) && t.rows.length === 1, tab + ': agent rows by lead source are said to be MTD-only, never invented');
+    /* Phase E (spec 071 task list, engine addition): the engine splits each agent by lead source per week and per day
+       too, so Weekly and Daily show agent rows under the lead-source filter — each the engine's own split */
+    else { const wi = M11.weeks.filter((x) => x.from <= M11.period.asOf).length - 1, di = M11.dates.length - 1;
+      const sp = (a1[v === 'weekly' ? 'leadWeeks' : 'leadDays'] || {}).revx, aw = sp ? sp[v === 'weekly' ? wi : di] : null;
+      const ar = t.rows.find((r) => N(r[2]) === 'Alpha Test');
+      ok(!/Agent rows by lead source are on Month to date only/.test(await viewText()), tab + ': the "MTD only" note is gone');
+      ok(!!aw && !!ar && at(t, ar, 'Sales') === N(F('n', aw.sales)) && at(t, ar, 'Fitted') === N(F('n', aw.fitted)), tab + ': each agent row is that agent\'s Revx split for the ' + (v === 'weekly' ? 'week' : 'day') + ' (engine agents[].' + (v === 'weekly' ? 'leadWeeks' : 'leadDays') + ')', ar && ar.join(' | ')); }
   }
 
   head('P10 · every control changes the page');
@@ -337,6 +343,7 @@ try {
   head('P16 · page errors and unit helpers');
   const gaps = PG.uploadGaps(FX.receipts, M11);
   ok(gaps.length === 1 && gaps[0].date === '2026-11-05' && gaps[0].missing.length === 2, 'uploadGaps (unit): only Thu 5 Nov, both files', JSON.stringify(gaps));
+  ok(JSON.stringify(M11.gaps) === JSON.stringify(gaps), 'the model carries the engine missing-day list (model.gaps, painted by the page and published in the digest)', JSON.stringify(M11.gaps));
   ok(PG.fmtCell('n', null) === '—' && PG.fmtCell('p', 0) === '0.0%' && PG.fmtCell('n', 0) === '0' && PG.fmtCell('s', '') === '—', 'fmtCell (unit): an absence is "—", a real zero is 0');
   ok(!errs.length, 'no page errors', errs.join(' ; '));
 } catch (e) { ok(false, 'the suite ran', String((e && e.stack) || e).slice(0, 600)); }

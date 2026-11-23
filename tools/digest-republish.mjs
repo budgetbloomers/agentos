@@ -61,6 +61,20 @@ const cycleRefusal = (job, cp) => {
   return late > 3 ? 'its data starts ' + first + ', ' + late + ' days after the cycle begins (' + job.from + ') — the start is missing' : '';
 };
 /*CYCLE-JOBS-END*/
+/*VT-JOBS-BEGIN*/
+/* THE VEHICLE TRACKING DIGEST JOBS (spec 071, Phase E): the SAST business month in progress takes the live key
+   kv:vt-digest (and its own history key once it has figures); the one just closed refreshes only its history key
+   kv:vt-digest-cycle-YYYY-MM — its "(final)". cycleKeyOf / cycleRange are the Worker's (cycle.mjs, one definition). */
+const vtJobsFor = (nowMs, cycleKeyOf, cycleRange) => {
+  const cur = cycleRange(cycleKeyOf(new Date(nowMs + 2 * 3600000).toISOString().slice(0, 10)));
+  const d = new Date(cur.from + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 1);
+  const prev = cycleRange(cycleKeyOf(d.toISOString().slice(0, 10)));
+  return [{ key: cur.key, from: cur.from, to: cur.to, live: true }, { key: prev.key, from: prev.from, to: prev.to, live: false }];
+};
+/* the keys one built VT digest is written under: live job → kv:vt-digest (+ its history key when not empty); the closed
+   month → its history key only, and never an empty one (an empty month has nothing to keep) */
+const vtKeysFor = (built) => (built.job.live ? ['vt-digest'] : []).concat(built.empty ? [] : ['vt-digest-' + built.job.key]);
+/*VT-JOBS-END*/
 /*RANGE-JOBS-BEGIN*/
 /* THE CUSTOM RANGES THE CAMPAIGN MANAGERS ASKED FOR (spec 006-cm-custom-range, contract C5). The Worker queues a range in
    kv:cm-range-requests the first time a manager asks for it. This run builds every WAITING one (oldest ask first), then
@@ -446,6 +460,33 @@ for (const job of rangeJobs) {
 }
 /* a page error raised while building a range must not abort the live publish below either */
 if (errs.length > errsBeforeRanges) { console.warn('page errors during the custom-range builds (ignored for the live digest): ' + errs.slice(errsBeforeRanges, errsBeforeRanges + 3).join(' | ')); errs.length = errsBeforeRanges; }
+/* ---- THE VEHICLE TRACKING DIGEST (spec 071, Phase E, E2) ---- built in the SAME headless page, by the page's own
+   VTPublish.buildDigest (the VT pages' model call), from the VT case book, the VT Agent List in force and the receipts
+   read here with the service key — read-only. Two jobs: the business month in progress (the LIVE key; on the 26th that is
+   a month with no data yet, published EMPTY — null figures, never zeros — so Agent Analytics says "No <Month> figures
+   yet") and the one just closed (its history key, the "(final)"). Each is an island: a VT failure (the migrations not
+   applied yet, a read that times out) is said and never touches the VAS publish. --no-vt skips it. */
+const vtBuilt = [];
+const errsBeforeVt = errs.length;
+if (!argMonth && !HISTORY && !process.argv.includes('--no-vt')) {
+  const { cycleKeyOf, cycleRange } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'cycle.mjs')).href);
+  const rpc = async (fn, args) => { const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
+    if (!r.ok) throw new Error(fn + ' HTTP ' + r.status + ' ' + (await r.text()).slice(0, 120)); return r.json(); };
+  for (const job of vtJobsFor(Date.now(), cycleKeyOf, cycleRange)) {
+    try {
+      const [book, roster] = await Promise.all([rpc('vt_book', { p_from: job.from }), rpc('vt_roster_at', { p_on: job.to })]);
+      const rr = await fetch(`${env.SUPABASE_URL}/rest/v1/vt_uploads?select=kind,state,extract_on,committed_at&state=eq.committed&order=id.desc&limit=400`, { headers: H });
+      const receipts = rr.ok ? await rr.json() : [];
+      const body = await page.evaluate((a) => (window.VTPublish && window.VTEngine && window.VTStation)
+        ? JSON.stringify(window.VTPublish.buildDigest(window.VTEngine.bookFromRpc(a.book), window.VTStation.rosterFromRpc(a.roster), a.key, a.receipts)) : '', { book, roster, key: job.key, receipts });
+      if (!body) { console.log('vt-digest ' + job.key + ' skipped — this build carries no VTPublish'); continue; }
+      const d = JSON.parse(body);
+      vtBuilt.push({ job, body, empty: d.empty === true, n: (d.agents || []).length });
+      console.log('vt-digest ' + job.key + ' built — ' + (d.empty ? 'EMPTY, ' : '') + (d.agents || []).length + ' agents, ' + Math.round(body.length / 1024) + ' KB');
+    } catch (e) { console.warn('vt-digest ' + job.key + ' skipped — ' + String(e && e.message || e).slice(0, 160)); }
+  }
+  if (errs.length > errsBeforeVt) { console.warn('page errors during the VT builds (ignored for the VAS digest): ' + errs.slice(errsBeforeVt, errsBeforeVt + 3).join(' | ')); errs.length = errsBeforeVt; }
+}
 await b.close(); server.close();
 if (errs.length) { console.error('page errors: ' + errs.slice(0, 3).join(' | ')); process.exit(1); }
 
@@ -508,7 +549,34 @@ const liveEmpty = jobs.some((j) => !j[0] && (JSON.parse(j[1]) || {}).empty);
 const describe = (mk, body) => { const pj = JSON.parse(body); const per = pj.period ? pj.period.from + '..' + pj.period.to : '?';
   return mk ? 'kv:agent-digest-' + mk + (liveEmpty ? ' (final)' : '') + ' — ' + pj.agents.length + ' agents, ' + per
     : 'kv:agent-digest (LIVE) — ' + (pj.empty ? 'EMPTY ' : '') + pj.agents.length + ' agents, ' + per; };
+/* THE VT KEYS' FENCE is the Worker's own rule (rules.mjs vtDigestFence) asked against each key's own pointer row — this tool
+   writes Storage directly, so the Worker's 409 never sees it. A pointer that cannot be read refuses ("could not tell"). */
+const { vtDigestFence } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'rules.mjs')).href);
+const vtPointerOf = async (key) => {
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?key=eq.${encodeURIComponent('kv:' + key)}&select=value`, { headers: H });
+  if (!r.ok) throw new Error('kv:' + key + ' pointer not read (HTTP ' + r.status + ')');
+  const row = (await r.json())[0]; if (!row) return null;
+  let v = row.value || {}; if (typeof v === 'string') { try { v = JSON.parse(v); } catch { v = {}; } }
+  return typeof v.period === 'string' ? { period: v.period, empty: v.empty === true } : { period: '', empty: false };
+};
+async function vtPublishAll(apply) {
+  for (const vb of vtBuilt) for (const key of vtKeysFor(vb)) {
+    try {
+      const f = vtDigestFence(key, JSON.parse(vb.body), await vtPointerOf(key), Date.now());
+      if (f.error) { console.log((apply ? '' : 'would NOT write ') + 'kv:' + key + ' NOT written — ' + f.error); continue; }
+      if (!apply) { console.log('would write kv:' + key + ' — Vehicle Tracking ' + vb.job.key + (vb.empty ? ' (EMPTY)' : '') + ', ' + vb.n + ' agents, ' + Math.round(vb.body.length / 1024) + ' KB'); continue; }
+      const store = 'raw/kv/' + key;
+      const put = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${store}`, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json', 'x-upsert': 'true' }, body: vb.body });
+      if (!put.ok) throw new Error('storage write failed: ' + put.status + ' ' + (await put.text()).slice(0, 160));
+      const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rules?on_conflict=key`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify([{ key: 'kv:' + key, value: { store, ...f.pointer, updated_at: new Date().toISOString() } }]) });
+      if (!r.ok) throw new Error('rules write failed: ' + r.status + ' ' + (await r.text()).slice(0, 160));
+      console.log('published ' + key + ' — Vehicle Tracking ' + vb.job.key + (vb.empty ? ' (EMPTY)' : '') + ', ' + vb.n + ' agents');
+    } catch (e) { console.error('kv:' + key + ' NOT published — ' + String(e && e.message || e)); }   // VT never fails the VAS publish
+  }
+}
 if (!APPLY) {
+  await vtPublishAll(false);
   for (const [mk, body] of jobs) {
     let v;
     try { v = await fenceVerdict(mk, body); } catch (e) { v = { write: false, why: 'live pointer not read (' + String(e && e.message || e).slice(0, 100) + ')' }; }
@@ -605,4 +673,5 @@ if (rangeResults.length) {
       : 'custom-range queue NOT updated — it kept moving; the next run settles it');
   } catch (e) { console.error('custom-range queue NOT updated — ' + String(e && e.message || e)); }
 }
+await vtPublishAll(true);   // the Vehicle Tracking keys last: their own names, their own fence, never the VAS keys (spec 071)
 console.log('done. The Worker edge/memory caches hold old copies for up to 5 minutes.');

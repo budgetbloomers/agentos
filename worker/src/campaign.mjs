@@ -297,6 +297,21 @@ export function effectiveCamps(ctx, username) {
     .filter((k) => k && k !== 'vt' && !owned.has(k) && !mine.includes(k));
   return mine.concat(unowned);
 }
+/* VEHICLE TRACKING IS IN A MANAGER'S SCOPE (spec 071, Phase E, E6) — for the VT cards ONLY. effectiveCamps above keeps
+   dropping 'vt' so every VAS card, row and number a manager reads is exactly as before; the VT view (worker/src/vt.mjs,
+   read from the VT digest) asks this instead. Same rule as effectiveCamps without the drop: VT is the manager's when their
+   assignment names it, or when the Agent List carries VT and no manager is assigned it (a new campaign goes to every
+   campaign manager until narrowed — Nick, 2026-09-03). An account with no assignment row gets nothing. */
+const VT_KEYS = new Set(['vt', 'vehicle tracking']);
+export function vtInScope(ctx, username) {
+  const assign = (ctx && ctx.assign) || {};
+  const a = assign[String(username || '').toLowerCase()] || null;
+  if (!a) return false;
+  const named = (x) => (x && Array.isArray(x.campaigns) ? x.campaigns : []).some((c) => VT_KEYS.has(campKey(c)));
+  if (named(a)) return true;
+  if (Object.values(assign).some(named)) return false;   // another manager owns VT
+  return ((ctx && ctx.campaigns) || []).some((c) => VT_KEYS.has(campKey(c.key || c.label)));
+}
 const cmCampsFor = (ctx, user) => {
   if (user.role === 'admin') return null;                       // null = every campaign
   return effectiveCamps(ctx, user.username);

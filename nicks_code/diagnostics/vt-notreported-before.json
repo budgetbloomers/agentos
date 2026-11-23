@@ -1,0 +1,80 @@
+{
+ "status": 200,
+ "notReported": null,
+ "me": {
+  "code": "CB9101",
+  "name": "Alpha Test",
+  "tl": "Leader One",
+  "campaign": "VT",
+  "covered": false,
+  "why": "campaign",
+  "checks": {
+   "value": {
+    "aveG": null,
+    "floorEx": 86.08,
+    "floorIncl": 99,
+    "pass": null
+   },
+   "volume": {
+    "pct": null,
+    "line": 100,
+    "pass": null
+   },
+   "basis": "ex VAT vs ex VAT; floor floored to the cent Salesforce books"
+  },
+  "drill": {
+   "ta": {
+    "k": "ta",
+    "label": "Target achieved",
+    "status": "none",
+    "result": null,
+    "target": 1,
+    "below": 0,
+    "of": 0,
+    "tlHelp": false,
+    "why": null,
+    "topic": "Review my call",
+    "action": null
+   },
+   "aveG": {
+    "k": "aveG",
+    "label": "Average sale (ex VAT)",
+    "status": "none",
+    "result": null,
+    "target": 86.08,
+    "below": 0,
+    "of": 0,
+    "tlHelp": false,
+    "why": null,
+    "topic": "Explain the product",
+    "action": null
+   },
+   "qa": {
+    "k": "qa",
+    "label": "QA score",
+    "status": "none",
+    "result": null,
+    "target": 0.9,
+    "below": null,
+    "of": null,
+    "tlHelp": false,
+    "why": null,
+    "topic": "Explain my quality result",
+    "action": null
+   },
+   "att": {
+    "k": "att",
+    "label": "Attendance",
+    "status": "none",
+    "result": null,
+    "target": 0.95,
+    "below": 0,
+    "of": 0,
+    "tlHelp": false,
+    "why": null,
+    "topic": "Something else",
+    "action": null
+   }
+  }
+ }
+}

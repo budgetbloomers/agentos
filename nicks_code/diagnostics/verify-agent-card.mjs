@@ -35,6 +35,50 @@ const ok = (n, c, d = '') => { if (c) pass++; else { fail++; failures.push(n + (
 const num = (s) => parseFloat(String(s).replace(/[\s ]/g, '').replace(',', '.'));
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+/* ---- VT MODE (spec 071, Phase E, SC-007): every Vehicle Tracking agent's card equals the engine's verdicts ----
+   CBX_VT=1 reads the published kv:vt-digest (read-only, Storage) and renders each agent's card on the deployed page;
+   CBX_VT_FIXTURE=1 does the same on the LOCAL built page over the fictional VT floor (vt-digest-fixture.mjs) — no network.
+   For each agent: the score on screen is the digest's; each driver row's points / max and pill are its part's verdict; an
+   unrated agent (scheduler, no in-play sales) shows no score at all. */
+if (process.env.CBX_VT || process.env.CBX_VT_FIXTURE) {
+  const VTFIX = !!process.env.CBX_VT_FIXTURE;
+  let vd = null;
+  if (VTFIX) vd = (await import('./vt-digest-fixture.mjs')).vtDigest();
+  else {
+    const r0 = await fetch(env.SUPABASE_URL + '/storage/v1/object/raw/kv/vt-digest', { headers: H });
+    if (r0.ok) { let buf = Buffer.from(await r0.arrayBuffer()); if (buf[0] === 0x1f && buf[1] === 0x8b) buf = zlib.gunzipSync(buf); vd = JSON.parse(buf.toString()); }
+  }
+  if (!vd || !Array.isArray(vd.agents) || !vd.agents.length) { console.log('VT mode: no Vehicle Tracking digest published — nothing to check'); process.exit(0); }
+  const site = VTFIX ? pathToFileURL(path.join(ROOT, 'site', 'agent', 'index.html')).href : SITE;
+  const nf = (v, d) => new Intl.NumberFormat('en-ZA', { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
+  const bv = await chromium.launch();
+  try {
+    const page = await bv.newPage({ viewport: { width: 1400, height: 1000 } }); const errs = []; page.on('pageerror', (e) => errs.push(String(e.message).slice(0, 160)));
+    await page.route('**/api/**', (route) => route.fulfill({ status: 401, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"error":"not signed in"}' }));
+    await page.goto(site, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => !!window.VTView, null, { timeout: 30000 }).catch(() => {});
+    if (!(await page.evaluate(() => !!window.VTView))) { ok('VT mode: the page carries VTView (Phase E build)', false); }
+    else for (const a of vd.agents) {
+      const v = await page.evaluate(({ d, a }) => { const box = document.createElement('div'); box.innerHTML = window.VTView._cardHTML(d, a, true); document.body.appendChild(box);
+        const s = box.querySelector('.pg-score b'); const rows = [...box.querySelectorAll('.pg-row')].map((r) => ({ k: r.dataset.k, t: r.innerText.replace(/\s+/g, ' ') })); box.remove();
+        return { score: s ? s.textContent : null, rows }; }, { d: vd, a });
+      const rt = a.rating || {};
+      if (!rt.rated) { ok(a.code + ': not rated (' + (rt.why || '?') + ') → no score on the card', v.score === null, v.score); continue; }
+      ok(a.code + ': score on screen = digest', v.score === nf(rt.adj, 1), v.score + ' vs ' + rt.adj);
+      for (const p of rt.parts) {
+        const row = v.rows.find((x) => x.k === p.k);
+        const want = !p.measured ? 'not measured' : (p.onTarget ? 'At target' : (p.dir === 'lower' ? 'Too high' : 'To go'));
+        ok(a.code + ' ' + p.k + ': pill = verdict (' + want + ')', !!row && row.t.includes(want), row && row.t);
+        if (p.measured) ok(a.code + ' ' + p.k + ': points = engine', !!row && row.t.includes(nf(p.pointsEff, 1) + ' / ' + nf(p.weff, p.weff % 1 ? 1 : 0) + ' pts'), row && row.t);
+      }
+    }
+    ok('VT mode: no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));
+  } finally { await bv.close(); }
+  for (const f of failures.slice(0, 40)) console.log('  FAIL ' + f);
+  console.log('\n==== ' + pass + ' passed, ' + fail + ' failed  (VT mode, ' + vd.agents.length + ' agents' + (VTFIX ? ', LOCAL FIXTURE' : '') + ') ====');
+  process.exit(fail ? 1 : 0);
+}
+
 /* ---- the fixture: the C1 empty payload for October 2026, three agents, served locally ---- */
 const nullRow = (code, name) => ({ code, name, tl: 'Denise Haripersad', campaign: 'Courtesy', tenure: 'M1', plan: 'M1', target: 100, covered: false,
   sales: null, gwpEx: null, pctT: null, spd: null, att: null, qa: null, aveG: null, ref: null, closed: null, leads: null, calls: null, ans: null, talk: null, aveTalk: null, act: null, emp: null, composite: null, days: [], wk: [] });

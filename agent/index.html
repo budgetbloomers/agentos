@@ -1366,7 +1366,8 @@ function lmAllExcluded(){
   return cov.length>0&&cov.every(function(a){return lmIsExcluded(a.campaign);});
 }
 function visibleReportTabs(){
-  return lmAllExcluded()?REPORT_TABS.filter(function(t){return t[0]!=='leads_team';}):REPORT_TABS;
+  var l=lmAllExcluded()?REPORT_TABS.filter(function(t){return t[0]!=='leads_team';}):REPORT_TABS;
+  return window.VTView?VTView.reportTabs(l):l;   // spec 071: + VT Month to date / Weekly / Daily for a leader with VT agents
 }
 function lmNoteHTML(){
   var ex=lmExcludedList(); if(!ex.length) return '';
@@ -2116,6 +2117,7 @@ function cellOf(html){
   return s;
 }
 function exportReports(which){
+  if(window.VTView&&VTView.owns(which)) return VTView.exportReport(which);   // spec 071: the VT reports' own workbook
   if(!D){ toast('Nothing to export yet.'); return; }
   var CM_TO_TL={cm_mtd:'mtd_team',cm_daily:'daily_team',cm_weekly:'weekly_team',cm_variance:'variance_team',cm_leads:'leads_team'};
   var parts=which==='all'?['mtd_team','daily_team','weekly_team','variance_team','leads_team']:[CM_TO_TL[which]||which];
@@ -4136,14 +4138,14 @@ var CM_REPORT_TABS=[['cm_mtd','Month to date'],['cm_daily','Daily'],['cm_weekly'
 var LAST_CM_REPORT='cm_mtd';
 function navFor(active){
   if(CM_VIEWS.indexOf(active)>=0)
-    return [['cm','Campaign',ICON.results],['cm_teams','Team Leaders',ICON.team],
+    return (window.VTView?VTView.nav:function(l){return l;})([['cm','Campaign',ICON.results],['cm_teams','Team Leaders',ICON.team],
             ['cm_assist','Assistance',ICON.kpi],
             /* ONE REPORTS TAB for the manager too (Nick, 2026-09-21): Variance · Lead management as sub-tabs */
             ['cm_reports','Reports',ICON.mtd,CM_REPORT_TABS],
             /* THE COACHING HUB ITSELF, below Reports (Nick, 2026-10-13, spec 033: "the full view of the coaching hub
                exactly like it is … I dont want the link i want the exact interface") — see cmHubEnsure(). */
             ['cm_hub','Coaching Hub',ICON.coaching],
-            ['cm_nik','Nikola',ICON.nik],['cm_set','Settings',ICON.set]];
+            ['cm_nik','Nikola',ICON.nik],['cm_set','Settings',ICON.set]],'cm');   // spec 071: + Vehicle Tracking when it is in scope
   if(TL_VIEWS.indexOf(active)>=0)
     /* 'All Forms' is OFF the nav (Nick, 2026-08-26) — the view survives for old
        links; both hubs still carry their own forms. */
@@ -4164,8 +4166,8 @@ function navFor(active){
      (same instruction) because that is what the page is — a projection. */
   /* LINKS (Nick, 2026-09-08): the three systems an agent signs in to every day, with a screenshot
      each — on the AGENT nav only ("this is for agent analytics only for the agent view"). */
-  return [['month','Today',ICON.month],['calc','Projected Commission',ICON.calc],
-          ['progress','My Progress',ICON.prog],['links','Links',ICON.links]]
+  return (window.VTView?VTView.nav:function(l){return l;})([['month','Today',ICON.month],['calc','Projected Commission',ICON.calc],
+          ['progress','My Progress',ICON.prog],['links','Links',ICON.links]],'agent');   // spec 071: a VT agent's own nav
 ;
 }
 
@@ -4314,6 +4316,7 @@ function render(){
   if(PW_OPEN) return;   // the person is mid-way through changing their password — leave the form alone
   /* a refresh that arrived while a form was open (LIVE.pending) lands now, if this render is safe */
   if(LIVE.pending&&liveTeamScope()&&liveSafeToRender()){ var fr=LIVE.pending; LIVE.pending=null; D=fr; TEAM=D; }
+  if(window.VTView&&VTView.render()) return;   // spec 071: a VT agent's page (D.scorecard==='vt') is the VT card
   /* The campaign manager is the third branch, decided by what is LOADED —
      the same rule as isTeam below. */
   if(D.scope==='campaign'&&!D.me){
@@ -4563,6 +4566,7 @@ function loadPortal(){
     if(r.status===401) return sessionExpired();
     if(!r.ok) return fatal('We could not open your page', r.json.error||'Please try again in a minute.', r.status>=500);
     D=r.json;
+    if(window.VTView) VTView.boot();   // spec 071: a leader's / manager's VT slice loads beside the VAS page (nothing changes without one)
     if(D.scope==='campaign') return cmOpen();
     if(D.role==='team_leader'||D.scope==='team'||D.scope==='all'){ startLiveRefresh(); startHelpPulse(); return teamView(); }
     if(D.notReported) return notReported();
@@ -5566,6 +5570,7 @@ function cmView(){
   TEAM=D;
   if(CM_VIEWS.indexOf(VIEW)<0) VIEW='cm';
   if(VIEW==='cm_reports') VIEW=LAST_CM_REPORT;   // the Reports nav entry opens the sub-tab that was open last
+  if(window.VTView&&VTView.cmPage(VIEW)) return;   // spec 071: the manager's Vehicle Tracking tab
   var c=cmCamp();
   if(!c){
     shell('Campaign Manager','',
@@ -5918,6 +5923,7 @@ function teamView(){
      state so it is correct whoever calls it. */
   if(TL_VIEWS.indexOf(VIEW)<0) VIEW='team';
   if(VIEW==='reports') VIEW=LAST_REPORT;   // the Reports nav entry opens the sub-tab that was open last
+  if(window.VTView&&VTView.teamPage(VIEW)) return;   // spec 071: the VT report tabs
   var t=D.totals||{};
   /* NOT named pct — the global pct() formatter is used inside cell() below, and a
      local of that name shadows it for the whole closure ("pct is not a function",
@@ -5984,7 +5990,7 @@ function teamView(){
       ? '<td class="l"><b>My team</b><div class="sub2">'+num((D.agents||[]).length)+' people</div></td>'
       : '<td class="l"><button class="lnk" data-cb="'+esc(a.code)+'">'+esc(a.name)+'</button>'
         +'<div class="sub2">'+esc(a.code)+' · '+esc(a.campaign||'')+(a.tenure?' · '+esc(a.tenure):'')+'</div></td>';
-    if(!isTot&&!a.covered) return '<tr>'+nm+'<td class="sub2" colspan="11">Not reported on this page</td></tr>';
+    if(!isTot&&!a.covered) return (window.VTView&&VTView.teamRow(a,nm))||'<tr>'+nm+'<td class="sub2" colspan="11">Not reported on this page</td></tr>';   // spec 071: a VT agent's row
     var talkDay=(a.talk!=null&&a.act)?a.talk/a.act:null;
     return '<tr'+(isTot?' class="totrow"':'')+'>'+nm
       +'<td class="num">'+num(a.sales)+'</td>'
@@ -6599,6 +6605,7 @@ function calcNow(){
   return calcRun(m,plan,f('cDays',m.worked), f('tDays',m.total), f('cGwp',m.gwp));
 }
 function show(a){
+  if(window.VTView&&VTView.render()) return;   // spec 071: a VT agent never gets the VAS page
   ME=a;
   if(['month','calc','progress','coaching','links'].indexOf(VIEW)<0) VIEW='month';
   var g=greeting();
@@ -8626,5 +8633,8 @@ function wireTool(){
 
 boot();
 </script>
+<!-- VEHICLE TRACKING (spec 071, Phase E): the VT card, the VT team / campaign reports. A companion file that works from
+     file:// and that tools/prepare-site.js inlines (data-inline); every hook above is one line naming VTView. -->
+<script src="vt-view.js" data-inline></script>
 </body>
 </html>

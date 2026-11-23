@@ -122,6 +122,10 @@ function planCommit(book, parsed, ctx) {
     commit: { p_base_rev: book.rev || 0, p_counts: m.counts, p_unmatched: m.unmatched, p_warnings: m.warnings.concat(ctx.warnings || []),
       p_quiet_ack: !!ctx.quietAck, p_cases: cases.length, p_events: events.length } };
 }
+function listWarning(rv) {
+  return 'the newest Agent List (' + rv.list_as_of + ') has no Vehicle Tracking rows, so this upload used the VT list of ' + rv.as_of
+    + '. Load an Agent List that keeps the VT sheet, or the VT agents stay as they were on ' + rv.as_of + '.';
+}
 function receiptLines(r) {
   var c = r.counts || {}, lines = [];
   lines.push(LABEL[r.kind] + ' · ' + r.fileName);
@@ -148,7 +152,60 @@ function call(env, method, p, body) {
   return (env.fetch || root.fetch)((root.__vtApiBase || API) + p, { method: method, headers: h, body: body == null ? undefined : JSON.stringify(body) })
     .then(function (r) { return r.text().then(function (t) { var j = null; try { j = JSON.parse(t); } catch (e) { j = null; } return { status: r.status, ok: r.ok, j: j }; }); });
 }
-function must(r, what) { if (!r.ok || !r.j) { var e = new Error(what + ' failed' + (r.j && r.j.error ? ': ' + r.j.error : ' (' + r.status + ')')); e.status = r.status; throw e; } return r.j; }
+/* THE WORKER'S REFUSALS, IN WORDS (review fixes, Phase E). vt.mjs answers a named refusal as 409 {error:<code>, detail},
+   a check violation as 409 bad_row, and anything else as 502 vt_<step>_failed — the uploader reads a sentence, never a code. */
+var WORDS = {
+  busy: 'This file is being loaded by another station or tab right now. Nothing was sent from here — try again in a few minutes.',
+  version_conflict: 'The Vehicle Tracking book changed while this file was being saved.',
+  bad_extract_on: 'The date in the file name is out of range (more than a few days ahead, or before Vehicle Tracking began). Rename the file with its real extract date (ddmmyy) and drop it again.',
+  bad_cycle_key: 'The business month worked out from the file name is not one the server accepts. Check the date in the file name (ddmmyy).',
+  bad_date: 'A date in the file is not a real calendar date, or is out of range. Export the file again and drop it.',
+  bad_file_name: 'The file name is empty, too long, or has characters the server refuses. Rename it (for example "BI Active Fitted 101126.xlsx") and drop it again.',
+  bad_row: 'A row in the file broke one of the database\'s rules, so nothing was saved. Export the file again; if it keeps happening, send the file to the support team.',
+  duplicate_case: 'The same case number was sent twice in this upload, so nothing was saved. Drop the file again.',
+  duplicate_event: 'The same status change was sent twice in this upload, so nothing was saved. Drop the file again.',
+  too_many_uploads: 'Too many Vehicle Tracking uploads are being loaded at the same time. Wait for the others to finish, then drop this file again.',
+  upload_too_large: 'This file carries more rows than one upload may hold. Export a smaller date range and load it in parts.',
+  commit_too_large: 'This upload changes more cases than one save may carry. Export a smaller date range and load it in parts.',
+  batch_too_large: 'A part of this upload was larger than the server takes in one call. Drop the file again.',
+  stage_incomplete: 'Not every part of the upload reached the server, so nothing was saved. Drop the file again.',
+  not_staging: 'This upload was already finished or abandoned on the server. Drop the file again.',
+  unknown_upload: 'The server no longer knows this upload (it may have been cleared). Drop the file again.',
+  not_owner: 'This upload was started by another account, so this account may not finish it. Wait a few minutes and drop the file again.',
+  bad_receipt: 'The upload\'s receipt was not in the shape the server keeps. Refresh the page and drop the file again.',
+  bad_user: 'The server could not tell who is uploading. Sign out, sign in again and drop the file again.',
+  rows_not_array: 'A part of the upload was not in the shape the server keeps. Refresh the page and drop the file again.'
+};
+var STEP_WORDS = { begin: 'start the upload', stage: 'take the rows', commit: 'save the upload', abandon: 'cancel the upload', book: 'read the case book', roster: 'read the Agent List', uploads: 'read the receipts' };
+function wordsFor(r) {
+  var code = r && r.j && r.j.error ? String(r.j.error) : '', m = /^vt_(\w+)_failed$/.exec(code);
+  if (WORDS[code]) return WORDS[code];
+  if (m) return 'The server could not ' + (STEP_WORDS[m[1]] || m[1]) + ' just now. Nothing was saved — try again in a minute.';
+  if (r && r.status === 413) return 'Too much was sent in one call. Drop the file again.';
+  if (r && (r.status === 401 || r.status === 403)) return 'This sign-in may not load Vehicle Tracking files (it needs the Upload Station). Sign in again or ask an admin.';
+  return code ? code : 'the server answered ' + (r ? r.status : '?');
+}
+function must(r, what) { if (!r.ok || !r.j) { var e = new Error(what + ' failed: ' + wordsFor(r)); e.status = r.status; e.code = r.j && r.j.error; throw e; } return r.j; }
+/* THE MERGE READ IN PARTS (review fix 4): POST /api/vt/book is capped at 256 KB (≈ 20k case numbers), so above ALSO_CHUNK
+   the file's case numbers go in parts; the books are united by case number and must all be the same revision, else the
+   book moved mid-read and the caller retries (a conflict, exactly as a commit's). */
+var ALSO_CHUNK = 15000;
+async function readBook(env, from, cns) {
+  var eng = E(), parts = [];
+  for (var i = 0; i < cns.length; i += ALSO_CHUNK) parts.push(cns.slice(i, i + ALSO_CHUNK));
+  if (!parts.length) parts.push([]);
+  var books = [];
+  for (var p = 0; p < parts.length; p++) books.push(eng.bookFromRpc(must(await call(env, 'POST', '/api/vt/book', { p_from: from, p_also: parts[p] }), 'Reading the VT book')));
+  if (books.length === 1) return books[0];
+  if (books.some(function (b) { return b.rev !== books[0].rev; })) return null;
+  var out = books[0], seen = {};
+  out.events.forEach(function (e) { seen[JSON.stringify(e)] = 1; });
+  books.slice(1).forEach(function (b) {
+    for (var cn in b.cases) out.cases[cn] = b.cases[cn];
+    b.events.forEach(function (e) { var k = JSON.stringify(e); if (!seen[k]) { seen[k] = 1; out.events.push(e); } });
+  });
+  return out;
+}
 
 /* ---------------------------------------------------------------- the page (DOM) ---- */
 function doc() { return root.document || null; }
@@ -213,13 +270,21 @@ async function ingest(name, buf, hash, expected, found, opts) {
       }
     }
     var roster, fallback = false;
-    try { roster = rosterFromRpc(must(await call(env, 'GET', '/api/vt/roster?on=' + cyc.to), 'Reading the Agent List')); }
-    catch (e) { roster = rosterFromPulse(opts.pulseRoster || (root.S && root.S.roster)); fallback = true; }
+    try {
+      var rv = must(await call(env, 'GET', '/api/vt/roster?on=' + cyc.to), 'Reading the Agent List');
+      roster = rosterFromRpc(rv);
+      /* review fix 5: the VT list in force is older than the newest Agent List — that newer list carried no VT rows */
+      if (rv && rv.list_as_of && rv.as_of && rv.list_as_of !== rv.as_of) warnings.push(listWarning(rv));
+    } catch (e) { roster = rosterFromPulse(opts.pulseRoster || (root.S && root.S.roster)); fallback = true; }
     for (var attempt = 1; attempt <= MAX_TRIES; attempt++) {
-      var book = eng.bookFromRpc(must(await call(env, 'POST', '/api/vt/book', { p_from: cyc.from, p_also: Object.keys(parsed.cases).map(Number) }), 'Reading the VT book'));
+      var book = await readBook(env, cyc.from, Object.keys(parsed.cases).map(Number));
+      if (!book) continue;   // the book moved between two parts of the read: re-read (a conflict, FR-008)
       if (kind === 'vtOpeningBook' && !book.openedOn) return fail(REFUSE_OPENING_FIRST);
       var plan = planCommit(book, parsed, { extractOn: ex.date, roster: roster, warnings: warnings, quietAck: opts.quietAck });
-      var b = must(await call(env, 'POST', '/api/vt/upload/begin', { p_sha256: hash, p_kind: DB_KIND[kind], p_file_name: String(name).slice(0, 300), p_extract_on: ex.date, p_cycle_key: cyc.key }), 'Starting the upload');
+      /* p_user is never sent (review fix 6): the Worker appends the session's own username to every write */
+      var br = await call(env, 'POST', '/api/vt/upload/begin', { p_sha256: hash, p_kind: DB_KIND[kind], p_file_name: String(name).slice(0, 300), p_extract_on: ex.date, p_cycle_key: cyc.key });
+      if (br.status === 409 && br.j && br.j.error === 'busy') return fail(WORDS.busy);   // review fix 2: words, and never stage into the other upload's id
+      var b = must(br, 'Starting the upload');
       if (b.duplicate) { toast('Skipped ' + name + ' — already uploaded'); return true; }
       try {
         var parts = [['case', plan.cases], ['event', plan.events]];
@@ -228,7 +293,9 @@ async function ingest(name, buf, hash, expected, found, opts) {
           for (var i = 0; i < bs.length; i++) must(await call(env, 'POST', '/api/vt/upload/stage', { p_id: b.id, p_kind: parts[p][0], p_from_ord: bs[i].from, p_rows: bs[i].rows }), 'Sending the rows');
         }
         var c = await call(env, 'POST', '/api/vt/upload/commit', Object.assign({ p_id: b.id }, plan.commit));
-        if (c.status === 409) continue;   // another station moved the book: re-read, re-merge, retry (FR-008)
+        /* another station moved the book (FR-008). Review fix 1: abandon OUR upload id first — a re-begin of the same bytes
+           within 15 minutes is otherwise refused as busy — then re-read, re-merge and retry */
+        if (c.status === 409 && c.j && c.j.error === 'version_conflict') { await call(env, 'POST', '/api/vt/upload/abandon', { p_id: b.id }).catch(function () {}); continue; }
         must(c, 'Saving the upload');
       } catch (e) { await call(env, 'POST', '/api/vt/upload/abandon', { p_id: b.id }).catch(function () {}); throw e; }
       var r = { kind: kind, fileName: name, extractOn: ex.date, assumed: ex.assumed, counts: plan.merged.counts, unmatched: plan.merged.unmatched,
@@ -237,7 +304,7 @@ async function ingest(name, buf, hash, expected, found, opts) {
       toast(LABEL[kind] + ' loaded: ' + num(plan.merged.counts.cases) + ' cases, ' + num(plan.events.length) + ' status changes · VAS money unchanged', '', 9000);
       root.__vtBook = plan.merged.book; root.__vtRoster = roster;
       if (root.VTPages && typeof root.VTPages.adopt === 'function') { try { root.VTPages.adopt(r, plan.merged.book, roster); } catch (e) { /* the pages re-read the book on their next open */ } }
-      if (typeof root.VTStation.afterCommit === 'function') { try { root.VTStation.afterCommit(r, plan.merged.book, roster); } catch (e) { /* the publish (Phase E) reports its own failures */ } }
+      if (root.VTStation && typeof root.VTStation.afterCommit === 'function') { try { root.VTStation.afterCommit(r, plan.merged.book, roster); } catch (e) { /* the publish (Phase E) reports its own failures */ } }
       return true;
     }
     return fail('The VT book kept changing while this file was being saved (' + MAX_TRIES + ' tries). Nothing was saved — drop the file again.');
@@ -250,7 +317,8 @@ function retryQuiet() { return root.__vtQuietRetry ? root.__vtQuietRetry() : nul
 return { API: API, LABEL: LABEL, DB_KIND: DB_KIND, REFUSE_OPENING_FIRST: REFUSE_OPENING_FIRST,
   caseRowToDb: caseRowToDb, eventToDb: eventToDb, batches: batches, rosterFromRpc: rosterFromRpc, rosterFromPulse: rosterFromPulse,
   headerOf: headerOf, kindOfSheets: kindOfSheets, workbookAoa: workbookAoa, parseFor: parseFor, lastCountFor: lastCountFor, planCommit: planCommit,
-  receiptLines: receiptLines, slotsHtml: slotsHtml, pick: pick, drop: drop, ingest: ingest, retryQuiet: retryQuiet, call: call, must: must, afterCommit: null };
+  receiptLines: receiptLines, slotsHtml: slotsHtml, pick: pick, drop: drop, ingest: ingest, retryQuiet: retryQuiet, call: call, must: must, afterCommit: null,
+  WORDS: WORDS, wordsFor: wordsFor, readBook: readBook, listWarning: listWarning, ALSO_CHUNK: ALSO_CHUNK };
 });
 /* ================= report half (Phase D) below this line ================= */
 /* VT REPORT PAGES — Vehicle Tracking → Month to date / Weekly / Daily in VAS Analytics (spec 071 US5, FR-030..FR-033).
@@ -312,7 +380,7 @@ function pulseRoster() { var S = host(); return (S && S.roster) || []; }
 function DO() { return typeof root.dataOnlyDay === 'function' ? root.dataOnlyDay : undefined; }   // PULSE's calendar: the VT working days are the VAS ones
 
 /* THE one model call (Phase E's digest publish must use it too, so the screen and the published figures are one set) */
-function modelFor(book, roster, cycleKey) { return E().model(book, roster, { cycleKey: cycleKey, isDataOnlyDay: DO(), aliases: {} }); }
+function modelFor(book, roster, cycleKey, receipts) { return E().model(book, roster, { cycleKey: cycleKey, isDataOnlyDay: DO(), aliases: {}, receipts: receipts || undefined }); }
 function latestExtract() {
   var d = null; (C.receipts || []).forEach(function (u) { if (u.state === 'committed' && u.kind !== 'opening_book' && (!d || u.extract_on > d)) d = u.extract_on; });
   if (C.book) for (var cn in C.book.cases) { var l = C.book.cases[cn].lastSeen; if (l && (!d || l > d)) d = l; }
@@ -334,7 +402,7 @@ function currentCycle() {
 /* ---------------------------------------------------------------- loading ---- */
 function env() { return { fetch: root.__vtFetch || undefined }; }
 function fetchReceipts() {
-  return ST.call(env(), 'GET', '/api/vt/uploads?limit=100').then(function (r) { C.receipts = ST.must(r, 'Reading the VT receipts').uploads || []; C.recErr = false; })
+  return ST.call(env(), 'GET', '/api/vt/uploads?limit=100').then(function (r) { C.receipts = ST.must(r, 'Reading the VT receipts').uploads || []; C.recErr = false; C.memo = null; })
     .catch(function () { C.receipts = C.receipts || []; C.recErr = true; });
 }
 function fetchBook(from) {
@@ -369,21 +437,11 @@ function adopt(receipt, book, roster) {
 }
 function model() {
   var cyc = currentCycle(), key = C.bookId + '|' + cyc.key;
-  if (!C.memo || C.memo.key !== key) C.memo = { key: key, M: modelFor(C.book, C.rosters[cyc.key], cyc.key) };
+  if (!C.memo || C.memo.key !== key) C.memo = { key: key, M: modelFor(C.book, C.rosters[cyc.key], cyc.key, C.receipts) };
   return C.memo.M;
 }
-/* working days (the engine's calendar) with no committed upload of a kind, from the first upload to the figures' date */
-function uploadGaps(receipts, M, isDataOnlyDay) {
-  var P = E().periods, have = { bi_fitted: {}, sched_missed: {} }, first = null, out = [];
-  (receipts || []).forEach(function (u) { if (u.state !== 'committed' || !have[u.kind]) return; have[u.kind][u.extract_on] = 1; if (!first || u.extract_on < first) first = u.extract_on; });
-  if (!first || !M || !M.period.asOf) return out;
-  for (var d = first > M.period.from ? first : M.period.from; d <= M.period.asOf; d = P.addDays(d, 1)) {
-    if (!P.isWorkingDay(d, isDataOnlyDay)) continue;
-    var miss = []; if (!have.bi_fitted[d]) miss.push('BI Active Fitted'); if (!have.sched_missed[d]) miss.push('Scheduled & Missed');
-    if (miss.length) out.push({ date: d, missing: miss });
-  }
-  return out;
-}
+/* the missing-day list is the ENGINE's (VTEngine.uploadGaps, Phase E: it travels in the digest too); kept here as a name */
+function uploadGaps(receipts, M, isDataOnlyDay) { return E().uploadGaps(receipts, M, isDataOnlyDay); }
 
 /* ---------------------------------------------------------------- columns ---- */
 function col(h, k, t, l) { return { h: h, k: k, t: t || 'n', l: !!l }; }
@@ -417,7 +475,12 @@ function ratingText(a) {
 /* ---------------------------------------------------------------- rows: model + filters → tables (no arithmetic) ---- */
 function winOf(obj, view, idx) { if (!obj) return null; return view === 'mtd' ? obj.mtd : view === 'weekly' ? (obj.weeks || [])[idx] : (obj.days || [])[idx]; }
 function agentWin(a, view, idx, f) {
-  if (f.lead) return view === 'mtd' ? (a.leads || {})[f.lead] || null : null;
+  if (f.lead) {   // the engine's per-agent split by lead source: MTD, each week, each day (Phase E)
+    if (view === 'mtd') return (a.leads || {})[f.lead] || null;
+    var lw = ((view === 'weekly' ? a.leadWeeks : a.leadDays) || {})[f.lead], x = lw ? lw[idx] || null : null;
+    if (x && view === 'daily') { x = Object.assign({}, x); x.target = a.target; }
+    return x;
+  }
   var w = winOf(a, view, idx); if (w && view === 'daily') { w = Object.assign({}, w); w.target = a.target; }   // the list's target, as read (C18)
   return w;
 }
@@ -434,9 +497,7 @@ function totalOf(M, f) {
 }
 function agentTable(view, M, f, idx) {
   var rows = [], notes = [], groupLead = f.lead && M.leadAgg[f.lead].members;
-  if (f.lead && (view !== 'mtd' || groupLead)) notes.push(view !== 'mtd'
-    ? 'Agent rows by lead source are on Month to date only: the engine splits each agent by lead source for the whole business month. The total row is the lead source\'s own figure.'
-    : 'Agent rows are split by single lead sources; ' + esc(M.leadAgg[f.lead].label) + ' is a group, so only its total is shown.');
+  if (groupLead) notes.push('Agent rows are split by single lead sources; ' + esc(M.leadAgg[f.lead].label) + ' is a group, so only its total is shown.');
   else {
     var groups = {};
     M.agents.forEach(function (a) { if ((!f.tl || a.tlCode === f.tl) && (!f.sub || a.sub === f.sub)) (groups[a.tlCode || ''] = groups[a.tlCode || ''] || []).push(a); });
@@ -566,7 +627,7 @@ function statesHtml(M) {
   var out = [], cyc = currentCycle(), un = M.floor.unmatched;
   if (C.fallback[cyc.key]) out.push(warn('Agent List read from this page', 'the server roster could not be reached', 'Sub-campaigns are unknown until the Worker answers, so agents sit under "No sub-campaign" and the fitment budgets read "—". Refresh to try again.'));
   if (C.recErr) out.push(warn('Upload receipts could not be read', '', 'Missing-day warnings are not checked on this screen until the receipts load again.'));
-  var gaps = uploadGaps(C.receipts, M, DO());
+  var gaps = M.gaps || [];   // the engine decided which days (VTEngine.uploadGaps); the page paints them
   if (gaps.length) out.push(warn('A day\'s upload is missing', gaps.length + ' working day' + (gaps.length === 1 ? '' : 's') + ' in this business month',
     gaps.map(function (g) { return '<b>' + esc(dayName(g.date)) + '</b>: no ' + esc(g.missing.join(' or ')); }).join(' · ')
     + '. No file carries a sale date, so a sale first seen on the next upload is counted on that later day. Load the missing day\'s files in the Upload Station.'));
@@ -594,6 +655,11 @@ function render(view) {
     + 'Load the day\'s <b>BI Active Fitted</b> and <b>Scheduled &amp; Missed</b> exports in the Upload Station; these reports build themselves from them.'
     + (typeof root.tabAllowed !== 'function' || root.tabAllowed('data') ? '<p style="margin:12px 0 0"><button class="btn small primary" onclick="go(\'data\')">Open the Upload Station</button></p>' : '') + '</div></div>';
   var M = model(), f = validFilters(M);
+  /* E2: a staff page open on the latest business month republishes the VT digest when an upload landed after the live
+     copy was written (vt-publish.js decides; the digest is this same model) */
+  if (root.VTPublish && isStaff() && M.period.key === E().periods.cycleOf(latestExtract() || sastToday()).key) {
+    try { root.VTPublish.onPageReady(C.book, C.rosters[M.period.key], M.period.key, C.receipts); } catch (e) { /* the publisher reports its own failures */ }
+  }
   if (!M.dates.length || !M.period.asOf || M.period.asOf < M.period.from) {
     var prev = cycleKeys().filter(function (k) { return k < currentCycle().key; })[0];
     return headHtml(view, null) + controlsHtml(view, null, f) + '<div class="card vt-empty"><div class="empty"><div class="big">No ' + esc(monthOf(currentCycle().key)) + ' figures yet</div>No Vehicle Tracking upload falls in this business month yet.'

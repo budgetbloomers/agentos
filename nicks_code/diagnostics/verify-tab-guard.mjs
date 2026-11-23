@@ -18,7 +18,7 @@ const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } el
 const J = JSON.stringify;
 
 const srv = http.createServer((q, r) => { const u = q.url.split('?')[0];
-  if (u === '/vt-engine.js' || u === '/vt-pages.js') { r.writeHead(200, { 'Content-Type': 'text/javascript' }); fs.createReadStream(path.join(ROOT, 'nicks_code', u.slice(1))).pipe(r); return; }   // the source page's companions (spec 071)
+  if (u === '/vt-engine.js' || u === '/vt-pages.js' || u === '/vt-publish.js') { r.writeHead(200, { 'Content-Type': 'text/javascript' }); fs.createReadStream(path.join(ROOT, 'nicks_code', u.slice(1))).pipe(r); return; }   // the source page's companions (spec 071)
   if (u !== '/' && u !== '/index.html') { r.writeHead(404); r.end(); return; }
   r.writeHead(200, { 'Content-Type': 'text/html' }); fs.createReadStream(PULSE_HTML).pipe(r); });
 await new Promise((res) => srv.listen(8306, '127.0.0.1', res));

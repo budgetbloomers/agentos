@@ -23,7 +23,8 @@ import { campKey, cmOverviewBody, effectiveCamps, blockPanelFor, rowInTenure, TE
 import { cycleRange, cyclesNow } from './cycle.mjs';   // the billing month (26th–25th), spec 001-cm-view-signoff
 import { rangeOf, rangeFilling, queueList, enqueueRange, RANGE_QUEUE_KEY } from './range.mjs';   // the custom range, spec 006-cm-custom-range
 import { withFloorEx, checksFor, VAT } from './rules.mjs';
-import { drillFor } from './drill.mjs';   // the KPI drill-down verdicts (sprint 2026-09-29, item 3)
+import { drillFor } from './drill.mjs';
+import { vtAgentOverview } from './vt.mjs';   // spec 071 Phase E: a CB on the published VT digest gets the VT card   // the KPI drill-down verdicts (sprint 2026-09-29, item 3)
 /* what drillFor needs beyond the agent row: the floor's ex-VAT twin and how far the month has run */
 const drillCtx = (digest, nba) => ({ floorEx: withFloorEx(nba && nba.thresholds).gwpFloorEx,
   workingDays: digest.workingDays, daysWithData: digest.daysWithData, dates: digest.dates, period: digest.period });   // one number, one verdict (2026-09-07): the floor and the two checks are decided once
@@ -49,6 +50,10 @@ export const PORTAL_ALLOWED = new Set([
   /* The team leader's Variance and Lead management tabs (2026-09-21): a slice of two report keys
      PULSE publishes, cut by the same authorise() as the overview — nothing computed here. */
   '/api/portal/tl/reports',
+  /* VEHICLE TRACKING (spec 071, Phase E): the caller's slice of the published VT digest, and a team leader's / manager's
+     drill-down into one VT agent — scoped from the session in worker/src/vt.mjs vtScope, exactly as the VAS routes are. */
+  '/api/portal/vt/overview',
+  '/api/portal/vt/agent',
   /* Nikola. Scoped by the same authorise() as the overview it is built from, so it
      can only ever discuss the caller's own results. */
   '/api/portal/ask',
@@ -373,6 +378,10 @@ export async function overviewRequest(env, DB, user, q, opts) {
   const { getAssist, nowMs = Date.now() } = opts || {};
   q = q || {};
   if (user.role !== 'campaign_manager') {
+    /* WHICH CARD (spec 071, FR-041): an agent whose CB is on the PUBLISHED Vehicle Tracking digest (built from the Agent
+       List's VT sheet) gets the VT answer, scorecard:'vt'. Everyone else — every VAS agent, every team leader — falls
+       through to the VAS answer below, byte for byte (verify-vt-vas-golden.mjs). */
+    if (user.role === 'agent') { const vt = await vtAgentOverview(DB, user); if (vt) return vt; }
     const mq = String(q.month || '');
     const month = /^\d{4}-\d{2}$/.test(mq) ? mq : null;
     const digest = await loadDigest(DB, month);
@@ -1031,7 +1040,13 @@ export async function overview(env, DB, user, digest, months, extra) {
         ...base,
         me,
         /* Not in this period's data — say which of the two reasons it is. */
-        notReported: auth.missing ? (digest.notCovered || []).find((n) => n.code === auth.cb) || { why: 'nodata' } : null,
+        /* THE notReported FIX (spec 071 US2-5, current-state §B2): an agent found only in notCovered with why:'campaign' got
+           notReported:null and an EMPTY VAS card (authorise returns their row, so auth.missing is false). A VT agent with a VT
+           row never reaches here (overviewRequest answered the VT card); anyone else on another campaign now gets the
+           "different scheme" notice. why:'nodata' is unchanged. */
+        notReported: auth.missing ? (digest.notCovered || []).find((n) => n.code === auth.cb) || { why: 'nodata' }
+          : (me && me.covered === false && me.why === 'campaign')
+            ? (digest.notCovered || []).find((n) => n.code === auth.cb) || { code: me.code, why: 'campaign', campaign: me.campaign || '' } : null,
         peers: peersFor(digest, me),
         top: topPerformers(digest, auth.cb),
         team: auth.team,

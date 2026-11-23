@@ -48,7 +48,7 @@ const ROSTER_RPC = { as_of: '2026-11-02', rows: [
   { code: 'CB9101', name: 'Alpha Test', sf: 'Alpha Test', tl: 'Leader One', tl_code: 'CB9190', campaign_raw: 'Matrix Vehicle Tracking - Digital', tenure: 'Exp', target: 6.5, start_date: '2026-01-05' },
   { code: 'CB9102', name: 'Bravo Middle Tester', sf: null, tl: 'Leader Two', tl_code: 'CB9191', campaign_raw: 'Matrix Vehicle Tracking - Referral', tenure: 'Exp', target: 3, start_date: '2026-01-05' }] };
 let W;
-function resetWorker(o = {}) { W = { rev: 0, openedOn: null, openingBookOn: null, cases: {}, events: [], uploads: [], stage: {}, log: [], conflicts: 0, rosterFails: false, down: false, ...o }; }
+function resetWorker(o = {}) { W = { rev: 0, openedOn: null, openingBookOn: null, cases: {}, events: [], uploads: [], stage: {}, log: [], conflicts: 0, rosterFails: false, down: false, kv: [], ...o }; }
 function answer(method, p, body) {
   const J = (b, s = 200) => ({ status: s, body: JSON.stringify(b) });
   if (p.startsWith('/api/vt/uploads')) return J({ uploads: W.uploads.slice().reverse() });
@@ -84,7 +84,7 @@ function answer(method, p, body) {
 }
 
 /* ---- PULSE, served from the source folder ---- */
-const SERVE = { '/': 'nicks_code/index.html', '/index.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js' };
+const SERVE = { '/': 'nicks_code/index.html', '/index.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/vt-publish.js': 'nicks_code/vt-publish.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js' };
 const server = http.createServer((q, s) => { const rel = SERVE[q.url.split('?')[0]]; const p = rel && path.join(ROOT, rel);
   if (!p || !fs.existsSync(p)) { s.writeHead(404); s.end(); return; }
   s.writeHead(200, { 'Content-Type': p.endsWith('.js') ? 'text/javascript' : 'text/html' }); fs.createReadStream(p).pipe(s); });
@@ -97,11 +97,17 @@ await page.route(API + '/**', async (route) => {
   if (W.down && p.startsWith('/api/vt/')) return route.abort('connectionrefused');
   let body = {}; try { body = r.postData() ? JSON.parse(r.postData()) : {}; } catch (e) { body = {}; }
   if (u.pathname.startsWith('/api/vt/')) W.log.push({ m: r.method(), p: u.pathname, raw: r.postData() || '', body });
+  /* the VT digest publish (Phase E, vt-publish.js): POST /api/kv?key=vt-digest… is recorded and acknowledged */
+  if (u.pathname === '/api/kv') {
+    if (r.method() === 'POST') { W.kv.push({ key: u.searchParams.get('key'), body: r.postData() || '' }); return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); }
+    return route.fulfill({ status: 404, contentType: 'application/json', body: '{"found":false}' });
+  }
   const a = u.pathname.startsWith('/api/vt/') ? answer(r.method(), u.pathname, body) : { status: 404, body: '{}' };
   return route.fulfill({ status: a.status, contentType: 'application/json', body: a.body });
 });
 await page.goto('http://127.0.0.1:8271/index.html', { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__mtd && window.__mtd.state() && window.VTStation && window.XLSX, null, { timeout: 60000 });
+await page.evaluate(() => { try { sessionStorage.setItem('cbx_token', 'station-test'); } catch (e) {} });   // a signed-in station (the VT digest publish needs a session)
 await page.evaluate(() => { window.__toasts = []; const t = window.toast; window.toast = function (m) { window.__toasts.push(String(m)); try { return t.apply(this, arguments); } catch (e) { return null; } }; });
 
 const drop = async (name, bytes, slot = null) => {
@@ -127,6 +133,15 @@ try {
   ok(/Sellers unmatched: nobody on the list \(1\)/.test(r1.receipt) && /VAS money unchanged/.test(r1.receipt), 'unmatched sellers by name, and "VAS money unchanged"', r1.receipt);
   ok(r1.toasts.some((t) => /loaded: 3 cases/.test(t)), 'a toast confirms it', r1.toasts.join(' | '));
   ok(W.log.find((x) => x.p === '/api/vt/book').body.p_also.length === 3, 'the merge read names the file\'s cases (p_also)');
+
+  head('S1b · the commit publishes the VT digest (Phase E, E2)');
+  await page.waitForFunction(() => window.VTPublish && window.VTPublish.state().last, null, { timeout: 8000 }).catch(() => {});
+  const keys = W.kv.map((x) => x.key);
+  ok(keys.includes('vt-digest') && keys.includes('vt-digest-cycle-2026-11') && !keys.some((k) => /^agent-/.test(k)), 'after the commit: kv:vt-digest and kv:vt-digest-cycle-2026-11 are posted — never a VAS key', keys.join(','));
+  const pub = W.kv.length ? JSON.parse(W.kv[0].body) : {};
+  ok(pub.scorecard === 'vt' && pub.period && pub.period.key === 'cycle-2026-11' && pub.period.from === '2026-10-26' && pub.period.to === '2026-11-25', 'the payload is the whole business month 26 Oct → 25 Nov', JSON.stringify(pub.period));
+  ok(Array.isArray(pub.agents) && pub.agents.length === ROSTER_RPC.rows.length, 'one row per VT agent on the list in force', pub.agents && pub.agents.length);
+  ok(await page.evaluate(() => !window.__vtDigestDirtySince && !!window.__vtDigestOk), 'acknowledged: the dirty flag is clear and the ack is stamped');
 
   head('S2 · no customer field leaves the browser');
   const sent = W.log.map((x) => x.raw).join('\n');

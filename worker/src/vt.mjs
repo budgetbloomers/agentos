@@ -33,7 +33,9 @@
  * that accepts it, so nothing is added here for that (review D-M10).
  * The portal half (Phase E: scoped digest slices, unmatched seller names stripped for non-staff) is added below.
  */
-import { canUpload } from './rules.mjs';
+import { canUpload, isFullScope } from './rules.mjs';
+import { cycleRange } from './cycle.mjs';
+import { vtInScope } from './campaign.mjs';   // VT in a manager's scope — for the VT cards only (E6)
 
 export const VT_STAGE_MAX = 512 * 1024;
 export const VT_BODY_MAX = 64 * 1024;
@@ -143,3 +145,189 @@ export async function vtIntakeRoute(req, url, env, user) {
   return rpcStream(env, 'vt_roster_at', JSON.stringify({ p_on: on }), 'roster');
 }
 /* ================= portal half (Phase E) below this line ================= */
+/* PORTAL HALF (Phase E). Agent Analytics reads the PUBLISHED VT digest (kv:vt-digest, kv:vt-digest-cycle-YYYY-MM — written
+ * by PULSE / tools/digest-republish.mjs, staff only, fenced in rules.mjs vtDigestFence) and the Worker only SLICES it: one
+ * parse per key per minute per isolate (the 60 s cache, value.store path), never the case book, never a recomputation —
+ * the FREE plan's 10 ms CPU and 50 subrequests (FR-051). Every scope comes from the SESSION, never from the request:
+ *   agent            → their own row only (session CB)
+ *   team_leader      → the rows whose team leader is them on the Agent List (the list's leader CB = session CB, or the
+ *                      leader's name = the session's team, the VAS rule), plus their own team block
+ *   campaign_manager → the whole VT floor, only when VT is in their scope (campaign.mjs vtInScope)
+ *   admin / exec     → everything (staff); every other role → 403; a scoped (wimpy, referrals) session → 403
+ * floor.unmatched.names (Salesforce spellings of people not on the list) is STAFF material and is stripped for every
+ * portal scope. WHICH CARD an agent gets is decided here too (vtAgentOverview): a CB on the published VT digest is a VT
+ * agent and gets scorecard:'vt'; anyone else falls through to the VAS answer, untouched. */
+
+const VT_CACHE_MS = 60000;
+const CYCLE_RE = /^cycle-\d{4}-(0[1-9]|1[0-2])$/;
+const normCode = (v) => { const d = String(v == null ? '' : v).toUpperCase().replace(/[^0-9]/g, ''); return d ? 'CB' + String(parseInt(d, 10)) : ''; };
+const trim = (v) => String(v == null ? '' : v).trim();
+
+/** The published VT digest: live (no cycle) or one business month's history. null when nothing is published. */
+export async function loadVtDigest(DB, cycleKey) {
+  if (cycleKey != null && cycleKey !== '' && !CYCLE_RE.test(String(cycleKey))) return null;
+  const key = cycleKey ? 'kv:vt-digest-' + cycleKey : 'kv:vt-digest';
+  const cc = (globalThis.__vtDigestCaches = globalThis.__vtDigestCaches || {});
+  const c = cc[key];
+  if (c && Date.now() - c.t < VT_CACHE_MS) return c.d;
+  const r = await DB.select('rules?key=eq.' + encodeURIComponent(key) + '&select=value');
+  const v = (r && r[0] && r[0].value) || {};
+  let payload = String(v.data || '');
+  if (!payload && v.store) payload = (await DB.storageGet('raw', String(v.store).replace(/^raw\//, ''))) || '';
+  let d = null;
+  if (payload) { try { d = JSON.parse(payload); } catch (e) { d = null; } }
+  if (d && d.scorecard !== 'vt') d = null;
+  cc[key] = { t: Date.now(), d };
+  return d;
+}
+/** The business months with a published history key, newest first (found by key prefix, like the VAS months). */
+export async function listVtCycles(DB) {
+  const c = globalThis.__vtCycles;
+  if (c && Date.now() - c.t < VT_CACHE_MS) return c.s;
+  let s = [];
+  try {
+    const rows = await DB.select('rules?key=like.' + encodeURIComponent('kv:vt-digest-cycle-%') + '&select=key');
+    s = (rows || []).map((x) => String(x.key).slice('kv:vt-digest-'.length)).filter((k) => CYCLE_RE.test(k)).sort().reverse();
+  } catch (e) { s = []; }
+  globalThis.__vtCycles = { t: Date.now(), s };
+  return s;
+}
+
+/** Who this session may see on the VT digest: {scope, rows, codes, staff?, tlCodes?} | {none:true} | {error, status}. */
+export function vtScope(user, d, cmCtx) {
+  if (!user || !isFullScope(user)) return { error: 'Not permitted.', status: 403 };
+  const agents = (d && Array.isArray(d.agents)) ? d.agents : [];
+  if (user.role === 'agent') {
+    const cb = normCode(user.cb);
+    if (!cb) return { error: 'This account is not linked to a CB number yet. Ask your team leader.', status: 403 };
+    const me = agents.find((a) => a && normCode(a.code) === cb);
+    return me ? { scope: 'agent', cb, rows: [me], codes: new Set([cb]) } : { none: true };
+  }
+  if (user.role === 'team_leader') {
+    const cb = normCode(user.cb), team = trim(user.team);
+    if (!cb && !team) return { error: 'This team leader account is not linked to a team yet.', status: 403 };
+    const rows = agents.filter((a) => a && ((cb && normCode(a.tlCode) === cb) || (team && trim(a.tl) === team)));
+    if (!rows.length) return { none: true };
+    return { scope: 'team', cb, team, rows, codes: new Set(rows.map((a) => normCode(a.code))), tlCodes: new Set(rows.map((a) => normCode(a.tlCode)).filter(Boolean)) };
+  }
+  if (user.role === 'campaign_manager') {
+    if (!cmCtx) return { error: 'Campaign assignments are not loaded — try again in a moment.', status: 503 };
+    if (!vtInScope(cmCtx, user.username)) return { none: true };
+    return { scope: 'campaign', rows: agents, codes: new Set(agents.map((a) => normCode(a.code))) };
+  }
+  if (user.role === 'admin' || user.role === 'exec') return { scope: 'all', rows: agents, codes: new Set(agents.map((a) => normCode(a.code))), staff: true };
+  return { error: 'Agent Analytics is for agents and team leaders. Sign in with your CB number.', status: 403 };
+}
+
+/* the frame every VT answer carries: the business month, the dictionary, the minima, the missing days — nobody named */
+const frame = (d) => ({ scorecard: 'vt', period: d.period, updatedAt: d.updatedAt || null, empty: d.empty === true || undefined,
+  version: d.version, workingDays: d.workingDays, workingDaysElapsed: d.workingDaysElapsed, trackFrom: d.trackFrom || null,
+  weeks: d.weeks || [], dates: d.dates || [], dayCols: d.dayCols || null, drivers: d.drivers || [], minima: d.minima || null,
+  gaps: d.gaps || null, budgets: d.budgets ? { cycle: d.budgets.cycle, fitment: d.budgets.fitment, missed: d.budgets.missed, hrsShare: d.budgets.hrsShare } : null });
+const portalFloor = (fl, staff) => {
+  if (!fl) return null;
+  if (staff || !fl.unmatched) return fl;
+  const { names: _n, ...un } = fl.unmatched;   // the Salesforce spellings are staff material (plan §P)
+  return { ...fl, unmatched: un };
+};
+/* one agent's page: their row, their team leader's name, and for a scheduler the team's scheduling speed as context */
+function agentBody(d, row, extra) {
+  const tl = (d.tlAgg || []).find((t) => t && row && normCode(t.tlCode) === normCode(row.tlCode)) || null;
+  const sched = !!(row && row.rating && row.rating.why === 'scheduling');
+  const teamHrs = sched && tl ? { tl: tl.tl, hrsAhead: tl.hrsAhead || null } : null;
+  return { ...frame(d), ...extra, scope: extra.scope || 'agent', me: row, team: row ? row.tl || '' : '', teamHrs };
+}
+function teamBody(d, s, user) {
+  const staff = !!s.staff, codes = s.codes, wide = staff || s.scope === 'campaign';
+  const tlAgg = (d.tlAgg || []).filter((t) => t && (wide || (s.tlCodes && s.tlCodes.has(normCode(t.tlCode)))));
+  const notRated = (d.notRated || []).filter((n) => n && codes.has(normCode(n.code)));
+  return { ...frame(d), scope: s.scope, staff, role: user.role, team: s.team || (wide ? 'Vehicle Tracking' : ''), agents: s.rows, notRated, tlAgg,
+    subAgg: wide ? d.subAgg || {} : null, leadAgg: wide ? d.leadAgg || {} : null, floor: wide ? portalFloor(d.floor, staff) : null };
+}
+
+/** /api/portal/overview's question for an AGENT: is this CB on the published VT digest? → the VT answer, else null (VAS). */
+export async function vtAgentOverview(DB, user) {
+  if (!user || user.role !== 'agent' || !isFullScope(user)) return null;
+  let d = null;
+  try { d = await loadVtDigest(DB, null); } catch (e) { console.warn('vt-digest read failed — the VAS answer is served', String((e && e.message) || e)); return null; }
+  if (!d) return null;
+  const s = vtScope(user, d, null);
+  if (s.none || s.error) return null;
+  const cycles = await listVtCycles(DB);
+  return { status: 200, body: agentBody(d, s.rows[0], { role: 'agent', name: user.full_name || user.username, cb: s.cb, cycles, months: [] }) };
+}
+
+/** GET /api/portal/vt/overview[?cycle=cycle-YYYY-MM] — the caller's VT slice; {none:true} when they have none. */
+export async function vtOverview(DB, user, q, cmCtx) {
+  const cyc = trim(q && q.cycle);
+  if (cyc && !CYCLE_RE.test(cyc)) return { status: 400, body: { error: 'bad_cycle' } };
+  const d = await loadVtDigest(DB, cyc || null);
+  const cycles = await listVtCycles(DB);
+  if (!d) return { status: 200, body: { scorecard: null, none: true, published: false, cycles, period: cyc ? cycleRange(cyc) : null } };
+  const s = vtScope(user, d, cmCtx);
+  if (s.error) return { status: s.status, body: { error: s.error } };
+  if (s.none) return { status: 200, body: { scorecard: null, none: true, published: true, cycles } };
+  if (s.scope === 'agent') return { status: 200, body: agentBody(d, s.rows[0], { role: 'agent', name: user.full_name || user.username, cb: s.cb, cycles }) };
+  return { status: 200, body: { ...teamBody(d, s, user), cycles } };
+}
+
+/** GET /api/portal/vt/agent?cb= — a team leader / manager / staff drilling into ONE VT agent. A set-membership test on the
+ *  session's own scope, first: a CB outside it is 403, with nothing said about whether it exists. */
+export async function vtAgentDetail(DB, user, wantCb, q, cmCtx) {
+  const cyc = trim(q && q.cycle);
+  if (cyc && !CYCLE_RE.test(cyc)) return { status: 400, body: { error: 'bad_cycle' } };
+  const cb = normCode(wantCb);
+  if (!cb) return { status: 400, body: { error: 'No agent specified.' } };
+  if (!user || user.role === 'agent') return { status: 403, body: { error: 'That agent is not on your team.' } };
+  const d = await loadVtDigest(DB, cyc || null);
+  if (!d) return { status: 404, body: { error: 'No Vehicle Tracking figures have been published yet.' } };
+  const s = vtScope(user, d, cmCtx);
+  if (s.error) return { status: s.status, body: { error: s.error } };
+  if (s.none || !s.codes.has(cb)) return { status: 403, body: { error: 'That agent is not on your team.' } };
+  const row = s.rows.find((a) => normCode(a.code) === cb);
+  return { status: 200, body: agentBody(d, row, { role: user.role, scope: 'agent-detail', name: user.full_name || user.username }) };
+}
+
+/** GET /api/portal/tl/reports?kind=vt-mtd|vt-weekly|vt-daily[&cycle=] — the Reports tab's VT slice: the same scoped team
+ *  rows and blocks as the overview, labelled with the report it feeds. An agent has no team: 403. */
+export async function vtReports(DB, user, q, cmCtx) {
+  const kind = trim(q && q.kind);
+  if (!/^vt-(mtd|weekly|daily)$/.test(kind)) return { status: 400, body: { error: 'kind must be vt-mtd, vt-weekly or vt-daily' } };
+  if (!user || user.role === 'agent') return { status: 403, body: { error: 'The Vehicle Tracking reports are a team leader page.' } };
+  const r = await vtOverview(DB, user, q, cmCtx);
+  if (r.status !== 200) return r;
+  return { status: 200, body: { ...r.body, kind } };
+}
+
+/** The portal routes this module serves (index.mjs mounts them below the session gate; both paths are on PORTAL_ALLOWED,
+ *  and the reports kinds ride the existing /api/portal/tl/reports). null = not a VT portal request. */
+export const VT_PORTAL_PATHS = ['/api/portal/vt/overview', '/api/portal/vt/agent'];
+export async function vtPortalRoute(req, url, DB, user, cmCtx) {
+  const p = url.pathname;
+  if (req.method !== 'GET') return null;
+  const q = { cycle: url.searchParams.get('cycle') || '', kind: url.searchParams.get('kind') || '' };
+  if (p === '/api/portal/vt/overview') return vtOverview(DB, user, q, cmCtx);
+  if (p === '/api/portal/vt/agent') return vtAgentDetail(DB, user, url.searchParams.get('cb') || '', q, cmCtx);
+  if (p === '/api/portal/tl/reports' && /^vt-/.test(q.kind)) return vtReports(DB, user, q, cmCtx);
+  return null;
+}
+
+/* ---- the VT digest write fence, as POST /api/kv applies it (rules.mjs vtDigestFence is the rule) ---- */
+/** {status, error} to refuse, or {pointer} for the row. Reads the key's own pointer row FRESH (never the 60 s cache) — a
+ *  failed read refuses ("could not tell" is never "nothing is live"). */
+export async function vtKvFence(DB, key, body, nowMs, fence) {
+  let pj = null;
+  try { pj = JSON.parse(body); } catch (e) { return { status: 400, error: 'the Vehicle Tracking digest is not JSON' }; }
+  let live = null;
+  try {
+    const row = ((await DB.select('rules?key=eq.' + encodeURIComponent('kv:' + key) + '&select=value')) || [])[0];
+    const v = (row && row.value) || null;
+    if (v && typeof v.period === 'string') live = { period: v.period, empty: v.empty === true };
+    else if (v) live = { period: '', empty: false };   // a row written before the stamp: treated as holding data (the safe side)
+  } catch (e) { return { status: 503, error: 'the ' + key + ' pointer could not be read — refused until it can (' + String((e && e.message) || e).slice(0, 100) + ')' }; }
+  const f = fence(key, pj, live, nowMs);
+  if (f.error) return f;
+  if (globalThis.__vtDigestCaches) delete globalThis.__vtDigestCaches['kv:' + key];
+  globalThis.__vtCycles = null;
+  return f;
+}

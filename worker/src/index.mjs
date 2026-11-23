@@ -13,7 +13,7 @@ import { getCoaching, rollUp, sessionsForAgent, withinWindow, snapshotCoachingWa
 import { PORTAL_ROLES, PORTAL_ALLOWED, loadDigest, reportsRequest, listDigestMonths, overview, overviewRequest, cmCoaching, coachingOthers, agentDetail, normCb } from './portal.mjs';
 import { helpRequest, helpList, helpDetail, helpStage, actionsList, actionSet, failsList, failSet, failDetail, syncCoaching, helpMine, helpCloseOwn, helpConfirm, helpPulse } from './help.mjs';
 import { campaignMoves, setCampaignMove } from './moves.mjs';
-import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness, kvKeyValid, isFullScope, canUpload } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
+import { liveDigestAllowed, emptyOverData, referralsReadAllowed, kvWriteAllowed, digestEmptiness, kvKeyValid, isFullScope, canUpload, isVtDigestKey, vtDigestFence } from './rules.mjs';   // the live digest's month rule, incl. the rollover grace (2026-10-01)
 import { hubIdsOf, coachingList, coachingCreate, kpiList, kpiWrite, COACH_TABLES, KPI_TITLES } from './hubs.mjs';
 import { draftsGet, draftsPost } from './drafts.mjs';
 import { loadCmContext, eodMarkdown, cmOverviewBody, cmSettingsBody, cmSettingsApply, rosterTargets, listTargetGroups, listTargetGroupValues } from './campaign.mjs';
@@ -25,7 +25,7 @@ import { assistCreate, assistList, assistDetail, assistAct } from './assist.mjs'
 import { usageTracker, recordOpen, recordAsk, pageOf, appFromPage } from './usage.mjs';   // the usage report (Spec Kit 028)
 import { askLabeller } from './topics.mjs';   // one topic per help ask / CM request, after the answer (Spec Kit 029)
 import { SUMMARY_MAX, summaryProblem, vasMonths, promptSafe, vasWriteAllowed } from './vas-summary.mjs';   // the Worker's small copy of the VAS state (Spec Kit 031)
-import { vtIntakeRoute } from './vt.mjs';   // Vehicle Tracking: book + upload intake (Spec Kit 071, Phase C)
+import { vtIntakeRoute, vtPortalRoute, vtKvFence } from './vt.mjs';   // Vehicle Tracking: intake (Spec Kit 071, Phase C) + portal slices and the digest fence (Phase E)
 
 // Hermes 2 Pro was deprecated 2026-05-30. Default: Llama 4 Scout (131k context —
 // fits the entire software's digests without truncation). Fallback: Llama 3.3 70B.
@@ -922,7 +922,8 @@ export default {
          authorise(). Team leaders need it too: their raise/confirm routes read
          the blockage table and SLA targets. */
       if ((user.role === 'campaign_manager' || user.role === 'team_leader' || user.role === 'admin' || user.role === 'exec')
-          && (path.startsWith('/api/portal/cm/') || path === '/api/portal/cm-coaching' || path === '/api/portal/overview' || path === '/api/portal/agent')) {
+          && (path.startsWith('/api/portal/cm/') || path === '/api/portal/cm-coaching' || path === '/api/portal/overview' || path === '/api/portal/agent'
+            || path.startsWith('/api/portal/vt/') || (path === '/api/portal/tl/reports' && /^vt-/.test(url.searchParams.get('kind') || '')))) {   // spec 071: VT in a manager's scope
         try { await loadCmContext(DB); }
         catch (e) { if (user.role === 'campaign_manager') return json({ error: 'Could not load campaign assignments: ' + String(e.message || e).slice(0, 160) }, 503); }
       }
@@ -961,6 +962,12 @@ export default {
         recordOpen(track, user, pageOf(req, url), 'boot');   // Agent Analytics' boot
         return json({ user: { username: user.username, name: user.full_name || user.username,
           role: user.role, cb: normCb(user.cb), team: user.team || '' } });
+      }
+      /* VEHICLE TRACKING IN AGENT ANALYTICS (spec 071, Phase E): /api/portal/vt/overview, /api/portal/vt/agent and the
+         VT kinds of /api/portal/tl/reports — slices of the PUBLISHED VT digest, scoped from the session (vt.mjs vtScope). */
+      if (path === '/api/portal/vt/overview' || path === '/api/portal/vt/agent' || (path === '/api/portal/tl/reports' && /^vt-/.test(url.searchParams.get('kind') || ''))) {
+        const vr = await vtPortalRoute(req, url, DB, user, globalThis.__cmCtx || null);
+        return vr ? json(vr.body, vr.status) : json({ error: 'Unknown Vehicle Tracking route.' }, 404);
       }
       if (path === '/api/portal/overview' && req.method === 'GET') {
         /* ?month=YYYY-MM opens a published past month; anything else is the live digest — for agents and team leaders,
@@ -2176,14 +2183,17 @@ export default {
           if (!sameStamp(String(sj.state_version), stateAt)) return json({ error: 'stale_summary: it describes another version of the VAS state', current: stateAt }, 409);
           summaryOf = String(sj.state_version);
         }
+        /* a Vehicle Tracking digest (it opens {"scorecard":"vt") never lands on any VAS digest or report key (spec 071): its rows
+           carry no VAS figure, so the VAS emptiness rule would read it as an empty month and the rollover grace could let it in */
+        if (/^agent-(digest|reports)/.test(qk) && /^\s*\{\s*"scorecard"\s*:\s*"vt"/.test(String(body || '').slice(0, 64)))
+          return json({ error: 'vt_payload: a Vehicle Tracking digest goes to kv:vt-digest, never to ' + qk }, 400);
         let digestFrom = null;   // the live digest's period, stamped on its pointer row below (rollover grace)
         let digestEmpty = false;   // an `empty:true` payload (spec 002 C2): its pointer row is stamped `empty` beside `period`
         if (qk === 'agent-digest' || /^agent-reports-(variance|leads)$/.test(qk)) {   // the report keys are fenced to the live month too (2026-09-21)
           let from = '', payloadEmpty = false;
           let pj = null;
           try { pj = JSON.parse(body); from = String((pj.period || {}).from || ''); }
-          catch (e) { return json({ error: 'agent-digest body is not JSON with a period' }, 400); }
-          /* EMPTINESS IS DERIVED HERE, never taken from the client's flag (review M1): no agents → 400 empty_digest; flagged empty
+          catch (e) { return json({ error: 'agent-digest body is not JSON with a period' }, 400); }          /* EMPTINESS IS DERIVED HERE, never taken from the client's flag (review M1): no agents → 400 empty_digest; flagged empty
              over figures → 400 bad_empty; unflagged with every figure null → empty all the same. The pointer stamp uses this value. */
           if (qk === 'agent-digest') {
             const em = digestEmptiness(pj);
@@ -2219,6 +2229,15 @@ export default {
           if (emptyOverData(payloadEmpty, from, liveFrom, liveEmpty))
             return json({ error: 'empty_over_data', message: 'The live agent digest already holds ' + liveFrom.slice(0, 7) + ' figures; an empty month payload never replaces them.' }, 409);
           if (qk === 'agent-digest') { digestFrom = from; digestEmpty = payloadEmpty; }
+        }
+        /* THE VEHICLE TRACKING DIGEST FENCE (spec 071, FR-050): kv:vt-digest is the CURRENT SAST business month (26th–25th,
+           rollover grace), kv:vt-digest-cycle-YYYY-MM exactly that month, the whole month only, an empty payload never over
+           data — the VAS fence on the VT calendar (rules.mjs vtDigestFence). Staff-only via GUARDED_KV above. */
+        let vtPointer = null;
+        if (isVtDigestKey(qk)) {
+          const f = await vtKvFence(DB, qk, body, Date.now(), vtDigestFence);
+          if (f.error) return json({ error: f.error }, f.status);
+          vtPointer = f.pointer;
         }
         /* the size the wipe guard and the write log speak in: UNPACKED bytes — from the gzip trailer for a compressed
            body (spec 013/031), the byte length for one kept as sent, the text length otherwise (as before) */
@@ -2296,6 +2315,7 @@ export default {
         const newAt = new Date().toISOString();
         /* the VAS state's pointer carries its unpacked size (the wipe guard's yardstick) and, when kept compressed, gz:true */
         const pointer = digestFrom ? { store: objPath, period: digestFrom, ...(digestEmpty ? { empty: true } : {}) }
+          : vtPointer ? { store: objPath, ...vtPointer }   // the VT digest's pointer carries its business month (spec 071)
           : keepAsSent ? { store: objPath, size: newSize, ...(gzRaw ? { gz: true } : {}) }
           : summaryOf ? { store: objPath, state_version: summaryOf } : { store: objPath };
         await DB.insert('rules', [{ key: 'kv:' + qk, value: pointer, updated_by: user.username, updated_at: newAt }], true);

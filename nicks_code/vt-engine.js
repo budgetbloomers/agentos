@@ -621,10 +621,14 @@ function model(book, roster, opts) {
     var fb = fitBudget(bud, a.sub, a.tenure), wdays = wd(start, asOf);
     var finishRow = function (r) { r.target = a.target; r.toTarget = a.target && r.spd != null ? r.spd / a.target : null; return r; };
     W.mtd = finishRow(W.mtd); W.mtd.fitBudget = fb; W.mtd.workingDays = wdays; W.weeks.forEach(finishRow);
-    var leads = {}; fs.forEach(function (f) { leads[f.lead] = 1; });
-    sortedKeys(leads).forEach(function (l) { var p = function (f) { return f.code === a.code && f.lead === l; }; leads[l] = rates(tally(factsOf(p), evOf(p), mtdWin, true, asOf), wdays); });
+    /* the agent split by lead source: MTD (leads), and each week / day (leadWeeks / leadDays, Phase E) so the lead-source
+       filter shows agent rows on Weekly and Daily too. The digest carries only the MTD split (plan §P). */
+    var leads = {}, leadWeeks = {}, leadDays = {}; fs.forEach(function (f) { leads[f.lead] = 1; });
+    sortedKeys(leads).forEach(function (l) { var p = function (f) { return f.code === a.code && f.lead === l; }, lf = factsOf(p), le = evOf(p);
+      leads[l] = rates(tally(lf, le, mtdWin, true, asOf), wdays);
+      var LW = windows(lf, le, function (x, y) { return wd(maxD(x, start), y); }); leadWeeks[l] = LW.weeks.map(finishRow); leadDays[l] = LW.days; });
     var row = { code: a.code, name: a.name, tl: a.tl, tlCode: a.tlCode, sub: a.sub, tenure: a.tenure, role: a.role, target: a.target, startDate: a.startDate || null,
-      workingDays: wdays, trackedDays: wdays, mtd: W.mtd, weeks: W.weeks, days: W.days, leads: leads };
+      workingDays: wdays, trackedDays: wdays, mtd: W.mtd, weeks: W.weeks, days: W.days, leads: leads, leadWeeks: leadWeeks, leadDays: leadDays };
     row.rating = rating(row, { cycleKey: cyc.key, asOf: asOf });
     row.rated = row.rating.rated;
     return row;
@@ -653,14 +657,32 @@ function model(book, roster, opts) {
     if (mem.length > 1 && !leadAgg[g]) leadAgg[g] = agg(function (f) { return mem.indexOf(f.lead) > -1; }, [], { lead: g, label: R.leadSources.labels[g] || g, members: mem }); });
   var floor = agg(function () { return true; }, agents, {});
   floor.unmatched = { sellers: Object.keys(unmatchedNames).length, cases: Object.keys(unmatchedNames).reduce(function (s, n) { return s + unmatchedNames[n]; }, 0), names: sortedKeys(unmatchedNames) };
+  var period = { key: cyc.key, from: cyc.from, to: cyc.to, asOf: asOf, hrsAsAt: hAsAt };
   return {
-    period: { key: cyc.key, from: cyc.from, to: cyc.to, asOf: asOf, hrsAsAt: hAsAt },
+    period: period, gaps: opts.receipts ? uploadGaps(opts.receipts, { period: period }, DO) : null,
     workingDays: wd(cyc.from, cyc.to), workingDaysElapsed: wd(trackFrom, asOf), trackFrom: trackFrom,
     weeks: weeks, dates: dates, agents: agents,
     notRated: agents.filter(function (a) { return !a.rated; }).map(function (a) { return { code: a.code, name: a.name, tl: a.tl, tlCode: a.tlCode, sub: a.sub, why: a.rating.why }; }),
     tlAgg: tlAgg, subAgg: subAgg, leadAgg: leadAgg, floor: floor,
     budgets: bud ? { cycle: bud.cycle, fitment: bud.b.fitment, missed: bud.b.missed, hrsShare: bud.b.hrsShare, spd: bud.b.spd } : null
   };
+}
+
+/* THE UPLOAD GAP (moved here from the page in Phase E, so the digest carries it to Agent Analytics): every working day
+   (the engine's calendar) from the first committed upload — or the business month's start — to the figures' date on which
+   a daily file was not committed. No file carries a sale date (A5), so a sale first seen on a later upload is counted on
+   that later day; this says which days. receipts: vt_uploads rows {kind:'bi_fitted'|'sched_missed', state, extract_on}. */
+var GAP_KINDS = { bi_fitted: 'BI Active Fitted', sched_missed: 'Scheduled & Missed' };
+function uploadGaps(receipts, M, isDataOnlyDay) {
+  var have = { bi_fitted: {}, sched_missed: {} }, first = null, out = [];
+  (receipts || []).forEach(function (u) { if (!u || u.state !== 'committed' || !have[u.kind]) return; have[u.kind][u.extract_on] = 1; if (!first || u.extract_on < first) first = u.extract_on; });
+  if (!first || !M || !M.period || !M.period.asOf) return out;
+  for (var d = maxD(first, M.period.from); d <= M.period.asOf; d = addDays(d, 1)) {
+    if (!isWorkingDay(d, isDataOnlyDay)) continue;
+    var miss = Object.keys(GAP_KINDS).filter(function (k) { return !have[k][d]; }).map(function (k) { return GAP_KINDS[k]; });
+    if (miss.length) out.push({ date: d, missing: miss });
+  }
+  return out;
 }
 
 /* ---------------------------------------------------------------- rating (spec §6) ---- */
@@ -678,7 +700,7 @@ function driverInputs(k, a, bud) {
    effective weights published (FR-042), no penalties, no ranking. */
 function rating(a, ctx) {
   var G = R.rating, F = G.floor, cyc = cycleByKey(ctx.cycleKey), bud = budgetFor(ctx.cycleKey);
-  var base = { rated: false, why: null, score: null, adj: null, band: null, nextBand: null, parts: [], weightScored: 0, unmeasured: [], weakest: null,
+  var base = { rated: false, why: null, score: null, adj: null, band: null, nextBand: null, parts: [], weightScored: 0, unmeasured: [], weakest: null, onTarget: null, measuredCount: 0,
     window: { from: cyc.from, to: ctx.asOf || null }, budgetCycle: bud ? bud.cycle : null };
   if (R.teams.notRated.indexOf(a.sub) > -1) { base.why = 'scheduling'; return base; }
   if (((a.mtd || {}).sales || 0) < G.minInPlayToRate) { base.why = 'nodata'; return base; }
@@ -700,23 +722,45 @@ function rating(a, ctx) {
   base.nextBand = i > 0 ? { label: B[i - 1].label, min: B[i - 1].min, gap: round(B[i - 1].min - score, 1) } : null;
   var best = null; parts.forEach(function (p) { if (p.measured && (!best || p.available > best.available)) best = p; });
   base.weakest = best ? best.k : null;
+  base.onTarget = parts.filter(function (p) { return p.measured && p.onTarget; }).length; base.measuredCount = parts.filter(function (p) { return p.measured; }).length;   // the card's "n of your m drivers" (Phase E)
   return base;
 }
 
 /* ---------------------------------------------------------------- digest (plan §P) ---- */
 function driversOnce() { return R.rating.drivers.map(function (d) { return { k: d.k, label: d.label, w: d.w, dir: d.dir, note: d.note }; }); }
+/* THE PUBLISHED SHAPE (size: a full business month of ~48 agents is ~530 KB as objects, ~85 % of it day rows). So every
+   days[] in the digest is COLUMNAR — one array per day in the order of the top-level dayCols — and every fraction is kept
+   to six decimals (a rate is printed to 0.1 %). The agent row drops the weekly / daily lead-source splits (PULSE's pages
+   only) and the per-agent driver labels and notes, which travel once in drivers. Nothing is recomputed: values are carried. */
+var DAY_COLS = ['d', 'sales', 'fitted', 'scheduled', 'missed', 'cancelled', 'fitDone', 'missAppt', 'due', 'value', 'fitRate', 'missRate', 'schedRate'];
+function six(v) { return typeof v === 'number' && v % 1 !== 0 ? Math.round(v * 1e6) / 1e6 : v; }
+function dayCells(x) { return DAY_COLS.map(function (k) { return x[k] == null ? null : six(x[k]); }); }
+function compact(o) {
+  if (Array.isArray(o)) return o.map(compact);
+  if (!o || typeof o !== 'object') return six(o);
+  var r = {}; for (var k in o) r[k] = k === 'days' && Array.isArray(o[k]) ? o[k].map(dayCells) : compact(o[k]);
+  return r;
+}
+function digestRow(a) {
+  var r = {}; for (var k in a) if (k !== 'leadWeeks' && k !== 'leadDays') r[k] = a[k];
+  r.rating = copy(a.rating); r.rating.parts = (a.rating.parts || []).map(function (p) { var q = copy(p); delete q.label; delete q.note; return q; });
+  return r;
+}
+/* digest(model, {updatedAt}) — `empty` is DERIVED (no in-play sale anywhere on the floor), never the caller's say-so */
 function digest(M, opts) {
   opts = opts || {};
-  return { scorecard: 'vt', version: R.version, rulesVersion: R.version, period: M.period, empty: false, updatedAt: opts.updatedAt || null,
-    workingDays: M.workingDays, workingDaysElapsed: M.workingDaysElapsed, weeks: M.weeks, dates: M.dates, drivers: driversOnce(),
-    agents: M.agents, notRated: M.notRated, tlAgg: M.tlAgg, subAgg: M.subAgg, leadAgg: M.leadAgg, floor: M.floor, budgets: M.budgets };
+  var fl = M.floor && M.floor.mtd, empty = !(fl && fl.sales > 0) && !M.agents.some(function (a) { return a.mtd && a.mtd.sales > 0; });
+  return { scorecard: 'vt', version: R.version, rulesVersion: R.version, period: M.period, empty: empty, updatedAt: opts.updatedAt || null,
+    workingDays: M.workingDays, workingDaysElapsed: M.workingDaysElapsed, trackFrom: M.trackFrom, weeks: M.weeks, dates: M.dates, drivers: driversOnce(),
+    agents: compact(M.agents.map(digestRow)), notRated: M.notRated, tlAgg: compact(M.tlAgg), subAgg: compact(M.subAgg), leadAgg: compact(M.leadAgg),
+    floor: compact(M.floor), budgets: M.budgets, gaps: M.gaps || null, dayCols: DAY_COLS, minima: { cases: R.rating.minCases, trackedDays: R.rating.minTrackedDays, floor: R.rating.floor } };
 }
 function emptyCyclePayload(cycleKey, opts) {
   var c = cycleByKey(cycleKey), bud = budgetFor(cycleKey);
   return { scorecard: 'vt', version: R.version, rulesVersion: R.version, period: { key: c.key, from: c.from, to: c.to, asOf: null, hrsAsAt: null }, empty: true,
     updatedAt: (opts && opts.updatedAt) || null, workingDays: workingDaysBetween(c.from, c.to), workingDaysElapsed: null, weeks: weeksOf(c), dates: [],
     drivers: driversOnce(), agents: [], notRated: [], tlAgg: [], subAgg: {}, leadAgg: {},
-    floor: { mtd: null, weeks: [], days: [], hrsAhead: null, unmatched: null },
+    floor: { mtd: null, weeks: [], days: [], hrsAhead: null, unmatched: null }, trackFrom: null, gaps: null, dayCols: DAY_COLS, minima: { cases: R.rating.minCases, trackedDays: R.rating.minTrackedDays, floor: R.rating.floor },
     budgets: bud ? { cycle: bud.cycle, fitment: bud.b.fitment, missed: bud.b.missed, hrsShare: bud.b.hrsShare, spd: bud.b.spd } : null };
 }
 
@@ -725,6 +769,6 @@ return {
   detect: detect, extractDate: extractDate, parseBi: parseBi, parseSm: parseSm, parseOpeningBook: parseOpeningBook, parseRoster: parseRoster,
   normSeller: normSeller, resolveSeller: resolveSeller, leadSourceOf: leadSourceOf, leadGroupOf: leadGroupOf, subOf: subOf,
   emptyBook: emptyBook, merge: merge, bookFromRpc: bookFromRpc, guardUpload: guardUpload,
-  rates: rates, model: model, rating: rating, bandOf: bandOf, digest: digest, emptyCyclePayload: emptyCyclePayload
+  rates: rates, model: model, rating: rating, bandOf: bandOf, digest: digest, emptyCyclePayload: emptyCyclePayload, uploadGaps: uploadGaps
 };
 });
