@@ -224,7 +224,14 @@ These go into `specs/vt_engine_rules.json` → `budgets["cycle-YYYY-MM"]` **and*
 ## Known, documented differences from the hand-kept report
 
 These are not bugs. Never "fix" them toward the hand sheet:
-- **Cancelled is absent.** No upload carries a cancellation, so the column reads "—", never 0, until a source exists (`cancelledFrom`).
+- **Cancelled is derived, not copied (spec A13, 2026-11-23).** No upload carries a cancellation, so a Scheduled/Missed sale
+  in neither file of a complete extract day is Cancelled (`dropped`), and a BI row with a deactivate date is Cancelled
+  (`deactivated`). Against the 10 Nov files with the report's Schedulers Data as the prior state (`verify-vt-oracle` R10):
+  259 cancelled = 204 the report also calls Cancelled (90 Current + 114 Rollover — all of them) + 55 the report still
+  calls Scheduled/Missed (1 Current Missed, 18 Rollover Scheduled, 36 Rollover Missed: its sticky rows that no export
+  carries); no Fitted case is cancelled. Cancellation % is over ALL sales and is shown, never scored.
+- **Migration 071 now carries `vt_cases.cancel_reason`, `vt_case_events.reason` and the `bad_cancel` refusal.** It is still
+  unapplied; apply it as written (no separate migration).
 - **The 11 manual credits are not copied.** The hand-kept report credits 11 sales to someone other than the Salesforce
   seller. The engine follows Salesforce and the Agent List.
 - **About 6.6 % of lead sources were relabelled** by hand in the report. The engine folds the Salesforce partner.

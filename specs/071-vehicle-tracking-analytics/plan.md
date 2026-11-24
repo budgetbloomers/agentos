@@ -47,7 +47,7 @@ and times out at about 8 s. Compare-and-set on shared stores. The month fence ap
 | Principle | How this plan holds it |
 |---|---|
 | I Engine decides | All VT maths in `nicks_code/vt-engine.js`, driven by `VT_RULES` (inlined copy of `specs/vt_engine_rules.json`, drift guard `verify-vt-rules.mjs`, dated `_changes[]`). Worker and pages only carry and paint verdicts. The merge logic lives ONLY in the engine; SQL applies the rows it computed. |
-| II Absence ≠ nought | Cancelled "—"; no target → unmeasured; < 5 cases → shown, not scored; empty-cycle payload has null figures. |
+| II Absence ≠ nought | Cancelled is a real count since A13 (0 when none); no target → unmeasured; < 5 cases → shown, not scored; empty-cycle payload has null figures. |
 | III Agent List is the record | VT org read from the roster of record (`/api/roster` + new read-only `vt_roster_at()`); no second list ingester; unmatched flagged. |
 | IV Like for like | Targets per sub-campaign × tenure (the list's own cells; the Sales Review budgets per tenure). No cross-agent ranking. |
 | V Locked down | New tables: RLS on, no policies, privileges revoked from anon/authenticated. New functions: EXECUTE revoked (re-assert of migration-049). Routes are staff-only or portal-scoped in the Worker. PII dropped in the browser. |
@@ -282,7 +282,7 @@ Digest (`VTEngine.digest`):
   empty:false, updatedAt, rulesVersion, workingDays, workingDaysElapsed, weeks:[{from,to,label}], dates:[…],
   drivers:[{k,label,w,dir,note}],                  // once, not per agent (VAS lesson: 176 KB saved)
   agents:[{ code, name, tl, tlCode, sub, tenure, role, target, rated,
-            mtd:{sales,current,rollover,fitted,scheduled,missed,cancelled:null,fitRate,missRate,schedRate,
+            mtd:{sales,current,rollover,fitted,scheduled,missed,cancelled,fitRate,missRate,schedRate,canRate,canBudget,
                  fitDone,missAppt,due,spd,toTarget,value},
             weeks:[{k, …same counts}], days:[{d, …same counts}],
             leads:{revx:{…},…},                     // lead-source split of mtd
@@ -300,7 +300,7 @@ Digest (`VTEngine.digest`):
 Top level: `_source`, `_generated`, `_changes[]` (dated `{date,by,key,from,to,why}`), `version`, and:
 - `detection`: per kind, `{requireHeaders[], beforeRules[], sheetName?, footerPattern, filenameDate}`.
 - `vtUnitTypes[]`, `unitTypeColumn` ("first Unit Type, column Y").
-- `status`: `{sameExtractPrecedence[], terminal[], sticky:true, olderExtractMayChangeStatus:false, cancelledFrom:null}`.
+- `status`: `{sameExtractPrecedence[], terminal[], sticky:true, olderExtractMayChangeStatus:false, cancelledFrom:['dropped','deactivated'], cancellation:{…}}` (spec A13, 2026-11-23).
 - `identity`: `{stripSuffixes[], firstLastTokenFallback:true, scope:'VT'}`.
 - `leadSources`: partner → key map, `{panimaxNewSales:{referralIfTeam:'referral', else:'predictive'}}`, groups.
 - `teams`: sub-campaign parse from `campaign_raw` (`/^Matrix Vehicle Tracking - (.+)$/`), `scheduling` role.
@@ -484,3 +484,25 @@ Applied in `worker/src/{rules,vt,index,portal,campaign}.mjs`, `agent/vt-view.js`
   (a runbook step). The text scan on VAS history keys does not
   catch a `\u`-escaped key name (only staff can write those keys). A VT-only team leader still gets the VAS 404 when no
   VAS digest is published at all.
+
+### Derived cancellation (owner-approved fix, 2026-11-23 — spec A13)
+
+- **Engine:** `VTEngine.merge(book, parsed, {…, receipts})` applies the file, then `dropCheck(kind, extractOn, receipts)`:
+  the day is complete when a `bi_fitted` and a `sched_missed` receipt (the file being merged counts) share the extract
+  date; only then, and only if no later day is complete, every `scheduled`/`missed` case with `lastSeen < extractOn`
+  becomes `cancelled` / `cancelReason:'dropped'`, `statusOn = extractOn`, one event `{to:'cancelled', reason:'dropped'}`.
+  No receipts → nothing cancelled. `parseBi` reads `Contract Status` (B) and `Contract Deactivate Date` (P), optional; a
+  deactivated case is `cancelReason:'deactivated'`. Counts gain `toCancelled, cancelledDropped, cancelledDeactivated,
+  reappeared, completeDay`; the merge returns `cancel.note` for the receipt. `rates()` adds `canRate = cancelled / sales`;
+  agent, TL, sub-campaign and floor MTD rows carry `canBudget`; `DAY_COLS` gains `canRate`; `budgets.cancelled` travels.
+- **Station:** reads `GET /api/vt/uploads` AFTER the book on every attempt and passes it as `receipts`, so a file committed
+  in between moves the revision and this commit is refused (version_conflict) and re-merged.
+- **Database (071, unapplied, edited in place):** `vt_cases.cancel_reason` (`dropped`|`deactivated`, required exactly when
+  `status='cancelled'`), `vt_case_events.reason` (last column; required exactly when `to_status='cancelled'`), both
+  upserted by `vt_upload_commit` and returned by `vt_book` (BOOK_COLS / EVENT_COLS gain `cancelReason` / `reason`).
+  `vt_upload_commit` refuses `bad_cancel` — a `dropped` event dated other than the upload's extract day, from an opening
+  book, without the other daily kind of that date committed, or when a later day is complete — under the revision lock.
+  `vt_trim` already treats a cancelled case as closed. The Worker names `bad_cancel` (409); the station says it in words.
+- **Guards:** `verify-vt-engine` (completeness, order, idempotency, gap, out-of-order, reappearance, Fitted, rollover,
+  deactivation, Missed Rate, the three period views), `verify-vt-db` R11, `verify-vt-station-fixes` F7–F8,
+  `verify-vt-rules` 3b (rule book ⇔ SQL checks), `verify-vt-oracle` R10, `verify-vt-pages` / `-portal` / `-digest`.

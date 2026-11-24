@@ -1,14 +1,19 @@
 {
   "_source": "THE VT RULE BOOK OF RECORD (Spec Kit 071). Finalised from specs/071-vehicle-tracking-analytics/rules-draft.json; the evidence for every value is in that draft, spec.md (F1-F12, A1-A12, D7) and specs/vt-analytics/workbook-rules.md. The operative copy is VT_RULES inlined in nicks_code/vt-engine.js (the apps run from file://): every key here that does not start with '_' must equal VT_RULES field by field - nicks_code/diagnostics/verify-vt-rules.mjs fails on drift. Change both together, with a dated _changes[] entry.",
   "_generated": "2026-11-23",
-  "version": "vt-1.0",
+  "version": "vt-1.1",
   "_changes": [
     { "date": "2026-11-23", "by": "Spec Kit 071 Phase B builder", "key": "*", "from": "rules-draft.json (draft 1)", "to": "vt-1.0", "why": "first rule book of record; _evidence prose dropped (it lives in the draft and the spec), _cells kept" },
     { "date": "2026-11-23", "by": "Spec Kit 071 Phase B builder", "key": "vat", "from": 0.15, "to": 1.15, "why": "the draft said 'must equal MTD_RULES.vat', and MTD_RULES.vat is the MULTIPLIER 1.15 (specs/mtd_engine_rules.json reference_data.vat_multiplier); stored the same way so the equality is literal. Fitted value = charge ex VAT x vat" },
     { "date": "2026-11-23", "by": "Spec Kit 071 Phase B builder", "key": "periods.extraHolidays", "from": null, "to": ["2026-11-04"], "why": "the one-off 4 Nov 2026 election holiday (MTD_RULES.extraHolidays, mirrored; verify-vt-rules fails if the two differ). It explains A4: the November cycle has 23 weekdays and the Sales Review budgets 22 dialing days" },
     { "date": "2026-11-23", "by": "Spec Kit 071 Phase B builder", "key": "identity.chain", "from": ["exact", "alias", "near_one_typo", "first_last_token_unique_in_VT"], "to": ["exact", "alias", "near", "first_last"], "why": "the chain keys are the seller_match values stored on the case (plan DB-2)" },
     { "date": "2026-11-23", "by": "Spec Kit 071 Phase B builder", "key": "rating.minInPlayToRate", "from": null, "to": 1, "why": "US2-2: an agent with no in-play case this business month is listed as notRated why 'nodata', never shown a zero score" },
-    { "date": "2026-11-23", "by": "Spec Kit 071 Phase B builder", "key": "saleDay.goLive", "from": null, "to": "unknown", "why": "A6 made operative: a case first seen on the book's opening extract (book.openedOn) has no sale day unless the opening book supplies one; working days for the rating start the day after the opening extract when no opening book was loaded" }
+    { "date": "2026-11-23", "by": "Spec Kit 071 Phase B builder", "key": "saleDay.goLive", "from": null, "to": "unknown", "why": "A6 made operative: a case first seen on the book's opening extract (book.openedOn) has no sale day unless the opening book supplies one; working days for the rating start the day after the opening extract when no opening book was loaded" },
+    { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder (owner: \"ok do the recommend fix\")", "key": "status.cancelledFrom", "from": null, "to": ["dropped", "deactivated"], "why": "No upload carries a cancellation (BI Active Fitted is active-only: Contract Status Active on all 19,404 rows, Contract Deactivate Date blank on every row; S&M Status holds attempts only), but the hand report marks 90 of the 93 current-month sales that are in NEITHER 10 Nov file Cancelled (97 %). A Scheduled/Missed case absent from both files of a complete extract day is now Cancelled, reason dropped; a BI row with a deactivate date or a non-Active Contract Status is Cancelled, reason deactivated. Cancelled is a count (0 when none) and Cancellation % = cancelled / sales sits beside the 5 % budget. Supersedes spec A8 ('Cancelled not invented')." },
+    { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder", "key": "status.cancellation", "from": null, "to": "dropped + deactivated rules", "why": "the exact trigger: evaluated by the commit of an extract day's second file, against that day's two files, only when no later extract day is complete; a dropped case returns on a file of its cancellation day or later; a deactivated case only on a newer Active BI row; a fitted case is never cancelled by absence" },
+    { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder", "key": "status.sameExtractPrecedence", "from": ["fitted", "missed", "scheduled"], "to": ["cancelled", "fitted", "missed", "scheduled"], "why": "an explicit deactivation in the BI file wins over Fitted for that case (R4)" },
+    { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder", "key": "columns.bi.contractStatus / deactivateOn / biOptional", "from": null, "to": ["B", "P"], "why": "the two BI contract columns, read by position (else by name), optional: a file without them deactivates nothing" },
+    { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder", "key": "reports.columns canRate / canBudget / cancelled / fitDone", "from": "Cancelled null; no Cancellation %", "to": "Cancelled count; canRate = cancelled / sales; canBudget = budgets[cycle].cancelled[sub]; fitDone keeps an install that was later deactivated", "why": "R6; denominators stay ALL the set's sales (a cancelled sale stays in Sales, as the hand report's Sale Count = 1 on cancelled rows)" }
   ],
 
   "detection": {
@@ -32,7 +37,8 @@
   },
 
   "columns": {
-    "bi": { "byPosition": true, "caseNumber": "AS", "unitType": "Y", "bundle": "Z", "chargeEx": "X", "chargeCheck": "AD", "installedOn": "Q", "contractCreatedOn": "O", "createdBy": "L", "sourcePartner": "AP" },
+    "bi": { "byPosition": true, "caseNumber": "AS", "unitType": "Y", "bundle": "Z", "chargeEx": "X", "chargeCheck": "AD", "installedOn": "Q", "contractCreatedOn": "O", "createdBy": "L", "sourcePartner": "AP", "contractStatus": "B", "deactivateOn": "P" },
+    "biOptional": ["contractStatus", "deactivateOn"],
     "sm": { "caseNumber": "C", "productType": "J", "attempt": "L", "bundle": "M", "apptOn": "R", "createdBy": "S", "outcome": "U", "sourcePartner": "A" },
     "opening": { "caseNumber": "F", "saleDate": "B" },
     "discardAll": "every column not listed above (customer name, mobile, registration, chassis, box, account/contract numbers, consultants, fitment partner, last modified by)",
@@ -45,13 +51,20 @@
     "values": ["scheduled", "missed", "fitted", "cancelled"],
     "fromBi": "fitted",
     "fromSm": { "Scheduled Fitment": "scheduled", "Missed Fitment": "missed" },
-    "sameExtractPrecedence": ["fitted", "missed", "scheduled"],
+    "sameExtractPrecedence": ["cancelled", "fitted", "missed", "scheduled"],
     "acrossExtracts": "newer extract decides between missed and scheduled",
     "terminal": ["fitted"],
     "open": ["scheduled", "missed"],
     "sticky": true,
     "olderExtractMayChangeStatus": false,
-    "cancelledFrom": null
+    "cancelledFrom": ["dropped", "deactivated"],
+    "cancellation": {
+      "reasons": ["dropped", "deactivated"],
+      "dropped": { "from": ["scheduled", "missed"], "completeDay": ["bi_fitted", "sched_missed"], "absentFrom": "both files of the extract day", "trigger": "the commit of the second file of an extract day, only when no later extract day is complete", "onDate": "that extract day", "returns": "seen again in a file of that extract day or later: takes that file's status" },
+      "deactivated": { "from": "bi", "when": "Contract Deactivate Date (P) not blank, or Contract Status (B) not blank and not activeStatus", "activeStatus": "Active", "onDate": "the deactivate date, never before the case's previous status day nor after the extract day; no date: the extract day", "winsOverFitted": true, "returns": "a newer BI row that is Active with no deactivate date: fitted" },
+      "fitDoneKeepsInstall": true,
+      "_note": "see _changes 2026-11-23 status.cancelledFrom and spec.md A8 (superseded) / A13"
+    }
   },
 
   "saleDay": {
@@ -123,11 +136,12 @@
       { "id": "fitted", "label": "Fitted", "f": "count(set where status=fitted)", "basis": "status as at" },
       { "id": "scheduled", "label": "Scheduled", "f": "count(set where status=scheduled)", "basis": "status as at" },
       { "id": "missed", "label": "Missed", "f": "count(set where status=missed)", "basis": "status as at" },
-      { "id": "cancelled", "label": "Cancelled", "f": "count(set where status=cancelled) or null when cancelledFrom is null", "basis": "status as at" },
+      { "id": "cancelled", "label": "Cancelled", "f": "count(set where status=cancelled); 0 when none", "basis": "status as at (the event's day: the complete extract day it dropped out, or the deactivate date)" },
       { "id": "fitRate", "label": "Fitted Rate %", "f": "fitted / sales" },
       { "id": "missRate", "label": "Missed Rate %", "f": "missed / sales" },
       { "id": "schedRate", "label": "Scheduled Rate %", "f": "scheduled / sales" },
-      { "id": "fitDone", "label": "Fitments done", "f": "count(cases fitted, fittedDay in window)", "basis": "fittedDay" },
+      { "id": "canRate", "label": "Cancellation %", "f": "cancelled / sales" },
+      { "id": "fitDone", "label": "Fitments done", "f": "count(cases fitted, or fitted and later deactivated, fittedDay in window)", "basis": "fittedDay" },
       { "id": "missAppt", "label": "Missed appointments", "f": "count(events to=missed, apptDay in window)", "basis": "apptDay" },
       { "id": "due", "label": "Due to fit", "f": "count(open scheduled, apptDay in window)", "basis": "apptDay" },
       { "id": "hrsAhead", "label": "Hrs Ahead 24/48/72/72+/Past due", "f": "bucket(apptDay - asAt) over open scheduled", "basis": "asAt", "mtdOnly": true },
@@ -137,6 +151,7 @@
       { "id": "target", "label": "Target SPD", "f": "Agent List Target; team = sum" },
       { "id": "toTarget", "label": "% to target", "f": "spd / target; teams: sum(current of targeted agents) / sum(target x workingDays)" },
       { "id": "fitBudget", "label": "Fitment budget %", "f": "budgets[cycle].fitment[sub][tenure]" },
+      { "id": "canBudget", "label": "Cancellation budget %", "f": "budgets[cycle].cancelled[sub]" },
       { "id": "value", "label": "Fitted value (incl VAT, Charge Amount basis)", "f": "sum(chargeEx of fitted) * vat", "basis": "fittedDay" },
       { "id": "noSaleDay", "label": "Sales without a sale day", "f": "count(set where saleDay null)", "mtdOnly": true, "showWhenPositive": true }
     ],

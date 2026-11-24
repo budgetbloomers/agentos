@@ -25,7 +25,7 @@
 
 /* @vt-rules start */
 var VT_RULES = {
-  "version": "vt-1.0",
+  "version": "vt-1.1",
   "detection": {
     "vtBiFitted": {"requireHeaders":["installation status","vehicle reg number","box number","unit type","case number","created by"],"runBefore":["bi","inactive"],"footerPattern":"^Applied filters:"},
     "vtSchedMissed": {"requireHeaders":["missedandscheduledfitment","fitment date","case number","created by"],"footerPattern":"^No filters applied"},
@@ -34,7 +34,8 @@ var VT_RULES = {
     "refuseIn": ["ops.detectSource","pulse.rakeDetect","relay.archiveUpload"]
   },
   "columns": {
-    "bi": {"byPosition":true,"caseNumber":"AS","unitType":"Y","bundle":"Z","chargeEx":"X","chargeCheck":"AD","installedOn":"Q","contractCreatedOn":"O","createdBy":"L","sourcePartner":"AP"},
+    "bi": {"byPosition":true,"caseNumber":"AS","unitType":"Y","bundle":"Z","chargeEx":"X","chargeCheck":"AD","installedOn":"Q","contractCreatedOn":"O","createdBy":"L","sourcePartner":"AP","contractStatus":"B","deactivateOn":"P"},
+    "biOptional": ["contractStatus","deactivateOn"],
     "sm": {"caseNumber":"C","productType":"J","attempt":"L","bundle":"M","apptOn":"R","createdBy":"S","outcome":"U","sourcePartner":"A"},
     "opening": {"caseNumber":"F","saleDate":"B"},
     "discardAll": "every column not listed above (customer name, mobile, registration, chassis, box, account/contract numbers, consultants, fitment partner, last modified by)",
@@ -45,13 +46,19 @@ var VT_RULES = {
     "values": ["scheduled","missed","fitted","cancelled"],
     "fromBi": "fitted",
     "fromSm": {"Scheduled Fitment":"scheduled","Missed Fitment":"missed"},
-    "sameExtractPrecedence": ["fitted","missed","scheduled"],
+    "sameExtractPrecedence": ["cancelled","fitted","missed","scheduled"],
     "acrossExtracts": "newer extract decides between missed and scheduled",
     "terminal": ["fitted"],
     "open": ["scheduled","missed"],
     "sticky": true,
     "olderExtractMayChangeStatus": false,
-    "cancelledFrom": null
+    "cancelledFrom": ["dropped","deactivated"],
+    "cancellation": {
+      "reasons": ["dropped","deactivated"],
+      "dropped": {"from":["scheduled","missed"],"completeDay":["bi_fitted","sched_missed"],"absentFrom":"both files of the extract day","trigger":"the commit of the second file of an extract day, only when no later extract day is complete","onDate":"that extract day","returns":"seen again in a file of that extract day or later: takes that file's status"},
+      "deactivated": {"from":"bi","when":"Contract Deactivate Date (P) not blank, or Contract Status (B) not blank and not activeStatus","activeStatus":"Active","onDate":"the deactivate date, never before the case's previous status day nor after the extract day; no date: the extract day","winsOverFitted":true,"returns":"a newer BI row that is Active with no deactivate date: fitted"},
+      "fitDoneKeepsInstall": true
+    }
   },
   "saleDay": {
     "basis": "first_seen",
@@ -114,11 +121,12 @@ var VT_RULES = {
       {"id":"fitted","label":"Fitted","f":"count(set where status=fitted)","basis":"status as at"},
       {"id":"scheduled","label":"Scheduled","f":"count(set where status=scheduled)","basis":"status as at"},
       {"id":"missed","label":"Missed","f":"count(set where status=missed)","basis":"status as at"},
-      {"id":"cancelled","label":"Cancelled","f":"count(set where status=cancelled) or null when cancelledFrom is null","basis":"status as at"},
+      {"id":"cancelled","label":"Cancelled","f":"count(set where status=cancelled); 0 when none","basis":"status as at (the event's day: the complete extract day it dropped out, or the deactivate date)"},
       {"id":"fitRate","label":"Fitted Rate %","f":"fitted / sales"},
       {"id":"missRate","label":"Missed Rate %","f":"missed / sales"},
       {"id":"schedRate","label":"Scheduled Rate %","f":"scheduled / sales"},
-      {"id":"fitDone","label":"Fitments done","f":"count(cases fitted, fittedDay in window)","basis":"fittedDay"},
+      {"id":"canRate","label":"Cancellation %","f":"cancelled / sales"},
+      {"id":"fitDone","label":"Fitments done","f":"count(cases fitted, or fitted and later deactivated, fittedDay in window)","basis":"fittedDay"},
       {"id":"missAppt","label":"Missed appointments","f":"count(events to=missed, apptDay in window)","basis":"apptDay"},
       {"id":"due","label":"Due to fit","f":"count(open scheduled, apptDay in window)","basis":"apptDay"},
       {"id":"hrsAhead","label":"Hrs Ahead 24/48/72/72+/Past due","f":"bucket(apptDay - asAt) over open scheduled","basis":"asAt","mtdOnly":true},
@@ -128,6 +136,7 @@ var VT_RULES = {
       {"id":"target","label":"Target SPD","f":"Agent List Target; team = sum"},
       {"id":"toTarget","label":"% to target","f":"spd / target; teams: sum(current of targeted agents) / sum(target x workingDays)"},
       {"id":"fitBudget","label":"Fitment budget %","f":"budgets[cycle].fitment[sub][tenure]"},
+      {"id":"canBudget","label":"Cancellation budget %","f":"budgets[cycle].cancelled[sub]"},
       {"id":"value","label":"Fitted value (incl VAT, Charge Amount basis)","f":"sum(chargeEx of fitted) * vat","basis":"fittedDay"},
       {"id":"noSaleDay","label":"Sales without a sale day","f":"count(set where saleDay null)","mtdOnly":true,"showWhenPositive":true}
     ],
@@ -257,6 +266,10 @@ var periods = { cycleOf: cycleOf, cycleByKey: cycleByKey, weeksOf: weeksOf, week
    Charge Amount and Unit Type, so BI is read by POSITION and each position is checked by name). */
 var BI_NAMES = { caseNumber: 'case number', unitType: 'unit type', bundle: 'product bundle', chargeEx: 'charge amount', chargeCheck: 'charge amount',
   installedOn: 'installation date', contractCreatedOn: 'contract create date', createdBy: 'created by', sourcePartner: 'source partner' };
+/* R4 (derived-cancellation fix): the two contract columns are OPTIONAL — read by position when the header there is the
+   expected name, else by the first header of that name, else absent (no deactivation is ever inferred from a missing column). */
+var BI_OPTIONAL = { contractStatus: 'contract status', deactivateOn: 'contract deactivate date' };
+function optIndex(H, f) { var i = colIndex(R.columns.bi[f]); return H[i] === BI_OPTIONAL[f] ? i : H.indexOf(BI_OPTIONAL[f]); }
 var SM_NAMES = { caseNumber: 'case number', productType: 'product type', attempt: 'status', bundle: 'bundle name', apptOn: 'fitment date',
   createdBy: 'created by', outcome: 'missedandscheduledfitment', sourcePartner: 'opportunity source partner' };
 
@@ -288,7 +301,9 @@ function parseBi(aoa) {
   Object.keys(BI_NAMES).forEach(function (f) { var i = colIndex(C[f]); idx[f] = i; if (H[i] !== BI_NAMES[f]) missing.push(BI_NAMES[f] + ' (column ' + C[f] + ')'); });
   var out = { kind: 'bi', rows: 0, vtLines: 0, skippedFooter: 0, skippedBlank: 0, missing: missing, cases: {}, warnings: [] };
   if (missing.length) return out;
-  var W = makeWarn(), VT = R.vtUnitTypes, foot = R.detection.vtBiFitted.footerPattern;
+  var W = makeWarn(), VT = R.vtUnitTypes, foot = R.detection.vtBiFitted.footerPattern, D = R.status.cancellation.deactivated;
+  (R.columns.biOptional || []).forEach(function (f) { idx[f] = optIndex(H, f); });
+  out.deactivated = 0;
   for (var n = 1; n < aoa.length; n++) {
     var r = aoa[n]; if (blankRow(r)) continue;
     if (footer(r[0], foot)) { out.skippedFooter++; continue; }
@@ -299,7 +314,13 @@ function parseBi(aoa) {
     var x = +r[idx.chargeEx] || 0, chk = +r[idx.chargeCheck] || 0;
     if (Math.abs(x - chk) > 0.005) W.add('Charge Amount X differs from AD on a VT line: X used');
     var inst = dateCell(r[idx.installedOn], W.add, 'Installation Date'), con = dateCell(r[idx.contractCreatedOn], W.add, 'Contract Create Date');
-    var c = out.cases[cn] || (out.cases[cn] = { products: [], bundle: null, chargeEx: 0, fittedOn: null, seller: null, partner: null });
+    var c = out.cases[cn] || (out.cases[cn] = { products: [], bundle: null, chargeEx: 0, fittedOn: null, seller: null, partner: null, deactivated: false, deactivatedOn: null });
+    /* a VT line deactivated (R4): a Deactivate Date, or a Contract Status that is not blank and not Active. The status text
+       itself never leaves this function; only the flag and the date do. */
+    var dOn = idx.deactivateOn > -1 ? dateCell(r[idx.deactivateOn], W.add, 'Contract Deactivate Date') : null;
+    var cst = idx.contractStatus > -1 ? strCell(r[idx.contractStatus]) : null;
+    var hasD = idx.deactivateOn > -1 && r[idx.deactivateOn] != null && r[idx.deactivateOn] !== '';
+    if (hasD || (cst && cst !== D.activeStatus)) { if (!c.deactivated) out.deactivated++; c.deactivated = true; c.deactivatedOn = minD(c.deactivatedOn, dOn); }
     c.products = union(c.products, [unit]);
     c.bundle = c.bundle || strCell(r[idx.bundle]);
     c.chargeEx = round(c.chargeEx + x, 2);
@@ -437,12 +458,11 @@ function sameRow(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 function applyObs(prev, o, kind, ext, rel, ctx) {
   var row = prev ? copy(prev) : { caseNumber: o.cn, status: null, statusOn: null, soldOn: null, soldBasis: null, firstSeen: ext, lastSeen: ext,
     apptOn: null, fittedOn: null, smAttempt: null, products: [], bundle: null, chargeEx: null, partnerRaw: null, leadSource: null,
-    sellerName: null, sellerCb: null, sellerMatch: null };
-  var obsStatus = kind === 'bi' ? R.status.fromBi : o.status, wins = rel === 'new' || rel === 'newer' || rel === 'same';
-  var terminal = row.status && R.status.terminal.indexOf(row.status) > -1, next = row.status;
-  if (rel === 'new') next = obsStatus;
-  else if (!terminal && rel === 'same') next = better(row.status, obsStatus);
-  else if (!terminal && rel === 'newer') next = obsStatus;
+    sellerName: null, sellerCb: null, sellerMatch: null, cancelReason: null };
+  if (row.cancelReason === undefined) row.cancelReason = null;
+  var obsDeact = kind === 'bi' && !!o.deactivated;
+  var obsStatus = obsDeact ? 'cancelled' : kind === 'bi' ? R.status.fromBi : o.status, wins = rel === 'new' || rel === 'newer' || rel === 'same';
+  var st = nextStatus(row, obsStatus, obsDeact, kind, ext, rel), next = st.status;
   var set = function (k, v, overwrite) { if (v != null && (overwrite || row[k] == null)) row[k] = v; };
   if (kind === 'bi') { set('fittedOn', o.fittedOn, wins); set('chargeEx', o.chargeEx, wins); set('bundle', o.bundle, false); }
   else { set('apptOn', o.apptOn, wins); set('smAttempt', o.attempt, wins); set('bundle', o.bundle, wins); }
@@ -456,9 +476,30 @@ function applyObs(prev, o, kind, ext, rel, ctx) {
   row.firstSeen = minD(row.firstSeen, ext); row.lastSeen = maxD(row.lastSeen, ext);
   if (row.soldBasis !== 'opening_book') { var sd = saleDayOf(row.firstSeen, ctx.openedOn); row.soldOn = sd.soldOn; row.soldBasis = sd.soldBasis; }
   var event = null;
-  if (next !== row.status) { event = { caseNumber: o.cn, onDate: ext, from: row.status, to: next, apptOn: row.apptOn }; row.status = next; row.statusOn = ext; }
+  if (next !== row.status || st.reason !== row.cancelReason) {
+    var on = next === 'cancelled' && st.reason === 'deactivated' && row.status !== 'cancelled' ? deactDay(o.deactivatedOn, ext, row.statusOn) : ext;
+    event = { caseNumber: o.cn, onDate: on, from: row.status, to: next, apptOn: row.apptOn, reason: next === 'cancelled' ? st.reason : null };
+    row.status = next; row.statusOn = on; row.cancelReason = next === 'cancelled' ? st.reason : null;
+  }
   return { row: row, event: event };
 }
+/* THE STATUS ONE OBSERVATION LEADS TO (A7 + the derived-cancellation fix R2–R4). Same extract: Cancelled (deactivated) >
+   Fitted > Missed > Scheduled. Newer extract: decides between Missed and Scheduled; Fitted is terminal except to an explicit
+   deactivation. A case cancelled because it DROPPED out of both files returns to whatever a file of its cancellation day or
+   later says (a late file for an earlier day never un-cancels it). A DEACTIVATED case returns only on a newer BI row that is
+   Active again — a Scheduled & Missed booking cannot reactivate a contract. An older extract never changes a status. */
+function nextStatus(row, obs, obsDeact, kind, ext, rel) {
+  var prev = row.status, why = row.cancelReason || null, out = function (s) { return { status: s, reason: s === 'cancelled' ? 'deactivated' : null }; };
+  if (rel === 'new') return out(obs);
+  if (prev === 'cancelled' && why === 'dropped') return ext >= row.statusOn ? out(obs) : { status: prev, reason: why };
+  if (prev === 'cancelled') return kind === 'bi' && !obsDeact && rel === 'newer' ? out(R.status.fromBi) : { status: prev, reason: why };
+  if (R.status.terminal.indexOf(prev) > -1) return obsDeact && rel !== 'older' ? out('cancelled') : { status: prev, reason: null };
+  if (rel === 'same') return out(better(prev, obs));
+  if (rel === 'newer') return out(obs);
+  return { status: prev, reason: why };
+}
+/* the day a deactivation counts from: its own date, never before the case's last status day, never after the extract */
+function deactDay(d, ext, prevOn) { return maxD(minD(d || ext, ext), prevOn && prevOn <= ext ? prevOn : null); }
 
 /* merge(book, parsed, {extractOn, roster, aliases}) → { book, cases (changed rows), events (new),
    counts, unmatched, warnings }. Pure and deterministic: the input book is never touched. */
@@ -466,7 +507,10 @@ function merge(book, parsed, opts) {
   book = book || emptyBook(); opts = opts || {};
   var ext = opts.extractOn, kind = parsed.kind, cases = copy(book.cases || {}), changed = [], events = [];
   var counts = { rows: parsed.rows || 0, vtLines: parsed.vtLines != null ? parsed.vtLines : (parsed.lines || 0), cases: 0, 'new': 0, toFitted: 0, toMissed: 0, toScheduled: 0,
+    toCancelled: 0, cancelledDropped: 0, cancelledDeactivated: 0, reappeared: 0, completeDay: null,
     changed: 0, skippedFooter: parsed.skippedFooter || 0, skippedBlank: parsed.skippedBlank || 0, notInBook: 0 };
+  var TO = { fitted: 'toFitted', missed: 'toMissed', scheduled: 'toScheduled', cancelled: 'toCancelled' }, cancel = null;
+  var tallyEvent = function (e) { counts[TO[e.to]]++; if (e.to === 'cancelled') counts[e.reason === 'dropped' ? 'cancelledDropped' : 'cancelledDeactivated']++; else if (e.from === 'cancelled') counts.reappeared++; };
   var out = { rev: book.rev || 0, openedOn: book.openedOn || null, openingBookOn: book.openingBookOn || null, cases: cases, events: null };
   var unmatched = {}, warnings = (parsed.warnings || []).slice();
   if (!ext) throw new Error('merge needs opts.extractOn');
@@ -489,20 +533,59 @@ function merge(book, parsed, opts) {
       var rel = !prev ? 'new' : ext > prev.lastSeen ? 'newer' : ext === prev.lastSeen ? 'same' : 'older';
       var r = applyObs(prev, o, kind, ext, rel, ctx);
       if (!prev) counts['new']++;
-      if (r.event) { events.push(r.event); counts[{ fitted: 'toFitted', missed: 'toMissed', scheduled: 'toScheduled' }[r.event.to]]++; }
+      if (r.event) { events.push(r.event); tallyEvent(r.event); }
       if (!r.row.sellerCb && r.row.sellerName) unmatched[r.row.sellerName] = (unmatched[r.row.sellerName] || 0) + 1;
       if (!prev || !sameRow(r.row, prev)) { cases[cn] = r.row; changed.push(r.row); }
     });
+    /* R1 · DERIVED CANCELLATION, after every observation of this file is applied (so the day's union is in last_seen) */
+    cancel = dropCheck(kind, ext, opts.receipts);
+    counts.completeDay = cancel.complete;
+    if (cancel.evaluate) {
+      var seen = {}; changed.forEach(function (row) { seen[row.caseNumber] = 1; });
+      sortedKeys(cases).forEach(function (cn) {
+        var row = cases[cn];
+        if (R.status.cancellation.dropped.from.indexOf(row.status) < 0 || !(row.lastSeen < ext)) return;
+        var nr = copy(row), e = { caseNumber: cn, onDate: ext, from: row.status, to: 'cancelled', apptOn: row.apptOn, reason: 'dropped' };
+        nr.status = 'cancelled'; nr.statusOn = ext; nr.cancelReason = 'dropped';
+        cases[cn] = nr; events.push(e); tallyEvent(e);
+        if (seen[cn]) changed = changed.map(function (x) { return x.caseNumber === cn ? nr : x; }); else changed.push(nr);
+      });
+      cancel.cancelled = counts.cancelledDropped;
+    }
   }
   counts.changed = changed.length;
   out.events = (book.events || []).concat(events);
-  return { book: out, cases: changed, events: events, counts: counts,
+  return { book: out, cases: changed, events: events, counts: counts, cancel: cancel,
     unmatched: sortedKeys(unmatched).map(function (n) { return { name: n, cases: unmatched[n] }; }), warnings: warnings };
+}
+/* R1 · WHEN A FILE MAY CANCEL (the derived-cancellation fix). An extract day is COMPLETE once a BI Active Fitted AND a
+   Scheduled & Missed file of that date are committed; `receipts` are the committed vt_uploads rows the station read AFTER
+   the book (so any commit in between moves the revision and this upload's commit is refused and re-merged), and the file
+   being merged counts as committed. The day is evaluated by the file that completes it, and only when no LATER extract
+   day is complete: a gap day never cancels anything (it never completes), a late file for an older day cancels nothing
+   (a newer complete day already decided), and re-sending a file finds nothing open that is absent. No receipts → no proof
+   the day is complete → nothing is cancelled. Pure: dates only, no clock. */
+var KIND_OF = { bi: 'bi_fitted', sm: 'sched_missed' };
+function dropCheck(kind, ext, receipts) {
+  var need = R.status.cancellation.dropped.completeDay, have = {}, mine = KIND_OF[kind];
+  var res = { complete: false, evaluate: false, newerComplete: null, waitingFor: null, cancelled: 0, note: null };
+  if (!mine) return res;
+  if (!Array.isArray(receipts)) { res.note = 'The upload receipts were not read, so no sale is marked cancelled from this file.'; return res; }
+  receipts.forEach(function (u) { if (u && u.state === 'committed' && need.indexOf(u.kind) > -1 && u.extract_on) (have[u.extract_on] = have[u.extract_on] || {})[u.kind] = 1; });
+  (have[ext] = have[ext] || {})[mine] = 1;
+  var full = function (d) { return need.every(function (k) { return have[d][k]; }); };
+  res.complete = full(ext);
+  sortedKeys(have).forEach(function (d) { if (d > ext && full(d)) res.newerComplete = d; });
+  var GAP = { bi_fitted: 'BI Active Fitted', sched_missed: 'Scheduled & Missed' };
+  if (!res.complete) { res.waitingFor = need.filter(function (k) { return !have[ext][k]; }).map(function (k) { return GAP[k]; }); res.note = 'Waiting for the ' + res.waitingFor.join(' and ') + ' file of ' + ext + ': one file alone never marks a sale cancelled.'; return res; }
+  if (res.newerComplete) { res.note = ext + ' is complete, but a newer complete day (' + res.newerComplete + ') already decided which sales dropped out, so nothing is cancelled from this file.'; return res; }
+  res.evaluate = true; res.note = ext + ' is complete (both files are in): open sales that are in neither file are now Cancelled (dropped out of both files).';
+  return res;
 }
 /* Convert the vt_book() RPC value (plan DB-3, positional arrays) into a book. The last three columns (Phase C) carry
    what merge and model read back — without partnerRaw a re-read book re-folded every lead source to 'other'. */
-var BOOK_COLS = ['caseNumber', 'status', 'statusOn', 'soldOn', 'soldBasis', 'firstSeen', 'lastSeen', 'apptOn', 'fittedOn', 'products', 'chargeEx', 'leadSource', 'sellerName', 'sellerCb', 'sellerMatch', 'smAttempt', 'bundle', 'partnerRaw'];
-var EVENT_COLS = ['caseNumber', 'onDate', 'from', 'to', 'apptOn'];
+var BOOK_COLS = ['caseNumber', 'status', 'statusOn', 'soldOn', 'soldBasis', 'firstSeen', 'lastSeen', 'apptOn', 'fittedOn', 'products', 'chargeEx', 'leadSource', 'sellerName', 'sellerCb', 'sellerMatch', 'smAttempt', 'bundle', 'partnerRaw', 'cancelReason'];
+var EVENT_COLS = ['caseNumber', 'onDate', 'from', 'to', 'apptOn', 'reason'];
 function bookFromRpc(v) {
   var b = emptyBook(); if (!v) return b;
   b.rev = v.rev || 0; b.openedOn = v.openedOn || v.opened_on || null; b.openingBookOn = v.openingBookOn || v.opening_book_on || null;
@@ -530,12 +613,14 @@ function budgetFor(cycleKey) {
 function pick(tbl, sub, tenure) { var t = tbl && (tbl[sub] || tbl['*']); if (t == null) return null; if (typeof t === 'number') return t; return t[tenure] != null ? t[tenure] : (t['*'] != null ? t['*'] : null); }
 function fitBudget(bud, sub, tenure) { return bud ? pick(bud.b.fitment, sub, tenure) : null; }
 function missBudget(bud, sub) { return bud ? pick(bud.b.missed, sub, null) : null; }
+function canBudget(bud, sub) { return bud ? pick(bud.b.cancelled, sub || '*', null) : null; }   // shown beside Cancellation %, never scored (R7)
 function spdBudget(bud, sub, tenure) { return bud ? pick(bud.b.spd, sub, tenure) : null; }   // the Sales Review SPD budget (the list's Target should equal it — the validator checks, F2)
 
 /* ---------------------------------------------------------------- counts → rates ---- */
 function rates(c, wd) {
   var r = copy(c), s = c.sales;
   r.fitRate = s > 0 ? c.fitted / s : null; r.missRate = s > 0 ? c.missed / s : null; r.schedRate = s > 0 ? c.scheduled / s : null;
+  r.canRate = s > 0 && c.cancelled != null ? c.cancelled / s : null;   // over ALL the set's sales: a cancelled sale stays in Sales
   r.spd = wd > 0 ? (c.current != null ? c.current : c.sales) / wd : null;
   return r;
 }
@@ -553,7 +638,7 @@ function tally(facts, missEv, w, mtd, asOf) {
       t.sales++; if (t[f.st] != null) t[f.st]++;
       if (mtd) { if (f.current) t.current++; else t.rollover++; if (!f.soldOn) t.noSaleDay++; }
     }
-    if (f.st === 'fitted' && inWin(f.fittedOn, act)) { t.fitDone++; t.value += f.charge; }
+    if (f.installed && inWin(f.fittedOn, act)) { t.fitDone++; t.value += f.charge; }
     if (f.st === 'scheduled' && inWin(f.apptOn, w)) t.due++;
   }
   for (var j = 0; j < missEv.length; j++) if (inWin(missEv[j].apptOn, w)) t.missAppt++;
@@ -589,7 +674,9 @@ function model(book, roster, opts) {
   ros.forEach(function (r) { byCode[r.code] = r; });
   var trackFrom = maxD(cyc.from, book.openingBookOn ? cyc.from : (book.openedOn ? addDays(book.openedOn, 1) : cyc.from));
   var evBy = {}; (book.events || []).forEach(function (e) { (evBy[e.caseNumber] = evBy[e.caseNumber] || []).push(e); });
-  for (var k0 in evBy) evBy[k0].sort(function (a, b) { return a.onDate < b.onDate ? -1 : a.onDate > b.onDate ? 1 : 0; });
+  /* by day; two changes on ONE day keep their chain (the one whose `to` is the other's `from` goes first) — vt_book returns a
+     day's events in to_status order, which would put a fitted unit's same-day deactivation before its fitment */
+  for (var k0 in evBy) evBy[k0].sort(function (a, b) { return a.onDate < b.onDate ? -1 : a.onDate > b.onDate ? 1 : a.to === b.from ? -1 : b.to === a.from ? 1 : 0; });
   var before = addDays(cyc.from, -1), OPEN = R.status.open, facts = [], missEv = [], unmatchedNames = {};
   sortedKeys(book.cases).forEach(function (cn) {
     var row = book.cases[cn], evs = evBy[cn], st = statusAt(row, evs, asOf);
@@ -599,7 +686,9 @@ function model(book, roster, opts) {
     var touched = (evs || []).some(function (e) { return e.onDate >= cyc.from && e.onDate <= asOf; });
     var inPlay = current || OPEN.indexOf(statusAt(row, evs, before)) > -1 || touched || inWin(row.fittedOn, { from: cyc.from, to: asOf }) || (!evs && row.lastSeen >= cyc.from);
     var f = { cn: cn, code: code, tl: a ? a.tlCode : null, sub: a ? a.sub : null, lead: leadSourceOf(row.partnerRaw, a ? a.sub : null), st: st,
-      soldOn: row.soldOn, current: current, inPlay: inPlay, fittedOn: row.fittedOn, apptOn: row.apptOn, charge: +row.chargeEx || 0 };
+      soldOn: row.soldOn, current: current, inPlay: inPlay, fittedOn: row.fittedOn, apptOn: row.apptOn, charge: +row.chargeEx || 0,
+      /* a fitment done stays done: a unit fitted and later deactivated still counts as an install on its day (R4) */
+      installed: st === 'fitted' || (st === 'cancelled' && row.cancelReason === 'deactivated' && !!row.fittedOn && R.status.cancellation.fitDoneKeepsInstall) };
     facts.push(f);
     if (!code && inPlay) unmatchedNames[row.sellerName || '(blank)'] = (unmatchedNames[row.sellerName || '(blank)'] || 0) + 1;
     (evs || []).forEach(function (e) { if (e.to === 'missed' && e.onDate <= asOf) missEv.push({ f: f, apptOn: e.apptOn }); });
@@ -621,7 +710,7 @@ function model(book, roster, opts) {
     var W = windows(fs, evOf(mine), function (x, y) { return wd(maxD(x, start), y); });
     var fb = fitBudget(bud, a.sub, a.tenure), wdays = wd(start, asOf);
     var finishRow = function (r) { r.target = a.target; r.toTarget = a.target && r.spd != null ? r.spd / a.target : null; return r; };
-    W.mtd = finishRow(W.mtd); W.mtd.fitBudget = fb; W.mtd.workingDays = wdays; W.weeks.forEach(finishRow);
+    W.mtd = finishRow(W.mtd); W.mtd.fitBudget = fb; W.mtd.canBudget = canBudget(bud, a.sub); W.mtd.workingDays = wdays; W.weeks.forEach(finishRow);
     /* the agent split by lead source: MTD (leads), and each week / day (leadWeeks / leadDays, Phase E) so the lead-source
        filter shows agent rows on Weekly and Daily too. The digest carries only the MTD split (plan §P). */
     var leads = {}, leadWeeks = {}, leadDays = {}; fs.forEach(function (f) { leads[f.lead] = 1; });
@@ -644,6 +733,8 @@ function model(book, roster, opts) {
     W.weeks.forEach(function (w, i) { var dn = tg.reduce(function (s, m) { return s + m.target * m.weeks[i].wd; }, 0);
       w.target = W.mtd.target; w.toTarget = dn > 0 ? tg.reduce(function (s, m) { return s + m.weeks[i].sales; }, 0) / dn : null; });
     W.hrsAhead = hrsAhead(fs, hAsAt);
+    var subs = union(members.map(function (m) { return m.sub; }));
+    W.mtd.canBudget = canBudget(bud, extra.sub || (subs.length === 1 ? subs[0] : '*'));
     for (var k in extra) W[k] = extra[k];
     return W;
   }
@@ -665,7 +756,7 @@ function model(book, roster, opts) {
     weeks: weeks, dates: dates, agents: agents,
     notRated: agents.filter(function (a) { return !a.rated; }).map(function (a) { return { code: a.code, name: a.name, tl: a.tl, tlCode: a.tlCode, sub: a.sub, why: a.rating.why }; }),
     tlAgg: tlAgg, subAgg: subAgg, leadAgg: leadAgg, floor: floor,
-    budgets: bud ? { cycle: bud.cycle, fitment: bud.b.fitment, missed: bud.b.missed, hrsShare: bud.b.hrsShare, spd: bud.b.spd } : null
+    budgets: bud ? { cycle: bud.cycle, fitment: bud.b.fitment, missed: bud.b.missed, cancelled: bud.b.cancelled, hrsShare: bud.b.hrsShare, spd: bud.b.spd } : null
   };
 }
 
@@ -733,7 +824,7 @@ function driversOnce() { return R.rating.drivers.map(function (d) { return { k: 
    days[] in the digest is COLUMNAR — one array per day in the order of the top-level dayCols — and every fraction is kept
    to six decimals (a rate is printed to 0.1 %). The agent row drops the weekly / daily lead-source splits (PULSE's pages
    only) and the per-agent driver labels and notes, which travel once in drivers. Nothing is recomputed: values are carried. */
-var DAY_COLS = ['d', 'sales', 'fitted', 'scheduled', 'missed', 'cancelled', 'fitDone', 'missAppt', 'due', 'value', 'fitRate', 'missRate', 'schedRate'];
+var DAY_COLS = ['d', 'sales', 'fitted', 'scheduled', 'missed', 'cancelled', 'fitDone', 'missAppt', 'due', 'value', 'fitRate', 'missRate', 'schedRate', 'canRate'];
 function six(v) { return typeof v === 'number' && v % 1 !== 0 ? Math.round(v * 1e6) / 1e6 : v; }
 function dayCells(x) { return DAY_COLS.map(function (k) { return x[k] == null ? null : six(x[k]); }); }
 function compact(o) {
@@ -762,7 +853,7 @@ function emptyCyclePayload(cycleKey, opts) {
     updatedAt: (opts && opts.updatedAt) || null, workingDays: workingDaysBetween(c.from, c.to), workingDaysElapsed: null, weeks: weeksOf(c), dates: [],
     drivers: driversOnce(), agents: [], notRated: [], tlAgg: [], subAgg: {}, leadAgg: {},
     floor: { mtd: null, weeks: [], days: [], hrsAhead: null, unmatched: null }, trackFrom: null, gaps: null, dayCols: DAY_COLS, minima: { cases: R.rating.minCases, trackedDays: R.rating.minTrackedDays, floor: R.rating.floor },
-    budgets: bud ? { cycle: bud.cycle, fitment: bud.b.fitment, missed: bud.b.missed, hrsShare: bud.b.hrsShare, spd: bud.b.spd } : null };
+    budgets: bud ? { cycle: bud.cycle, fitment: bud.b.fitment, missed: bud.b.missed, cancelled: bud.b.cancelled, hrsShare: bud.b.hrsShare, spd: bud.b.spd } : null };
 }
 
 return {

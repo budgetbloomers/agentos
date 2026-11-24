@@ -157,7 +157,7 @@ head('W5 · RPC refusals in words');
   ok(x.status === 502 && x.j.error === 'vt_commit_failed', 'any other failure → 502 with a short stable code naming the step', x.t);
   ok(!/timeout|canceling/.test(x.t), 'S-L1: the database words never reach the client', x.t);
   ok(ERRS.some((l) => /vt commit failed: 500 .*statement timeout/.test(l)), 'S-L1: ...they are logged server-side instead', ERRS.join(' | '));
-  for (const code of ['not_owner', 'upload_too_large', 'too_many_uploads', 'bad_extract_on', 'bad_cycle_key', 'bad_date', 'bad_file_name', 'bad_user', 'duplicate_case', 'duplicate_event', 'bad_receipt', 'commit_too_large']) {
+  for (const code of ['not_owner', 'upload_too_large', 'too_many_uploads', 'bad_extract_on', 'bad_cycle_key', 'bad_date', 'bad_file_name', 'bad_user', 'duplicate_case', 'duplicate_event', 'bad_receipt', 'commit_too_large', 'bad_cancel']) {
     RPC_ANSWER.vt_upload_commit = { status: 400, body: { code: 'P0001', message: code + ': words' } };
     const c = await call('POST', '/api/vt/upload/commit', '{"p_id":5}');
     ok(c.status === 409 && c.j.error === code, 'the refusal ' + code + ' → 409 {error:"' + code + '"}', c.status + ' ' + c.t); }

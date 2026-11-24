@@ -44,7 +44,7 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const STEPS = new Set(['begin', 'stage', 'commit', 'abandon']);
 const json = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 const NO_UPLOAD = () => json({ error: 'Not permitted — this needs Upload Station access.' }, 403);
-const REFUSALS = /^(stage_incomplete|not_staging|batch_too_large|unknown_upload|rows_not_array|not_owner|upload_too_large|too_many_uploads|bad_extract_on|bad_cycle_key|bad_date|bad_file_name|bad_user|duplicate_case|duplicate_event|bad_receipt|commit_too_large)\b/;
+const REFUSALS = /^(stage_incomplete|not_staging|batch_too_large|unknown_upload|rows_not_array|not_owner|upload_too_large|too_many_uploads|bad_extract_on|bad_cycle_key|bad_date|bad_file_name|bad_user|duplicate_case|duplicate_event|bad_receipt|commit_too_large|bad_cancel)\b/;
 
 /* what PostgREST answered for a failed function call → a status and a short reason the station can show */
 function refusal(step, status, text) {

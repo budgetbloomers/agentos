@@ -1,5 +1,7 @@
 /* vt-digest-fixture.mjs — a FICTIONAL Vehicle Tracking floor for the Phase E suites (spec 071): the case book built through
- * the real engine (VTEngine.merge over fixture files, one extract per working day 19 Oct → 10 Nov 2026, Thu 5 Nov missing),
+ * the real engine (VTEngine.merge over fixture files, one extract per working day 19 Oct → 10 Nov 2026, Thu 5 Nov missing;
+ * every 20th sale DROPS out of both files three days after it is made, so the derived cancellation of 2026-11-23 runs —
+ * the merge is handed the receipts committed so far, as the station does),
  * the VT roster as vt_roster_at returns it, the published digest (VTEngine.digest of the same model the pages paint), and a
  * small VAS digest for the "VAS is unchanged" proofs. Invented people (CB91xx VT, CB92xx VAS), invented case numbers.
  *
@@ -38,16 +40,16 @@ function buildFixture() {
   for (let d = '2026-10-19'; d <= '2026-11-10'; d = add(d, 1)) if (ENG.periods.isWorkingDay(d) && d !== '2026-11-05') days.push(d);
   days.forEach((e, di) => {
     SELLERS.forEach((seller) => { for (let k = 0; k < 2 + (di % 2); k++) { const i = counter++;
-      const outcome = i % 10 < 7 ? 'fit' : i % 10 < 9 ? 'miss' : 'open';
+      const outcome = i % 10 < 7 ? 'fit' : i % 10 < 9 ? 'miss' : i % 20 === 19 ? 'drop' : 'open';
       cases.push({ cn: 90100000 + i, seller, partner: PARTNERS[i % 4], born: e, appt: add(e, outcome === 'open' ? 20 : 1 + (i % 3)), outcome, charge: 100 + (i % 5) * 20 }); } });
-    const born = cases.filter((c) => c.born <= e);
+    const born = cases.filter((c) => c.born <= e && !(c.outcome === 'drop' && e >= add(c.born, 3)));
     const bi = born.filter((c) => c.outcome === 'fit' && c.appt <= e).map((c) => ({ cn: c.cn, charge: c.charge, inst: c.appt, seller: c.seller, partner: c.partner, unit: c.cn % 2 ? 'MXV' : 'BEAME' }));
     const sm = born.filter((c) => !(c.outcome === 'fit' && c.appt <= e)).map((c) => ({ cn: c.cn, appt: c.appt, seller: c.seller, partner: c.partner,
       outcome: c.outcome === 'miss' && c.appt <= e ? 'Missed Fitment' : 'Scheduled Fitment' }));
     for (const [kind, aoa] of [['bi_fitted', biFile(bi)], ['sched_missed', smFile(sm)]]) {
       const parsed = kind === 'bi_fitted' ? ENG.parseBi(aoa) : ENG.parseSm(aoa);
       if (!Object.keys(parsed.cases).length) continue;
-      const m = ENG.merge(book, parsed, { extractOn: e, roster: ROSTER, aliases: {} }); book = m.book; book.rev = ++id;
+      const m = ENG.merge(book, parsed, { extractOn: e, roster: ROSTER, aliases: {}, receipts: receipts.slice() }); book = m.book; book.rev = ++id;
       receipts.push({ id, sha256: String(id).padStart(64, '0'), kind, file_name: (kind === 'bi_fitted' ? 'BI Active Fitted ' : 'Scheduled & Missed ') + e.slice(8, 10) + e.slice(5, 7) + e.slice(2, 4) + '.xlsx',
         extract_on: e, cycle_key: ENG.periods.cycleOf(e).key, state: 'committed', counts: m.counts, unmatched: m.unmatched, warnings: [], quiet_day_ack: false, committed_at: e + 'T06:15:00Z', rev_after: id });
     }
@@ -55,13 +57,13 @@ function buildFixture() {
   return { book, receipts };
 }
 export const FX = buildFixture();
-const COLS = ['caseNumber', 'status', 'statusOn', 'soldOn', 'soldBasis', 'firstSeen', 'lastSeen', 'apptOn', 'fittedOn', 'products', 'chargeEx', 'leadSource', 'sellerName', 'sellerCb', 'sellerMatch', 'smAttempt', 'bundle', 'partnerRaw'];
+const COLS = ['caseNumber', 'status', 'statusOn', 'soldOn', 'soldBasis', 'firstSeen', 'lastSeen', 'apptOn', 'fittedOn', 'products', 'chargeEx', 'leadSource', 'sellerName', 'sellerCb', 'sellerMatch', 'smAttempt', 'bundle', 'partnerRaw', 'cancelReason'];
 /* what vt_book(p_from) returns (migration-071) */
 export function bookRpc(from) {
   const cs = Object.values(FX.book.cases).filter((c) => !from || c.lastSeen >= from || ['scheduled', 'missed'].includes(c.status));
   const keep = new Set(cs.map((c) => String(c.caseNumber)));
   return { rev: FX.book.rev, openedOn: FX.book.openedOn, openingBookOn: FX.book.openingBookOn, cases: cs.map((c) => COLS.map((k) => (c[k] === undefined ? null : c[k]))),
-    events: FX.book.events.filter((e) => keep.has(String(e.caseNumber))).map((e) => [e.caseNumber, e.onDate, e.from, e.to, e.apptOn]) };
+    events: FX.book.events.filter((e) => keep.has(String(e.caseNumber))).map((e) => [e.caseNumber, e.onDate, e.from, e.to, e.apptOn, e.reason == null ? null : e.reason]) };
 }
 /* the published VT digest of a business month — the engine's own digest of the engine's own model (Node calendar) */
 export function vtDigest(cycleKey = CYCLE, o = {}) {

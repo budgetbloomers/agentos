@@ -72,6 +72,21 @@ ok('_changes[] first entry is dated 2026-11-23', Array.isArray(SPEC._changes) &&
 ok('every _changes[] entry has date/by/key/why', SPEC._changes.every(c => /^\d{4}-\d{2}-\d{2}$/.test(c.date) && c.by && c.key && c.why));
 ok('no _evidence prose left in the record', JSON.stringify(SPEC).indexOf('"_evidence"') === -1);
 
+console.log('\n== 3b. derived cancellation (2026-11-23): rule book ⇔ SQL checks ==');
+{ const C = E.VT_RULES.status.cancellation, M71 = fs.readFileSync(path.join(REPO, 'supabase', 'migration-071-vt-facts.sql'), 'utf8');
+  ok('cancelledFrom names exactly the cancellation reasons', JSON.stringify(E.VT_RULES.status.cancelledFrom) === JSON.stringify(C.reasons), JSON.stringify(E.VT_RULES.status.cancelledFrom));
+  ok('cancelled is a status value and first in same-extract precedence (a deactivation wins over Fitted)', E.VT_RULES.status.values.includes('cancelled') && E.VT_RULES.status.sameExtractPrecedence[0] === 'cancelled');
+  ok('only open statuses can drop out; Fitted never does (R3)', JSON.stringify(C.dropped.from) === JSON.stringify(E.VT_RULES.status.open) && !C.dropped.from.includes('fitted'));
+  ok('a complete day needs both daily kinds the SQL knows', C.dropped.completeDay.length === 2 && C.dropped.completeDay.every(k => M71.includes("'" + k + "'")));
+  const m = M71.match(/cancel_reason\s+text[^\n]*?in \(([^)]*)\)/), ev = M71.match(/\breason\s+text[^\n]*?in \(([^)]*)\)/);
+  const list = (x) => x ? x[1].split(',').map(t => t.trim().replace(/'/g, '')) : null;
+  ok('vt_cases.cancel_reason check = the rule book reasons', JSON.stringify(list(m)) === JSON.stringify(C.reasons), m && m[0]);
+  ok('vt_case_events.reason check = the rule book reasons', JSON.stringify(list(ev)) === JSON.stringify(C.reasons), ev && ev[0]);
+  ok('every business month with budgets has a cancellation budget', Object.values(E.VT_RULES.budgets).every(b => b.cancelled && typeof b.cancelled['*'] === 'number'));
+  ok('Cancellation % is a report column and is NOT a rating driver (R7)', E.VT_RULES.reports.columns.some(c => c.id === 'canRate') && !E.VT_RULES.rating.drivers.some(d => /cancel/i.test(d.k + d.label)));
+  ok('the BI contract columns are optional (a file without them deactivates nothing)', JSON.stringify(E.VT_RULES.columns.biOptional) === JSON.stringify(['contractStatus', 'deactivateOn']));
+}
+
 console.log('\n== 4. no rule literal outside VT_RULES ==');
 function stripBlocks(src) {
   return src

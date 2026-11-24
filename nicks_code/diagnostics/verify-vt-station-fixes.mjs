@@ -71,7 +71,7 @@ head('F2 · busy: words, and never stage into the other upload');
   ok(/another station or tab/.test(ST.wordsFor({ status: 409, j: { error: 'busy', id: 99 } })), 'busy reads: "being loaded by another station or tab right now … try again in a few minutes"'); }
 
 head('F3 · every refusal in plain words');
-for (const code of ['bad_date', 'bad_row', 'bad_file_name', 'bad_extract_on', 'bad_cycle_key', 'duplicate_case', 'duplicate_event', 'too_many_uploads', 'upload_too_large', 'commit_too_large', 'batch_too_large', 'not_owner', 'stage_incomplete']) {
+for (const code of ['bad_date', 'bad_row', 'bad_file_name', 'bad_extract_on', 'bad_cycle_key', 'duplicate_case', 'duplicate_event', 'too_many_uploads', 'upload_too_large', 'commit_too_large', 'batch_too_large', 'not_owner', 'stage_incomplete', 'bad_cancel']) {
   const s = ST.wordsFor({ status: 409, j: { error: code, detail: 'x' } });
   ok(s && s !== code && !/_/.test(s) && /\.$/.test(s.trim()), code + ' → "' + s.slice(0, 70) + '…"');
 }
@@ -109,6 +109,47 @@ head('F6 · the station never sends p_user');
   await run(w);
   const bodies = w.calls.filter((c) => c.body).map((c) => JSON.stringify(c.body));
   ok(bodies.length >= 6 && bodies.every((b) => !/p_user/.test(b)), 'no begin / stage / commit / abandon / book body carries p_user (' + bodies.length + ' bodies)'); }
+
+head('F7 · derived cancellation: receipts read AFTER the book on every attempt; the cancellations ride in the same commit');
+{ const eq = (m, a, b) => ok(JSON.stringify(a) === JSON.stringify(b), m, 'expected ' + JSON.stringify(b) + ' got ' + JSON.stringify(a));
+  /* the book holds one open case (90900099, scheduled, last seen 9 Nov) that is in neither 10 Nov file */
+  const OPEN = ['90900099', 'scheduled', '2026-11-09', '2026-11-09', 'first_seen', '2026-11-09', '2026-11-09', '2026-11-12', null, ['MXV'], null, 'revx', 'alpha test', 'CB9101', 'exact', 'New', 'Bundle Q', 'RevX', null];
+  const BOOK = { rev: 7, openedOn: '2026-10-19', openingBookOn: null, cases: [OPEN], events: [['90900099', '2026-11-09', null, 'scheduled', '2026-11-12', null]] };
+  const SM10 = { id: 30, sha256: 'd'.repeat(64), kind: 'sched_missed', state: 'committed', extract_on: '2026-11-10', cycle_key: 'cycle-2026-11', file_name: 'Scheduled & Missed 101126.xlsx', counts: { cases: 1 } };
+  const staged = (w, id) => w.calls.filter((c) => c.p === '/api/vt/upload/stage' && c.body.p_id === id && c.body.p_kind === 'event').flatMap((c) => c.body.p_rows);
+  const dropped = (rows) => rows.filter((e) => e.to_status === 'cancelled' && e.reason === 'dropped').map((e) => e.case_number);
+  /* (a) the S&M of the same day is already committed: this BI completes 10 Nov → 90900099 is cancelled in THIS commit */
+  { const w = worker(base({ '/api/vt/book': [{ status: 200, j: BOOK }], '/api/vt/uploads': [{ status: 200, j: { uploads: [SM10] } }] }));
+    ok(await run(w) === true, 'the BI file completing the day is saved');
+    eq('…its commit stages the cancelled event of the open case in neither file (reason dropped)', dropped(staged(w, 41)), ['90900099']);
+    const cm = w.calls.find((c) => c.p === '/api/vt/upload/commit');
+    ok(cm && cm.body.p_counts.cancelledDropped === 1 && cm.body.p_events === staged(w, 41).length, 'the receipt counts it and the commit expects exactly the staged events', cm && JSON.stringify(cm.body.p_counts));
+    const order = w.calls.map((c) => c.p).filter((p) => p === '/api/vt/book' || p === '/api/vt/uploads');
+    eq('the receipts are read again after the book, before the merge (duplicate check, then book → receipts)', order, ['/api/vt/uploads', '/api/vt/book', '/api/vt/uploads']); }
+  /* (b) only this file of the day: nothing cancelled */
+  { const w = worker(base({ '/api/vt/book': [{ status: 200, j: BOOK }] }));
+    await run(w);
+    eq('one file of a day alone stages no cancellation', dropped(staged(w, 41)), []); }
+  /* (c) the race: the other station commits the day's S&M between this station's reads — the commit is refused
+     (version_conflict), the retry re-reads book AND receipts, and the second commit carries the cancellation */
+  { const w = worker(base({ '/api/vt/book': [{ status: 200, j: BOOK }, { status: 200, j: { ...BOOK, rev: 8 } }],
+      '/api/vt/uploads': [{ status: 200, j: { uploads: [] } }, { status: 200, j: { uploads: [] } }, { status: 200, j: { uploads: [SM10] } }],
+      '/api/vt/upload/begin': [{ status: 200, j: { id: 41 } }, { status: 200, j: { id: 42 } }],
+      '/api/vt/upload/commit': [{ status: 409, j: { error: 'version_conflict' } }, { status: 200, j: { rev: 9 } }] }));
+    ok(await run(w) === true, 'race: saved on the second attempt');
+    eq('…the first attempt (S&M not yet in) staged no cancellation; the retry staged it', [dropped(staged(w, 41)), dropped(staged(w, 42))], [[], ['90900099']]);
+    const commits = w.calls.filter((c) => c.p === '/api/vt/upload/commit').map((c) => c.body.p_base_rev);
+    eq('…and the retry merged on the new revision', commits, [7, 8]); }
+}
+
+head('F8 · the receipt says what was cancelled, in words');
+{ const lines = ST.receiptLines({ kind: 'vtSchedMissed', fileName: 'Scheduled & Missed 101126.xlsx', extractOn: '2026-11-10', counts: { vtLines: 5, cases: 5, new: 1, toFitted: 0, toMissed: 1, toScheduled: 1, toCancelled: 3, cancelledDropped: 2, cancelledDeactivated: 1, reappeared: 1 },
+    unmatched: [], warnings: [], cancelNote: '2026-11-10 is complete (both files are in): open sales that are in neither file are now Cancelled (dropped out of both files).' }).join('\n');
+  ok(/to Cancelled 3/.test(lines) && /Cancelled — dropped out of both files of 2026-11-10: 2 open sales \(inferred/.test(lines) && /deactivated in the BI file: 1/.test(lines) && /Back from Cancelled \(seen again in this file\): 1/.test(lines) && /is complete \(both files are in\)/.test(lines),
+    'the receipt names dropped (inferred) and deactivated cancellations, returns, and whether the day was complete', lines);
+  const one = ST.receiptLines({ kind: 'vtBiFitted', fileName: 'BI Active Fitted 101126.xlsx', extractOn: '2026-11-10', counts: { vtLines: 1, rows: 1, cases: 1, toCancelled: 0 }, unmatched: [], warnings: [],
+    cancelNote: 'Waiting for the Scheduled & Missed file of 2026-11-10: one file alone never marks a sale cancelled.' }).join('\n');
+  ok(/one file alone never marks a sale cancelled/.test(one) && !/dropped out of both files of/.test(one), 'one file of a day: the receipt says it is waiting for the other file', one); }
 
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 process.exit(fail ? 1 : 0);

@@ -185,13 +185,19 @@ try {
     'Missed appointments', 'Due to fit', 'Working days', 'SPD', 'Target SPD', '% to target', 'Fitment budget %', 'Fitted value (incl VAT)'];
   ok(ag && SPEC.every((h) => ag.head.includes(h)), 'every spec §5 column C1–C21 is on the agent table', ag && SPEC.filter((h) => !ag.head.includes(h)).join(','));
   ok(M11.floor.mtd.noSaleDay > 0 === ag.head.includes('Sales without a sale day'), 'C22 "Sales without a sale day" shows only when the engine has some (' + M11.floor.mtd.noSaleDay + ')');
-  ok(T.every((t) => t.head.indexOf('Cancelled') < 0 || t.rows.every((r) => N(r[t.head.indexOf('Cancelled')]) === '—')), 'Cancelled reads "—" on every row of every table, never 0');
-  ok(/no upload carries a cancellation yet, so it is unknown, not zero/.test(await viewText()), 'with the plain-words note');
+  /* derived cancellation (2026-11-23): Cancelled is a real count — 0 when nothing dropped out, never "—" */
+  { const COUNT = /^[\d\s\u00a0]+$/, bad = T.flatMap((t) => t.head.indexOf('Cancelled') < 0 ? [] : t.rows.filter((r) => !/^Unmatched sellers/.test(N(r[0])) && !COUNT.test(N(r[t.head.indexOf('Cancelled')])))
+      .map((r) => t.sheet + ':' + N(r[0]) + '/' + N(r[2]) + '=' + N(r[t.head.indexOf('Cancelled')])));
+    ok(bad.length === 0, 'Cancelled is a real count on every row of every table (0 when none, never "—"; the unmatched-sellers line carries Sales only, as before)', bad.join(' ; ')); }
+  ok(/Cancelled includes sales that dropped out of both daily files/.test(await viewText()) && /stays in Sales/.test(await viewText()), 'with the plain-words note: Cancelled includes sales that dropped out of both files, and a cancelled sale stays in Sales');
   const a1 = M11.agents.find((a) => a.code === 'CB9101'), r1 = ag.rows.find((r) => N(r[2]) === 'Alpha Test');
   ok(r1 && ['sales', 'current', 'rollover', 'fitted', 'scheduled', 'missed', 'fitDone', 'missAppt', 'due', 'workingDays'].every((k, i) => at(ag, r1, ['Sales', 'Current', 'Rollover', 'Fitted', 'Scheduled', 'Missed', 'Fitments done', 'Missed appointments', 'Due to fit', 'Working days'][i]) === N(F('n', a1.mtd[k])))
     && at(ag, r1, 'Fitted %') === F('p', a1.mtd.fitRate) && at(ag, r1, 'SPD') === N(F('d2', a1.mtd.spd)) && at(ag, r1, 'Fitment budget %') === F('p', a1.mtd.fitBudget) && at(ag, r1, 'Fitted value (incl VAT)') === N(F('r', a1.mtd.value)),
     'an agent row is the engine\'s agent row, field for field', r1 && r1.join(' | '));
   ok(at(ag, r1, 'Rating') === (a1.rating.rated ? a1.rating.score.toFixed(1) + ' · ' + a1.rating.band : '—'), 'its rating is the engine\'s score and band', at(ag, r1, 'Rating'));
+  ok(ag.head.includes('Cancelled %') && ag.head.includes('Cancellation budget %') && at(ag, r1, 'Cancelled') === N(F('n', a1.mtd.cancelled))
+    && at(ag, r1, 'Cancelled %') === F('p', a1.mtd.canRate) && at(ag, r1, 'Cancellation budget %') === F('p', a1.mtd.canBudget),
+    'Cancelled, Cancelled % and the cancellation budget are the engine\'s (' + [at(ag, r1, 'Cancelled'), at(ag, r1, 'Cancelled %'), at(ag, r1, 'Cancellation budget %')].join(' / ') + ')');
   const cRow = ag.rows.find((r) => N(r[2]) === 'Charlie Delta'), c1 = M11.agents.find((a) => a.code === 'CB9103');
   ok(cRow && at(ag, cRow, 'Fitment budget %') === F('p', c1.mtd.fitBudget) && at(ag, cRow, 'Target SPD') === N(F('d2', 1)), 'tenure-aware budget (Predictive M1) and the list\'s own Target SPD', cRow && cRow.join(' | '));
 

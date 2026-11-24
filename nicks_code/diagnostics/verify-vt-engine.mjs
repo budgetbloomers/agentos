@@ -184,7 +184,7 @@ console.log('\n== pure, deterministic, idempotent ==');
   const x = merge(b0, 'sm', smFile([{ cn: 90000061 }, { cn: 90000062, outcome: 'Missed Fitment' }]), '2026-11-10');
   eq('deterministic: same inputs, same output', JSON.stringify(x), JSON.stringify(r));
   ok('no customer field anywhere in the merge result', !PII.some(p => JSON.stringify(r2).includes(p)));
-  eq('receipt counts', r2.counts, { rows: 1, vtLines: 1, cases: 1, new: 0, toFitted: 1, toMissed: 0, toScheduled: 0, changed: 1, skippedFooter: 1, skippedBlank: 0, notInBook: 0 });
+  eq('receipt counts', r2.counts, { rows: 1, vtLines: 1, cases: 1, new: 0, toFitted: 1, toMissed: 0, toScheduled: 0, toCancelled: 0, cancelledDropped: 0, cancelledDeactivated: 0, reappeared: 0, completeDay: false, changed: 1, skippedFooter: 1, skippedBlank: 0, notInBook: 0 });
   ok('book revision is the caller\'s (merge never invents one)', r2.book.rev === r.book.rev); }
 
 console.log('\n== thin-pull guards (FR-006) ==');
@@ -228,7 +228,7 @@ console.log('\n== model wiring (small book) ==');
   const a1 = M.agents.find(a => a.code === 'CB9101');
   eq('CB9101 MTD: 3 in play (1 opening, 2 current), 1 fitted, 2 scheduled', [a1.mtd.sales, a1.mtd.current, a1.mtd.rollover, a1.mtd.fitted, a1.mtd.scheduled], [3, 2, 1, 1, 2]);
   eq('…sales without a sale day = 1 (the opening case)', a1.mtd.noSaleDay, 1);
-  eq('…Cancelled is absent (null), never 0', a1.mtd.cancelled, null);
+  eq('…Cancelled is a real count: 0 when nothing dropped out of a complete day (derived cancellation, 2026-11-23)', [a1.mtd.cancelled, a1.mtd.canRate], [0, 0]);
   eq('…fitted value = charge × VAT', a1.mtd.value, 115);
   eq('…fitments done on 10 Nov in the daily row', a1.days.find(d => d.d === '2026-11-10').fitDone, 1);
   eq('…working days run from the day after the opening extract (3 Nov – 10 Nov, no 4 Nov) = 5', a1.workingDays, 5);
@@ -246,6 +246,152 @@ console.log('\n== model wiring (small book) ==');
   eq('digest: scorecard vt, drivers once, empty false', [D.scorecard, D.drivers.length, D.empty, 'drivers' in D.agents[0].rating], ['vt', 4, false, false]);
   const X = E.emptyCyclePayload('cycle-2026-12', { updatedAt: 'x' });
   eq('empty cycle payload: empty:true, no agents, null figures', [X.empty, X.agents.length, X.floor.mtd, X.period.from], [true, 0, null, '2026-11-26']);
+}
+
+/* ---- DERIVED CANCELLATION (owner-approved fix, 2026-11-23: R1–R7). A case that is Scheduled or Missed and is in NEITHER
+   file of a COMPLETE extract day (both BI Active Fitted and Scheduled & Missed committed for that date) becomes Cancelled,
+   reason 'dropped', as at that day — evaluated when the day's second file commits, against the newest complete day only.
+   A BI row with a Contract Deactivate Date (or a Contract Status other than Active) is Cancelled, reason 'deactivated'. */
+console.log('\n== derived cancellation: completeness, order, idempotency (R1) ==');
+const RC = (...xs) => xs.map(([kind, on]) => ({ kind: kind === 'bi' ? 'bi_fitted' : 'sched_missed', state: 'committed', extract_on: on }));
+const day = (book, files, on, receipts) => {   // files: [['bi'|'sm', aoa], …] in upload order; receipts = what is committed BEFORE this day
+  let r = { book }, got = receipts.slice(), all = [];
+  for (const [k, aoa] of files) { r = merge(r.book, k, aoa, on, { receipts: got }); all.push(r); got = got.concat(RC([k, on])); }
+  return { book: r.book, steps: all, receipts: got };
+};
+const D1 = '2026-11-02', D2 = '2026-11-03', D3 = '2026-11-05', D4 = '2026-11-06', D5 = '2026-11-09';
+const start = day(E.emptyBook(), [['bi', biFile([{ cn: 91000001, inst: '2026-11-02' }])], ['sm', smFile([{ cn: 91000002 }, { cn: 91000003, outcome: 'Missed Fitment', appt: '2026-11-02' }, { cn: 91000004 }])]], D1, []);
+{ const st = (b, cn) => b.cases[cn].status;
+  eq('day 1 (both files): nothing to cancel on a new book', start.steps.map(s => s.counts.toCancelled), [0, 0]);
+  /* day 2, BI first: one file alone never cancels — a case absent from BI may be in that day's S&M */
+  const biOnly = merge(start.book, 'bi', biFile([{ cn: 91000001, inst: '2026-11-02' }]), D2, { receipts: start.receipts });
+  eq('one file of a day alone cancels nothing (BI only, S&M not in yet)', [biOnly.counts.toCancelled, st(biOnly.book, 91000002), st(biOnly.book, 91000003)], [0, 'scheduled', 'missed']);
+  ok('…and its receipt says the day is waiting for its other file', biOnly.counts.completeDay === false && /Scheduled & Missed/.test(biOnly.cancel.note), JSON.stringify(biOnly.cancel));
+  const smOnly = merge(start.book, 'sm', smFile([{ cn: 91000004 }]), D2, { receipts: start.receipts });
+  eq('one file of a day alone cancels nothing (S&M only, BI not in yet)', [smOnly.counts.toCancelled, st(smOnly.book, 91000002)], [0, 'scheduled']);
+  /* the second file completes day 2: 91000002 (scheduled) and 91000003 (missed) are in neither file → cancelled, dropped */
+  const biThenSm = day(start.book, [['bi', biFile([{ cn: 91000001, inst: '2026-11-02' }])], ['sm', smFile([{ cn: 91000004 }])]], D2, start.receipts);
+  const smThenBi = day(start.book, [['sm', smFile([{ cn: 91000004 }])], ['bi', biFile([{ cn: 91000001, inst: '2026-11-02' }])]], D2, start.receipts);
+  const B = biThenSm.book;
+  eq('the second file of a complete day cancels the open cases in neither file', [st(B, 91000002), st(B, 91000003), st(B, 91000004), st(B, 91000001)], ['cancelled', 'cancelled', 'scheduled', 'fitted']);
+  eq('…reason dropped, as at that extract day', [B.cases[91000002].cancelReason, B.cases[91000002].statusOn, B.cases[91000003].cancelReason], ['dropped', D2, 'dropped']);
+  eq('…one event each, from the last known status, reason dropped', biThenSm.steps[1].events.filter(e => e.to === 'cancelled').map(e => [e.caseNumber, e.from, e.onDate, e.reason]),
+    [['91000002', 'scheduled', D2, 'dropped'], ['91000003', 'missed', D2, 'dropped']]);
+  eq('…counted on the receipt (toCancelled 2, dropped 2, deactivated 0)', [biThenSm.steps[1].counts.toCancelled, biThenSm.steps[1].counts.cancelledDropped, biThenSm.steps[1].counts.cancelledDeactivated], [2, 2, 0]);
+  eq('…and only the triggering (second) file wrote them', biThenSm.steps[0].counts.toCancelled, 0);
+  const canon = b => JSON.stringify(Object.keys(b.cases).sort().map(k => [k, b.cases[k].status, b.cases[k].statusOn, b.cases[k].cancelReason]))
+    + JSON.stringify(b.events.map(e => [e.caseNumber, e.from, e.to, e.onDate, e.reason]).sort());
+  eq('upload order does not matter: S&M first then BI gives the same book and events', canon(smThenBi.book), canon(B));
+  const again = merge(B, 'sm', smFile([{ cn: 91000004 }]), D2, { receipts: biThenSm.receipts });
+  eq('re-merging the second file (the day already complete) changes nothing', [again.cases.length, again.events.length], [0, 0]);
+  const againBi = merge(B, 'bi', biFile([{ cn: 91000001, inst: '2026-11-02' }]), D2, { receipts: biThenSm.receipts });
+  eq('…nor does the first file again', [againBi.cases.length, againBi.events.length], [0, 0]);
+  const noRc = merge(biOnly.book, 'sm', smFile([{ cn: 91000004 }]), D2, {});
+  eq('without the receipts the day cannot be proved complete: nothing is cancelled (safe default)', [noRc.counts.toCancelled, st(noRc.book, 91000002)], [0, 'scheduled']);
+
+  console.log('\n== derived cancellation: gaps, out-of-order days, reappearance (R1, R2) ==');
+  /* a skipped day: day 2 has no files at all; day 3 complete → cancelled as at day 3, never day 2 */
+  const skip = day(start.book, [['bi', biFile([{ cn: 91000001, inst: '2026-11-02' }])], ['sm', smFile([{ cn: 91000004 }])]], D3, start.receipts);
+  eq('a skipped day cancels nothing by itself: the next complete day does, dated that day', [st(skip.book, 91000002), skip.book.cases[91000002].statusOn], ['cancelled', D3]);
+  const halfDay = merge(start.book, 'bi', biFile([{ cn: 91000001, inst: '2026-11-02' }]), D2, { receipts: start.receipts });
+  const afterHalf = day(halfDay.book, [['sm', smFile([{ cn: 91000004 }])], ['bi', biFile([{ cn: 91000001, inst: '2026-11-02' }])]], D3, start.receipts.concat(RC(['bi', D2])));
+  eq('a day with only one file never completes; the next complete day decides', [halfDay.counts.toCancelled, afterHalf.book.cases[91000002].statusOn], [0, D3]);
+  /* an older day arriving late: day 2's two files after day 3 is complete. 91000002 is in day 2's S&M: it stays cancelled
+     (as at day 3), last_seen moves to day 2; and day 2 completing evaluates nothing (a newer complete day exists). */
+  const late = day(skip.book, [['sm', smFile([{ cn: 91000002 }, { cn: 91000004 }])], ['bi', biFile([{ cn: 91000001, inst: '2026-11-02' }])]], D2, skip.receipts);
+  eq('a late file for an OLDER day never un-cancels: the case stays cancelled as at the newer complete day', [st(late.book, 91000002), late.book.cases[91000002].statusOn, late.book.cases[91000002].lastSeen], ['cancelled', D3, D2]);
+  eq('…and completing the older day cancels nothing (only the newest complete day is evaluated)', late.steps.map(s => s.counts.toCancelled), [0, 0]);
+  ok('…its receipt says why', /newer complete day/.test(late.steps[1].cancel.note), late.steps[1].cancel.note);
+  const lateOpen = day(start.book, [['bi', biFile([{ cn: 91000001, inst: '2026-11-02' }])], ['sm', smFile([{ cn: 91000002 }, { cn: 91000003, outcome: 'Missed Fitment', appt: '2026-11-02' }, { cn: 91000004 }])]], D3, start.receipts);
+  const lateOld = day(lateOpen.book, [['bi', biFile([{ cn: 91000001, inst: '2026-11-02' }])], ['sm', smFile([{ cn: 91000004 }])]], D2, lateOpen.receipts);
+  eq('…nor does it cancel an open case that a newer day still carries', [st(lateOld.book, 91000002), st(lateOld.book, 91000003)], ['scheduled', 'missed']);
+  /* reappearance: cancelled on day 2, the case is back in day 4's S&M as Missed → Missed, one event cancelled → missed */
+  const back = merge(B, 'sm', smFile([{ cn: 91000002, outcome: 'Missed Fitment', appt: '2026-11-05', attempt: '2nd attempt' }, { cn: 91000004 }]), D4, { receipts: biThenSm.receipts });
+  eq('a dropped case seen again in a later file takes that file\'s status (R2)', [st(back.book, 91000002), back.book.cases[91000002].cancelReason, back.book.cases[91000002].statusOn], ['missed', null, D4]);
+  eq('…with one event cancelled → missed, counted as a return', [back.events.filter(e => e.caseNumber === '91000002').map(e => [e.from, e.to, e.onDate, e.reason]), back.counts.reappeared], [[['cancelled', 'missed', D4, null]], 1]);
+  const backBi = merge(B, 'bi', biFile([{ cn: 91000003, inst: '2026-11-06' }]), D4, { receipts: biThenSm.receipts });
+  eq('…a dropped case later fitted is Fitted (Fitted > Missed > Scheduled as before)', [st(backBi.book, 91000003), backBi.book.cases[91000003].fittedOn], ['fitted', '2026-11-06']);
+  { const M0 = E.model(B, ROSTER, { asOf: D2 }), M1 = E.model(back.book, ROSTER, { asOf: D4 });
+    const a0 = M0.agents.find(a => a.code === 'CB9101'), a1 = M1.agents.find(a => a.code === 'CB9101');
+    eq('nothing is double counted: the returning case is still one sale (sales unchanged, cancelled → missed)', [a0.mtd.sales, a1.mtd.sales, a0.mtd.cancelled, a1.mtd.cancelled, a1.mtd.missed], [a0.mtd.sales, a0.mtd.sales, 2, 1, 1]); }
+
+  console.log('\n== derived cancellation: Fitted and the business-month rollover (R3, R5) ==');
+  eq('a Fitted case absent from both files of a complete day stays Fitted (R3)', [st(skip.book, 91000001)], ['fitted']);
+  { const oct = day(E.emptyBook(), [['bi', biFile([{ cn: 91000011, inst: '2026-10-20' }])], ['sm', smFile([{ cn: 91000012, appt: '2026-10-28' }, { cn: 91000013, appt: '2026-10-28' }])]], '2026-10-20', []);
+    const nov = day(oct.book, [['bi', biFile([{ cn: 91000021, inst: '2026-10-27' }])], ['sm', smFile([{ cn: 91000013, appt: '2026-10-30' }, { cn: 91000022 }])]], '2026-10-27', oct.receipts);
+    eq('month rollover: last month\'s fitted contract leaves the BI file and stays Fitted', st(nov.book, 91000011), 'fitted');
+    eq('…an OLD (rollover) open case in neither file is cancelled too, reason dropped (R5: any age)', [st(nov.book, 91000012), nov.book.cases[91000012].cancelReason, nov.book.cases[91000012].statusOn], ['cancelled', 'dropped', '2026-10-27']);
+    eq('…a rollover case still in S&M stays open', st(nov.book, 91000013), 'scheduled');
+    const M = E.model(nov.book, ROSTER, { asOf: '2026-10-27', cycleKey: 'cycle-2026-11' });
+    const a = M.agents.find(x => x.code === 'CB9101');
+    eq('…in the new business month the cancelled rollover case is in play (open at the start) and counts as Cancelled', [a.mtd.rollover, a.mtd.cancelled, a.mtd.scheduled], [2, 1, 2]);
+  }
+
+  console.log('\n== explicit deactivation (R4, synthetic rows — the real files never fill it) ==');
+  { const deact = (lines) => { const f = biFile(lines); lines.forEach((l, i) => { if (l.deact) f[i + 1][15] = S(l.deact); if (l.cstatus) f[i + 1][1] = l.cstatus; }); return f; };
+    const p = E.parseBi(deact([{ cn: 91000031, inst: '2026-11-03', deact: '2026-11-04' }, { cn: 91000032, inst: '2026-11-03', cstatus: 'Inactive' }, { cn: 91000033, inst: '2026-11-03' }]));
+    eq('parseBi reads Contract Deactivate Date (P) and Contract Status (B) of a VT line', [p.cases[91000031].deactivated, p.cases[91000031].deactivatedOn, p.cases[91000032].deactivated, p.cases[91000032].deactivatedOn, p.cases[91000033].deactivated],
+      [true, '2026-11-04', true, null, false]);
+    ok('…and never carries the Contract Status text out of the parse', !JSON.stringify(p).includes('Inactive'));
+    const fitted = merge(E.emptyBook(), 'bi', biFile([{ cn: 91000031, inst: '2026-11-03' }, { cn: 91000032, inst: '2026-11-03' }]), D2, {});
+    const later = merge(fitted.book, 'bi', deact([{ cn: 91000031, inst: '2026-11-03', deact: '2026-11-04' }, { cn: 91000032, inst: '2026-11-03', cstatus: 'Inactive' }]), D4, {});
+    eq('a deactivated contract is Cancelled, reason deactivated — it wins over Fitted', [later.book.cases[91000031].status, later.book.cases[91000031].cancelReason, later.book.cases[91000032].status], ['cancelled', 'deactivated', 'cancelled']);
+    eq('…as at the deactivate date (no date: the extract day)', [later.book.cases[91000031].statusOn, later.book.cases[91000032].statusOn], ['2026-11-04', D4]);
+    eq('…one event fitted → cancelled each, reason deactivated', later.events.map(e => [e.caseNumber, e.from, e.to, e.onDate, e.reason]), [['91000031', 'fitted', 'cancelled', '2026-11-04', 'deactivated'], ['91000032', 'fitted', 'cancelled', D4, 'deactivated']]);
+    eq('…counted as deactivated on the receipt', [later.counts.toCancelled, later.counts.cancelledDeactivated, later.counts.cancelledDropped], [2, 2, 0]);
+    const same = merge(E.emptyBook(), 'bi', deact([{ cn: 91000034, inst: '2026-11-03', deact: '2026-11-03' }]), D2, {});
+    const sameSm = merge(same.book, 'sm', smFile([{ cn: 91000034 }]), D2, {});
+    eq('a new case deactivated on its first file: Cancelled; the same day\'s S&M Scheduled does not override it', [same.book.cases[91000034].status, sameSm.book.cases[91000034].status], ['cancelled', 'cancelled']);
+    const reAct = merge(later.book, 'bi', biFile([{ cn: 91000031, inst: '2026-11-03' }]), D5, {});
+    eq('a NEWER BI row that is Active again (no deactivate date) → Fitted, one event', [reAct.book.cases[91000031].status, reAct.events.map(e => [e.from, e.to])], ['fitted', [['cancelled', 'fitted']]]);
+    const oldAct = merge(later.book, 'bi', biFile([{ cn: 91000031, inst: '2026-11-03' }]), D3, {});
+    eq('…an OLDER Active row never undoes the deactivation', oldAct.book.cases[91000031].status, 'cancelled');
+    const smAfter = merge(later.book, 'sm', smFile([{ cn: 91000031 }]), D5, {});
+    eq('…nor does a later S&M booking (only Salesforce\'s contract can reactivate it)', smAfter.book.cases[91000031].status, 'cancelled');
+    /* the same day twice: fitted on 3 Nov, then a deactivation dated on or before it → both events on 3 Nov. Read back from
+       vt_book (events in to_status order: cancelled before fitted) the model must still end on Cancelled */
+    { const f3 = merge(E.emptyBook(), 'bi', biFile([{ cn: 91000036, inst: '2026-11-03' }]), D3, {});
+      const d3 = merge(f3.book, 'bi', deact([{ cn: 91000036, inst: '2026-11-03', deact: '2026-11-01' }]), D4, {});
+      const evs = d3.book.events.filter(e => e.caseNumber === '91000036');
+      eq('a deactivation dated before the last status day counts from that day (never earlier)', evs.map(e => [e.to, e.onDate]), [['fitted', D3], ['cancelled', D3]]);
+      const dbOrder = Object.assign({}, d3.book, { events: evs.slice().sort((x, y) => x.to.localeCompare(y.to)) });
+      eq('…and the model ends on Cancelled whatever order the two same-day events come back in', E.model(dbOrder, ROSTER, { asOf: D4 }).floor.mtd.cancelled, 1); }
+    const noCols = biFile([{ cn: 91000035, inst: '2026-11-03' }]); noCols[0] = noCols[0].slice(); noCols[0][1] = 'Account Type'; noCols[0][15] = 'Something Else';
+    const pn = E.parseBi(noCols);
+    eq('a BI file without the two columns still parses (tolerant): nothing deactivated, nothing missing', [pn.missing, pn.cases[91000035] && pn.cases[91000035].deactivated], [[], false]);
+    const M = E.model(later.book, ROSTER, { asOf: D4 }), a = M.agents.find(x => x.code === 'CB9101');
+    eq('the deactivated unit leaves Fitted (status) but its install still counts as a fitment done on its day', [a.mtd.fitted, a.mtd.cancelled, a.mtd.fitDone], [0, 2, 2]);
+  }
+
+  console.log('\n== a cancelled sale leaves the Missed Rate; Cancellation % on every period view (R6, R7) ==');
+  { const open = day(E.emptyBook(), [['bi', biFile([{ cn: 91000040, inst: '2026-11-02', seller: 'Bravo Middle Tester' }])], ['sm', smFile([])]], D1, []);   // the opening extract (no sale day)
+    const five = day(open.book, [['bi', biFile([{ cn: 91000041, inst: '2026-11-03' }, { cn: 91000042, inst: '2026-11-03' }, { cn: 91000043, inst: '2026-11-03' }])],
+      ['sm', smFile([{ cn: 91000044, outcome: 'Missed Fitment', appt: '2026-11-03' }, { cn: 91000045, outcome: 'Missed Fitment', appt: '2026-11-03' }])]], D2, open.receipts);
+    const gone = day(five.book, [['bi', biFile([{ cn: 91000041, inst: '2026-11-03' }])], ['sm', smFile([{ cn: 91000044, outcome: 'Missed Fitment', appt: '2026-11-03' }])]], D3, five.receipts);
+    const M0 = E.model(five.book, ROSTER, { asOf: D3 }), M1 = E.model(gone.book, ROSTER, { asOf: D3 });
+    const a0 = M0.agents.find(x => x.code === 'CB9101').mtd, a1 = M1.agents.find(x => x.code === 'CB9101').mtd;
+    eq('before: 5 sales, 2 missed, Missed Rate 40 %, Cancelled 0 (a real nought, not "—")', [a0.sales, a0.missed, a0.missRate, a0.cancelled, a0.canRate], [5, 2, 0.4, 0, 0]);
+    eq('after one Missed case drops out: still 5 sales (cancelled sales stay in Sales), 1 missed, Missed Rate 20 %', [a1.sales, a1.missed, a1.missRate, a1.cancelled], [5, 1, 0.2, 1]);
+    eq('…Cancellation % = cancelled ÷ sales = 20 %, beside the 5 % budget', [a1.canRate, a1.canBudget], [0.2, 0.05]);
+    eq('…Fitment Rate unchanged (fitted ÷ all sales)', [a0.fitRate, a1.fitRate], [0.6, 0.6]);
+    const r0 = M0.agents.find(x => x.code === 'CB9101').rating, r1 = M1.agents.find(x => x.code === 'CB9101').rating;
+    const part = (r, k) => r.parts.find(p => p.k === k);
+    eq('the rating keeps its four drivers and weights (35/30/20/15) — no Cancellation driver', r1.parts.map(p => [p.k, p.w]), [['targetAch', 35], ['fitRate', 30], ['missRate', 20], ['fitted', 15]]);
+    eq('…its only change: the Missed Rate driver reads the lower rate', [part(r0, 'missRate').value, part(r1, 'missRate').value], [0.4, 0.2]);
+    const ag1 = M1.agents.find(x => x.code === 'CB9101');
+    const wk = ag1.weeks.find(w => w.from <= D2 && w.to >= D2), dd = ag1.days.find(x => x.d === D2);
+    eq('Weekly: the week the sales were made shows Cancelled 1 and Cancellation % 20 %', [wk.sales, wk.cancelled, wk.canRate], [5, 1, 0.2]);
+    eq('Daily: the sale day shows Cancelled 1 of 5', [dd.sales, dd.cancelled, dd.canRate], [5, 1, 0.2]);
+    eq('…a day with no sales: Cancelled 0, Cancellation % "—" (no sales to divide)', [ag1.days.find(x => x.d === D3).cancelled, ag1.days.find(x => x.d === D3).canRate], [0, null]);
+    const tl = M1.tlAgg.find(t => t.tlCode === 'CB9190'), sub = M1.subAgg.digital, lead = M1.leadAgg.revx;
+    eq('team leader, sub-campaign, lead source and floor carry Cancelled and Cancellation %', [tl.mtd.cancelled, sub.mtd.cancelled, lead.mtd.cancelled, M1.floor.mtd.cancelled, M1.floor.mtd.canRate], [1, 1, 1, 1, 1 / 6]);
+    eq('…and the cancellation budget at sub-campaign and floor level', [sub.mtd.canBudget, M1.floor.mtd.canBudget], [0.05, 0.05]);
+    eq('the model publishes the cancellation budget', M1.budgets.cancelled, { '*': 0.05 });
+    const D = E.digest(M1, { updatedAt: 'x' });
+    ok('digest day rows carry cancelled and canRate by name (dayCols)', D.dayCols.includes('cancelled') && D.dayCols.includes('canRate')
+      && D.agents.find(x => x.code === 'CB9101').days.find(c => c[0] === D2)[D.dayCols.indexOf('cancelled')] === 1, JSON.stringify(D.dayCols));
+  }
+  eq('the rule book defines Cancelled (cancelledFrom no longer null)', E.VT_RULES.status.cancelledFrom, ['dropped', 'deactivated']);
 }
 
 finish();

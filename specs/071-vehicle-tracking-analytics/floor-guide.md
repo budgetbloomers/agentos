@@ -62,14 +62,26 @@ sale is often fitted days later.
 
 ## What "—" means
 
-**"—" means no figure, never zero.** Under **Cancelled** it is always "—", because none of the uploads carries
-cancellations yet. The column will fill once a file does. Anywhere else, "—" means the figure cannot be worked out yet (for
-example, % to target with no target).
+**"—" means no figure, never zero** — for example, % to target with no target.
+
+## What "Cancelled" means
+
+No upload says "cancelled", so the system works it out:
+- A **Scheduled or Missed** sale that is in **neither** of a day's two files (BI Active Fitted and Scheduled & Missed)
+  counts as **Cancelled from that day** — it "dropped out of both files". This only happens once **both** files of the
+  day are loaded; one file alone never cancels anything, and a day with no files cancels nothing.
+- A contract the BI file shows as **deactivated** is Cancelled from its deactivate date, even if it was fitted.
+- A **Fitted** sale never becomes Cancelled just because it left the files.
+- If a later file carries the sale again, it goes back to that file's status.
+- A cancelled sale **stays in Sales**. It is no longer Scheduled or Missed, so it no longer counts against the Missed
+  Rate. **Cancellation %** = cancelled ÷ sales, shown beside the 5 % budget. It is not part of the rating.
+- The upload receipt says how many sales dropped out, and whether the day was complete.
 
 ## Why a figure can differ from the hand-kept report
 
 The system follows Salesforce and the Agent List, so a few things differ on purpose:
-- **Cancelled is missing.** No upload carries it.
+- **Cancelled is worked out, not copied.** On 10 Nov the rule catches every sale the hand-kept report marks Cancelled,
+  and also cancels about 55 older Scheduled/Missed rows the report still keeps although no export carries them any more.
 - **Manual credits are not copied.** 11 sales that the hand-kept report credited by hand go to the seller Salesforce names.
 - **Lead sources follow Salesforce.** About 6.6 % of cases had their lead source relabelled by hand in the hand-kept report.
 - **A missed daily upload shifts sale days** to the next upload's day.

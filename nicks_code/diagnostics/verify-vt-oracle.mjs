@@ -95,7 +95,7 @@ eq('Fitted 1,104 · Missed 153 · Scheduled 499', [byStatus('fitted'), byStatus(
 { const notExplained = [...report.entries()].filter(([k]) => !book.cases[k]);
   const br = {}; notExplained.forEach(([, v]) => { const kk = v.result + '/' + v.month; br[kk] = (br[kk] || 0) + 1; });
   doc('report rows no upload explains (status history + Cancelled)', { rows: notExplained.length, breakdown: br }, { rows: 178, note: 'spec/workbook-rules 3.1 say 178; the same table rows sum to 268 (204 Cancelled + 64 other)' },
-    'Result is sticky and typed by hand; one day of uploads cannot rebuild earlier statuses (A7). Cancelled has no source (A8).'); }
+    'Result is sticky and typed by hand; one day of uploads cannot rebuild earlier statuses (A7). Cancelled is DERIVED from absence on a complete day (A13), so one day of uploads alone cannot show it — see the R10 section.'); }
 
 /* ---- sellers -------------------------------------------------------------------------------- */
 console.log('\n== sellers (FR-016): 41 matched + CB342 by near-spelling; the rest unmatched ==');
@@ -178,7 +178,7 @@ console.log('\n== pivots restricted to reproducible rows (PD VT Campaign / Lead 
     eq(`PD ${g} (rows where the label agrees) F/S/M`, [got.fitted, got.scheduled, got.missed], [exp.fitted, exp.scheduled, exp.missed]);
   }
   doc('PD VT Campaign grand totals F / M / S / C (whole report)', { report: [1113, 190, 517, 204], engine: [M.floor.mtd.fitted, M.floor.mtd.missed, M.floor.mtd.scheduled, M.floor.mtd.cancelled] },
-    { fittedGap: 9, missedGap: 37, scheduledGap: 18, cancelled: 'absent' }, 'status history (sticky hand statuses) + no cancellation source (A7, A8)');
+    { fittedGap: 9, missedGap: 37, scheduledGap: 18, cancelled: 'derived (A13): 0 on a book opened by the 10 Nov files alone — the rule needs an earlier day; R10 measures it' }, 'status history (sticky hand statuses) + Cancelled is derived, never in a file (A7, A13)');
 }
 
 console.log('\n== SC-002: Hrs Ahead, 499 of 499 (as-at 11 Nov) ==');
@@ -243,6 +243,58 @@ console.log('\n== with the optional opening book (FR-003): Current / Rollover an
   console.log('    ratings (CB:score): ' + rd.join(' '));
   doc('Daily 10 Nov sales (whole report 127) and Weekly 2–7 Nov (500)', { day10: byDay['2026-11-10'] || 0, week2: Mo.floor.weeks[1].sales }, { day10: 127, week2: 500 },
     'the whole-report figures include Cancelled and earlier-status rows the uploads do not carry');
+}
+
+console.log('\n== R10 · derived cancellation against the hand report (prior state = Schedulers Data, then 10 Nov as a complete day) ==');
+{ /* PRIOR STATE: every report row as a case with the status the report holds, last seen the day before (9 Nov). A row the
+     report calls Cancelled has no earlier status on record, so it goes in as Scheduled (open) — the assumption that lets the
+     rule meet it; the rule cannot cancel what was never open. Only the case, its sale date and the report's Result are read. */
+  const PRIOR = '2026-11-09', TODAY = ext.date;
+  const prior = E.emptyBook(); prior.openedOn = '2026-10-01'; prior.openingBookOn = '2026-10-01';
+  for (const [k, v] of report) {
+    const sold = E.serialToISO(v.date) || null, st = v.result === 'cancelled' ? 'scheduled' : v.result;
+    if (!['fitted', 'scheduled', 'missed'].includes(st)) continue;
+    prior.cases[k] = { caseNumber: k, status: st, statusOn: PRIOR, soldOn: sold, soldBasis: 'opening_book', firstSeen: sold && sold < PRIOR ? sold : PRIOR, lastSeen: PRIOR,
+      apptOn: null, fittedOn: st === 'fitted' ? PRIOR : null, smAttempt: null, products: [], bundle: null, chargeEx: null, partnerRaw: null, leadSource: null,
+      sellerName: null, sellerCb: null, sellerMatch: null, cancelReason: null };
+    prior.events.push({ caseNumber: k, onDate: PRIOR, from: null, to: st, apptOn: null, reason: null });
+  }
+  const rc = [{ kind: 'bi_fitted', state: 'committed', extract_on: PRIOR }, { kind: 'sched_missed', state: 'committed', extract_on: PRIOR }];
+  const a = E.merge(prior, pBi, { extractOn: TODAY, roster, aliases: {}, receipts: rc });
+  eq('the 10 Nov BI file alone cancels nothing (the day is not complete yet)', [a.counts.toCancelled, a.counts.completeDay], [0, false]);
+  const b = E.merge(a.book, pSm, { extractOn: TODAY, roster, aliases: {}, receipts: rc.concat([{ kind: 'bi_fitted', state: 'committed', extract_on: TODAY }]) });
+  ok('the 10 Nov S&M file completes the day and evaluates it', b.counts.completeDay === true && b.cancel.evaluate === true, JSON.stringify(b.cancel));
+  const inFile = new Set([...Object.keys(pBi.cases), ...Object.keys(pSm.cases)]);
+  const ruleSet = Object.keys(b.book.cases).filter(k => b.book.cases[k].status === 'cancelled' && b.book.cases[k].cancelReason === 'dropped');
+  const defined = [...report.keys()].filter(k => prior.cases[k] && ['scheduled', 'missed'].includes(prior.cases[k].status) && !inFile.has(k));
+  eq('R1 cancels EXACTLY the prior open cases in neither 10 Nov file (no more, no fewer)', ruleSet.slice().sort(), defined.slice().sort());
+  ok('every cancellation is dated 10 Nov with one dropped event', ruleSet.every(k => b.book.cases[k].statusOn === TODAY) && b.events.filter(e => e.to === 'cancelled' && e.reason === 'dropped').length === ruleSet.length);
+  const absent = [...report.keys()].filter(k => !inFile.has(k));
+  const tab = (keys) => { const t = {}; keys.forEach(k => { const v = report.get(k), kk = v.month + '/' + v.result; t[kk] = (t[kk] || 0) + 1; }); return t; };
+  const T = tab(absent), n = (m, r) => T[m + '/' + r] || 0;
+  eq('the owner\'s check: Current sales in neither file = 93, of which the report marks 90 Cancelled',
+    [n('Current', 'cancelled') + n('Current', 'scheduled') + n('Current', 'missed') + n('Current', 'fitted'), n('Current', 'cancelled')], [93, 90]);
+  eq('…Rollover sales in neither file = 175: 114 Cancelled, 54 Scheduled/Missed, 7 Fitted',
+    [n('Rollover', 'cancelled') + n('Rollover', 'scheduled') + n('Rollover', 'missed') + n('Rollover', 'fitted'), n('Rollover', 'cancelled'), n('Rollover', 'scheduled') + n('Rollover', 'missed'), n('Rollover', 'fitted')], [175, 114, 54, 7]);
+  const ruleT = tab(ruleSet), rn = (m, r) => ruleT[m + '/' + r] || 0;
+  const tp = { current: rn('Current', 'cancelled'), rollover: rn('Rollover', 'cancelled') };
+  const extra = { currentScheduled: rn('Current', 'scheduled'), currentMissed: rn('Current', 'missed'), rolloverScheduled: rn('Rollover', 'scheduled'), rolloverMissed: rn('Rollover', 'missed') };
+  const repC = [...report.keys()].filter(k => report.get(k).result === 'cancelled');
+  const unseen = repC.filter(k => !ruleSet.includes(k)), unseenT = tab(unseen);
+  eq('true positives: every report-Cancelled sale in neither file is cancelled by the rule (90 Current + 114 Rollover)', [tp.current, tp.rollover], [90, 114]);
+  eq('no report-Fitted case is cancelled by absence (R3: the 7 + Current Fitted absent stay Fitted)', ruleSet.filter(k => report.get(k).result === 'fitted').length, 0);
+  eq('report Cancelled cases the rule cannot see = those still in a 10 Nov file', unseen.length, repC.filter(k => inFile.has(k)).length);
+  console.log('    true positives: Current ' + tp.current + ' · Rollover ' + tp.rollover);
+  console.log('    the rule cancels, the report still calls open: ' + JSON.stringify(extra));
+  console.log('    report Cancelled the rule cannot see (in a 10 Nov file): ' + unseen.length + ' ' + JSON.stringify(unseenT));
+  doc('Cancelled — DERIVED (was "absent"): the rule vs the report\'s Cancelled column',
+    { truePositives: tp, ruleCancelsReportStillOpen: extra, reportCancelledRuleCannotSee: { n: unseen.length, by: unseenT }, precision: +((tp.current + tp.rollover) / ruleSet.length * 100).toFixed(1) + '%', recall: +((tp.current + tp.rollover) / repC.length * 100).toFixed(1) + '%' },
+    { scheduledGap: 18, missedGap: 37, note: 'the report\'s sticky S/M rows in no upload (PD gaps) are what the rule cancels beyond the report' },
+    'R1 is inferred from absence (reason dropped). The report keeps some old Scheduled/Missed rows the export no longer carries; the rule calls them Cancelled. A report-Cancelled sale still in a file cannot be seen: no file says cancelled.');
+  const Mc = E.model(b.book, roster, { asOf: TODAY });
+  ok('the model counts them: floor Cancelled = the rule\'s in-play cancellations, Cancellation % = cancelled ÷ sales', Mc.floor.mtd.cancelled > 0 && Math.abs(Mc.floor.mtd.canRate - Mc.floor.mtd.cancelled / Mc.floor.mtd.sales) < 1e-12,
+    JSON.stringify({ cancelled: Mc.floor.mtd.cancelled, sales: Mc.floor.mtd.sales, canRate: Mc.floor.mtd.canRate }));
+  console.log(`    floor: ${Mc.floor.mtd.sales} in play, ${Mc.floor.mtd.cancelled} cancelled (${(Mc.floor.mtd.canRate * 100).toFixed(1)} % against the ${(Mc.floor.mtd.canBudget * 100).toFixed(0)} % budget)`);
 }
 
 console.log('\n== PII never leaves the parse ==');

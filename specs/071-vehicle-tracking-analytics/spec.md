@@ -27,7 +27,7 @@ CB number only. No customer data appears here.
 | F3 | **Fitment budgets**: Digital 85 %, Referral 85 %, Predictive Exp 80 % / M2 75 % / M1 70 % (overall 80 %). | `VT Digital!N45`, `VT Referrals!N17`, `VT Predictive!N70:N73`; `VT Scheduling!N16` (80 % floor-wide). |
 | F4 | **Missed budget = 5 % of sales** for every sub-campaign. | `VT Scheduling!N22/N7` = 103.3/2066, `N24/N9` = 8.95/179, `N25/N10` = 39.25/785 (all exactly 5 %). |
 | F5 | **Scheduling-speed budgets** (share of open Scheduled cases): 24 h 80 %, 48 h 10 %, 72 h 5 %, 72 h+ 5 %. | `VT Scheduling!A41,A46,A51,A56` labels. |
-| F6 | **Cancellation budget 5 %**, but no upload carries a cancellation. | `VT Digital!N55`; workbook-rules §5 cause 2. |
+| F6 | **Cancellation budget 5 %**, but no upload carries a cancellation: BI Active Fitted is active-only (Contract Status "Active" on all 19,404 rows; "Contract Deactivate Date" present but blank on every row; it holds only contracts created in the current business month), and the S&M "Status" holds only 1st/2nd/3rd attempt, New, In Progress. **But the hand report shows how a cancellation appears:** of the 93 current-month sales in NEITHER 10 Nov file it marks 90 Cancelled (97 %); of the 175 older (rollover) sales in neither file, 114 Cancelled, 54 Scheduled/Missed, 7 Fitted. So Cancelled is DERIVED (A13). | `VT Digital!N55`; workbook-rules §5 cause 2; `verify-vt-oracle` R10. |
 | F7 | **BI `Contract Create Date` and `Installation Date` are the FITMENT date, not the sale date.** They are equal on 1,103 of 1,107 VT lines and fall 0–15 days after the report's sale date (mode +1). | Scratch analysis of `BI Active Fitted 101126.xlsx` cols O, Q against report col B. |
 | F8 | **No upload carries a sale date.** Case Numbers are issued in sale order: sorted by Case Number, the report's sale dates are out of order only 5 times in 2,024 rows. All 1,309 non-cancelled "Current" report sales (832 F + 374 S + 103 M) are present in that day's two uploads (830 Current cases in BI and 479 in S&M). So **the day a case first appears in a daily upload is its sale day** (within a day). | Report `Schedulers Data` A/B/F/K; inputs C/AS. |
 | F9 | **The workbook's GWP is a bundle price incl. VAT (R99/189/199/209/229/359…), not the Charge Amount.** Σ Charge Amount × 1.15 equals the report GWP for only 328 of 1,104 fitted cases. S&M has no amount at all. The budgets' Avg GWP (Digital 166, Referral 199, Predictive 169) are on the bundle-price basis. | `BI!X`/`AD` (identical on 1,107 of 1,107 VT lines) against report col E; `VT Digital!N35`, `VT Referrals!N15`, `VT Predictive!N60`. |
@@ -132,8 +132,13 @@ team leader, sub-campaign and lead source, and export .xlsx, exactly as on the V
 ### Edge Cases
 - A case in both S&M Missed and BI on the same extract → Fitted (3 cases in the sample). A case in both S&M Scheduled and BI →
   Fitted (1 case).
-- A Fitted case that later drops out of BI (deactivated, or a new month's filter) → stays Fitted. No file carries a
-  cancellation; the rule book has a `cancelledFrom` slot for when one does.
+- A Fitted case that later drops out of BI (a new month's filter) → stays Fitted: absence never cancels a fitted unit. A
+  BI row that carries a Contract Deactivate Date (or a Contract Status other than Active) → Cancelled, reason
+  `deactivated`, winning over Fitted (A13; the current files never fill it).
+- A Scheduled or Missed case that is in NEITHER file of a complete extract day (both files of that date committed) →
+  Cancelled, reason `dropped`, as at that day (A13). One file of a day alone never cancels anything; a skipped day cancels
+  nothing by itself; a late file for an older day neither cancels nor un-cancels. If a later file carries the case again it
+  takes that file's status (one event, still one sale).
 - A Missed case later appears as Scheduled in a newer S&M (re-booked, "2nd attempt") → Scheduled, and the Missed event stays in
   the case history (Daily/Weekly "missed appointments" still count it).
 - An OLDER extract uploaded after a newer one → it may fill fields that are still blank, but never changes a status decided by
@@ -266,9 +271,10 @@ columns count events on their own date. Rates use the same set's sales as the de
 | C4 | Fitted | C2 cases with status Fitted | BI VT set (Unit Type Y) | status as at | ✓ | ✓ | ✓ |
 | C5 | Scheduled | C2 cases with status Scheduled | S&M U = "Scheduled Fitment" | status as at | ✓ | ✓ | ✓ |
 | C6 | Missed | C2 cases with status Missed | S&M U = "Missed Fitment" | status as at | ✓ | ✓ | ✓ |
-| C7 | Cancelled | C2 cases with status Cancelled | none today → column shows "—" (not 0) until `cancelledFrom` is set | status as at | ✓ | ✓ | ✓ |
+| C7 | Cancelled | C2 cases with status Cancelled (0 when none) | DERIVED (A13): a Scheduled/Missed case in neither file of a complete extract day (`dropped`), or a BI row with a deactivate date (`deactivated`) | status as at (the event's day: the complete day it dropped out / the deactivate date) | ✓ | ✓ | ✓ |
 | C8 | Fitted Rate % | C4 ÷ C2 | — | — | ✓ | ✓ | ✓ |
 | C9 | Missed Rate % | C6 ÷ C2 | — | — | ✓ | ✓ | ✓ |
+| C9a | Cancellation % | C7 ÷ C2 (C2 = ALL the set's sales: a cancelled sale stays in Sales), beside the 5 % budget (`budgets[cycle].cancelled`, F6) — shown, never scored | — | — | ✓ | ✓ | ✓ |
 | C10 | Scheduled Rate % | C5 ÷ C2 | — | — | ✓ | ✓ | ✓ |
 | C11 | Fitments done | events → Fitted dated in the window | BI Q (Installation Date) | fitted day | ✓ | ✓ | ✓ |
 | C12 | Missed appointments | events → Missed dated in the window (by appointment day) | S&M R | appointment day | ✓ | ✓ | ✓ |
@@ -283,7 +289,7 @@ columns count events on their own date. Rates use the same set's sales as the de
 | C21 | Fitted value (incl VAT) | Σ Charge Amount (X) of the case's VT lines × (1 + VAT) for C4 cases | BI X | fitted day | ✓ | ✓ | ✓ |
 | C22 | Sales without a sale day | opening-book cases with no sale day (shown only when > 0) | — | — | ✓ | – | – |
 
-Rules every column obeys: an absent figure reads "—", never 0 (e.g. C7, or C19 with no target). Rates are computed only when
+Rules every column obeys: an absent figure reads "—", never 0 (e.g. C19 with no target; C7 is a real count since A13). Every rate's denominator is C2, all the set's sales, cancelled ones included (the hand report counts Sale Count = 1 on a cancelled row). A fitment done (C11) and its value (C21) stay counted on their day if the contract is later deactivated. Rates are computed only when
 C2 > 0. Team and floor totals are sums of counts, and their rates are ratios of sums, never a mean of agent rates.
 C21 is labelled "Charge Amount basis, not the bundle price" (F9). The workbook's scheduler pivots (PD sheets) are **not**
 built in v1: no upload names the scheduler (workbook-rules §3.4).
@@ -355,11 +361,30 @@ value or a one-line code change.
   working days. Optionally the owner's own report (`Schedulers Data`) can be dropped once to supply real sale days (FR-003).
   This is a fourth, optional, one-off file (a deviation from "the 3", stated). Would change if: the owner declines it (then the
   first business month's TA starts on its 5th tracked day).
-- **A7 · Status rules.** Same extract: F > M > S (workbook-rules §3.1, 4 overlap cases). Across extracts: newer wins between
+- **A7 · Status rules.** Same extract: Cancelled (deactivated) > F > M > S (workbook-rules §3.1, 4 overlap cases). Across extracts: newer wins between
   M and S, F terminal, sticky when absent. Evidence: 178 report rows hold earlier statuses (workbook-rules §3.1). Would change if:
   a cancellation or de-fitment status appears in a file.
-- **A8 · "Cancelled" not invented.** No file carries it (F6). The column reads "—". Would change if: the owner supplies a source
-  (`cancelledFrom`).
+- **A8 · "Cancelled" not invented — SUPERSEDED 2026-11-23 by A13** (owner: "ok do the recommend fix"). It read "—" because no
+  file carries a cancellation; the hand report showed that a cancellation appears as a sale dropping out of both files (F6).
+- **A13 · Cancelled is derived (2026-11-23).** (1) `dropped`: a case whose last status is Scheduled or Missed and which is in
+  neither file of a COMPLETE extract day (a BI Active Fitted and a Scheduled & Missed of that date both committed) becomes
+  Cancelled as at that day. It is decided by the commit of the day's second file, against that day's two files (whichever
+  came first), and only when no later extract day is complete; the station reads the receipts after the book, and the
+  database refuses a `dropped` event the upload cannot prove (`bad_cancel`, under the revision lock). Re-sending a file
+  changes nothing. (2) A dropped case carried again by a file of its cancellation day or later takes that file's status
+  (Fitted > Missed > Scheduled), with one event; it was always one sale. (3) Fitted is never cancelled by absence (the BI
+  file only holds the current business month's contracts). (4) `deactivated`: a BI row with a Contract Deactivate Date, or
+  a Contract Status other than Active, cancels the case as at that date (never before its previous status day, never after
+  the extract), winning over Fitted; only a newer Active BI row reactivates it; the columns are optional. (5) Any age: a
+  rollover sale drops out the same way (the 10 Nov evidence is weaker there — 114 of 175 — but its sale month does not
+  separate the report's Cancelled from its Scheduled/Missed rows, so no separate rule); the reason (`dropped` inferred,
+  `deactivated` explicit) is stored on the case and on the event, and every page says in words that Cancelled includes
+  sales that dropped out of both files. (6) The rating is unchanged (four drivers, 35/30/20/15): a cancelled sale is simply
+  no longer a Missed or Scheduled case. Oracle (R10, prior state = the report's Schedulers Data, then 10 Nov complete):
+  the rule cancels 259 cases — 204 the report calls Cancelled (90 Current + 114 Rollover; every report-Cancelled sale is
+  caught) and 55 the report still calls open (1 Current Missed, 18 Rollover Scheduled, 36 Rollover Missed: the report's
+  sticky rows the export no longer carries); no Fitted case is cancelled. Would change if: a file starts to carry a
+  cancellation (then it becomes an explicit source like `deactivated`).
 - **A9 · Fitment = BEAME / MXV / Matrix Vision** in the first Unit Type column. "Recovery Service" lines alone are not fitments.
   Evidence: F10 (1,104 = 1,104). Would change if: the owner counts Recovery Service.
 - **A10 · Seller = Salesforce Created By.** The 11 manual credits in the report are not reproduced. Evidence: workbook-rules §3.2

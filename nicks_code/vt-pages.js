@@ -40,9 +40,9 @@ function caseRowToDb(r) {
   return { case_number: String(r.caseNumber), status: r.status, status_on: r.statusOn, sold_on: r.soldOn, sold_basis: r.soldBasis,
     first_seen: r.firstSeen, last_seen: r.lastSeen, appt_on: r.apptOn, fitted_on: r.fittedOn, sm_attempt: r.smAttempt,
     products: r.products || [], bundle: r.bundle, charge_ex: r.chargeEx, partner_raw: r.partnerRaw, lead_source: r.leadSource,
-    seller_name: r.sellerName, seller_cb: r.sellerCb, seller_match: r.sellerMatch };
+    seller_name: r.sellerName, seller_cb: r.sellerCb, seller_match: r.sellerMatch, cancel_reason: r.cancelReason || null };
 }
-function eventToDb(e) { return { case_number: String(e.caseNumber), on_date: e.onDate, from_status: e.from, to_status: e.to, appt_on: e.apptOn }; }
+function eventToDb(e) { return { case_number: String(e.caseNumber), on_date: e.onDate, from_status: e.from, to_status: e.to, appt_on: e.apptOn, reason: e.reason || null }; }
 /* rows → stage batches: ≤ STAGE_ROWS rows and ≤ STAGE_BYTES of JSON each; ord is the row's position in the upload */
 function batches(rows, maxRows, maxBytes) {
   maxRows = maxRows || STAGE_ROWS; maxBytes = maxBytes || STAGE_BYTES;
@@ -116,7 +116,8 @@ function lastCountFor(kind, cycleKey, receipts) {
 }
 /* one merge, turned into what the Worker carries: stage rows (PII-free by construction) and the commit's arguments */
 function planCommit(book, parsed, ctx) {
-  var m = E().merge(book, parsed, { extractOn: ctx.extractOn, roster: ctx.roster, aliases: ctx.aliases || {} });
+  /* ctx.receipts: the committed uploads read AFTER this book (derived cancellation, R1) — absent, nothing is cancelled */
+  var m = E().merge(book, parsed, { extractOn: ctx.extractOn, roster: ctx.roster, aliases: ctx.aliases || {}, receipts: ctx.receipts });
   var cases = m.cases.map(caseRowToDb), events = m.events.map(eventToDb);
   return { merged: m, cases: cases, events: events,
     commit: { p_base_rev: book.rev || 0, p_counts: m.counts, p_unmatched: m.unmatched, p_warnings: m.warnings.concat(ctx.warnings || []),
@@ -134,7 +135,12 @@ function receiptLines(r) {
   else {
     lines.push((r.kind === 'vtBiFitted' ? 'VT lines ' + num(c.vtLines) + ' of ' + num(c.rows) + ' rows' : num(c.vtLines) + ' rows') + ' · cases ' + num(c.cases)
       + (c.skippedFooter || c.skippedBlank ? ' · skipped ' + num((c.skippedFooter || 0) + (c.skippedBlank || 0)) + ' footer/blank rows' : ''));
-    lines.push('New ' + num(c['new']) + ' · to Fitted ' + num(c.toFitted) + ' · to Missed ' + num(c.toMissed) + ' · to Scheduled ' + num(c.toScheduled));
+    lines.push('New ' + num(c['new']) + ' · to Fitted ' + num(c.toFitted) + ' · to Missed ' + num(c.toMissed) + ' · to Scheduled ' + num(c.toScheduled)
+      + (c.toCancelled != null ? ' · to Cancelled ' + num(c.toCancelled) : ''));
+    if (c.cancelledDropped) lines.push('Cancelled — dropped out of both files of ' + r.extractOn + ': ' + num(c.cancelledDropped) + ' open sale' + (c.cancelledDropped === 1 ? '' : 's') + ' (inferred: in neither the BI Active Fitted nor the Scheduled & Missed file of that day)');
+    if (c.cancelledDeactivated) lines.push('Cancelled — contract deactivated in the BI file: ' + num(c.cancelledDeactivated));
+    if (c.reappeared) lines.push('Back from Cancelled (seen again in this file): ' + num(c.reappeared));
+    if (r.cancelNote) lines.push(r.cancelNote);
     var un = r.unmatched || [];
     lines.push('Sellers unmatched: ' + (un.length ? un.map(function (u) { return u.name + ' (' + u.cases + ')'; }).join(', ') : 'none'));
   }
@@ -164,6 +170,7 @@ var WORDS = {
   bad_row: 'A row in the file broke one of the database\'s rules, so nothing was saved. Export the file again; if it keeps happening, send the file to the support team.',
   duplicate_case: 'The same case number was sent twice in this upload, so nothing was saved. Drop the file again.',
   duplicate_event: 'The same status change was sent twice in this upload, so nothing was saved. Drop the file again.',
+  bad_cancel: 'This upload would have marked sales cancelled for a day that is not complete on the server (its other file is missing, or a newer day is already complete). Nothing was saved — drop the file again.',
   too_many_uploads: 'Too many Vehicle Tracking uploads are being loaded at the same time. Wait for the others to finish, then drop this file again.',
   upload_too_large: 'This file carries more rows than one upload may hold. Export a smaller date range and load it in parts.',
   commit_too_large: 'This upload changes more cases than one save may carry. Export a smaller date range and load it in parts.',
@@ -280,7 +287,10 @@ async function ingest(name, buf, hash, expected, found, opts) {
       var book = await readBook(env, cyc.from, Object.keys(parsed.cases).map(Number));
       if (!book) continue;   // the book moved between two parts of the read: re-read (a conflict, FR-008)
       if (kind === 'vtOpeningBook' && !book.openedOn) return fail(REFUSE_OPENING_FIRST);
-      var plan = planCommit(book, parsed, { extractOn: ex.date, roster: roster, warnings: warnings, quietAck: opts.quietAck });
+      /* the receipts are read AFTER the book, every attempt (derived cancellation, R1): a file committed after the book read
+         moves the revision, so this commit is refused and re-merged; one committed before it is in both reads */
+      var rcp = kind === 'vtOpeningBook' ? null : (must(await call(env, 'GET', '/api/vt/uploads?limit=60'), 'Reading the VT receipts').uploads || []);
+      var plan = planCommit(book, parsed, { extractOn: ex.date, roster: roster, warnings: warnings, quietAck: opts.quietAck, receipts: rcp });
       /* p_user is never sent (review fix 6): the Worker appends the session's own username to every write */
       var br = await call(env, 'POST', '/api/vt/upload/begin', { p_sha256: hash, p_kind: DB_KIND[kind], p_file_name: String(name).slice(0, 300), p_extract_on: ex.date, p_cycle_key: cyc.key });
       if (br.status === 409 && br.j && br.j.error === 'busy') return fail(WORDS.busy);   // review fix 2: words, and never stage into the other upload's id
@@ -299,9 +309,11 @@ async function ingest(name, buf, hash, expected, found, opts) {
         must(c, 'Saving the upload');
       } catch (e) { await call(env, 'POST', '/api/vt/upload/abandon', { p_id: b.id }).catch(function () {}); throw e; }
       var r = { kind: kind, fileName: name, extractOn: ex.date, assumed: ex.assumed, counts: plan.merged.counts, unmatched: plan.merged.unmatched,
-        warnings: plan.commit.p_warnings, rosterFallback: fallback, quietDay: !!opts.quietAck, rev: c.j.rev, attempts: attempt };
+        warnings: plan.commit.p_warnings, rosterFallback: fallback, quietDay: !!opts.quietAck, rev: c.j.rev, attempts: attempt,
+        cancelNote: plan.merged.cancel ? plan.merged.cancel.note : null };
       banner(null); showReceipt(r);
-      toast(LABEL[kind] + ' loaded: ' + num(plan.merged.counts.cases) + ' cases, ' + num(plan.events.length) + ' status changes · VAS money unchanged', '', 9000);
+      toast(LABEL[kind] + ' loaded: ' + num(plan.merged.counts.cases) + ' cases, ' + num(plan.events.length) + ' status changes'
+        + (plan.merged.counts.cancelledDropped ? ' (' + num(plan.merged.counts.cancelledDropped) + ' cancelled: in neither file of the day)' : '') + ' · VAS money unchanged', '', 9000);
       root.__vtBook = plan.merged.book; root.__vtRoster = roster;
       if (root.VTPages && typeof root.VTPages.adopt === 'function') { try { root.VTPages.adopt(r, plan.merged.book, roster); } catch (e) { /* the pages re-read the book on their next open */ } }
       if (root.VTStation && typeof root.VTStation.afterCommit === 'function') { try { root.VTStation.afterCommit(r, plan.merged.book, roster); } catch (e) { /* the publish (Phase E) reports its own failures */ } }
@@ -325,7 +337,8 @@ return { API: API, LABEL: LABEL, DB_KIND: DB_KIND, REFUSE_OPENING_FIRST: REFUSE_
  *
  * ENGINE DECIDES, PAGE PAINTS. Every figure on these pages is a field of VTEngine.model() (one call, modelFor below,
  * the same call the digest publish must use): this half only picks which rows a filter shows, formats them and writes
- * the same rows to .xlsx. Absent figures read "—", never 0 (Cancelled: no upload carries one, A8). Totals are the
+ * the same rows to .xlsx. Absent figures read "—", never 0. Cancelled is a real count since the derived-cancellation fix (2026-11-23):
+ * a sale that dropped out of both files of a complete day, or whose contract the BI file shows deactivated. Totals are the
  * engine's own aggregates (sums of counts, ratios of sums) — never a mean of the rows on screen.
  * The book is read from GET /api/vt/book?from=<business month start>, the Agent List in force from
  * /api/vt/roster?on=<month end> (the whole-month rule); a station commit hands both over directly (adopt).
@@ -449,14 +462,14 @@ function figCols(view, M) {
   var c = [col('Sales', 'sales')];
   if (view === 'mtd') c.push(col('Current', 'current'), col('Rollover', 'rollover'));
   c.push(col('Fitted', 'fitted'), col('Scheduled', 'scheduled'), col('Missed', 'missed'), col('Cancelled', 'cancelled'),
-    col('Fitted %', 'fitRate', 'p'), col('Missed %', 'missRate', 'p'), col('Scheduled %', 'schedRate', 'p'),
+    col('Fitted %', 'fitRate', 'p'), col('Missed %', 'missRate', 'p'), col('Scheduled %', 'schedRate', 'p'), col('Cancelled %', 'canRate', 'p'),
     col('Fitments done', 'fitDone'), col('Missed appointments', 'missAppt'), col('Due to fit', 'due'));
   if (view === 'mtd') c.push(col('Working days', 'workingDays'));
   if (view === 'weekly') c.push(col('Working days', 'wd'));
   if (view !== 'daily') c.push(col('SPD', 'spd', 'd2'));
   c.push(col('Target SPD', 'target', 'd2'));
   if (view !== 'daily') c.push(col('% to target', 'toTarget', 'p'));
-  if (view === 'mtd') c.push(col('Fitment budget %', 'fitBudget', 'p'));
+  if (view === 'mtd') c.push(col('Fitment budget %', 'fitBudget', 'p'), col('Cancellation budget %', 'canBudget', 'p'));
   c.push(col('Fitted value (incl VAT)', 'value', 'r'));
   if (view === 'mtd' && M.floor.mtd && M.floor.mtd.noSaleDay > 0) c.push(col('Sales without a sale day', 'noSaleDay'));
   return c;
@@ -640,7 +653,7 @@ function statesHtml(M) {
   var sch = M.notRated.filter(function (n) { return n.why === 'scheduling'; });
   if (sch.length) out.push(warn('Scheduling agents are listed, not rated in v1', sch.length + ' agent' + (sch.length === 1 ? '' : 's'),
     'The uploads do not say which scheduler handled a sale, so scheduling agents carry no sales and no rating yet. The Hrs Ahead table is the scheduling-speed view.', 'info'));
-  out.push('<p class="note vt-cancel-note" style="margin:8px 0 0;max-width:none">Cancelled reads "—": no upload carries a cancellation yet, so it is unknown, not zero. Fitted value is the Charge Amount × VAT, not the bundle price.</p>');
+  out.push('<p class="note vt-cancel-note" style="margin:8px 0 0;max-width:none">Cancelled includes sales that dropped out of both daily files: a Scheduled or Missed sale that is in neither the BI Active Fitted nor the Scheduled & Missed file of a day with both files in counts as Cancelled from that day (no file says "cancelled", so this is inferred), and a contract the BI file shows as deactivated. A cancelled sale stays in Sales, is no longer Scheduled or Missed, and comes back if a later file carries it. Cancellation % = cancelled ÷ sales, beside the ' + fmtCell('p', (((M.budgets || {}).cancelled) || {})['*']) + ' budget. Fitted value is the Charge Amount × VAT, not the bundle price.</p>');
   return out.join('');
 }
 function render(view) {

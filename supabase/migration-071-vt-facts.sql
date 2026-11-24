@@ -7,6 +7,12 @@
 -- rows / 4.66 GB). The raw files are not stored either (they carry customer PII): the browser parses them, drops every
 -- customer field (plan DB-4) and sends only changed case rows and events; the files' hashes and receipts are kept.
 --
+-- CANCELLED (owner-approved fix, 2026-11-23). No file carries a cancellation, so the engine DERIVES it: a Scheduled /
+-- Missed case in neither file of a COMPLETE extract day (both a BI Active Fitted and a Scheduled & Missed of that date
+-- committed) becomes cancelled with cancel_reason 'dropped'; a BI row with a deactivate date is 'deactivated'. The rule is
+-- decided in VTEngine.merge; vt_upload_commit only REFUSES a 'dropped' event this upload cannot prove (bad_cancel, below),
+-- under the same revision lock, so a single file can never cancel anything whatever a station sends.
+--
 -- NO MERGE LOGIC LIVES HERE. The status precedence, sale day, seller and lead source are decided ONCE, in
 -- nicks_code/vt-engine.js (VTEngine.merge, oracle-tested). These functions apply the rows the engine computed and
 -- enforce only keys, checks, bounds, ownership, idempotency and the book revision (compare-and-set). The two book-level
@@ -95,10 +101,12 @@ create table if not exists vt_cases (
   seller_name   text check (seller_name is null or length(seller_name) <= 120),   -- normalised Salesforce display name of the SELLER (staff)
   seller_cb     text check (seller_cb is null or seller_cb ~ '^CB[0-9]+$'),
   seller_match  text check (seller_match is null or seller_match in ('exact', 'alias', 'near', 'first_last', 'unmatched')),
+  cancel_reason text check (cancel_reason is null or cancel_reason in ('dropped', 'deactivated')),   -- why a case is cancelled (2026-11-23 fix)
   last_upload   bigint not null references vt_uploads (id),
   rev           bigint not null,
   updated_at    timestamptz not null default now(),
-  check (last_seen >= first_seen)
+  check (last_seen >= first_seen),
+  check ((status = 'cancelled') = (cancel_reason is not null))   -- a cancelled case always says why; no other status carries a reason
 ) with (fillfactor = 70);
 comment on table vt_cases is 'VT case book (spec 071): the CURRENT state of each sale. No customer field. Team leader and sub-campaign are NOT stored — they come from the Agent List in force each business month.';
 
@@ -112,7 +120,9 @@ create table if not exists vt_case_events (
   to_status    text not null check (to_status in ('scheduled', 'missed', 'fitted', 'cancelled')),
   appt_on      date,
   upload_id    bigint not null references vt_uploads (id),
-  primary key (case_number, on_date, to_status)
+  reason       text check (reason is null or reason in ('dropped', 'deactivated')),   -- last: why a cancelled event happened (2026-11-23 fix)
+  primary key (case_number, on_date, to_status),
+  check ((to_status = 'cancelled') = (reason is not null))
 );
 create index if not exists vt_case_events_on_idx on vt_case_events (on_date);
 create index if not exists vt_case_events_upload_idx on vt_case_events (upload_id);
@@ -235,7 +245,7 @@ revoke execute on function vt_upload_stage(bigint, text, int, jsonb, text) from 
 grant execute on function vt_upload_stage(bigint, text, int, jsonb, text) to service_role;
 
 -- ------------------------------------------------------------------------------------------------- vt_upload_commit
--- Refusals before any write: not_owner, not_staging, bad_receipt (counts an object ≤ 4 KB; unmatched an array of ≤ 2,000
+-- Refusals before any write: not_owner, not_staging, bad_cancel (a 'dropped' cancellation this upload cannot prove), bad_receipt (counts an object ≤ 4 KB; unmatched an array of ≤ 2,000
 -- names, ≤ 48 KB; warnings an array of ≤ 200, ≤ 16 KB — review S-M2), version_conflict, commit_too_large (> 60,000 rows
 -- of a kind: the per-commit cap, review D-H3), stage_incomplete, duplicate_case / duplicate_event (named, not
 -- Postgres's "cannot affect row a second time"), bad_date (review S-M4: first_seen / last_seen / status_on and an
@@ -290,30 +300,43 @@ begin
      limit 1;
   end if;
   if v_bad is not null then raise exception 'bad_date: case % carries a date outside 2000-01-01 .. % (today + 1; + 400 for sale, appointment, fitment)', v_bad, v_today + 1; end if;
+  -- A 'dropped' cancellation (2026-11-23 fix) is only ever written by the daily file that COMPLETES its extract day: dated
+  -- that day, the other daily kind of the same date already committed, and no later day complete. Checked under the
+  -- revision lock taken above, so two stations committing the day's two files are serialised and the second one decides.
+  select x.case_number::text into v_bad
+    from vt_upload_stage s, jsonb_to_record(s.row) as x(case_number bigint, to_status text, reason text, on_date date)
+   where s.upload_id = p_id and s.kind = 'event' and x.to_status = 'cancelled' and x.reason = 'dropped'
+     and (u.kind not in ('bi_fitted', 'sched_missed') or x.on_date is distinct from u.extract_on
+          or not exists (select 1 from vt_uploads o where o.state = 'committed' and o.extract_on = u.extract_on
+                          and o.kind = case u.kind when 'bi_fitted' then 'sched_missed' else 'bi_fitted' end)
+          or exists (select 1 from vt_uploads a join vt_uploads b on b.extract_on = a.extract_on and b.kind = 'sched_missed' and b.state = 'committed'
+                      where a.kind = 'bi_fitted' and a.state = 'committed' and a.extract_on > u.extract_on))
+   limit 1;
+  if v_bad is not null then raise exception 'bad_cancel: case % is marked dropped, but this upload does not complete the newest extract day (both files of %)', v_bad, u.extract_on; end if;
   v_rev := r.rev + 1;
   insert into vt_cases (case_number, status, status_on, sold_on, sold_basis, first_seen, last_seen, appt_on, fitted_on, sm_attempt, products,
-                        bundle, charge_ex, partner_raw, lead_source, seller_name, seller_cb, seller_match, last_upload, rev, updated_at)
+                        bundle, charge_ex, partner_raw, lead_source, seller_name, seller_cb, seller_match, cancel_reason, last_upload, rev, updated_at)
   select x.case_number, x.status, x.status_on, x.sold_on, x.sold_basis, x.first_seen, x.last_seen, x.appt_on, x.fitted_on, x.sm_attempt,
-         coalesce(x.products, '{}'), x.bundle, x.charge_ex, x.partner_raw, x.lead_source, x.seller_name, x.seller_cb, x.seller_match, p_id, v_rev, now()
+         coalesce(x.products, '{}'), x.bundle, x.charge_ex, x.partner_raw, x.lead_source, x.seller_name, x.seller_cb, x.seller_match, x.cancel_reason, p_id, v_rev, now()
     from vt_upload_stage s,
          jsonb_to_record(s.row) as x(case_number bigint, status text, status_on date, sold_on date, sold_basis text, first_seen date, last_seen date,
                                      appt_on date, fitted_on date, sm_attempt text, products text[], bundle text, charge_ex numeric, partner_raw text,
-                                     lead_source text, seller_name text, seller_cb text, seller_match text)
+                                     lead_source text, seller_name text, seller_cb text, seller_match text, cancel_reason text)
    where s.upload_id = p_id and s.kind = 'case'
   on conflict (case_number) do update set
     status = excluded.status, status_on = excluded.status_on, sold_on = excluded.sold_on, sold_basis = excluded.sold_basis,
     first_seen = excluded.first_seen, last_seen = excluded.last_seen, appt_on = excluded.appt_on, fitted_on = excluded.fitted_on,
     sm_attempt = excluded.sm_attempt, products = excluded.products, bundle = excluded.bundle, charge_ex = excluded.charge_ex,
     partner_raw = excluded.partner_raw, lead_source = excluded.lead_source, seller_name = excluded.seller_name, seller_cb = excluded.seller_cb,
-    seller_match = excluded.seller_match, last_upload = excluded.last_upload, rev = excluded.rev, updated_at = excluded.updated_at;
-  insert into vt_case_events (case_number, on_date, from_status, to_status, appt_on, upload_id)
-  select x.case_number, x.on_date, x.from_status, x.to_status, x.appt_on, p_id
+    seller_match = excluded.seller_match, cancel_reason = excluded.cancel_reason, last_upload = excluded.last_upload, rev = excluded.rev, updated_at = excluded.updated_at;
+  insert into vt_case_events (case_number, on_date, from_status, to_status, appt_on, reason, upload_id)
+  select x.case_number, x.on_date, x.from_status, x.to_status, x.appt_on, x.reason, p_id
     from vt_upload_stage s,
-         jsonb_to_record(s.row) as x(case_number bigint, on_date date, from_status text, to_status text, appt_on date)
+         jsonb_to_record(s.row) as x(case_number bigint, on_date date, from_status text, to_status text, appt_on date, reason text)
    where s.upload_id = p_id and s.kind = 'event'
   on conflict (case_number, on_date, to_status) do update set
-    from_status = excluded.from_status, appt_on = excluded.appt_on, upload_id = excluded.upload_id
-   where (vt_case_events.from_status, vt_case_events.appt_on) is distinct from (excluded.from_status, excluded.appt_on);
+    from_status = excluded.from_status, appt_on = excluded.appt_on, reason = excluded.reason, upload_id = excluded.upload_id
+   where (vt_case_events.from_status, vt_case_events.appt_on, vt_case_events.reason) is distinct from (excluded.from_status, excluded.appt_on, excluded.reason);
   update vt_book_rev set rev = v_rev,
          opened_on = coalesce(opened_on, case when u.kind <> 'opening_book' then u.extract_on end),
          opening_book_on = coalesce(opening_book_on, case when u.kind = 'opening_book' then u.extract_on end),
@@ -366,8 +389,8 @@ returns json language sql stable security invoker set search_path = public as $$
     'rev', r.rev, 'openedOn', r.opened_on, 'openingBookOn', r.opening_book_on,
     'cases', coalesce((select json_agg(json_build_array(c.case_number::text, c.status, c.status_on, c.sold_on, c.sold_basis, c.first_seen, c.last_seen,
                                                           c.appt_on, c.fitted_on, to_json(c.products), c.charge_ex, c.lead_source, c.seller_name, c.seller_cb,
-                                                          c.seller_match, c.sm_attempt, c.bundle, c.partner_raw) order by c.case_number) from c), '[]'::json),
-    'events', coalesce((select json_agg(json_build_array(e.case_number::text, e.on_date, e.from_status, e.to_status, e.appt_on)
+                                                          c.seller_match, c.sm_attempt, c.bundle, c.partner_raw, c.cancel_reason) order by c.case_number) from c), '[]'::json),
+    'events', coalesce((select json_agg(json_build_array(e.case_number::text, e.on_date, e.from_status, e.to_status, e.appt_on, e.reason)
                                          order by e.case_number, e.on_date, e.to_status)
                           from vt_case_events e join c on c.case_number = e.case_number), '[]'::json))
   from vt_book_rev r where r.id = 1
@@ -380,7 +403,7 @@ grant execute on function vt_book(date, bigint[]) to service_role;
 -- (verify-vt-db.mjs checks it). Weekly, from the health cron's Sunday slot (task F3). Review fixes:
 --   · it takes the revision row lock FIRST (D-M4), the same lock every commit takes, so a trim and a commit run one
 --     after the other and can never deadlock; the stuck-upload sweep skips rows a live call holds (skip locked);
---   · a CLOSED case (fitted / cancelled) last seen before the cutoff goes, with its events; a still-OPEN case
+--   · a CLOSED case (fitted / cancelled — dropped or deactivated) last seen before the cutoff goes, with its events; a still-OPEN case
 --     (scheduled / missed) is never deleted however old — it is counted in skipped_open (D-M5);
 --   · events go ONLY with their case (D-M6): a kept case keeps its whole history (a few events per case), so no report
 --     inside the window ever sees a case whose earlier status changes were cut away;

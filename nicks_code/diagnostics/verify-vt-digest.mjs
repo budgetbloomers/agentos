@@ -50,6 +50,15 @@ ok(D.minima && D.minima.cases === ENG.VT_RULES.rating.minCases && D.minima.track
 const ma1 = M.agents.find((a) => a.code === 'CB9101');
 ok(a1.rating.score === ma1.rating.score && a1.mtd.sales === ma1.mtd.sales && Math.abs(a1.mtd.fitRate - ma1.mtd.fitRate) < 1e-6, 'the digest row is the model row (score, sales, fitted rate)');
 ok(D.empty === false, 'empty is false with in-play sales (derived)');
+/* derived cancellation (2026-11-23): the fixture's every-20th sale drops out of both files three days after it is made */
+ok(D.floor.mtd.cancelled > 0 && D.floor.mtd.cancelled === M.floor.mtd.cancelled && Math.abs(D.floor.mtd.canRate - D.floor.mtd.cancelled / D.floor.mtd.sales) < 1e-6,
+  'Cancelled travels as a real count with Cancellation % = cancelled ÷ sales (floor ' + D.floor.mtd.cancelled + ' of ' + D.floor.mtd.sales + ')', JSON.stringify([D.floor.mtd.cancelled, D.floor.mtd.canRate]));
+ok(D.agents.every((a) => typeof a.mtd.cancelled === 'number' && a.mtd.canBudget === ENG.VT_RULES.budgets[CYCLE].cancelled['*']) && D.budgets.cancelled && D.budgets.cancelled['*'] === ENG.VT_RULES.budgets[CYCLE].cancelled['*'],
+  'every agent row carries Cancelled (0 when none) and the cancellation budget; the budgets travel with it');
+{ const ci = D.dayCols.indexOf('cancelled'), ri = D.dayCols.indexOf('canRate');
+  const dayC = D.floor.days.reduce((n, r) => n + (r[ci] || 0), 0), wkC = D.floor.weeks.reduce((n, w) => n + (w.cancelled || 0), 0);
+  ok(ci > 0 && ri > 0 && dayC === wkC && dayC > 0 && D.tlAgg.every((t) => typeof t.mtd.cancelled === 'number') && Object.values(D.leadAgg).every((l) => typeof l.mtd.cancelled === 'number'),
+    'Weekly and Daily carry Cancelled by sale day (the days add up to the weeks: ' + dayC + '), and every team-leader and lead-source block carries it', JSON.stringify([ci, ri, dayC, wkC])); }
 const E0 = ENG.digest(ENG.model(ENG.emptyBook(), ROSTER, { cycleKey: 'cycle-2026-12', asOf: '2026-11-27' }), {});
 ok(E0.empty === true && E0.agents.every((a) => a.rating.rated === false), 'a month with no in-play sale is empty:true, nobody rated (never a 0 score)');
 const X = ENG.emptyCyclePayload('cycle-2026-12', { updatedAt: 'x' });

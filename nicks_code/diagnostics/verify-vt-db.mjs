@@ -508,6 +508,73 @@ await asOwner(`insert into team_leader_cbs (leader_name, employee_code) values (
   eq('...the exact (btrim) spelling wins and the code goes through norm_cb', ro.rows.map((r) => r.tl_code), ['CB9190', null, 'CB77']);
   eq('D-M9: list_as_of names the newest accepted list of ANY campaign on or before the day (the page can warn)', [ro.as_of, ro.list_as_of], ['2026-11-02', '2026-11-20']); }
 
+head('R11 · derived cancellation (2026-11-23 fix): storage, atomic with its upload, proven by the database, trimmed as closed');
+/* a fresh book for this section (the uploads stay; their days are all before the dates used here), and a later clock */
+await asOwner(`delete from vt_case_events; delete from vt_cases; update vt_uploads set state = 'abandoned' where state = 'staging'; delete from vt_upload_stage;`);
+await db.exec(`set vt.today = '2027-03-10'`);
+const committed = async () => (await all(`select kind, state, extract_on::text extract_on from vt_uploads where state = 'committed'`));
+async function uploadRc(sha, kind, aoa, on, name) {   // the station's order: book first, then the receipts, then merge
+  const parsed = kind === 'bi_fitted' ? E.parseBi(aoa) : E.parseSm(aoa);
+  const bk = await book(null, null), rc = await committed();
+  const plan = ST.planCommit(bk, parsed, { extractOn: on, roster: ROSTER, receipts: rc });
+  const b = await beginAs(sha, on, 'tester', { kind, name });
+  await stageAll(b.id, plan.cases, plan.events);
+  const c = plan.commit;
+  const res = await rpc('vt_upload_commit', [b.id, c.p_base_rev, JSON.stringify(c.p_counts), JSON.stringify(c.p_unmatched), JSON.stringify(c.p_warnings), c.p_quiet_ack, c.p_cases, c.p_events]);
+  return { plan, res, b };
+}
+const CA = '2027-03-01', CB = '2027-03-02', CC = '2027-03-03';
+await uploadRc(H(9101), 'bi_fitted', biFile([{ cn: 93000001, inst: CA }]), CA, 'BI Active Fitted 010327.xlsx');
+await uploadRc(H(9102), 'sched_missed', smFile([{ cn: 93000002 }, { cn: 93000003, outcome: 'Missed Fitment', appt: CA }]), CA, 'Scheduled & Missed 010327.xlsx');
+const cB1 = await uploadRc(H(9103), 'bi_fitted', biFile([{ cn: 93000001, inst: CA }]), CB, 'BI Active Fitted 020327.xlsx');
+eq('one file of a day writes no cancellation', [cB1.plan.merged.counts.toCancelled, (await one(`select count(*)::int n from vt_cases where status = 'cancelled'`)).n], [0, 0]);
+const cB2 = await uploadRc(H(9104), 'sched_missed', smFile([{ cn: 93000004 }]), CB, 'Scheduled & Missed 020327.xlsx');
+eq('the file that completes the day commits its cancellations in the same call', [cB2.plan.merged.counts.cancelledDropped, cB2.res.events], [2, cB2.plan.events.length]);
+eq('vt_cases: status cancelled, cancel_reason dropped, as at the day', await all(`select case_number::text cn, status, cancel_reason, status_on::text as son from vt_cases where status = 'cancelled' order by 1`),
+  [{ cn: '93000002', status: 'cancelled', cancel_reason: 'dropped', son: CB }, { cn: '93000003', status: 'cancelled', cancel_reason: 'dropped', son: CB }]);
+eq('vt_case_events: one cancelled event each, with its reason and the upload that wrote it', await all(`select case_number::text cn, from_status, reason, upload_id::int u from vt_case_events where to_status = 'cancelled' order by 1`),
+  [{ cn: '93000002', from_status: 'scheduled', reason: 'dropped', u: cB2.b.id }, { cn: '93000003', from_status: 'missed', reason: 'dropped', u: cB2.b.id }]);
+{ const bk = await book(null, null), canon = (o) => JSON.stringify(o, (k, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((x) => [x, v[x]])) : v));
+  const want = cB2.plan.merged.book, diff = Object.keys(want.cases).filter((cn) => canon(want.cases[cn]) !== canon(bk.cases[cn]));
+  ok(diff.length === 0, 'vt_book reads the cancelled cases back equal to the merged book (cancelReason included)', diff.join(','));
+  const ev = (x) => x.map((e) => [e.caseNumber, e.onDate, e.from, e.to, e.reason].join('|')).sort();
+  eq('...and every event with its reason', ev(bk.events), ev(want.events)); }
+/* the database refuses a 'dropped' cancellation the upload cannot prove — whatever a station sends */
+const dropEv = (cn, on) => erow(cn, on, { from_status: 'scheduled', to_status: 'cancelled', reason: 'dropped' });
+const dropRow = (cn, on) => crow(cn, on, { status: 'cancelled', cancel_reason: 'dropped', fitted_on: null, first_seen: CA, sold_on: CA });
+{ const e1 = await err(() => load(H(9105), CC, [dropRow(93000004, CC)], [dropEv(93000004, CC)], 'tester', { kind: 'sched_missed', name: 'S&M alone 030327.xlsx' }));
+  ok(e1 && /bad_cancel/.test(e1), 'a single file of a day (its other file not committed) cannot cancel: bad_cancel', e1);
+  eq('...and nothing was written', (await one(`select status from vt_cases where case_number = 93000004`)).status, 'scheduled');
+  await sweep();
+  const e2 = await err(() => load(H(9106), CB, [dropRow(93000004, CA)], [dropEv(93000004, CA)], 'tester', { kind: 'sched_missed', name: 'S&M misdated 020327.xlsx' }));
+  ok(e2 && /bad_cancel/.test(e2), 'a dropped event dated another day than the upload\'s extract: bad_cancel', e2);
+  await sweep();
+  const e3 = await err(() => load(H(9107), CA, [dropRow(93000004, CA)], [dropEv(93000004, CA)], 'tester', { kind: 'bi_fitted', name: 'BI late 010327.xlsx' }));
+  ok(e3 && /bad_cancel/.test(e3), 'an OLDER day completing late (a newer day is complete) cannot cancel: bad_cancel', e3);
+  await sweep();
+  const e4 = await err(() => load(H(9108), CB, [dropRow(93000004, CB)], [dropEv(93000004, CB)], 'tester', { kind: 'opening_book', name: 'Opening.xlsx' }));
+  ok(e4 && /bad_cancel/.test(e4), 'the opening book can never cancel: bad_cancel', e4);
+  await sweep();
+  const e5 = await err(() => load(H(9109), CC, [crow(93000005, CC, { status: 'cancelled', cancel_reason: null })], [], 'tester', { kind: 'bi_fitted' }));
+  ok(e5 && /check constraint/.test(e5), 'a cancelled case without a reason breaks a check', e5);
+  await sweep();
+  const e6 = await err(() => load(H(9110), CC, [crow(93000005, CC, { cancel_reason: 'dropped' })], [], 'tester', { kind: 'bi_fitted' }));
+  ok(e6 && /check constraint/.test(e6), 'a reason on a case that is not cancelled breaks a check', e6);
+  await sweep();
+  const e7 = await err(() => load(H(9111), CC, [crow(93000005, CC)], [erow(93000005, CC, { to_status: 'cancelled' })], 'tester', { kind: 'bi_fitted' }));
+  ok(e7 && /check constraint/.test(e7), 'a cancelled event without a reason breaks a check', e7);
+  await sweep();
+  const e8 = await err(() => load(H(9112), CC, [crow(93000005, CC, { status: 'cancelled', cancel_reason: 'gone' })], [], 'tester', { kind: 'bi_fitted' }));
+  ok(e8 && /check constraint/.test(e8), 'an unknown reason breaks a check', e8);
+  await sweep();
+  const dv = await load(H(9113), CC, [crow(93000006, CC, { status: 'cancelled', cancel_reason: 'deactivated' })], [erow(93000006, CC, { to_status: 'cancelled', reason: 'deactivated' })], 'tester', { kind: 'bi_fitted', name: 'BI 030327.xlsx' });
+  ok(dv.res && dv.res.events === 1, 'an explicit deactivation needs no complete day: one BI file may write it', JSON.stringify(dv.res)); }
+{ const tr2 = await rpc('vt_trim', [13, '2028-06-01']);
+  ok(!(await one('select 1 x from vt_cases where case_number = 93000002')) && !(await one('select 1 x from vt_case_events where case_number = 93000002')),
+    'vt_trim treats a cancelled case as CLOSED: last seen before the cutoff, it goes with its events', JSON.stringify(tr2));
+  ok(!!(await one('select 1 x from vt_cases where case_number = 93000004')), '...while an open (scheduled) case is never trimmed', JSON.stringify(tr2)); }
+await db.exec(`set vt.today = '2026-11-23'`);
+
 head('R10 · signatures, grants, applying');
 { const sigs = (await all(`select p.oid::regprocedure::text sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname like 'vt\\_%' order by 1`)).map((x) => x.sig);
   eq('the VT function signatures, exactly (no stale overload left behind)', sigs, ['vt_book(date,bigint[])', 'vt_db_size()', 'vt_roster_at(date)', 'vt_trim(integer,date,integer)',
