@@ -601,6 +601,12 @@ const envelope = (digest) => ({
   updatedAt: digest.updatedAt,
   diallingDays: digest.diallingDays,
   workingDays: digest.workingDays,
+  /* THE TWO DAY FACTS THE CALCULATOR DIVIDES BY (2026-11-24, owner: "the comms calculator the days are not right for
+     the vas guys"). Without daysWithData the page counted the days itself, and without extraHolidays it counted the
+     4 Nov election holiday as a day with data: 16 not 15, so every VAS agent read 4 days left instead of 5 and the
+     projection ran one day short. This envelope hand-picks its fields, so both must be named. */
+  daysWithData: digest.daysWithData,
+  extraHolidays: Array.isArray(digest.extraHolidays) ? digest.extraHolidays : [],
   dates: digest.dates,
   weeks: digest.weeks || [],   // Monday-anchored weeks, for the portal's Weekly view
   /* how PULSE prints talk averages (MTD_RULES.aveTalkUnit) — the mirrored tables print them

@@ -151,6 +151,45 @@ try {
   await b.close(); server.close();
 }
 
+/* ------------------------------------------------------------------ D. the Worker carries the day counts ---- */
+/* Owner, 2026-11-24: "the comms calculator the days are not right for the vas guys". PULSE published the right
+   November counts (workingDays 20, daysWithData 15, extraHolidays ['2026-11-04']), but the Worker's portal
+   envelope hand-picks its fields and dropped daysWithData and extraHolidays. The agent page then fell back to
+   counting weekdays itself WITHOUT the election holiday: 16 days with data, so LEFT = 20 − 16 = 4 instead of 5,
+   every VAS agent's projection was one day short and the per-day ask divided by 4. This runs the REAL Worker
+   overview()/agentDetail() over a November fixture and the REAL page functions over what they return. */
+console.log('\nD · THE WORKER HANDS THE PAGE THE DAY COUNTS PULSE PUBLISHED (November 2026, 4 Nov election holiday)');
+{
+  const { overview, agentDetail } = await import(pathToFileURL(path.join(ROOT, 'worker', 'src', 'portal.mjs')).href);
+  const novDates = []; for (let d = 1; d <= 23; d++) novDates.push('2026-11-' + String(d).padStart(2, '0'));
+  const row = { code: 'CB9001', name: 'Fixture Agent', campaign: 'Cuddle', tenure: 'Exp', tl: 'Fixture Leader', plan: 'EXP_CUDDLE',
+    gwpEx: 9000, sales: 116, target: 120, act: 15, emp: 15, days: [], wk: [], spark: [], badges: [] };
+  const digest = { v: 1, updatedAt: '2026-11-24T06:00:00Z', period: { from: '2026-11-01', to: '2026-11-30' }, weeks: [],
+    diallingDays: 15, extraHolidays: ['2026-11-04'], workingDays: 20, daysWithData: 15, dates: novDates,
+    comm: { version: '2026-11', dd: 20, saleValue: 89 / 1.15, brackets: { EXP_CUDDLE: [{ gwp: 9286.96, comm: 4000 }, { gwp: 11000, comm: 6000 }] } },
+    compositeDrivers: [], groups: {}, onTarget: 1, talkUnit: 'minutes', tlAgg: [], campAgg: {}, agents: [row], notCovered: [] };
+  const DB = { select: async () => [], storageGet: async () => null, insert: async () => {}, update: async () => {} };
+  const grab = (name) => { const i = AGENT.indexOf('function ' + name + '('); if (i < 0) return '';
+    let n = 0; for (let k = AGENT.indexOf('{', i); k < AGENT.length; k++) { if (AGENT[k] === '{') n++; else if (AGENT[k] === '}' && !--n) return AGENT.slice(i, k + 1); } return ''; };
+  const FNS = ['saHolidaysFor', 'isPublicHoliday', 'DAYS', 'DATA_DAYS', 'WORKED', 'workingDaysFrom', 'LEFT', 'TDAYS'];
+  const pageOver = (D) => new Function('D', 'ME', 'var _SA_HOLIDAYS_BY_YEAR={};' + FNS.map(grab).join('\n')
+    + ';function nowDay(){return "2026-11-24";};return {DAYS:DAYS,DATA_DAYS:DATA_DAYS,WORKED:WORKED,LEFT:LEFT,TDAYS:TDAYS};')(D, D.me);
+  const agentUser = { role: 'agent', cb: 'CB9001', full_name: 'Fixture Agent', username: 'cb9001' };
+  const bodies = [['the agent\'s own overview', (await overview({}, DB, agentUser, digest, [])).body],
+                  ['the agent-detail view', (await agentDetail({}, DB, agentUser, digest, 'CB9001')).body]];
+  for (const [what, body] of bodies) {
+    ok(what + ' carries daysWithData (15) from the digest', body && body.daysWithData === 15, String(body && body.daysWithData));
+    ok(what + ' carries the one-off holidays (extraHolidays 2026-11-04)', !!body && Array.isArray(body.extraHolidays) && body.extraHolidays.includes('2026-11-04'), JSON.stringify(body && body.extraHolidays));
+    const f = body && body.me ? pageOver(body) : null;
+    ok(what + ': the page reads 20 working days, 15 with data, 5 left (24–30 Nov), projects over 20', !!f && f.DAYS() === 20 && f.DATA_DAYS() === 15 && f.LEFT() === 5 && f.TDAYS() === 20,
+      f ? 'DAYS ' + f.DAYS() + ' DATA_DAYS ' + f.DATA_DAYS() + ' LEFT ' + f.LEFT() + ' TDAYS ' + f.TDAYS() : 'no me row');
+  }
+  /* an older digest without daysWithData still has the holiday: the page's own count must honour it */
+  const { daysWithData: _drop, ...older } = digest;
+  const ob = (await overview({}, DB, agentUser, older, [])).body; const fo = pageOver(ob);
+  ok('a digest without daysWithData: the page\'s fallback still skips 4 Nov (15 days with data, 5 left)', fo.DATA_DAYS() === 15 && fo.LEFT() === 5, 'DATA_DAYS ' + fo.DATA_DAYS() + ' LEFT ' + fo.LEFT());
+}
+
 /* ------------------------------------------------------------------ C. the published digest ---- */
 if (LIVE) {
   console.log('\nC · THE PUBLISHED DIGEST (live)');
