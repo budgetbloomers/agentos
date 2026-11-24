@@ -25,7 +25,7 @@
 
 /* @vt-rules start */
 var VT_RULES = {
-  "version": "vt-1.1",
+  "version": "vt-1.2",
   "detection": {
     "vtBiFitted": {"requireHeaders":["installation status","vehicle reg number","box number","unit type","case number","created by"],"runBefore":["bi","inactive"],"footerPattern":"^Applied filters:"},
     "vtSchedMissed": {"requireHeaders":["missedandscheduledfitment","fitment date","case number","created by"],"footerPattern":"^No filters applied"},
@@ -151,17 +151,16 @@ var VT_RULES = {
     "minTrackedDays": 5,
     "minInPlayToRate": 1,
     "renormalise": true,
-    "lowerIsBetter": "att = clamp(target / value, 0, 1); value 0 → 1",
+    "lowerIsBetter": "att = clamp(target / value, 0, 1); value 0 → 1 (kept in the engine; no driver uses it since vt-1.2)",
     "points": "round(w * clamp((att - floor) / (1 - floor), 0, 1), 1)",
     "score": "round(min(100, sum(points) / sum(measured w) * 100), 1)",
     "penalties": 0,
     "drivers": [
-      {"k":"targetAch","label":"Target Achievement","w":35,"dir":"higher","value":"reports.spd","target":"Agent List Target (AL VT!I) for the cycle's list","note":"How close your sales per working day come to your target."},
-      {"k":"fitRate","label":"Fitment Rate","w":30,"dir":"higher","value":"reports.fitRate (MTD in play)","target":"budgets[cycle].fitment[sub][tenure]","note":"Out of every 100 of your sales in play this month, how many are fitted."},
-      {"k":"missRate","label":"Missed Rate","w":20,"dir":"lower","value":"reports.missRate (MTD in play)","target":"budgets[cycle].missed[sub]","note":"How many of your sales missed their fitment appointment. Lower is better."},
-      {"k":"fitted","label":"Fitted vs target","w":15,"dir":"higher","value":"reports.fitDone (MTD)","target":"target * workingDays * budgets[cycle].fitment[sub][tenure]","note":"Fitments done this month against what your target would fit."}
+      {"k":"targetAch","label":"Target Achievement","w":50,"dir":"higher","value":"reports.spd","target":"Agent List Target (AL VT!I) for the cycle's list","note":"How close your sales per working day come to your target."},
+      {"k":"fitRate","label":"Fitment Rate","w":50,"dir":"higher","value":"reports.fitRate (MTD in play)","target":"budgets[cycle].fitment[sub][tenure]","note":"Out of every 100 of your sales in play this month, how many are fitted. A missed or cancelled sale is a sale not fitted, so it counts here, once."}
     ],
-    "notScored": {"gwp":"D7-a: Charge Amount x VAT equals RPT GWP on 328/1,104; budget Avg GWP is on the bundle-price basis; SM has no amount","hrsAhead":"D7-b: scheduler's queue, not the seller's","attendance_talk_qa_conversion_optins":"D7-c: not in the VT files","schedulers":"D7-d"},
+    "info": ["missed","missRate","missBudget","cancelled","canRate","canBudget","fitDone"],
+    "notScored": {"gwp":"D7-a: Charge Amount x VAT equals RPT GWP on 328/1,104; budget Avg GWP is on the bundle-price basis; SM has no amount","hrsAhead":"D7-b: scheduler's queue, not the seller's","attendance_talk_qa_conversion_optins":"D7-c: not in the VT files","schedulers":"D7-d","missRate":"vt-1.2: removed as a driver - double counting of Fitment Rate (a missed sale is a sale not fitted); shown on the card beside the missed budget, unscored","fittedVsTarget":"vt-1.2: removed as a driver - target x working days x fitment budget re-scores Target Achievement x Fitment Rate; fitments done shown on the card, unscored","cancellations":"R7: shown beside the cancellation budget, never scored; a cancelled sale is still a sale and is not fitted, so it lowers Fitment Rate"},
     "bands": [{"label":"Elite","min":90},{"label":"Strong","min":80},{"label":"On track","min":70},{"label":"Building","min":60},{"label":"Needs support","min":0}]
   },
   "budgetFallback": "latest earlier cycle; the card names the cycle used",
@@ -788,15 +787,23 @@ function driverInputs(k, a, bud) {
   var t = hasT && fb != null ? round(a.target * (a.workingDays || 0) * fb, 3) : null;
   return { value: m.fitDone, target: t, evidence: t != null && t > 0 && days, why: !hasT ? 'no target' : fb == null ? 'no fitment budget' : !days ? 'fewer than ' + G.minTrackedDays + ' tracked working days' : null };
 }
-/* rating(agentRow, {cycleKey, asOf}) — points start at half of target, unmeasured drivers renormalise,
-   effective weights published (FR-042), no penalties, no ranking. */
+/* the unscored figures the card shows under its driver rows (vt-1.2): missed and cancelled beside their budgets and the
+   fitments done. Carried, never scored — a missed or cancelled sale already lowers Fitment Rate, once. */
+function ratingInfo(a, bud) {
+  var m = a.mtd || {}, o = {};
+  R.rating.info.forEach(function (k) { o[k] = k === 'missBudget' ? missBudget(bud, a.sub) : k === 'canBudget' ? canBudget(bud, a.sub) : (m[k] == null ? null : m[k]); });
+  return o;
+}
+/* rating(agentRow, {cycleKey, asOf, drivers?}) — points start at half of target, unmeasured drivers renormalise,
+   effective weights published (FR-042), no penalties, no ranking. ctx.drivers replaces the rule book's driver list
+   (tests only: it keeps the lower-is-better path, which no live driver uses since vt-1.2, exercised). */
 function rating(a, ctx) {
-  var G = R.rating, F = G.floor, cyc = cycleByKey(ctx.cycleKey), bud = budgetFor(ctx.cycleKey);
+  var G = R.rating, F = G.floor, cyc = cycleByKey(ctx.cycleKey), bud = budgetFor(ctx.cycleKey), DRV = ctx.drivers || G.drivers;
   var base = { rated: false, why: null, score: null, adj: null, band: null, nextBand: null, parts: [], weightScored: 0, unmeasured: [], weakest: null, onTarget: null, measuredCount: 0,
-    window: { from: cyc.from, to: ctx.asOf || null }, budgetCycle: bud ? bud.cycle : null };
+    window: { from: cyc.from, to: ctx.asOf || null }, budgetCycle: bud ? bud.cycle : null, info: ratingInfo(a, bud) };
   if (R.teams.notRated.indexOf(a.sub) > -1) { base.why = 'scheduling'; return base; }
   if (((a.mtd || {}).sales || 0) < G.minInPlayToRate) { base.why = 'nodata'; return base; }
-  var parts = G.drivers.map(function (d) {
+  var parts = DRV.map(function (d) {
     var x = driverInputs(d.k, a, bud), v = x.value, t = x.target, att = null;
     if (v != null && t != null) att = d.dir === 'lower' ? (v === 0 ? 1 : clamp01(t / v)) : (t > 0 ? clamp01(v / t) : null);
     var measured = !!x.evidence && att != null;

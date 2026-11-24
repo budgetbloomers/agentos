@@ -194,7 +194,9 @@ and republishes after a tick.
 
 Never sign in as a person: 2FA enrolment would start on their account. Mint a short-lived session row the way
 `verify-cm-live.mjs` does (random token, sha256 stored, 5 minutes, deleted in `finally`). Then check:
-- **A VT agent**: Agent Analytics shows the VT card, with 4 drivers, "points start at half of target", and no VAS calculator.
+- **A VT agent**: Agent Analytics shows the VT card, with 2 drivers (Target Achievement 50, Fitment Rate 50) and the
+  unscored "For your information — not part of your score" block (Missed, Cancelled, Fitments done), "points start at half
+  of target", and no VAS calculator. The rule book version on the digest is `vt-1.2`.
   Run `CBX_VT=1 node nicks_code/diagnostics/verify-agent-card.mjs`, which renders every VT agent's card against the
   published digest, read-only.
 - **A VT team leader**: Reports has VT Month to date / Weekly / Daily for their own team only, and the export names the team.

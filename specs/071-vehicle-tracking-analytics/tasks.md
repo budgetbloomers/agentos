@@ -189,7 +189,7 @@ it. Run D before E, or let E1 land first and then D.
 - [ ] **E7** `agent/index.html` hooks (< 60 lines): `<script src="vt-view.js" data-inline>`, and a branch in
   `loadPortal`/`render` on `D.scorecard==='vt'`. The TL table paints VT rows instead of "Not reported" (≈5987).
   `reportsTabs` gains VT tabs for VT TLs/CMs.
-- [ ] **E8** `agent/vt-view.js`: the VT card (score, band, 4 driver rows, points available, "How the score works" from
+- [ ] **E8** `agent/vt-view.js`: the VT card (score, band, 4 driver rows — 2 since vt-1.2, see the note at the end — points available, "How the score works" from
   `drivers[].note`, "Open my session brief", "Ask my team leader", scheduler message, no-data month), and the VT reports +
   `exportReports`-style .xlsx (`TL VT <report> - <team> - <period>.xlsx`). No rule literal (guarded). ≤ 800 lines.
 - [ ] **E9** Acceptance: `verify-vt-portal`, `verify-vt-vas-golden` (byte-identical), `verify-agent-card` (VAS + VT),
@@ -238,3 +238,12 @@ it. Run D before E, or let E1 land first and then D.
 | `migration-073-agent-list-raw-retention.sql` | F6 (conditional) | retention for non-roster sheets of `agent_list_raw` | owner, only if F6 shows the need |
 
 (Numbers assume 070 is the latest today. Re-check `supabase/` before creating, and renumber if another migration has landed.)
+
+## Change after deploy, before the first figures: two drivers (rule book vt-1.2, 2026-11-24)
+- [x] **R1** The VT rating is Target Achievement 50 + Fitment Rate 50 (owner: "Two drivers (Recommended)", after an
+  executive review found Missed Rate and Fitted vs target double-counted Fitment Rate: one missed fitment cost about 12
+  points). Missed, Cancelled and Fitments done are shown on the card unscored (`rating.info`) and stay report columns. Rule
+  book + `VT_RULES` + `_changes[]`; spec §6 / D13; floor guide; deploy checklist; CLAUDE.md NN16. No database or migration
+  change. Suites: `verify-vt-rating` (worked example 61.7 Building; a missed sale moves the score only through Fitment Rate;
+  lower-is-better path kept and tested), `verify-vt-rules`, `-engine`, `-digest`, `-portal`, `-pages`, `verify-agent-card`
+  VT mode. Needs a republish of the VT digest only once figures exist (none are published yet).

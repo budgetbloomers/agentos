@@ -243,7 +243,7 @@ console.log('\n== model wiring (small book) ==');
   eq('team totals are sums of counts', M.tlAgg.find(t => t.tlCode === 'CB9190').mtd.sales, a1.mtd.sales);
   ok('rates are ratios of sums (floor fitRate = fitted / sales)', M.floor.mtd.fitRate === M.floor.mtd.fitted / M.floor.mtd.sales);
   const D = E.digest(M, { updatedAt: '2026-11-10T08:00:00Z' });
-  eq('digest: scorecard vt, drivers once, empty false', [D.scorecard, D.drivers.length, D.empty, 'drivers' in D.agents[0].rating], ['vt', 4, false, false]);
+  eq('digest: scorecard vt, drivers once (two), empty false', [D.scorecard, D.drivers.length, D.empty, 'drivers' in D.agents[0].rating], ['vt', 2, false, false]);
   const X = E.emptyCyclePayload('cycle-2026-12', { updatedAt: 'x' });
   eq('empty cycle payload: empty:true, no agents, null figures', [X.empty, X.agents.length, X.floor.mtd, X.period.from], [true, 0, null, '2026-11-26']);
 }
@@ -363,7 +363,7 @@ const start = day(E.emptyBook(), [['bi', biFile([{ cn: 91000001, inst: '2026-11-
     eq('the deactivated unit leaves Fitted (status) but its install still counts as a fitment done on its day', [a.mtd.fitted, a.mtd.cancelled, a.mtd.fitDone], [0, 2, 2]);
   }
 
-  console.log('\n== a cancelled sale leaves the Missed Rate; Cancellation % on every period view (R6, R7) ==');
+  console.log('\n== a cancelled sale leaves the Missed count; Cancellation % on every period view (R6, R7); the score counts it once, in Fitment Rate (vt-1.2) ==');
   { const open = day(E.emptyBook(), [['bi', biFile([{ cn: 91000040, inst: '2026-11-02', seller: 'Bravo Middle Tester' }])], ['sm', smFile([])]], D1, []);   // the opening extract (no sale day)
     const five = day(open.book, [['bi', biFile([{ cn: 91000041, inst: '2026-11-03' }, { cn: 91000042, inst: '2026-11-03' }, { cn: 91000043, inst: '2026-11-03' }])],
       ['sm', smFile([{ cn: 91000044, outcome: 'Missed Fitment', appt: '2026-11-03' }, { cn: 91000045, outcome: 'Missed Fitment', appt: '2026-11-03' }])]], D2, open.receipts);
@@ -376,8 +376,9 @@ const start = day(E.emptyBook(), [['bi', biFile([{ cn: 91000001, inst: '2026-11-
     eq('…Fitment Rate unchanged (fitted ÷ all sales)', [a0.fitRate, a1.fitRate], [0.6, 0.6]);
     const r0 = M0.agents.find(x => x.code === 'CB9101').rating, r1 = M1.agents.find(x => x.code === 'CB9101').rating;
     const part = (r, k) => r.parts.find(p => p.k === k);
-    eq('the rating keeps its four drivers and weights (35/30/20/15) — no Cancellation driver', r1.parts.map(p => [p.k, p.w]), [['targetAch', 35], ['fitRate', 30], ['missRate', 20], ['fitted', 15]]);
-    eq('…its only change: the Missed Rate driver reads the lower rate', [part(r0, 'missRate').value, part(r1, 'missRate').value], [0.4, 0.2]);
+    eq('the rating has its two drivers and weights (50/50) — no Missed, Fitted vs target or Cancellation driver', r1.parts.map(p => [p.k, p.w]), [['targetAch', 50], ['fitRate', 50]]);
+    eq('…a Missed sale turning Cancelled does not move the score (it was not fitted either way)', [r1.score, part(r1, 'fitRate').value], [r0.score, part(r0, 'fitRate').value]);
+    eq('…the unscored info line reads the change: missed 2 → 1, cancelled 0 → 1', [r0.info.missed, r1.info.missed, r0.info.cancelled, r1.info.cancelled, r1.info.canBudget], [2, 1, 0, 1, 0.05]);
     const ag1 = M1.agents.find(x => x.code === 'CB9101');
     const wk = ag1.weeks.find(w => w.from <= D2 && w.to >= D2), dd = ag1.days.find(x => x.d === D2);
     eq('Weekly: the week the sales were made shows Cancelled 1 and Cancellation % 20 %', [wk.sales, wk.cancelled, wk.canRate], [5, 1, 0.2]);

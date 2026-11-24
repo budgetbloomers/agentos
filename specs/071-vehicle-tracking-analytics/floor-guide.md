@@ -46,15 +46,20 @@ sale is often fitted days later.
 
 | Driver | What it measures | Target | Points |
 |---|---|---|---|
-| Target Achievement | your sales per working day | your Target on the Agent List | 35 |
-| Fitment Rate | fitted ÷ your sales | the Sales Review budget (e.g. 85 % Digital) | 30 |
-| Missed Rate | missed ÷ your sales (lower is better) | 5 % | 20 |
-| Fitted vs target | fitments done this month | target × working days × fitment budget | 15 |
+| Target Achievement | your sales per working day | your Target on the Agent List | 50 |
+| Fitment Rate | fitted ÷ your sales | the Sales Review budget (e.g. 85 % Digital) | 50 |
+
+- **Every sale counts once.** A sale ends up fitted or not. A missed or cancelled sale is a sale that is not fitted, so it
+  lowers your Fitment Rate — and nothing else. (Until 24 Nov 2026 Missed Rate and Fitted vs target were scored too; that
+  took points off twice for the same sale, so they were removed before the first figures were published.)
+- **Shown, not scored.** Under the two drivers the card lists, "for your information — not part of your score": Missed
+  (count and % of your sales, beside the 5 % budget), Cancelled (count and %, beside the 5 % budget) and Fitments done this
+  month. They have no pill and no points. The reports still show them as ordinary columns.
 
 - **Points start at half of target.** At half of the target or below you score 0 for that driver. At the target you get all
   of its points. In between, the points rise evenly.
 - A driver without enough data yet (fewer than 5 sales, fewer than 5 working days, or no target) is **not measured**. It is
-  left out, and the other drivers count for more. It never counts as zero.
+  left out, and the other driver is then out of 100. It never counts as zero.
 - The score is out of 100. The bands are **Elite 90+ · Strong 80+ · On track 70+ · Building 60+ · Needs support** below 60.
 - **"Not rated yet"** means there is nothing to rate this business month (no sale in play yet). Scheduling agents are not
   rated in this version.

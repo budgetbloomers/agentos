@@ -16,7 +16,7 @@
  * PAGE HALF — the BUILT Agent Analytics page (site/agent/index.html, rebuilt first) in Chromium, every /api/** call
  * answered by the same in-process Worker (the HighLevel help list is the one canned answer):
  *   B1  the VT agent card: score, band, "n of m drivers", every driver row (value of target, two-shade bar, points / max,
- *       pill), the lower-is-better row, the tip boxes, the composite line, the three buttons, "Your help requests"
+ *       pill), the two driver rows (vt-1.2), the unscored "For your information" block with no pill, the tip boxes, the composite line, the three buttons, "Your help requests"
  *   B2  honest states: not rated yet (no score), scheduler (message + team scheduling speed), driver not measured
  *       (renormalised, said in words), the missing day's upload, the month that began before the first upload (opening
  *       book), the empty month with "<Month> (final)" and back
@@ -85,7 +85,7 @@ ok(r.status === 200 && r.j.scorecard === 'vt' && r.j.me && r.j.me.code === 'CB91
 ok(r.j.me && !r.j.me.checks && !r.j.me.drill && !('comm' in r.j) && !('nba' in r.j) && !('top' in r.j), 'no VAS checks, drill-down, commission, NBA or top performers on a VT answer');
 ok(JSON.stringify(codesIn(r.t)) === '["CB9101","CB9190"]', 'the answer names nobody else (only their own CB and their leader\'s)', JSON.stringify(codesIn(r.t)));
 ok(!r.j.floor && !r.j.tlAgg && !r.j.agents && !/nobody on the list/i.test(r.t), 'no floor, team blocks, other rows or unmatched names');
-ok(r.j.drivers.length === 4 && r.j.dayCols && r.j.minima && Array.isArray(r.j.cycles), 'the dictionary travels: drivers, dayCols, minima, the published months');
+ok(r.j.drivers.length === 2 && r.j.dayCols && r.j.minima && Array.isArray(r.j.cycles), 'the dictionary travels: drivers, dayCols, minima, the published months');
 r = await get(U.vtSched, '/api/portal/overview');
 ok(r.j.scorecard === 'vt' && r.j.me.rating.why === 'scheduling' && r.j.teamHrs && r.j.teamHrs.hrsAhead, 'a scheduler: the VT answer, not rated (why scheduling), the team\'s scheduling speed as context');
 r = await get(U.vasAgent, '/api/portal/overview');
@@ -330,24 +330,32 @@ publish();
     return { score: (c.querySelector('.pg-score b') || {}).textContent, verdict: (c.querySelector('.pg-verdict') || {}).textContent, why: (c.querySelector('.why') || {}).textContent,
       rows: [...c.querySelectorAll('.pg-row')].map((r) => ({ k: r.dataset.k, t: r.innerText.replace(/\s+/g, ' '), solid: !!r.querySelector('i.solid'), pale: !!r.querySelector('i.pale'), ok: r.querySelector('.pg-bar2') && r.querySelector('.pg-bar2').className })),
       tips: [...c.querySelectorAll('.vt-tip .t')].map((x) => x.textContent), tally: (c.querySelector('.pg-tally') || {}).textContent, btns: [...c.querySelectorAll('.pg-btns button')].map((b) => b.textContent),
-      tiny: [...c.querySelectorAll('.tiny2')].map((x) => x.textContent).join(' ') }; });
+      tiny: [...c.querySelectorAll(':scope > .tiny2')].map((x) => x.textContent).join(' '),
+      info: c.querySelector('[data-vt="info"]') ? { t: c.querySelector('[data-vt="info"]').innerText.replace(/\s+/g, ' '), chips: c.querySelectorAll('[data-vt="info"] .chip2, [data-vt="info"] .pg-bar2, [data-vt="info"] .pg-chip').length,
+        rows: [...c.querySelectorAll('[data-vt="info"] .vt-info-row')].map((r) => ({ k: r.dataset.k, t: r.innerText.replace(/\s+/g, ' ') })), inDrv: !!c.querySelector('.pg-drv [data-vt="info"]') } : null }; });
   ok(!!card, 'the card renders');
   ok(card && card.score === nf(rt.adj, 1), 'score = the engine\'s (' + nf(rt.adj, 1) + ' out of 100)', card && card.score);
   ok(card && card.verdict.startsWith(rt.band) && (!rt.nextBand || card.verdict.includes(nf(rt.nextBand.gap, 1) + ' points from ' + rt.nextBand.label)), 'tier and the gap to the next tier are the engine\'s', card && card.verdict);
-  ok(card && card.why.includes(rt.onTarget + ' of your ' + rt.measuredCount + ' drivers are at target'), '"n of your m drivers are at target" from the engine', card && card.why);
+  ok(card && card.why.includes(rt.onTarget + ' of your ' + rt.measuredCount + ' drivers are at target') && rt.measuredCount === 2, '"n of your 2 drivers are at target" from the engine', card && card.why);
   const wk = rt.parts.find((p) => p.k === rt.weakest);
   ok(card && card.why.includes('The most points sitting unclaimed are in ' + VT.drivers.find((d) => d.k === rt.weakest).label + ' — ' + nf(wk.available, 1)), 'the weakest driver and its points, from the engine', card && card.why);
   ok(card && /business month to date \(26 Oct – 10 Nov\)/.test(card.tiny) && /never a ranking against your colleagues/.test(card.tiny), 'the window sentence: your business month to date (26 Oct – 10 Nov), never a ranking', card && card.tiny.slice(0, 200));
-  ok(card && JSON.stringify(card.rows.map((x) => x.k)) === '["targetAch","fitRate","missRate","fitted"]', 'one row per VT driver, no VAS driver', card && card.rows.map((x) => x.k).join(','));
+  ok(card && JSON.stringify(card.rows.map((x) => x.k)) === '["targetAch","fitRate"]', 'exactly two driver rows (Target Achievement, Fitment Rate), no VAS driver, no Missed Rate or Fitted vs target row', card && card.rows.map((x) => x.k).join(','));
   for (const p of rt.parts) {
     const row = card && card.rows.find((x) => x.k === p.k); const lab = VT.drivers.find((d) => d.k === p.k).label;
     const pill = p.onTarget ? 'At target' : (p.dir === 'lower' ? 'Too high' : 'To go');
     ok(row && row.t.startsWith(lab) && row.t.includes(nf(p.pointsEff, 1) + ' / ' + nf(p.weff, p.weff % 1 ? 1 : 0) + ' pts') && row.t.includes(pill), p.k + ': label, points / max and the pill (' + pill + ') are the engine\'s verdict', row && row.t);
     ok(row && row.ok.includes(p.onTarget ? 'ok' : 'short') && row.pale === (p.att > 0) && row.solid === (p.att * 100 > 50), p.k + ': the two-shade bar changes shade at half of target', row && JSON.stringify(row));
   }
-  const mr = card && card.rows.find((x) => x.k === 'missRate');
-  ok(mr && /lower is better/.test(mr.t) && /max /.test(mr.t), 'Missed Rate reads lower-is-better ("lower is better", "max <target>")', mr && mr.t);
-  ok(card && /On Missed Rate lower is better/.test(card.tiny) && /changes shade at half of your target/.test(card.tiny), 'the footnote: shade at half of target + how the lower-is-better bar fills');
+  ok(card && /changes shade at half of your target/.test(card.tiny) && !/lower is better/i.test(card.tiny), 'the footnote: shade at half of target, and no lower-is-better sentence (no scored driver is lower-is-better)', card && card.tiny);
+  const inf = card && card.info, ix = rt.info || {}, pc = (v) => nf(v * 100, 1) + '%';
+  ok(inf && /For your information — not part of your score/.test(inf.t) && !inf.inDrv, 'the unscored block sits under the driver rows: "For your information — not part of your score"', inf && inf.t);
+  ok(inf && JSON.stringify(inf.rows.map((r) => r.k)) === '["missed","cancelled","fitDone"]', 'it shows Missed, Cancelled and Fitments done this month', inf && inf.rows.map((r) => r.k).join(','));
+  const ir = (k) => (inf && inf.rows.find((r) => r.k === k) || {}).t || '';
+  ok(ir('missed').startsWith('Missed ' + nf(ix.missed, 0)) && ir('missed').includes(pc(ix.missRate) + ' of your sales') && ir('missed').includes('budget ' + pc(ix.missBudget)), 'Missed: the engine\'s count and % of sales beside the ' + pc(ix.missBudget) + ' budget', ir('missed'));
+  ok(ir('cancelled').startsWith('Cancelled ' + nf(ix.cancelled, 0)) && ir('cancelled').includes(pc(ix.canRate) + ' of your sales') && ir('cancelled').includes('budget ' + pc(ix.canBudget)), 'Cancelled: the engine\'s count and % of sales beside the ' + pc(ix.canBudget) + ' budget', ir('cancelled'));
+  ok(ir('fitDone') === 'Fitments done this month ' + nf(ix.fitDone, 0), 'Fitments done this month: the engine\'s count', ir('fitDone'));
+  ok(inf && inf.chips === 0 && !/At target|To go|Too high|pts/.test(inf.t), 'no pill, bar or points on an unscored line (it must not look like a verdict)', inf && inf.t);
   const tipsWant = rt.parts.filter((p) => p.measured && p.available > 0.2).sort((a, b) => b.available - a.available).slice(0, 3).map((p) => VT.drivers.find((d) => d.k === p.k).label + ' · ' + nf(p.available, 1) + ' points available');
   ok(card && JSON.stringify(card.tips) === JSON.stringify(tipsWant), 'the "points available" tip boxes are the engine\'s biggest unclaimed', card && card.tips.join(' | '));
   ok(card && card.tally.includes('Composite ' + nf(rt.score, 1)) && card.tally.includes(nf(rt.adj, 1) + ' out of 100'), 'the composite line: Composite … = … out of 100', card && card.tally);
@@ -357,7 +365,8 @@ publish();
   await page.click('[data-vthow]'); await settle(page);
   const how = await txt(page, '#vtOv');
   ok(VT.drivers.every((d) => how.includes(d.label + ' — ' + d.w + ' points')) && /half of the target/.test(how) && /never ranked/.test(how) && how.includes('at least ' + VT.minima.cases + ' sales'), '"How the score works" explains the VT score in words, from the payload', how.slice(0, 200));
-  ok(/A cancelled sale/.test(how) && /no longer counts against your Missed Rate/.test(how) && /no cancellation driver/.test(how), '"How the score works" says what happens to a cancelled sale (still a sale, no longer Missed, not scored)', how.slice(-400));
+  ok(/A cancelled sale/.test(how) && /A cancelled sale is still a sale; it is not fitted, so it lowers your Fitment Rate/.test(how) && /no cancellation driver/.test(how), '"How the score works" says what happens to a cancelled sale (still a sale, not fitted, so it lowers Fitment Rate; not scored)', how.slice(-400));
+  ok(/built from 2 drivers/.test(how) && /Every outcome counts once/.test(how) && /take points off twice/.test(how) && !/Missed Rate|Fitted vs target/.test(how), '"How the score works": 2 drivers, every outcome counts once, no Missed Rate or Fitted vs target', how.slice(0, 400));
   await page.evaluate(() => document.getElementById('vtOv').remove());
   await page.click('[data-vthelp]'); await settle(page);
   ok(await page.evaluate(() => !!document.getElementById('helpOv') && /Send to Leader/.test(document.getElementById('helpOv').textContent)), 'Ask the team leader opens the Help Center form addressed to their leader');
@@ -387,9 +396,9 @@ head('B2 · honest states');
 { const { page, errs } = await pageAs('vtNew');
   const a = VT.agents.find((x) => x.code === 'CB9107');
   const t = await txt(page);
-  ok(a.rating.unmeasured.length === 2 && /Target Achievement is not measured yet \(fewer than 5 tracked working days\)/.test(t) && /the other drivers share its weight/.test(t), 'a driver not measured: said in words, renormalised', t.slice(0, 300));
+  ok(a.rating.unmeasured.length === 1 && /Target Achievement is not measured yet \(fewer than 5 tracked working days\)/.test(t) && /your other driver carries its weight/.test(t), 'a driver not measured: said in words, renormalised (the other driver alone is out of 100)', t.slice(0, 300));
   const rows = await page.evaluate(() => [...document.querySelectorAll('.pg-row')].map((r) => r.innerText.replace(/\s+/g, ' ')));
-  ok(rows.filter((x) => /not measured/.test(x)).length === 2 && rows.some((x) => { const w = a.rating.parts.find((p) => p.k === 'fitRate').weff; return x.includes('/ ' + nf(w, w % 1 ? 1 : 0) + ' pts'); }), 'unmeasured rows say "not measured"; the measured ones carry their effective weight', rows.join(' / '));
+  ok(rows.filter((x) => /not measured/.test(x)).length === 1 && rows.some((x) => { const w = a.rating.parts.find((p) => p.k === 'fitRate').weff; return w === 100 && x.includes('/ ' + nf(w, 0) + ' pts'); }), 'the unmeasured row says "not measured"; Fitment Rate carries the whole 100', rows.join(' / '));
   ok(/Thu 5 Nov: no BI Active Fitted or Scheduled & Missed upload/.test(t), 'the missing day\'s upload is said (Thu 5 Nov), from the engine\'s list');
   allErrs.push(...errs); await page.close(); }
 { publish({ live: { ...VT, trackFrom: '2026-11-02' } });

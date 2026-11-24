@@ -65,11 +65,16 @@ if (process.env.CBX_VT || process.env.CBX_VT_FIXTURE) {
     if (!(await page.evaluate(() => !!window.VTView))) { ok('VT mode: the page carries VTView (Phase E build)', false); }
     else for (const a of vd.agents) {
       const v = await page.evaluate(({ d, a }) => { const box = document.createElement('div'); box.innerHTML = window.VTView._cardHTML(d, a, true); document.body.appendChild(box);
-        const s = box.querySelector('.pg-score b'); const rows = [...box.querySelectorAll('.pg-row')].map((r) => ({ k: r.dataset.k, t: r.innerText.replace(/\s+/g, ' ') })); box.remove();
-        return { score: s ? s.textContent : null, rows }; }, { d: vd, a });
+        const s = box.querySelector('.pg-score b'); const rows = [...box.querySelectorAll('.pg-row')].map((r) => ({ k: r.dataset.k, t: r.innerText.replace(/\s+/g, ' ') }));
+        const ib = box.querySelector('[data-vt="info"]'), info = ib ? { rows: [...ib.querySelectorAll('.vt-info-row')].map((r) => ({ k: r.dataset.k, t: r.innerText.replace(/\s+/g, ' ') })), pills: ib.querySelectorAll('.chip2, .pg-bar2').length } : null; box.remove();
+        return { score: s ? s.textContent : null, rows, info }; }, { d: vd, a });
       const rt = a.rating || {};
       if (!rt.rated) { ok(a.code + ': not rated (' + (rt.why || '?') + ') → no score on the card', v.score === null, v.score); continue; }
       ok(a.code + ': score on screen = digest', v.score === nf(rt.adj, 1), v.score + ' vs ' + rt.adj);
+      ok(a.code + ': one card row per scored driver, exactly the digest\'s parts', JSON.stringify(v.rows.map((x) => x.k)) === JSON.stringify(rt.parts.map((p) => p.k)), v.rows.map((x) => x.k).join(','));
+      if (rt.info) { const ir = (k) => ((v.info && v.info.rows.find((x) => x.k === k)) || {}).t || '';
+        ok(a.code + ': the unscored info block = the digest (missed ' + rt.info.missed + ', cancelled ' + rt.info.cancelled + ', fitments done ' + rt.info.fitDone + '), no pill or bar',
+          !!v.info && v.info.pills === 0 && ir('missed').startsWith('Missed ' + nf(rt.info.missed, 0)) && ir('cancelled').startsWith('Cancelled ' + nf(rt.info.cancelled, 0)) && ir('fitDone') === 'Fitments done this month ' + nf(rt.info.fitDone, 0), JSON.stringify(v.info)); }
       for (const p of rt.parts) {
         const row = v.rows.find((x) => x.k === p.k);
         const want = !p.measured ? 'not measured' : (p.onTarget ? 'At target' : (p.dir === 'lower' ? 'Too high' : 'To go'));

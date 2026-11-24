@@ -72,12 +72,15 @@ available", "How the score works", "Open my session brief", and "Ask my team lea
 **Why this priority**: it is what the owner asked for in his own words ("when they login their kpi will be different").
 
 **Independent Test**: publish a VT digest from fictional fixtures and open Agent Analytics as a fictional VT agent. The card
-shows the four VT drivers and no VAS driver, no VAS commission calculator and no R99 floor. A VAS agent's response and
+shows the two VT drivers (Target Achievement, Fitment Rate) plus the unscored "For your information" lines, and no VAS
+driver, no VAS commission calculator and no R99 floor. A VAS agent's response and
 rendered page are byte-identical to the build before this feature.
 
 **Acceptance Scenarios**:
-1. **Given** a VT Digital agent with VT cases this business month, **Then** they see the VT card with Target Achievement,
-   Fitment Rate, Missed Rate and Fitted vs target. Each row uses the engine's numbers and verdicts.
+1. **Given** a VT Digital agent with VT cases this business month, **Then** they see the VT card with two driver rows,
+   Target Achievement and Fitment Rate, each using the engine's numbers and verdicts. Under them, "For your information — not
+   part of your score" shows Missed and Cancelled (count and % of sales, beside the 5 % budgets) and Fitments done this month,
+   with no pill and no points (rule book vt-1.2, §6).
 2. **Given** a VT agent with no cases yet this month, **Then** they see "No <Month> figures yet" with a link to last month
    (final), never a zero score.
 3. **Given** a VT Scheduling agent, **Then** they see "Scheduling agents are not rated yet: the uploads do not say which
@@ -147,7 +150,7 @@ team leader, sub-campaign and lead source, and export .xlsx, exactly as on the V
 - A file with no ddmmyy in its name → the extract date is today (SAST), and the receipt warns "extract date assumed".
 - A seller on no Agent List sheet → excluded from agent rows, counted as unmatched (7 sellers, 49 BI + 17 S&M cases in the
   sample). The CB342 one-letter variant resolves through near-spelling.
-- `Target` "-" (Scheduling rows) or blank → no target, so Target Achievement and Fitted vs target are unmeasured, never 0.
+- `Target` "-" (Scheduling rows) or blank → no target, so Target Achievement is unmeasured, never 0 (Fitment Rate alone is then out of 100).
 - An agent with fewer than 5 cases in a rate's denominator → the rate is shown but not scored (renormalised).
 - A Saturday sale or fitment → counted as data, never as a working day (VAS `dataOnlyDay` rule).
 - First upload into an empty book (go-live) → see A6: opening-book cases have no sale day.
@@ -300,22 +303,31 @@ built in v1: no upload names the scheduler (workbook-rules §3.4).
 lower-is-better drivers `att = clamp(t / v, 0, 1)`, with `v = 0` giving `att = 1`). Points `= round(w × clamp((att − 0.5) / 0.5, 0, 1), 1)`,
 so points start at half of target (`floor 0.5`). The score is `raw ÷ Σ measured weights × 100`, so unmeasured drivers renormalise.
 Tiers are the VAS bands: **Elite ≥ 90 · Strong ≥ 80 · On track ≥ 70 · Building ≥ 60 · Needs support < 60**. The card shows
-"At target" when `v ≥ t` (`v ≤ t` for lower-is-better), otherwise "To go". The page shows "points available" (`w − pts`), the
+"At target" when `v ≥ t` (`v ≤ t` for lower-is-better), otherwise "To go". Since rule book **vt-1.2** (2026-11-24) no scored
+driver is lower-is-better; the lower-is-better path stays in the engine, tested (`verify-vt-rating`), for future use. The page shows "points available" (`w − pts`), the
 weakest driver and points to the next tier. There are no penalties and no ranking against colleagues. The page never
 recomputes.
 
 | Driver (key) | Measure | Target and source | Weight | Direction | Scored when |
 |---|---|---|---|---|---|
-| **Target Achievement** (`targetAch`) | Current sales ÷ working days (C17) | Agent List `Target` for the agent in this business month (VT!I; = November SPD budget, F1); tenure-aware because the list is | **35** | higher | target > 0 and ≥ 5 tracked working days (A6) |
-| **Fitment Rate** (`fitRate`) | Fitted ÷ in-play sales (C8, MTD set) | `budgets[cycle][sub][tenure].fitment`: Digital 85 %, Referral 85 %, Predictive Exp 80 / M2 75 / M1 70 % (F3) | **30** | higher | ≥ 5 in-play sales |
-| **Missed Rate** (`missRate`) | Missed ÷ in-play sales (C9) | `budgets[cycle][sub].missed` = 5 % (F4) | **20** | lower | ≥ 5 in-play sales |
-| **Fitted vs target** (`fitted`) | Fitments done in the month (C11) | Target SPD × working days × fitment budget % | **15** | higher | target > 0 and ≥ 5 tracked working days |
+| **Target Achievement** (`targetAch`) | Current sales ÷ working days (C17) | Agent List `Target` for the agent in this business month (VT!I; = November SPD budget, F1); tenure-aware because the list is | **50** | higher | target > 0 and ≥ 5 tracked working days (A6) |
+| **Fitment Rate** (`fitRate`) | Fitted ÷ in-play sales (C8, MTD set) | `budgets[cycle][sub][tenure].fitment`: Digital 85 %, Referral 85 %, Predictive Exp 80 / M2 75 / M1 70 % (F3) | **50** | higher | ≥ 5 in-play sales |
 
-**Why these weights** (total 100): volume first, as in VAS (Target Achievement is the one driver the agent controls fully, and
-its target is the list cell the owner already maintains). Fitment is the revenue event and the number every Sales Review
-block leads with, so its rate is next. Missed is the main avoidable loss (a 5 % budget). Fitted count is a cross-check that
-rewards converting volume into installs, so it carries the smallest weight, because it partly double-counts the first two.
-GWP, scheduling speed, cancellations, attendance, talk time, QA and conversion are **not** scored in v1: see D7-a…g in §9.
+**Shown, not scored** (the card's "For your information — not part of your score" block, under the driver rows; carried as
+`rating.info` in the digest; no pill, no bar, no points): **Missed** (count and % of in-play sales, beside the 5 % budget,
+F4), **Cancelled** (count and %, beside the 5 % budget, F6) and **Fitments done this month** (C11). In the reports they stay
+ordinary columns (C6, C7, C9, C9a, C11).
+
+**Why these weights** (total 100, rule book vt-1.2, 2026-11-24). Two things an agent does: sell (Target Achievement, the one
+driver the agent controls fully, its target the list cell the owner already maintains) and get the sale fitted (Fitment Rate,
+the revenue event every Sales Review block leads with). They weigh the same. **Missed Rate and Fitted vs target were removed
+as double counting of Fitment Rate** (an executive's review, the owner's decision "Two drivers (Recommended)"): once a sale is
+scheduled it ends fitted or not, so a missed sale is a sale not fitted, which Fitment Rate already scores; and Fitted vs
+target (target × working days × fitment budget) re-scored Target Achievement × Fitment Rate. Under vt-1.1 (35/30/20/15), for
+an agent with 60 sales, 3 missed (5 %) scored 20/20 on Missed Rate, 4 missed (6.7 %) 10/20 and 6 missed (10 %) 0/20, and the
+same missed sale also lowered Fitment Rate and Fitted vs target: about 12 points for one sale. Now every outcome counts once:
+a missed or cancelled sale lowers Fitment Rate only. GWP, scheduling speed, cancellations, attendance, talk time, QA and
+conversion stay **not** scored, as before: see D7-a…g in §9.
 
 **Window.** VAS rates the last five worked sessions. VT cannot: a sale is fitted 0–15 days later (median 3, F7), so a
 five-day window would rate most of an agent's sales as "not yet fitted". **The VT window is the business month to date**
@@ -323,11 +335,12 @@ five-day window would rate most of an agent's sales as "not yet fitted". **The V
 month and fitted this month count. The card says "your business month to date (26 Oct – 10 Nov)".
 
 **Worked example** (fictional agent CB9101, Digital, Exp, Target 6.5, business month 2026-11, latest extract Mon 9 Nov →
-11 working days: 26–30 Oct, 2–6 Nov, 9 Nov). Current sales 57 → SPD 5.18 → att 0.797 → scaled 0.594 → **20.8 / 35**.
-In play 66, Fitted 46 → 69.7 % vs 85 % → att 0.820 → scaled 0.640 → **19.2 / 30**. Missed 4 → 6.06 % vs 5 % → att 0.825 →
-scaled 0.650 → **13.0 / 20**. Fitments done 44 vs 6.5 × 11 × 0.85 = 60.775 → att 0.724 → scaled 0.448 → **6.7 / 15**.
-Score = 20.8 + 19.2 + 13.0 + 6.7 = **59.7 → "Needs support"**, 0.3 points from Building. The most points available are in
-Target Achievement (14.2). This is test fixture `vt-rating-example` in `verify-vt-rating.mjs`.
+11 working days: 26–30 Oct, 2–6 Nov, 9 Nov). Current sales 57 → SPD 5.18 → att 0.797 → scaled 0.594 → **29.7 / 50**.
+In play 66, Fitted 46 → 69.7 % vs 85 % → att 0.820 → scaled 0.640 → **32.0 / 50**.
+Score = 29.7 + 32.0 = **61.7 → "Building"**, 8.3 points from On track; 0 of 2 drivers at target. The most points available
+are in Target Achievement (20.3; Fitment Rate 18.0). Shown, not scored: Missed 4 (6.1 % of sales, budget 5 %), Cancelled 0
+(0.0 %, budget 5 %), Fitments done 44. (Under vt-1.1 the same agent scored 59.7, "Needs support".) These are the engine's
+numbers: test fixture `vt-rating-example` in `verify-vt-rating.mjs`.
 
 ## Success Criteria *(mandatory)*
 - **SC-001** All 1,756 cases carried by the sample uploads get the report's Result (0 disagreements). Per-agent Fitted /
@@ -379,8 +392,9 @@ value or a one-line code change.
   rollover sale drops out the same way (the 10 Nov evidence is weaker there — 114 of 175 — but its sale month does not
   separate the report's Cancelled from its Scheduled/Missed rows, so no separate rule); the reason (`dropped` inferred,
   `deactivated` explicit) is stored on the case and on the event, and every page says in words that Cancelled includes
-  sales that dropped out of both files. (6) The rating is unchanged (four drivers, 35/30/20/15): a cancelled sale is simply
-  no longer a Missed or Scheduled case. Oracle (R10, prior state = the report's Schedulers Data, then 10 Nov complete):
+  sales that dropped out of both files. (6) The rating was unchanged by A13 (then four drivers, 35/30/20/15): a cancelled sale
+  was simply no longer a Missed or Scheduled case. Since D13 (vt-1.2) a cancelled sale is still a sale and is not fitted, so it
+  lowers Fitment Rate, and nothing else. Oracle (R10, prior state = the report's Schedulers Data, then 10 Nov complete):
   the rule cancels 259 cases — 204 the report calls Cancelled (90 Current + 114 Rollover; every report-Cancelled sale is
   caught) and 55 the report still calls open (1 Current Missed, 18 Rollover Scheduled, 36 Rollover Missed: the report's
   sticky rows the export no longer carries); no Fitted case is cancelled. Would change if: a file starts to carry a
@@ -405,6 +419,16 @@ value or a one-line code change.
 - **D7-e · Window = business month to date** (fitment lag, F7).
 - **D7-f · Minimum 5 cases / 5 tracked days** to score a driver (the VAS `convMinDataDays` pattern). Below that the driver is
   shown, not scored.
+- **D13 · Two scored drivers, 50 / 50 (2026-11-24, rule book vt-1.2) — supersedes the §6 four-driver weights (35/30/20/15).**
+  Decision: the owner, "Two drivers (Recommended)", after an executive (Barry) reviewed the score: "you can't have missed and
+  fitted — it's double counting … once you have your scheduled, it's either missed or fitted. So if [it's] missed your missed
+  would be high and your fitted would be low, so it's a double minus on your score." Evidence: for an agent with 60 sales,
+  3 missed (5 %) scored 20/20 on Missed Rate, 4 missed (6.7 %) 10/20, 6 missed (10 %) 0/20, and the same missed sale also
+  lowered Fitment Rate and Fitted vs target — about 12 points for one sale; Fitted vs target is Target Achievement × Fitment
+  Rate in another form. Now: Target Achievement 50 + Fitment Rate 50; Missed, Cancelled and Fitments done are shown on the
+  card, unscored, and stay report columns. Measures, targets, scored-when rules, floor, renormalisation and bands unchanged.
+  It landed before the first VT figures were published, so no published score moved. Would change if: the owner wants an
+  appointment-keeping measure that is not the same event as an unfitted sale (e.g. missed appointments per booking, C12).
 - **D7-g · Budgets for a cycle with no Sales Review block** use the most recent earlier cycle's budgets, and the card says which
   cycle's budget it uses.
 - **D9 · Removal.** Detail in plan §R. PULSE's latent "Matrix Tracker" filter option is hidden (two different VT sales figures

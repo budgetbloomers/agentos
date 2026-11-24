@@ -479,6 +479,11 @@ function cellOf(c, row) {
   if (c.t === 's') return row.meta[c.k];
   var w = row.w || {}; return w[c.k] == null ? null : w[c.k];
 }
+/* the Rating column's tooltip, from the rule book's drivers (vt-1.2: two, 50 + 50) */
+function ratingTip() {
+  return 'Out of 100: ' + R().rating.drivers.map(function (d) { return d.label + ' ' + d.w + ' points'; }).join(' + ')
+    + '. Missed, Cancelled and Fitments done are shown as columns, not scored: a missed or cancelled sale is a sale not fitted, so it already lowers Fitment Rate.';
+}
 function ratingText(a) {
   if (!a || !a.rating) return null;
   if (a.rating.why === 'scheduling') return 'not rated in v1';
@@ -529,7 +534,7 @@ function agentTable(view, M, f, idx) {
   var tot = totalOf(M, f);
   rows.push({ cls: 'total', meta: { tl: tot.label, sub: '', agent: '' }, w: winOf(tot.obj, view, idx) });
   var cols = [col('Team leader', 'tl', 's', 1), col('Sub-campaign', 'sub', 's', 1), col('Agent', 'agent', 's', 1)].concat(figCols(view, M));
-  if (view === 'mtd') cols.push(col('Rating', 'rating', 's'));
+  if (view === 'mtd') { var rc = col('Rating', 'rating', 's'); rc.tip = ratingTip(); cols.push(rc); }
   return { cols: cols, rows: rows, notes: notes };
 }
 function aggTable(M, label, items) {
@@ -591,7 +596,7 @@ function validFilters(M) {   // a saved filter this month does not carry is drop
 
 /* ---------------------------------------------------------------- HTML (PULSE's own classes) ---- */
 function tableHtml(t) {
-  var th = t.cols.map(function (c) { return '<th class="' + (c.l ? 'l' : '') + '">' + esc(c.h) + '</th>'; }).join('');
+  var th = t.cols.map(function (c) { return '<th class="' + (c.l ? 'l' : '') + '"' + (c.tip ? ' title="' + esc(c.tip) + '"' : '') + '>' + esc(c.h) + '</th>'; }).join('');
   var body = t.rows.map(function (r) { return '<tr class="' + r.cls + '"' + (r.code ? ' data-code="' + esc(r.code) + '"' : '') + '>' + t.cols.map(function (c) {
     return '<td class="' + (c.l ? 'l' : '') + '">' + esc(fmtCell(c.t, cellOf(c, r))) + '</td>'; }).join('') + '</tr>'; }).join('');
   return '<div class="tablewrap"><table class="data vt-table"><thead><tr>' + th + '</tr></thead><tbody>' + body + '</tbody></table></div>';
@@ -653,7 +658,7 @@ function statesHtml(M) {
   var sch = M.notRated.filter(function (n) { return n.why === 'scheduling'; });
   if (sch.length) out.push(warn('Scheduling agents are listed, not rated in v1', sch.length + ' agent' + (sch.length === 1 ? '' : 's'),
     'The uploads do not say which scheduler handled a sale, so scheduling agents carry no sales and no rating yet. The Hrs Ahead table is the scheduling-speed view.', 'info'));
-  out.push('<p class="note vt-cancel-note" style="margin:8px 0 0;max-width:none">Cancelled includes sales that dropped out of both daily files: a Scheduled or Missed sale that is in neither the BI Active Fitted nor the Scheduled & Missed file of a day with both files in counts as Cancelled from that day (no file says "cancelled", so this is inferred), and a contract the BI file shows as deactivated. A cancelled sale stays in Sales, is no longer Scheduled or Missed, and comes back if a later file carries it. Cancellation % = cancelled ÷ sales, beside the ' + fmtCell('p', (((M.budgets || {}).cancelled) || {})['*']) + ' budget. Fitted value is the Charge Amount × VAT, not the bundle price.</p>');
+  out.push('<p class="note vt-cancel-note" style="margin:8px 0 0;max-width:none">Cancelled includes sales that dropped out of both daily files: a Scheduled or Missed sale that is in neither the BI Active Fitted nor the Scheduled & Missed file of a day with both files in counts as Cancelled from that day (no file says "cancelled", so this is inferred), and a contract the BI file shows as deactivated. A cancelled sale stays in Sales, is no longer Scheduled or Missed, and comes back if a later file carries it; it is not fitted, so it lowers the agent\'s Fitment Rate (the one place the rating counts it). Cancellation % = cancelled ÷ sales, beside the ' + fmtCell('p', (((M.budgets || {}).cancelled) || {})['*']) + ' budget. Fitted value is the Charge Amount × VAT, not the bundle price.</p>');
   return out.join('');
 }
 function render(view) {

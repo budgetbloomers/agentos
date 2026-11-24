@@ -287,7 +287,7 @@ Digest (`VTEngine.digest`):
             weeks:[{k, …same counts}], days:[{d, …same counts}],
             leads:{revx:{…},…},                     // lead-source split of mtd
             rating:{score,adj,band,nextBand,parts:[{k,value,target,measured,shown,att,points,available,onTarget,note}],
-                    weightScored, window:{from,to}, budgetCycle, unmeasured:[…], weakest} }],
+                    weightScored, window:{from,to}, budgetCycle, unmeasured:[…], weakest, info:{missed,missRate,missBudget,cancelled,canRate,canBudget,fitDone}} }],
   notRated:[{code,name,tl,sub,why:'scheduling'|'nodata'}],
   tlAgg:[{tlCode,tl,sub[],mtd,weeks,days,hrsAhead:{h24,h48,h72,h72p,past,share{…}}}],
   subAgg:{digital:{…},predictive:{…},referral:{…},scheduling:{…}}, leadAgg:{…},

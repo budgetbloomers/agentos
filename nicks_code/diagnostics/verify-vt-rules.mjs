@@ -59,8 +59,13 @@ ok('extraHolidays equal the VAS one-off public holidays', JSON.stringify(E.VT_RU
 ok('bands equal the VAS composite bands', JSON.stringify(E.VT_RULES.rating.bands) === JSON.stringify(COMP.bands.map(b => ({ label: b.label, min: b.min }))),
   JSON.stringify(COMP.bands));
 ok('driver weights total 100', E.VT_RULES.rating.drivers.reduce((s, x) => s + x.w, 0) === 100);
-ok('drivers are targetAch 35 / fitRate 30 / missRate 20 (lower) / fitted 15',
-  E.VT_RULES.rating.drivers.map(x => x.k + ':' + x.w + ':' + x.dir).join(',') === 'targetAch:35:higher,fitRate:30:higher,missRate:20:lower,fitted:15:higher');
+ok('vt-1.2: two drivers, targetAch 50 / fitRate 50 (Missed Rate and Fitted vs target removed as double counting)',
+  E.VT_RULES.rating.drivers.map(x => x.k + ':' + x.w + ':' + x.dir).join(',') === 'targetAch:50:higher,fitRate:50:higher');
+ok('the rule book is version vt-1.2', E.VT_RULES.version === 'vt-1.2', E.VT_RULES.version);
+{ const c = SPEC._changes.find(x => x.date === '2026-11-24' && /rating\.drivers/.test(x.key));
+  ok('a dated _changes[] entry (2026-11-24) names the reason (double counting, ~12 points for one missed sale) and who decided', !!c && /double counting/i.test(c.why) && /12 points/.test(c.why) && /owner/.test(c.by) && /vt-1\.2/.test(c.to), c && c.by); }
+ok('Missed Rate and Fitted vs target are named as not scored, with the reason', /double counting/.test(E.VT_RULES.rating.notScored.missRate || '') && /Fitment Rate/.test(E.VT_RULES.rating.notScored.fittedVsTarget || ''));
+ok('the card\'s unscored info fields are listed in the rule book and are not drivers', Array.isArray(E.VT_RULES.rating.info) && ['missed', 'missRate', 'cancelled', 'canRate', 'fitDone'].every(k => E.VT_RULES.rating.info.includes(k)) && !E.VT_RULES.rating.drivers.some(d => E.VT_RULES.rating.info.includes(d.k)));
 
 console.log('\n== 3. evidence and history ==');
 for (const [ck, b] of Object.entries(SPEC.budgets)) {
@@ -94,7 +99,7 @@ function stripBlocks(src) {
     .replace(/\/\* @mirror:sa-holidays start[\s\S]*?\/\* @mirror:sa-holidays end \*\//, '')
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 }
-const LITERALS = ['0.85', '0.05', '0.75', '0.7', '0.8', '6.5', '1.15', '0.15', '0.9', '0.4', '26', '35', '30', '20', '15', '90', '60'];
+const LITERALS = ['0.85', '0.05', '0.75', '0.7', '0.8', '6.5', '1.15', '0.15', '0.9', '0.4', '26', '35', '30', '20', '15', '50', '90', '60'];
 function literalHits(file) {
   const code = stripBlocks(fs.readFileSync(file, 'utf8'));
   return LITERALS.filter(l => new RegExp('(^|[^\\w.])' + l.replace('.', '\\.') + '(?![\\w.])').test(code));

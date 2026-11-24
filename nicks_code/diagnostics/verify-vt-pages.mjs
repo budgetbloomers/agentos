@@ -195,6 +195,12 @@ try {
     && at(ag, r1, 'Fitted %') === F('p', a1.mtd.fitRate) && at(ag, r1, 'SPD') === N(F('d2', a1.mtd.spd)) && at(ag, r1, 'Fitment budget %') === F('p', a1.mtd.fitBudget) && at(ag, r1, 'Fitted value (incl VAT)') === N(F('r', a1.mtd.value)),
     'an agent row is the engine\'s agent row, field for field', r1 && r1.join(' | '));
   ok(at(ag, r1, 'Rating') === (a1.rating.rated ? a1.rating.score.toFixed(1) + ' · ' + a1.rating.band : '—'), 'its rating is the engine\'s score and band', at(ag, r1, 'Rating'));
+  { const tips = await page.evaluate(() => [...document.querySelectorAll('.vt-table th')].filter((th) => th.textContent.trim() === 'Rating').map((th) => th.title));
+    const want = 'Out of 100: ' + ENG.VT_RULES.rating.drivers.map((d) => d.label + ' ' + d.w + ' points').join(' + ');
+    ok(tips.length > 0 && tips.every((t) => t.startsWith(want) && /Target Achievement 50 points \+ Fitment Rate 50 points/.test(t) && /not scored/.test(t) && !/Missed Rate|Fitted vs target/.test(t)),
+      'the Rating column\'s tooltip names the two drivers (Target Achievement 50 + Fitment Rate 50) and says Missed / Cancelled / Fitments done are not scored', tips[0]); }
+  ok(ag.head.includes('Missed') && ag.head.includes('Missed %') && ag.head.includes('Fitments done'), 'Missed, Missed % and Fitments done stay ordinary report columns (vt-1.2: shown, not scored)');
+  ok(/it is not fitted, so it lowers the agent's Fitment Rate/.test(await viewText()), 'the cancelled note says a cancelled sale is not fitted, so it lowers Fitment Rate');
   ok(ag.head.includes('Cancelled %') && ag.head.includes('Cancellation budget %') && at(ag, r1, 'Cancelled') === N(F('n', a1.mtd.cancelled))
     && at(ag, r1, 'Cancelled %') === F('p', a1.mtd.canRate) && at(ag, r1, 'Cancellation budget %') === F('p', a1.mtd.canBudget),
     'Cancelled, Cancelled % and the cancellation budget are the engine\'s (' + [at(ag, r1, 'Cancelled'), at(ag, r1, 'Cancelled %'), at(ag, r1, 'Cancellation budget %')].join(' / ') + ')');

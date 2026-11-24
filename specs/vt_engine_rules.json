@@ -1,7 +1,7 @@
 {
   "_source": "THE VT RULE BOOK OF RECORD (Spec Kit 071). Finalised from specs/071-vehicle-tracking-analytics/rules-draft.json; the evidence for every value is in that draft, spec.md (F1-F12, A1-A12, D7) and specs/vt-analytics/workbook-rules.md. The operative copy is VT_RULES inlined in nicks_code/vt-engine.js (the apps run from file://): every key here that does not start with '_' must equal VT_RULES field by field - nicks_code/diagnostics/verify-vt-rules.mjs fails on drift. Change both together, with a dated _changes[] entry.",
   "_generated": "2026-11-23",
-  "version": "vt-1.1",
+  "version": "vt-1.2",
   "_changes": [
     { "date": "2026-11-23", "by": "Spec Kit 071 Phase B builder", "key": "*", "from": "rules-draft.json (draft 1)", "to": "vt-1.0", "why": "first rule book of record; _evidence prose dropped (it lives in the draft and the spec), _cells kept" },
     { "date": "2026-11-23", "by": "Spec Kit 071 Phase B builder", "key": "vat", "from": 0.15, "to": 1.15, "why": "the draft said 'must equal MTD_RULES.vat', and MTD_RULES.vat is the MULTIPLIER 1.15 (specs/mtd_engine_rules.json reference_data.vat_multiplier); stored the same way so the equality is literal. Fitted value = charge ex VAT x vat" },
@@ -13,7 +13,8 @@
     { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder", "key": "status.cancellation", "from": null, "to": "dropped + deactivated rules", "why": "the exact trigger: evaluated by the commit of an extract day's second file, against that day's two files, only when no later extract day is complete; a dropped case returns on a file of its cancellation day or later; a deactivated case only on a newer Active BI row; a fitted case is never cancelled by absence" },
     { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder", "key": "status.sameExtractPrecedence", "from": ["fitted", "missed", "scheduled"], "to": ["cancelled", "fitted", "missed", "scheduled"], "why": "an explicit deactivation in the BI file wins over Fitted for that case (R4)" },
     { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder", "key": "columns.bi.contractStatus / deactivateOn / biOptional", "from": null, "to": ["B", "P"], "why": "the two BI contract columns, read by position (else by name), optional: a file without them deactivates nothing" },
-    { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder", "key": "reports.columns canRate / canBudget / cancelled / fitDone", "from": "Cancelled null; no Cancellation %", "to": "Cancelled count; canRate = cancelled / sales; canBudget = budgets[cycle].cancelled[sub]; fitDone keeps an install that was later deactivated", "why": "R6; denominators stay ALL the set's sales (a cancelled sale stays in Sales, as the hand report's Sale Count = 1 on cancelled rows)" }
+    { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder", "key": "reports.columns canRate / canBudget / cancelled / fitDone", "from": "Cancelled null; no Cancellation %", "to": "Cancelled count; canRate = cancelled / sales; canBudget = budgets[cycle].cancelled[sub]; fitDone keeps an install that was later deactivated", "why": "R6; denominators stay ALL the set's sales (a cancelled sale stays in Sales, as the hand report's Sale Count = 1 on cancelled rows)" },
+    { "date": "2026-11-24", "by": "the owner, choosing 'Two drivers (Recommended)' after an executive review of the score (Barry: 'you can't have missed and fitted - it's double counting ... a double minus on your score'); built by the Spec Kit 071 two-driver builder", "key": "version / rating.drivers / rating.notScored / rating.lowerIsBetter", "from": "vt-1.1: four drivers targetAch 35 / fitRate 30 / missRate 20 (lower) / fitted 15", "to": "vt-1.2: two drivers targetAch 50 / fitRate 50; Missed Rate and Fitted vs target shown, never scored", "why": "DOUBLE COUNTING. Once a sale is scheduled it ends fitted or not; Missed Rate scored the same unfitted sale Fitment Rate already scores, and Fitted vs target (target x days x fitment budget) re-scored Target Achievement x Fitment Rate. For an agent with 60 sales, 3 missed (5 %) scored 20/20 on Missed Rate, 4 missed (6.7 %) 10/20, 6 missed (10 %) 0/20, and the same missed sale also lowered Fitment Rate and Fitted vs target: about 12 points for ONE sale. Now every outcome counts once: a missed or cancelled sale lowers Fitment Rate only. Measures, targets, scored-when rules, the half-of-target floor, renormalisation and the VAS bands are unchanged; the lower-is-better code path stays in the engine (tested) for future use. Landed before the first VT figures were published, so no agent's published score changes. The worked example (fictional CB9101) moves from 59.7 Needs support to 61.7 Building" }
   ],
 
   "detection": {
@@ -167,21 +168,23 @@
     "minTrackedDays": 5,
     "minInPlayToRate": 1,
     "renormalise": true,
-    "lowerIsBetter": "att = clamp(target / value, 0, 1); value 0 → 1",
+    "lowerIsBetter": "att = clamp(target / value, 0, 1); value 0 → 1 (kept in the engine; no driver uses it since vt-1.2)",
     "points": "round(w * clamp((att - floor) / (1 - floor), 0, 1), 1)",
     "score": "round(min(100, sum(points) / sum(measured w) * 100), 1)",
     "penalties": 0,
     "drivers": [
-      { "k": "targetAch", "label": "Target Achievement", "w": 35, "dir": "higher", "value": "reports.spd", "target": "Agent List Target (AL VT!I) for the cycle's list", "note": "How close your sales per working day come to your target." },
-      { "k": "fitRate", "label": "Fitment Rate", "w": 30, "dir": "higher", "value": "reports.fitRate (MTD in play)", "target": "budgets[cycle].fitment[sub][tenure]", "note": "Out of every 100 of your sales in play this month, how many are fitted." },
-      { "k": "missRate", "label": "Missed Rate", "w": 20, "dir": "lower", "value": "reports.missRate (MTD in play)", "target": "budgets[cycle].missed[sub]", "note": "How many of your sales missed their fitment appointment. Lower is better." },
-      { "k": "fitted", "label": "Fitted vs target", "w": 15, "dir": "higher", "value": "reports.fitDone (MTD)", "target": "target * workingDays * budgets[cycle].fitment[sub][tenure]", "note": "Fitments done this month against what your target would fit." }
+      { "k": "targetAch", "label": "Target Achievement", "w": 50, "dir": "higher", "value": "reports.spd", "target": "Agent List Target (AL VT!I) for the cycle's list", "note": "How close your sales per working day come to your target." },
+      { "k": "fitRate", "label": "Fitment Rate", "w": 50, "dir": "higher", "value": "reports.fitRate (MTD in play)", "target": "budgets[cycle].fitment[sub][tenure]", "note": "Out of every 100 of your sales in play this month, how many are fitted. A missed or cancelled sale is a sale not fitted, so it counts here, once." }
     ],
+    "info": ["missed", "missRate", "missBudget", "cancelled", "canRate", "canBudget", "fitDone"],
     "notScored": {
       "gwp": "D7-a: Charge Amount x VAT equals RPT GWP on 328/1,104; budget Avg GWP is on the bundle-price basis; SM has no amount",
       "hrsAhead": "D7-b: scheduler's queue, not the seller's",
       "attendance_talk_qa_conversion_optins": "D7-c: not in the VT files",
-      "schedulers": "D7-d"
+      "schedulers": "D7-d",
+      "missRate": "vt-1.2: removed as a driver - double counting of Fitment Rate (a missed sale is a sale not fitted); shown on the card beside the missed budget, unscored",
+      "fittedVsTarget": "vt-1.2: removed as a driver - target x working days x fitment budget re-scores Target Achievement x Fitment Rate; fitments done shown on the card, unscored",
+      "cancellations": "R7: shown beside the cancellation budget, never scored; a cancelled sale is still a sale and is not fitted, so it lowers Fitment Rate"
     },
     "bands": [ { "label": "Elite", "min": 90 }, { "label": "Strong", "min": 80 }, { "label": "On track", "min": 70 }, { "label": "Building", "min": 60 }, { "label": "Needs support", "min": 0 } ]
   },

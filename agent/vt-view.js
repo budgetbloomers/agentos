@@ -80,12 +80,14 @@ function cardHTML(d, me, back) {
   var un = (r.parts || []).filter(function (p) { return !p.measured; });
   h += '<div class="tiny2" style="margin-top:4px">Your rating is worked out from your own business month to date ('
     + esc(day(r.window && r.window.from)) + ' – ' + esc(day(r.window && r.window.to)) + ') against the targets for your sub-campaign and level. It is never a ranking against your colleagues.'
-    + (r.budgetCycle && d.period && r.budgetCycle !== d.period.key ? ' The fitment and missed targets are ' + esc(monthOf(r.budgetCycle)) + '\'s budget: this business month\'s budget is not loaded yet.' : '')
+    + (r.budgetCycle && d.period && r.budgetCycle !== d.period.key ? ' The fitment target and the budgets below are ' + esc(monthOf(r.budgetCycle)) + '\'s: this business month\'s budget is not loaded yet.' : '')
     + (un.length ? ' ' + un.map(function (p) { return esc(drv(d, p.k).label) + ' is not measured yet (' + esc(p.why || 'no value yet') + ')'; }).join('; ')
-      + (un.length === 1 ? ', so it carries' : ', so they carry') + ' none of your points rather than counting against you; the other drivers share its weight.' : '') + '</div>';
+      + (un.length === 1 ? ', so it carries' : ', so they carry') + ' none of your points rather than counting against you; '
+      + ((r.parts || []).length - un.length === 1 ? 'your other driver carries its weight.' : 'the other drivers share its weight.') : '') + '</div>';
   h += '<div class="pg-drv">' + (r.parts || []).map(function (p) { return rowHTML(d, p, floorPct); }).join('') + '</div>';
+  h += infoHTML(r.info);
   h += '<div class="tiny2" style="margin-top:6px">Each bar changes shade at half of your target. Points only start there, so the solid part is what you are being paid for.'
-    + ((r.parts || []).some(function (p) { return p.dir === 'lower'; }) ? ' On Missed Rate lower is better: the bar fills as your rate comes DOWN to its target, and it is full at the target or below.' : '') + '</div>';
+    + ((r.parts || []).some(function (p) { return p.dir === 'lower'; }) ? ' On ' + esc(drv(d, (r.parts.filter(function (p) { return p.dir === 'lower'; })[0] || {}).k).label) + ' lower is better: the bar fills as your figure comes DOWN to its target, and it is full at the target or below.' : '') + '</div>';
   var lev = (r.parts || []).filter(function (p) { return p.measured && p.available > 0.2; }).sort(function (a, b) { return b.available - a.available; }).slice(0, 3);
   if (lev.length) h += '<div class="pg-cards">' + lev.map(function (p) {
     var lab = drv(d, p.k).label;
@@ -107,6 +109,18 @@ function rowHTML(d, p, floorPct) {
   var pill = p.measured ? (p.onTarget ? '<span class="chip2 beat"><i></i>At target</span>' : '<span class="chip2 togo"><i></i>' + (lower ? 'Too high' : 'To go') + '</span>') : '';
   return '<div class="pg-row" data-k="' + esc(p.k) + '"><span class="pg-l">' + esc(lab) + (lower ? ' <small class="vt-lower">lower is better</small>' : '') + '</span>' + v + bar
     + '<span class="pg-chip">' + (p.measured ? '<b class="num">' + num(p.pointsEff, 1) + '</b> <small>/ ' + num(p.weff, p.weff % 1 ? 1 : 0) + ' pts</small> ' : '<small>not measured</small> ') + pill + '</span></div>';
+}
+/* the unscored figures (vt-1.2): shown so nothing is hidden, with no pill, no bar and no points — an unscored figure must
+   not look like a verdict. A missed or cancelled sale is a sale not fitted, so it already counts in Fitment Rate, once. */
+function infoHTML(x) {
+  if (!x) return '';
+  var line = function (k, label, val, note) { return '<div class="vt-info-row" data-k="' + esc(k) + '" style="display:flex;justify-content:space-between;gap:12px;padding:4px 0"><span class="pg-l">' + esc(label) + '</span> <span class="pg-v num">' + val + (note ? ' <small>' + note + '</small>' : '') + '</span></div>'; };
+  var pct = function (n, rate, bud) { return n0(n) + ' <small>(' + p1(rate) + ' of your sales' + (bud != null ? ', budget ' + p1(bud) : '') + ')</small>'; };
+  return '<div class="vt-info" data-vt="info" style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--line,#ddd)"><div class="tiny2"><b>For your information — not part of your score</b></div>'
+    + line('missed', 'Missed', pct(x.missed, x.missRate, x.missBudget), '')
+    + line('cancelled', 'Cancelled', pct(x.cancelled, x.canRate, x.canBudget), '')
+    + line('fitDone', 'Fitments done this month', n0(x.fitDone), '')
+    + '<div class="tiny2">A missed or cancelled sale is a sale that is not fitted, so it already lowers your Fitment Rate. It is not taken off a second time.</div></div>';
 }
 function helpBtns(d, me, back, wk) {
   return '<div class="pg-btns"><button class="btn2 jbtn" data-vthow="1">★ How the score works</button>'
@@ -185,6 +199,11 @@ function winOf(d, obj, view) {
 function weekKey(d) { var ws = (d.weeks || []).filter(function (w) { return w.from <= ((d.period && d.period.asOf) || ''); }); var k = VT.week; return ws.some(function (w) { return w.k === k; }) ? k : (ws.length ? ws[ws.length - 1].k : ''); }
 function dayKey(d) { var ds = d.dates || []; return ds.indexOf(VT.day) >= 0 ? VT.day : ds[ds.length - 1]; }
 function ratingText(a) { var r = a.rating || {}; return r.why === 'scheduling' ? 'not rated in v1' : r.rated ? num(r.adj, 1) + ' · ' + r.band : 'not rated yet'; }
+/* the Rating column's tooltip, from the payload's drivers (no rule literal here) */
+function ratingTip(d) {
+  var ds = (d && d.drivers) || [];
+  return 'Out of 100: ' + ds.map(function (x) { return x.label + ' ' + x.w + ' points'; }).join(' + ') + '. Missed, Cancelled and Fitments done are shown as columns, not scored: a missed or cancelled sale is a sale not fitted, so it already lowers Fitment Rate.';
+}
 /* one report as data: the screen AND the export walk it (the house rule — the workbook never carries a column the screen does not) */
 function report(d, view, scope) {
   var cols = colsFor(view), rows = [];
@@ -196,14 +215,14 @@ function report(d, view, scope) {
     if (un && un.sellers && view === 'mtd') totals.push({ label: 'Unmatched sellers (' + n0(un.sellers) + ')', tl: '', sub: '', w: { sales: un.cases }, cls: 'totrow' });
     totals.push({ label: 'Floor total', tl: '', sub: '', w: winOf(d, d.floor, view), cls: 'totrow' });
   }
-  return { cols: cols, rows: rows, totals: totals, view: view };
+  return { cols: cols, rows: rows, totals: totals, view: view, ratingTip: ratingTip(d) };
 }
 function reportTable(rep, scope) {
   var head = ['Agent', 'Team leader', 'Sub-campaign'].concat(rep.cols.map(function (c) { return c[0]; })).concat(rep.view === 'mtd' ? ['Rating'] : []);
   var line = function (r) { return '<tr' + clsAttr(r.cls) + (r.code ? ' data-vtcb="' + esc(r.code) + '"' : '') + '><td class="l">' + (r.code ? '<button class="lnk" data-vtcb="' + esc(r.code) + '">' + esc(r.label) + '</button>' : '<b>' + esc(r.label) + '</b>') + '</td>'
     + '<td class="l">' + esc(r.tl || '') + '</td><td class="l">' + esc(r.sub || '') + '</td>' + rep.cols.map(function (c) { return '<td class="num">' + cell(c, r.w || {}) + '</td>'; }).join('')
     + (rep.view === 'mtd' ? '<td class="l">' + esc(r.rating || '') + '</td>' : '') + '</tr>'; };
-  return '<div class="scroller"><table class="tbl vastbl vt-rep" data-vtrep="' + rep.view + '"><thead><tr>' + head.map(function (h, i) { return '<th' + (i < 3 ? ' class="l"' : '') + '>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>'
+  return '<div class="scroller"><table class="tbl vastbl vt-rep" data-vtrep="' + rep.view + '"><thead><tr>' + head.map(function (h, i) { return '<th' + (i < 3 ? ' class="l"' : '') + (h === 'Rating' && rep.ratingTip ? ' title="' + esc(rep.ratingTip) + '" data-vt="rating-th"' : '') + '>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>'
     + rep.rows.map(line).join('') + rep.totals.map(line).join('') + '</tbody></table></div>';
 }
 function aggTable(d, title, items) {
@@ -237,7 +256,7 @@ function statesHTML(d, scope) {
   var out = [], sch = (d.notRated || []).filter(function (x) { return x.why === 'scheduling'; });
   if (sch.length) out.push('Scheduling agents are listed, not rated in v1 (' + n0(sch.length) + '): the uploads do not say which scheduler handled a sale.');
   if (d.floor && d.floor.unmatched && d.floor.unmatched.sellers && scope !== 'team') out.push('Unmatched sellers (' + n0(d.floor.unmatched.sellers) + '): their ' + n0(d.floor.unmatched.cases) + ' cases count in the floor total, never as agent rows. Correct them on the Agent List.');
-  out.push('Cancelled includes sales that dropped out of both daily files: a Scheduled or Missed sale that is in neither the BI Active Fitted nor the Scheduled & Missed file of a day with both files in counts as Cancelled from that day (no file says "cancelled", so this is inferred), and a contract the BI file shows as deactivated. A cancelled sale stays in Sales, is no longer Scheduled or Missed, and comes back if a later file carries it. Cancellation % = cancelled ÷ sales, beside the ' + p1((((d.budgets || {}).cancelled) || {})['*']) + ' budget. Fitted value is the Charge Amount × VAT, not the bundle price.');
+  out.push('Cancelled includes sales that dropped out of both daily files: a Scheduled or Missed sale that is in neither the BI Active Fitted nor the Scheduled & Missed file of a day with both files in counts as Cancelled from that day (no file says "cancelled", so this is inferred), and a contract the BI file shows as deactivated. A cancelled sale stays in Sales, is no longer Scheduled or Missed, and comes back if a later file carries it; it is not fitted, so it lowers the agent\'s Fitment Rate (the one place the rating counts it). Cancellation % = cancelled ÷ sales, beside the ' + p1((((d.budgets || {}).cancelled) || {})['*']) + ' budget. Fitted value is the Charge Amount × VAT, not the bundle price.');
   return notesHTML(d) + '<p class="why vt-states">' + out.map(esc).join('<br>') + '</p>';
 }
 function tabsForTeam() { return typeof visibleReportTabs === 'function' ? visibleReportTabs() : TL_TABS; }   // the VAS tabs + the VT ones (the hook below appends them)
@@ -313,10 +332,11 @@ function howHTML(d) {
   var m = d.minima || {}, ds = d.drivers || [];
   return '<div class="vt-how"><p class="why">Your Vehicle Tracking rating is out of 100 and is built from ' + n0(ds.length) + ' drivers, each worth a share of the points:</p><ul>'
     + ds.map(function (x) { return '<li><b>' + esc(x.label) + '</b> — ' + n0(x.w) + ' points. ' + esc(x.note || '') + (x.dir === 'lower' ? ' Lower is better: you reach its target by coming in at or under it.' : '') + '</li>'; }).join('') + '</ul>'
+    + '<p class="why">Every outcome counts once. Once a sale is booked it ends up fitted or not, so a missed or cancelled sale lowers your Fitment Rate and nothing else. Your missed and cancelled sales and your fitments done are shown under the drivers for your information, but they are not scored on their own: scoring them as well would take points off twice for the same sale.</p>'
     + '<p class="why">Each driver compares your own figure with your own target. Points start once you are at half of the target and grow until you reach it; at or past the target you get the driver\'s full points. The score is the points you have earned out of the points that could be earned.</p>'
-    + '<p class="why">It is worked out over your business month to date — the whole month, not the last few days, because a sale is usually fitted a few days after it is made. A rate needs at least ' + n0(m.cases) + ' sales in play, and Target Achievement and Fitted vs target need at least ' + n0(m.trackedDays)
+    + '<p class="why">It is worked out over your business month to date — the whole month, not the last few days, because a sale is usually fitted a few days after it is made. Fitment Rate needs at least ' + n0(m.cases) + ' sales in play, and Target Achievement needs at least ' + n0(m.trackedDays)
     + ' tracked working days; until then that driver is shown but not scored, and the others share its weight — it never counts against you. There are no penalties, and you are never ranked against your colleagues.</p>'
-    + '<p class="why">A cancelled sale: when a Scheduled or Missed sale is in neither of a day\'s two files (BI Active Fitted and Scheduled & Missed), or the BI file shows its contract deactivated, it counts as Cancelled from that day. It stays one of your sales, so it still counts in your sales per day and in the Fitment Rate\'s sales, but it is no longer a Missed (or Scheduled) case, so it no longer counts against your Missed Rate. Cancellations are shown, not scored: there is no cancellation driver. If a later file carries the sale again, it goes back to that file\'s status.</p></div>';
+    + '<p class="why">A cancelled sale: when a Scheduled or Missed sale is in neither of a day\'s two files (BI Active Fitted and Scheduled & Missed), or the BI file shows its contract deactivated, it counts as Cancelled from that day. A cancelled sale is still a sale; it is not fitted, so it lowers your Fitment Rate. It still counts in your sales per day, and it is no longer a Missed (or Scheduled) case. Cancellations are shown, not scored: there is no cancellation driver. If a later file carries the sale again, it goes back to that file\'s status.</p></div>';
 }
 function openAgent(cb) {
   var ov = overlay('<p class="why">Reading the Vehicle Tracking card…</p>');
