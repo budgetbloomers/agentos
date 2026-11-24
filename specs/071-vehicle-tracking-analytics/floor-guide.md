@@ -2,7 +2,13 @@
 
 ## What to upload each day, and in what order
 
-Use the **VAS Upload Station** (VAS Analytics → Upload Station). Never the Ops one: Ops refuses VT files.
+**Where Vehicle Tracking lives.** Pick **Vehicle Tracking** in the app dropdown at the top of the sidebar (beside Ops Analytics
+and VAS Analytics). Its sidebar holds Month to Date, Weekly Reports, Daily Reports, the Upload Station (if your account uploads)
+and Apps. Its address is `/pulse/?app=vt`, so a bookmark or a reload brings you straight back. No Vehicle Tracking entry in the
+dropdown means your account has no VT pages; ask Nick or Nicholas.
+
+Use the **Upload Station inside Vehicle Tracking** (it is the same station as VAS Analytics → Upload Station). Never the Ops one:
+Ops refuses VT files.
 
 1. **The two daily files.** Load them in either order, on their own VT slots:
    - `BI Active Fitted <ddmmyy>.xlsx` on **VT · BI Active Fitted**
@@ -29,7 +35,7 @@ Each upload shows a receipt card:
 | Refused as a thin pull | the file has far fewer cases than the last one (BI under 90 %). Pull it again. |
 | Missing day | a working day with no file. See above. |
 
-## What each VT page shows (VAS Analytics → Vehicle Tracking)
+## What each VT page shows (app dropdown → Vehicle Tracking)
 
 - **Month to date**: the business month (26th to 25th) by agent, team leader, sub-campaign and lead source. It shows Sales
   (Current + Rollover), Fitted, Scheduled, Missed, the rates, Fitments done, Missed appointments, Due to fit, SPD against

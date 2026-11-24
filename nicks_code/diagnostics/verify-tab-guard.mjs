@@ -18,7 +18,7 @@ const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } el
 const J = JSON.stringify;
 
 const srv = http.createServer((q, r) => { const u = q.url.split('?')[0];
-  if (u === '/vt-engine.js' || u === '/vt-pages.js' || u === '/vt-publish.js') { r.writeHead(200, { 'Content-Type': 'text/javascript' }); fs.createReadStream(path.join(ROOT, 'nicks_code', u.slice(1))).pipe(r); return; }   // the source page's companions (spec 071)
+  if (u === '/vt-engine.js' || u === '/vt-pages.js' || u === '/vt-publish.js' || u === '/vt-app.js') { r.writeHead(200, { 'Content-Type': 'text/javascript' }); fs.createReadStream(path.join(ROOT, 'nicks_code', u.slice(1))).pipe(r); return; }   // the source page's companions (spec 071)
   if (u !== '/' && u !== '/index.html') { r.writeHead(404); r.end(); return; }
   r.writeHead(200, { 'Content-Type': 'text/html' }); fs.createReadStream(PULSE_HTML).pipe(r); });
 await new Promise((res) => srv.listen(8306, '127.0.0.1', res));
@@ -38,7 +38,7 @@ try {
       window.CBX_USER = user; S.ui.tab = tab;
       if (how === 'go') go(tab); else if (how === 'authed') document.dispatchEvent(new CustomEvent('cbx-authed', { detail: user })); else renderPage();
       await paint(); await new Promise((r) => setTimeout(r, 50)); await paint();
-      return { tab: S.ui.tab, head: (document.querySelector('#view .page-head h2') || {}).textContent || '' };
+      return { tab: S.ui.tab, vt: !!(window.VTApp && window.VTApp.on()), head: (document.querySelector('#view .page-head h2') || {}).textContent || '' };
     };
     const out = {};
     out.viewerSaved = await as({ role: 'viewer', tabs: { vas: NO_ADJ } }, 'adjust', 'render');
@@ -48,8 +48,10 @@ try {
     out.star = await as({ role: 'viewer', tabs: { vas: ['*'] } }, 'adjust', 'go');
     out.admin = await as({ role: 'admin', tabs: {} }, 'adjust', 'go');
     out.dataOnly = await as({ role: 'viewer', tabs: { vas: ['data'] } }, 'dashboard', 'render');
-    /* spec 071 Phase D: the Vehicle Tracking pages are VAS tabs like any other — vt_mtd, vt_weekly, vt_daily */
+    /* spec 071 Phase D: the Vehicle Tracking pages are VAS tabs like any other — vt_mtd, vt_weekly, vt_daily. Since 2026-11-24
+       they open Vehicle Tracking, its own app in the switcher (VT mode, vt-app.js); the Upload Station belongs to both apps. */
     out.vtNone = await as({ role: 'viewer', tabs: { vas: NO_ADJ } }, 'vt_mtd', 'go');
+    out.vtNoneNoStation = await as({ role: 'viewer', tabs: { vas: ['dashboard', 'mtd'] } }, 'vt_mtd', 'go');
     out.vtWeekly = await as({ role: 'viewer', tabs: { vas: ['vt_mtd', 'vt_daily'] } }, 'vt_weekly', 'render');
     out.vtOwn = await as({ role: 'viewer', tabs: { vas: ['vt_mtd', 'vt_weekly', 'vt_daily'] } }, 'vt_daily', 'go');
     window.CBX_USER = undefined; out.anon = await as(undefined, 'adjust', 'render');
@@ -63,9 +65,11 @@ try {
   ok('an admin still opens Adjustments', R.admin.tab === 'adjust', J(R.admin));
   ok('an Upload-Station-only account lands on the Upload Station, not the dashboard', R.dataOnly.tab === 'data', J(R.dataOnly));
   ok('before sign-in resolves nothing is decided (the gate overlay covers the page)', R.anon.tab === 'adjust', J(R.anon));
-  ok('VT: an account without the VT tabs does not open vt_mtd', R.vtNone.tab === 'dashboard' && !/Vehicle Tracking/.test(R.vtNone.head), J(R.vtNone));
+  ok('VT: an account without the VT tabs does not open vt_mtd (an uploader lands on the Upload Station, inside Vehicle Tracking)', R.vtNone.tab === 'data' && R.vtNone.vt && !/Vehicle Tracking —/.test(R.vtNone.head), J(R.vtNone));
+  ok('VT: without the VT tabs or the Upload Station it stays in VAS, on its first granted page', R.vtNoneNoStation.tab === 'dashboard' && !R.vtNoneNoStation.vt && !/Vehicle Tracking/.test(R.vtNoneNoStation.head), J(R.vtNoneNoStation));
   ok('VT: holding vt_mtd + vt_daily, a saved vt_weekly view moves to the first granted page', R.vtWeekly.tab === 'vt_mtd', J(R.vtWeekly));
-  ok('VT: holding the three VT tabs opens VT Daily', R.vtOwn.tab === 'vt_daily' && /Vehicle Tracking/.test(R.vtOwn.head), J(R.vtOwn));
+  ok('VT: holding the three VT tabs opens VT Daily, in VT mode', R.vtOwn.tab === 'vt_daily' && R.vtOwn.vt && /Vehicle Tracking/.test(R.vtOwn.head), J(R.vtOwn));
+  ok('VT: a VAS page again leaves VT mode', !R.anon.vt, J(R.anon));
   ok('no page errors', errs.length === 0, errs.join(' | '));
 } finally { await b.close(); srv.close(); }
 console.log(`\n${pass} passed, ${fail} failed`);

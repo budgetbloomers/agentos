@@ -113,7 +113,7 @@ Predictive; Referral).
 2. **Given** they pick a past business month, **Then** the VT history key for that month is served.
 
 ### User Story 5: An executive or manager reads the VT pages in VAS Analytics (Priority: P2)
-A management user with the VT tabs opens **Vehicle Tracking → Month to date / Weekly / Daily** in VAS Analytics. They filter by
+A management user with the VT tabs picks **Vehicle Tracking** in the app dropdown (D13; until 2026-11-24 a group inside VAS Analytics) and opens **Month to date / Weekly / Daily**. They filter by
 team leader, sub-campaign and lead source, and export .xlsx, exactly as on the VAS pages.
 
 **Acceptance Scenarios**:
@@ -433,5 +433,10 @@ value or a one-line code change.
   cycle's budget it uses.
 - **D9 · Removal.** Detail in plan §R. PULSE's latent "Matrix Tracker" filter option is hidden (two different VT sales figures
   on one site would break "one number, one verdict"). The engine branch behind it is left untouched, so the VAS guards are unchanged.
+- **D13 · Vehicle Tracking is its own dropdown app (2026-11-24; reason: owner).** "where is the drop down for me to access the
+  vehicles tracking" — his brief was "a new tab like how we have for vas analytics". The app switcher (Ops and VAS) offers
+  **Vehicle Tracking**; it opens PULSE in VT mode (`/pulse/?app=vt`, `nicks_code/vt-app.js`) with only the VT pages, the Upload
+  Station and Apps in the sidebar, and VAS Analytics loses the VT group. Same code, same `vas` tab grants (no new app grant, no
+  migration); the entry shows for an account that can open a VT page or the Upload Station. Guard: `verify-vt-app.mjs`.
 - **D12 · Database.** Tables, not a growing blob. Current state per case plus status-change events only. No daily snapshots
   (the 4.66 GB open-cases lesson).

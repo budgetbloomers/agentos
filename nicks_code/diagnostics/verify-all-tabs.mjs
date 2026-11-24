@@ -311,10 +311,10 @@ ok('the Apps page links all three apps, with the exact URLs',
   hubs.urls.join(' | '));
 ok('every outward link opens in a new tab', hubs.targets.every(t => t === '_blank'), hubs.targets.join(','));
 /* …and the app SWITCHER no longer offers Agent Analytics — agents get the link, staff get
-   the card; the dropdown is internal dashboards only (Ops / VAS / Tracker). */
+   the card; the dropdown is internal dashboards only (Ops / VAS / Vehicle Tracking — PULSE in VT mode since 2026-11-24). */
 const switcher = await page.evaluate(() =>
   [...document.querySelectorAll('aside select option')].map(o => o.textContent.trim()));
-ok('the app switcher is internal-only: Ops / VAS / Tracker, no Agent Analytics',
+ok('the app switcher is internal-only: Ops / VAS / Vehicle Tracking, no Agent Analytics',
   switcher.length === 3 && !switcher.some(t => /Agent Analytics/i.test(t)), switcher.join(' | '));
 ok('every outward link carries rel=noopener (window.opener cannot be abused)',
   hubs.rels.every(r => /noopener/.test(r)), hubs.rels.join(' | '));

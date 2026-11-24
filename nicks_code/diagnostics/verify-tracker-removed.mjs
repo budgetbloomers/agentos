@@ -10,6 +10,10 @@
  * referral tracker. Only the first goes, so this suite asserts both directions: the app is absent from the build, the
  * switchers, the sign-in gate and the Worker's manager set — and the VAS tracker is still there.
  *
+ * NOT the old app: the "Vehicle Tracking" switcher entry (2026-11-24, owner) opens PULSE in VT mode (/pulse/?app=vt,
+ * nicks_code/vt-app.js) — the new module's pages, granted as `vas` tabs. Section 2b accepts exactly that entry and still
+ * fails if it points anywhere near /tracker/ or brings back a `tracker` app grant.
+ *
  * The old VT MTD Report shipped a July 2026 seed with real first names. Those names are read from GIT HISTORY at run time
  * (the commit that added tracker/vt-mtd-report.html) and are never written into this file or printed: a hit is reported
  * by file and count only. No network, no Supabase.
@@ -46,6 +50,15 @@ ok('Ops source has no tracker/index.html link', ops && !/tracker\/index\.html/.t
 ok('PULSE source has no tracker/index.html link', pulse && !/tracker\/index\.html/.test(pulse));
 ok('PULSE app switcher no longer offers "Tracker Analytics"', !/>\s*Tracker Analytics\s*</.test(pulse));
 ok('Ops app switcher no longer offers "Tracker Analytics"', !/>\s*Tracker Analytics\s*</.test(ops));
+/* ---- 2b. the new Vehicle Tracking entry is PULSE in VT mode, not the old app ---- */
+console.log('\n2b · the "Vehicle Tracking" entry opens PULSE in VT mode, never /tracker/');
+const opsVt = (ops.match(/<option value="([^"]*)"[^>]*>Vehicle Tracking<\/option>/) || [])[1];
+ok('Ops switcher: "Vehicle Tracking" opens pulse/index.html?app=vt', opsVt === 'pulse/index.html?app=vt', String(opsVt));
+const vtApp = read('nicks_code/vt-app.js');
+ok('PULSE switcher: the entry comes from vt-app.js and switches PULSE in place (value "vt")', /<script src="vt-app\.js" data-inline><\/script>/.test(pulse) && /<option value="vt" data-vt-entry/.test(vtApp));
+ok('vt-app.js names no tracker path and no tracker app', !!vtApp && !/tracker\//i.test(vtApp) && !/'tracker'/.test(vtApp));
+ok('no switcher offers an option valued tracker…', !/<option value="[^"]*tracker[^"]*"/i.test(ops + pulse + vtApp));
+
 /* A4: the latent "Matrix Tracker" view is reachable only through a header campaign filter left on 'VT' (CAMPS never
    offers it). rebuild() now clears that stale value like any other unreported campaign; buildModel/aggCols are untouched. */
 ok("PULSE rebuild no longer keeps a stale 'VT' header filter", !/S\.ui\.camp!=='VT'&&!CAMPS\.includes\(S\.ui\.camp\)/.test(pulse));

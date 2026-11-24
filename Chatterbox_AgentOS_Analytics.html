@@ -438,6 +438,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(37,99,235,.12)
       <select class="as-select" aria-label="Switch app" onchange="if(this.value)location.href=this.value">
         <option value="" selected>Ops Analytics</option>
         <option value="pulse/index.html">VAS Analytics</option>
+        <option value="pulse/index.html?app=vt" data-vt-entry>Vehicle Tracking</option><!-- spec 071: PULSE in VT mode; auth-gate removes it for an account without VT -->
       </select>
     </div>
     <nav class="nav" id="nav"></nav>

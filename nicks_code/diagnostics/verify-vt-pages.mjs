@@ -6,7 +6,8 @@
  * a FICTIONAL case book (CB91xx, invented case numbers) built in Node through the real engine (VTEngine.merge over
  * fixture files, one extract per working day, Thu 5 Nov deliberately missing (Wed 4 Nov is the election holiday)). Every figure the page shows is checked
  * against VTEngine.model() computed here in Node from the same book — the page never computes one itself.
- *   P1  NAV: a "Vehicle Tracking" group with vt_mtd / vt_weekly / vt_daily; the header's VAS filters stand down
+ *   P1  NAV: Vehicle Tracking is its own app (VT mode, vt-app.js — 2026-11-24): its sidebar holds vt_mtd / vt_weekly /
+ *       vt_daily (no "VT" prefix) + the Upload Station + Apps; the VAS sidebar has no VT group; the VAS filters stand down
  *   P2  tabAllowed: an account without the VT tabs never sees them render; with vt_mtd it does
  *   P3  the page's model IS the engine's model (deep equal), period line "figures to … · updated …"
  *   P4  Month to date: every spec §5 column (C2–C22) present; Cancelled "—" everywhere (never 0) with the note
@@ -110,7 +111,7 @@ if (!SOURCE && !process.argv.includes('--no-build')) {
   const r = spawnSync(process.execPath, [path.join(ROOT, 'tools', 'prepare-site.js')], { cwd: ROOT, encoding: 'utf8' });
   ok(r.status === 0 && /Build consistency verified/.test(r.stdout), 'the site builds (tools/prepare-site.js)', (r.stderr || r.stdout).slice(-300));
 }
-const SERVE = SOURCE ? { '/index.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/vt-publish.js': 'nicks_code/vt-publish.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js' }
+const SERVE = SOURCE ? { '/index.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/vt-publish.js': 'nicks_code/vt-publish.js', '/vt-app.js': 'nicks_code/vt-app.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js' }
   : { '/index.html': 'site/pulse/index.html', '/xlsx.full.min.js': 'site/xlsx.full.min.js' };
 const server = http.createServer((q, s) => { const rel = SERVE[q.url.split('?')[0]]; const p = rel && path.join(ROOT, rel);
   if (!p || !fs.existsSync(p)) { s.writeHead(404); s.end(); return; }
@@ -151,11 +152,16 @@ try {
   await reset(); await open('vt_mtd');
   const nav = await page.evaluate(() => { const g = [...document.querySelectorAll('#side .navgroup')].find((x) => /Vehicle Tracking/.test(x.querySelector('.lab').textContent));
     return { ids: g ? [...g.querySelectorAll('[data-page]')].map((b) => b.dataset.page) : [], labels: g ? [...g.querySelectorAll('[data-page] span')].map((s) => s.textContent) : [],
-      filtersOff: document.getElementById('topbar').classList.contains('filters-off'), nav: NAV.flatMap((x) => x.items.map((i) => i[0])) }; });
+      filtersOff: document.getElementById('topbar').classList.contains('filters-off'), nav: NAV.flatMap((x) => x.items.map((i) => i[0])),
+      vt: window.VTApp.on(), side: [...document.querySelectorAll('#side [data-page]')].map((b) => b.dataset.page) }; });
   ok(nav.ids.join() === 'vt_mtd,vt_weekly,vt_daily', 'a "Vehicle Tracking" group holds vt_mtd, vt_weekly, vt_daily', nav.ids.join());
-  ok(nav.labels.join(' | ') === 'VT Month to Date | VT Weekly Reports | VT Daily Reports', 'labelled Month to Date / Weekly / Daily', nav.labels.join(' | '));
+  ok(nav.labels.join(' | ') === 'Month to Date | Weekly Reports | Daily Reports', 'labelled Month to Date / Weekly / Daily (the app itself says Vehicle Tracking)', nav.labels.join(' | '));
+  ok(nav.vt && nav.side.join() === 'vt_mtd,vt_weekly,vt_daily,data,hubs', 'a VT page opens VT mode: its sidebar is the VT pages, the Upload Station and Apps only', nav.side.join());
   ok(nav.filtersOff, 'the header\'s VAS period / campaign / team filters stand down on a VT page (it carries its own)');
   ok(['mtd', 'weekly', 'daily'].every((v) => nav.nav.includes(v)), 'the VAS Month to Date / Weekly / Daily pages are still in the nav');
+  await open('mtd');
+  const vas = await page.evaluate(() => ({ vt: window.VTApp.on(), side: [...document.querySelectorAll('#side [data-page]')].map((b) => b.dataset.page), groups: [...document.querySelectorAll('#side .navgroup .lab')].map((x) => x.textContent) }));
+  ok(!vas.vt && !vas.side.some((i) => /^vt_/.test(i)) && !vas.groups.includes('Vehicle Tracking') && vas.side.includes('mtd'), 'VAS Analytics has no Vehicle Tracking group (one home for it)', JSON.stringify(vas));
 
   head('P2 · tab grants');
   /* each account's page is read once it has SETTLED (settle() above), not after a fixed "two frames + 30 ms": a VT page
@@ -166,7 +172,7 @@ try {
     one: await as({ role: 'viewer', tabs: { vas: ['vt_mtd'] } }, 'vt_mtd'), oneOther: await as({ role: 'viewer', tabs: { vas: ['vt_mtd'] } }, 'vt_weekly'),
     star: await as({ role: 'viewer', tabs: { vas: ['*'] } }, 'vt_weekly') };
   await page.evaluate(() => { window.CBX_USER = { role: 'admin', username: 'tester', tabs: {} }; });
-  ok(g.none.tab === 'dashboard' && !/Vehicle Tracking/.test(g.none.h) && g.daily.tab === 'dashboard', 'an account without the VT tabs never renders them (lands on its first granted page)', JSON.stringify(g.none));
+  ok(['dashboard', 'mtd'].includes(g.none.tab) && !/Vehicle Tracking/.test(g.none.h) && ['dashboard', 'mtd'].includes(g.daily.tab), 'an account without the VT tabs never renders them (stays on a granted VAS page)', JSON.stringify(g.none));
   ok(g.one.tab === 'vt_mtd' && g.oneOther.tab === 'vt_mtd', 'holding vt_mtd only: Month to date opens, Weekly does not', JSON.stringify([g.one, g.oneOther]));
   ok(g.star.tab === 'vt_weekly', 'vas:["*"] opens every VT page');
 

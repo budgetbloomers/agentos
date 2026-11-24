@@ -8,6 +8,8 @@
  *     Worker makes — vt_book(p_from), vt_roster_at(p_on), vt_uploads — with the service key, READ-ONLY (no write is ever made)
  * and then check the page against the engine: every VT page renders with no error card, and the page's model is
  * VTEngine.model() computed here in Node over the same book, roster and receipts (the engine decides, the page paints).
+ * Since 2026-11-24 a VT page opens Vehicle Tracking as its own app (VT mode, nicks_code/vt-app.js): openVt() sets the tab and
+ * renderPage() moves the page into VT mode, so these drive the pages exactly as the switcher does; checkVtTabs asserts it.
  *
  *   import { vtSource, installVtRoutes, checkVtTabs, probeVtControls } from './vt-tab-source.mjs';
  */
@@ -78,6 +80,8 @@ export async function checkVtTabs(page, ok, src) {
       const st = window.VTPages.state();
       return { len: t.length, head: t.slice(0, 80).replace(/\n/g, ' '), err: /Something went wrong|is not defined|undefined is not|Cannot read|could not be read/i.test(t), status: st.status, cycle: st.cycle, ready: st.ready }; });
     ok(`VT ${tab} renders (${src.label})`, r.len > 40 && !r.err && r.status !== 'error', JSON.stringify(r));
+    const mode = await page.evaluate(() => ({ vt: !!(window.VTApp && window.VTApp.on()), side: [...document.querySelectorAll('#side [data-page]')].map((b) => b.dataset.page) }));
+    ok(`VT ${tab} opens in Vehicle Tracking (VT mode), its sidebar holding no VAS page`, mode.vt && mode.side.every((i) => /^vt_/.test(i) || i === 'data' || i === 'hubs'), JSON.stringify(mode));
     if (tab !== 'vt_mtd') continue;
     if (!r.ready) { ok('VT: the page has a model to compare (' + src.label + ')', false, JSON.stringify(r)); continue; }
     const pm = await page.evaluate(() => JSON.stringify(window.VTPages.state().model));

@@ -33,7 +33,7 @@ if (!process.argv.includes('--no-build')) {
 }
 const SRC = read(path.join(ROOT, 'nicks_code', 'index.html'));
 const OUT = read(path.join(ROOT, 'site', 'pulse', 'index.html'));
-for (const f of ['vt-engine.js', 'vt-pages.js', 'vt-publish.js']) {   // vt-publish.js: Phase E (the digest publisher)
+for (const f of ['vt-engine.js', 'vt-pages.js', 'vt-publish.js', 'vt-app.js']) {   // vt-publish.js: Phase E (the digest publisher); vt-app.js: VT mode (2026-11-24)
   ok(SRC.includes('<script src="' + f + '" data-inline></script>'), 'the source page loads ' + f + ' with a data-inline tag');
   const code = read(path.join(ROOT, 'nicks_code', f)).replace(/<\/script/gi, '<\\/script');
   ok(OUT.includes('/* inlined ' + f + ' (tools/prepare-site.js) */\n' + code + '\n</script>'), 'site/pulse/index.html carries ' + f + ' inlined, verbatim');
@@ -69,8 +69,8 @@ head('B4 · file://');
     for (const [label, file] of [['the source page (nicks_code/index.html)', path.join(ROOT, 'nicks_code', 'index.html')], ['the built page (site/pulse/index.html)', path.join(ROOT, 'site', 'pulse', 'index.html')]]) {
       const page = await browser.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message.slice(0, 120)));
       await page.goto(pathToFileURL(file).href, { waitUntil: 'domcontentloaded' });
-      const got = await page.waitForFunction(() => window.VTEngine && window.VTStation && { v: window.VTEngine.version, k: typeof window.VTStation.ingest, d: window.VTEngine.detect(['Installation Status', 'Vehicle Reg Number', 'Box Number', 'Unit Type', 'Case Number', 'Created By'], 'Export') }, null, { timeout: 30000 }).then((h) => h.jsonValue()).catch(() => null);
-      ok(got && got.k === 'function' && got.d === 'vtBiFitted', label + ' from file:// exposes window.VTEngine (' + (got && got.v) + ') and window.VTStation', JSON.stringify(got));
+      const got = await page.waitForFunction(() => window.VTEngine && window.VTStation && window.VTApp && { v: window.VTEngine.version, k: typeof window.VTStation.ingest, d: window.VTEngine.detect(['Installation Status', 'Vehicle Reg Number', 'Box Number', 'Unit Type', 'Case Number', 'Created By'], 'Export') }, null, { timeout: 30000 }).then((h) => h.jsonValue()).catch(() => null);
+      ok(got && got.k === 'function' && got.d === 'vtBiFitted', label + ' from file:// exposes window.VTEngine (' + (got && got.v) + '), window.VTStation and window.VTApp', JSON.stringify(got));
       ok(!errs.some((e) => /VTEngine|VTStation|vt-engine|vt-pages/.test(e)), label + ': no VT page error', errs.join(' ; '));
       await page.close();
     }

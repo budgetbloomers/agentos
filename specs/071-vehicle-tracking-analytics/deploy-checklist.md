@@ -155,6 +155,11 @@ without it the upload lands on a preview.
 2. `node nicks_code/diagnostics/verify-live-save.mjs --live`.
 3. `/tracker/` must not serve the old app. A former tracker-only staff account still opens VAS Analytics and sees
    Vehicle Tracking.
+3b. **The Vehicle Tracking dropdown entry** (2026-11-24). Signed in as an admin, the app dropdown in Ops AND in VAS Analytics
+   lists Ops Analytics / VAS Analytics / Vehicle Tracking. Picking it opens `/pulse/?app=vt` on Month to Date with a sidebar of
+   Month to Date, Weekly Reports, Daily Reports, Upload Station, Apps — and VAS Analytics' own sidebar has no Vehicle Tracking
+   group. Reload keeps it; Back returns to VAS. As a VAS account without VT tabs (no `vt_*`, no `data`): no entry in either
+   dropdown, and typing `/pulse/?app=vt` lands on its VAS page with a notice. Offline proof: `node nicks_code/diagnostics/verify-vt-app.mjs`.
 4. Run `node nicks_code/diagnostics/verify-vt-tabs.mjs --live` once 071/072 are applied: the three VT pages over the live
    book, read-only. It skips cleanly before that.
 5. Check `GET /api/kv?key=vt-digest` with an agent's session: it must be refused (staff-only after the fix pass).

@@ -4,6 +4,9 @@
 (function () {
   var WORKER = 'https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
   var APP = location.pathname.indexOf('/pulse') !== -1 ? 'vas' : 'ops';
+  /* Vehicle Tracking (spec 071, 2026-11-24) is PULSE in VT mode (/pulse/?app=vt, nicks_code/vt-app.js) — still the `vas`
+     app for grants (its pages live in tabs.vas); VIEW only names it on the no-access screen. */
+  var VIEW = APP === 'vas' && /[?&]app=vt(?:&|$)/.test(location.search) ? 'vt' : APP;
   var TKEY = 'cbx_token';
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
 
@@ -305,6 +308,7 @@
     document.dispatchEvent(new CustomEvent('cbx-authed', { detail: window.CBX_USER }));
     themeSync(window.CBX_USER);
     applyPerms();
+    gateVtEntry();
     addSignout();
     addThemeButton();
     addPasswordButton();
@@ -321,12 +325,12 @@
      Say so plainly, and point at the app they DO have. */
   function noAccessNotice() {
     var u = window.CBX_USER || {};
-    var NAMES = { vas: 'VAS Analytics', ops: 'Ops Analytics' };
+    var NAMES = { vas: 'VAS Analytics', ops: 'Ops Analytics', vt: 'Vehicle Tracking' };
     var PATHS = { vas: '/pulse/', ops: '/' };
     var mine = (u.apps || []).filter(function (a) { return a !== APP && NAMES[a]; });
     overlay(
       '<div style="text-align:center"><div style="font-size:20px;font-weight:800;letter-spacing:-.4px;color:#0F1E36">CHATTER<span style="color:#2563EB">BOX</span></div>'
-      + '<div style="font-size:15px;font-weight:700;color:#0F1E36;margin:16px 0 6px">No access to ' + esc(NAMES[APP] || APP) + '</div>'
+      + '<div style="font-size:15px;font-weight:700;color:#0F1E36;margin:16px 0 6px">No access to ' + esc(NAMES[VIEW] || APP) + '</div>'
       + '<div style="font-size:12.5px;color:#71809B;line-height:1.6">Signed in as <b style="color:#0F1E36">' + esc(u.username || '') + '</b>. '
       + 'This account has no tabs in this app, so there is nothing to show — the dashboard is working, your account simply is not on it.<br>'
       + 'Ask Nick or Nicholas if you need it.</div>'
@@ -353,6 +357,30 @@
     var nav = document.getElementById('nav') || document.querySelector('.side') || document.body;
     new MutationObserver(hide).observe(nav, { childList: true, subtree: true });
   }
+  /* THE VEHICLE TRACKING ENTRY (spec 071, 2026-11-24). Both switchers offer "Vehicle Tracking" (option[data-vt-entry]);
+     an account that can open no VT-mode page — a VT page or the Upload Station — does not see it. The mirror of PULSE's
+     rule (nicks_code/vt-app.js entryAllowed over tabAllowed: admin, vas:['*'] or the id); verify-vt-app.mjs holds the two
+     equal. Needed here because the Ops switcher is static HTML and PULSE repaints its sidebar after sign-in. */
+  function vtEntryOk(u) {
+    if (!u || u.role === 'admin') return true;
+    var t = (u.tabs && u.tabs.vas) || [];
+    return t.indexOf('*') !== -1 || ['vt_mtd', 'vt_weekly', 'vt_daily', 'data'].some(function (i) { return t.indexOf(i) !== -1; });
+  }
+  function gateVtEntry() {
+    if (vtEntryOk(window.CBX_USER)) return;
+    var prune = function () { document.querySelectorAll('option[data-vt-entry]').forEach(function (o) { o.remove(); }); };
+    prune();
+    new MutationObserver(prune).observe(document.getElementById('side') || document.querySelector('.side') || document.body, { childList: true, subtree: true });
+  }
+  /* Back to a page the browser kept (bfcache) shows the switcher as it was LEFT — on the app just navigated to. Put it
+     back on the app this page is. */
+  window.addEventListener('pageshow', function (ev) {
+    if (!ev.persisted) return;
+    document.querySelectorAll('select[aria-label="Switch app"]').forEach(function (s) {
+      for (var i = 0; i < s.options.length; i++) if (s.options[i].defaultSelected) { s.selectedIndex = i; return; }
+      s.selectedIndex = 0;
+    });
+  });
   /* The entry point. It sits beside sign-out rather than inside any one app's
      sidebar, because all three management apps share this file and none of them
      has a settings screen to put it in. */

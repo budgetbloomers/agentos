@@ -18,6 +18,8 @@
  *   S9  roster (C7): read from /api/vt/roster; when that fails, PULSE's own VT roster rows are used and the receipt says so
  *   S10 the Upload Station shows the three VT slots in their own group; the ten VAS slot cards are untouched
  *   S11 stage batches stay ≤ 1,000 rows and under the 512 KB cap (unit)
+ *   S13 Vehicle Tracking as its own app (VT mode, 2026-11-24): the Upload Station inside it takes a VT file and the commit
+ *       still publishes the VT digest
  *   S12 the real BI Active Fitted 101126: 1,107 VT lines of 19,404 rows, 1,104 cases (spec US1-1), no reg / chassis /
  *       box value in any request
  *
@@ -84,7 +86,7 @@ function answer(method, p, body) {
 }
 
 /* ---- PULSE, served from the source folder ---- */
-const SERVE = { '/': 'nicks_code/index.html', '/index.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/vt-publish.js': 'nicks_code/vt-publish.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js' };
+const SERVE = { '/': 'nicks_code/index.html', '/index.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/vt-publish.js': 'nicks_code/vt-publish.js', '/vt-app.js': 'nicks_code/vt-app.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js' };
 const server = http.createServer((q, s) => { const rel = SERVE[q.url.split('?')[0]]; const p = rel && path.join(ROOT, rel);
   if (!p || !fs.existsSync(p)) { s.writeHead(404); s.end(); return; }
   s.writeHead(200, { 'Content-Type': p.endsWith('.js') ? 'text/javascript' : 'text/html' }); fs.createReadStream(p).pipe(s); });
@@ -253,6 +255,17 @@ try {
     const all = W.log.map((x) => x.raw).join('\n'), leaked = [...pii].filter((v) => all.includes(v)).length;
     ok(pii.size > 50 && leaked === 0, 'none of ' + pii.size + ' sampled registration / chassis / box / account / contract values is in any request (values not printed)', leaked + ' leaked');
   }
+  head('S13 · the Upload Station inside Vehicle Tracking (VT mode)');
+  await dismiss(); resetWorker();
+  await page.evaluate(() => { window.__vtDigestOk = null; });
+  await page.evaluate(() => { window.VTApp.go(true); go('data'); });
+  const mode = await page.evaluate(() => ({ vt: window.VTApp.on(), tab: window.__mtd.state().ui.tab, search: location.search }));
+  ok(mode.vt && mode.tab === 'data' && mode.search === '?app=vt&page=data', 'VT mode, on the Upload Station', JSON.stringify(mode));
+  const r13 = await drop('BI Active Fitted 091126.xlsx', BI1);
+  ok(W.rev === 1 && /VT · BI Active Fitted/.test(r13.receipt), 'the VT file is committed from VT mode, with its receipt', r13.receipt.split(String.fromCharCode(10))[0]);
+  await page.waitForFunction(() => !!window.__vtDigestOk, null, { timeout: 30000 }).catch(() => {});
+  ok(W.kv.some((x) => x.key === 'vt-digest') && !W.kv.some((x) => /^agent-/.test(x.key)), 'the commit publishes kv:vt-digest from VT mode — never a VAS key', W.kv.map((x) => x.key).join(','));
+  ok(await page.evaluate(() => window.VTApp.on() && window.__mtd.state().ui.tab === 'data'), 'and the page stays in Vehicle Tracking');
   ok(!errs.length, 'no page errors', errs.join(' ; '));
 } catch (e) { ok(false, 'the suite ran', String((e && e.stack) || e).slice(0, 400)); }
 finally { await browser.close(); server.close(); }
