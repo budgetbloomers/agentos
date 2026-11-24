@@ -149,6 +149,21 @@ export function canUpload(user) {
     return apps.includes(app) && (t.includes('*') || ids.some((i) => t.includes(i)));
   });
 }
+/* WHO MAY READ THE VEHICLE TRACKING BOOK (24 Nov 2026). The three VT pages in VAS Analytics (vt_mtd / vt_weekly / vt_daily)
+   paint VTEngine.model() over the book, the receipts and the roster — so READING those is what a VT page grant means, and
+   it must not need the Upload Station: ryan and preshen (campaign managers who hold VAS) were granted the pages and every
+   read answered 403. A full-scope session may read when it could upload anyway, or is admin / exec, or holds the VAS app
+   with '*' or at least one VT page. Role is NOT the test here (a campaign manager who was deliberately given a VT page in
+   VAS reads it); a portal-only account never has the VAS app, and a scoped session is refused first. Writing is unchanged:
+   every upload step and the station's merge read still need canUpload. */
+const VT_PAGE_TABS = ['vt_mtd', 'vt_weekly', 'vt_daily'];
+export function vtReadAllowed(user) {
+  if (!user || !isFullScope(user)) return false;
+  if (canUpload(user) || user.role === 'admin' || user.role === 'exec') return true;
+  const apps = Array.isArray(user.apps) ? user.apps : [];
+  const t = user.tabs && typeof user.tabs === 'object' && Array.isArray(user.tabs.vas) ? user.tabs.vas : [];
+  return apps.includes('vas') && (t.includes('*') || VT_PAGE_TABS.some((i) => t.includes(i)));
+}
 
 /* EMPTINESS IS DERIVED, NEVER TRUSTED (review M1). The `empty:true` flag decides whether a payload may be refused by the
    empty_over_data fence and what the pointer is stamped, so it cannot be the client's say-so. An agent-digest body:

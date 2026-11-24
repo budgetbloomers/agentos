@@ -15,8 +15,10 @@
  *   GET  /api/vt/uploads?limit=n             → the newest n (≤ 100) receipts
  *   GET  /api/vt/roster?on=YYYY-MM-DD        → vt_roster_at(p_on)            the VT Agent List in force (migration-072)
  *
- * WHO: a full-scope staff session holding the Upload Station (rules.mjs canUpload) — the same grant as every other load
- * route. Portal roles never reach here (index.mjs PORTAL_ALLOWED is an allow-list and names no /api/vt route) and the
+ * WHO: WRITES (the four upload steps and the station's merge read, POST book) need a full-scope staff session holding the
+ * Upload Station (rules.mjs canUpload) — the same grant as every other load route. READS (GET book, receipts, roster) are
+ * what the three VT pages paint, so they need only rules.mjs vtReadAllowed: the VAS app with a VT page, or admin / exec,
+ * or the Upload Station (24 Nov 2026 — reading a report is not uploading). Portal roles never reach here (index.mjs PORTAL_ALLOWED is an allow-list and names no /api/vt route) and the
  * four writes are in GATED_WRITES (an outdated tab may not write). p_user on all four writes is the SESSION's username,
  * appended as the body's LAST key (Postgres reads the last of two equal keys), so whatever the client sends, an upload
  * belongs to the account that began it and no other may stage, commit or abandon it (review S-M3). The receipts carry
@@ -33,7 +35,7 @@
  * that accepts it, so nothing is added here for that (review D-M10).
  * The portal half (Phase E: scoped digest slices, unmatched seller names stripped for non-staff) is added below.
  */
-import { canUpload, isFullScope, VT_DIGEST_MAX, vtPointerView } from './rules.mjs';
+import { canUpload, isFullScope, VT_DIGEST_MAX, vtPointerView, vtReadAllowed } from './rules.mjs';
 import { cycleRange } from './cycle.mjs';
 import { vtInScope } from './campaign.mjs';   // VT in a manager's scope — for the VT cards only (E6)
 
@@ -44,6 +46,7 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const STEPS = new Set(['begin', 'stage', 'commit', 'abandon']);
 const json = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 const NO_UPLOAD = () => json({ error: 'Not permitted — this needs Upload Station access.' }, 403);
+const NO_VT_READ = () => json({ error: 'Not permitted — this needs a Vehicle Tracking page in VAS Analytics.' }, 403);
 const REFUSALS = /^(stage_incomplete|not_staging|batch_too_large|unknown_upload|rows_not_array|not_owner|upload_too_large|too_many_uploads|bad_extract_on|bad_cycle_key|bad_date|bad_file_name|bad_user|duplicate_case|duplicate_event|bad_receipt|commit_too_large|bad_cancel)\b/;
 
 /* what PostgREST answered for a failed function call → a status and a short reason the station can show */
@@ -110,7 +113,11 @@ export async function vtIntakeRoute(req, url, env, user) {
   const isBook = path === '/api/vt/book', step = path.startsWith('/api/vt/upload/') ? path.slice('/api/vt/upload/'.length) : null;
   if (!isBook && !step && path !== '/api/vt/uploads' && path !== '/api/vt/roster') return null;
   if (!user) return json({ error: 'not signed in' }, 401);
-  if (!canUpload(user)) return NO_UPLOAD();
+  /* READS (the book by GET, the receipts, the roster) are what the VT pages paint: a VT page grant is enough
+     (rules.mjs vtReadAllowed). Everything else — the four upload steps and the station's merge read (POST book) — writes
+     or prepares a write and still needs the Upload Station. */
+  const isRead = req.method === 'GET' && !step;
+  if (isRead ? !vtReadAllowed(user) : !canUpload(user)) return isRead ? NO_VT_READ() : NO_UPLOAD();
 
   if (isBook && req.method === 'GET') {
     const from = url.searchParams.get('from');

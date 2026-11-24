@@ -101,6 +101,27 @@ SESSION = userRow();
 { const res = []; for (const [m, p, b] of ROUTES) res.push(await call(m, p, b));
   ok(res.every((r) => r.status === 200), 'a staff session with the Upload Station grant reaches every route', res.map((r) => r.status).join(','));
   SESSION = userRow({ role: 'admin', apps: null, tabs: null }); const a = await call('GET', '/api/vt/uploads'); ok(a.status === 200, 'admin reaches them too'); SESSION = userRow(); }
+/* READING THE VT PAGES IS NOT UPLOADING (24 Nov 2026 — the owner: "ashton, avesh, ryan and preshen" need access; ryan and
+   preshen are campaign managers who hold VAS and were given the three VT pages, and every page read was refused 403).
+   An account that holds the VAS app and a VT page (or is admin / exec, or has the Upload Station) may READ the book, the
+   receipts and the roster; the merge read and all four write steps still need the Upload Station. */
+{ const READS = ROUTES.filter(([m, p]) => m === 'GET'), WRITES = ROUTES.filter(([m]) => m === 'POST');
+  const READERS = [
+    ['a campaign manager holding VAS and the VT pages', userRow({ role: 'campaign_manager', apps: ['agent', 'vas'], tabs: { vas: ['mtd', 'vt_mtd', 'vt_weekly', 'vt_daily'] } })],
+    ['a viewer holding one VT page and no Upload Station', userRow({ role: 'viewer', tabs: { vas: ['vt_daily'] } })],
+    ['an exec whose VAS tabs do not include the Upload Station', userRow({ role: 'exec', tabs: { vas: ['mtd'] } })]];
+  for (const [label, s] of READERS) {
+    SESSION = s; const rd = [], wr = [];
+    for (const [m, p, b] of READS) rd.push(await call(m, p, b));
+    for (const [m, p, b] of WRITES) wr.push(await call(m, p, b));
+    ok(rd.every((r) => r.status === 200), label + ': may READ the book, the receipts and the roster', rd.map((r) => r.status).join(','));
+    ok(wr.every((r) => r.status === 403 && r.rpcs.length === 0), label + ': may NOT upload or run the merge read, and no RPC is called', wr.map((r) => r.status).join(','));
+  }
+  SESSION = { ...userRow({ role: 'viewer', tabs: { vas: ['vt_mtd'] } }), scope: 'referrals' };
+  { const r = await call('GET', '/api/vt/book?from=2026-10-26'); ok(r.status === 403 || r.status === 401, 'a scoped session holding a VT page still reads nothing', r.status); }
+  SESSION = userRow({ role: 'viewer', apps: ['ops'], tabs: { vas: ['vt_mtd'] } });
+  { const r = await call('GET', '/api/vt/book?from=2026-10-26'); ok(r.status === 403, 'a VT page id without the VAS app reads nothing', r.status); }
+  SESSION = userRow(); }
 { const r = await call('POST', '/api/vt/upload/begin', '{}', { 'X-Cbx-Client': 'v4' });
   ok(r.status === 409 && r.rpcs.length === 0, 'an outdated tab may not write (GATED_WRITES)', r.status); }
 { SESSION = null; const r = await call('GET', '/api/vt/book'); ok(r.status === 401, 'no session → 401', r.status); SESSION = userRow(); }
