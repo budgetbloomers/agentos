@@ -162,7 +162,8 @@ team leader, sub-campaign and lead source, and export .xlsx, exactly as on the V
 **Intake (Upload Station, PULSE)**
 - **FR-001** The station MUST classify a sheet as `vtBiFitted` when its header row contains all of `installation status`,
   `vehicle reg number`, `box number`, `unit type`, `case number`, `created by`. This check MUST run BEFORE the VAS `bi` /
-  `inactive` rules.
+  `inactive` rules. **Amended 2026-11-24 (D14):** the VAS "BI Active" export has the same header, so a header match only
+  says "one of the two BI files"; the slot and the file name decide (D14).
 - **FR-002** The station MUST classify a sheet as `vtSchedMissed` when its header contains `missedandscheduledfitment`,
   `fitment date`, `case number`.
 - **FR-003** The station MAY classify the hand-built report's `Schedulers Data` sheet as `vtOpeningBook` (headers `month`,
@@ -438,5 +439,18 @@ value or a one-line code change.
   **Vehicle Tracking**; it opens PULSE in VT mode (`/pulse/?app=vt`, `nicks_code/vt-app.js`) with only the VT pages, the Upload
   Station and Apps in the sidebar, and VAS Analytics loses the VT group. Same code, same `vas` tab grants (no new app grant, no
   migration); the entry shows for an account that can open a VT page or the Upload Station. Guard: `verify-vt-app.mjs`.
+- **D14 · Two BI exports, the same columns: the slot and the name decide (incident 2026-11-24, rule book vt-1.3).** The owner:
+  "this bi is not the same for vas its two different". The VAS **"BI Active <ddmmyy>.xlsx"** (VAS money: PULSE `bi`, Ops
+  `BI_ACTIVE_CASES`) and the Vehicle Tracking **"BI Active Fitted <ddmmyy>.xlsx"** carry the same header, so FR-001's column
+  test cannot tell them apart. Incident: on 24 Nov the VAS "BI Active 231126.xlsx" (31,712 rows) was taken by the VT intake —
+  VAS got no BI, Ops refused it — and the real Fitted file was then refused by the thin-pull guard against that file's 1,982
+  cases. Rule (the one the station already uses for the two header-identical Salesforce pulls): a BI-columned file is Vehicle
+  Tracking only when dropped on the **VT · BI Active Fitted** slot, or its name contains "Fitted"
+  (`detection.vtBiFitted.nameHint`), or it is dropped with no slot inside the Vehicle Tracking app; otherwise it is the VAS
+  file, ingested exactly as before spec 071. A "Fitted" file on the VAS BI slot is refused in words; a file dropped on the VT
+  BI slot without "Fitted" in its name loads as VT with a heads-up. Ops (`isVtFile(headers, name)`), the Rake (`rakeDetect`)
+  and the validators (`tools/vt-validate.mjs`) apply the same name rule; Scheduled & Missed and the opening book stay VT by
+  their columns alone. Evidence: `verify-vt-bi-two-files.mjs` (the incident case, and the VAS result identical to the pre-071
+  page 55a452c). Would change if: the two exports ever differ by a column (then detect by that column).
 - **D12 · Database.** Tables, not a growing blob. Current state per case plus status-change events only. No daily snapshots
   (the 4.66 GB open-cases lesson).

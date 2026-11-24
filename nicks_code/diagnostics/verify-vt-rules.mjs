@@ -61,7 +61,11 @@ ok('bands equal the VAS composite bands', JSON.stringify(E.VT_RULES.rating.bands
 ok('driver weights total 100', E.VT_RULES.rating.drivers.reduce((s, x) => s + x.w, 0) === 100);
 ok('vt-1.2: two drivers, targetAch 50 / fitRate 50 (Missed Rate and Fitted vs target removed as double counting)',
   E.VT_RULES.rating.drivers.map(x => x.k + ':' + x.w + ':' + x.dir).join(',') === 'targetAch:50:higher,fitRate:50:higher');
-ok('the rule book is version vt-1.2', E.VT_RULES.version === 'vt-1.2', E.VT_RULES.version);
+ok('the rule book is version vt-1.3 (vt-1.2 drivers kept; vt-1.3 adds detection.vtBiFitted.nameHint)', E.VT_RULES.version === 'vt-1.3', E.VT_RULES.version);
+ok('vt-1.3: the BI header is shared with the VAS BI Active export, so detection.vtBiFitted carries nameHint "fitted" and the engine tests names with it',
+  E.VT_RULES.detection.vtBiFitted.nameHint === 'fitted' && E.isBiFittedName('BI Active Fitted 231126.xlsx') && !E.isBiFittedName('BI Active 231126.xlsx'), E.VT_RULES.detection.vtBiFitted.nameHint);
+{ const c = SPEC._changes.find(x => x.date === '2026-11-24' && x.key === 'detection.vtBiFitted.nameHint');
+  ok('a dated _changes[] entry (2026-11-24) says the BI header is shared with the VAS BI Active export and the slot + name decide', !!c && /shared with the VAS BI Active export/.test(c.why) && /slot and the file name/.test(c.why) && /incident 2026-11-24/.test(c.why), c && c.why.slice(0, 120)); }
 { const c = SPEC._changes.find(x => x.date === '2026-11-24' && /rating\.drivers/.test(x.key));
   ok('a dated _changes[] entry (2026-11-24) names the reason (double counting, ~12 points for one missed sale) and who decided', !!c && /double counting/i.test(c.why) && /12 points/.test(c.why) && /owner/.test(c.by) && /vt-1\.2/.test(c.to), c && c.by); }
 ok('Missed Rate and Fitted vs target are named as not scored, with the reason', /double counting/.test(E.VT_RULES.rating.notScored.missRate || '') && /Fitment Rate/.test(E.VT_RULES.rating.notScored.fittedVsTarget || ''));

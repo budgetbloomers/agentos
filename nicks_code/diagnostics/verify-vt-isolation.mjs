@@ -9,10 +9,13 @@
  *   I2  a real-shaped VAS Power BI file still lands as VAS BI (S.files type bi), and never reaches the VT intake
  *   I3  detectType: VT signatures win BEFORE the bi rule; a VAS BI header is still 'bi'; the real samples (when present)
  *       are vtBiFitted / vtSchedMissed, never bi / inactive
- *   I4  PULSE rakeDetect refuses a VT header in words; a VAS BI header is still BI_ACTIVE_CASES
+ *   I4  PULSE rakeDetect refuses the two VT-only headers (and a BI header whose NAME says Fitted) in words; a BI header
+ *       with no name is the VAS BI Active export (incident 2026-11-24: same columns), and a VAS BI header is BI_ACTIVE_CASES
  *   I5  Ops: detectSource never names a source for a VT file; the slot upload and the bulk upload both refuse it with
  *       "This is a Vehicle Tracking file. Load it in the VAS Upload Station" and store nothing; a VAS BI CSV is still
- *       BI_ACTIVE_CASES; Ops' signatures are exactly the VT rule book's
+ *       BI_ACTIVE_CASES; Ops' signatures and its BI name hint are exactly the VT rule book's
+ *   The BI header is SHARED with the VAS "BI Active" export (rule book vt-1.3): a BI file is VT by its slot or its name
+ *   ("Fitted") — verify-vt-bi-two-files.mjs proves the incident case end to end.
  *
  *   node nicks_code/diagnostics/verify-vt-isolation.mjs        (builds site/ first unless --no-build)
  */
@@ -76,6 +79,7 @@ try {
     window.__spy = {}; for (const fn of ['save', 'regFile', 'archiveUpload', 'rebuild', 'largeUpload', 'rakeInPage', 'kickAgentDigest']) {
       if (typeof window[fn] !== 'function') continue; const f0 = window[fn]; window.__spy[fn] = 0;
       window[fn] = function () { window.__spy[fn]++; return f0.apply(this, arguments); }; }
+    window.__toasts = []; const t0 = window.toast; window.toast = function (m) { window.__toasts.push(String(m)); try { return t0.apply(this, arguments); } catch (e) { return null; } };
     const vi = window.VTStation.ingest; window.__vtCalls = 0; window.VTStation.ingest = function () { window.__vtCalls++; return vi.apply(this, arguments); }; });
   const snap = () => page.evaluate(() => JSON.stringify(window.__mtd.state()));
   const before = await snap(), filesBefore = await page.evaluate(() => JSON.stringify(window.__mtd.state().files));
@@ -87,14 +91,15 @@ try {
   await drop('BI Active Fitted 091126.xlsx', BI); await drop('Scheduled & Missed 091126.xlsx', SM, 'vtSchedMissed'); await drop('November 2026 - VT Report.xlsx', OB, 'vtOpeningBook');
   await drop('BI Active Fitted 101126.xlsx', xlsxBytes(biFile([{ cn: 90000001 }, { cn: 90000002 }, { cn: 90000004 }])), 'bi');   // on the VAS BI slot, too
   const after = await snap(), filesAfter = await page.evaluate(() => JSON.stringify(window.__mtd.state().files));
-  const spy = await page.evaluate(() => ({ spy: window.__spy, vt: window.__vtCalls }));
-  ok(spy.vt === 4, 'all four drops went to the VT intake', spy.vt);
+  const spy = await page.evaluate(() => ({ spy: window.__spy, vt: window.__vtCalls, toasts: window.__toasts.slice() }));
+  ok(spy.vt === 3, 'the three VT drops went to the VT intake; the Fitted file on the VAS BI slot did not', spy.vt);
+  ok(spy.toasts.some((t) => /BI Active Fitted 101126\.xlsx" is the Vehicle Tracking file/.test(t) && /Nothing was loaded into VAS/.test(t)), 'a "Fitted" file dropped on the VAS BI slot is refused in words (never VAS money)', spy.toasts.join(' | '));
   ok(before === after, 'the whole VAS state (vas-state) is byte-identical (' + before.length + ' chars)');
   ok(filesBefore === filesAfter && !/vt|Fitted|Scheduled/i.test(filesAfter.replace('Power BI fixture', '')), 'S.files holds no VT entry');
   ok(Object.values(spy.spy).every((n) => n === 0), 'save / regFile / archiveUpload / rebuild / largeUpload / rakeInPage / kickAgentDigest never ran', JSON.stringify(spy.spy));
   const bad = net.filter((x) => /^POST \/api\/kv|\/api\/upload-archive|\/api\/upload\/large|\/api\/rake\/page|\/api\/upload-file/.test(x));
   ok(bad.length === 0, 'no POST to /api/kv, the relay (/api/upload-archive) or the Rake', bad.join(', '));
-  ok(net.filter((x) => x === 'POST /api/vt/upload/commit').length === 4, 'the four files were committed to the VT store instead', net.filter((x) => /commit/.test(x)).length);
+  ok(net.filter((x) => x === 'POST /api/vt/upload/commit').length === 3, 'the three VT files were committed to the VT store instead', net.filter((x) => /commit/.test(x)).length);
 
   head('I2 · a real-shaped VAS Power BI file still lands as VAS BI');
   await page.evaluate(() => { window.__vtCalls = 0; for (const k in window.__spy) window.__spy[k] = 0; });
@@ -117,8 +122,12 @@ try {
   }
 
   head('I4 · the Rake refuses VT');
-  const rk = await page.evaluate(([bi, vb]) => { let e = null; try { window.rakeDetect(bi); } catch (x) { e = String(x.message); } return { e, vas: window.rakeDetect(vb) }; }, [BI_HDR, ['Account Number', 'Owner', 'Charge Amount', 'Contract Create Date', 'Case Number']]);
-  ok(rk.e && rk.e.startsWith(REFUSAL), 'rakeDetect refuses a VT header with the sentence', rk.e);
+  const rk = await page.evaluate(([bi, sm, ob, vb]) => { const t = (h, n) => { try { return { src: window.rakeDetect(h, n) }; } catch (x) { return { e: String(x.message) }; } };
+    return { bi: t(bi), biNamed: t(bi, 'BI Active 231126.xlsx'), fitted: t(bi, 'BI Active Fitted 231126.xlsx'), sm: t(sm, 'Scheduled & Missed 231126.xlsx'), ob: t(ob, 'November 2026 - VT Report.xlsx'), vas: window.rakeDetect(vb) }; },
+    [BI_HDR, SM_HDR, ['Month', 'Date', 'Agent', 'Sale Count', 'GWP', 'Case Number', 'Result'], ['Account Number', 'Owner', 'Charge Amount', 'Contract Create Date', 'Case Number']]);
+  ok(!rk.bi.e && !rk.biNamed.e, 'rakeDetect lets a BI header through as the VAS BI Active export (same columns; a large file is the VAS pull)', JSON.stringify([rk.bi, rk.biNamed]));
+  ok(rk.fitted.e && rk.fitted.e.startsWith(REFUSAL), 'rakeDetect refuses a BI header whose name says Fitted, with the sentence', JSON.stringify(rk.fitted));
+  ok(rk.sm.e && rk.sm.e.startsWith(REFUSAL) && rk.ob.e && rk.ob.e.startsWith(REFUSAL), 'rakeDetect refuses the two VT-only headers (Scheduled & Missed, the opening book) with the sentence', JSON.stringify([rk.sm, rk.ob]));
   ok(rk.vas === 'BI_ACTIVE_CASES', 'rakeDetect still names a VAS BI header BI_ACTIVE_CASES', rk.vas);
   ok(!errs.length, 'PULSE: no page errors', errs.join(' ; '));
   await page.close();
@@ -141,8 +150,10 @@ try {
     res.bulk = typeof pendingBulk !== 'undefined' && pendingBulk ? pendingBulk.map((i) => ({ n: i.file.name, src: i.src || null, err: i.error || null })) : null;
     res.bulkHtml = (document.querySelector('.modal') || document.body).innerText.slice(0, 4000);
     const pv = await readUpload(new File([csv], 'vas.csv'), null); res.vasSrc = detectSource(pv);
+    res.biVasName = detectSource(await readUpload(file(bi, 'BI Active 231126.xlsx'), null));   // the SAME columns, the VAS name
     return res; }, [b64(BI), b64(SM), csv]);
-  ok(o.biSrc === null && o.smSrc === null, 'detectSource names no source for BI Active Fitted or Scheduled & Missed', JSON.stringify([o.biSrc, o.smSrc]));
+  ok(o.biSrc === null && o.smSrc === null, 'detectSource (with the file name readUpload now carries) names no source for BI Active Fitted or Scheduled & Missed', JSON.stringify([o.biSrc, o.smSrc]));
+  ok(o.biVasName === 'BI_ACTIVE_CASES', 'the same BI columns named "BI Active 231126.xlsx" are BI_ACTIVE_CASES (the VAS export)', o.biVasName);
   ok(o.slotToast.some((t) => t.startsWith(REFUSAL)) && o.modal === 0, 'dropped on the Power BI slot: refused with the sentence, no load dialog', o.slotToast.join(' | '));
   const bulkVt = (o.bulk || []).filter((i) => /Fitted|Scheduled/.test(i.n));
   ok(bulkVt.length === 2 && bulkVt.every((i) => !i.src && i.err && i.err.startsWith(REFUSAL)), 'the bulk upload refuses both VT files with the sentence (nothing to load)', JSON.stringify(o.bulk));
@@ -154,7 +165,9 @@ try {
     const m = /const VT_SIGNATURES=(\[[^\n]*\]);/.exec(OPS); let sig = null; try { sig = m && JSON.parse(m[1]); } catch (e) { sig = null; }
     const D = E.VT_RULES.detection, want = [D.vtBiFitted.requireHeaders, D.vtSchedMissed.requireHeaders, D.vtOpeningBook.requireHeaders];
     ok(JSON.stringify(sig) === JSON.stringify(want), 'Ops\' VT_SIGNATURES are exactly the rule book\'s detection.*.requireHeaders', m && m[1]);
-    ok(OPS.includes("const VT_REFUSAL='" + REFUSAL), 'Ops carries the spec US1-7 sentence'); }
+    ok(OPS.includes("const VT_REFUSAL='" + REFUSAL), 'Ops carries the spec US1-7 sentence');
+    const hm = /const VT_BI_NAME_HINT="([^"]*)";/.exec(OPS);
+    ok(hm && hm[1] === D.vtBiFitted.nameHint, "Ops' VT_BI_NAME_HINT is exactly the rule book's detection.vtBiFitted.nameHint", hm && hm[1]); }
 } catch (e) { ok(false, 'the suite ran', String((e && e.stack) || e).slice(0, 400)); }
 finally { await browser.close(); server.close(); }
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);

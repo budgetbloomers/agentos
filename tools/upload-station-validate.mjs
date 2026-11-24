@@ -206,7 +206,8 @@ for (const sn of wbAgents.SheetNames) {
 /* ---------------- 1b. VEHICLE TRACKING files (spec 071, F2) ----------------
    BI Active Fitted / Scheduled & Missed / the opening book are VALIDATED here, never mistaken for VAS sources: every .xlsx
    the VAS checks do not claim is offered to the VT engine's own detection (tools/vt-validate.mjs). A VT file is never the
-   VAS money source — NAMES.active only ever matches "Active.xlsx". The Agent List's VT sheet has a Target column now: its
+   VAS money source — NAMES.active only ever matches "Active.xlsx". The BI header is SHARED with the VAS "BI Active" export
+   (incident 2026-11-24): vt-validate only takes a BI-columned file as Vehicle Tracking when its name says "Fitted". The Agent List's VT sheet has a Target column now: its
    Targets are checked against the business month's Sales Review SPD budgets. */
 const VAS_NAMES = new Set(Object.values(NAMES).filter(Boolean));
 const VT_CANDIDATES = fs.readdirSync(UPLOAD_DIR).filter(n => /\.xlsx?$/i.test(n) && !VAS_NAMES.has(n) && !n.startsWith('~$'));

@@ -1211,7 +1211,7 @@ function readUpload(file,srcKey){
           if(w.blank.length)toast('"'+(file.name||'file')+'": '+w.blank.length+' agent(s) are on the register with NO day captured for '+w.month+' ('+w.blank.slice(0,8).join(', ')+(w.blank.length>8?' …':'')+') — HR has not filled their rows.','err',15000);
           headers=w.headers;data=w.rows;
         }
-        resolve({headers,data,rowsRaw:rows,textHash:hashStr(headers.join('|')+'|'+rows.length+'|'+file.size+'|'+(file.name||''))});
+        resolve({headers,data,rowsRaw:rows,fileName:file.name||'',textHash:hashStr(headers.join('|')+'|'+rows.length+'|'+file.size+'|'+(file.name||''))});
       }catch(e){reject(e)}
     };
     rd.readAsArrayBuffer(file);
@@ -1395,7 +1395,7 @@ let pendingUpload=null;
 async function handleFile(srcKey,file){
   try{
     const parsed=await readUpload(file,srcKey);
-    if(isVtFile(parsed.headers)){toast(VT_REFUSAL+' — nothing was stored.','err');return}   // spec 071 US1-7
+    if(isVtFile(parsed.headers,file&&file.name)){toast(VT_REFUSAL+' — nothing was stored.','err');return}   // spec 071 US1-7
     const hv=validateHeaders(srcKey,parsed.headers);
     const dupe=state.batches.find(b=>b.file_hash===parsed.textHash&&b.source_type===srcKey&&b.validation_status!=='failed');
     pendingUpload={srcKey,file,parsed,hv,dupe};
@@ -1738,9 +1738,14 @@ function loadMsg(srcKey,r){
    (specs/vt_engine_rules.json detection.*.requireHeaders — verify-vt-isolation fails if they drift); nothing is stored. */
 const VT_REFUSAL='This is a Vehicle Tracking file. Load it in the VAS Upload Station';
 const VT_SIGNATURES=[["installation status","vehicle reg number","box number","unit type","case number","created by"],["missedandscheduledfitment","fitment date","case number","created by"],["month","date","agent","case number","result"]];
-function isVtFile(headers){const have=new Set((headers||[]).map(h=>String(h).toLowerCase().replace(/\s+/g,' ').trim()));return VT_SIGNATURES.some(sig=>sig.every(h=>have.has(h)))}
+/* THE FIRST SIGNATURE (BI) IS SHARED BY TWO EXPORTS (incident 2026-11-24): the VAS "BI Active" file — this app's own
+   BI_ACTIVE_CASES source, refused here all morning — and the Vehicle Tracking "BI Active Fitted" file have the same
+   columns. Headers cannot tell them apart, so the BI signature only means Vehicle Tracking when the file's NAME says
+   "Fitted". The other two signatures (Scheduled & Missed, the opening book) are Vehicle Tracking by their columns alone. */
+const VT_BI_NAME_HINT="fitted";   // = specs/vt_engine_rules.json detection.vtBiFitted.nameHint (verify-vt-isolation fails if they drift)
+function isVtFile(headers,name){const have=new Set((headers||[]).map(h=>String(h).toLowerCase().replace(/\s+/g,' ').trim()));return VT_SIGNATURES.some((sig,i)=>sig.every(h=>have.has(h))&&(i>0||new RegExp(VT_BI_NAME_HINT,'i').test(String(name||''))))}
 function detectSource(parsed){
-  if(isVtFile(parsed.headers))return null;   // never a source here (spec 071)
+  if(isVtFile(parsed.headers,parsed.fileName||''))return null;   // never a source here (spec 071); a BI file with no "Fitted" in its name is BI_ACTIVE_CASES, as always
   const norm=h=>h.toLowerCase().replace(/\s+/g,' ').trim();
   const have=new Set(parsed.headers.map(norm));
   let cands=[];
@@ -1785,7 +1790,7 @@ async function handleBulkFiles(files){
   for(const f of list){
     try{
       let parsed=await readUpload(f,null);
-      if(isVtFile(parsed.headers)){items.push({file:f,error:VT_REFUSAL+' — it will not be loaded here.',vt:true});continue}   // spec 071 US1-7
+      if(isVtFile(parsed.headers,f&&f.name)){items.push({file:f,error:VT_REFUSAL+' — it will not be loaded here.',vt:true});continue}   // spec 071 US1-7
       let src=detectSource(parsed);
       if(src&&SOURCES[src].sheetScan)parsed=await readUpload(f,src);   // re-read: all tabs + header-row scan
       if(!src){ // multi-tab registers can hide their header row from the generic first-sheet read

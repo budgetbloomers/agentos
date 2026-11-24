@@ -33,7 +33,10 @@ Stages, in order. Each stage says how to undo it:
    `verify-tracker-removed verify-grant-tabs-071 verify-audit-permissions-071 verify-vt-rules verify-vt-periods
    verify-vt-rating verify-vt-engine verify-vt-oracle verify-vt-db verify-vt-worker verify-vt-station verify-vt-isolation
    verify-vt-build verify-vt-pages verify-vt-digest verify-vt-portal verify-vt-vas-golden verify-vt-station-fixes
-   verify-vt-health verify-vt-validate verify-vt-tabs`, plus `CBX_VT_FIXTURE=1 node …/verify-agent-card.mjs`.
+   verify-vt-health verify-vt-validate verify-vt-tabs verify-vt-bi-two-files`, plus `CBX_VT_FIXTURE=1 node …/verify-agent-card.mjs`.
+   `verify-vt-bi-two-files` is the 2026-11-24 incident guard (rule book vt-1.3): the VAS "BI Active" and the VT "BI Active
+   Fitted" exports share their columns, so the slot and the name ("Fitted") decide; it also proves the VAS result is identical
+   to the pre-071 page (55a452c). After deploying it, tell the uploaders: keep "Fitted" in the VT file's name.
    The quick half runs with `node tools/vt-verify.mjs`, which takes about 20 s.
    Run the suites one after another. Several of them rebuild `site/`, and running them in parallel makes Playwright suites flake.
 4. The security-review fix pass on `worker/src/vt.mjs`, `portal.mjs`, `campaign.mjs`, `rules.mjs`, `index.mjs`,

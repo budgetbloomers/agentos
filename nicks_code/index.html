@@ -2489,10 +2489,13 @@ function wideRegisterToLong(headers,rows,label,today){
     rows:out,month,inferred:!!ym.inferred,people,agents,blank};
 }
 /* WIDE-REGISTER:END */
-function detectType(header, sheetName, recs){
-  /* VEHICLE TRACKING FIRST (spec 071 FR-001/002): BI Active Fitted carries every column the VAS 'bi' rule keys on, so
-     the VT signatures (columns VAS BI never has) are checked before it — a VT file must never become VAS money. */
-  if(typeof VTEngine!=='undefined'){ const vt=VTEngine.detect(header, sheetName); if(vt) return vt; }
+function detectType(header, sheetName, recs, vasOnly){
+  /* VEHICLE TRACKING FIRST (spec 071 FR-001/002) — but HEADERS ALONE CANNOT SETTLE A BI FILE (incident 2026-11-24).
+     The VAS "BI Active" export and the Vehicle Tracking "BI Active Fitted" export are TWO DIFFERENT FILES WITH THE SAME
+     COLUMNS (the owner: "this bi is not the same for vas its two different"). A header match therefore only says "one of
+     the two"; ingestText decides which from the slot it was dropped on and the file's name (VTEngine.isBiFittedName — rule book detection.vtBiFitted.nameHint), and asks again
+     with vasOnly=true for the VAS type when it is the VAS file. */
+  if(!vasOnly&&typeof VTEngine!=='undefined'){ const vt=VTEngine.detect(header, sheetName); if(vt) return vt; }
   const H=header.map(h=>h.toLowerCase());
   const has=(...ks)=>ks.every(k=>H.some(h=>h.includes(k)));
   if(has('charge amount','contract create date')&&has('account number')){
@@ -2609,7 +2612,20 @@ async function ingestText(name, text, expected, hash){
   /* A VEHICLE TRACKING FILE IS HANDED WHOLE TO ITS OWN INTAKE before any sheet is read here (spec 071 FR-004): it never
      reaches INGEST, regFile, save(), the relay or the Rake, and vas-state is not touched (verify-vt-isolation). */
   const vtk=typeof VTStation!=='undefined'?VTStation.kindOfSheets(sheets,detectType):null;
-  if(vtk){ await VTStation.ingest(name,__vtBuf,hash,expected,vtk,{pulseRoster:S.roster}); return 'vt'; }
+  /* WHICH BI FILE IS THIS? (incident 2026-11-24: the daily VAS "BI Active 231126.xlsx" was taken by Vehicle Tracking, so
+     VAS got no BI and the VT book filled with the wrong file.) Same columns, two exports — the SLOT is the uploader's own
+     declaration and the NAME is the fallback, the rule this station already uses for the two header-identical Salesforce
+     pulls. It is the Vehicle Tracking file only when it was dropped on the Vehicle Tracking BI slot, or its name says
+     "Fitted", or it is dropped with no slot inside the Vehicle Tracking app. Otherwise it is the VAS file and is ingested
+     below exactly as before spec 071. A "Fitted" file dropped on the VAS BI slot is refused: it must never become VAS money. */
+  let vasBi=false;
+  if(vtk&&vtk.kind==='vtBiFitted'){
+    const named=VTEngine.isBiFittedName(name), inVtApp=typeof VTApp!=='undefined'&&typeof VTApp.on==='function'&&!!VTApp.on();
+    if(expected==='bi'&&named){ toast('"'+name+'" is the Vehicle Tracking file (BI Active Fitted). Load it in Vehicle Tracking → Upload Station. Nothing was loaded into VAS.','err',15000); return 'vt'; }
+    vasBi=!(expected==='vtBiFitted'||named||(!expected&&inVtApp));
+    if(!vasBi&&!named) toast('Heads up: "'+name+'" does not say "Fitted" in its name. It is being loaded as the Vehicle Tracking file because of where it was dropped — if it is the VAS BI Active export, load it in VAS Analytics instead.','err',15000);
+  }
+  if(vtk&&!vasBi){ await VTStation.ingest(name,__vtBuf,hash,expected,vtk,{pulseRoster:S.roster}); return 'vt'; }
   let ingested=[];
   rosterCovered=new Set(); rosterBestRank=-1; rosterFileCodes=null; rosterFileLoaded=false; rosterRaw=null;
   __rosterAsOf=null;      // a fresh file, a fresh snapshot date (and a fresh one-shot override)
@@ -2640,6 +2656,7 @@ async function ingestText(name, text, expected, hash){
       if(!recs.length) continue;
     }
     let type=detectType(header, sn, recs);
+    if(type==='vtBiFitted'&&vasBi) type=detectType(header, sn, recs, true);   // the VAS BI Active export: its VAS type, as before spec 071
     if(!type||/^vt[A-Z]/.test(type)) continue;   // a VT sheet is never a VAS ingest (the whole file went to VTStation above)
     /* WHICH LEAD PAGE DOES THIS OPEN-CASES PULL BELONG TO? The two Salesforce exports are
        header-identical, so detectType cannot tell them apart and must not try. The SLOT the
@@ -8287,7 +8304,7 @@ const RAKE_SOURCES={
     cols:{call_date:'call_date',agent_login:'user',lead_id:'lead_id',status:'status',full_name:'full_name',user_group:'user_group',campaign_id:'campaign_id',length_in_sec:'length_in_sec',status_name:'status_name'}},
 };
 const rakeNorm=h=>String(h||'').replace(/\s+/g,' ').trim().toLowerCase();
-function rakeDetect(headers){ if(typeof VTEngine!=='undefined'&&VTEngine.detect(headers)) throw new Error('This is a Vehicle Tracking file. Load it in the VAS Upload Station (the slots under Vehicle Tracking), not as a large file');   // spec 071 FR-004: never the Rake
+function rakeDetect(headers,name){ const __vk=typeof VTEngine!=='undefined'?VTEngine.detect(headers):null; if(__vk&&(__vk!=='vtBiFitted'||VTEngine.isBiFittedName(name))) throw new Error(   /* a BI header here is the VAS BI Active export (same columns as the VT file; a large file is never the small VT pull) — as before spec 071 — unless its NAME says Fitted (rule book detection.vtBiFitted.nameHint): then it is refused, never VAS money */'This is a Vehicle Tracking file. Load it in the VAS Upload Station (the slots under Vehicle Tracking), not as a large file');   // spec 071 FR-004: never the Rake
   const set=new Set(headers.map(rakeNorm));
   for(const [src,c] of Object.entries(RAKE_SOURCES)) if(c.required.every(h=>set.has(rakeNorm(h)))&&!(c.absent||[]).some(h=>set.has(rakeNorm(h)))) return src; return null; }
 function rakeSnapshot(name){ const m=/(\d{2})(\d{2})(\d{2})(?!\d)/.exec(name); if(m&&+m[2]>=1&&+m[2]<=12&&+m[1]>=1&&+m[1]<=31) return `20${m[3]}-${m[2]}-${m[1]}`; return dkey(new Date()); }
@@ -8332,7 +8349,7 @@ async function rakeInPage(file, id, say){
     pending=pending.then(()=>step('stage',{p_file:id,p_from:from,p_rows:rows})).then(()=>{ queued--; say('Loading '+file.name+' — '+fmtNum(from+rows.length)+' rows staged…'); }).catch(e=>{ queued--; failed=failed||e; }); };
   const drain=async()=>{ while(slice.length>=SLICE&&!failed){ while(queued>=2&&!failed) await new Promise(r=>setTimeout(r,40)); flush(); } };
   const onRow=(cells)=>{ if(failed) return;
-    if(!src){ src=rakeDetect(cells); if(!src) throw new Error('unrecognised header — not one of '+Object.keys(RAKE_SOURCES).join(', '));
+    if(!src){ src=rakeDetect(cells,file.name); if(!src) throw new Error('unrecognised header — not one of '+Object.keys(RAKE_SOURCES).join(', '));
       contract=RAKE_SOURCES[src]; const hn=cells.map(rakeNorm); idx={}; for(const [col,h] of Object.entries(contract.cols)) idx[col]=hn.indexOf(rakeNorm(h));
       lakeCols=[...Object.keys(contract.cols),...(contract.extra||[])];
       pending=pending.then(()=>step('begin',{p_file:id,p_source:src,p_sha:sha,p_bytes:file.size})).then(j=>{ begun=true;

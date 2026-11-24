@@ -87,7 +87,9 @@ try {
   }
   /* D · VEHICLE TRACKING (spec 071, C5): BI Active Fitted carries every column the money source keys on, so it must be
      recognised as VT FIRST and never as VAS BI — in PULSE (the VT rule runs before 'bi') and in Ops (refused). A VAS
-     Power BI export is still VAS BI in both. verify-vt-isolation.mjs proves the full drop in a real station. */
+     Power BI export is still VAS BI in both. verify-vt-isolation.mjs proves the full drop in a real station.
+     THE BI HEADER IS SHARED (incident 2026-11-24, rule book vt-1.3): the VAS "BI Active" export has the same columns as
+     "BI Active Fitted", so Ops decides by the NAME — "Fitted" is VT (refused), anything else is BI_ACTIVE_CASES. */
   console.log('\nD · VEHICLE TRACKING IS NEVER VAS BI, VAS BI IS STILL VAS BI');
   {
     const { BI_HDR, SM_HDR, VAS_BI_HDR } = await import('./vt-fixtures.mjs');
@@ -99,9 +101,10 @@ try {
     const q = (v) => (/[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v);
     const d = await page.evaluate(async ([vt, sm, vas]) => {
       const rd = async (cols, n) => detectSource(await readUpload(new File([cols + '\n' + cols.split(',').map((_, i) => 'v' + i).join(',') + '\n'], n, { type: 'text/csv' })));
-      return { vt: await rd(vt, 'BI Active Fitted 101126.csv'), sm: await rd(sm, 'Scheduled & Missed 101126.csv'), vas: await rd(vas, 'Power BI 101126.csv') }; },
+      return { vt: await rd(vt, 'BI Active Fitted 101126.csv'), vasNamed: await rd(vt, 'BI Active 101126.csv'), sm: await rd(sm, 'Scheduled & Missed 101126.csv'), vas: await rd(vas, 'Power BI 101126.csv') }; },
       [BI_HDR.map(q).join(','), SM_HDR.map(q).join(','), VAS_BI_HDR.map(q).join(',')]);
-    ok('Ops: a BI Active Fitted CSV is NOT read as BI_ACTIVE_CASES (refused as VT)', d.vt === null, 'detected ' + d.vt);
+    ok('Ops: a BI-columned CSV named "BI Active Fitted …" is NOT read as BI_ACTIVE_CASES (refused as VT, by its name)', d.vt === null, 'detected ' + d.vt);
+    ok('Ops: the SAME columns named "BI Active 101126.csv" (the VAS export) ARE BI_ACTIVE_CASES (or its header twin)', TWINS.has(d.vasNamed), 'detected ' + d.vasNamed);
     ok('Ops: a Scheduled & Missed CSV names no source', d.sm === null, 'detected ' + d.sm);
     ok('Ops: a VAS Power BI CSV is still BI_ACTIVE_CASES (or its header twin)', TWINS.has(d.vas), 'detected ' + d.vas);
   }

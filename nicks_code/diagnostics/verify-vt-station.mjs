@@ -8,7 +8,8 @@
  *   S1  a BI Active Fitted drop: GET receipts → roster → book → begin → stage → commit; the receipt card says file,
  *       extract date, VT lines of rows, cases, changes, unmatched sellers by name, and "VAS money unchanged"
  *   S2  no customer field (name, phone, registration, chassis, box, account / contract number) is in ANY request
- *   S3  the same bytes again → "already uploaded", nothing begun
+ *   S3  the same bytes again (renamed, still "Fitted" — a BI-columned name without it is the VAS BI Active export since the
+ *       2026-11-24 incident) → "already uploaded", nothing begun
  *   S4  thin BI pull (< 90 % of the cycle's last BI) → refused in words with both counts, nothing begun
  *   S5  thin S&M (< 40 %) → refused unless "genuine quiet day" is clicked; then it loads and the receipt says so
  *   S6  a version conflict re-reads, re-merges and commits ONCE (one receipt); three conflicts → a persistent red
@@ -16,7 +17,8 @@
  *   S7  the server unreachable → a persistent banner, nothing saved
  *   S8  the opening book on an empty book → refused in plain words (after the first day's files it applies sale dates)
  *   S9  roster (C7): read from /api/vt/roster; when that fails, PULSE's own VT roster rows are used and the receipt says so
- *   S10 the Upload Station shows the three VT slots in their own group; the ten VAS slot cards are untouched
+ *   S10 the Upload Station shows the three VT slots in their own group; the ten VAS slot cards are untouched; a "Fitted"
+ *       file dropped on the VAS BI slot is refused in words (rule book vt-1.3), nothing committed
  *   S11 stage batches stay ≤ 1,000 rows and under the 512 KB cap (unit)
  *   S13 Vehicle Tracking as its own app (VT mode, 2026-11-24): the Upload Station inside it takes a VT file and the commit
  *       still publishes the VT digest
@@ -151,7 +153,7 @@ try {
 
   head('S3 · the same bytes again');
   W.log = [];
-  const r3 = await drop('copy of BI.xlsx', BI1);
+  const r3 = await drop('copy of BI Active Fitted 091126.xlsx', BI1);   // the name keeps "Fitted": with no slot, the NAME says which BI file it is
   ok(r3.toasts.some((t) => /already uploaded/.test(t)) && calls('/api/vt/upload/begin') === 0, '"already uploaded", nothing begun', r3.toasts.join(' | '));
 
   head('S4 · thin BI pull');
@@ -230,7 +232,8 @@ try {
   ok(slots.vt.join(' | ') === 'vtBiFitted:VT · BI Active Fitted | vtSchedMissed:VT · Scheduled & Missed | vtOpeningBook:VT · Opening book (once)', 'the three VT slots, in their own group', slots.vt.join(' | '));
   await dismiss(); resetWorker();
   const r10 = await drop('BI Active Fitted 091126.xlsx', BI1, 'bi');
-  ok(r10.toasts.some((t) => /actually VT · BI Active Fitted/.test(t)) && W.rev === 1, 'a VT file dropped on the VAS BI slot is filed as VT, with a heads-up', r10.toasts.join(' | '));
+  ok(r10.toasts.some((t) => /is the Vehicle Tracking file \(BI Active Fitted\)/.test(t) && /Nothing was loaded into VAS/.test(t)) && W.rev === 0 && calls('/api/vt/upload/begin') === 0,
+    'a "Fitted" file dropped on the VAS BI slot is refused in words: neither VAS money nor a VT commit (rule book vt-1.3)', W.rev + ' ' + calls('/api/vt/upload/begin') + ' ' + r10.toasts.join(' | '));
 
   head('S11 · stage batches (unit)');
   const rows = Array.from({ length: 2500 }, (_, i) => ({ case_number: String(90000000 + i), seller_name: 'x'.repeat(i % 7 ? 20 : 400) }));

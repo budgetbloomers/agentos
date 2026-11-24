@@ -10,6 +10,11 @@ dropdown means your account has no VT pages; ask Nick or Nicholas.
 Use the **Upload Station inside Vehicle Tracking** (it is the same station as VAS Analytics → Upload Station). Never the Ops one:
 Ops refuses VT files.
 
+**Two BI files look the same — keep them apart.** The VAS **"BI Active <ddmmyy>.xlsx"** goes in **VAS Analytics → Upload
+Station** (the Power BI slot). The Vehicle Tracking **"BI Active Fitted <ddmmyy>.xlsx"** goes in **Vehicle Tracking → Upload
+Station** (VT · BI Active Fitted). They have the same columns, so the station goes by where you drop the file and by its name:
+**keep "Fitted" in the Vehicle Tracking file's name.** A "Fitted" file dropped on the VAS BI slot is refused, never loaded.
+
 1. **The two daily files.** Load them in either order, on their own VT slots:
    - `BI Active Fitted <ddmmyy>.xlsx` on **VT · BI Active Fitted**
    - `Scheduled & Missed <ddmmyy>.xlsx` on **VT · Scheduled & Missed**

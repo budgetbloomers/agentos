@@ -31,6 +31,10 @@ head('V1 · the files');
   ok('a VAS Power BI file is NOT a VT file (it stays with the VAS checks)', !r.vtFiles.has('Active.xlsx'));
   ok('the extract date comes from the ddmmyy in the name', r.sources.every((s) => s.extractOn === '2026-11-21' && !s.assumed));
   ok('VT lines counted, no CRITICAL / HIGH on a good day', r.sources.every((s) => s.cases > 0) && !r.findings.some((x) => x.sev === 'CRITICAL' || x.sev === 'HIGH'), JSON.stringify(r.findings)); }
+/* incident 2026-11-24: the VAS "BI Active <ddmmyy>.xlsx" export has the SAME columns as BI Active Fitted — the name decides */
+{ const r = V.validateVtPackage({ periodEnd: '2026-11-23', files: [{ name: 'BI Active 231126.xlsx', sheets: { Export: biFile(lines(40)) } }, { name: 'BI Active Fitted 231126.xlsx', sheets: { Export: biFile(lines(40)) } }] });
+  ok('a BI-columned file named "BI Active 231126.xlsx" (no "Fitted") is the VAS export, never validated as VT; the same bytes named "BI Active Fitted" are VT',
+    !r.vtFiles.has('BI Active 231126.xlsx') && r.vtFiles.has('BI Active Fitted 231126.xlsx') && sev(r, 'LOW', /read as the VAS BI Active export/), JSON.stringify([...r.vtFiles]) + ' ' + JSON.stringify(r.findings)); }
 { const r = V.validateVtPackage({ periodEnd: '2026-11-21', files: [{ name: 'BI Active Fitted.xlsx', sheets: { Export: biFile(lines(5)) } }] });
   ok('a name without ddmmyy is HIGH: the station would date it today', sev(r, 'HIGH', /no ddmmyy date/));
   ok('only one of the two daily files → MEDIUM, in words', sev(r, 'MEDIUM', /Only the BI Active Fitted file is here/)); }

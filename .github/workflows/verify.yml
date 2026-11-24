@@ -82,7 +82,7 @@ jobs:
                    verify-vt-rules verify-vt-periods verify-vt-rating verify-vt-engine verify-vt-oracle \
                    verify-vt-db verify-vt-worker verify-vt-station verify-vt-isolation verify-vt-build verify-vt-pages \
                    verify-vt-digest verify-vt-portal verify-vt-vas-golden verify-vt-station-fixes \
-                   verify-vt-health verify-vt-validate verify-vt-tabs; do
+                   verify-vt-health verify-vt-validate verify-vt-tabs verify-vt-bi-two-files; do
             echo "== $t =="; node nicks_code/diagnostics/$t.mjs
           done
           echo "== verify-agent-card (VT fixture mode) =="; CBX_VT_FIXTURE=1 node nicks_code/diagnostics/verify-agent-card.mjs

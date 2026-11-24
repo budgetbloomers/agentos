@@ -41,6 +41,13 @@ export function validateVtPackage({ files = [], agentList = null, periodEnd = nu
   for (const file of files) {
     const hit = detectVtWorkbook(file.sheets);
     if (!hit) continue;
+    /* THE BI HEADER IS SHARED (rule book vt-1.3, incident 2026-11-24): the VAS "BI Active <ddmmyy>.xlsx" export has the same
+       columns as "BI Active Fitted". Without the slot to say which (a folder has none), the NAME decides, as in the station:
+       no "Fitted" (detection.vtBiFitted.nameHint) = the VAS BI Active export, never validated as Vehicle Tracking. */
+    if (hit.kind === 'vtBiFitted' && !VT.isBiFittedName(file.name)) {
+      f('LOW', `${file.name}: has the BI Active columns but no "Fitted" in its name — read as the VAS BI Active export, not Vehicle Tracking (the Vehicle Tracking file must keep "Fitted" in its name).`);
+      continue;
+    }
     vtFiles.add(file.name);
     const label = KIND[hit.kind];
     const ex = VT.extractDate(file.name, periodEnd);

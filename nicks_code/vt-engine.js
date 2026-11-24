@@ -25,9 +25,9 @@
 
 /* @vt-rules start */
 var VT_RULES = {
-  "version": "vt-1.2",
+  "version": "vt-1.3",
   "detection": {
-    "vtBiFitted": {"requireHeaders":["installation status","vehicle reg number","box number","unit type","case number","created by"],"runBefore":["bi","inactive"],"footerPattern":"^Applied filters:"},
+    "vtBiFitted": {"requireHeaders":["installation status","vehicle reg number","box number","unit type","case number","created by"],"nameHint":"fitted","runBefore":["bi","inactive"],"footerPattern":"^Applied filters:"},
     "vtSchedMissed": {"requireHeaders":["missedandscheduledfitment","fitment date","case number","created by"],"footerPattern":"^No filters applied"},
     "vtOpeningBook": {"sheetName":"Schedulers Data","requireHeaders":["month","date","agent","case number","result"],"takeOnly":["case number","date"],"optional":true},
     "filenameDate": {"pattern":"(\\d{2})(\\d{2})(\\d{2})(?=\\D*\\.xlsx?$)","order":"ddmmyy","century":2000,"fallback":"todaySAST+warning"},
@@ -280,6 +280,10 @@ function detect(header, sheetName) {
   if (has(D.vtOpeningBook.requireHeaders) && (!sheetName || norm(sheetName) === norm(D.vtOpeningBook.sheetName))) return 'vtOpeningBook';
   return null;
 }
+/* THE BI HEADER IS SHARED (rule book vt-1.3, incident 2026-11-24): the VAS "BI Active" export and the Vehicle Tracking
+   "BI Active Fitted" export have the same columns, so detect() saying vtBiFitted only means "one of the two". The
+   uploader's slot decides, and the file NAME (detection.vtBiFitted.nameHint) is the fallback — this is that one test. */
+function isBiFittedName(fileName) { return new RegExp(R.detection.vtBiFitted.nameHint, "i").test(String(fileName || "")); }
 /* Extract date from the ddmmyy in the file name; else the caller's "today (SAST)", flagged. */
 function extractDate(fileName, todaySAST) {
   var F = R.detection.filenameDate, m = String(fileName || '').match(new RegExp(F.pattern));
@@ -865,7 +869,7 @@ function emptyCyclePayload(cycleKey, opts) {
 
 return {
   VT_RULES: VT_RULES, version: R.version, saHolidaysFor: saHolidaysFor, periods: periods, serialToISO: serialToISO, normCB: normCB,
-  detect: detect, extractDate: extractDate, parseBi: parseBi, parseSm: parseSm, parseOpeningBook: parseOpeningBook, parseRoster: parseRoster,
+  detect: detect, isBiFittedName: isBiFittedName, extractDate: extractDate, parseBi: parseBi, parseSm: parseSm, parseOpeningBook: parseOpeningBook, parseRoster: parseRoster,
   normSeller: normSeller, resolveSeller: resolveSeller, leadSourceOf: leadSourceOf, leadGroupOf: leadGroupOf, subOf: subOf,
   emptyBook: emptyBook, merge: merge, bookFromRpc: bookFromRpc, guardUpload: guardUpload,
   rates: rates, model: model, rating: rating, bandOf: bandOf, digest: digest, emptyCyclePayload: emptyCyclePayload, uploadGaps: uploadGaps,
