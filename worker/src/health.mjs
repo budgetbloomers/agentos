@@ -57,6 +57,77 @@ export const ALERTS_KEY = 'kv:health-alerts';
 export const SIZE_KEY = 'kv:db-size-history';   // one database-size sample per SAST day (stability plan, 2026-10-26)
 const REFERRAL_SLOTS = [8, 14];                          // SAST hours the local tick pulls referrals (spec 002 C3)
 
+/* THE WIMPY KITCHEN BOARD (2026-11-24 — 15 cards sat in "New Order" all day and 21 never left "Order Processing", and
+   nobody was told). The Wimpy service reads its own HighLevel board (wimpy-service/src/wimpy-board.mjs — the key lives
+   there) at two slots after ordering closes at 10:30; this Worker's ten-minute tick is the clock that asks, because
+   Vercel Hobby runs a cron once a day and anywhere within the hour. A slot is asked for during the hour after it starts,
+   Monday to Friday, until a result for it is recorded (kv:wimpy-board-status): at most one call per tick, six per slot. */
+export const WIMPY_BOARD_KEY = 'kv:wimpy-board-status';
+export const WIMPY_BOARD_SLOTS = [['10:45', 645], ['12:00', 720]];   // [label, SAST minute] — the service's BOARD_SLOTS, same order
+const BOARD_WINDOW_MIN = 60;
+const boardRank = (slot) => WIMPY_BOARD_SLOTS.findIndex(([l]) => l === slot);
+function boardClock(now) {
+  const d = new Date(now + 2 * HOUR);
+  return { day: d.toISOString().slice(0, 10), min: d.getUTCHours() * 60 + d.getUTCMinutes(), weekday: d.getUTCDay() >= 1 && d.getUTCDay() <= 5 };
+}
+/** Pure: the slot to ask the Wimpy service for now, or null. "status" = the last kv:wimpy-board-status (or null). */
+export function wimpyBoardSlotDue(now, status) {
+  const c = boardClock(now);
+  if (!c.weekday) return null;
+  const doneRank = status && status.day === c.day ? boardRank(status.slot) : -1;
+  for (let i = WIMPY_BOARD_SLOTS.length - 1; i >= 0; i--) {
+    const [label, start] = WIMPY_BOARD_SLOTS[i];
+    if (c.min < start) continue;
+    if (c.min >= start + BOARD_WINDOW_MIN) return null;   // this slot's hour is over — a later slot is not due yet
+    return doneRank >= i ? null : label;
+  }
+  return null;
+}
+/** Pure: the ONE wimpy-board alert for now (or null). "expected" = the Worker has the secret to ask (else no opinion). */
+export function evaluateWimpyBoard(status, now, expected) {
+  if (!expected) return null;
+  const c = boardClock(now);
+  if (!c.weekday) return null;
+  const today = status && status.day === c.day ? status : null;
+  let last = -1;                                                       // the latest slot that has started today
+  WIMPY_BOARD_SLOTS.forEach(([, start], i) => { if (c.min >= start) last = i; });
+  if (last < 0) return null;
+  const doneRank = today ? boardRank(today.slot) : -1;
+  const [lastLabel, lastStart] = WIMPY_BOARD_SLOTS[last];
+  const since = c.day + 'T' + lastLabel + ':00+02:00';
+  /* the latest slot is overdue and never recorded: the check could not run (the service unreachable from here) */
+  if (doneRank < last && c.min >= lastStart + BOARD_WINDOW_MIN)
+    return { id: 'wimpy-board', severity: 'warning', since,
+      message: 'Could not read the Wimpy kitchen board: the ' + lastLabel + ' SAST check did not run (the Wimpy service did not answer the Worker). '
+        + 'Look at the Wimpy Pipeline in HighLevel for cards still in New Order or Order Processing. Check WIMPY_CRON_SECRET on the Worker and the Wimpy service log.' };
+  if (!today || doneRank < 0) return null;                             // nothing recorded today yet (or the latest slot is still within its hour)
+  const label = today.slot, sinceDone = c.day + 'T' + label + ':00+02:00';
+  if (!today.ok) return { id: 'wimpy-board', severity: 'warning', since: sinceDone,
+    message: 'Could not read the Wimpy kitchen board for the ' + label + ' SAST check (' + String(today.error || 'no reason given').slice(0, 140)
+      + '). Nothing is known about cards still waiting — look at the Wimpy Pipeline in HighLevel.' };
+  const n = Number(today.count) || 0;
+  if (!n) return null;                                                 // the board is clean: the alert clears
+  const list = (Array.isArray(today.cards) ? today.cards : []).map((x) => (x.cb ? String(x.cb).toUpperCase() : 'CB not known') + ' (' + x.at + (x.stage ? ', ' + x.stage : '') + ')');
+  const stages = (today.stages || []).join(' or ') || 'New Order';
+  return { id: 'wimpy-board', severity: 'warning', since: sinceDone,
+    message: 'Wimpy kitchen board, ' + label + ' SAST check: ' + n + ' of today\'s order card' + (n === 1 ? ' is' : 's are') + ' still in ' + stages + ' — '
+      + list.join(', ') + (n > list.length ? ' and ' + (n - list.length) + ' more' : '') + (today.truncated ? ' (the board had more cards than were read)' : '')
+      + '. Move them on in HighLevel (Wimpy Pipeline); the board loads the newest cards first, so scroll down for the older ones.' };
+}
+/** Ask the Wimpy service for one slot (one subrequest). → the status it answers, or null (logged). Never throws. */
+export async function kickWimpyBoard(env, wimpyUrl, slot) {
+  if (!env || !env.WIMPY_CRON_SECRET || !wimpyUrl) return null;
+  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 25000);
+  try {
+    const r = await fetch(String(wimpyUrl).replace(/\/+$/, '') + '/api/wimpy/cron/board?slot=' + encodeURIComponent(slot),
+      { headers: { Authorization: 'Bearer ' + env.WIMPY_CRON_SECRET }, signal: ctrl.signal });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || j.slot !== slot) { console.warn('[health] the Wimpy board check answered ' + r.status); return null; }
+    return j;
+  } catch (e) { console.warn('[health] the Wimpy board check could not be reached: ' + String((e && e.message) || e).slice(0, 120)); return null; }
+  finally { clearTimeout(timer); }
+}
+
 /**
  * The sentinel itself. Pure: timestamps in, alerts out.
  *
@@ -481,6 +552,9 @@ export function evaluateFreshness(t) {
     message: 'A Wimpy order reached the kitchen but could not be recorded for My orders (' + sast(ms(wl.at)) + ': ' + String(wl.error || '').slice(0, 120)
       + ') — that person will not see it in their history. Check wimpy_orders (migration-055 applied?) and the Wimpy service log.',
     since: wl.at });
+  /* the kitchen board (2026-11-24): one alert at most, cleared when the board is clean or the day turns */
+  const wb = evaluateWimpyBoard(t.wimpyBoard && typeof t.wimpyBoard === 'object' ? t.wimpyBoard : null, now, !!t.wimpyBoardExpected);
+  if (wb) alerts.push(wb);
   /* No alert about the start password: keeping it is allowed (Nick, 2026-09-08 — "only if they want
      to"). accounts_on_default_password remains the audit view for whoever asks. */
   return alerts;
@@ -494,15 +568,23 @@ export function evaluateFreshness(t) {
  */
 export async function runHealthChecks(DB, opts = {}) {
   const rows = await DB.select(
-    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching,kv:referrals-sync-log,kv:wimpy-hl-status,kv:wimpy-ledger-failed,kv:vt-digest,kv:vt-trim-log,' + SIZE_KEY)})&select=key,updated_at,value`);
+    `rules?key=in.(${encodeURIComponent('kv:upload-manifest,kv:vas-state,kv:cb-config,kv:app-opened,kv:coaching,kv:referrals-sync-log,kv:wimpy-hl-status,kv:wimpy-ledger-failed,kv:wimpy-board-status,kv:vt-digest,kv:vt-trim-log,' + SIZE_KEY)})&select=key,updated_at,value`);
   const at = {}; let opened = null;
   const sizeRow = ((rows || []).find((r) => r.key === SIZE_KEY) || {}).value || null;
   /* spec 015: the Wimpy cron's status and the last lost ledger row ride this same select — no extra subrequest */
-  let wimpyHl = null, wimpyLedgerFailed = null;
+  let wimpyHl = null, wimpyLedgerFailed = null, wimpyBoard = null;
   const small = (v) => { try { return v && typeof v.data === 'string' ? JSON.parse(v.data) : (v && typeof v === 'object' ? v : null); } catch (e) { return null; } };
   for (const r of rows || []) {
     if (r.key === 'kv:wimpy-hl-status') wimpyHl = small(r.value);
     if (r.key === 'kv:wimpy-ledger-failed') wimpyLedgerFailed = small(r.value);
+    if (r.key === WIMPY_BOARD_KEY) wimpyBoard = small(r.value);
+  }
+  /* the kitchen board slot, when one is due (2026-11-24): ONE subrequest, twice a working day (retried on later ticks
+     within the slot's hour if the service does not answer) — the answer is used at once, and the service has stored it */
+  const wimpyBoardExpected = !!(opts.env && opts.env.WIMPY_CRON_SECRET && opts.wimpyUrl);
+  if (wimpyBoardExpected) {
+    const slot = wimpyBoardSlotDue(Date.now(), wimpyBoard);
+    if (slot) { const got = await kickWimpyBoard(opts.env, opts.wimpyUrl, slot); if (got) wimpyBoard = got; }
   }
   /* kv:coaching rides the same select (its value is the small pointer {store,bytes,sessions,fetchedAt}) — no extra subrequest;
      coachingAt is null when the row is missing (the copy was never taken) */
@@ -596,7 +678,7 @@ export async function runHealthChecks(DB, opts = {}) {
      (freshness, list refusal, integrity) was silent for a day. verify-roster-propagation caught it. */
   const helpCenter = await probeHelpCenter(opts.env);
   const alerts = evaluateFreshness({
-    helpCenter, coachingAt, coachingIncomplete, referralsLog, wimpyHl, wimpyLedgerFailed,
+    helpCenter, coachingAt, coachingIncomplete, referralsLog, wimpyHl, wimpyLedgerFailed, wimpyBoard, wimpyBoardExpected,
     manifestAt: at['kv:upload-manifest'], vasAt: at['kv:vas-state'], opsAt: at['kv:cb-config'],
     staffLoginRecent, now: Date.now(), digestMonth, digestAt, curMonth, integrity, opened, saveFailures, opsFactsAt, jobs, cadence, reach, expectedReach, kick, rake, roster, db: dbh, dbUnreadable, dbHistory, runnerExpected: !!opts.runnerExpected,
   });

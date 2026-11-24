@@ -49,7 +49,9 @@ let A = null;
 if (sqlText) {
   const LEGACY = ['login_ok', 'login_fail:bad_password', 'login_fail:no_user', 'login_fail:disabled', 'locked', 'logout', 'password_change',
     'password_reset', 'pw_change:bulk_reset_by_admin_2026-08-18', 'login_ok:wimpy', 'login_fail:wimpy:bad_password', 'wimpy_signin_ok',
-    'wimpy_signin_fail', 'wimpy_signin_refused:no_app', 'wimpy_password_change', 'created:bootstrap', 'unlock:admin', 'username_changed:a->b'];
+    'wimpy_signin_fail', 'wimpy_signin_refused:no_app', 'wimpy_password_change', 'created:bootstrap', 'unlock:admin', 'username_changed:a->b',
+    /* the Wimpy order outcomes (2026-11-24) — NOT sign-ins: they must never read as login_fail / login_ok */
+    'wimpy_order_ok', 'wimpy_order_refused:kitchen_status:502', 'wimpy_order_refused:no_session', 'wimpy_order_refused:cb_mismatch'];
   try {
     A = await newDb({ before: async (db) => { await seedUsers(db);
       for (const ev of LEGACY) await db.query("insert into auth_log (user_id, username, event, ip, at) values ($1, 'cb162', $2, '', '2026-09-30T10:00:00Z')", [U.cb162, ev]); } });
@@ -92,7 +94,9 @@ if (sqlText) {
       'login_fail:wimpy:bad_password': ['login_fail', 'bad_password', 'wimpy'], wimpy_signin_fail: ['login_fail', 'failed', 'wimpy'], 'wimpy_signin_refused:no_app': ['login_fail', 'no_app', 'wimpy'],
       'login_fail:disabled': ['login_fail', 'disabled', 'worker'], password_reset: ['password_change', 'reset', 'worker'], 'pw_change:bulk_reset_by_admin_2026-08-18': ['password_change', 'reset', 'worker'],
       password_change: ['password_change', 'change', 'worker'], wimpy_password_change: ['password_change', 'change', 'wimpy'], 'created:bootstrap': ['account_admin', 'created', 'worker'],
-      'unlock:admin': ['account_admin', 'unlock', 'worker'], logout: ['logout', null, 'worker'] };
+      'unlock:admin': ['account_admin', 'unlock', 'worker'], logout: ['logout', null, 'worker'],
+      wimpy_order_ok: ['account_admin', 'wimpy_order_ok', 'wimpy'], 'wimpy_order_refused:kitchen_status:502': ['account_admin', 'wimpy_order_refused', 'wimpy'],
+      'wimpy_order_refused:no_session': ['account_admin', 'wimpy_order_refused', 'wimpy'], 'wimpy_order_refused:cb_mismatch': ['account_admin', 'wimpy_order_refused', 'wimpy'] };
     for (const [a, [ev, cat, app]] of Object.entries(expect)) { const r = map[a] || {};
       ok(r.event === ev && (r.category ?? null) === cat && r.app === app, `auth event ${a} → ${ev} / ${cat} / ${app}`, r); }
 

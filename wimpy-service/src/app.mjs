@@ -18,6 +18,8 @@
  *   POST /api/wimpy/order         submitWimpyOrder() — kitchen webhook, then the ledger + HighLevel card after the reply
  *   GET  /api/wimpy/orders        listMyOrders() — the session's own orders, nothing a request sends can widen it
  *   GET  /api/wimpy/cron/retry    Bearer CRON_SECRET → retryDueOrders() (Vercel Cron; the container uses its own timer)
+ *   GET  /api/wimpy/cron/board    Bearer CRON_SECRET, ?slot=10:45|12:00 → checkKitchenBoard() — READ-ONLY to HighLevel; the
+ *                                 AgentOS Worker's ten-minute tick calls it (Vercel Hobby crons run once a day, ±59 min)
  *
  * THE SESSION GATE: this service mints only `scope = 'wimpy'` sessions and ACCEPTS only those. A token from the suite's
  * main sign-in is useless here, and (since Spec Kit 018) a Wimpy token is useless on the suite's Worker. Two doors,
@@ -30,7 +32,8 @@
 import fs from 'node:fs';
 import { db } from './db.mjs';
 import { session, signinWimpy, logout, changeWimpyPassword } from './auth.mjs';
-import { wimpyMenu, submitWimpyOrder, WIMPY_HISTORY_SINCE, windowInfo } from './wimpy.mjs';
+import { wimpyMenu, submitWimpyOrder, noteOrder, WIMPY_HISTORY_SINCE, windowInfo } from './wimpy.mjs';
+import { checkKitchenBoard, BOARD_SLOTS } from './wimpy-board.mjs';
 import { retryDueOrders, listMyOrders, dbWhy, hlConfigured } from './wimpy-hl.mjs';
 import { SECURITY_HEADERS } from './headers.mjs';
 import { clientIp, SOCKET_IP_HEADER } from './net.mjs';
@@ -109,12 +112,30 @@ export async function handle(req, env, ctx) {
       }
     }
 
+    /* THE KITCHEN BOARD CHECK (2026-11-24) — same bearer as the retry. Read-only to HighLevel; writes kv:wimpy-board-status
+       (counts, times, CB numbers — no phone, no name) for the Worker's health banner, and answers the same status. */
+    if (path === '/api/wimpy/cron/board') {
+      if (req.method !== 'GET' && req.method !== 'POST') return json({ error: 'Not found.' }, 404);
+      if (!env.CRON_SECRET) return json({ error: CRON_NOT_CONFIGURED }, 503);
+      const bearer = String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+      if (!bearer || !sameSecret(bearer, env.CRON_SECRET)) return json({ error: 'Not permitted.' }, 401);
+      const slot = url.searchParams.get('slot') || '';
+      if (!BOARD_SLOTS[slot]) return json({ error: 'slot must be one of ' + Object.keys(BOARD_SLOTS).join(', ') + '.' }, 400);
+      const st = await checkKitchenBoard(env, DB, { slot });   // never throws: HighLevel down → {ok:false, error}
+      console.info('[wimpy:board] ' + slot + ' ok=' + st.ok + ' count=' + st.count);
+      return json(st);
+    }
+
     /* SESSIONS TRAVEL AS A BEARER ONLY. The shared session() also reads a cbx_session cookie (the suite's); this service never
        sets one and never honours one, so a cookie can never ride a cross-site request here (security review 018 L3). */
-    if (!/^Bearer\s+\S+/i.test(req.headers.get('authorization') || '')) return json({ error: 'Sign in required.' }, 401);
+    /* an ORDER that arrives with no valid session is recorded too (wimpy_order_refused:no_session, the address only) — the
+       person's page says the order was NOT sent; this row is how support sees it happened (2026-11-24) */
+    const isOrder = path === '/api/wimpy/order' && req.method === 'POST';
+    const noSession = (u) => { if (isOrder) noteOrder(env, ctx, u, 'no_session', clientIp(req, env) || ''); };
+    if (!/^Bearer\s+\S+/i.test(req.headers.get('authorization') || '')) { noSession(null); return json({ error: 'Sign in required.' }, 401); }
     const user = await session(DB, req);
-    if (!user) return json({ error: 'Sign in required.' }, 401);
-    if (user.scope !== 'wimpy') return json({ error: WIMPY_ONLY }, 403);
+    if (!user) { noSession(null); return json({ error: 'Sign in required.' }, 401); }
+    if (user.scope !== 'wimpy') { noSession(user); return json({ error: WIMPY_ONLY }, 403); }
 
     if (path === '/api/wimpy/me' && req.method === 'GET') {
       const { token_hash, ...safe } = user;
@@ -130,7 +151,7 @@ export async function handle(req, env, ctx) {
     }
     if (path === '/api/wimpy/menu' && req.method === 'GET') return json(wimpyMenu());
     if (path === '/api/wimpy/order' && req.method === 'POST') {
-      const r = await submitWimpyOrder(env, user, await req.json().catch(() => ({})), Date.now(), ctx);
+      const r = await submitWimpyOrder(env, user, await req.json().catch(() => ({})), Date.now(), ctx, clientIp(req, env) || '');
       return json(r.body, r.status);
     }
     if (path === '/api/wimpy/orders' && req.method === 'GET') {
@@ -149,6 +170,9 @@ export async function handle(req, env, ctx) {
    convention is not what it uses. The handler is the Vercel adapter (api/index.mjs: Vercel's env, waitUntil, a trusted
    proxy), loaded lazily so the container — which never calls this — needs no @vercel/functions. */
 export const maxDuration = 30;
+/* …and in the form Vercel documents for a plain Node function (2026-11-24: the kitchen wait is 20 s — wimpy.mjs
+   KITCHEN_TIMEOUT_MS — so the 30 s must hold whichever form the builder reads; Hobby allows up to 300 s). */
+export const config = { maxDuration: 30 };
 let vercelEntry = null;
 export default async function (req, res) {
   if (!vercelEntry) vercelEntry = (await import('../api/index.mjs')).default;

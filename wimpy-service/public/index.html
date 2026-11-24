@@ -214,6 +214,13 @@ var API_EPOCH=0;                                // bumped by wReset: a reply ask
 /* MY ORDERS (spec 015): the signed-in person's own history, exactly as the Worker answers it — the Worker decides whose
    orders and every figure; this page only paints them. Held only while the view is open; cleared by wReset. */
 var WHIST=null, WHIST_BUSY=false, WHIST_ERR='';
+/* AN ORDER OUTLIVES A DEAD SESSION (2026-11-24). When the sign-in ends while a cart is open (expired, or replaced by a
+   password change in another tab) the cart and the typed details are held here across the sign-in screen — and handed
+   back ONLY to the same account (WHO_FOR); anyone else signing in at that desk gets nothing of it (A4). */
+var WKEEP=null;
+var SESSION_ENDED_ORDER='Your sign-in ended — your order was NOT sent. Sign in again and press Confirm & send.';
+var SESSION_ENDED_CART='Your sign-in ended — your order was NOT sent. Sign in again; your order is kept and you can finish it.';
+var SESSION_ENDED='Your sign-in has ended. Sign in again to carry on.';
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -263,8 +270,11 @@ function wChangePassword(){
   WPW.busy=true; WPW.msg=''; render();
   api('/api/wimpy/password',{current:WPW.cur,'new':WPW.nw}).then(function(r){
     WPW.busy=false;
-    if(r.ok&&r.json&&r.json.ok){ WPW=wPwBlank(); WPW.msg='Done — use the new password for Wimpy from now on.'; if(U) U.wimpy_password_is_default=false; }
-    else if(r.status===401&&!(r.json&&/current/i.test(r.json.error||''))){ signOut(); return; }   // a dead session, not a wrong password
+    /* CHANGED: straight back to the menu (any cart kept) — the password screen must not read like "sign in again" (24 Nov:
+       12 of 13 first-time users who changed it never ordered) */
+    if(r.ok&&r.json&&r.json.ok){ WPW=wPwBlank(); if(U) U.wimpy_password_is_default=false; WSTATE='order'; WERR='';
+      WNOTE='Password changed — you’re still signed in. Carry on with your order.'; render(); return; }
+    else if(r.status===401&&!(r.json&&/current/i.test(r.json.error||''))){ wSessionEnded(false); return; }   // a dead session, not a wrong password
     else { WPW.msg=(r.json&&r.json.error)||'The password could not be changed. Try again.'; WPW.bad=true; WPW.cur=''; }
     render();
   });
@@ -302,8 +312,9 @@ fetch('/api/health').then(function(r){return r.json();}).then(function(j){
 
 /* ---------- sign-in: CB number + the person's own password (Spec Kit 009) ---------- */
 /* keepCb: after a refusal the CB number stays typed and only the password is asked again */
-function loginScreen(msg, bad, keepCb){
-  wReset();   // a sign-in screen never holds a previous person's order (A4)
+function loginScreen(msg, bad, keepCb, keep){
+  wReset();   // a sign-in screen never holds a previous person's order (A4)…
+  WKEEP=keep||null;   // …except the SAME person's unsent order after their session ended (handed back in boot() only to them)
   $('root').innerHTML='<div class="login"><div class="box">'
     +'<div class="top"><div class="logo">🍔</div><h1>Wimpy Order</h1><p>Chatterbox × Wimpy · Weekday Value Menu</p></div>'
     +'<form id="lf" autocomplete="off">'
@@ -330,23 +341,42 @@ function loginScreen(msg, bad, keepCb){
       if(r.ok&&r.json&&r.json.token){
         try{ sessionStorage.setItem(TKEY,r.json.token); }catch(e){}
         U=r.json.user; boot();
-      } else loginScreen((r.json&&r.json.error)||'Could not sign in.', true, v);
+      } else loginScreen((r.json&&r.json.error)||'Could not sign in.', true, v, WKEEP);   // a typo does not lose the kept order
     });
   };
 }
 function signOut(){
   api('/api/wimpy/logout',{}).then(function(){},function(){});   // sent with this person's token, before the reset drops it
-  loginScreen('Signed out. See you tomorrow.');            // resets everything (wReset)
+  loginScreen('Signed out. See you tomorrow.');            // resets everything (wReset) — the person chose this
 }
+/* THE SIGN-IN ENDED UNDER THEM (a 401, or the 403 "for Wimpy orders only") — never silent, never "See you tomorrow".
+   onOrder: it was the Confirm & send itself. With a cart, the cart + details are kept for the same account. */
+function wSessionEnded(onOrder){
+  wReadForm();
+  var acct=WHO_FOR||String((U&&(U.cb||U.username))||'').toUpperCase();
+  if(!WCART.length){ loginScreen(SESSION_ENDED, true, acct); return; }
+  var keep={cart:WCART.map(function(l){ return {id:l.id,quantity:l.quantity,name:l.name}; }), who:{cb:WHO.cb,first:WHO.first,last:WHO.last,phone:WHO.phone,notes:WHO.notes},
+    who_for:acct, state:(onOrder||WSTATE==='confirm')?'confirm':(WSTATE==='form'?'form':'order')};
+  loginScreen(onOrder?SESSION_ENDED_ORDER:SESSION_ENDED_CART, true, acct, keep);
+}
+/* a dead session, as each route answers it: 401 always; 403 only with the scope refusal (a 403 from the order route can
+   also be "ordering is closed", which is not a dead session) */
+function wDead(r){ return r.status===401||(r.status===403&&/for Wimpy orders only/i.test((r.json&&r.json.error)||'')); }
 
 /* ---------- boot ---------- */
 function boot(){
   var t=null; try{ t=sessionStorage.getItem(TKEY); }catch(e){}
   if(!t){ loginScreen(); return; }
   api('/api/wimpy/me').then(function(r){
-    if(!r.ok||!r.json||!r.json.user){ loginScreen(r.status===426?'This page is an outdated copy — press Ctrl+Shift+R.':''); return; }
+    if(!r.ok||!r.json||!r.json.user){ loginScreen(r.status===426?'This page is an outdated copy — press Ctrl+Shift+R.':'', false, '', WKEEP); return; }
     U=r.json.user;
     var acct=String(U.cb||U.username||'').toUpperCase();
+    /* the same person back after their session ended: their unsent order, exactly as it was (never anyone else's) */
+    if(WKEEP&&WKEEP.who_for===acct){
+      WCART=WKEEP.cart; WHO=WKEEP.who; WHO_FOR=acct; WSTATE=WKEEP.state; WOPEN=true;
+      WNOTE='You are signed in again. Your order is still here — it has NOT been sent yet.'+(WSTATE==='confirm'?' Press Confirm & send.':'');
+    }
+    WKEEP=null;
     if(WHO_FOR!==acct){ WHO=whoBlank(); WHO_FOR=acct; }   // another CB signed in: none of the last person's details (A4)
     WHO.cb=acct;
     var parts=String(U.full_name||'').trim().split(/\s+/);
@@ -356,7 +386,7 @@ function boot(){
 }
 function wLoadMenu(){
   api('/api/wimpy/menu').then(function(r){
-    if(r.status===401||r.status===403){ signOut(); return; }
+    if(r.status===401||r.status===403){ wSessionEnded(false); return; }
     WMENU = r.ok ? r.json : {error:(r.json&&r.json.error)||'The menu could not be loaded.'};
     wPruneCart();
     render();
@@ -524,7 +554,7 @@ function wLoadHistory(){
   WHIST_BUSY=true; WHIST_ERR=''; render();
   api('/api/wimpy/orders').then(function(r){
     WHIST_BUSY=false;
-    if(r.status===401||r.status===403){ signOut(); return; }
+    if(r.status===401||r.status===403){ wSessionEnded(false); return; }
     if(r.ok&&r.json&&r.json.orders){ WHIST=r.json; WHIST_ERR=''; }
     else WHIST_ERR=(r.json&&r.json.error)||'Your orders could not be loaded. Press Refresh to try again.';
     if(WSTATE==='history') render();
@@ -620,7 +650,7 @@ function wSubmit(){
     WBUSY=false;
     if(r.ok&&r.json&&r.json.ok){
       WDONE={total:r.json.total_price, slip:r.json.order_formatted||''}; WCART=[]; WHO.notes=''; WSTATE='done'; WERR=''; WNOTE='';
-    } else if(r.status===401){ signOut(); return; }
+    } else if(wDead(r)){ wSessionEnded(true); return; }   // NOT sent — said so, cart kept for this person
     else { WERR=(r.json&&r.json.error)||'Unable to send the order. Please try again.'; if(r.status===400&&/CB number|name|surname|phone/i.test(WERR)) WSTATE='form'; }
     render();
   });

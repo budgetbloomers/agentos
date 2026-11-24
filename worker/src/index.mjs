@@ -685,7 +685,7 @@ export default {
              incident never had (its data survived only because the raw-file relay
              happens to archive uploads);
            · hygiene: orphaned zz-* probe keys and write-log rows past 90 days. */
-      try { await runHealthChecks(DB, { runnerExpected: env.GITHUB_RUNNER === 'on', env }); }
+      try { await runHealthChecks(DB, { runnerExpected: env.GITHUB_RUNNER === 'on', env, wimpyUrl: WIMPY_URL }); }   // wimpyUrl: the kitchen board check (2026-11-24)
       catch (e) { console.warn('[cron] health checks failed: ' + (e && e.message || e)); }
       /* THE GITHUB KICK IS OFF (Nick, 2026-09-16: "my email keeps getting github emails saying failed …
          I dont want to be on any paid plans"). Every ask produced a billing-refused run and an email

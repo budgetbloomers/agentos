@@ -56,10 +56,21 @@ often (the deploy fails outright). "My orders" self-heals a person's own late ca
 card waits at most until its owner next opens the page or the nightly run. On the Pro plan change the schedule back
 to `7,27,47 * * * *` (the Worker's old cadence). The container runs its own 20-minute timer and ignores this.
 
+**The kitchen board check (2026-11-24)** — `GET /api/wimpy/cron/board?slot=10:45|12:00` (same `CRON_SECRET` bearer) reads
+the Wimpy Pipeline (GET only) and stores `kv:wimpy-board-status`: today's cards still in New Order (10:45) or New Order /
+Order Processing (12:00), by SAST time and CB number. Hobby cron cannot fire at those times (daily, ±59 min), so the
+**AgentOS Worker's ten-minute tick** calls it (worker/src/health.mjs) and raises ONE `wimpy-board` alert on the health
+banner. The Worker needs the secret `WIMPY_CRON_SECRET` = this service's `CRON_SECRET`; without it the Worker never calls.
+
+**Every order outcome is in `auth_log`** — `wimpy_order_ok` or `wimpy_order_refused:<reason>` (window_closed, cb_missing,
+cb_mismatch, name, surname, phone_missing, phone_invalid, cart_empty, item_*, kitchen_status:<code>, kitchen_timeout,
+kitchen_unreachable, no_session). A `kitchen_timeout` row with a kitchen card but no `wimpy_orders` row = the kitchen
+answered late. The kitchen wait is 20 s (`KITCHEN_TIMEOUT_MS`) inside the function's 30 s.
+
 ## Routes
 
 `GET /api/health` · `POST /api/wimpy/signin` · `GET /api/wimpy/me` · `POST /api/wimpy/logout` · `POST /api/wimpy/password` (the Wimpy password: `wimpy123` to start, then the person's own — spec 025) · `GET /api/wimpy/menu` ·
-`POST /api/wimpy/order` · `GET /api/wimpy/orders` · `GET /api/wimpy/cron/retry` (bearer). Full contract:
+`POST /api/wimpy/order` · `GET /api/wimpy/orders` · `GET /api/wimpy/cron/retry` (bearer) · `GET /api/wimpy/cron/board?slot=` (bearer). Full contract:
 `specs/018-wimpy-standalone-service/contracts/service-api.md`.
 
 ## Rules that did not move

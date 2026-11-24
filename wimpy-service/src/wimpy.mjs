@@ -347,9 +347,9 @@ function defsFor(now) {
  * !ok — every message here is written to be shown to the agent as-is.
  */
 export function priceOrder(body, now = Date.now()) {
-  const errors = [];
+  const errors = [], codes = [];   // codes[i] names errors[i] for the audit row (wimpy_order_refused:<code>)
   const raw = (body && body.order && Array.isArray(body.order.items)) ? body.order.items : [];
-  if (!raw.length) errors.push('Add at least one item before submitting.');
+  if (!raw.length) { errors.push('Add at least one item before submitting.'); codes.push('cart_empty'); }
 
   const items = [];
   let totalCents = 0;
@@ -367,16 +367,18 @@ export function priceOrder(body, now = Date.now()) {
       if (other) {
         errors.push(other.name + ' is ' + DAY_NAMES[other.day] + '’s Big One'
           + (today ? ' — today’s is the ' + today.name + '.' : ' — the Big One returns Monday.'));
+        codes.push('item_off_day');
         return;
       }
-      errors.push(where + ': unknown menu item.'); return;
+      errors.push(where + ': unknown menu item.'); codes.push('item_unknown'); return;
     }
     if (def.basePrice == null) {
       errors.push(def.name + ' has no price set yet, so it cannot be ordered. Ask Nick to configure it.');
+      codes.push('item_unpriced');
       return;
     }
     const qty = Math.floor(Number(row.quantity));
-    if (!Number.isFinite(qty) || qty < 1 || qty > MAX_QTY) { errors.push(def.name + ': quantity must be between 1 and ' + MAX_QTY + '.'); return; }
+    if (!Number.isFinite(qty) || qty < 1 || qty > MAX_QTY) { errors.push(def.name + ': quantity must be between 1 and ' + MAX_QTY + '.'); codes.push('item_quantity'); return; }
 
     /* EVERY ITEM COMES AS IT IS (Nick, 2026-09-02; add-ons too, 2026-09-10). A
        request still carrying a customisation or an add-on is an old cached tab —
@@ -388,6 +390,7 @@ export function priceOrder(body, now = Date.now()) {
       || (row.choices && Object.keys(row.choices).length)
       || (row.customisations && ((row.customisations.removed || []).length || (row.customisations.added || []).length))) {
       errors.push(def.name + ' comes as it is — add-ons and customisations are not taken. Remove the item and add it back.');
+      codes.push('item_customised');
       return;
     }
 
@@ -402,7 +405,7 @@ export function priceOrder(body, now = Date.now()) {
     });
   });
 
-  return { ok: !errors.length, errors, items, totalCents, total: rands(totalCents) };
+  return { ok: !errors.length, errors, codes, items, totalCents, total: rands(totalCents) };
 }
 
 /** The human-readable order n8n forwards downstream. */
@@ -445,19 +448,23 @@ export function whoIsOrdering(user, who) {
   const phone = normPhone(w.phone);
   const own = String(user.cb || '').trim();
   const norm = (v) => /^\s*(cb)?[\s-]*0*\d+\s*$/i.test(v) ? 'CB' + String(parseInt(String(v).replace(/[^0-9]/g, ''), 10)) : String(v).trim().toLowerCase();
-  if (!typedCb) return { error: 'Type your CB number.' };
-  if (!first || !NAME_RE.test(first) || first.length < 2) return { error: 'Type your name (letters only, 2 to 40 characters).' };
-  if (!last || !NAME_RE.test(last) || last.length < 2) return { error: 'Type your surname (letters only, 2 to 40 characters).' };
-  if (!String(w.phone || '').trim()) return { error: 'Type your phone number.' };
-  if (!phone) return { error: 'That phone number does not look right — type a South African number, e.g. 082 123 4567.' };
+  /* `code` names the refusal for the audit row (wimpy_order_refused:<code>) — a category only, never what was typed */
+  if (!typedCb) return { error: 'Type your CB number.', code: 'cb_missing' };
+  if (!first || !NAME_RE.test(first) || first.length < 2) return { error: 'Type your name (letters only, 2 to 40 characters).', code: 'name' };
+  if (!last || !NAME_RE.test(last) || last.length < 2) return { error: 'Type your surname (letters only, 2 to 40 characters).', code: 'surname' };
+  if (!String(w.phone || '').trim()) return { error: 'Type your phone number.', code: 'phone_missing' };
+  if (!phone) return { error: 'That phone number does not look right — type a South African number, e.g. 082 123 4567.', code: 'phone_invalid' };
   if (own) {
-    if (norm(typedCb) !== norm(own)) return { error: 'That CB number is not the one you signed in with (' + own.toUpperCase() + '). An order can only be placed in your own name — sign in as that person to order for them.' };
+    if (norm(typedCb) !== norm(own)) return { error: 'That CB number is not the one you signed in with (' + own.toUpperCase() + '). An order can only be placed in your own name — sign in as that person to order for them.', code: 'cb_mismatch' };
     return { cb: own.toUpperCase(), first, last, phone };
   }
-  /* management: no CB on the account, the username is the handle */
-  if (norm(typedCb) !== String(user.username || '').trim().toLowerCase())
-    return { error: 'You have no CB number on your account — type your username (' + user.username + ') in the CB number box.' };
-  return { cb: String(user.username).toLowerCase(), first, last, phone };
+  /* management: no CB on the account, the username is the handle. BOTH sides through norm() (2026-11-24): an account with
+     cb NULL and a CB-shaped username ("cb436") was compared as "CB436" (typed, normalised) against "cb436" (raw) and could
+     never order — the page even pre-fills "CB436". */
+  const handle = String(user.username || '').trim();
+  if (!handle || norm(typedCb) !== norm(handle))
+    return { error: 'You have no CB number on your account — type your username (' + user.username + ') in the CB number box.', code: 'cb_mismatch' };
+  return { cb: /^CB\d+$/.test(norm(handle)) ? norm(handle) : handle.toLowerCase(), first, last, phone };
 }
 
 /* South African local time. SAST is UTC+2 all year — no daylight saving. */
@@ -506,6 +513,32 @@ function recordOrder(env, user, who, priced, notes, now, ctx) {
   if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(chain);
 }
 
+/* EVERY ORDER THAT DOES NOT GO THROUGH LEAVES A ROW (2026-11-24, after "refused orders are NOT stored anywhere" — 20 Oct,
+   and the 24 Nov kitchen-board investigation). One auth_log row per outcome — `wimpy_order_ok`, or
+   `wimpy_order_refused:<reason>` — written after the reply through ctx.waitUntil (the same audit path the sign-in uses),
+   so it can never delay or change what the person is told, and it never throws. The reason is a CATEGORY only (and, for
+   the kitchen, its status code) — never a phone number, never a name the person typed. These events start with neither
+   `login_fail` nor `locked` nor `wimpy_signin_`, so no lockout tally, per-network limit, sign-in report or usage
+   login count reads them (usage_auth_event files them under the wimpy app, category wimpy_order_refused / wimpy_order_ok).
+   No database configured (the pure tests) → nothing written. */
+export const ORDER_OK_EVENT = 'wimpy_order_ok';
+export const ORDER_REFUSED_EVENT = 'wimpy_order_refused';
+export function noteOrder(env, ctx, user, reason, ip) {
+  try {
+    if (!env || !env.SUPABASE_URL) return;
+    const event = reason ? ORDER_REFUSED_EVENT + ':' + String(reason).replace(/[^a-z0-9_:]/gi, '').slice(0, 60) : ORDER_OK_EVENT;
+    const p = db(env).insert('auth_log', [{ user_id: (user && user.user_id) || null, username: (user && user.username) || null, event, ip: String(ip || '') }])
+      .catch((e) => { console.warn('[wimpy] order audit row not written: ' + dbWhy(env, e)); });
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p);
+  } catch (e) { /* the audit row is never allowed to change the reply */ }
+}
+
+/* THE KITCHEN'S TIME (2026-11-24). The slowest kitchen reply seen in 14 days was 14 s against a 15 s abort — one second of
+   headroom. The function may run 30 s (app.mjs maxDuration + config); before the kitchen call the request has spent a
+   session read (well under 1 s), and after it the ledger insert runs in waitUntil inside the SAME 30 s. 20 s leaves ~9 s
+   for both. A timeout is recorded (wimpy_order_refused:kitchen_timeout) because the kitchen may still make the card. */
+export const KITCHEN_TIMEOUT_MS = 20000;
+
 /**
  * POST /api/wimpy/order — validate, re-price, send.
  *
@@ -516,20 +549,21 @@ function recordOrder(env, user, who, priced, notes, now, ctx) {
  * reconcile a nickname without anyone's word being silently corrected.
  * `ctx` (spec 015) lets the HighLevel card be written after the reply.
  */
-export async function submitWimpyOrder(env, user, body, now = Date.now(), ctx = null) {
+export async function submitWimpyOrder(env, user, body, now = Date.now(), ctx = null, ip = '') {
+  const refuse = (reason, res) => { noteOrder(env, ctx, user, reason, ip); return res; };
   /* THE WINDOW IS ENFORCED HERE, not only shown on the page — a tab left open
      since 16:55 does not get to order at half past five. */
-  if (!wimpyWindowOpen(now)) return { status: 403, body: {
-    error: 'Wimpy orders are taken between 07:00 and 10:30, Monday to Friday (SA time). Ordering is closed now — the menu is back next working day.' } };
+  if (!wimpyWindowOpen(now)) return refuse('window_closed', { status: 403, body: {
+    error: 'Wimpy orders are taken between 07:00 and 10:30, Monday to Friday (SA time). Ordering is closed now — the menu is back next working day.' } });
 
   const who = whoIsOrdering(user, body && body.who);
-  if (who.error) return { status: 400, body: { error: who.error } };
+  if (who.error) return refuse(who.code || 'who', { status: 400, body: { error: who.error } });
   const agentName = who.first + ' ' + who.last;
   const cb = who.cb;
   const listName = String(user.full_name || '').trim();
 
   const priced = priceOrder(body, now);
-  if (!priced.ok) return { status: 400, body: { error: priced.errors[0], errors: priced.errors } };
+  if (!priced.ok) return refuse((priced.codes && priced.codes[0]) || 'items', { status: 400, body: { error: priced.errors[0], errors: priced.errors } });
 
   const notes = String((body.order && body.order.additional_notes) || '').trim().slice(0, 1000);
 
@@ -563,7 +597,7 @@ export async function submitWimpyOrder(env, user, body, now = Date.now(), ctx = 
   const headers = { 'Content-Type': 'application/json' };
   if (env.WIMPY_WEBHOOK_SECRET) headers[WEBHOOK_SECRET_HEADER] = String(env.WIMPY_WEBHOOK_SECRET);
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
+  const timer = setTimeout(() => ctrl.abort(), KITCHEN_TIMEOUT_MS);
   try {
     const r = await fetch(url, {
       method: 'POST',
@@ -573,17 +607,22 @@ export async function submitWimpyOrder(env, user, body, now = Date.now(), ctx = 
     });
     const text = await r.text().catch(() => '');
     if (!r.ok) {
-      /* The order is NOT cleared on a failure — the page keeps the cart and
-         offers Retry, so the message has to say what happened. */
-      return { status: 502, body: { error: 'The order could not be sent (the kitchen system answered ' + r.status + '). Your order has been kept — press Retry.', detail: text.slice(0, 200) } };
+      /* The order is NOT cleared on a failure — the page keeps the cart on the Confirm screen, so the message says what
+         happened and what to press. THERE IS NO AUTOMATIC RETRY (2026-11-24): the kitchen webhook takes no idempotency
+         key, so a resend can never be proved safe — the person decides, told plainly. */
+      return refuse('kitchen_status:' + (Number(r.status) || 0), { status: 502, body: { error: 'The order could not be sent (the kitchen system answered ' + r.status + '). Your order has been kept — press Confirm & send again. If it fails again, tell your team leader.', detail: text.slice(0, 200) } });
     }
     /* the kitchen said yes: keep it (spec 015) — never able to change this reply */
     try { recordOrder(env, user, who, priced, notes, now, ctx); }   // after the reply (waitUntil) — never awaited here
     catch (e) { console.error('[wimpy] ledger step failed: ' + String((e && e.message) || e).slice(0, 120)); }
+    noteOrder(env, ctx, user, null, ip);
     return { status: 200, body: { ok: true, total_price: priced.total, order_formatted: payload.order_formatted, timestamp: payload.timestamp } };
   } catch (e) {
-    const why = ctrl.signal.aborted ? 'the kitchen system did not answer within 15 seconds' : String((e && e.message) || e).slice(0, 140);
-    return { status: 502, body: { error: 'The order could not be sent — ' + why + '. Your order has been kept — press Retry.' } };
+    /* A TIMEOUT IS NOT A NO. The kitchen may have the order and answer late (its card then has no ledger row and no
+       My orders line — wimpy_order_refused:kitchen_timeout is what lets it be reconciled). So the person is told it may
+       already be there and to check before sending again; an unreachable kitchen (no connection made) never got it. */
+    if (ctrl.signal.aborted) return refuse('kitchen_timeout', { status: 502, body: { error: 'The kitchen system did not answer within ' + Math.round(KITCHEN_TIMEOUT_MS / 1000) + ' seconds, so we cannot tell whether your order arrived — the kitchen may already have it. Your order has been kept here. Check with the Wimpy counter or your team leader before you press Confirm & send again, so it is not made twice.' } });
+    return refuse('kitchen_unreachable', { status: 502, body: { error: 'The order could not be sent — the kitchen system could not be reached (' + String((e && e.message) || e).slice(0, 140) + '). Your order has been kept — press Confirm & send again.' } });
   } finally { clearTimeout(timer); }
 }
 

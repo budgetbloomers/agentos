@@ -57,7 +57,7 @@ jobs:
           # verify-overload-031 (2026-10-11, spec 031): the VAS save is kept as it arrives (never unpacked by the Worker), the
           # guards still refuse, the Worker's own readers use the engine's summary, archives go straight to storage, one log line per heavy request
           # spec 014 (2026-10-07) system sweep: one suite per area — VAS, Ops, Agent Analytics+Wimpy, Worker, tick+tools
-          for t in verify-agent-analytics verify-wimpy-removal verify-wimpy-service-drift verify-session-name verify-kv-large-store verify-overload-031 verify-vas-sweep-014 verify-ops-sweep-014 verify-agent-sweep-014 verify-worker-sweep-014 verify-tick-014 verify-engine-rules verify-rule-constants verify-public-holidays verify-saturday-rule verify-leave-days verify-ops-leave \
+          for t in verify-agent-analytics verify-wimpy-removal verify-wimpy-service-drift verify-wimpy-board verify-session-name verify-kv-large-store verify-overload-031 verify-vas-sweep-014 verify-ops-sweep-014 verify-agent-sweep-014 verify-worker-sweep-014 verify-tick-014 verify-engine-rules verify-rule-constants verify-public-holidays verify-saturday-rule verify-leave-days verify-ops-leave \
                    verify-coaching-signature verify-coaching-drafts \
                    verify-cm-targets verify-targets-027 verify-campaign-manager verify-perf-score verify-history \
                    verify-tbc-backdate verify-variance verify-save-acks verify-login-lockout \
