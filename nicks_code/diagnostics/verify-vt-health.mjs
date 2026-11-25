@@ -76,6 +76,27 @@ ok('files loaded but nothing ever published → stale, in words', /never been pu
   const g = a.find((x) => x.id === 'vt-upload-gap');
   ok('one working day missing → warning', !!g && g.severity === 'warning' && /BI Active Fitted file since Mon 23 Nov/.test(g.message), g && g.message);
   ok('…and it clears the tick the file lands', !H.evaluateVtHealth({ now: T0, uploads: fresh, digest: dg() }).some((x) => x.id === 'vt-upload-gap')); }
+/* spec 072 E4 · the Schedulers Data sheet behind the daily files */
+{ const base = [up('bi_fitted', '2026-11-24'), up('sched_missed', '2026-11-24')];
+  ok('no Schedulers Data sheet has ever landed → no vt-schedulers-stale (there is nothing to be stale against)',
+    !H.evaluateVtHealth({ now: T0, uploads: base, digest: dg() }).some((x) => x.id === 'vt-schedulers-stale'));
+  ok('the sheet loaded on the same day as the daily files raises nothing',
+    !H.evaluateVtHealth({ now: T0, uploads: [...base, up('schedulers_data', '2026-11-24')], digest: dg() }).some((x) => x.id === 'vt-schedulers-stale'));
+  ok('one working day behind is inside guards.uploadGapWorkingDays',
+    !H.evaluateVtHealth({ now: T0, uploads: [...base, up('schedulers_data', '2026-11-23')], digest: dg() }).some((x) => x.id === 'vt-schedulers-stale'));
+  const two = H.evaluateVtHealth({ now: T0, uploads: [...base, up('schedulers_data', '2026-11-20')], digest: dg() }).find((x) => x.id === 'vt-schedulers-stale');
+  ok('two working days behind (Fri 20 → Tue 24, the weekend not counted) → vt-schedulers-stale, warning, naming both days',
+    !!two && two.severity === 'warning' && /2 working days behind/.test(two.message) && /Fri 20 Nov/.test(two.message) && /Tue 24 Nov/.test(two.message), two && two.message);
+  ok('…and it says what reads as at the older day, and where to load the sheet',
+    !!two && /scheduler pivots/.test(two.message) && /GWP/.test(two.message) && /VT · Schedulers Data/.test(two.message), two && two.message);
+  const wk = H.evaluateVtHealth({ now: T0, uploads: [...base, up('schedulers_data', '2026-11-13')], digest: dg() }).find((x) => x.id === 'vt-schedulers-stale');
+  ok('a week behind → critical', !!wk && wk.severity === 'critical', wk && wk.severity);
+  ok('…and it clears the tick a newer sheet is committed',
+    !H.evaluateVtHealth({ now: T0, uploads: [...base, up('schedulers_data', '2026-11-13'), up('schedulers_data', '2026-11-24')], digest: dg() }).some((x) => x.id === 'vt-schedulers-stale'));
+  ok('a staged (uncommitted) sheet does not clear it',
+    H.evaluateVtHealth({ now: T0, uploads: [...base, up('schedulers_data', '2026-11-13'), { kind: 'schedulers_data', state: 'staging', extract_on: '2026-11-24', started_at: '2026-11-24T08:55:00Z' }], digest: dg() }).some((x) => x.id === 'vt-schedulers-stale'));
+  ok('the working-day count skips the rule book’s extra holiday (4 Nov)',
+    H.workingDaysAfter('2026-11-03', '2026-11-05') === 1 && H.workingDaysAfter('2026-11-20', '2026-11-24') === 2 && H.workingDaysAfter('2026-11-24', '2026-11-24') === 0); }
 { const st = [...fresh, { kind: 'bi_fitted', state: 'staging', extract_on: '2026-11-24', started_at: '2026-11-24T09:00:00Z' }];
   ok('an upload half-loaded for over an hour → vt-staging-stuck', H.evaluateVtHealth({ now: T0, uploads: st, digest: dg() }).some((x) => x.id === 'vt-staging-stuck'));
   ok('…not while it is under an hour old', !H.evaluateVtHealth({ now: at('2026-11-24T09:30:00Z'), uploads: st, digest: dg() }).some((x) => x.id === 'vt-staging-stuck')); }

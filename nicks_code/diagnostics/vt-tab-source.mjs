@@ -1,5 +1,5 @@
-/* vt-tab-source.mjs — what the whole-app health checks (verify-all-tabs, verify-controls) need to drive the three
- * Vehicle Tracking pages (spec 071, Phase F item 5).
+/* vt-tab-source.mjs — what the whole-app health checks (verify-all-tabs, verify-controls) need to drive the four
+ * Vehicle Tracking pages (spec 071, Phase F item 5; the VT Report added by spec 072 E4).
  *
  * The VT pages read the case book, the VT roster and the receipts from the Worker (/api/vt/book, /roster, /uploads), and a
  * page served from 127.0.0.1 cannot reach the deployed Worker (CORS). So the suites answer those three routes themselves:
@@ -21,7 +21,11 @@ const require = createRequire(import.meta.url);
 export const ENG = require(path.join(ROOT, 'nicks_code', 'vt-engine.js'));
 export const ST = require(path.join(ROOT, 'nicks_code', 'vt-pages.js'));
 export const API = 'https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
-export const VT_PAGES = ['vt_mtd', 'vt_weekly', 'vt_daily'];
+/* spec 072 E4: the consolidated VT Report joins the sweep. It is painted by VTDash from VTEngine.dashboard() and
+   keeps its own per-person view state (S.ui.vtReport), so openVt resets both pages and checkVtTabs compares it
+   against dashboard() rather than model(). */
+export const VT_PAGES = ['vt_report', 'vt_mtd', 'vt_weekly', 'vt_daily'];
+export const VT_DASH_PAGE = 'vt_report';
 
 /** {label, live, cycle|null, book(from), roster(on), uploads()} — fixture by default; live only when asked AND readable */
 export async function vtSource({ live = false } = {}) {
@@ -68,7 +72,11 @@ const settle = (page) => page.evaluate(async () => {
 
 /** open one VT page (optionally pinned to a business month) and wait for it */
 export async function openVt(page, tab, cycle) {
-  await page.evaluate(([t, c]) => { const S = window.__mtd.state(); if (window.VTPages._reset) window.VTPages._reset(); S.ui.vt = c ? { cycle: c } : {}; S.ui.tab = t; renderPage(); }, [tab, cycle || null]);
+  await page.evaluate(([t, c]) => { const S = window.__mtd.state();
+    if (window.VTPages && window.VTPages._reset) window.VTPages._reset();
+    if (window.VTDash && window.VTDash._reset) window.VTDash._reset();
+    S.ui.vt = c ? { cycle: c } : {}; S.ui.vtReport = c ? { cycle: c } : {};
+    S.ui.tab = t; renderPage(); }, [tab, cycle || null]);
   await settle(page);
 }
 
@@ -76,12 +84,29 @@ export async function openVt(page, tab, cycle) {
 export async function checkVtTabs(page, ok, src) {
   for (const tab of VT_PAGES) {
     await openVt(page, tab, src.cycle);
-    const r = await page.evaluate(() => { const v = document.getElementById('view'); const t = (v && v.innerText) || '';
-      const st = window.VTPages.state();
-      return { len: t.length, head: t.slice(0, 80).replace(/\n/g, ' '), err: /Something went wrong|is not defined|undefined is not|Cannot read|could not be read/i.test(t), status: st.status, cycle: st.cycle, ready: st.ready }; });
+    const r = await page.evaluate((dash) => { const v = document.getElementById('view'); const t = (v && v.innerText) || '';
+      const st = (dash ? window.VTDash : window.VTPages).state();
+      return { len: t.length, head: t.slice(0, 80).replace(/\n/g, ' '), err: /Something went wrong|is not defined|undefined is not|Cannot read|could not be read/i.test(t), status: st.status, cycle: st.cycle, ready: st.ready }; }, tab === VT_DASH_PAGE);
     ok(`VT ${tab} renders (${src.label})`, r.len > 40 && !r.err && r.status !== 'error', JSON.stringify(r));
     const mode = await page.evaluate(() => ({ vt: !!(window.VTApp && window.VTApp.on()), side: [...document.querySelectorAll('#side [data-page]')].map((b) => b.dataset.page) }));
     ok(`VT ${tab} opens in Vehicle Tracking (VT mode), its sidebar holding no VAS page`, mode.vt && mode.side.every((i) => /^vt_/.test(i) || i === 'data' || i === 'hubs'), JSON.stringify(mode));
+    if (tab === VT_DASH_PAGE) {
+      /* THE VT REPORT paints VTEngine.dashboard(). Its previous-cycle comparison may come from a frozen digest
+         (live) or from the engine (fixture), and that only moves the `delta` of a card, so this sweep compares the
+         figures themselves and leaves the deep equal to verify-vt-dashboard.mjs. */
+      if (!r.ready) { ok('VT Report: the page has a model to compare (' + src.label + ')', false, JSON.stringify(r)); continue; }
+      const pick = (m) => JSON.stringify({ view: m.view, period: m.period, counts: m.counts, rates: m.rates,
+        dialingDays: m.dialingDays, buckets: m.buckets, integrity: m.integrity, channels: m.channels.map((c) => [c.k, c.sales, c.fitted]) });
+      const pm = await page.evaluate(`(${pick.toString()})(window.VTDash.state().model)`);
+      const cyc0 = ENG.periods.cycleByKey(r.cycle);
+      const [bk, ro, up] = await Promise.all([src.book(cyc0.from), src.roster(cyc0.to), src.uploads()]);
+      const asOf = (up || []).filter((u) => u.state === 'committed' && u.kind !== 'opening_book')
+        .reduce((m, u) => (!m || u.extract_on > m ? u.extract_on : m), null);
+      const Dm = ENG.dashboard(ENG.bookFromRpc(bk), ST.rosterFromRpc(ro), { cycleKey: r.cycle, asOf: asOf || undefined });
+      ok(`VT Report: the page's figures are VTEngine.dashboard() over the same book and roster (${r.cycle})`, pm === pick(Dm),
+        String(pm).slice(0, 200) + ' ||| ' + pick(Dm).slice(0, 200));
+      continue;
+    }
     if (tab !== 'vt_mtd') continue;
     if (!r.ready) { ok('VT: the page has a model to compare (' + src.label + ')', false, JSON.stringify(r)); continue; }
     const pm = await page.evaluate(() => JSON.stringify(window.VTPages.state().model));

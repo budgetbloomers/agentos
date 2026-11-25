@@ -28,6 +28,9 @@
  *   R11 no console error, no page error, no spinner left behind, no empty card, no customer field in the DOM;
  *       screenshots (fictional data only) in diagnostics/scratch/vt/
  *
+ *   R14 the .xlsx export (E3): every painted cell of every panel table equals its exported cell, folded and open,
+ *       the file's sheets and name, a number format per cell type, and no customer field in the workbook (SC-007)
+ *
  *   node nicks_code/diagnostics/verify-vt-dashboard.mjs [--source] [--no-build]
  */
 import fs from 'node:fs';
@@ -545,6 +548,77 @@ try {
       'the book unreadable: the reason, no stale copy, and a Retry', N(t).slice(0, 0)); }
   resetWorker(); await reset(); await open('vt_report', { cycle: 'cycle-2026-08' });
   ok(/No August 2026 figures yet/.test(await viewText()), 'a business month with no sale: "No <Month> figures yet", never a screen of zeros');
+  await reset(); await open('vt_report');
+
+  /* ---------------------------------------------------------------- R14 · the .xlsx export (E3, SC-007) ----
+   * The file is built from the MODEL, so the proof that matters is that every figure it carries is the one the
+   * page PAINTS — cell for cell, for every panel that has a table — and that the fold changes none of them. The
+   * export's own arithmetic is proved against the engine in verify-vt-export.mjs; this is the screen half. */
+  head('R14 · the .xlsx export carries exactly what the screen shows');
+  {
+    ok(!!(await page.evaluate(() => !!document.querySelector('#view #vtrExport'))), 'the filter row carries an Export .xlsx button');
+    const wbIn = await page.evaluate(() => { const w = window.VTDash.workbookFor(); return { n: w.name, sheets: w.sheets.map((s) => s.name), view: w.view, cycle: w.cycle, pre: w.preamble }; });
+    ok(wbIn.sheets.length === 20, 'the workbook holds a sheet for every panel group (' + wbIn.sheets.length + ')', wbIn.sheets.join(', '));
+    ok(wbIn.cycle === CYCLE && wbIn.view === D.view && /^VT Report - /.test(wbIn.n), 'and names the cycle, the view and the report in the file name', wbIn.n + ' / ' + wbIn.cycle);
+    /* every painted table against its own sheet, folded as a reader first meets the page and then fully open */
+    const compare = (openFirst) => page.evaluate((openThem) => {
+      document.querySelectorAll('#view details.vt-fold').forEach((d) => { d.open = !!openThem; });
+      const S = window.VTDash.state(), specs = window.VTDash.sheetSpecs(S.model), PRE = window.VTDash.PREAMBLE;
+      const wb = window.VTDash.workbookFor();
+      /* a DRAWN cell (a change chip, an outcome-mix bar) is a shape on screen and words in the file: the figures
+         behind it are the row's own other cells, so there is nothing to compare — it is counted, not skipped silently */
+      const fmt = (c) => c == null ? '' : c && c.html ? null : c.t ? window.VTPages.fmtCell(c.t, c.v) : String(c);
+      const norm = (s) => String(s == null ? '' : s).replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
+      const out = { checked: 0, cells: 0, drawn: 0, bad: [] };
+      /* the screen shows ONE pivot scope at a time and the file carries all four: compare the painted one */
+      const shown = (document.querySelector('#view [data-panel="pivots"] [data-pivot].on') || {}).dataset;
+      specs.forEach((sp, si) => {
+        if (sp.panel === 'pivots' && (!shown || sp.scope !== shown.pivot)) return;
+        const host = sp.panel && document.querySelector('#view [data-panel="' + sp.panel + '"]');
+        const t = host && host.querySelector('table');
+        if (!t) return;
+        const body = [...t.querySelectorAll('tbody tr')].map((tr) => [...tr.children].map((td) => norm(td.textContent)));
+        const aoa = wb.sheets[si].aoa.slice(PRE + 1);
+        out.checked++;
+        if (body.length !== sp.rows.length || aoa.length !== sp.rows.length) { out.bad.push(sp.sheet + ': ' + body.length + ' painted rows, ' + aoa.length + ' exported, ' + sp.rows.length + ' in the spec'); return; }
+        sp.rows.forEach((r, ri) => sp.cols.forEach((c, ci) => {
+          const want = fmt(r.cells[ci]);
+          if (want === null) {                             /* a drawn shape: the file carries words, the screen a chart */
+            out.drawn++;
+            if (!String(r.cells[ci].v || '').length) out.bad.push(sp.sheet + ' r' + ri + ' "' + c.h + '": a drawn cell with no words for the file');
+            return;
+          }
+          out.cells++;
+          if (norm(want) !== body[ri][ci]) out.bad.push(sp.sheet + ' r' + ri + ' "' + c.h + '": screen "' + body[ri][ci] + '" vs "' + norm(want) + '"');
+        }));
+      });
+      return out;
+    }, openFirst);
+    const folded = await compare(false);
+    ok(folded.checked >= 12 && folded.cells > 400 && !folded.bad.length, 'folded: every painted cell of every panel table equals its exported cell ('
+      + folded.checked + ' tables, ' + folded.cells + ' cells, ' + folded.drawn + ' drawn cells carrying words instead)', folded.bad.slice(0, 4).join(' | '));
+    const opened = await compare(true);
+    ok(opened.checked === folded.checked && opened.cells === folded.cells && opened.drawn === folded.drawn && !opened.bad.length,
+      'and a folded table exports IDENTICALLY to an open one — the fold moves no figure', opened.bad.slice(0, 4).join(' | '));
+    /* the written file: XLSX.writeFile stubbed so nothing is downloaded, the real utils still used */
+    const wrote = await page.evaluate(() => {
+      const X = window.XLSX, real = X.writeFile; let got = null;
+      X.writeFile = (bk, nm) => { got = { name: nm, sheets: bk.SheetNames, z: {} };
+        bk.SheetNames.forEach((s) => { const ws = bk.Sheets[s]; got.z[s] = Object.keys(ws).filter((k) => ws[k] && ws[k].z).map((k) => ws[k].z); }); };
+      try { const r = window.VTDash.exportView(); return { r: r && { name: r.name, sheets: r.sheets.map((x) => x.name), pre: r.preamble }, got }; }
+      finally { X.writeFile = real; }
+    });
+    ok(!!wrote.got && wrote.got.name === wbIn.n && wrote.got.sheets.join() === wbIn.sheets.join(),
+      'Export .xlsx writes one workbook with those sheets, under that name', wrote.got && wrote.got.name);
+    ok(!!wrote.r && wrote.r.sheets.join() === wbIn.sheets.join(), 'and leaves a receipt of what it wrote (window.__vtDashExport)', JSON.stringify(wrote.r && wrote.r.sheets).slice(0, 120));
+    const zs = wrote.got ? [].concat(...Object.values(wrote.got.z)) : [];
+    ok(zs.indexOf('0.0%') > -1 && zs.indexOf('#,##0') > -1 && zs.indexOf('"R "#,##0.00') > -1,
+      'a percentage, a count and a rand figure each carry their own number format in the file', [...new Set(zs)].join(' '));
+    const flat = await page.evaluate(() => { const w = window.VTDash.workbookFor();
+      return w.sheets.map((s) => s.aoa.filter((r) => String(r[0]) !== 'Customer data').map((r) => r.join('|')).join('\n')).join('\n'); });
+    { const found = PII.filter((p) => flat.indexOf(p) > -1);
+      ok(!found.length, 'no customer field anywhere in the workbook (FR-057)', found.join()); }
+  }
   await reset(); await open('vt_report');
 
   head('R11 · no error, no customer field, screenshots in both themes');

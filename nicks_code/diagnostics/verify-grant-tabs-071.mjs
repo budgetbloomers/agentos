@@ -38,8 +38,8 @@ ok('a campaign manager whose assignment names VT is listed', !!by['fx-cm'] && by
 ok('an agent with no tracker grant is not listed', !by['fx-agent']);
 
 console.log('\n2 · what it proposes');
-ok("tracker holder gets apps += vas and the three VT tabs", JSON.stringify(by['fx-viewer'].addApps) === '["vas"]' && JSON.stringify(by['fx-viewer'].addTabs) === JSON.stringify(VT_TABS));
-ok('a tab already held is not added twice (a CM who already holds vas)', JSON.stringify(by['fx-cm'].addTabs) === '["vt_weekly","vt_daily"]' && by['fx-cm'].addApps.length === 0);
+ok("tracker holder gets apps += vas and every VT tab", JSON.stringify(by['fx-viewer'].addApps) === '["vas"]' && JSON.stringify(by['fx-viewer'].addTabs) === JSON.stringify(VT_TABS));
+ok('a tab already held is not added twice (a CM who already holds vas)', JSON.stringify(by['fx-cm'].addTabs) === JSON.stringify(VT_TABS.filter((t) => t !== 'vt_mtd')) && by['fx-cm'].addApps.length === 0);
 ok("vas:'*' needs no tab ids", by['fx-exec'].addTabs.length === 0 && by['fx-exec'].noop);
 ok('an account already fully granted is a no-op', by['fx-done'].noop);
 /* F2 decision (spec 071 Phase F): Phase E put the VT team leader and campaign manager reports INSIDE Agent Analytics
@@ -75,7 +75,7 @@ const dir = path.join(HERE, 'scratch', 'vt-grant'); fs.mkdirSync(dir, { recursiv
 const fx = path.join(dir, 'fixture.json'); fs.writeFileSync(fx, JSON.stringify({ app_users: users, assignments }));
 const dry = spawnSync(process.execPath, [TOOL, '--fixture', fx], { encoding: 'utf8' });
 ok('the fixture dry run exits 0', dry.status === 0, dry.stderr);
-ok('the dry run prints the plan', /fx-viewer/.test(dry.stdout) && /tabs\.vas \+= vt_mtd, vt_weekly, vt_daily/.test(dry.stdout));
+ok('the dry run prints the plan', /fx-viewer/.test(dry.stdout) && dry.stdout.includes('tabs.vas += ' + VT_TABS.join(', ')));
 ok('the dry run prints counts by role', /by role: /.test(dry.stdout) && /team_leader/.test(dry.stdout), dry.stdout.slice(-400));
 ok('the dry run says nothing was written', /nothing written/.test(dry.stdout));
 const noOwner = spawnSync(process.execPath, [TOOL, '--apply'], { encoding: 'utf8', env: { ...process.env, VT_GRANT_APPLY: '' } });

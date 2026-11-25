@@ -75,14 +75,19 @@ jobs:
       # needs the November reference files OUTSIDE the repo (../reference/zips/vt/) and skips with a notice without them.
       # verify-tracker-removed / verify-vt-build / -pages / -portal build the site themselves; the tabs run is last so it
       # reads the build those leave.
-      - name: Vehicle Tracking suites (spec 071)
+      # SPEC 072 (2026-11-25): the consolidated VT Report. verify-vt-views and verify-vt-export are pure; verify-vt-dashboard
+      # drives the BUILT page in Chromium (it builds the site itself) and runs beside verify-vt-tabs at the end.
+      # verify-vt-report-oracle needs the owner's master workbook OUTSIDE the repo (../reference/zips/vt-master/) and skips
+      # with a notice without it, exactly like verify-vt-oracle.
+      - name: Vehicle Tracking suites (specs 071 + 072)
         run: |
           set -e
           for t in verify-tracker-removed verify-grant-tabs-071 verify-audit-permissions-071 \
                    verify-vt-rules verify-vt-periods verify-vt-rating verify-vt-engine verify-vt-oracle \
+                   verify-vt-views verify-vt-report-oracle verify-vt-export \
                    verify-vt-db verify-vt-worker verify-vt-station verify-vt-isolation verify-vt-build verify-vt-pages \
                    verify-vt-digest verify-vt-portal verify-vt-vas-golden verify-vt-station-fixes \
-                   verify-vt-health verify-vt-validate verify-vt-tabs verify-vt-bi-two-files; do
+                   verify-vt-health verify-vt-validate verify-vt-dashboard verify-vt-tabs verify-vt-bi-two-files; do
             echo "== $t =="; node nicks_code/diagnostics/$t.mjs
           done
           echo "== verify-agent-card (VT fixture mode) =="; CBX_VT_FIXTURE=1 node nicks_code/diagnostics/verify-agent-card.mjs

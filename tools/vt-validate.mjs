@@ -77,8 +77,11 @@ export function validateVtPackage({ files = [], agentList = null, periodEnd = nu
     }
     sources.push(src);
   }
-  /* the thin-pull guard: each daily file against the EARLIER file of its kind in the same folder */
-  for (const kind of ['vtBiFitted', 'vtSchedMissed']) {
+  /* The thin-pull guard: each file against the EARLIER file of its kind in the same folder. The Schedulers Data
+     sheet rides it too (spec 072 U-6, engine guardUpload kind 'schedulers'): the master sheet is the whole history,
+     so its case count only grows and a suddenly short one is a bad export — the station refuses it, so the
+     validator must say so first. */
+  for (const kind of ['vtBiFitted', 'vtSchedMissed', 'vtSchedulers']) {
     const ofKind = sources.filter((s) => s.kind === kind).sort((a, b) => String(a.extractOn).localeCompare(String(b.extractOn)));
     for (let i = 1; i < ofKind.length; i++) {
       const g = VT.guardUpload(GUARD_KIND[kind], ofKind[i].cases, ofKind[i - 1].cases, false);
@@ -87,7 +90,7 @@ export function validateVtPackage({ files = [], agentList = null, periodEnd = nu
   }
   const has = (k) => sources.some((s) => s.kind === k);
   if (has('vtBiFitted') !== has('vtSchedMissed')) f('MEDIUM', `Only the ${has('vtBiFitted') ? 'BI Active Fitted' : 'Scheduled & Missed'} file is here — the day needs both; a missing day shifts first-seen sale days to the next upload.`);
-  for (const k of ['vtBiFitted', 'vtSchedMissed']) {
+  for (const k of ['vtBiFitted', 'vtSchedMissed', 'vtSchedulers']) {
     const days = sources.filter((s) => s.kind === k).map((s) => s.extractOn);
     const dup = days.filter((d, i) => d && days.indexOf(d) !== i);
     if (dup.length) f('MEDIUM', `Two ${KIND[k]} files carry the same extract date ${dup[0]} — the station keeps the first and refuses the same bytes twice; check which is the real pull.`);

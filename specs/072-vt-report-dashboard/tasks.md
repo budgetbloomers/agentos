@@ -238,19 +238,19 @@ What Phase E needs to know:
 
 ## Phase E · Export, integrity, health, validator, docs · one builder (after D)
 
-- [ ] **E1 · The three integrity checks** (panel 20) in `nicks_code/vt-dashboard.js`: K17, K18 and the scheduler-name check as engine **verdicts**, each with an icon and the words OK / CHECK, printing both sides and the difference on CHECK, and never blocking the page (FR-050…054).
+- [x] **E1 · The three integrity checks** (panel 20) in `nicks_code/vt-dashboard.js`: K17, K18 and the scheduler-name check as engine **verdicts**, each with an icon and the words OK / CHECK, printing both sides and the difference on CHECK, and never blocking the page (FR-050…054).
   - Files: 1.
-- [ ] **E2 · "Where the sources disagree"** (panel 19): the new counts beside the carried-forward 071 figures, in the floor guide's wording (FR-014, FR-015).
+- [x] **E2 · "Where the sources disagree"** (panel 19): the new counts beside the carried-forward 071 figures, in the floor guide's wording (FR-014, FR-015).
   - Files: 1.
-- [ ] **E3 · `.xlsx` export** through `workbookFor` / `exportView`: one sheet per panel, built from the same model object, plus a header sheet carrying view, cycle, data-through and rule-book version; no customer field (FR-055…057).
+- [x] **E3 · `.xlsx` export** through `workbookFor` / `exportView`: one sheet per panel, built from the same model object, plus a header sheet carrying view, cycle, data-through and rule-book version; no customer field (FR-055…057).
   - Verify: `verify-vt-export.mjs` (new) — SC-007, the file's figures equal the screen's.
   - Files: 2.
-- [ ] **E4 · Grants, validator, health, tick** — **[P]** with E3: `vt_report` in `tools/vt-grant-tabs.mjs` and `tools/audit-permissions.mjs`; the new file in `tools/vt-validate.mjs` (and the retired slot named as retired); the page in `tools/vt-verify.mjs` so it joins the daily tick; a `vt-schedulers-stale` alert in `worker/src/vt-health.mjs` when the newest Schedulers Data receipt is older than the newest BI receipt by more than `guards.uploadGapWorkingDays`.
+- [x] **E4 · Grants, validator, health, tick** — **[P]** with E3: `vt_report` in `tools/vt-grant-tabs.mjs` and `tools/audit-permissions.mjs`; the new file in `tools/vt-validate.mjs` (and the retired slot named as retired); the page in `tools/vt-verify.mjs` so it joins the daily tick; a `vt-schedulers-stale` alert in `worker/src/vt-health.mjs` when the newest Schedulers Data receipt is older than the newest BI receipt by more than `guards.uploadGapWorkingDays`.
   - Verify: `verify-vt-tabs`, `verify-vt-validate`, `verify-vt-health`.
   - Files: 5.
-- [ ] **E5 · Docs** — **[P]** with E3/E4: `specs/072-vt-report-dashboard/deploy-checklist.md` (every suite in order, the two palette validator reports, the migration-073 apply step, the post-deploy smoke, and the standing note that 073 is applied by Nick) and `floor-guide.md` (what each panel means, the four views in plain words, why the page's `72+` buckets may differ from the owner's workbook as his sheet ages — D5 — and the carried-forward known differences).
+- [x] **E5 · Docs** — **[P]** with E3/E4: `specs/072-vt-report-dashboard/deploy-checklist.md` (every suite in order, the two palette validator reports, the migration-073 apply step, the post-deploy smoke, and the standing note that 073 is applied by Nick) and `floor-guide.md` (what each panel means, the four views in plain words, why the page's `72+` buckets may differ from the owner's workbook as his sheet ages — D5 — and the carried-forward known differences).
   - Files: 2 new.
-- [ ] **E6 · Final checkpoint.** Every `verify-vt-*` suite green, including the three that must be **unchanged** passes. Then hand to Nick: he applies migration-073, deploys, republishes, and runs the post-deploy smoke. **This spec's builders do not deploy, do not run wrangler, and make no live Supabase write.**
+- [x] **E6 · Final checkpoint.** Every `verify-vt-*` suite green, including the three that must be **unchanged** passes. Then hand to Nick: he applies migration-073, deploys, republishes, and runs the post-deploy smoke. **This spec's builders do not deploy, do not run wrangler, and make no live Supabase write.**
 
 ---
 
@@ -266,3 +266,50 @@ What Phase E needs to know:
 - **C1 + C2** (charts and tokens) are independent of **C3 + C4** (the page) if two builders agree the function signatures first; otherwise one builder, in order.
 - **E3, E4 and E5** are genuinely independent and are the only three-way parallel in the plan.
 - **Never** parallelise A with B, B with D, or any two of C / D / E — they write the same two files.
+
+---
+
+### Phase E build note (2026-11-25, Phase E builder)
+
+E1–E6 are done; every VT suite and the VAS baseline are green with counts only up. What is left for the owner is
+`specs/072-vt-report-dashboard/deploy-checklist.md`, which is the single runbook for this deploy (071's stays the
+record for migrations 071/072 and the monthly budgets, and now points at it).
+
+- **E3 reads the model, and so does the screen — through ONE spec.** Rather than a second enumeration of every column
+  beside the panels', each panel now builds a `*Spec(D)` object (`sheet`, `cols`, `rows`) of **typed cells**
+  (`n`/`pc`/`rd`/`d2`/`sv`, and `drawn(html, words)` for a chart or a change chip). `table()` prints `fmt(t, v)` and
+  `workbookFrom(D)` writes `v` itself with the matching number format, so the file and the page cannot drift and the
+  dozens of `== null ? absent()` checks are gone from the page. **20 sheets**: `About this export` (view, cycle, as-at,
+  rule-book version, what `—` means, no customer data), `Exco Summary`, `Performance Trend`, `Channel Performance`,
+  `Campaign Breakdown`, `Cycle Performance`, `Sales vs budget`, `Forecast vs Actual`, `Detailed Breakdown`,
+  `Key Insights`, `Fitted GWP`, the FOUR `Pivot - …` sheets (the screen shows one scope, the file carries all four),
+  `Agent & Scheduler Summary` (as the five controls are set), `Upcoming Fitments`, `Rollover Follow-up`,
+  `Sources Disagree`, `Integrity Checks`. Three preamble rows on every sheet name the panel, the view, the month and
+  the as-at date. File name: `VT Report - <view label> - <Month Year> to <dd Mon>.xlsx`. A panel with nothing honest to
+  say (no budget, no GWP, no rollover, no booking) has **no sheet**, never a sheet of noughts.
+- **The fold is proved twice.** `verify-vt-export` builds the workbook with every fold open, then closed, and asserts
+  the sheets are byte-identical; `verify-vt-dashboard` R14 compares **every painted cell of every panel table against
+  its exported cell** (14 tables, 552 cells, 10 drawn cells carrying words instead) folded and open, and both runs
+  agree exactly.
+- **E1/E2 were built in C and D, so they were EXTENDED, not re-created.** Both panels gained the figures behind them:
+  the integrity panel now also has a folded table (check, verdict, computed, expected, difference, formula, workbook
+  cell), and the disagreement panel a table whose last two rows are the carried-forward 071 **11 hand credits** and
+  **~6.6 % relabels** in the floor guide's own wording, beside the six new counts. Both leave in the `.xlsx` exactly as
+  they read.
+- **One control that did nothing is gone.** With no Schedulers Data sheet, the four pivot scope chips repainted the same
+  sentence — `verify-vt-tabs` caught it the moment the VT Report joined the sweep. The chips are now not drawn in that
+  state and the panel says there is nothing to switch between until the sheet lands.
+- **E4.** `vt_report` is in `VT_TABS` in **both** tools, so a VT grant proposes it and `audit-permissions` reports it
+  MISSING (never DEAD — the page ids are read from PULSE's own NAV). `tools/vt-validate.mjs` now runs the thin-pull and
+  duplicate-extract-date guards over the Schedulers Data file as well as the two daily ones (the engine's
+  `guardUpload('schedulers', …)` already existed). `worker/src/vt-health.mjs` gained **`vt-schedulers-stale`** on the
+  existing `kv:health-alerts` path — no new channel, no new recipient — warning at two working days behind the newest
+  BI file, critical at five, silent before the first sheet ever lands, self-clearing. The tick gained the three pure
+  072 suites (`verify-vt-views`, `verify-vt-report-oracle`, `verify-vt-export`): **+3.9 s, ~17 s → ~21 s**;
+  `verify-vt-dashboard` went into `verify.yml` beside `verify-vt-tabs`, not into the tick.
+- **`vt-tab-source.mjs` now drives four VT pages**, so `verify-all-tabs` and `verify-controls` cover the VT Report too.
+  It compares the page's figures (counts, rates, dialing days, buckets, integrity, per-channel sales) to
+  `VTEngine.dashboard()`, not the deep equal — the previous-cycle source may be a frozen digest live and that only
+  moves a card's `delta`. The deep equal stays in `verify-vt-dashboard` R2.
+- **No engine change.** `nicks_code/vt-engine.js` is untouched by Phase E (1,758 lines, unsplit).
+- **migration-073 is still NOT applied**, and no builder deployed, ran wrangler or wrote to Supabase.

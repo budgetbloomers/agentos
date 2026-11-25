@@ -17,7 +17,7 @@ const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } el
 console.log('\n1 · page ids come from the apps');
 const PAGES = A.readPages(fs.readFileSync(path.join(ROOT, 'nicks_code', 'index.html'), 'utf8'), fs.readFileSync(path.join(ROOT, 'Chatterbox_AgentOS_Analytics.html'), 'utf8'));
 ok('PULSE NAV yields the VAS pages (dashboard, mtd, data …)', ['dashboard', 'mtd', 'data'].every((x) => PAGES.vas.includes(x)), PAGES.vas.join());
-ok('the three VT pages are real VAS pages now (vt_mtd, vt_weekly, vt_daily)', A.VT_TABS.every((x) => PAGES.vas.includes(x)), PAGES.vas.join());
+ok('every VT page is a real VAS page now (' + A.VT_TABS.join(', ') + ')', A.VT_TABS.every((x) => PAGES.vas.includes(x)), PAGES.vas.join());
 ok('Ops pages are read', PAGES.ops.length > 5, String(PAGES.ops.length));
 ok('tracker is not a known app any more (only vas and ops tab lists are audited)', A.APPS.join() === 'vas,ops' && A.RETIRED_APPS.includes('tracker'));
 
@@ -43,7 +43,7 @@ ok('the input account is not mutated', JSON.stringify(u3) === before);
 const r5 = A.auditUser({ username: 'fx-admin', role: 'admin', apps: ['vas', 'tracker'], tabs: { tracker: ['*'] } }, PAGES);
 ok('an admin sees every VT page: inert grant reported, no VT line', r5.inert.length === 2 && r5.vtMissing === null);
 const L = A.linesFor(r3).join('\n');
-ok('the printed lines say DEAD-INERT and VT in plain words', /DEAD-INERT apps:tracker, tabs\.tracker/.test(L) && /VT: a former Tracker user without vt_mtd, vt_weekly, vt_daily/.test(L), L);
+ok('the printed lines say DEAD-INERT and VT in plain words', /DEAD-INERT apps:tracker, tabs\.tracker/.test(L) && L.includes('VT: a former Tracker user without ' + A.VT_TABS.join(', ')), L);
 
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 if (fail) { console.log('FAILURES:'); failures.forEach((f) => console.log('  ✗ ' + f)); process.exit(1); }

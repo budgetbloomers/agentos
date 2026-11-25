@@ -6,8 +6,9 @@
  * GitHub Actions is off (2026-09-16), so the nightly proof in publish-digests.yml does not run; the local tick
  * (tools/tick-local.mjs) is what runs on a schedule. This is the cheap half of the VT suites — pure Node, no browser, no
  * network, no credentials — so the tick stays fast: the rule book drift guard, the calendar, the rating, the engine, the
- * engine against the November reference report (skips without ../reference/zips/vt/), the health logic, the validator and
- * the two permission tools. The tick stamps the result as the `verify-vt` step in kv:jobs-status, and a red stamp raises
+ * engine against the November reference report (skips without ../reference/zips/vt/), the VT Report's own views, its
+ * .xlsx export and its oracle over the owner's master workbook (spec 072; skips without ../reference/zips/vt-master/),
+ * the health logic, the validator and the two permission tools. The tick stamps the result as the `verify-vt` step in kv:jobs-status, and a red stamp raises
  * the existing "verification-failed" banner (worker/src/health.mjs). The browser suites stay in verify.yml / by hand.
  * Exit 0 = all green; otherwise the last line names the red suites.
  */
@@ -16,7 +17,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/* spec 072 E4: the three pure 072 suites join the daily tick — the dashboard's own views and integrity verdicts
+   (verify-vt-views, ~0.3 s), the .xlsx export against the model (verify-vt-export, ~0.3 s) and the oracle over the
+   owner's master workbook (verify-vt-report-oracle, ~3.2 s, which SKIPS where ../reference/zips/vt-master/ is not on
+   the machine). About 3.8 s added. The BROWSER suite for the page (verify-vt-dashboard) stays out of the tick and
+   runs in .github/workflows/verify.yml and by hand, like every other browser suite. */
 export const VT_PURE_SUITES = ['verify-vt-rules', 'verify-vt-periods', 'verify-vt-rating', 'verify-vt-engine', 'verify-vt-oracle',
+  'verify-vt-views', 'verify-vt-report-oracle', 'verify-vt-export',
   'verify-vt-health', 'verify-vt-validate', 'verify-grant-tabs-071', 'verify-audit-permissions-071'];
 
 export function runAll(suites = VT_PURE_SUITES, run = (s) => spawnSync(process.execPath, [path.join(ROOT, 'nicks_code', 'diagnostics', s + '.mjs')], { cwd: ROOT, encoding: 'utf8', timeout: 300000, windowsHide: true })) {

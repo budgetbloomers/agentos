@@ -4,7 +4,7 @@
  * MANAGEMENT_APPS. An account whose only management app was 'tracker' would then silently become portal-only. This tool
  * runs BEFORE that deploy: it lists every app_users row that holds 'tracker' (in apps or tabs), every VT team leader
  * (by CB) and every campaign manager whose cm:assignments row names VT, and proposes
- *     apps += 'vas'      tabs.vas += ['vt_mtd', 'vt_weekly', 'vt_daily']
+ *     apps += 'vas'      tabs.vas += ['vt_report', 'vt_mtd', 'vt_weekly', 'vt_daily']
  * It NEVER removes anything: stale 'tracker' entries stay in the data, inert (plan §R (c)).
  *
  *   node tools/vt-grant-tabs.mjs                         dry run against the live database (read-only GETs)
@@ -27,7 +27,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const VT_TABS = ['vt_mtd', 'vt_weekly', 'vt_daily'];
+/* spec 072 E4: 'vt_report' (the consolidated VT Report, first in the NAV group) joins the three 071 pages, so a
+   VT grant opens the dashboard too. Nothing is ever removed and an account that already has it is a no-op. */
+export const VT_TABS = ['vt_report', 'vt_mtd', 'vt_weekly', 'vt_daily'];
 export const VT_TL_CBS = ['CB194', 'CB104', 'CB360', 'CB358'];
 const VT_CAMP_KEYS = new Set(['vt', 'matrix tracker', 'vehicle tracking', 'tracker']);
 const MANAGEMENT_AFTER = new Set(['ops', 'vas']);          // the Worker's set once 'tracker' is dropped (index.mjs MANAGEMENT_APPS)

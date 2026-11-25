@@ -1,5 +1,10 @@
 # Vehicle Tracking in AgentOS — a one-page guide for the floor
 
+> **The VT Report** — the one consolidated dashboard, first in the Vehicle Tracking sidebar — has its own guide:
+> `specs/072-vt-report-dashboard/floor-guide.md`. It also explains the **VT · Schedulers Data** upload, which replaced
+> the one-off opening book described under step 3 below, and why that page's `72+` figures can read differently from the
+> hand-kept workbook.
+
 ## What to upload each day, and in what order
 
 **Where Vehicle Tracking lives.** Pick **Vehicle Tracking** in the app dropdown at the top of the sidebar (beside Ops Analytics

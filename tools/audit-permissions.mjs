@@ -12,7 +12,7 @@
  *   DEAD-INERT — a grant for an app that no longer exists at all: `tracker` (Tracker Analytics, removed by spec 071
  *                Phase A). It opens nothing and the Worker ignores it. It is REPORTED, never stripped: --dead leaves it
  *                (plan §R (c) keeps the data; tools/vt-grant-tabs.mjs never removes anything either)
- *   VT         — spec 071: vt_mtd / vt_weekly / vt_daily are ordinary VAS tabs, read from PULSE's NAV like every other
+ *   VT         — specs 071/072: vt_report / vt_mtd / vt_weekly / vt_daily are ordinary VAS tabs, read from PULSE's NAV like every other
  *                page (MISSING / DEAD apply to them as to any page). An account that still carries a `tracker` grant but
  *                lacks the VT tabs is named on its own line — the person most likely to be looking for them.
  *
@@ -28,7 +28,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const APPS = ['vas', 'ops'];                 // the apps whose tab lists mean something
 export const RETIRED_APPS = ['tracker'];            // spec 071 Phase A: granted once, opens nothing now
-export const VT_TABS = ['vt_mtd', 'vt_weekly', 'vt_daily'];
+/* spec 072 E4: vt_report joins them. The page ids themselves are read from PULSE's own NAV (readPages), so a new
+   VT page is MISSING for an account that lacks it and is never DEAD — this list is only what a VT grant should hold. */
+export const VT_TABS = ['vt_report', 'vt_mtd', 'vt_weekly', 'vt_daily'];
 
 /** page ids straight from each app's source — the app is the authority, never a list kept here */
 export function readPages(vasSrc, opsSrc) {

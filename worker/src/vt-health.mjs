@@ -1,12 +1,15 @@
 /**
  * VEHICLE TRACKING HEALTH (spec 071, Phase F, task F3) — the sentinel watches the VT pipeline the way health.mjs watches VAS.
  *
- * Five alerts, all in plain words, all clearing themselves the tick the condition ends (they ride kv:health-alerts, so they
+ * Seven alerts, all in plain words, all clearing themselves the tick the condition ends (they ride kv:health-alerts, so they
  * reach exactly the people the existing banner reaches — nobody new is added):
  *   vt-digest-stale    a VT upload was committed after the VT figures agents see were published (> 15 min), or the published
  *                      figures are for an older business month while this one has uploads
  *   vt-upload-gap      a working day (Mon–Fri, not an SA public holiday or a rule-book extra holiday) has passed with no
  *                      committed BI Active Fitted or no Scheduled & Missed file — sale days shift to the next upload
+ *   vt-schedulers-stale  the newest Schedulers Data sheet is more than `guards.uploadGapWorkingDays` working days behind the
+ *                      newest BI Active Fitted file, so the VT Report's scheduler, GWP and sale-date figures are as at an
+ *                      older day (spec 072 E4; never before the first sheet has landed)
  *   vt-staging-stuck   an upload has sat half-loaded for over an hour
  *   vt-budget-missing  the live business month has no Sales Review budgets in the rule book (the rating falls back to the
  *                      latest earlier month and says so) — or no budget at all
@@ -70,6 +73,14 @@ const dayLabel = (d) => { const t = new Date(d + 'T00:00:00Z'); return ['Sun', '
 export function vtWorkingDay(d, extra = VT_EXTRA_HOLIDAYS) {
   const w = new Date(d + 'T00:00:00Z').getUTCDay();
   return w >= 1 && w <= 5 && !saHolidaysFor(+d.slice(0, 4)).includes(d) && !extra.includes(d);
+}
+
+/** the VT working days strictly after `from` and up to and including `to` (spec 072 E4: the Schedulers Data gap) */
+export function workingDaysAfter(from, to, extra = VT_EXTRA_HOLIDAYS) {
+  if (!from || !to || to <= from) return 0;
+  let n = 0;
+  for (let d = addDays(from, 1); d <= to && n < 400; d = addDays(d, 1)) if (vtWorkingDay(d, extra)) n++;
+  return n;
 }
 
 /** the working days after `lastDay` whose files are already due at `nowMs` (today counts from 13:00 SAST) */
@@ -146,6 +157,25 @@ export function evaluateVtHealth(t) {
       message: 'No Vehicle Tracking ' + late.map((x) => KIND_LABEL[x.kind] + ' file since ' + dayLabel(x.last) + ' (missing: ' + x.miss.map(dayLabel).join(', ') + ')').join('; ')
         + '. Load the day\'s files on the Upload Station (VT slots). Until they are loaded, sales first seen on a later file are counted on that later day.',
       since: late.map((x) => addDays(x.last, 1)).sort()[0] });
+  }
+
+  /* 2b · THE SCHEDULERS DATA SHEET IS BEHIND THE DAILY FILES (spec 072 E4). The scheduler, the GWP and the true
+     sale date come from that one sheet and from nothing else, so once it has ever been loaded, a VT Report left
+     reading an old copy of it is a real gap: the panels do not lie (they say "needs the Schedulers Data upload" or
+     name their as-at), but nobody would know to re-upload. It never fires before the first one lands — there is
+     nothing to be stale against — and it clears itself the tick a newer sheet is committed. */
+  {
+    const dayOfKind = (k) => committed.filter((u) => u.kind === k).map((u) => String(u.extract_on || '').slice(0, 10)).filter(Boolean).sort().pop() || null;
+    const sch = dayOfKind('schedulers_data'), bi = dayOfKind('bi_fitted');
+    const gap = workingDaysAfter(sch, bi, t.extraHolidays || VT_EXTRA_HOLIDAYS);
+    if (sch && bi && gap > VT_HEALTH.uploadGapWorkingDays) {
+      alerts.push({ id: 'vt-schedulers-stale', severity: gap >= 5 ? 'critical' : 'warning',
+        message: 'The Vehicle Tracking Schedulers Data sheet is ' + gap + ' working day' + (gap === 1 ? '' : 's') + ' behind the daily files: the newest master sheet is '
+          + dayLabel(sch) + ' while BI Active Fitted has reached ' + dayLabel(bi)
+          + '. Until a newer one is loaded, the VT Report\'s scheduler pivots, the Agent & Scheduler Summary and every GWP figure are as at ' + dayLabel(sch)
+          + ', and a sale since then carries no scheduler, no GWP and no true sale date. Load the master VT report on the Upload Station (VT · Schedulers Data).',
+        since: addDays(sch, 1) });
+    }
   }
 
   /* 3 · a half-loaded upload */

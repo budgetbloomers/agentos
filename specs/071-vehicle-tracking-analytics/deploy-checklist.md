@@ -1,5 +1,10 @@
 # 071 Vehicle Tracking Analytics — deploy checklist (the single runbook)
 
+> **Spec 072 (the VT Report) has its own runbook: `specs/072-vt-report-dashboard/deploy-checklist.md`.** Use that one
+> for that deploy — migration 073, the `vt_report` grant, the `VT · Schedulers Data` upload that replaces the opening
+> book below, the `vt-schedulers-stale` alert and the new suites. This file stays the record for migrations 071/072, the
+> `tracker` removal, the monthly Sales Review budgets and the known differences from the hand-kept report.
+
 **The owner says "deploy". No builder runs any step below.** No builder has applied a migration, run `--apply`, deployed,
 or written to production. Every database test ran in PGlite, and every page test ran against fictional data.
 
