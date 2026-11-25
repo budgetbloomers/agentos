@@ -8283,6 +8283,17 @@ PAGES.data=()=>{
     ${nr.map(([k,v])=>`<tr><td class="l"><code>${esc(k)}</code></td><td class="l">${esc(v.code)} · ${esc(v.name)}</td>
       <td class="l"><select onchange="mapIdentity(this.dataset.k,this.value)" onfocus="fillAgentOptions(this)" data-k="${esc(k)}"><option value="">— keep —</option><option value="__ignore__">Ignore</option></select></td></tr>`).join('')}
     </tbody></table></div></div>`:'';
+  /* VEHICLE TRACKING MODE SHOWS ONLY ITS OWN SLOTS (the owner, 24 Nov: "for the upload station in vehicle tracking
+     remove everything that it doesnt need only what it does it leave on"; again 25 Nov: "I want to load it in vehicle
+     tracking tab upload station"). The ten VAS slots used to render FIRST, with the three VT slots below them and the
+     large-file card - so in the Vehicle Tracking tab the obvious place to drop "BI Active Fitted" was the VAS
+     "Power BI - Active Cases" slot, which refuses it and says "load it in Vehicle Tracking -> Upload Station", where
+     the owner already was. That loop cost a day of uploads. In VT mode nothing renders but the VT slots and the VT
+     receipts: no VAS slot, no VAS banner, no large-file card, nothing that cannot take a Vehicle Tracking file. */
+  const vtOnly = typeof VTApp!=='undefined' && typeof VTApp.on==='function' && !!VTApp.on() && typeof VTStation!=='undefined';
+  if(vtOnly) return `<div class="page-head"><h2>Vehicle Tracking · Upload station</h2>
+    <div class="sub">the two daily exports build every Vehicle Tracking report — drop each on its own slot, or click Choose file. The type is confirmed from the file's own columns, so a renamed file is fine. Nothing on this page can change a VAS figure.</div></div>
+    ${VTStation.slotsHtml()}${typeof VTPages!=='undefined'?VTPages.receiptsCardHtml():''}`;
   return `${listRefusedBanner()}${listAppliedBanner()}${unattributedBanner()}${staleGrainBanner()}<div class="page-head"><h2>Upload station</h2>
     <div class="sub">one slot per file — drop the file on its slot or click Choose file. Renamed files are fine: the type is confirmed from the file's own columns, and anything dropped on the wrong slot gets filed correctly with a heads-up.</div></div>
   <div class="slots">${slotCards}</div>

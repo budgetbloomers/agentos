@@ -234,6 +234,20 @@ try {
   const slots = await (await pu.waitForFunction(() => { const v = [...document.querySelectorAll('#view .slot[data-vtslot]')]; return v.length ? v.map((c) => c.dataset.vtslot) : false; }, null, { timeout: 30000 })).jsonValue();
   L = await look(pu);
   ok(L.vt && L.tab === 'data' && L.search === '?app=vt&page=data' && slots.join(',') === 'vtBiFitted,vtSchedMissed,vtSchedulers', 'the Upload Station opens inside Vehicle Tracking, with the three VT slots', J([L.vt, L.search, slots]));
+  /* 25 Nov 2026: the ten VAS slots used to render FIRST here, with the VT slots below them and the large-file card.
+     In the Vehicle Tracking tab the obvious place to drop "BI Active Fitted" was then the VAS "Power BI - Active
+     Cases" slot, which refuses it and says "load it in Vehicle Tracking -> Upload Station" - where the owner was.
+     VT mode must therefore show NOTHING but its own slots: no VAS slot can take a Vehicle Tracking file. */
+  const vtStation = await pu.evaluate(() => ({
+    vasSlots: [...document.querySelectorAll('#view .slot[data-slot]')].map((e) => e.dataset.slot),
+    vtSlots: [...document.querySelectorAll('#view .slot[data-vtslot]')].map((e) => e.dataset.vtslot),
+    heading: (document.querySelector('#view .page-head h2') || {}).textContent || '',
+    text: (document.getElementById('view') || document.body).innerText }));
+  ok(vtStation.vasSlots.length === 0, 'VT mode shows NO VAS slot at all — nothing that would refuse a VT file', vtStation.vasSlots.join(','));
+  ok(/Vehicle Tracking/.test(vtStation.heading), 'and the heading says which station this is', vtStation.heading);
+  ok(!/Power BI - Active Cases|ViciDial|QA Evaluations|Lead Management/.test(vtStation.text),
+    'and not one VAS slot name is on the page', vtStation.text.slice(0, 120));
+  ok(vtStation.vtSlots.length === 3, 'while all three VT slots are there', vtStation.vtSlots.join(','));
   ok(await pu.evaluate(() => typeof window.VTStation.afterCommit === 'function' && !!window.VTPublish), 'the publish hook is wired in VT mode (VTStation.afterCommit → VTPublish)');
   await pu.close();
   const pr = await open('reader', '/pulse/?app=vt'); await pulse(pr); L = await look(pr);
