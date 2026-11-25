@@ -352,3 +352,50 @@ Every disagreement above is **counted and shown** (FR-014), extending the 071 or
 - **Q4** The **`72+ in cycle` bucket is unreachable in the last three days of every cycle** (F0-15) — its 5 % share cannot be hit. Should that 5 % migrate to `72+ out cycle` late in the cycle, or is a zero there the intended signal?
 - **Q5** Should the **previous-cycle deltas be back-built** from the Schedulers Data sale dates (which reach back to 2026-08-21), or left reading "—" until `cycle-2026-12` gives the page its first real comparison? (A9.)
 - **Q6** The **scheduler spread is 62.3 % to 84.9 % fitted** (F0-17). Is there a per-scheduler target, or is the floor target (80 %) the only one? There is none in any source.
+
+---
+
+## Correction, 25 Nov 2026 — the daily exports build this report
+
+The owner, after the first deploy:
+
+> "the report for vehicle tracking needs to be build by the reports in the upload station, we are not going to be
+> uploading this master every month, that is the example which we need to get with the current data"
+
+`Master November 2026 - VT Report.xlsx` is the **example of the output**, not a monthly input. This reverses the
+*framing* of decision D1, not the engine's behaviour.
+
+### What was measured before changing anything
+
+Cross-referenced the master's `Schedulers Data` sheet (3,010 cases) against the 10 Nov daily exports. The daily files
+carry **none** of the sheet's three facts, so nothing could be re-sourced:
+
+| Fact | Result |
+|---|---|
+| Scheduler | 6 names in the master. `Last Modified By` has **74 distinct values, 0 exact matches** (380/1,078 loose first-name hits, ~35%). Internal/External Consultant: 4–5 values, **0 matches**. `Created By`: 47 values, 0 matches. |
+| GWP | **No column equals it**, and the bundle does not determine it — "Beam-e Budget" is both 99 and 199; up to **12 distinct GWP per `Product Bundle`**. |
+| Sale day | `Fitment Date` is later than the sale on **1,078/1,078** rows. `Contract Create Date` / `Installation Date`: later on 1,859/1,867, median **+4 days**, max **+62**. `Account Create Date` matches only **11/1,867** — an existing customer's account can predate the sale by **6,203 days**. |
+
+### What changed
+
+Nothing in the engine. `saleDay.basisPrecedence` already reads `schedulers_data > opening_book > first_seen`, so a
+sale **first seen after the book opened is dated by its own daily upload**. What changed is that the page no longer
+presents the sheet as a requirement, and no longer blanks itself over history it cannot date:
+
+1. The top banner is now **"Two panels wait on the Schedulers Data sheet"** — it names the two panels and says the
+   rest is built from the daily exports, an occasional extra and not a monthly chore.
+2. The no-uploads state says the two daily exports build the report; the sheet is optional.
+3. **The whole-page gate now explains itself.** A case already open when VT reporting started carries no sale day at
+   all, so it belongs to no business month. The page names how many, says they predate the book, states that no daily
+   export carries the day a sale was made, and says every sale from the next daily upload onward is dated by it.
+4. The two integrity rows that said a sale date "arrives with the next Schedulers Data sheet" now say what is true: a
+   new sale is dated by its own daily upload; the sheet is what dates pre-book history.
+
+### Consequence for the owner
+
+Upload only the two daily files and the dashboard fills from that day forward. The scheduler pivots and the
+hand-typed GWP stay empty — never zero — until the sheet is loaded, which may be once, occasionally, or never.
+`migration-073` uses `coalesce`, so a daily upload can never blank what a past sheet filled in.
+
+**Guards:** `verify-vt-dashboard` 173 (3 new: the undated book is named and explained, the daily-upload sentence, no
+zero painted), `verify-vt-rules` 72 (1 new: the dated `_changes` entry and its measurement must survive).

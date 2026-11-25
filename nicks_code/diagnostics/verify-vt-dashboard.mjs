@@ -110,6 +110,10 @@ function buildFixture(withSchedulers) {
 }
 const FULL = buildFixture(true);          // BI + Scheduled & Missed + Schedulers Data
 const NOSCH = buildFixture(false);        // the daily two only: the "needs the Schedulers Data upload" state
+/* THE LIVE STATE ON 25 Nov 2026: every case was already open when the book was opened, so not one carries a sale
+   day. No daily export carries the day a sale was made, so this history cannot be dated from one - the page must
+   SAY that rather than blank itself (the owner's correction: the daily exports are what build this report). */
+const UNDATED = (() => { const f = structuredClone(NOSCH); Object.values(f.book.cases).forEach((c) => { c.soldOn = null; c.soldBasis = 'unknown'; }); return f; })();
 let FX = FULL;
 function bookRpc(from) {   // what vt_book(p_from) returns (migration-071 + 073's seven columns)
   const cs = Object.values(FX.book.cases).filter((c) => !from || c.lastSeen >= from || ['scheduled', 'missed'].includes(c.status) || (c.soldOn && c.soldOn >= from));
@@ -535,7 +539,11 @@ try {
   ok(/Schedulers not on the Agent List/.test(t0) && lower.indexOf('kilo lima') > -1, 'a scheduler not on the Agent List is named, counted as typed', lower.indexOf('kilo lima'));
   FX = NOSCH; await reset(); await open('vt_report');
   { const t = await viewText();
-    ok(/Needs the Schedulers Data upload/.test(t), 'with no Schedulers Data the page says "Needs the Schedulers Data upload" in words');
+    /* the owner's correction (25 Nov 2026): the DAILY exports build this report and the Schedulers Data sheet is an
+       occasional extra, so the banner must name the panels that wait on it WITHOUT implying the page needs it. */
+    ok(/Two panels wait on the Schedulers Data sheet/.test(t), 'with no Schedulers Data the page names the two panels that wait on it');
+    ok(/built from the daily Upload Station exports/.test(t) && /not a monthly chore/.test(t),
+      'and says the daily exports build the rest, so the sheet is not a monthly chore');
     ok(/needs the Schedulers Data upload/.test(t) && !/R 0,00/.test(t), 'and paints no zero in its place (an absence is not a nought)');
     await page.addStyleTag({ content: '.tablewrap{content-visibility:visible!important}' });
     await page.screenshot({ path: path.join(SHOTS, 'vt-report-not-loaded.png'), fullPage: false }); }
@@ -548,6 +556,13 @@ try {
       'the book unreadable: the reason, no stale copy, and a Retry', N(t).slice(0, 0)); }
   resetWorker(); await reset(); await open('vt_report', { cycle: 'cycle-2026-08' });
   ok(/No August 2026 figures yet/.test(await viewText()), 'a business month with no sale: "No <Month> figures yet", never a screen of zeros');
+  FX = UNDATED; resetWorker(); await reset(); await open('vt_report');
+  { const t = await viewText();
+    ok(/figures yet/.test(t) && /carry no sale date/.test(t) && /already open when Vehicle Tracking reporting started/.test(t),
+      'a book of undated history NAMES and explains it, never a blank screen');
+    ok(/from the next daily upload onward is dated/.test(t), 'and says every new sale is dated by its own daily upload');
+    ok(!/0/.test(t.replace(/\d[\d,]*/g, (m) => (m === '0' ? '0' : 'N'))), 'and still paints no zero in its place'); }
+  FX = FULL; resetWorker();
   await reset(); await open('vt_report');
 
   /* ---------------------------------------------------------------- R14 · the .xlsx export (E3, SC-007) ----

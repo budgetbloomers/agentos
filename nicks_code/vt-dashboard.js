@@ -15,8 +15,14 @@
  * so on itself.
  *
  * AN ABSENCE IS NOT A NOUGHT (non-negotiable 6). No previous cycle → every change reads the rule book's absent
- * marker with the reason; no Schedulers Data upload → the GWP and scheduler figures read "needs the Schedulers Data
- * upload"; a channel with no budget row → "—" and a sentence. Nothing here is ever filled in with a zero.
+ * marker with the reason; no Schedulers Data upload → the GWP and scheduler panels say so and paint nothing; a
+ * channel with no budget row → "—" and a sentence. Nothing here is ever filled in with a zero.
+ *
+ * WHAT BUILDS THIS PAGE (the owner's correction, 25 Nov 2026): the two DAILY Upload Station exports. "we are not
+ * going to be uploading this master every month, that is the example which we need to get with the current data."
+ * The Schedulers Data sheet is an occasional extra that adds exactly three things no daily export carries — the
+ * scheduler, the hand-typed GWP, and a sale date for cases that predate this book — and its absence costs those
+ * panels and nothing else.
  *
  * THEME (FR-004): light/dark is the account's own (--vtc1…--vtc4 and the ink/grid tokens are defined in BOTH theme
  * blocks of index.html). Nothing on this page names a colour; the mockup's dark palette is never hard-coded.
@@ -253,8 +259,8 @@ function statesHtml(D) {
   if (gaps.length) out.push(warn('A day\'s upload is missing', gaps.length + ' working day' + (gaps.length === 1 ? '' : 's') + ' in this business month',
     gaps.map(function (g) { return '<b>' + esc(shortDay(g.date)) + '</b>: no ' + esc(g.missing.join(' or ')); }).join(' · ')
     + '. Every figure on this page still counts what did arrive; load the missing day\'s files in the Upload Station.'));
-  if (!D.gwp.loaded || !D.schedulers.loaded) out.push(warn('Needs the Schedulers Data upload', 'the scheduler, the GWP and the true sale date come from that sheet and from nothing else',
-    esc(D.gwp.words) + ' ' + esc(D.schedulers.words) + ' Nothing on this page is filled in with a zero in its place.', 'info'));
+  if (!D.gwp.loaded || !D.schedulers.loaded) out.push(warn('Two panels wait on the Schedulers Data sheet', 'every other figure on this page is built from the daily Upload Station exports',
+    esc(D.gwp.words) + ' ' + esc(D.schedulers.words) + ' That sheet is an occasional extra, not a monthly chore: load it when you want the scheduler pivots, the hand-typed GWP, or a sale date for cases that predate this book. Nothing on this page is filled in with a zero in its place.', 'info'));
   if (!D.prevCycle.present) out.push(warn('No previous cycle to compare with', D.prevCycle.cycle ? monthOf(D.prevCycle.cycle) : '',
     esc(D.prevCycle.words) + (D.prevWhy ? ' (' + esc(D.prevWhy) + ')' : ''), 'info'));
   if (D.unmapped.length) out.push(warn('Campaigns not in the channel map (' + D.unmapped.length + ')', 'they are counted under Other and named here, never dropped',
@@ -715,7 +721,7 @@ function disagreeSpec(D) {
     { cells: [sv('Sellers not matched to a CB'), n(g.unmatchedSellers), pc(null), sv('they count in every total; only the person row is missing'), sv('this cycle (new in 072)')] },
     { cells: [sv('Campaigns not in the channel map'), n(g.unmappedCampaigns), pc(null),
       sv(g.unmappedNames.length ? 'as the source spells them: ' + g.unmappedNames.join(', ') : 'every campaign in this view is mapped'), sv('this cycle (new in 072)')] },
-    { cells: [sv('Sales with no sale date'), n(g.noSaleDay), pc(null), sv('counted; the date arrives with the next Schedulers Data sheet'), sv('this cycle (new in 072)')] },
+    { cells: [sv('Sales with no sale date'), n(g.noSaleDay), pc(null), sv('already open when this book started, so no month owns it; a new sale is dated by its own daily upload'), sv('this cycle (new in 072)')] },
     { cells: [sv('Sales with no GWP'), n(g.gwpMissing), pc(null),
       sv(D.gwp.loaded ? 'a row the sheet leaves blank in column E; nothing is filled in for it' : 'not countable until the Schedulers Data sheet lands'), sv('this cycle (new in 072)')] },
     { cls: 'subtotal', cells: [sv('Hand credits carried forward'), n(g.carried.handCredits), pc(null), sv(g.carried.words), sv('spec 071 floor guide, measured by verify-vt-oracle')] },
@@ -739,7 +745,7 @@ function disagreeHtml(D) {
     item('Schedulers not matched to a CB', g.unmatchedSchedulers, 'Counted under the name the sheet types, listed above the panels, never guessed away.'),
     item('Sellers not matched to a CB', g.unmatchedSellers, 'They count in every total; only the person row is missing until the Agent List carries them.'),
     item('Campaigns not in the channel map', g.unmappedCampaigns, g.unmappedNames.length ? 'As the source spells them: <b>' + g.unmappedNames.map(esc).join('</b>, <b>') + '</b>. They count under Other.' : 'Every campaign in this view is mapped.'),
-    item('Sales with no sale date', g.noSaleDay, 'A case no source has dated yet: it is counted, and its date arrives with the next Schedulers Data sheet.'),
+    item('Sales with no sale date', g.noSaleDay, 'A case that was already open when this book started. No daily export carries the day a sale was made, so no business month owns it. Every sale from the first daily upload onward is dated by that upload; the Schedulers Data sheet is what dates this history.'),
     item('Sales with no GWP', g.gwpMissing, D.gwp.loaded ? 'A row the sheet leaves blank in column E. Nothing is filled in for it.' : 'GWP needs the Schedulers Data upload, so this is not yet countable and reads ' + esc(absent()) + '.')
   ].join('');
   var sp = disagreeSpec(D);
@@ -905,15 +911,25 @@ function render() {
   if (!ready()) return headHtml(null) + '<div class="card vt-loading"><div class="empty"><div class="big">Reading the Vehicle Tracking book…</div>The case book and the Agent List for this business month are loading.</div></div>';
   var committed = C.receipts.filter(function (u) { return u.state === 'committed'; }).length;
   if (!Object.keys(C.book.cases).length && !committed) return headHtml(null) + '<div class="card vt-empty"><div class="empty"><div class="big">No Vehicle Tracking uploads yet</div>'
-    + 'Load the day\'s <b>BI Active Fitted</b> and <b>Scheduled &amp; Missed</b> exports in the Upload Station, and the <b>Schedulers Data</b> sheet for the scheduler, the GWP and the true sale date. This report builds itself from them.'
+    + 'Load the day\'s <b>BI Active Fitted</b> and <b>Scheduled &amp; Missed</b> exports in the Upload Station and this page fills in. The <b>Schedulers Data</b> sheet is an optional extra for the scheduler pivots and the hand-typed GWP; it is not needed every month.'
     + (typeof root.tabAllowed !== 'function' || root.tabAllowed('data') ? '<p style="margin:12px 0 0"><button class="btn small primary" onclick="go(\'data\')">Open the Upload Station</button></p>' : '') + '</div></div>';
   var D = model();
   /* "no figures yet" is NO SALE IN THIS VIEW AT ALL — read off the model (no sale, so no week), never a screen of
      zeros. dataThrough is the cycle end once any case exists, so it cannot answer this question. */
   if (!D.counts.sales && !D.weeks.length) {
     var prev = cycleKeys().filter(function (k) { return k < currentCycle().key; })[0];
+    /* WHY THERE IS NOTHING TO PAINT, in the owner's own terms. A case already open when VT reporting started carries
+       no sale day at all (saleDayOf: first_seen is not later than openedOn), so it belongs to no business month. That
+       is history, not a fault — it is named and explained here instead of being left as a blank screen. No daily
+       export carries the day a sale was made (measured 25 Nov: Fitment Date is later on 1,078/1,078 rows, Contract
+       Create Date by a median of 4 days, Account Create Date runs back years for an existing customer), so this
+       history can be dated only by the Schedulers Data sheet. */
+    var undated = D.disagree && D.disagree.noSaleDay ? D.disagree.noSaleDay : 0;
     return headHtml(null) + controlsHtml(null) + '<div class="card vt-empty"><div class="empty"><div class="big">No ' + esc(monthOf(currentCycle().key)) + ' figures yet</div>'
       + 'No Vehicle Tracking sale falls in this business month yet. Nothing is shown as a zero in its place.'
+      + (undated ? '<p style="margin:10px 0 0">' + esc(N(undated)) + ' case' + (undated === 1 ? '' : 's') + ' in the book carry no sale date: they were already open when Vehicle Tracking reporting started'
+        + (C.book.openedOn ? ' on <b>' + esc(shortDay(C.book.openedOn)) + '</b>' : '') + ', so they sit outside every business month. No daily export carries the day a sale was made, so they cannot be dated from one. '
+        + '<b>Every sale from the next daily upload onward is dated by that upload</b> and appears here. To date this history as well, load the <b>Schedulers Data</b> sheet.</p>' : '')
       + (prev ? '<p style="margin:12px 0 0"><button class="btn small" onclick="VTDash.set(\'cycle\',\'' + jsq(prev) + '\')">' + esc(monthOf(prev)) + ' (final)</button></p>' : '') + '</div></div>';
   }
   /* TWO COLUMNS WHERE THERE IS ROOM, ONE ON A PHONE (the owner's layout decision): the panels sit in a grid that

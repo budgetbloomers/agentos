@@ -68,6 +68,10 @@ ok('vt-1.3: the BI header is shared with the VAS BI Active export, so detection.
   ok('a dated _changes[] entry (2026-11-24) says the BI header is shared with the VAS BI Active export and the slot + name decide', !!c && /shared with the VAS BI Active export/.test(c.why) && /slot and the file name/.test(c.why) && /incident 2026-11-24/.test(c.why), c && c.why.slice(0, 120)); }
 { const c = SPEC._changes.find(x => x.date === '2026-11-24' && /rating\.drivers/.test(x.key));
   ok('a dated _changes[] entry (2026-11-24) names the reason (double counting, ~12 points for one missed sale) and who decided', !!c && /double counting/i.test(c.why) && /12 points/.test(c.why) && /owner/.test(c.by) && /vt-1\.2/.test(c.to), c && c.by); }
+{ const c = SPEC._changes.find(x => x.date === '2026-11-25' && /vtSchedulers/.test(x.key));
+  ok('a dated _changes[] entry (2026-11-25) records the owner correction - the DAILY exports build the report, the Schedulers Data sheet is occasional - and the measurement behind it',
+    !!c && /not going to be uploading this master every month/.test(c.why) && /74 distinct values/.test(c.why) && /1,078\/1,078/.test(c.why) && /6,203 days/.test(c.why) && /owner/.test(c.by),
+    c && c.to); }
 ok('Missed Rate and Fitted vs target are named as not scored, with the reason', /double counting/.test(E.VT_RULES.rating.notScored.missRate || '') && /Fitment Rate/.test(E.VT_RULES.rating.notScored.fittedVsTarget || ''));
 ok('the card\'s unscored info fields are listed in the rule book and are not drivers', Array.isArray(E.VT_RULES.rating.info) && ['missed', 'missRate', 'cancelled', 'canRate', 'fitDone'].every(k => E.VT_RULES.rating.info.includes(k)) && !E.VT_RULES.rating.drivers.some(d => E.VT_RULES.rating.info.includes(d.k)));
 
