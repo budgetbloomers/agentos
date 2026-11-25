@@ -1,7 +1,7 @@
 {
   "_source": "THE VT RULE BOOK OF RECORD (Spec Kit 071). Finalised from specs/071-vehicle-tracking-analytics/rules-draft.json; the evidence for every value is in that draft, spec.md (F1-F12, A1-A12, D7) and specs/vt-analytics/workbook-rules.md. The operative copy is VT_RULES inlined in nicks_code/vt-engine.js (the apps run from file://): every key here that does not start with '_' must equal VT_RULES field by field - nicks_code/diagnostics/verify-vt-rules.mjs fails on drift. Change both together, with a dated _changes[] entry.",
   "_generated": "2026-11-23",
-  "version": "vt-1.3",
+  "version": "vt-1.4",
   "_changes": [
     { "date": "2026-11-23", "by": "Spec Kit 071 Phase B builder", "key": "*", "from": "rules-draft.json (draft 1)", "to": "vt-1.0", "why": "first rule book of record; _evidence prose dropped (it lives in the draft and the spec), _cells kept" },
     { "date": "2026-11-23", "by": "Spec Kit 071 Phase B builder", "key": "vat", "from": 0.15, "to": 1.15, "why": "the draft said 'must equal MTD_RULES.vat', and MTD_RULES.vat is the MULTIPLIER 1.15 (specs/mtd_engine_rules.json reference_data.vat_multiplier); stored the same way so the equality is literal. Fitted value = charge ex VAT x vat" },
@@ -15,7 +15,24 @@
     { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder", "key": "columns.bi.contractStatus / deactivateOn / biOptional", "from": null, "to": ["B", "P"], "why": "the two BI contract columns, read by position (else by name), optional: a file without them deactivates nothing" },
     { "date": "2026-11-23", "by": "Spec Kit 071 derived-cancellation builder", "key": "reports.columns canRate / canBudget / cancelled / fitDone", "from": "Cancelled null; no Cancellation %", "to": "Cancelled count; canRate = cancelled / sales; canBudget = budgets[cycle].cancelled[sub]; fitDone keeps an install that was later deactivated", "why": "R6; denominators stay ALL the set's sales (a cancelled sale stays in Sales, as the hand report's Sale Count = 1 on cancelled rows)" },
     { "date": "2026-11-24", "by": "the owner, choosing 'Two drivers (Recommended)' after an executive review of the score (Barry: 'you can't have missed and fitted - it's double counting ... a double minus on your score'); built by the Spec Kit 071 two-driver builder", "key": "version / rating.drivers / rating.notScored / rating.lowerIsBetter", "from": "vt-1.1: four drivers targetAch 35 / fitRate 30 / missRate 20 (lower) / fitted 15", "to": "vt-1.2: two drivers targetAch 50 / fitRate 50; Missed Rate and Fitted vs target shown, never scored", "why": "DOUBLE COUNTING. Once a sale is scheduled it ends fitted or not; Missed Rate scored the same unfitted sale Fitment Rate already scores, and Fitted vs target (target x days x fitment budget) re-scored Target Achievement x Fitment Rate. For an agent with 60 sales, 3 missed (5 %) scored 20/20 on Missed Rate, 4 missed (6.7 %) 10/20, 6 missed (10 %) 0/20, and the same missed sale also lowered Fitment Rate and Fitted vs target: about 12 points for ONE sale. Now every outcome counts once: a missed or cancelled sale lowers Fitment Rate only. Measures, targets, scored-when rules, the half-of-target floor, renormalisation and the VAS bands are unchanged; the lower-is-better code path stays in the engine (tested) for future use. Landed before the first VT figures were published, so no agent's published score changes. The worked example (fictional CB9101) moves from 59.7 Needs support to 61.7 Building" },
-    { "date": "2026-11-24", "by": "the owner (\"this bi is not the same for vas its two different\"), built by the incident hotfix", "key": "detection.vtBiFitted.nameHint", "from": null, "to": "fitted", "why": "detection.vtBiFitted matches by header but the header is shared with the VAS BI Active export; the slot and the file name ('Fitted') decide (incident 2026-11-24: the VAS 'BI Active 231126.xlsx', 31,712 rows, was taken by the Vehicle Tracking intake, so VAS got no BI and the real Fitted file was then refused as thin against its 1,982 cases). A BI-columned file is Vehicle Tracking only when dropped on the VT BI slot, or its name matches nameHint (case-insensitive), or it is dropped with no slot inside the Vehicle Tracking app; otherwise it is the VAS BI Active export, exactly as before spec 071. A nameHint file on the VAS BI slot is refused. Ops and the Rake read the same hint; Scheduled & Missed and the opening book stay Vehicle Tracking by their columns alone." }
+    { "date": "2026-11-24", "by": "the owner (\"this bi is not the same for vas its two different\"), built by the incident hotfix", "key": "detection.vtBiFitted.nameHint", "from": null, "to": "fitted", "why": "detection.vtBiFitted matches by header but the header is shared with the VAS BI Active export; the slot and the file name ('Fitted') decide (incident 2026-11-24: the VAS 'BI Active 231126.xlsx', 31,712 rows, was taken by the Vehicle Tracking intake, so VAS got no BI and the real Fitted file was then refused as thin against its 1,982 cases). A BI-columned file is Vehicle Tracking only when dropped on the VT BI slot, or its name matches nameHint (case-insensitive), or it is dropped with no slot inside the Vehicle Tracking app; otherwise it is the VAS BI Active export, exactly as before spec 071. A nameHint file on the VAS BI slot is refused. Ops and the Rake read the same hint; Scheduled & Missed and the opening book stay Vehicle Tracking by their columns alone." },
+
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "version", "from": "vt-1.3", "to": "vt-1.4", "why": "spec 072, the consolidated VT Report dashboard. Adds the workbook's four views, its campaign-to-channel map, its per-channel cycle budgets, its straight-line forecast rule, a fifth lead-time bucket, the Schedulers Data column map and the three integrity checks. NOTHING in rating.* changes: owner decision D2, settled 2026-11-24 after an executive review of the score, and verify-vt-rating.mjs passes byte-for-byte." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "columns.schedulers", "from": null, "to": "read by position, Schedulers Data row 1", "why": "spec 072 A2. The Schedulers Data header row read verbatim: Month, Date, Agent, Sale Count, GWP, Case Number, Customer Contact, Campaign/Partner, Referring Agent, Scheduler, Result, Hrs Ahead, Date Scheduled, (blank), Scheduled, Missed, Fitted, Channel. Read by POSITION like every other VT source. 'Result' is parsed but NEVER applied (status precedence is unchanged, spec FR-012); 'Customer Contact' (col G) is customer data and is discarded in the browser before anything is sent." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "columns.discardAll", "from": "prose list", "to": "prose list naming Customer Contact", "why": "spec F0-22: Schedulers Data col G is named explicitly so no later reader has to infer that it is a customer field." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder (owner decision D1)", "key": "detection.vtSchedulers", "from": null, "to": "the Schedulers Data sheet as a full, re-uploadable upload", "why": "D1: the Schedulers Data sheet becomes an upload with its own slot, superseding 'Opening book (once)'. It is the SAME sheet, now read for the three facts the daily exports do not carry — Scheduler (col J), GWP (col E) and the true sale Date (col B) — which is what unlocks the scheduler pivots, real Fitted GWP and exact daily and weekly sales. detection.vtOpeningBook is left in place for this phase: Phase B (tasks B1 and B5) replaces parseOpeningBook with parseSchedulers and retires the old slot, and the DB kind 'opening_book' stays legal so historical receipts still read (plan U-3)." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "channels", "from": null, "to": "4 keys + campaignMap + the Panimax roll-up", "why": "Exco Summary B26:C32 is the campaign-to-channel mapping and Schedulers Data col R is =IF(H blank, blank, IFERROR(INDEX(channels, MATCH(H, campaigns, 0)), 'Other')) — exact match, unmapped falls to Other. All seven campaigns in the owner's file are mapped and Other holds exactly one record (spec F0-16). The Sales Review labels Lead Gen as 'Digital' and groups Referral + Predictive as 'Panimax', which is a roll-up and never a raw channel. This is the LEAD-SOURCE dimension, not the agent's sub-campaign (spec FR-027)." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "views", "from": null, "to": "4 views", "why": "Exco Summary C4 with helper cells Z2 and Z4:AB5, and Agent & Scheduler Summary C4 with AL2 and AL4:AN5: CHOOSE over MATCH of the four labels. The cycle view restricts pre-cycle records to Result = Fitted (AB5 = IF(Z2=1,'Fitted','*')). openOutcomesInCycleOnly records the asymmetry found in the cells (spec F0-9): Sales Review C88-C92 (scheduled), C70-C74 (missed) and C76-C80 (cancelled) carry NO pre-cycle term, while sales C52-C56 and fitments C58-C62 do. K17 reads OK precisely because of it, and adding a pre-cycle term to the open outcomes would break the reconciliation." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder (owner decision D5/D6)", "key": "periods.leadTimeBuckets", "from": "periods.hrsAheadBuckets, 4 + past: h24/h48/h72/h72p/past", "to": "periods.leadTimeBuckets, 5 + past: h24/h48/h72/h72pIn/h72pOut/past", "why": "Schedulers Data col L is a five-way nested IF: 24 / 48 / 72 / '72+ in cycle' / '72+ out cycle'. The engine had four, which no page could reconcile against Sales Review K18 (C93+C99+C105+C111+C117 = C87). The split is DISPLAY ONLY: rating.notScored.hrsAhead already excludes the buckets from the score, so the two drivers (Target Achievement 50, Fitment Rate 50), their weights, the half-of-target floor, the bands and every budgets[cycle].fitment value are untouched and verify-vt-rating.mjs passes byte-for-byte (spec FR-033, D6). The only figures that move anywhere in the suite are the '72+' column on the MTD 'Hrs Ahead' table and the matching table in agent/vt-view.js, each becoming two columns. The in-cycle cutoff is the cycle end from periods.cycleByKey, NOT the workbook's DATE(YEAR(TODAY()),MONTH(TODAY())+(DAY(TODAY())>25),25) expression (spec FR-032), and the bucket stays computed from the FROZEN as-at date (hrsAsAt = latest extract + hrsAheadAsAtOffsetDays), never TODAY(): on the owner's own file the two are the same day (spec F0-14)." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "periods.weekWindow / periods.hrsAheadBasis", "from": null, "to": "stated in the rule book", "why": "the workbook's own week window is date >= week start AND date < week start + 7 (Exco Summary C67 et seq.), which is what periods.weeksOf already produces; it is written down so the Performance Trend panel can cite it (spec FR-022). hrsAheadBasis states decision D5 in the rule book rather than only in the spec." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder (owner decision D2)", "key": "cycleBudget", "from": null, "to": "per cycle key, per channel, from the Sales Review cells", "why": "D2: the workbook's targets are authoritative for this dashboard. Every value is a Sales Review cell, in the rule book and never in page code, and each is carried in an operative cells{} so the page can name it on screen. Deliberately a SEPARATE branch from budgets[cycle]: budgets is per SUB-CAMPAIGN per tenure for the RATING (digital/predictive/referral/scheduling, from Sales_Review_YTD 2026.xlsx), cycleBudget is per CHANNEL for the DASHBOARD (lead_gen/referral/predictive, from this workbook). They are different dimensions over different workbooks and merging them is the most likely way to break the rating (plan risk 1). Each screen names which it measures against (D3)." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder (owner decision D3)", "key": "dashboardHrsShare", "from": null, "to": "h24 0.75, h48 0.1, h72 0.05, h72pIn 0.05, h72pOut 0.05", "why": "Sales Review B94 = 0.75*B88, B100 = 0.1*B88, B106 = 0.05*B88, B112 = 0.05*B88, B118 = 0.05*B88 — the 10 % scheduled target apportioned 75/10/5/5/5. budgets[cycle].hrsShare (80/10/5/5) is LEFT EXACTLY AS IT IS: it comes from a different workbook ('VT Digital'!N...) and belongs to the MTD table. Both are real, both stay, and each screen labels which one it is measuring against (spec FR-034). Neither is scored." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "forecast", "from": null, "to": "straight-line pace over dialing days", "why": "Sales Review F51 = IFERROR(C51/$C$49*$B$49,''), where B49 = NETWORKDAYS($K$5,$K$6,$K$9:$K$14) total dialing days and C49 = NETWORKDAYS($K$5,$K$7,$K$9:$K$14) elapsed, with K7 = MIN(cycle end, MAX(sale date)) the data-through date. The holiday range K9:K14 holds 2026-11-04 and nothing else, which is ALREADY periods.extraHolidays here and MTD_RULES.extraHolidays in VAS — confirmed in both, nothing added (spec F0-7). The engine's existing periods.workingDaysBetween is the one implementation, and the label is mandatory because the figure is a pace, not a prediction (spec FR-040)." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder (owner decision D4)", "key": "cycleBudget[].salesBudgetIsTheOnlyBudget", "from": null, "to": true, "why": "D4: the mockup's 'Budget vs Spend' card is sales against the 3,030 cycle sales budget with the straight-line forecast beside it. There is NO spend or cost figure in any of the eight sheets, in either daily export, or on the Agent List, and none may ever be invented or implied." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "integrity", "from": null, "to": "3 checks", "why": "Sales Review K17 = IF(SUM(B43:E43)=F43,'OK','CHECK') and K18 = IF(C93+C99+C105+C111+C117=C87,'OK','CHECK'), plus a third the guide never mentions: Agent & Scheduler Summary E36 = IF(C39=$B$7,'Reconciles to total sales in view','Check: N sales in view have no scheduler name') (spec F0-23). All three read OK on the owner's real data: 1996+373+128+208 = 2705, and 130+68+26+0+149 = 373. They are engine VERDICTS, shown with an icon and the words, never colour alone, and a failing check never blocks the page (spec FR-050 to FR-054)." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "insights", "from": null, "to": "4 computed templates", "why": "Exco Summary B11-B14 are the workbook's own headline sentences, built by formula from the figures above them. They are reproduced as templates filled from the model so no insight on the page is ever hand-written, and each names the number and the cell it came from (spec FR-042, FR-043). A template whose data is absent is omitted, never padded." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "reports.schedulerPivots / personDimensions / gwp / upcomingFitments / rolloverFollowUp", "from": "schedulerPivots built false, why 'no upload names the scheduler'", "to": "built true, plus the four other report shapes", "why": "the reason it was false is gone: D1's Schedulers Data upload names the scheduler (col J). The four pivot sheets divide each outcome by that scheduler's own grand total via GETPIVOTDATA and are ALL DATA, every page field '(All)' — grand total 3,010, matching the full record count. The workbook's percentages are not consistently divide-by-zero guarded; ours are (spec FR-045). Six schedulers in the file, exactly the headcount budget of 6, with fitted rates from 62.3 % to 84.9 % — the widest actionable spread in the workbook (spec F0-17). Schedulers resolve to a CB through the existing chain against the Agent List's 'scheduling' sub-campaign, which teams.keys and teams.notRated already carry (spec F0-18)." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "saleDay.basisPrecedence / saleDay.schedulersData", "from": null, "to": "schedulers_data outranks opening_book and first_seen", "why": "plan U-4: on a Schedulers Data commit every case in the sheet takes col B as its sale date, and sold_basis records which source won so 'why did this case move months?' is a query and not an archaeology. A Schedulers Data commit sets book.openingBookOn with the opening book's EXACT semantics, so model()'s trackFrom, the working-day count and therefore every published SPD and target-achievement figure do not move (plan U-5, risk 2). The merge branch itself is Phase B task B2." }
   ],
 
   "detection": {
@@ -35,6 +52,15 @@
       "takeOnly": ["case number", "date"],
       "optional": true
     },
+    "vtSchedulers": {
+      "sheetName": "Schedulers Data",
+      "requireHeaders": ["month", "date", "agent", "case number", "result", "gwp", "scheduler", "campaign/partner"],
+      "takeOnly": ["case number", "date", "gwp", "campaign/partner", "referring agent", "scheduler", "result", "date scheduled"],
+      "optional": false,
+      "reUploadable": true,
+      "_renamedFrom": "vtOpeningBook",
+      "_phase": "spec 072 task B1 switches detect() and the parser over to this key and retires vtOpeningBook; Phase A only records it. No VAS export carries a sheet named 'Schedulers Data', so unlike the BI file this detection needs no name hint and no slot tiebreak — its columns alone decide. 'result' is required as a header so a half-built sheet is refused, but its VALUE is never applied."
+    },
     "filenameDate": { "pattern": "(\\d{2})(\\d{2})(\\d{2})(?=\\D*\\.xlsx?$)", "order": "ddmmyy", "century": 2000, "fallback": "todaySAST+warning" },
     "refuseIn": ["ops.detectSource", "pulse.rakeDetect", "relay.archiveUpload"]
   },
@@ -44,7 +70,29 @@
     "biOptional": ["contractStatus", "deactivateOn"],
     "sm": { "caseNumber": "C", "productType": "J", "attempt": "L", "bundle": "M", "apptOn": "R", "createdBy": "S", "outcome": "U", "sourcePartner": "A" },
     "opening": { "caseNumber": "F", "saleDate": "B" },
-    "discardAll": "every column not listed above (customer name, mobile, registration, chassis, box, account/contract numbers, consultants, fitment partner, last modified by)",
+    "schedulers": {
+      "byPosition": true,
+      "saleDate": "B",
+      "agent": "C",
+      "saleCount": "D",
+      "gwp": "E",
+      "caseNumber": "F",
+      "campaignRaw": "H",
+      "referringAgent": "I",
+      "scheduler": "J",
+      "result": "K",
+      "apptOn": "M",
+      "discard": ["A", "G", "L", "N", "O", "P", "Q", "R"],
+      "resultIsNeverApplied": true,
+      "_discardWhy": "A = Month label ('Current'/'Rollover'), not a date field. G = Customer Contact, CUSTOMER DATA, discarded. L = Hrs Ahead, a TODAY()-dependent formula we recompute frozen from periods.leadTimeBuckets. N = blank by design. O/P/Q = reference helpers, not outcome fields. R = the Channel formula, which we recompute from channels.campaignMap.",
+      "_quirks": {
+        "referringAgentZero": "col I is the NUMBER 0, not blank, when there is no referrer — 2,382 of 3,010 rows. A blank test reports every sale as a referral (spec F0-19).",
+        "apptSerialZero": "a blank col M reads as serial 0 (renders 1899-12-29), not empty (spec F0-20).",
+        "emptyRows": "16,950 of the 19,960 rows in the sheet's range are EMPTY — they carry only the extended L and R formulas. The guide's '19,960 data rows' is wrong; the populated count is 3,010 (spec F0-1). Count rows, never trust the range.",
+        "saleCountAlwaysOne": "col D = 1 on every populated row and all 3,010 case numbers are distinct (spec F0-3). A file with a repeated case number is REFUSED whole, naming the duplicates, in the pattern of publish_agent_list's duplicate-CB refusal."
+      }
+    },
+    "discardAll": "every column not listed above — including Schedulers Data col G 'Customer Contact' — plus customer name, mobile, registration, chassis, box, account/contract numbers, consultants, fitment partner and last modified by",
     "dateSerial": "Excel 1900 serial, integer part; text dates refused"
   },
 
@@ -72,6 +120,8 @@
 
   "saleDay": {
     "basis": "first_seen",
+    "basisPrecedence": ["schedulers_data", "opening_book", "first_seen"],
+    "schedulersData": "takes Schedulers Data col B for its cases and outranks both other bases (plan U-4; the merge branch is Phase B task B2)",
     "openingBook": "takes RPT 'Schedulers Data'!B for its cases",
     "openingWithoutDate": "null - in play, never counted as a sale on any day",
     "goLive": "unknown",
@@ -123,7 +173,17 @@
     "extraHolidays": ["2026-11-04"],
     "saturday": "data, not a working day",
     "hrsAheadAsAtOffsetDays": 1,
-    "hrsAheadBuckets": [ { "k": "h24", "label": "24", "days": 0 }, { "k": "h48", "label": "48", "days": 1 }, { "k": "h72", "label": "72", "days": 2 }, { "k": "h72p", "label": "72+", "minDays": 3 }, { "k": "past", "label": "Past due", "maxDays": -1 } ]
+    "hrsAheadBasis": "frozen: hrsAsAt = latest extract + hrsAheadAsAtOffsetDays. NEVER TODAY(). Decision D5.",
+    "weekWindow": "date >= week start AND date < week start + 7",
+    "leadTimeBuckets": [
+      { "k": "h24", "label": "24", "days": 0 },
+      { "k": "h48", "label": "48", "days": 1 },
+      { "k": "h72", "label": "72", "days": 2 },
+      { "k": "h72pIn", "label": "72+ in cycle", "minDays": 3, "cutoff": "cycle.to", "cutoffOp": "<=" },
+      { "k": "h72pOut", "label": "72+ out cycle", "minDays": 3, "cutoff": "cycle.to", "cutoffOp": ">" },
+      { "k": "past", "label": "Past due", "maxDays": -1 }
+    ],
+    "_cells": { "leadTimeBuckets": "Schedulers Data col L, the five-way nested IF", "weekWindow": "Exco Summary C67 et seq." }
   },
 
   "guards": { "thinBiShare": 0.9, "thinSmShare": 0.4, "uploadGapWorkingDays": 1 },
@@ -160,7 +220,44 @@
     ],
     "totals": "sum of counts; rates = ratio of sums",
     "absent": "—",
-    "schedulerPivots": { "built": false, "why": "no upload names the scheduler (WR 3.4)" }
+    "schedulerPivots": {
+      "built": true,
+      "scopes": ["referral", "predictive", "lead_gen", "all"],
+      "scope": "allData",
+      "percentBase": "schedulerGrandTotal",
+      "outcomes": ["fitted", "scheduled", "cancelled", "missed"],
+      "divideByZeroSafe": true,
+      "_cells": { "percentages": "the four Pivot sheets' H:K columns, GETPIVOTDATA(outcome) / GETPIVOTDATA(scheduler total)", "grandTotal": "Pivot - VT All Campaigns G15 = 3010" },
+      "_note": "the workbook's GETPIVOTDATA percentages are not consistently wrapped in IFERROR; ours are."
+    },
+    "personDimensions": [
+      { "k": "agent", "label": "Agent", "from": "the engine's resolved seller (Salesforce Created By)" },
+      { "k": "referrer", "label": "Referring Agent", "from": "Schedulers Data col I, where it is not 0" },
+      { "k": "scheduler", "label": "Scheduler", "from": "Schedulers Data col J" }
+    ],
+    "gwp": {
+      "fitted": "sum of Schedulers Data col E where status == fitted",
+      "total": "sum of Schedulers Data col E in view",
+      "lost": "sum of Schedulers Data col E where status in (cancelled, missed)",
+      "source": "Schedulers Data col E, hand-typed, whole rand",
+      "notSource": "NOT the engine's BI Fitted value (charge ex VAT x vat), which is a different measure (spec A7). Both are shown, each named; neither is adjusted to match the other.",
+      "_cells": { "fitted": "Exco Summary K7/K8, L18:L22, L26:L33", "lost": "Agent & Scheduler Summary L39 'Lost GWP'", "openGwp": "Exco Summary L36:L41" }
+    },
+    "upcomingFitments": {
+      "startAt": "MINIFS(apptOn where status == scheduled)",
+      "countPerDate": "cases with that apptOn and status scheduled",
+      "sharePerDate": "count / total scheduled pipeline",
+      "horizonDays": 16,
+      "tailLabel": "Later dates / not shown",
+      "scope": "all bookings including rollovers, regardless of view",
+      "_cells": "Exco Summary B83:D102 (B85 MINIFS, C85:C100 COUNTIFS, C101 the tail, C102 the total)"
+    },
+    "rolloverFollowUp": {
+      "columns": ["sales", "fitted", "scheduled", "cancelled", "missed", "open", "fittedPct", "openPct", "gwpFitted", "gwpOpen"],
+      "openToAction": "scheduled + cancelled + missed",
+      "alwaysPreCycle": true,
+      "_cells": "Exco Summary B35:L42"
+    }
   },
 
   "rating": {
@@ -192,6 +289,180 @@
   },
 
   "budgetFallback": "latest earlier cycle; the card names the cycle used",
+  "channels": {
+    "keys": ["lead_gen", "referral", "predictive", "other"],
+    "labels": { "lead_gen": "Lead Gen", "referral": "Referral", "predictive": "Predictive", "other": "Other" },
+    "salesReviewLabels": { "lead_gen": "Digital", "referral": "Referrals", "predictive": "Predictive", "other": "Other" },
+    "campaignMap": {
+      "Revx": "lead_gen",
+      "Tracking Empire": "lead_gen",
+      "Jag": "lead_gen",
+      "Afrilead": "lead_gen",
+      "Referral Agent": "referral",
+      "Predictive": "predictive",
+      "Black Birch Projects": "other"
+    },
+    "unmapped": "other",
+    "blankCampaign": "blank, never Other",
+    "rollups": { "panimax": { "label": "Panimax", "members": ["referral", "predictive"], "neverDoubleCounted": true } },
+    "dimension": "lead source (leadAgg / lead groups), NOT the agent's sub-campaign (subAgg)",
+    "_cells": { "campaignMap": "Exco Summary B26:C32", "channelFormula": "Schedulers Data col R", "salesReviewLabels": "Sales Review A52/A55/A56/A53 and A29-A33", "panimax": "Sales Review A54 'Panimax', A60, A33 'Panimax (Referrals + Predictive)'" },
+    "_counts_2026_11": { "Revx": 1061, "Tracking Empire": 760, "Jag": 246, "Afrilead": 38, "Referral Agent": 278, "Predictive": 626, "Black Birch Projects": 1, "unmapped": 0 }
+  },
+
+  "views": {
+    "default": "cycle",
+    "list": [
+      {
+        "k": "cycle",
+        "label": "Cycle view (current + fitted rollovers)",
+        "words": "Sales dated in the cycle, plus earlier sales only where they were fitted",
+        "dateRule": "date >= cycle.from AND date <= cycle.to",
+        "preCycle": { "include": true, "onlyStatus": "fitted" },
+        "openOutcomesInCycleOnly": true
+      },
+      {
+        "k": "current",
+        "label": "Current cycle sales only",
+        "words": "Sales dated in the cycle",
+        "dateRule": "date >= cycle.from AND date <= cycle.to",
+        "preCycle": { "include": false, "onlyStatus": null },
+        "openOutcomesInCycleOnly": true
+      },
+      {
+        "k": "rollovers",
+        "label": "Rollovers only",
+        "words": "Sales dated before the cycle start",
+        "dateRule": "date < cycle.from",
+        "preCycle": { "include": true, "onlyStatus": null },
+        "openOutcomesInCycleOnly": false
+      },
+      {
+        "k": "all",
+        "label": "All data",
+        "words": "All sales to date",
+        "dateRule": "date is a real date",
+        "preCycle": { "include": true, "onlyStatus": null },
+        "openOutcomesInCycleOnly": false
+      }
+    ],
+    "alwaysAllBookings": ["leadTime", "upcomingFitments"],
+    "rollover": {
+      "isRollover": "date < cycle.from",
+      "fittedCountsInCycle": true,
+      "openToAction": ["scheduled", "cancelled", "missed"],
+      "openNeverCountsAsNewCycleSale": true,
+      "preCycleWeeksAreFittedOnly": "in cycle view a pre-cycle week's fitted share reads 100 % by construction and must be labelled so nobody reads it as a real week"
+    },
+    "_cells": { "selector": "Exco Summary C4 / Agent & Scheduler Summary C4", "helpers": "Exco Summary Z2, Z4:AB5; A&SS AL2, AL4:AN5", "openOutcomesInCycleOnly": "Sales Review C70-C74, C76-C80, C88-C92 carry no pre-cycle term; C52-C56 and C58-C62 do" }
+  },
+
+  "cycleBudget": {
+    "cycle-2026-11": {
+      "headcount": 6,
+      "sales": { "lead_gen": 2066, "referral": 179, "predictive": 785, "total": 3030 },
+      "fitments": { "lead_gen": 1653, "referral": 143, "predictive": 628, "total": 2424 },
+      "fitmentRate": { "*": 0.8 },
+      "cancelledPct": { "*": 0.05 },
+      "missedPct": { "*": 0.05 },
+      "scheduledPct": { "*": 0.1 },
+      "dialingDays": 22,
+      "salesBudgetIsTheOnlyBudget": true,
+      "cells": {
+        "headcount": "Sales Review B50 (actual C50 = 6 distinct schedulers)",
+        "sales": "Sales Review B51 total 3030 = SUM(B52:B54); B52 Digital 2066, B54 Panimax = B55+B56, B55 Referrals 179, B56 Predictive 785",
+        "fitments": "Sales Review B57 total 2424 = SUM(B58:B60); B58 Digital 1653, B61 Referrals 143, B62 Predictive 628",
+        "fitmentRate": "Sales Review B63 total 0.8 — flat 80 % on every channel (B64 Digital, B66 Panimax, B67 Referrals, B68 Predictive)",
+        "cancelledPct": "Sales Review B81 total 0.05 (B82/B84/B85/B86 0.05); the count budgets B76 = 0.05*B52, B79 = 0.05*B55, B80 = 0.05*B56",
+        "missedPct": "Sales Review B70 = 0.05*B52, B73 = 0.05*B55, B74 = 0.05*B56",
+        "scheduledPct": "Sales Review B88 = 0.1*B52, B91 = 0.1*B55, B92 = 0.1*B56",
+        "dialingDays": "Sales Review B49 = NETWORKDAYS(K5,K6,K9:K14) = 22 for 26 Oct - 25 Nov 2026 with 4 Nov a holiday"
+      },
+      "_note": "There is no budget row for the 'Other' channel anywhere in the Sales Review (B53, B59, B65, B83 are all blank), so Other has an actual and no target. The page shows an absent marker for its target, never 0.",
+      "_dashboardOnly": "These are the DASHBOARD's targets (owner decision D2). The AGENT CARD measures against budgets[cycle] — per sub-campaign, per tenure: fitment digital 0.85, referral 0.85, predictive 0.8/0.75/0.7 by tenure, floor 0.8. The two differ for the same measure and each screen names which one it is showing (D3, spec FR-034)."
+    },
+    "fallback": "latest earlier cycle; the panel names the cycle used, exactly as budgetFallback does for the rating"
+  },
+
+  "dashboardHrsShare": {
+    "h24": 0.75,
+    "h48": 0.1,
+    "h72": 0.05,
+    "h72pIn": 0.05,
+    "h72pOut": 0.05,
+    "base": "the channel's scheduled target = scheduledPct x that channel's sales budget",
+    "notTheRatingShare": "budgets[cycle].hrsShare (h24 0.8, h48 0.1, h72 0.05, h72p 0.05) comes from Sales_Review_YTD 2026.xlsx and stays unchanged. Neither share is scored (rating.notScored.hrsAhead).",
+    "structuralZero": "h72pIn is unreachable in the last three days of a cycle — its rule is '3+ days ahead AND on or before the cycle end', so from the 23rd nothing can land in it. It is 0 on the owner's file for that reason, and its 5 % share cannot be hit. Open question Q4.",
+    "cells": { "h24": "Sales Review B94 = 0.75*B88", "h48": "B100 = 0.1*B88", "h72": "B106 = 0.05*B88", "h72pIn": "B112 = 0.05*B88", "h72pOut": "B118 = 0.05*B88" }
+  },
+
+  "forecast": {
+    "method": "straight_line_pace",
+    "formula": "actual / elapsedDialingDays * totalDialingDays",
+    "totalDialingDays": "workingDaysBetween(cycle.from, cycle.to)",
+    "elapsedDialingDays": "workingDaysBetween(cycle.from, dataThrough)",
+    "dataThrough": "MIN(cycle.to, latest sale date in the book)",
+    "holidays": "periods.extraHolidays + saHolidaysFor(year) — the rule book's list, which already holds 2026-11-04 and already equals MTD_RULES.extraHolidays",
+    "appliesTo": ["sales", "fitments"],
+    "notAppliedTo": ["missed", "cancelled", "scheduled", "leadTimeBuckets"],
+    "label": "straight-line pace, not a prediction",
+    "cells": { "formula": "Sales Review F51 / F57 = IFERROR(C51/$C$49*$B$49,'')", "totalDialingDays": "Sales Review B49", "elapsedDialingDays": "Sales Review C49", "dataThrough": "Sales Review K7 = MIN(K6, MAX(col B))", "holidays": "Sales Review K9:K14 (K9 = 2026-11-04, K10:K14 blank)" }
+  },
+
+  "integrity": [
+    {
+      "k": "k17",
+      "label": "Outcomes = total sales",
+      "formula": "fitted + scheduled + missed + cancelled == sales",
+      "okWords": "Fitted, scheduled, missed and cancelled add up to total sales",
+      "checkWords": "{got} outcomes against {expected} sales - a difference of {diff}",
+      "cell": "Sales Review K17 = IF(SUM(B43:E43)=F43,'OK','CHECK')",
+      "_real": "1996 + 373 + 128 + 208 = 2705 - OK"
+    },
+    {
+      "k": "k18",
+      "label": "Lead-time buckets = scheduled",
+      "formula": "h24 + h48 + h72 + h72pIn + h72pOut == scheduled",
+      "okWords": "The five lead-time buckets add up to the scheduled pipeline",
+      "checkWords": "{got} in buckets against {expected} scheduled - a difference of {diff}; look for a scheduled case with no appointment date",
+      "cell": "Sales Review K18 = IF(C93+C99+C105+C111+C117=C87,'OK','CHECK')",
+      "_real": "130 + 68 + 26 + 0 + 149 = 373 - OK"
+    },
+    {
+      "k": "schedulerName",
+      "label": "Every sale has a scheduler",
+      "formula": "sum of per-scheduler sales == sales in view",
+      "okWords": "Reconciles to total sales in view",
+      "checkWords": "Check: {diff} sales in view have no scheduler name",
+      "cell": "Agent & Scheduler Summary E36",
+      "_real": "0 sales without a scheduler in the owner's file"
+    }
+  ],
+
+  "insights": {
+    "templates": [
+      { "id": "conversion", "requires": ["sales", "fitted", "scheduled"], "text": "Conversion: {fitRate} of {sales} sales in view are fitted, and a further {scheduled} ({schedRate}) are booked.", "cell": "Exco Summary B11" },
+      { "id": "leakage", "requires": ["cancelled", "missed", "sales"], "text": "Leakage: {leak} sales ({leakRate}) were cancelled or missed, representing R{leakGwp} of GWP.", "cell": "Exco Summary B12" },
+      { "id": "bestCampaign", "requires": ["campaigns"], "minSales": 20, "text": "Campaigns with {minSales}+ sales: best fitted rate {best} ({bestRate}), lowest {worst} ({worstRate}).", "cell": "Exco Summary B13" },
+      { "id": "rollovers", "requires": ["rollovers"], "text": "Rollovers (sold before {cycleFrom}): {total} in total; {fitted} fitted and counted in this cycle, {open} still open - {scheduled} scheduled, {rebook} to rebook.", "cell": "Exco Summary B14" }
+    ],
+    "rules": {
+      "computedOnly": "no insight may be hand-written; each names the figure and the cell it came from",
+      "omitWhenAbsent": "a template whose requires[] are not all present is omitted, never padded with a zero",
+      "minSalesApplies": "a template with minSales is omitted when no member clears it"
+    }
+  },
+
+  "disagree": {
+    "resultApplied": false,
+    "words": "The Schedulers Data Result column is hand-typed and is not the system of record: it is parsed, compared and counted by direction, and never applied. Every count here is a count with words, never a hidden adjustment.",
+    "carried": {
+      "handCredits": 11,
+      "leadSourceRelabelledShare": "6.6 %",
+      "words": "Carried forward from the 071 floor guide: 11 sales the hand report credits to someone other than the Salesforce Created By, and about 6.6 % of rows whose lead source the hand report relabels. The engine keeps Salesforce as the system of record for both."
+    }
+  },
+
   "budgets": {
     "cycle-2026-11": {
       "spd": { "digital": { "*": 6.5 }, "referral": { "*": 3 }, "predictive": { "Exp": 2, "M2": 1.5, "M1": 1 } },

@@ -229,9 +229,19 @@ try {
 
   head('P6 · Hrs Ahead');
   const hr = T.find((t) => t.sheet === 'MTD hrs ahead'), fl = hr && rowBy(hr, 'Floor'), H = M11.floor.hrsAhead;
-  ok(hr && ['24 h', '24 h share', '24 h budget', '48 h', '48 h share', '48 h budget', '72 h', '72 h share', '72 h budget', '72+ h', '72+ h share', '72+ h budget', 'Past due'].every((h) => hr.head.includes(h)), 'each bucket\'s share sits beside its budget', hr && hr.head.join(','));
-  ok(fl && at(hr, fl, 'Open scheduled') === N(F('n', H.total)) && at(hr, fl, '24 h') === N(F('n', H.h24)) && at(hr, fl, '72+ h share') === F('p', H.share.h72p) && at(hr, fl, 'Past due') === N(F('n', H.past)), 'floor counts and shares are the engine\'s', fl && fl.join(' | '));
-  ok(fl && ['80.0%', '10.0%', '5.0%', '5.0%'].join() === ['24 h budget', '48 h budget', '72 h budget', '72+ h budget'].map((h) => at(hr, fl, h)).join(), 'budgets 80 / 10 / 5 / 5 % from the rule book', fl && fl.join(' | '));
+  /* 072 D6: the single '72+' column became '72+ in cycle' + '72+ out cycle'. The rating-side
+     budgets[cycle].hrsShare still has four keys, so the two new columns show the absent marker
+     until task D3 labels them (FR-034). Nothing else on this table moved. */
+  ok(hr && ['24 h', '24 h share', '24 h budget', '48 h', '48 h share', '48 h budget', '72 h', '72 h share', '72 h budget',
+    '72+ in cycle h', '72+ in cycle h share', '72+ in cycle h budget', '72+ out cycle h', '72+ out cycle h share', '72+ out cycle h budget', 'Past due'].every((h) => hr.head.includes(h)), 'each of the five buckets\' shares sits beside its budget', hr && hr.head.join(','));
+  ok(hr && !hr.head.includes('72+ h') && !hr.head.includes('72+ h share'), 'the old single 72+ column is gone, so no reader can confuse the two halves', hr && hr.head.join(','));
+  ok(fl && at(hr, fl, 'Open scheduled') === N(F('n', H.total)) && at(hr, fl, '24 h') === N(F('n', H.h24))
+    && at(hr, fl, '72+ in cycle h') === N(F('n', H.h72pIn)) && at(hr, fl, '72+ in cycle h share') === F('p', H.share.h72pIn)
+    && at(hr, fl, '72+ out cycle h') === N(F('n', H.h72pOut)) && at(hr, fl, '72+ out cycle h share') === F('p', H.share.h72pOut)
+    && at(hr, fl, 'Past due') === N(F('n', H.past)), 'floor counts and shares are the engine\'s, for all five buckets', fl && fl.join(' | '));
+  ok(fl && H.h24 + H.h48 + H.h72 + H.h72pIn + H.h72pOut + H.past === H.total, 'the five buckets plus Past due account for every open scheduled case');
+  ok(fl && ['80.0%', '10.0%', '5.0%'].join() === ['24 h budget', '48 h budget', '72 h budget'].map((h) => at(hr, fl, h)).join(), 'budgets 80 / 10 / 5 % from the rule book on the three buckets it prices', fl && fl.join(' | '));
+  ok(fl && ['72+ in cycle h budget', '72+ out cycle h budget'].every((h) => at(hr, fl, h) === ENG.VT_RULES.reports.absent), 'the two 72+ budgets read the absent marker, never 0 and never the dashboard\'s 5 % (D3, FR-034)', fl && fl.join(' | '));
   ok(hr && hr.rows.every((r) => / \((team|sub-campaign)\)$|^Floor$/.test(N(r[0]))), 'team, sub-campaign and floor rows only — no agent rows', hr && hr.rows.map((r) => r[0]).join(','));
 
   head('P7 · unmatched sellers');

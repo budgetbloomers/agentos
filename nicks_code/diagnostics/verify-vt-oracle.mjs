@@ -182,14 +182,23 @@ console.log('\n== pivots restricted to reproducible rows (PD VT Campaign / Lead 
 }
 
 console.log('\n== SC-002: Hrs Ahead, 499 of 499 (as-at 11 Nov) ==');
-{ const MAP = { '24': 'h24', '48': 'h48', '72': 'h72', '72+': 'h72p' };
+{ /* 072 D6 split the report's single '72+' column into '72+ in cycle' and '72+ out cycle'; the hand
+     report has one column, so either engine bucket satisfies its '72+' and the two must SUM to it. */
+  const MAP = { '24': 'h24', '48': 'h48', '72': 'h72', '72+': ['h72pIn', 'h72pOut'] };
+  const bk = (c) => E.periods.hrsBucket(c.apptOn, M.period.hrsAsAt, M.period.to);
   const open = Object.entries(book.cases).filter(([, c]) => c.status === 'scheduled');
-  const bad = open.filter(([k, c]) => MAP[report.get(k).hrs] !== E.periods.hrsBucket(c.apptOn, M.period.hrsAsAt));
-  bad.slice(0, 10).forEach(([k, c]) => console.log(`    case …${k.slice(-3)} expected ${report.get(k).hrs} got ${E.periods.hrsBucket(c.apptOn, M.period.hrsAsAt)}`));
+  const want = (k) => { const w = MAP[report.get(k).hrs]; return Array.isArray(w) ? w : [w]; };
+  const bad = open.filter(([k, c]) => want(k).indexOf(bk(c)) < 0);
+  bad.slice(0, 10).forEach(([k, c]) => console.log(`    case ...${k.slice(-3)} expected ${report.get(k).hrs} got ${bk(c)}`));
   eq('every open Scheduled case gets the report\'s bucket', [open.length - bad.length, open.length], [499, 499]);
-  const h = M.floor.hrsAhead; eq('floor Hrs Ahead 24/48/72/72+/past = 136/83/99/181/0', [h.h24, h.h48, h.h72, h.h72p, h.past], [136, 83, 99, 181, 0]);
+  const h = M.floor.hrsAhead;
+  eq('floor Hrs Ahead 24/48/72/72+/past = 136/83/99/181/0, with 72+ now the sum of its two halves (072 D6)',
+    [h.h24, h.h48, h.h72, h.h72pIn + h.h72pOut, h.past], [136, 83, 99, 181, 0]);
+  eq('the five buckets plus Past due still account for every open Scheduled case (K18)',
+    [h.h24 + h.h48 + h.h72 + h.h72pIn + h.h72pOut + h.past, h.total], [499, 499]);
+  ok('the old single h72p key is gone from the engine output, so nothing can read it by accident', h.h72p === undefined && h.share.h72p === undefined);
   ok('Hrs Ahead shares are published beside the budget', h.share && Math.abs(h.share.h24 - 136 / 499) < 1e-9 && M.budgets.hrsShare.h24 === 0.8);
-  doc('Hrs Ahead buckets (whole report 139/84/105/189)', [h.h24, h.h48, h.h72, h.h72p], [136, 83, 99, 181], '18 Scheduled rows carried from earlier days (3+1+6+8) are in no upload');
+  doc('Hrs Ahead buckets (whole report 139/84/105/189)', [h.h24, h.h48, h.h72, h.h72pIn + h.h72pOut], [136, 83, 99, 181], '18 Scheduled rows carried from earlier days (3+1+6+8) are in no upload');
 }
 
 console.log('\n== Target = sales per working day, per the list (F1, A1) ==');

@@ -25,20 +25,60 @@
 
 /* @vt-rules start */
 var VT_RULES = {
-  "version": "vt-1.3",
+  "version": "vt-1.4",
   "detection": {
-    "vtBiFitted": {"requireHeaders":["installation status","vehicle reg number","box number","unit type","case number","created by"],"nameHint":"fitted","runBefore":["bi","inactive"],"footerPattern":"^Applied filters:"},
+    "vtBiFitted": {
+      "requireHeaders": ["installation status","vehicle reg number","box number","unit type","case number","created by"],
+      "nameHint": "fitted",
+      "runBefore": ["bi","inactive"],
+      "footerPattern": "^Applied filters:"
+    },
     "vtSchedMissed": {"requireHeaders":["missedandscheduledfitment","fitment date","case number","created by"],"footerPattern":"^No filters applied"},
     "vtOpeningBook": {"sheetName":"Schedulers Data","requireHeaders":["month","date","agent","case number","result"],"takeOnly":["case number","date"],"optional":true},
+    "vtSchedulers": {
+      "sheetName": "Schedulers Data",
+      "requireHeaders": ["month","date","agent","case number","result","gwp","scheduler","campaign/partner"],
+      "takeOnly": ["case number","date","gwp","campaign/partner","referring agent","scheduler","result","date scheduled"],
+      "optional": false,
+      "reUploadable": true
+    },
     "filenameDate": {"pattern":"(\\d{2})(\\d{2})(\\d{2})(?=\\D*\\.xlsx?$)","order":"ddmmyy","century":2000,"fallback":"todaySAST+warning"},
     "refuseIn": ["ops.detectSource","pulse.rakeDetect","relay.archiveUpload"]
   },
   "columns": {
-    "bi": {"byPosition":true,"caseNumber":"AS","unitType":"Y","bundle":"Z","chargeEx":"X","chargeCheck":"AD","installedOn":"Q","contractCreatedOn":"O","createdBy":"L","sourcePartner":"AP","contractStatus":"B","deactivateOn":"P"},
+    "bi": {
+      "byPosition": true,
+      "caseNumber": "AS",
+      "unitType": "Y",
+      "bundle": "Z",
+      "chargeEx": "X",
+      "chargeCheck": "AD",
+      "installedOn": "Q",
+      "contractCreatedOn": "O",
+      "createdBy": "L",
+      "sourcePartner": "AP",
+      "contractStatus": "B",
+      "deactivateOn": "P"
+    },
     "biOptional": ["contractStatus","deactivateOn"],
     "sm": {"caseNumber":"C","productType":"J","attempt":"L","bundle":"M","apptOn":"R","createdBy":"S","outcome":"U","sourcePartner":"A"},
     "opening": {"caseNumber":"F","saleDate":"B"},
-    "discardAll": "every column not listed above (customer name, mobile, registration, chassis, box, account/contract numbers, consultants, fitment partner, last modified by)",
+    "schedulers": {
+      "byPosition": true,
+      "saleDate": "B",
+      "agent": "C",
+      "saleCount": "D",
+      "gwp": "E",
+      "caseNumber": "F",
+      "campaignRaw": "H",
+      "referringAgent": "I",
+      "scheduler": "J",
+      "result": "K",
+      "apptOn": "M",
+      "discard": ["A","G","L","N","O","P","Q","R"],
+      "resultIsNeverApplied": true
+    },
+    "discardAll": "every column not listed above — including Schedulers Data col G 'Customer Contact' — plus customer name, mobile, registration, chassis, box, account/contract numbers, consultants, fitment partner and last modified by",
     "dateSerial": "Excel 1900 serial, integer part; text dates refused"
   },
   "vtUnitTypes": ["BEAME","MXV","Matrix Vision"],
@@ -55,13 +95,29 @@ var VT_RULES = {
     "cancelledFrom": ["dropped","deactivated"],
     "cancellation": {
       "reasons": ["dropped","deactivated"],
-      "dropped": {"from":["scheduled","missed"],"completeDay":["bi_fitted","sched_missed"],"absentFrom":"both files of the extract day","trigger":"the commit of the second file of an extract day, only when no later extract day is complete","onDate":"that extract day","returns":"seen again in a file of that extract day or later: takes that file's status"},
-      "deactivated": {"from":"bi","when":"Contract Deactivate Date (P) not blank, or Contract Status (B) not blank and not activeStatus","activeStatus":"Active","onDate":"the deactivate date, never before the case's previous status day nor after the extract day; no date: the extract day","winsOverFitted":true,"returns":"a newer BI row that is Active with no deactivate date: fitted"},
+      "dropped": {
+        "from": ["scheduled","missed"],
+        "completeDay": ["bi_fitted","sched_missed"],
+        "absentFrom": "both files of the extract day",
+        "trigger": "the commit of the second file of an extract day, only when no later extract day is complete",
+        "onDate": "that extract day",
+        "returns": "seen again in a file of that extract day or later: takes that file's status"
+      },
+      "deactivated": {
+        "from": "bi",
+        "when": "Contract Deactivate Date (P) not blank, or Contract Status (B) not blank and not activeStatus",
+        "activeStatus": "Active",
+        "onDate": "the deactivate date, never before the case's previous status day nor after the extract day; no date: the extract day",
+        "winsOverFitted": true,
+        "returns": "a newer BI row that is Active with no deactivate date: fitted"
+      },
       "fitDoneKeepsInstall": true
     }
   },
   "saleDay": {
     "basis": "first_seen",
+    "basisPrecedence": ["schedulers_data","opening_book","first_seen"],
+    "schedulersData": "takes Schedulers Data col B for its cases and outranks both other bases (plan U-4; the merge branch is Phase B task B2)",
     "openingBook": "takes RPT 'Schedulers Data'!B for its cases",
     "openingWithoutDate": "null - in play, never counted as a sale on any day",
     "goLive": "unknown",
@@ -80,10 +136,27 @@ var VT_RULES = {
     "creditOverrides": {}
   },
   "leadSources": {
-    "map": {"RevX":"revx","Tracking Empire / Shawn Langley":"tracking_empire","Jag Web Marketing- Panimax":"jag","Afrilead- Panimax":"afrilead","Sales Enablement":"sales_enablement","Panimax - New Sales":{"ifSellerTeam":{"referral":"referral"},"else":"predictive"}},
+    "map": {
+      "RevX": "revx",
+      "Tracking Empire / Shawn Langley": "tracking_empire",
+      "Jag Web Marketing- Panimax": "jag",
+      "Afrilead- Panimax": "afrilead",
+      "Sales Enablement": "sales_enablement",
+      "Panimax - New Sales": {"ifSellerTeam":{"referral":"referral"},"else":"predictive"}
+    },
     "unknown": "other",
     "groups": {"lead_gen":["revx","tracking_empire","jag","afrilead"],"predictive":["predictive"],"referral":["referral"],"other":["sales_enablement","other"]},
-    "labels": {"revx":"Revx","tracking_empire":"Tracking Empire","jag":"Jag","afrilead":"Afrilead","predictive":"Predictive","referral":"Referral","sales_enablement":"Sales Enablement","other":"Other","lead_gen":"Lead Gen"}
+    "labels": {
+      "revx": "Revx",
+      "tracking_empire": "Tracking Empire",
+      "jag": "Jag",
+      "afrilead": "Afrilead",
+      "predictive": "Predictive",
+      "referral": "Referral",
+      "sales_enablement": "Sales Enablement",
+      "other": "Other",
+      "lead_gen": "Lead Gen"
+    }
   },
   "teams": {
     "fromCampaignRaw": "^Matrix Vehicle Tracking - (Digital|Predictive|Referral|Scheduling)\\s*$",
@@ -102,11 +175,14 @@ var VT_RULES = {
     "extraHolidays": ["2026-11-04"],
     "saturday": "data, not a working day",
     "hrsAheadAsAtOffsetDays": 1,
-    "hrsAheadBuckets": [
+    "hrsAheadBasis": "frozen: hrsAsAt = latest extract + hrsAheadAsAtOffsetDays. NEVER TODAY(). Decision D5.",
+    "weekWindow": "date >= week start AND date < week start + 7",
+    "leadTimeBuckets": [
       {"k":"h24","label":"24","days":0},
       {"k":"h48","label":"48","days":1},
       {"k":"h72","label":"72","days":2},
-      {"k":"h72p","label":"72+","minDays":3},
+      {"k":"h72pIn","label":"72+ in cycle","minDays":3,"cutoff":"cycle.to","cutoffOp":"<="},
+      {"k":"h72pOut","label":"72+ out cycle","minDays":3,"cutoff":"cycle.to","cutoffOp":">"},
       {"k":"past","label":"Past due","maxDays":-1}
     ]
   },
@@ -121,7 +197,12 @@ var VT_RULES = {
       {"id":"fitted","label":"Fitted","f":"count(set where status=fitted)","basis":"status as at"},
       {"id":"scheduled","label":"Scheduled","f":"count(set where status=scheduled)","basis":"status as at"},
       {"id":"missed","label":"Missed","f":"count(set where status=missed)","basis":"status as at"},
-      {"id":"cancelled","label":"Cancelled","f":"count(set where status=cancelled); 0 when none","basis":"status as at (the event's day: the complete extract day it dropped out, or the deactivate date)"},
+      {
+        "id": "cancelled",
+        "label": "Cancelled",
+        "f": "count(set where status=cancelled); 0 when none",
+        "basis": "status as at (the event's day: the complete extract day it dropped out, or the deactivate date)"
+      },
       {"id":"fitRate","label":"Fitted Rate %","f":"fitted / sales"},
       {"id":"missRate","label":"Missed Rate %","f":"missed / sales"},
       {"id":"schedRate","label":"Scheduled Rate %","f":"scheduled / sales"},
@@ -142,7 +223,39 @@ var VT_RULES = {
     ],
     "totals": "sum of counts; rates = ratio of sums",
     "absent": "—",
-    "schedulerPivots": {"built":false,"why":"no upload names the scheduler (WR 3.4)"}
+    "schedulerPivots": {
+      "built": true,
+      "scopes": ["referral","predictive","lead_gen","all"],
+      "scope": "allData",
+      "percentBase": "schedulerGrandTotal",
+      "outcomes": ["fitted","scheduled","cancelled","missed"],
+      "divideByZeroSafe": true
+    },
+    "personDimensions": [
+      {"k":"agent","label":"Agent","from":"the engine's resolved seller (Salesforce Created By)"},
+      {"k":"referrer","label":"Referring Agent","from":"Schedulers Data col I, where it is not 0"},
+      {"k":"scheduler","label":"Scheduler","from":"Schedulers Data col J"}
+    ],
+    "gwp": {
+      "fitted": "sum of Schedulers Data col E where status == fitted",
+      "total": "sum of Schedulers Data col E in view",
+      "lost": "sum of Schedulers Data col E where status in (cancelled, missed)",
+      "source": "Schedulers Data col E, hand-typed, whole rand",
+      "notSource": "NOT the engine's BI Fitted value (charge ex VAT x vat), which is a different measure (spec A7). Both are shown, each named; neither is adjusted to match the other."
+    },
+    "upcomingFitments": {
+      "startAt": "MINIFS(apptOn where status == scheduled)",
+      "countPerDate": "cases with that apptOn and status scheduled",
+      "sharePerDate": "count / total scheduled pipeline",
+      "horizonDays": 16,
+      "tailLabel": "Later dates / not shown",
+      "scope": "all bookings including rollovers, regardless of view"
+    },
+    "rolloverFollowUp": {
+      "columns": ["sales","fitted","scheduled","cancelled","missed","open","fittedPct","openPct","gwpFitted","gwpOpen"],
+      "openToAction": "scheduled + cancelled + missed",
+      "alwaysPreCycle": true
+    }
   },
   "rating": {
     "floor": 0.5,
@@ -156,16 +269,225 @@ var VT_RULES = {
     "score": "round(min(100, sum(points) / sum(measured w) * 100), 1)",
     "penalties": 0,
     "drivers": [
-      {"k":"targetAch","label":"Target Achievement","w":50,"dir":"higher","value":"reports.spd","target":"Agent List Target (AL VT!I) for the cycle's list","note":"How close your sales per working day come to your target."},
-      {"k":"fitRate","label":"Fitment Rate","w":50,"dir":"higher","value":"reports.fitRate (MTD in play)","target":"budgets[cycle].fitment[sub][tenure]","note":"Out of every 100 of your sales in play this month, how many are fitted. A missed or cancelled sale is a sale not fitted, so it counts here, once."}
+      {
+        "k": "targetAch",
+        "label": "Target Achievement",
+        "w": 50,
+        "dir": "higher",
+        "value": "reports.spd",
+        "target": "Agent List Target (AL VT!I) for the cycle's list",
+        "note": "How close your sales per working day come to your target."
+      },
+      {
+        "k": "fitRate",
+        "label": "Fitment Rate",
+        "w": 50,
+        "dir": "higher",
+        "value": "reports.fitRate (MTD in play)",
+        "target": "budgets[cycle].fitment[sub][tenure]",
+        "note": "Out of every 100 of your sales in play this month, how many are fitted. A missed or cancelled sale is a sale not fitted, so it counts here, once."
+      }
     ],
     "info": ["missed","missRate","missBudget","cancelled","canRate","canBudget","fitDone"],
-    "notScored": {"gwp":"D7-a: Charge Amount x VAT equals RPT GWP on 328/1,104; budget Avg GWP is on the bundle-price basis; SM has no amount","hrsAhead":"D7-b: scheduler's queue, not the seller's","attendance_talk_qa_conversion_optins":"D7-c: not in the VT files","schedulers":"D7-d","missRate":"vt-1.2: removed as a driver - double counting of Fitment Rate (a missed sale is a sale not fitted); shown on the card beside the missed budget, unscored","fittedVsTarget":"vt-1.2: removed as a driver - target x working days x fitment budget re-scores Target Achievement x Fitment Rate; fitments done shown on the card, unscored","cancellations":"R7: shown beside the cancellation budget, never scored; a cancelled sale is still a sale and is not fitted, so it lowers Fitment Rate"},
+    "notScored": {
+      "gwp": "D7-a: Charge Amount x VAT equals RPT GWP on 328/1,104; budget Avg GWP is on the bundle-price basis; SM has no amount",
+      "hrsAhead": "D7-b: scheduler's queue, not the seller's",
+      "attendance_talk_qa_conversion_optins": "D7-c: not in the VT files",
+      "schedulers": "D7-d",
+      "missRate": "vt-1.2: removed as a driver - double counting of Fitment Rate (a missed sale is a sale not fitted); shown on the card beside the missed budget, unscored",
+      "fittedVsTarget": "vt-1.2: removed as a driver - target x working days x fitment budget re-scores Target Achievement x Fitment Rate; fitments done shown on the card, unscored",
+      "cancellations": "R7: shown beside the cancellation budget, never scored; a cancelled sale is still a sale and is not fitted, so it lowers Fitment Rate"
+    },
     "bands": [{"label":"Elite","min":90},{"label":"Strong","min":80},{"label":"On track","min":70},{"label":"Building","min":60},{"label":"Needs support","min":0}]
   },
   "budgetFallback": "latest earlier cycle; the card names the cycle used",
+  "channels": {
+    "keys": ["lead_gen","referral","predictive","other"],
+    "labels": {"lead_gen":"Lead Gen","referral":"Referral","predictive":"Predictive","other":"Other"},
+    "salesReviewLabels": {"lead_gen":"Digital","referral":"Referrals","predictive":"Predictive","other":"Other"},
+    "campaignMap": {
+      "Revx": "lead_gen",
+      "Tracking Empire": "lead_gen",
+      "Jag": "lead_gen",
+      "Afrilead": "lead_gen",
+      "Referral Agent": "referral",
+      "Predictive": "predictive",
+      "Black Birch Projects": "other"
+    },
+    "unmapped": "other",
+    "blankCampaign": "blank, never Other",
+    "rollups": {"panimax":{"label":"Panimax","members":["referral","predictive"],"neverDoubleCounted":true}},
+    "dimension": "lead source (leadAgg / lead groups), NOT the agent's sub-campaign (subAgg)"
+  },
+  "views": {
+    "default": "cycle",
+    "list": [
+      {
+        "k": "cycle",
+        "label": "Cycle view (current + fitted rollovers)",
+        "words": "Sales dated in the cycle, plus earlier sales only where they were fitted",
+        "dateRule": "date >= cycle.from AND date <= cycle.to",
+        "preCycle": {"include":true,"onlyStatus":"fitted"},
+        "openOutcomesInCycleOnly": true
+      },
+      {
+        "k": "current",
+        "label": "Current cycle sales only",
+        "words": "Sales dated in the cycle",
+        "dateRule": "date >= cycle.from AND date <= cycle.to",
+        "preCycle": {"include":false,"onlyStatus":null},
+        "openOutcomesInCycleOnly": true
+      },
+      {
+        "k": "rollovers",
+        "label": "Rollovers only",
+        "words": "Sales dated before the cycle start",
+        "dateRule": "date < cycle.from",
+        "preCycle": {"include":true,"onlyStatus":null},
+        "openOutcomesInCycleOnly": false
+      },
+      {"k":"all","label":"All data","words":"All sales to date","dateRule":"date is a real date","preCycle":{"include":true,"onlyStatus":null},"openOutcomesInCycleOnly":false}
+    ],
+    "alwaysAllBookings": ["leadTime","upcomingFitments"],
+    "rollover": {
+      "isRollover": "date < cycle.from",
+      "fittedCountsInCycle": true,
+      "openToAction": ["scheduled","cancelled","missed"],
+      "openNeverCountsAsNewCycleSale": true,
+      "preCycleWeeksAreFittedOnly": "in cycle view a pre-cycle week's fitted share reads 100 % by construction and must be labelled so nobody reads it as a real week"
+    }
+  },
+  "cycleBudget": {
+    "cycle-2026-11": {
+      "headcount": 6,
+      "sales": {"lead_gen":2066,"referral":179,"predictive":785,"total":3030},
+      "fitments": {"lead_gen":1653,"referral":143,"predictive":628,"total":2424},
+      "fitmentRate": {"*":0.8},
+      "cancelledPct": {"*":0.05},
+      "missedPct": {"*":0.05},
+      "scheduledPct": {"*":0.1},
+      "dialingDays": 22,
+      "salesBudgetIsTheOnlyBudget": true,
+      "cells": {
+        "headcount": "Sales Review B50 (actual C50 = 6 distinct schedulers)",
+        "sales": "Sales Review B51 total 3030 = SUM(B52:B54); B52 Digital 2066, B54 Panimax = B55+B56, B55 Referrals 179, B56 Predictive 785",
+        "fitments": "Sales Review B57 total 2424 = SUM(B58:B60); B58 Digital 1653, B61 Referrals 143, B62 Predictive 628",
+        "fitmentRate": "Sales Review B63 total 0.8 — flat 80 % on every channel (B64 Digital, B66 Panimax, B67 Referrals, B68 Predictive)",
+        "cancelledPct": "Sales Review B81 total 0.05 (B82/B84/B85/B86 0.05); the count budgets B76 = 0.05*B52, B79 = 0.05*B55, B80 = 0.05*B56",
+        "missedPct": "Sales Review B70 = 0.05*B52, B73 = 0.05*B55, B74 = 0.05*B56",
+        "scheduledPct": "Sales Review B88 = 0.1*B52, B91 = 0.1*B55, B92 = 0.1*B56",
+        "dialingDays": "Sales Review B49 = NETWORKDAYS(K5,K6,K9:K14) = 22 for 26 Oct - 25 Nov 2026 with 4 Nov a holiday"
+      }
+    },
+    "fallback": "latest earlier cycle; the panel names the cycle used, exactly as budgetFallback does for the rating"
+  },
+  "dashboardHrsShare": {
+    "h24": 0.75,
+    "h48": 0.1,
+    "h72": 0.05,
+    "h72pIn": 0.05,
+    "h72pOut": 0.05,
+    "base": "the channel's scheduled target = scheduledPct x that channel's sales budget",
+    "notTheRatingShare": "budgets[cycle].hrsShare (h24 0.8, h48 0.1, h72 0.05, h72p 0.05) comes from Sales_Review_YTD 2026.xlsx and stays unchanged. Neither share is scored (rating.notScored.hrsAhead).",
+    "structuralZero": "h72pIn is unreachable in the last three days of a cycle — its rule is '3+ days ahead AND on or before the cycle end', so from the 23rd nothing can land in it. It is 0 on the owner's file for that reason, and its 5 % share cannot be hit. Open question Q4.",
+    "cells": {"h24":"Sales Review B94 = 0.75*B88","h48":"B100 = 0.1*B88","h72":"B106 = 0.05*B88","h72pIn":"B112 = 0.05*B88","h72pOut":"B118 = 0.05*B88"}
+  },
+  "forecast": {
+    "method": "straight_line_pace",
+    "formula": "actual / elapsedDialingDays * totalDialingDays",
+    "totalDialingDays": "workingDaysBetween(cycle.from, cycle.to)",
+    "elapsedDialingDays": "workingDaysBetween(cycle.from, dataThrough)",
+    "dataThrough": "MIN(cycle.to, latest sale date in the book)",
+    "holidays": "periods.extraHolidays + saHolidaysFor(year) — the rule book's list, which already holds 2026-11-04 and already equals MTD_RULES.extraHolidays",
+    "appliesTo": ["sales","fitments"],
+    "notAppliedTo": ["missed","cancelled","scheduled","leadTimeBuckets"],
+    "label": "straight-line pace, not a prediction",
+    "cells": {
+      "formula": "Sales Review F51 / F57 = IFERROR(C51/$C$49*$B$49,'')",
+      "totalDialingDays": "Sales Review B49",
+      "elapsedDialingDays": "Sales Review C49",
+      "dataThrough": "Sales Review K7 = MIN(K6, MAX(col B))",
+      "holidays": "Sales Review K9:K14 (K9 = 2026-11-04, K10:K14 blank)"
+    }
+  },
+  "integrity": [
+    {
+      "k": "k17",
+      "label": "Outcomes = total sales",
+      "formula": "fitted + scheduled + missed + cancelled == sales",
+      "okWords": "Fitted, scheduled, missed and cancelled add up to total sales",
+      "checkWords": "{got} outcomes against {expected} sales - a difference of {diff}",
+      "cell": "Sales Review K17 = IF(SUM(B43:E43)=F43,'OK','CHECK')"
+    },
+    {
+      "k": "k18",
+      "label": "Lead-time buckets = scheduled",
+      "formula": "h24 + h48 + h72 + h72pIn + h72pOut == scheduled",
+      "okWords": "The five lead-time buckets add up to the scheduled pipeline",
+      "checkWords": "{got} in buckets against {expected} scheduled - a difference of {diff}; look for a scheduled case with no appointment date",
+      "cell": "Sales Review K18 = IF(C93+C99+C105+C111+C117=C87,'OK','CHECK')"
+    },
+    {
+      "k": "schedulerName",
+      "label": "Every sale has a scheduler",
+      "formula": "sum of per-scheduler sales == sales in view",
+      "okWords": "Reconciles to total sales in view",
+      "checkWords": "Check: {diff} sales in view have no scheduler name",
+      "cell": "Agent & Scheduler Summary E36"
+    }
+  ],
+  "insights": {
+    "templates": [
+      {
+        "id": "conversion",
+        "requires": ["sales","fitted","scheduled"],
+        "text": "Conversion: {fitRate} of {sales} sales in view are fitted, and a further {scheduled} ({schedRate}) are booked.",
+        "cell": "Exco Summary B11"
+      },
+      {
+        "id": "leakage",
+        "requires": ["cancelled","missed","sales"],
+        "text": "Leakage: {leak} sales ({leakRate}) were cancelled or missed, representing R{leakGwp} of GWP.",
+        "cell": "Exco Summary B12"
+      },
+      {
+        "id": "bestCampaign",
+        "requires": ["campaigns"],
+        "minSales": 20,
+        "text": "Campaigns with {minSales}+ sales: best fitted rate {best} ({bestRate}), lowest {worst} ({worstRate}).",
+        "cell": "Exco Summary B13"
+      },
+      {
+        "id": "rollovers",
+        "requires": ["rollovers"],
+        "text": "Rollovers (sold before {cycleFrom}): {total} in total; {fitted} fitted and counted in this cycle, {open} still open - {scheduled} scheduled, {rebook} to rebook.",
+        "cell": "Exco Summary B14"
+      }
+    ],
+    "rules": {
+      "computedOnly": "no insight may be hand-written; each names the figure and the cell it came from",
+      "omitWhenAbsent": "a template whose requires[] are not all present is omitted, never padded with a zero",
+      "minSalesApplies": "a template with minSales is omitted when no member clears it"
+    }
+  },
+  "disagree": {
+    "resultApplied": false,
+    "words": "The Schedulers Data Result column is hand-typed and is not the system of record: it is parsed, compared and counted by direction, and never applied. Every count here is a count with words, never a hidden adjustment.",
+    "carried": {
+      "handCredits": 11,
+      "leadSourceRelabelledShare": "6.6 %",
+      "words": "Carried forward from the 071 floor guide: 11 sales the hand report credits to someone other than the Salesforce Created By, and about 6.6 % of rows whose lead source the hand report relabels. The engine keeps Salesforce as the system of record for both."
+    }
+  },
   "budgets": {
-    "cycle-2026-11": {"spd":{"digital":{"*":6.5},"referral":{"*":3},"predictive":{"Exp":2,"M2":1.5,"M1":1}},"fitment":{"digital":{"*":0.85},"referral":{"*":0.85},"predictive":{"*":0.8,"Exp":0.8,"M2":0.75,"M1":0.7},"floor":0.8},"missed":{"*":0.05},"cancelled":{"*":0.05},"hrsShare":{"h24":0.8,"h48":0.1,"h72":0.05,"h72p":0.05},"avgGwpShownNotScored":{"digital":166,"referral":199,"predictive":169}}
+    "cycle-2026-11": {
+      "spd": {"digital":{"*":6.5},"referral":{"*":3},"predictive":{"Exp":2,"M2":1.5,"M1":1}},
+      "fitment": {"digital":{"*":0.85},"referral":{"*":0.85},"predictive":{"*":0.8,"Exp":0.8,"M2":0.75,"M1":0.7},"floor":0.8},
+      "missed": {"*":0.05},
+      "cancelled": {"*":0.05},
+      "hrsShare": {"h24":0.8,"h48":0.1,"h72":0.05,"h72p":0.05},
+      "avgGwpShownNotScored": {"digital":166,"referral":199,"predictive":169}
+    }
   }
 };
 /* @vt-rules end */
@@ -246,13 +568,23 @@ function defaultDataOnly(d) {
 function isWorkingDay(d, isDataOnlyDay) { var w = dow(d); return w > 0 && w < 6 && !(isDataOnlyDay || defaultDataOnly)(d); }
 function workingDaysBetween(a, b, isDataOnlyDay) { var n = 0; for (var d = a; a && b && d <= b; d = addDays(d, 1)) if (isWorkingDay(d, isDataOnlyDay)) n++; return n; }
 function hrsAsAt(extractOn) { return addDays(extractOn, R.periods.hrsAheadAsAtOffsetDays); }
-function hrsBucket(apptOn, asAt) {
+/* THE LEAD-TIME BUCKET (072 D5/D6, rule book periods.leadTimeBuckets). Five buckets ahead plus Past
+   due: 24 / 48 / 72 are exact day offsets from the FROZEN as-at (never a clock), and a booking three
+   or more days out splits on the cycle end — `72+ in cycle` on or before it, `72+ out cycle` after.
+   `cycleTo` is the cycle end from periods.cycleByKey (FR-032), never the workbook's TODAY() expression;
+   every caller in this file passes it. Omitted, it falls back to the cycle the as-at date sits in,
+   which is a safety net and not the contract — a caller that knows its cycle must say so. */
+function hrsBucket(apptOn, asAt, cycleTo) {
   if (!apptOn || !asAt) return null;
-  var diff = dayDiff(apptOn, asAt), B = R.periods.hrsAheadBuckets;
+  var diff = dayDiff(apptOn, asAt), B = R.periods.leadTimeBuckets, end = cycleTo || cycleOf(asAt).to;
   for (var i = 0; i < B.length; i++) {
     var b = B[i];
     if (b.days != null && diff === b.days) return b.k;
-    if (b.minDays != null && diff >= b.minDays) return b.k;
+    if (b.minDays != null && diff >= b.minDays) {
+      if (!b.cutoff) return b.k;
+      if (b.cutoffOp === '>' ? apptOn > end : apptOn <= end) return b.k;
+      continue;
+    }
     if (b.maxDays != null && diff <= b.maxDays) return b.k;
   }
   return null;
@@ -648,10 +980,10 @@ function tally(facts, missEv, w, mtd, asOf) {
   t.value = round(t.value * R.vat, 2);
   return t;
 }
-function hrsAhead(facts, asAt) {
-  var h = { total: 0 }, share = {}; R.periods.hrsAheadBuckets.forEach(function (b) { h[b.k] = 0; });
-  facts.forEach(function (f) { if (f.st !== 'scheduled') return; var k = hrsBucket(f.apptOn, asAt); h.total++; if (k) h[k]++; });
-  R.periods.hrsAheadBuckets.forEach(function (b) { share[b.k] = h.total ? h[b.k] / h.total : null; });
+function hrsAhead(facts, asAt, cycleTo) {
+  var h = { total: 0 }, share = {}; R.periods.leadTimeBuckets.forEach(function (b) { h[b.k] = 0; });
+  facts.forEach(function (f) { if (f.st !== 'scheduled') return; var k = hrsBucket(f.apptOn, asAt, cycleTo); h.total++; if (k) h[k]++; });
+  R.periods.leadTimeBuckets.forEach(function (b) { share[b.k] = h.total ? h[b.k] / h.total : null; });
   h.share = share; return h;
 }
 
@@ -735,7 +1067,7 @@ function model(book, roster, opts) {
     W.mtd.toTarget = den > 0 ? tg.reduce(function (s, m) { return s + (m.mtd.current || 0); }, 0) / den : null;
     W.weeks.forEach(function (w, i) { var dn = tg.reduce(function (s, m) { return s + m.target * m.weeks[i].wd; }, 0);
       w.target = W.mtd.target; w.toTarget = dn > 0 ? tg.reduce(function (s, m) { return s + m.weeks[i].sales; }, 0) / dn : null; });
-    W.hrsAhead = hrsAhead(fs, hAsAt);
+    W.hrsAhead = hrsAhead(fs, hAsAt, cyc.to);
     var subs = union(members.map(function (m) { return m.sub; }));
     W.mtd.canBudget = canBudget(bud, extra.sub || (subs.length === 1 ? subs[0] : '*'));
     for (var k in extra) W[k] = extra[k];
@@ -867,12 +1199,420 @@ function emptyCyclePayload(cycleKey, opts) {
     budgets: bud ? { cycle: bud.cycle, fitment: bud.b.fitment, missed: bud.b.missed, cancelled: bud.b.cancelled, hrsShare: bud.b.hrsShare, spd: bud.b.spd } : null };
 }
 
+/* ---------------------------------------------------------------- the dashboard (072) ----
+ * VTEngine.dashboard(book, roster, {cycleKey, view, asOf, prev, isDataOnlyDay, filters}) — the whole
+ * VT Report page as one object. PURE: no DOM, no fetch, no clock (asOf comes in), the book is never
+ * mutated, and the same inputs always give the same answer. THE ENGINE DECIDES, THE PAGE PAINTS: the
+ * page holds no arithmetic and no threshold, and every target here is a rule-book value that carries
+ * its Sales Review cell so the panel can name it on screen.
+ *
+ * It sits BESIDE model() rather than inside it: four views over twenty panels would bloat the one
+ * function three live pages and the digest depend on (plan, Complexity Tracking).
+ *
+ * The four views (rule book views.list) and the asymmetry that makes them balance: Sales and Fitments
+ * add the pre-cycle Fitted term, while Scheduled / Missed / Cancelled are IN-CYCLE ONLY. That is what
+ * the owner's own Sales Review cells do (spec F0-9) and it is why K17 reconciles; "fixing" it would
+ * break the reconciliation. Lead time and upcoming fitments cover ALL bookings whatever the view.
+ */
+function cycleBudgetFor(cycleKey) {
+  var CB = R.cycleBudget, keys = sortedKeys(CB).filter(function (k) { return CB[k] && typeof CB[k] === 'object'; });
+  if (CB[cycleKey]) return { cycle: cycleKey, b: CB[cycleKey], fallback: false, words: 'Targets are the Sales Review\'s own, for ' + cycleKey + '.' };
+  var earlier = keys.filter(function (k) { return k < cycleKey; });
+  if (!earlier.length) return null;
+  var k = earlier[earlier.length - 1];
+  return { cycle: k, b: CB[k], fallback: true, words: 'No targets are on file for ' + cycleKey + ', so the ' + k + ' targets are shown and named.' };
+}
+/* the campaign → channel map, exact match on the raw Campaign/Partner, unmapped → Other (FR-026).
+   With no Schedulers Data row the campaign is unknown, so the engine's own lead-source GROUP stands
+   in — the daily exports keep every channel panel working (spec edge case). */
+var _CMAP = null;
+function campaignChannelMap() {
+  if (_CMAP) return _CMAP;
+  _CMAP = {}; var M = R.channels.campaignMap;
+  Object.keys(M).forEach(function (k) { _CMAP[norm(k)] = M[k]; });
+  return _CMAP;
+}
+function channelOf(campaign, leadSource) {
+  var c = strCell(campaign), m = campaignChannelMap();
+  if (c) return m[norm(c)] || R.channels.unmapped;
+  var g = leadGroupOf(leadSource);
+  return g && R.channels.keys.indexOf(g) > -1 ? g : R.channels.unmapped;
+}
+function viewDef(key) {
+  var L = R.views.list, k = key || R.views.default;
+  for (var i = 0; i < L.length; i++) if (L[i].k === k) return L[i];
+  return L[0];
+}
+function ratio(a, b) { return b > 0 ? a / b : null; }
+function fmtN(n) { return n == null ? R.reports.absent : String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+function fmtP(x) { return x == null ? R.reports.absent : (x * 100).toFixed(1) + '%'; }
+function fmtR(n) { return n == null ? R.reports.absent : fmtN(n); }
+function fill(tpl, vals) { return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return vals[k] == null ? R.reports.absent : String(vals[k]); }); }
+
+/* one pass over the book → the dashboard's facts. Customer data is never in the book and is never
+   read here; a scheduler, an agent or a referrer travels as the name the source typed (PII stays out
+   of every output but the staff name the report already carries). */
+function dashFacts(book, cyc, asOf) {
+  var evBy = {}; (book.events || []).forEach(function (e) { (evBy[e.caseNumber] = evBy[e.caseNumber] || []).push(e); });
+  for (var k0 in evBy) evBy[k0].sort(function (a, b) { return a.onDate < b.onDate ? -1 : a.onDate > b.onDate ? 1 : a.to === b.from ? -1 : b.to === a.from ? 1 : 0; });
+  var out = [], noSaleDay = 0, anyGwp = false, anyScheduler = false;
+  sortedKeys(book.cases).forEach(function (cn) {
+    var row = book.cases[cn], st = statusAt(row, evBy[cn], asOf);
+    if (!st) return;
+    if (row.gwpRpt != null) anyGwp = true;
+    if (strCell(row.schedulerName)) anyScheduler = true;
+    if (!row.soldOn) { noSaleDay++; return; }                 /* in play, never counted as a sale on any day */
+    if (row.soldOn > asOf) return;
+    var campaign = strCell(row.campaignRpt);
+    out.push({
+      cn: cn, st: st, soldOn: row.soldOn, apptOn: row.apptOn || null,
+      current: row.soldOn >= cyc.from && row.soldOn <= cyc.to, pre: row.soldOn < cyc.from,
+      campaign: campaign, channel: channelOf(campaign, row.leadSource),
+      gwp: row.gwpRpt == null ? null : +row.gwpRpt,
+      scheduler: strCell(row.schedulerName), schedulerCb: row.schedulerCb || null,
+      agent: strCell(row.sellerName), agentCb: row.sellerCb || null,
+      referrer: strCell(row.referringName), referrerCb: row.referringCb || null,
+      resultRpt: row.resultRpt || null
+    });
+  });
+  return { facts: out, noSaleDay: noSaleDay, gwpLoaded: anyGwp, schedulersLoaded: anyScheduler };
+}
+/* the five lead-time buckets over one scheduled set, frozen at `asAt`, split on the cycle end (D5/D6).
+   `past` is carried separately: the workbook's K18 adds the FIVE, and so do we. */
+function bucketRows(scheduled, asAt, cycleTo, budgetBase) {
+  var B = R.periods.leadTimeBuckets, share = R.dashboardHrsShare, tally = {}, past = 0, unreach = {};
+  B.forEach(function (b) { tally[b.k] = 0; });
+  scheduled.forEach(function (f) { var k = hrsBucket(f.apptOn, asAt, cycleTo); if (k) tally[k]++; });
+  past = tally.past;
+  var ahead = B.filter(function (b) { return b.k !== 'past'; }), total = ahead.reduce(function (s, b) { return s + tally[b.k]; }, 0);
+  /* a bucket whose rule cannot be satisfied between the as-at and the cycle end is structurally empty,
+     not missing data: '72+ in cycle' needs minDays of room before the cycle end (F0-15, Q4). */
+  ahead.forEach(function (b) { unreach[b.k] = b.cutoff === 'cycle.to' && b.cutoffOp === '<=' && b.minDays != null && cycleTo != null && dayDiff(cycleTo, asAt) < b.minDays; });
+  return {
+    rows: ahead.map(function (b) {
+      var target = share[b.k] == null || budgetBase == null ? null : share[b.k] * budgetBase;
+      return { k: b.k, label: b.label, count: tally[b.k], share: ratio(tally[b.k], total), target: target,
+        attainment: target > 0 ? tally[b.k] / target : null, structuralZero: !!(unreach[b.k] && tally[b.k] === 0),
+        words: unreach[b.k] && tally[b.k] === 0 ? R.dashboardHrsShare.structuralZero : null };
+    }),
+    total: total, past: past
+  };
+}
+function dashboard(book, roster, opts) {
+  opts = opts || {}; book = book || emptyBook();
+  var V = R.views, CH = R.channels, vd = viewDef(opts.view);
+  var cyc = opts.cycleKey ? cycleByKey(opts.cycleKey) : cycleOf(opts.asOf);
+  var seen = null; for (var c0 in book.cases) seen = maxD(seen, book.cases[c0].lastSeen, book.cases[c0].soldOn);
+  var asOf = opts.asOf || seen, DO = opts.isDataOnlyDay;
+  var F = dashFacts(book, cyc, asOf), facts = F.facts;
+  var maxSold = null, minSold = null;
+  facts.forEach(function (f) { maxSold = maxD(maxSold, f.soldOn); minSold = minD(minSold, f.soldOn); });
+  var dataThrough = minD(cyc.to, maxSold), hAsAt = dataThrough ? hrsAsAt(dataThrough) : null;
+
+  /* ---- the view: one predicate for the SALES set, one for the open outcomes (F0-9) ---- */
+  var only = vd.preCycle && vd.preCycle.include ? vd.preCycle.onlyStatus : undefined;
+  var inSales = vd.k === 'rollovers' ? function (f) { return f.pre; }
+    : !vd.preCycle.include ? function (f) { return f.current; }
+      : only ? function (f) { return f.current || (f.pre && f.st === only); }
+        : function () { return true; };
+  var inOpen = vd.openOutcomesInCycleOnly ? function (f) { return f.current; } : inSales;
+  var sales = facts.filter(inSales), open = facts.filter(inOpen);
+  var countOf = function (list, st) { var n = 0; for (var i = 0; i < list.length; i++) if (list[i].st === st) n++; return n; };
+  var sumGwp = function (list, test) { var s = 0, any = false; list.forEach(function (f) { if (test(f) && f.gwp != null) { s += f.gwp; any = true; } }); return any || F.gwpLoaded ? s : null; };
+  function tallySet(sl, op) {
+    var t = { sales: sl.length, fitted: countOf(sl, 'fitted'), scheduled: countOf(op, 'scheduled'), missed: countOf(op, 'missed'), cancelled: countOf(op, 'cancelled') };
+    t.gwpFitted = F.gwpLoaded ? sumGwp(sl, function (f) { return f.st === 'fitted'; }) : null;
+    t.gwpTotal = F.gwpLoaded ? sumGwp(sl, function () { return true; }) : null;
+    t.fitRate = ratio(t.fitted, t.sales); t.missRate = ratio(t.missed, t.sales);
+    t.schedRate = ratio(t.scheduled, t.sales); t.canRate = ratio(t.cancelled, t.sales);
+    return t;
+  }
+  var counts = tallySet(sales, open);
+  var rates = { fitRate: counts.fitRate, missRate: counts.missRate, schedRate: counts.schedRate, canRate: counts.canRate };
+
+  /* ---- dialing days and the straight-line forecast (FR-036..FR-040) ---- */
+  var wdOf = function (a, b) { return a && b && a <= b ? workingDaysBetween(a, b, DO) : 0; };
+  var ddTotal = wdOf(cyc.from, cyc.to), ddElapsed = wdOf(cyc.from, dataThrough);
+  var dialing = { total: ddTotal, elapsed: ddElapsed, left: ddTotal - ddElapsed, pct: ratio(ddElapsed, ddTotal),
+    words: 'Dialing day ' + ddElapsed + ' of ' + ddTotal + ', the working days of the cycle on the rule book\'s calendar.' };
+  var bud = cycleBudgetFor(cyc.key), cb = bud ? bud.b : null;
+  var pace = function (actual) { return ddElapsed > 0 ? actual / ddElapsed * ddTotal : null; };
+  var forecast = { sales: pace(counts.sales), fitments: pace(counts.fitted), method: R.forecast.method,
+    label: R.forecast.label, basis: R.forecast.formula, elapsed: ddElapsed, total: ddTotal,
+    words: 'A ' + R.forecast.label + ': ' + R.forecast.formula + ', over the cycle\'s dialing days.' };
+  var budget = bud ? {
+    cycle: bud.cycle, fallback: bud.fallback, words: bud.words, cells: cb.cells,
+    sales: cb.sales, fitments: cb.fitments, fitmentRate: cb.fitmentRate['*'],
+    cancelledPct: cb.cancelledPct['*'], missedPct: cb.missedPct['*'], scheduledPct: cb.scheduledPct['*'],
+    headcount: cb.headcount, dialingDays: cb.dialingDays,
+    achievement: ratio(counts.sales, cb.sales.total), fitAchievement: ratio(counts.fitted, cb.fitments.total),
+    forecastVsSales: ratio(forecast.sales, cb.sales.total), forecastVsFitments: ratio(forecast.fitments, cb.fitments.total)
+  } : null;
+  if (budget) { forecast.salesVsBudget = budget.forecastVsSales; forecast.fitmentsVsBudget = budget.forecastVsFitments; }
+
+  /* ---- the five lead-time buckets: the view's scheduled set, and every booking there is (FR-029) ---- */
+  var base = cb ? cb.scheduledPct['*'] * cb.sales[CH.keys[0]] : null;   /* SR B94 = 0.75 x B88, B88 = 0.1 x B52 */
+  var bkView = bucketRows(open.filter(function (f) { return f.st === 'scheduled'; }), hAsAt, cyc.to, base);
+  var bkAll = bucketRows(facts.filter(function (f) { return f.st === 'scheduled'; }), hAsAt, cyc.to, base);
+  var bucketWords = 'Lead time is frozen at ' + hAsAt + ' (the extract plus one day), never a clock, and the two 72+ buckets split on the cycle end ' + cyc.to + '.';
+
+  /* ---- channels (the donut shape) and campaigns (the ranked-bar shape) ---- */
+  var byChannel = CH.keys.map(function (k) {
+    var sl = sales.filter(function (f) { return f.channel === k; }), op = open.filter(function (f) { return f.channel === k; });
+    var t = tallySet(sl, op);
+    t.k = k; t.label = CH.labels[k]; t.srLabel = CH.salesReviewLabels[k];
+    t.share = ratio(t.sales, counts.sales);
+    t.salesBudget = cb && cb.sales[k] != null ? cb.sales[k] : null;
+    t.fitmentBudget = cb && cb.fitments[k] != null ? cb.fitments[k] : null;
+    t.fitmentRateBudget = cb ? cb.fitmentRate['*'] : null;
+    t.achievement = ratio(t.sales, t.salesBudget);
+    t.forecastSales = pace(t.sales); t.forecastFitments = pace(t.fitted);
+    t.targetWords = t.salesBudget == null ? 'This channel has an actual and no target: the Sales Review carries no budget row for it.' : bud.words;
+    return t;
+  });
+  var campNames = {}; sales.forEach(function (f) { if (f.campaign) campNames[f.campaign] = 1; });
+  var campaigns = sortedKeys(campNames).map(function (name) {
+    var sl = sales.filter(function (f) { return f.campaign === name; }), op = open.filter(function (f) { return f.campaign === name; });
+    var t = tallySet(sl, op); t.name = name; t.channel = channelOf(name, null);
+    t.share = ratio(t.sales, counts.sales); t.rollup = false;
+    t.mapped = !!campaignChannelMap()[norm(name)];
+    return t;
+  }).sort(function (a, b) { return b.sales - a.sales || (a.name < b.name ? -1 : 1); });
+  var unmapped = campaigns.filter(function (c) { return !c.mapped; }).map(function (c) { return c.name; });
+  var rollups = sortedKeys(CH.rollups).map(function (rk) {
+    var r = CH.rollups[rk], mem = r.members;
+    var sl = sales.filter(function (f) { return mem.indexOf(f.channel) > -1; }), op = open.filter(function (f) { return mem.indexOf(f.channel) > -1; });
+    var t = tallySet(sl, op); t.k = rk; t.label = r.label; t.members = mem.slice(); t.rollup = true;
+    t.salesBudget = cb ? mem.reduce(function (s, m) { return s + (cb.sales[m] || 0); }, 0) : null;
+    t.fitmentBudget = cb ? mem.reduce(function (s, m) { return s + (cb.fitments[m] || 0); }, 0) : null;
+    t.words = r.label + ' is a named roll-up of ' + mem.map(function (m) { return CH.labels[m]; }).join(' + ') + ' and is never counted twice in a total.';
+    return t;
+  });
+
+  /* ---- Performance Trend: the workbook's own week window, the engine's own cycle weeks (FR-021..024) ---- */
+  var minSoldV = null, maxSoldV = null;
+  sales.forEach(function (f) { minSoldV = minD(minSoldV, f.soldOn); maxSoldV = maxD(maxSoldV, f.soldOn); });
+  var weeks = [];
+  if (minSoldV) {
+    for (var w = mondayOf(minSoldV); w < cyc.from; w = addDays(w, 7)) weeks.push({ from: w, to: minD(addDays(w, 6), addDays(cyc.from, -1)), preCycle: true, postCycle: false });
+    weeksOf(cyc).forEach(function (x) { weeks.push({ from: x.from, to: x.to, preCycle: false, postCycle: false }); });
+    if (maxSoldV > cyc.to) { var p = addDays(cyc.to, 1);
+      while (p <= maxSoldV) { var pe = minD(addDays(mondayOf(p), 6), maxSoldV); weeks.push({ from: p, to: pe, preCycle: false, postCycle: true }); p = addDays(pe, 1); } }
+  }
+  weeks = weeks.map(function (x) {
+    var sl = sales.filter(function (f) { return f.soldOn >= x.from && f.soldOn <= x.to; });
+    var op = open.filter(function (f) { return f.soldOn >= x.from && f.soldOn <= x.to; });
+    var t = tallySet(sl, op), dd = x.preCycle || x.postCycle ? null : wdOf(maxD(x.from, cyc.from), minD(x.to, cyc.to));
+    t.k = x.from; t.from = x.from; t.to = x.to; t.label = short(x.from) + ' – ' + short(x.to);
+    t.preCycle = x.preCycle; t.postCycle = x.postCycle; t.dialingDays = dd;
+    t.fittedOnly = !!(x.preCycle && vd.preCycle && vd.preCycle.onlyStatus === 'fitted');
+    t.target = dd != null && cb && ddTotal > 0 ? cb.sales.total / ddTotal * dd : null;
+    t.words = t.fittedOnly ? V.rollover.preCycleWeeksAreFittedOnly : null;
+    return t;
+  });
+  var weekWords = 'Weeks are the engine\'s cycle weeks, ' + R.periods.weekWindow + '. Each week\'s target is the cycle sales budget over the cycle\'s dialing days, times that week\'s dialing days.';
+
+  /* ---- the previous cycle, the KPI cards and the Detailed Breakdown ---- */
+  var pv = opts.prev && (opts.prev.counts || opts.prev), prevOk = !!(pv && pv.sales != null);
+  var prevCycle = { present: prevOk, cycle: (opts.prev && opts.prev.cycle) || null,
+    words: prevOk ? 'Change is against ' + ((opts.prev && opts.prev.cycle) || 'the previous cycle') + '.'
+      : 'There is no previous cycle on file, so every change reads ' + R.reports.absent + ' — never 0 and never a percentage of nothing.' };
+  var deltaOf = function (now, was) { return prevOk && was != null && now != null ? { abs: now - was, pct: ratio(now - was, was) } : null; };
+  var kpis = [
+    { k: 'sales', label: 'Total Sales', value: counts.sales, delta: deltaOf(counts.sales, prevOk ? pv.sales : null),
+      words: fmtN(counts.sales) + ' sales in view.', cell: 'Sales Review C51 / Exco Summary B7' },
+    { k: 'fitted', label: 'Total Fitments', value: counts.fitted, delta: deltaOf(counts.fitted, prevOk ? pv.fitted : null),
+      pct: rates.fitRate, budget: budget ? budget.fitmentRate : null, scored: false,
+      words: fmtN(counts.fitted) + ' fitted, ' + fmtP(rates.fitRate) + ' of sales, against the dashboard\'s flat ' + fmtP(budget ? budget.fitmentRate : null) + ' target.',
+      cell: 'Sales Review C57 / B63' },
+    { k: 'cancelled', label: 'Cancellations', value: counts.cancelled, delta: deltaOf(counts.cancelled, prevOk ? pv.cancelled : null),
+      pct: rates.canRate, budget: budget ? budget.cancelledPct : null, scored: false,
+      words: fmtN(counts.cancelled) + ' cancelled, ' + fmtP(rates.canRate) + ' of sales, beside the ' + fmtP(budget ? budget.cancelledPct : null) + ' budget. Shown, never scored.',
+      cell: 'Sales Review C75 / C81' },
+    { k: 'missed', label: 'Missed', value: counts.missed, delta: deltaOf(counts.missed, prevOk ? pv.missed : null),
+      pct: rates.missRate, budget: budget ? budget.missedPct : null, scored: false,
+      words: fmtN(counts.missed) + ' missed, ' + fmtP(rates.missRate) + ' of sales, beside the ' + fmtP(budget ? budget.missedPct : null) + ' budget. Shown, never scored.',
+      cell: 'Sales Review C69' },
+    { k: 'targetAchieved', label: 'Target Achieved', value: budget ? budget.achievement : null,
+      delta: deltaOf(budget ? budget.achievement : null, prevOk ? pv.achievement : null),
+      words: budget ? fmtP(budget.achievement) + ' of the ' + fmtN(budget.sales.total) + ' cycle sales budget' : 'No cycle sales budget is on file.',
+      cell: budget ? budget.cells.sales : null }
+  ];
+  var breakdown = byChannel.map(function (t) {
+    return { k: t.k, label: t.label, srLabel: t.srLabel, sales: t.sales, fitted: t.fitted, cancelled: t.cancelled, missed: t.missed,
+      scheduled: t.scheduled, fitRate: t.fitRate, canRate: t.canRate, missRate: t.missRate, salesBudget: t.salesBudget,
+      fitmentBudget: t.fitmentBudget, achievement: t.achievement, forecastSales: t.forecastSales, forecastFitments: t.forecastFitments,
+      delta: deltaOf(t.sales, prevOk && pv.channels ? (pv.channels[t.k] || {}).sales : null) };
+  });
+  var breakdownTotals = { k: 'total', label: 'Total', sales: counts.sales, fitted: counts.fitted, cancelled: counts.cancelled,
+    missed: counts.missed, scheduled: counts.scheduled, fitRate: rates.fitRate, canRate: rates.canRate, missRate: rates.missRate,
+    salesBudget: budget ? budget.sales.total : null, fitmentBudget: budget ? budget.fitments.total : null,
+    achievement: budget ? budget.achievement : null, forecastSales: forecast.sales, forecastFitments: forecast.fitments,
+    delta: deltaOf(counts.sales, prevOk ? pv.sales : null), words: R.reports.totals };
+
+  /* ---- GWP: the Schedulers Data figure, named, and never the engine's BI value (A7, FR-016) ---- */
+  var gwp = {
+    loaded: F.gwpLoaded,
+    fitted: F.gwpLoaded ? counts.gwpFitted : null,
+    total: F.gwpLoaded ? counts.gwpTotal : null,
+    lost: F.gwpLoaded ? sumGwp(sales, function (f) { return f.st === 'cancelled' || f.st === 'missed'; }) : null,
+    open: F.gwpLoaded ? sumGwp(open, function (f) { return R.status.open.indexOf(f.st) > -1 || f.st === 'cancelled'; }) : null,
+    source: R.reports.gwp.source, notSource: R.reports.gwp.notSource,
+    words: F.gwpLoaded ? 'GWP is ' + R.reports.gwp.source + '. It is not the engine\'s fitted value, which is the BI charge: see ' + R.reports.gwp.notSource
+      : 'GWP needs the Schedulers Data upload; nothing is painted here and no figure is guessed.'
+  };
+
+  /* ---- the Rollover Follow-up panel: always the pre-cycle position, whatever the view (FR-049) ---- */
+  var preAll = facts.filter(function (f) { return f.pre; });
+  var rollRow = function (list) {
+    var t = tallySet(list, list);
+    t.open = t.scheduled + t.cancelled + t.missed;
+    t.fittedPct = ratio(t.fitted, t.sales); t.openPct = ratio(t.open, t.sales);
+    t.gwpOpen = F.gwpLoaded ? sumGwp(list, function (f) { return f.st === 'scheduled' || f.st === 'cancelled' || f.st === 'missed'; }) : null;
+    return t;
+  };
+  var rollover = {
+    rows: CH.keys.map(function (k) { var r = rollRow(preAll.filter(function (f) { return f.channel === k; })); r.k = k; r.label = CH.labels[k]; return r; }),
+    totals: rollRow(preAll),
+    words: 'Rollovers are sales dated before ' + cyc.from + '. A fitted rollover counts towards this cycle; ' +
+      R.views.rollover.openToAction.join(', ') + ' are open to action and must be scheduled or rebooked. This panel is always the pre-cycle position, whatever the view.'
+  };
+  rollover.totals.k = 'total'; rollover.totals.label = 'Total';
+
+  /* ---- Upcoming Scheduled Fitments: all bookings, regardless of view (FR-048) ---- */
+  var U = R.reports.upcomingFitments, booked = facts.filter(function (f) { return f.st === 'scheduled' && f.apptOn; });
+  var upFrom = booked.reduce(function (m, f) { return !m || f.apptOn < m ? f.apptOn : m; }, null);
+  var upTotal = facts.filter(function (f) { return f.st === 'scheduled'; }).length, upDates = [], shown = 0;
+  if (upFrom) for (var i = 0; i < U.horizonDays; i++) {
+    var d = addDays(upFrom, i), n = booked.filter(function (f) { return f.apptOn === d; }).length;
+    shown += n; upDates.push({ d: d, count: n, share: ratio(n, upTotal) || 0 });
+  }
+  var upcoming = { from: upFrom, dates: upDates, total: upTotal,
+    tail: { label: U.tailLabel, count: upTotal - shown, share: ratio(upTotal - shown, upTotal) || 0 },
+    words: 'Upcoming fitments cover all bookings, including rollovers, whatever the view is set to. Dates run from the earliest booking.' };
+
+  /* ---- the scheduler dimension and the four pivots (FR-045, FR-046) ---- */
+  var personRows = function (list, op, dim) {
+    var key = dim === 'agent' ? 'agent' : dim === 'referrer' ? 'referrer' : 'scheduler';
+    var cbKey = dim === 'agent' ? 'agentCb' : dim === 'referrer' ? 'referrerCb' : 'schedulerCb';
+    var names = {}; list.forEach(function (f) { if (f[key]) names[f[key]] = 1; });
+    return sortedKeys(names).map(function (nm) {
+      var mine = list.filter(function (f) { return f[key] === nm; }), mineOp = op.filter(function (f) { return f[key] === nm; });
+      var t = tallySet(mine, mineOp);
+      t.name = nm; t.cb = (mine[0] || {})[cbKey] || null; t.matched = !!t.cb;
+      t.gwpLost = F.gwpLoaded ? sumGwp(mine, function (f) { return f.st === 'cancelled' || f.st === 'missed'; }) : null;
+      t.pct = { fitted: ratio(t.fitted, t.sales), scheduled: ratio(t.scheduled, t.sales), cancelled: ratio(t.cancelled, t.sales), missed: ratio(t.missed, t.sales) };
+      return t;
+    });
+  };
+  var schRows = personRows(sales, open, 'scheduler');
+  var schedulers = {
+    loaded: F.schedulersLoaded, rows: schRows, headcount: schRows.length,
+    headcountBudget: cb ? cb.headcount : null, headcountCell: cb ? cb.cells.headcount : null,
+    unmatched: schRows.filter(function (r) { return !r.matched; }).map(function (r) { return r.name; }),
+    words: F.schedulersLoaded ? 'Schedulers come from the Schedulers Data sheet and from nothing else; a name not on the Agent List is counted as typed and listed as unmatched, never guessed away.'
+      : 'The scheduler dimension needs the Schedulers Data upload: no daily export names the scheduler, so nothing is painted here.'
+  };
+  var pivotScope = function (scope) {
+    var all = facts, sl = scope === 'all' ? all : all.filter(function (f) { return f.channel === scope; });
+    return personRows(sl, sl, 'scheduler').filter(function (r) { return r.sales > 0; });
+  };
+  var persons = function (dim, filters) {
+    var fl = { from: null, to: null, channel: null, campaign: null }, gi = [opts.filters || {}, filters || {}];
+    gi.forEach(function (g) { Object.keys(fl).forEach(function (k) { if (g[k] != null) fl[k] = g[k]; }); });
+    var keep = function (f) {
+      if (fl.from && f.soldOn < fl.from) return false;
+      if (fl.to && f.soldOn > fl.to) return false;
+      if (fl.channel && f.channel !== fl.channel) return false;
+      if (fl.campaign && f.campaign !== fl.campaign) return false;
+      return true;
+    };
+    var sl = sales.filter(keep), op = open.filter(keep), rows = personRows(sl, op, dim);
+    var all = tallySet(sl, op);
+    all.gwpLost = F.gwpLoaded ? sumGwp(sl, function (f) { return f.st === 'cancelled' || f.st === 'missed'; }) : null;
+    all.name = 'All ' + dim + 's'; all.pct = { fitted: ratio(all.fitted, all.sales), scheduled: ratio(all.scheduled, all.sales), cancelled: ratio(all.cancelled, all.sales), missed: ratio(all.missed, all.sales) };
+    var on = Object.keys(fl).filter(function (k) { return fl[k] != null; });
+    var dd = R.reports.personDimensions.filter(function (p) { return p.k === dim; })[0] || { label: dim };
+    return { dim: dim, label: dd.label, rows: rows, all: all, filters: fl,
+      words: dd.label + ' over ' + vd.label + '. Active filters: ' + (on.length ? on.map(function (k) { return k + ' = ' + fl[k]; }).join(', ') : 'none') + '.' };
+  };
+
+  /* ---- the three integrity checks: engine verdicts, with the words, never colour alone ---- */
+  var ichk = { k17: { got: counts.fitted + counts.scheduled + counts.missed + counts.cancelled, expected: counts.sales },
+    k18: { got: bkView.total, expected: counts.scheduled },
+    schedulerName: { got: schRows.reduce(function (s, r) { return s + r.sales; }, 0), expected: counts.sales } };
+  var integrity = R.integrity.map(function (c) {
+    var x = ichk[c.k], diff = x.got - x.expected, pass = diff === 0;
+    return { k: c.k, label: c.label, formula: c.formula, cell: c.cell, got: x.got, expected: x.expected, diff: diff, ok: pass,
+      verdict: pass ? 'OK' : 'CHECK', words: pass ? c.okWords : fill(c.checkWords, { got: fmtN(x.got), expected: fmtN(x.expected), diff: fmtN(Math.abs(diff)) }) };
+  });
+
+  /* ---- where the sources disagree: EXTENDING the 071 accounting, never restarting it (FR-014/015) ---- */
+  var dir = {}, dtotal = 0;
+  sales.forEach(function (f) { if (f.resultRpt && f.resultRpt !== f.st) { var k = f.resultRpt + ' -> ' + f.st; dir[k] = (dir[k] || 0) + 1; dtotal++; } });
+  var uSch = {}, uSel = {};
+  sales.forEach(function (f) { if (f.scheduler && !f.schedulerCb) uSch[f.scheduler] = 1; if (f.agent && !f.agentCb) uSel[f.agent] = 1; });
+  var disagree = {
+    resultApplied: R.disagree.resultApplied,
+    resultVsEngine: { total: dtotal, share: ratio(dtotal, counts.sales), byDirection: dir },
+    unmatchedSchedulers: Object.keys(uSch).length, unmatchedSellers: Object.keys(uSel).length,
+    unmappedCampaigns: unmapped.length, unmappedNames: unmapped.slice(),
+    noSaleDay: F.noSaleDay, gwpMissing: F.gwpLoaded ? sales.filter(function (f) { return f.gwp == null; }).length : null,
+    carried: R.disagree.carried, words: R.disagree.words
+  };
+
+  /* ---- Key Insights: templates filled from the figures above, never hand-written (FR-042/043) ---- */
+  var leak = counts.cancelled + counts.missed;
+  var ranked = campaigns.filter(function (x) { return x.fitRate != null; });
+  var src = {
+    conversion: counts.sales > 0 ? { fitRate: rates.fitRate, sales: counts.sales, scheduled: counts.scheduled, schedRate: rates.schedRate } : null,
+    leakage: counts.sales > 0 ? { leak: leak, leakRate: ratio(leak, counts.sales), leakGwp: gwp.lost, cancelled: counts.cancelled, missed: counts.missed } : null,
+    bestCampaign: null,
+    rollovers: rollover.totals.sales > 0 ? { total: rollover.totals.sales, fitted: rollover.totals.fitted, open: rollover.totals.open,
+      scheduled: rollover.totals.scheduled, rebook: rollover.totals.cancelled + rollover.totals.missed, gwpOpen: rollover.totals.gwpOpen, cycleFrom: cyc.from } : null
+  };
+  var insights = [];
+  R.insights.templates.forEach(function (t) {
+    var v = src[t.id];
+    if (t.id === 'bestCampaign') {
+      var elig = ranked.filter(function (x) { return x.sales >= t.minSales; });
+      if (!elig.length) return;
+      var hi = elig.slice().sort(function (a, b) { return b.fitRate - a.fitRate || (a.name < b.name ? -1 : 1); })[0];
+      var lo = elig.slice().sort(function (a, b) { return a.fitRate - b.fitRate || (a.name < b.name ? -1 : 1); })[0];
+      v = { best: hi.name, bestRate: hi.fitRate, worst: lo.name, worstRate: lo.fitRate, minSales: t.minSales, eligible: elig.length };
+    }
+    if (!v) return;
+    var shown = {};
+    Object.keys(v).forEach(function (k) {
+      var x = v[k];
+      shown[k] = typeof x !== 'number' ? x
+        : /Rate|Pct|share/.test(k) ? fmtP(x)
+          : /Gwp/.test(k) ? fmtR(x) : fmtN(x);
+    });
+    insights.push({ id: t.id, template: t.text, cell: t.cell, v: v, text: fill(t.text, shown) });
+  });
+
+  return {
+    view: vd.k, viewLabel: vd.label, viewWords: vd.words, viewRule: vd.dateRule,
+    openOutcomesInCycleOnly: !!vd.openOutcomesInCycleOnly,
+    period: { key: cyc.key, from: cyc.from, to: cyc.to, asOf: asOf, dataThrough: dataThrough, hrsAsAt: hAsAt },
+    dataThrough: dataThrough, dialingDays: dialing, counts: counts, rates: rates, budget: budget, forecast: forecast,
+    kpis: kpis, weeks: weeks, weekWords: weekWords, channels: byChannel, campaigns: campaigns, campaignRollups: rollups,
+    buckets: bkView.rows, bucketsAll: bkAll.rows, bucketsPastDue: bkView.past, bucketWords: bucketWords,
+    breakdown: breakdown, breakdownTotals: breakdownTotals, insights: insights, gwp: gwp, rollover: rollover,
+    upcoming: upcoming, schedulers: schedulers, schedulerPivot: pivotScope, persons: persons,
+    integrity: integrity, disagree: disagree, prevCycle: prevCycle,
+    unmapped: unmapped, unmatched: { schedulers: schedulers.unmatched, sellers: Object.keys(uSel).sort() },
+    rulesVersion: R.version
+  };
+}
+
 return {
   VT_RULES: VT_RULES, version: R.version, saHolidaysFor: saHolidaysFor, periods: periods, serialToISO: serialToISO, normCB: normCB,
   detect: detect, isBiFittedName: isBiFittedName, extractDate: extractDate, parseBi: parseBi, parseSm: parseSm, parseOpeningBook: parseOpeningBook, parseRoster: parseRoster,
   normSeller: normSeller, resolveSeller: resolveSeller, leadSourceOf: leadSourceOf, leadGroupOf: leadGroupOf, subOf: subOf,
   emptyBook: emptyBook, merge: merge, bookFromRpc: bookFromRpc, guardUpload: guardUpload,
-  rates: rates, model: model, rating: rating, bandOf: bandOf, digest: digest, emptyCyclePayload: emptyCyclePayload, uploadGaps: uploadGaps,
+  rates: rates, model: model, dashboard: dashboard, cycleBudgetFor: cycleBudgetFor, channelOf: channelOf, rating: rating, bandOf: bandOf, digest: digest, emptyCyclePayload: emptyCyclePayload, uploadGaps: uploadGaps,
   budgetFor: budgetFor, spdBudget: spdBudget
 };
 });

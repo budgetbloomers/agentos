@@ -129,7 +129,7 @@ function helpBtns(d, me, back, wk) {
 }
 function hrsHTML(d) {
   var t = d.teamHrs, h = t && t.hrsAhead; if (!h) return '';
-  var B = [['h24', '24 h'], ['h48', '48 h'], ['h72', '72 h'], ['h72p', '72+ h'], ['past', 'Past due']];
+  var B = [['h24', '24 h'], ['h48', '48 h'], ['h72', '72 h'], ['h72pIn', '72+ in cycle'], ['h72pOut', '72+ out cycle'], ['past', 'Past due']];
   return '<div class="scroller"><table class="tbl vt-hrs"><thead><tr><th class="l">' + esc(t.tl || 'Your team') + ' — open Scheduled</th>' + B.map(function (b) { return '<th>' + b[1] + '</th>'; }).join('') + '</tr></thead><tbody>'
     + '<tr><td class="l">' + n0(h.total) + ' booked</td>' + B.map(function (b) { return '<td class="num">' + n0(h[b[0]]) + (h.share && h.share[b[0]] != null ? ' <span class="sub2">' + p1(h.share[b[0]]) + '</span>' : '') + '</td>'; }).join('') + '</tr></tbody></table></div>';
 }
@@ -231,7 +231,7 @@ function aggTable(d, title, items) {
     items.map(function (it) { return { name: it.name, w: it.obj && it.obj.mtd, __cls: it.cls || '' }; }), 'vt-agg') + '</div>';
 }
 function hrsTable(d, scope) {
-  var B = [['h24', '24 h'], ['h48', '48 h'], ['h72', '72 h'], ['h72p', '72+ h'], ['past', 'Past due']], bud = (d.budgets && d.budgets.hrsShare) || {};
+  var B = [['h24', '24 h'], ['h48', '48 h'], ['h72', '72 h'], ['h72pIn', '72+ in cycle'], ['h72pOut', '72+ out cycle'], ['past', 'Past due']], bud = (d.budgets && d.budgets.hrsShare) || {};
   var items = (d.tlAgg || []).map(function (t) { return { name: t.tl + ' (team)', h: t.hrsAhead }; });
   if (scope !== 'team') { Object.keys(SUBS).forEach(function (s) { if (d.subAgg && d.subAgg[s]) items.push({ name: SUBS[s] + ' (sub-campaign)', h: d.subAgg[s].hrsAhead }); }); if (d.floor) items.push({ name: 'Floor', h: d.floor.hrsAhead }); }
   return '<div class="card"><h3>Hrs Ahead — open Scheduled cases</h3><p class="why">Each share sits beside its scheduling budget. Teams' + (scope === 'team' ? '' : ', sub-campaigns and the floor') + ' only — it is the schedulers\' queue, not a seller\'s figure.</p>'

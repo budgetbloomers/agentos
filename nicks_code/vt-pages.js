@@ -542,7 +542,7 @@ function aggTable(M, label, items) {
     rows: items.map(function (it) { return { cls: it.cls || '', meta: { name: it.name }, w: winOf(it.obj, 'mtd', 0) }; }) };
 }
 function hrsTable(M, f) {
-  var B = R().periods.hrsAheadBuckets, bud = (M.budgets && M.budgets.hrsShare) || {}, cols = [col('Level', 'name', 's', 1), col('Open scheduled', 'total')];
+  var B = R().periods.leadTimeBuckets, bud = (M.budgets && M.budgets.hrsShare) || {}, cols = [col('Level', 'name', 's', 1), col('Open scheduled', 'total')];
   B.forEach(function (b) { var lab = b.k === 'past' ? b.label : b.label + ' h';
     cols.push(col(lab, 'n_' + b.k)); if (b.k !== 'past') cols.push(col(lab + ' share', 's_' + b.k, 'p'), col(lab + ' budget', 'b_' + b.k, 'p')); });
   var mk = function (name, obj, cls) { var h = (obj && obj.hrsAhead) || {}, w = { total: h.total };

@@ -61,7 +61,7 @@ ok('bands equal the VAS composite bands', JSON.stringify(E.VT_RULES.rating.bands
 ok('driver weights total 100', E.VT_RULES.rating.drivers.reduce((s, x) => s + x.w, 0) === 100);
 ok('vt-1.2: two drivers, targetAch 50 / fitRate 50 (Missed Rate and Fitted vs target removed as double counting)',
   E.VT_RULES.rating.drivers.map(x => x.k + ':' + x.w + ':' + x.dir).join(',') === 'targetAch:50:higher,fitRate:50:higher');
-ok('the rule book is version vt-1.3 (vt-1.2 drivers kept; vt-1.3 adds detection.vtBiFitted.nameHint)', E.VT_RULES.version === 'vt-1.3', E.VT_RULES.version);
+ok('the rule book is version vt-1.4 (vt-1.2 drivers kept; vt-1.3 the BI nameHint; vt-1.4 the 072 dashboard keys)', E.VT_RULES.version === 'vt-1.4', E.VT_RULES.version);
 ok('vt-1.3: the BI header is shared with the VAS BI Active export, so detection.vtBiFitted carries nameHint "fitted" and the engine tests names with it',
   E.VT_RULES.detection.vtBiFitted.nameHint === 'fitted' && E.isBiFittedName('BI Active Fitted 231126.xlsx') && !E.isBiFittedName('BI Active 231126.xlsx'), E.VT_RULES.detection.vtBiFitted.nameHint);
 { const c = SPEC._changes.find(x => x.date === '2026-11-24' && x.key === 'detection.vtBiFitted.nameHint');
@@ -70,6 +70,60 @@ ok('vt-1.3: the BI header is shared with the VAS BI Active export, so detection.
   ok('a dated _changes[] entry (2026-11-24) names the reason (double counting, ~12 points for one missed sale) and who decided', !!c && /double counting/i.test(c.why) && /12 points/.test(c.why) && /owner/.test(c.by) && /vt-1\.2/.test(c.to), c && c.by); }
 ok('Missed Rate and Fitted vs target are named as not scored, with the reason', /double counting/.test(E.VT_RULES.rating.notScored.missRate || '') && /Fitment Rate/.test(E.VT_RULES.rating.notScored.fittedVsTarget || ''));
 ok('the card\'s unscored info fields are listed in the rule book and are not drivers', Array.isArray(E.VT_RULES.rating.info) && ['missed', 'missRate', 'cancelled', 'canRate', 'fitDone'].every(k => E.VT_RULES.rating.info.includes(k)) && !E.VT_RULES.rating.drivers.some(d => E.VT_RULES.rating.info.includes(d.k)));
+
+console.log('\n== 2b. vt-1.4 (spec 072): the dashboard keys, and the rating left alone ==');
+{ const V = E.VT_RULES, CY = 'cycle-2026-11', cb = V.cycleBudget[CY];
+  ok('columns.schedulers is read by position and names the Schedulers Data facts', V.columns.schedulers.byPosition === true &&
+    ['saleDate', 'agent', 'saleCount', 'gwp', 'caseNumber', 'campaignRaw', 'referringAgent', 'scheduler', 'result', 'apptOn'].every(k => /^[A-Z]$/.test(V.columns.schedulers[k])),
+    JSON.stringify(V.columns.schedulers));
+  ok('columns.schedulers never takes the Hrs Ahead or Channel formula columns, and discards Customer Contact (col G)',
+    V.columns.schedulers.hrsAhead == null && V.columns.schedulers.channel == null && V.columns.schedulers.discard.includes('G') && V.columns.schedulers.discard.includes('L') && V.columns.schedulers.discard.includes('R'));
+  ok('columns.discardAll names Customer Contact explicitly (F0-22)', /Customer Contact/i.test(V.columns.discardAll));
+  ok('the Schedulers Data Result is never applied', V.columns.schedulers.resultIsNeverApplied === true && V.disagree.resultApplied === false);
+  ok('four channels, every campaign maps to one of them, unmapped falls to other', JSON.stringify(V.channels.keys) === JSON.stringify(['lead_gen', 'referral', 'predictive', 'other']) &&
+    Object.values(V.channels.campaignMap).every(c => V.channels.keys.includes(c)) && V.channels.unmapped === 'other');
+  ok('the Sales Review labels Lead Gen as Digital, and Panimax is a roll-up of referral + predictive, never a key',
+    V.channels.salesReviewLabels.lead_gen === 'Digital' && JSON.stringify(V.channels.rollups.panimax.members) === JSON.stringify(['referral', 'predictive']) && !V.channels.keys.includes('panimax'));
+  ok('four views, default cycle, and only the two cycle views count the open outcomes in-cycle only (F0-9)',
+    V.views.list.length === 4 && V.views.default === 'cycle' && V.views.list.map(v => v.k + ':' + v.openOutcomesInCycleOnly).join(',') === 'cycle:true,current:true,rollovers:false,all:false');
+  ok('the cycle view includes a pre-cycle case only when it is fitted', V.views.list[0].preCycle.include === true && V.views.list[0].preCycle.onlyStatus === 'fitted');
+  ok('every view says in words what it includes', V.views.list.every(v => typeof v.words === 'string' && v.words.length > 10 && typeof v.label === 'string'));
+  ok('six lead-time buckets: five ahead plus Past due, with the in/out-of-cycle cutoff named',
+    V.periods.leadTimeBuckets.map(b => b.k).join(',') === 'h24,h48,h72,h72pIn,h72pOut,past' &&
+    V.periods.leadTimeBuckets.find(b => b.k === 'h72pIn').cutoff === 'cycle.to' && V.periods.leadTimeBuckets.find(b => b.k === 'h72pOut').cutoffOp === '>');
+  ok('the lead-time basis is the frozen as-at, never TODAY() (D5)', /frozen/i.test(V.periods.hrsAheadBasis) && /never TODAY/i.test(V.periods.hrsAheadBasis) && V.periods.hrsAheadAsAtOffsetDays === 1);
+  ok('the week window is the workbook\'s half-open window', V.periods.weekWindow === 'date >= week start AND date < week start + 7');
+  ok('the dashboard bucket shares total 1 and have five keys (75/10/5/5/5, D3)',
+    ['h24', 'h48', 'h72', 'h72pIn', 'h72pOut'].reduce((s, k) => s + V.dashboardHrsShare[k], 0) === 1 && V.dashboardHrsShare.h24 === 0.75);
+  ok('the rating-side hrsShare is a DIFFERENT table, still four keys, still 80/10/5/5 (plan risk 1)',
+    JSON.stringify(V.budgets[CY].hrsShare) === JSON.stringify({ h24: 0.8, h48: 0.1, h72: 0.05, h72p: 0.05 }) && /Sales_Review_YTD/.test(V.dashboardHrsShare.notTheRatingShare) && /Neither share is scored/.test(V.dashboardHrsShare.notTheRatingShare));
+  ok('cycleBudget is a separate branch from budgets and never carries a per-tenure fitment table',
+    !!V.cycleBudget && !!V.budgets && V.cycleBudget[CY].fitment == null && V.budgets[CY].fitment.digital['*'] === 0.85);
+  ok('the channel sales budgets add to the total, and so do the fitment budgets',
+    cb.sales.lead_gen + cb.sales.referral + cb.sales.predictive === cb.sales.total && cb.fitments.lead_gen + cb.fitments.referral + cb.fitments.predictive === cb.fitments.total);
+  ok('Other has no budget anywhere in cycleBudget (it has an actual and no target)', cb.sales.other == null && cb.fitments.other == null);
+  ok('every cycleBudget figure cites its Sales Review cell, operatively, so the page can print it',
+    ['headcount', 'sales', 'fitments', 'fitmentRate', 'cancelledPct', 'missedPct', 'scheduledPct', 'dialingDays'].every(k => typeof cb.cells[k] === 'string' && /Sales Review|B\d\d/.test(cb.cells[k])));
+  ok('the sales budget cell names B51, which is what the Target Achieved card prints', /B51/.test(cb.cells.sales));
+  ok('the forecast is a straight-line pace over dialing days and is labelled as not a prediction',
+    V.forecast.method === 'straight_line_pace' && /pace/i.test(V.forecast.label) && /not a prediction/i.test(V.forecast.label) && JSON.stringify(V.forecast.appliesTo) === JSON.stringify(['sales', 'fitments']));
+  ok('the forecast is never applied to the open outcomes or the buckets', ['missed', 'cancelled', 'scheduled', 'leadTimeBuckets'].every(k => V.forecast.notAppliedTo.includes(k)));
+  ok('three integrity checks, each with OK words, CHECK words and its cell', V.integrity.length === 3 &&
+    V.integrity.map(c => c.k).join(',') === 'k17,k18,schedulerName' && V.integrity.every(c => c.okWords.length > 10 && /\{/.test(c.checkWords) && /K1[78]|E36/.test(c.cell)));
+  ok('four insight templates, each naming its cell, none hand-written', V.insights.templates.length === 4 &&
+    V.insights.templates.map(t => t.id).sort().join(',') === 'bestCampaign,conversion,leakage,rollovers' &&
+    V.insights.templates.every(t => /Exco Summary B1\d/.test(t.cell) && /\{/.test(t.text)) && /never be hand-written|no insight may be hand-written/.test(V.insights.rules.computedOnly));
+  ok('the scheduler pivots are built now, all-data, over each scheduler\'s own grand total, divide-by-zero safe',
+    V.reports.schedulerPivots.built === true && V.reports.schedulerPivots.scope === 'allData' && V.reports.schedulerPivots.percentBase === 'schedulerGrandTotal' && V.reports.schedulerPivots.divideByZeroSafe === true);
+  ok('the three person dimensions are agent, referrer and scheduler', V.reports.personDimensions.map(p => p.k).join(',') === 'agent,referrer,scheduler');
+  ok('GWP names its source and says it is not the engine\'s BI value (A7)', /Schedulers Data col E/.test(V.reports.gwp.source) && /BI/.test(V.reports.gwp.notSource));
+  ok('schedulers_data outranks opening_book and first_seen as a sale-day basis (U-4)',
+    JSON.stringify(V.saleDay.basisPrecedence) === JSON.stringify(['schedulers_data', 'opening_book', 'first_seen']));
+  ok('the carried-forward 071 figures travel in the rule book with the floor guide\'s wording (FR-015)',
+    V.disagree.carried.handCredits === 11 && /6\.6/.test(V.disagree.carried.leadSourceRelabelledShare) && /Salesforce/.test(V.disagree.carried.words));
+  for (const k of ['columns.schedulers', 'channels', 'views', 'periods.leadTimeBuckets', 'cycleBudget', 'dashboardHrsShare', 'forecast', 'integrity', 'insights'])
+    ok(`a dated vt-1.4 _changes[] entry names ${k}`, SPEC._changes.some(c => c.date === '2026-11-25' && c.key.indexOf(k.split('.').pop()) > -1 && c.why.length > 40));
+}
 
 console.log('\n== 3. evidence and history ==');
 for (const [ck, b] of Object.entries(SPEC.budgets)) {

@@ -208,7 +208,7 @@ head('SC-001 · the other three views (3,010 / 2,382 / 628 with 305 open)');
 const Mall = D('all'), Mcur = D('current'), Mroll = D('rollovers');
 eq('all data: 3,010 sales = Exco B7, 1,996 / 460 / 182 / 372', [Mall.counts.sales, Mall.counts.fitted, Mall.counts.scheduled, Mall.counts.missed, Mall.counts.cancelled],
   [cell(EXCO, 'B7'), cell(EXCO, 'C7'), cell(EXCO, 'E7'), cell(EXCO, 'I7'), cell(EXCO, 'G7')]);
-near('all data: 66.3 % fitted = Exco L22 column', Mall.rates.fitRate, cell(EXCO, 'J22'), 1e-9);
+near('all data: 66.3 % fitted = Exco I22 (row 17 heads I "Fitted %"; J is Cancelled %)', Mall.rates.fitRate, cell(EXCO, 'I22'), 1e-9);
 eq('current cycle only: 2,382 sales, 1,673 fitted, 373 / 128 / 208', [Mcur.counts.sales, Mcur.counts.fitted, Mcur.counts.scheduled, Mcur.counts.missed, Mcur.counts.cancelled], [2382, 1673, 373, 128, 208]);
 eq('rollovers only: 628 sales, 323 fitted, 87 scheduled, 54 missed, 164 cancelled', [Mroll.counts.sales, Mroll.counts.fitted, Mroll.counts.scheduled, Mroll.counts.missed, Mroll.counts.cancelled], [628, 323, 87, 54, 164]);
 eq('every view says in words what it includes (FR-008)', [M.view, Mall.view, Mcur.view, Mroll.view], ['cycle', 'all', 'current', 'rollovers']);
@@ -299,7 +299,7 @@ head('SC-001 · Key Insights (Exco B11:B14) — computed, never hand-written');
   eq('leakage = 554 sales (18.4 %) and R107,015 of GWP — Exco B12', [ins.leakage.v.leak, ins.leakage.v.leakGwp], [554, cell(ASS, 'L39')]);
   eq('best campaign at 20+ sales = Tracking Empire (72.5 %), lowest Afrilead (50 %) — Exco B13',
     [ins.bestCampaign.v.best, Math.round(ins.bestCampaign.v.bestRate * 1e6), ins.bestCampaign.v.worst, ins.bestCampaign.v.worstRate],
-    ['Tracking Empire', Math.round(cell(EXCO, 'J27') * 1e6), 'Afrilead', cell(EXCO, 'J29')]);
+    ['Tracking Empire', Math.round(cell(EXCO, 'I27') * 1e6), 'Afrilead', cell(EXCO, 'I29')]);
   eq('rollovers: 628 in total, 323 fitted, 305 open — 87 scheduled, 218 to rebook — Exco B14',
     [ins.rollovers.v.total, ins.rollovers.v.fitted, ins.rollovers.v.open, ins.rollovers.v.scheduled, ins.rollovers.v.rebook], [628, 323, 305, 87, 218]);
   ok('every insight names the figure it came from and nothing is hand-written', Mall.insights.every(i => i.v && Object.keys(i.v).length && i.template && i.cell));
@@ -335,7 +335,8 @@ head('SC-001 · the four scheduler pivots (all data, % over each scheduler\'s ow
   eq('…and the workbook\'s own count of distinct schedulers in the cycle (SR C50) agrees', cell(SR, 'C50'), 6);
   const PIV = { all: 'Pivot - VT All Campaigns', referral: 'Pivot - VT Referral', predictive: 'Pivot - VT Predictive', lead_gen: 'Pivot - VT Lead Gen' };
   for (const [scope, sheet] of Object.entries(PIV)) {
-    const rows2 = {}; for (let r = 8; r <= 13; r++) rows2[String(cell(sheet, 'A' + r))] = ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'].map(c => cell(sheet, c + r));
+    const z = (v) => (v == null ? 0 : v);   /* a pivot leaves a zero cell EMPTY: Referral D9/D10/E10 */
+    const rows2 = {}; for (let r = 8; r <= 13; r++) rows2[String(cell(sheet, 'A' + r))] = ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'].map(c => z(cell(sheet, c + r)));
     const got = Mall.schedulerPivot(scope);
     const bad = got.filter(x => { const w = rows2[x.name]; return !w || x.cancelled !== w[0] || x.missed !== w[1] || x.scheduled !== w[2] || x.fitted !== w[3] || x.sales !== w[4]
       || Math.round(x.pct.cancelled * 1e9) !== Math.round(w[5] * 1e9) || Math.round(x.pct.missed * 1e9) !== Math.round(w[6] * 1e9)
@@ -346,8 +347,13 @@ head('SC-001 · the four scheduler pivots (all data, % over each scheduler\'s ow
   }
   console.log('    cycle-view fitted rates by scheduler: ' + Mall.schedulerPivot('all').map(x => sid(x.name)).join(', '));
   const cv = M.schedulers.rows.slice().sort((a, b) => a.name < b.name ? -1 : 1);
-  eq('in the cycle view the six spreads are the spec\'s 628/56/258/643/409/711 sales (F0-17)', cv.map(x => x.sales), [628, 56, 258, 643, 409, 711]);
-  eq('…with fitted rates 75.6 / 78.6 / 84.9 / 74.5 / 62.3 / 73.7 %', cv.map(x => +(x.pct.fitted * 100).toFixed(1)), [75.6, 78.6, 84.9, 74.5, 62.3, 73.7]);
+  /* ORACLE FIX (072 A6 builder): the expected spreads were written in SHEET order (spec F0-17) but
+     this suite sorts the rows by NAME. Same six pairs, in the order the sort produces:
+     Amanda 643/74.5, Chireshi 258/84.9, Devamani 56/78.6, Luvo 628/75.6, Mandisa 711/73.7, Roshel 409/62.3 */
+  eq('in the cycle view the six spreads are 628/56/258/643/409/711 sales (F0-17)', cv.map(x => x.sales).slice().sort((a, b) => a - b), [56, 258, 409, 628, 643, 711]);
+  eq('and name by name, in this suite own sort order, they are 643 / 258 / 56 / 628 / 711 / 409', cv.map(x => x.sales), [643, 258, 56, 628, 711, 409]);
+  eq('with fitted rates 74.5 / 84.9 / 78.6 / 75.6 / 73.7 / 62.3 %', cv.map(x => +(x.pct.fitted * 100).toFixed(1)), [74.5, 84.9, 78.6, 75.6, 73.7, 62.3]);
+  eq('which is the 62.3 % to 84.9 % spread the spec records, scheduler for scheduler', cv.map(x => +(x.pct.fitted * 100).toFixed(1)).slice().sort((a, b) => a - b), [62.3, 73.7, 74.5, 75.6, 78.6, 84.9]);
   ok('every percentage is divide-by-zero safe (FR-045)', (() => { const z = Mall.schedulerPivot('all').concat([]); return z.every(x => x.sales > 0 ? x.pct.fitted != null : x.pct.fitted === null); })());
   ok('no scheduler is printed by name by this suite', true); }
 
@@ -380,7 +386,7 @@ head('FR-014 / FR-015 · where the sources disagree — EXTENDING the 071 accoun
 
 head('the rating did not move (SC-003) and the engine has no clock (D5)');
 { const src = fs.readFileSync(ENGINE, 'utf8');
-  const clock = src.replace(/\/\*[\s\S]*?\*\//g, '').match(/Date\.now|new Date\(\s*\)|Date\(\)/g);
+  const clock = src.replace(/\/\*[\s\S]*?\*\//g, '').match(/Date\.now|new\s+Date\s*\(\s*\)|(?:^|[^A-Za-z0-9_$.])Date\s*\(\s*\)/g);
   eq('no clock anywhere in the engine: every "today" is passed in', clock, null);
   const d1 = E.dashboard(book, [], { cycleKey: CYCLE, view: 'cycle', asOf: ASOF });
   const d2 = E.dashboard(book, [], { cycleKey: CYCLE, view: 'cycle', asOf: ASOF });

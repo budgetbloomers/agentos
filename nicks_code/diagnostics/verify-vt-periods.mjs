@@ -65,14 +65,27 @@ ok('an ordinary Tuesday is a working day', P.isWorkingDay('2026-11-10'));
 
 console.log('\n== Hrs Ahead buckets (as-at = latest extract + 1 day) ==');
 eq('as-at of extract 10 Nov = 11 Nov', P.hrsAsAt('2026-11-10'), '2026-11-11');
-const B = a => P.hrsBucket(a, '2026-11-11');
+const CYC = P.cycleByKey('cycle-2026-11');
+const B = a => P.hrsBucket(a, '2026-11-11', CYC.to);
 eq('appointment on the as-at day → 24', B('2026-11-11'), 'h24');
 eq('+1 day → 48', B('2026-11-12'), 'h48');
 eq('+2 days → 72', B('2026-11-13'), 'h72');
-eq('+3 days → 72+', B('2026-11-14'), 'h72p');
-eq('+23 days → 72+', B('2026-12-04'), 'h72p');
+eq('+3 days, on or before the cycle end → 72+ in cycle (072 D6)', B('2026-11-14'), 'h72pIn');
+eq('the cycle end itself is still in cycle', B(CYC.to), 'h72pIn');
+eq('the day after the cycle end → 72+ out cycle', B(P.addDays(CYC.to, 1)), 'h72pOut');
+eq('+23 days → 72+ out cycle', B('2026-12-04'), 'h72pOut');
 eq('−1 day → Past due', B('2026-11-10'), 'past');
 eq('no appointment day → null', B(null), null);
+eq('the rule book carries five buckets ahead plus Past due, not four (FR-029)',
+  E.VT_RULES.periods.leadTimeBuckets.map(b => b.k), ['h24', 'h48', 'h72', 'h72pIn', 'h72pOut', 'past']);
+eq('the in/out cutoff is the cycle end from periods.cycleByKey, not TODAY() (FR-032)',
+  [E.VT_RULES.periods.leadTimeBuckets[3].cutoff, E.VT_RULES.periods.leadTimeBuckets[3].cutoffOp, E.VT_RULES.periods.leadTimeBuckets[4].cutoffOp], ['cycle.to', '<=', '>']);
+eq('a different cycle end moves the same booking between the two 72+ buckets, and nothing else',
+  ['2026-11-14', '2026-12-04'].map(a => P.hrsBucket(a, '2026-11-11', '2026-12-25')), ['h72pIn', 'h72pIn']);
+eq('the as-at is frozen at the extract + the rule book\'s offset, so the bucket cannot drift (D5)',
+  [E.VT_RULES.periods.hrsAheadAsAtOffsetDays, P.hrsAsAt('2026-11-23')], [1, '2026-11-24']);
+{ const src = fs.readFileSync(ENGINE, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  eq('no clock anywhere in the engine: every "today" is passed in (D5)', src.match(/Date\.now|new\s+Date\s*\(\s*\)|(?:^|[^A-Za-z0-9_$.])Date\s*\(\s*\)/g), null); }
 
 console.log('\n== the holiday calendar is PULSE\'s, byte for byte ==');
 const block = s => { const m = s.match(/\/\* @mirror:sa-holidays start[\s\S]*?\/\* @mirror:sa-holidays end \*\//); return m && m[0]; };
