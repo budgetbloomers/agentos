@@ -33,28 +33,47 @@ Five phases, A → E. Each is sized for **one builder**. Within a phase, tasks m
 
 The whole phase is pure: no UI, no DB, no network. **Tests are written before the code they test.**
 
-- [ ] **A1 · Write the oracle first.** `nicks_code/diagnostics/verify-vt-report-oracle.mjs` — read the owner's `Master November 2026 - VT Report.xlsx` from `../reference/zips/vt-master/` and assert SC-001 and SC-002: 3,010 records (not 19,960), cycle-view 2,705 / 1,996 / 373 / 128 / 208, 73.8 %, Fitted GWP R 383,206, buckets 130/68/26/0/149, all-data 3,010, current-cycle 2,382, rollovers 628 with 305 open, dialing days 20 of 22, forecast 2,976. Use the 071 `doc()` mechanism for anything irreproducible and **carry forward the 11 hand credits and the ~6.6 % relabels with the floor guide's wording** (FR-015). It must FAIL at this point.
+- [x] **A1 · Write the oracle first.** `nicks_code/diagnostics/verify-vt-report-oracle.mjs` — read the owner's `Master November 2026 - VT Report.xlsx` from `../reference/zips/vt-master/` and assert SC-001 and SC-002: 3,010 records (not 19,960), cycle-view 2,705 / 1,996 / 373 / 128 / 208, 73.8 %, Fitted GWP R 383,206, buckets 130/68/26/0/149, all-data 3,010, current-cycle 2,382, rollovers 628 with 305 open, dialing days 20 of 22, forecast 2,976. Use the 071 `doc()` mechanism for anything irreproducible and **carry forward the 11 hand credits and the ~6.6 % relabels with the floor guide's wording** (FR-015). It must FAIL at this point.
   - Acceptance: the suite runs and reports failures with real numbers, never a crash.
   - Verify: `node nicks_code/diagnostics/verify-vt-report-oracle.mjs`
   - Files: 1 new.
-- [ ] **A2 · `specs/vt_engine_rules.json` → `vt-1.4`.** Apply `rules-draft.json`: `views`, `channels`, `cycleBudget`, `dashboardHrsShare`, `forecast`, `insights`, `integrity`, the 5-bucket `periods.leadTimeBuckets`, `columns.schedulers`, `detection.vtSchedulers`, `columns.discardAll` amendment. One dated `_changes[]` entry **per key**, each naming its Sales Review cell or its decision id. Drop `_evidence` prose (it lives in the draft and the spec); keep `_cells`.
+- [x] **A2 · `specs/vt_engine_rules.json` → `vt-1.4`.** Apply `rules-draft.json`: `views`, `channels`, `cycleBudget`, `dashboardHrsShare`, `forecast`, `insights`, `integrity`, the 5-bucket `periods.leadTimeBuckets`, `columns.schedulers`, `detection.vtSchedulers`, `columns.discardAll` amendment. One dated `_changes[]` entry **per key**, each naming its Sales Review cell or its decision id. Drop `_evidence` prose (it lives in the draft and the spec); keep `_cells`.
   - Acceptance: every non-`_` key traces to a cell or a decision id; `version` is `vt-1.4`.
   - Files: 1.
-- [ ] **A3 · Mirror into `VT_RULES`** inside the `@vt-rules` block of `nicks_code/vt-engine.js`, field for field.
+- [x] **A3 · Mirror into `VT_RULES`** inside the `@vt-rules` block of `nicks_code/vt-engine.js`, field for field.
   - Verify: `node nicks_code/diagnostics/verify-vt-rules.mjs` passes (extend it for the new keys in the same task).
   - Files: 2.
-- [ ] **A4 · Split the 5th bucket.** `periods.hrsBucket(apptOn, asAt, cycleTo)`; `h72p` → `h72pIn` + `h72pOut`; `past` unchanged. Update `model()`'s `hrsAhead` on `tlAgg`/`subAgg`/`leadAgg`/`floor` and the `digest()` shape. Extend `verify-vt-periods.mjs` for the five buckets, the cycle-end cutoff, the frozen as-at (D5) and an assertion that **no clock exists anywhere in the engine**.
+- [x] **A4 · Split the 5th bucket.** `periods.hrsBucket(apptOn, asAt, cycleTo)`; `h72p` → `h72pIn` + `h72pOut`; `past` unchanged. Update `model()`'s `hrsAhead` on `tlAgg`/`subAgg`/`leadAgg`/`floor` and the `digest()` shape. Extend `verify-vt-periods.mjs` for the five buckets, the cycle-end cutoff, the frozen as-at (D5) and an assertion that **no clock exists anywhere in the engine**.
   - Acceptance: `verify-vt-rating.mjs` passes **byte-for-byte unchanged** (SC-003) — this is the gate on the whole phase.
   - Verify: `verify-vt-periods`, `verify-vt-rating`, `verify-vt-digest`, `verify-vt-engine`.
   - Files: 4–5.
-- [ ] **A5 · `hrsTable` 5th column in `agent/vt-view.js`.** Display only; no rule literal.
+- [x] **A5 · `hrsTable` 5th column in `agent/vt-view.js`.** Display only; no rule literal.
   - Verify: `verify-vt-portal.mjs`.
   - Files: 1.
-- [ ] **A6 · `VTEngine.dashboard(book, roster, {cycleKey, view, asOf, prev, isDataOnlyDay})`** — pure, no clock, no DOM. Returns `{period, view, viewWords, dataThrough, dialingDays:{total,elapsed,left,pct}, kpis[5], weeks[], channels[], campaigns[], buckets[5], budget, forecast, breakdown[], insights[], gwp, integrity[3], disagree, unmapped[], unmatched[]}`. Reuses `tally` / `rates` / `periods` / `leadGroupOf`; honours the four views including the in-cycle-only asymmetry (F0-9). One accessor `cycleBudgetFor(cycleKey)` with the latest-earlier-cycle fallback, naming the cycle used.
+- [x] **A6 · `VTEngine.dashboard(book, roster, {cycleKey, view, asOf, prev, isDataOnlyDay})`** — pure, no clock, no DOM. Returns `{period, view, viewWords, dataThrough, dialingDays:{total,elapsed,left,pct}, kpis[5], weeks[], channels[], campaigns[], buckets[5], budget, forecast, breakdown[], insights[], gwp, integrity[3], disagree, unmapped[], unmatched[]}`. Reuses `tally` / `rates` / `periods` / `leadGroupOf`; honours the four views including the in-cycle-only asymmetry (F0-9). One accessor `cycleBudgetFor(cycleKey)` with the latest-earlier-cycle fallback, naming the cycle used.
   - Acceptance: A1's oracle **passes**; `verify-vt-views.mjs` (new, written in this task) proves the four views, the three integrity checks, the forecast, the dialing days and the insight templates.
   - Verify: `verify-vt-report-oracle`, `verify-vt-views`.
   - Files: 2–3.
-- [ ] **A7 · Checkpoint.** Run the full `verify-vt-*` set. **Nothing may fail**, and `-rating`, `-vas-golden`, `-isolation` must be untouched passes. Capture a golden of the three existing VT pages' figures for SC-004 before Phase B begins.
+- [x] **A7 · Checkpoint.** Run the full `verify-vt-*` set. **Nothing may fail**, and `-rating`, `-vas-golden`, `-isolation` must be untouched passes. Capture a golden of the three existing VT pages' figures for SC-004 before Phase B begins.
+
+### Phase A build note (2026-11-25, Phase A builder)
+
+A1-A7 are done and every suite is green. Three things the next phase needs to know:
+
+- **A2, the detection rename is ADDITIVE.** `detection.vtSchedulers` is in both rule-book copies, but
+  `detection.vtOpeningBook` is still there and `detect()` / `parseOpeningBook()` still use it. Eleven
+  files reference the old key and they are all Phase B's (`parseSchedulers`, the slot swap, the
+  validator). **B1/B5 retire `vtOpeningBook`**; doing it in A would have broken `verify-vt-engine`,
+  `-station`, `-validate`, `-app` and `-isolation` for no gain.
+- **A4 reached two files outside its column.** The five-bucket split renamed
+  `periods.hrsAheadBuckets` to `periods.leadTimeBuckets`, so `nicks_code/vt-pages.js` needed that one
+  identifier changed (line 545) or the MTD Hrs Ahead table would have lost every bucket column, and
+  `verify-vt-pages.mjs` / `verify-vt-oracle.mjs` needed their four-bucket expectations re-stated for
+  five. **D3 still owns the labelling** - the two new columns currently show the absent marker for
+  their budget, because `budgets[cycle].hrsShare` has four keys by design (D3, FR-034).
+- **A6 also delivered D1's engine aggregations.** The oracle written in A1 asserts the scheduler
+  pivots, the person dimensions, the upcoming fitments and the Rollover Follow-up, so `dashboard()`
+  returns all of them already. **Task D1 is engine-complete**; D2 only has to paint them.
 
 ---
 
