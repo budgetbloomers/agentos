@@ -319,7 +319,9 @@ function trendHtml(D) {
       { name: 'Target', values: D.weeks.map(function (w) { return w.target; }), color: ch.hue(3), dashed: true }],
     flags: D.weeks.map(function (w) { return !!(w.preCycle || w.postCycle); }),
     flagWords: 'outside the cycle — no dialing days, so no target',
-    fmt: function (v) { return fmt('d2', v); },
+    /* whole sales on the chart: a week's target is a fraction of the cycle budget (413,10), but nobody sells a tenth
+       of a sale, so the axis, the dots and the end tags read whole numbers. The figures table keeps the decimals. */
+    fmt: N, integer: true,
     emptyWords: 'No week in this view carries a sale yet'
   });
   var sp = trendSpec(D);

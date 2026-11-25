@@ -48,6 +48,15 @@ function hue(i) { return SERIES[i < 0 || i >= SERIES.length ? SERIES.length - 1 
 function n(v, d) { return typeof v === 'number' && isFinite(v) ? v : (d == null ? 0 : d); }
 function pos(v) { return Math.max(0, n(v)); }
 function f1(v) { return (Math.round(v * 100) / 100).toFixed(2).replace(/\.?0+$/, ''); }
+/* a round axis step for a range: 1, 2, 2.5 or 5 x 10^n. An integer axis (counts of sales) never steps below 1. */
+function niceStep(raw, integer) {
+  if (!(raw > 0)) return 1;
+  var mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10)), r = raw / mag;
+  var st = (r <= 1 ? 1 : r <= 2 ? 2 : r <= 2.5 ? 2.5 : r <= 5 ? 5 : 10) * mag;
+  return integer ? Math.max(1, Math.round(st)) : st;
+}
+/* a label at x that must stay inside the 640 viewBox: centred where there is room, pinned to an edge where not */
+function edgeAt(x, room) { room = room || 56; return x > W - room ? { x: W - 6, anchor: 'end' } : x < room ? { x: 6, anchor: 'start' } : { x: x, anchor: 'middle' }; }
 function txt(x, y, s, o) {
   o = o || {};
   return '<text x="' + f1(x) + '" y="' + f1(y) + '"' + (o.anchor ? ' text-anchor="' + o.anchor + '"' : '')
@@ -83,10 +92,14 @@ function line(o) {
   if (!labels.length || !all.length) return empty(o.emptyWords || 'No figures in this view yet');
   var max = Math.max.apply(null, all), min = 0;
   if (max === min) max = min + 1;
-  max = max + (max - min) * 0.08;
+  /* ROUND TICKS (26 Nov 2026, the owner: "the formatting is off"). The ticks used to be max x 1/4, 1/2, 3/4 of a
+     padded maximum, so a sales axis read 185,93 / 371,86 / 557,80 / 743,73. They now step by 1, 2, 2.5 or 5 x 10^n
+     and the top of the axis is the first step at or above the largest value. A count axis never steps below 1. */
+  var step = niceStep(max / 4, o.integer !== false);
+  max = Math.ceil(max / step) * step;
   var xs = labels.length < 2 ? function () { return P.l + (W - P.l - P.r) / 2; } : function (i) { return P.l + (W - P.l - P.r) * i / (labels.length - 1); };
   var ys = function (v) { return P.t + (h - P.t - P.b) * (1 - (n(v) - min) / (max - min)); };
-  var ticks = [0, 0.25, 0.5, 0.75, 1].map(function (t) { return min + (max - min) * t; });
+  var ticks = []; for (var tv = min; tv <= max + step / 2; tv += step) ticks.push(tv);
   var grid = ticks.map(function (t) {
     return '<line x1="' + P.l + '" x2="' + (W - P.r) + '" y1="' + f1(ys(t)) + '" y2="' + f1(ys(t)) + '" stroke="' + GRID + '"/>'
       + txt(P.l - 8, ys(t) + 3.5, fmt(t), { anchor: 'end', size: 9.5 });
@@ -219,12 +232,12 @@ function meter(o) {
     + mark((o.label || 'Actual') + ' ' + fmt(o.value) + (o.target == null ? '' : ' of ' + fmt(o.target))) + '</rect>';
   if (o.target != null) body += '<line x1="' + f1(at(o.target)) + '" x2="' + f1(at(o.target)) + '" y1="' + (y - 6) + '" y2="' + (y + bh + 6) + '" stroke="' + MARK + '" stroke-width="2"><title>'
     + esc('Budget ' + fmt(o.target) + (o.targetLabel ? ' · ' + o.targetLabel : '')) + '</title></line>'
-    + txt(at(o.target), y + bh + 19, 'budget ' + fmt(o.target), { anchor: 'middle', size: 9.5 });
+    + (function () { var e = edgeAt(at(o.target)); return txt(e.x, y + bh + 19, 'budget ' + fmt(o.target), { anchor: e.anchor, size: 9.5 }); })();
   if (o.marker && o.marker.value != null) {
     var mx = at(o.marker.value);
     body += '<polygon points="' + f1(mx - 6) + ',' + (y - 10) + ' ' + f1(mx + 6) + ',' + (y - 10) + ' ' + f1(mx) + ',' + (y - 2) + '" fill="' + hue(2) + '"><title>'
       + esc(o.marker.label + ' ' + fmt(o.marker.value)) + '</title></polygon>'
-      + txt(mx, y - 14, o.marker.label, { anchor: 'middle', size: 9.5, weight: 700, fill: hue(2) });
+      + (function () { var e = edgeAt(mx); return txt(e.x, y - 14, o.marker.label, { anchor: e.anchor, size: 9.5, weight: 700, fill: hue(2) }); })();
   }
   var desc = (o.label || 'Actual') + ' ' + fmt(o.value) + (o.target == null ? ', no budget on file' : ' against a budget of ' + fmt(o.target))
     + (o.marker && o.marker.value != null ? ', ' + o.marker.label + ' ' + fmt(o.marker.value) : '') + '.';

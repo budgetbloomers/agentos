@@ -18,6 +18,24 @@ const HERE = path.dirname(fileURLToPath(import.meta.url)); const ROOT = path.res
 const { chromium } = await import(pathToFileURL(path.join(HERE, 'node_modules', 'playwright', 'index.mjs')).href);
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.log('  FAIL ' + n + (d ? ' — ' + String(d).slice(0, 220) : '')); } };
+/* CHART TEXT (26 Nov 2026). The trend axis read 185,93 / 371,86 / 557,80 / 743,73 - ticks at max x 1/4.. of a padded
+   maximum, formatted to two decimals because a week's target is fractional - and the Sales vs budget panel centred
+   "budget 3 030" on a mark at the right edge, so half of it fell off the card. */
+{
+  const { createRequire } = await import('node:module');
+  const C = createRequire(import.meta.url)(path.join(ROOT, 'nicks_code', 'vt-charts.js'));
+  const svg = C.line({ labels: ['a', 'b', 'c', 'd'], series: [{ name: 'Sales', values: [0, 152, 690, 0] },
+    { name: 'Target', values: [413.1, 413.1, 413.1, 413.1], dashed: true }], fmt: (v) => String(Math.round(v)), integer: true, h: 176 });
+  const ticks = [...svg.matchAll(/text-anchor="end"[^>]*>([0-9]+)</g)].map((m) => +m[1]);
+  const steps = ticks.slice(1).map((t, i) => t - ticks[i]);
+  ok('chart: the axis steps by one round number (1, 2, 2.5 or 5 x 10^n)', ticks.length >= 3 && steps.every((d) => d === steps[0])
+    && /^(1|2|25|5)0*$/.test(String(steps[0])), ticks.join(' / '));
+  ok('chart: a count axis carries no decimals', !/>[0-9]+[.,][0-9]+</.test(svg.replace(/<title>[^<]*<\/title>/g, '')), ticks.join(' / '));
+  const m = C.meter({ label: 'Sales in view', value: 450, target: 3030, marker: { label: 'forecast', value: 3030 }, fmt: (v) => String(v) });
+  const xs = [...m.matchAll(/<text x="([0-9.]+)"[^>]*text-anchor="(\w+)"[^>]*>(budget[^<]*|forecast)</g)];
+  ok('chart: a label at the right edge is pinned inside the card, never centred past it',
+    xs.length === 2 && xs.every((x) => !(x[2] === 'middle' && +x[1] > 640 - 56)), xs.map((x) => x[3] + ' x=' + x[1] + ' ' + x[2]).join(' | '));
+}
 const src = await vtSource({ live: false });
 const HTML = path.join(ROOT, 'site', 'pulse', 'index.html');
 if (!fs.existsSync(HTML)) { console.log('site/pulse/index.html is not built — run tools/prepare-site.js'); process.exit(1); }
