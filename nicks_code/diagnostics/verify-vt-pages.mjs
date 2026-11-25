@@ -154,9 +154,11 @@ try {
     return { ids: g ? [...g.querySelectorAll('[data-page]')].map((b) => b.dataset.page) : [], labels: g ? [...g.querySelectorAll('[data-page] span')].map((s) => s.textContent) : [],
       filtersOff: document.getElementById('topbar').classList.contains('filters-off'), nav: NAV.flatMap((x) => x.items.map((i) => i[0])),
       vt: window.VTApp.on(), side: [...document.querySelectorAll('#side [data-page]')].map((b) => b.dataset.page) }; });
-  ok(nav.ids.join() === 'vt_mtd,vt_weekly,vt_daily', 'a "Vehicle Tracking" group holds vt_mtd, vt_weekly, vt_daily', nav.ids.join());
-  ok(nav.labels.join(' | ') === 'Month to Date | Weekly Reports | Daily Reports', 'labelled Month to Date / Weekly / Daily (the app itself says Vehicle Tracking)', nav.labels.join(' | '));
-  ok(nav.vt && nav.side.join() === 'vt_mtd,vt_weekly,vt_daily,data,hubs', 'a VT page opens VT mode: its sidebar is the VT pages, the Upload Station and Apps only', nav.side.join());
+  /* vt_report (the VT Report dashboard, spec 072 Phase C) joined the group as its first item; the three pages this
+     suite checks are unchanged and keep their place after it (SC-004: nothing on them moved). */
+  ok(nav.ids.join() === 'vt_report,vt_mtd,vt_weekly,vt_daily', 'a "Vehicle Tracking" group holds vt_report, vt_mtd, vt_weekly, vt_daily', nav.ids.join());
+  ok(nav.labels.join(' | ') === 'VT Report | Month to Date | Weekly Reports | Daily Reports', 'labelled VT Report / Month to Date / Weekly / Daily (the app itself says Vehicle Tracking)', nav.labels.join(' | '));
+  ok(nav.vt && nav.side.join() === 'vt_report,vt_mtd,vt_weekly,vt_daily,data,hubs', 'a VT page opens VT mode: its sidebar is the VT pages, the Upload Station and Apps only', nav.side.join());
   ok(nav.filtersOff, 'the header\'s VAS period / campaign / team filters stand down on a VT page (it carries its own)');
   ok(['mtd', 'weekly', 'daily'].every((v) => nav.nav.includes(v)), 'the VAS Month to Date / Weekly / Daily pages are still in the nav');
   await open('mtd');

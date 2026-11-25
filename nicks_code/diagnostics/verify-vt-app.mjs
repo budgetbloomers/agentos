@@ -58,6 +58,13 @@ ok(J(APP.intentOf('?app=vt&page=weekly')) === J({ vt: true, page: 'vt_weekly' })
 ok(J(APP.intentOf('?page=vt_daily')) === J({ vt: true, page: 'vt_daily' }), 'a VAS address naming a VT page is VT mode');
 ok(J(APP.intentOf('')) === J({ vt: false, page: null }) && J(APP.intentOf('?page=mtd')) === J({ vt: false, page: 'mtd' }), 'no app=vt and a VAS page: VAS mode');
 ok(APP.intentOf('?page=<script>').page === null, 'a page parameter that is not an id is ignored');
+/* spec 072 Phase C: the VT Report page and its address shorthand */
+ok(APP.VT_PAGES[0] === 'vt_report' && APP.VT_PAGES.length === 4, 'vt_report is a VT page and comes first (spec 072 FR-001)', APP.VT_PAGES.join());
+ok(APP.intentOf('?app=vt&page=vt_report').page === 'vt_report' && APP.intentOf('?app=vt&page=report').page === 'vt_report',
+  'the VT Report is reachable at ?app=vt&page=vt_report and at the ?page=report shorthand');
+ok(APP.intentOf('?page=vt_report').vt === true, 'a bare VAS deep link to vt_report still opens Vehicle Tracking');
+ok(APP.ENTRY_IDS.indexOf('vt_report') > -1, 'an account granted only vt_report sees the Vehicle Tracking entry');
+ok(APP.LANDING === 'vt_mtd', '/pulse/?app=vt still lands on Month to Date — the address keeps the meaning it has had since 071');
 ok(APP.searchFor(true, 'vt_mtd', '') === '?app=vt' && APP.searchFor(true, 'vt_weekly', '?x=1') === '?app=vt&page=vt_weekly&x=1', 'the VT address: ?app=vt (the landing page needs no page=), other parameters kept');
 ok(APP.searchFor(false, 'mtd', '?app=vt&page=vt_mtd') === '' && APP.searchFor(false, null, '?app=vt&x=1') === '?x=1', 'the VAS address carries no app / page');
 ok(APP.modeFor('vt_daily', false) === true && APP.modeFor('mtd', true) === false && APP.modeFor('data', true) === true && APP.modeFor('data', false) === false && APP.modeFor('hubs', true) === true,
@@ -185,8 +192,10 @@ try {
   L = await look(pa);
   ok(L.vt && L.search === '?app=vt' && L.tab === 'vt_mtd', 'the address is /pulse/?app=vt and Month to Date opens first', J([L.search, L.tab]));
   ok(L.selected === 'Vehicle Tracking' && /Vehicle Tracking/.test(L.title) && !/VAS/.test(L.title), 'the switcher shows Vehicle Tracking selected; the title reads Vehicle Tracking', J([L.selected, L.title]));
-  ok(L.items.join(',') === 'vt_mtd,vt_weekly,vt_daily,data,hubs', 'the VT sidebar: the three VT pages, the Upload Station, Apps — nothing VAS', L.items.join(','));
-  ok(L.labels.slice(0, 3).join(' | ') === 'Month to Date | Weekly Reports | Daily Reports', 'labelled without the "VT" prefix', L.labels.join(' | '));
+  /* spec 072 Phase C: vt_report (the VT Report dashboard) joined the group as its FIRST item (FR-001) */
+  ok(L.items.join(',') === 'vt_report,vt_mtd,vt_weekly,vt_daily,data,hubs', 'the VT sidebar: the four VT pages, the Upload Station, Apps — nothing VAS', L.items.join(','));
+  ok(L.items[0] === 'vt_report', 'VT Report is the first item of the group (spec 072 FR-001)', L.items.join(','));
+  ok(L.labels.slice(0, 4).join(' | ') === 'VT Report | Month to Date | Weekly Reports | Daily Reports', 'labelled without the "VT" prefix, except the VT Report page the owner names that way', L.labels.join(' | '));
   ok(/^Vehicle Tracking — Month to date/.test(L.h2) && L.viewLen > 40, 'the page is Vehicle Tracking — Month to date, painted', L.h2);
   ok(L.filtersOff && !L.trustShown, 'the VAS header filters and the VAS Data Trust strip stand down', J([L.filtersOff, L.trustShown]));
   await pa.screenshot({ path: path.join(SHOTS, 'vt-app-mtd.png'), fullPage: false });
@@ -197,7 +206,7 @@ try {
   await pa.click('#side [data-page="vt_weekly"]'); await settle(pa); L = await look(pa);
   ok(L.search === '?app=vt&page=vt_weekly' && L.tab === 'vt_weekly', 'opening Weekly keeps the address in step', L.search);
   await pa.reload({ waitUntil: 'domcontentloaded' }); await pulse(pa); L = await look(pa);
-  ok(L.vt && L.tab === 'vt_weekly' && L.selected === 'Vehicle Tracking' && L.items[0] === 'vt_mtd', 'a reload keeps VT mode and the page', J([L.vt, L.tab, L.selected]));
+  ok(L.vt && L.tab === 'vt_weekly' && L.selected === 'Vehicle Tracking' && L.items[0] === 'vt_report', 'a reload keeps VT mode and the page', J([L.vt, L.tab, L.selected]));
   await pick(pa, 'VAS Analytics'); L = await look(pa);
   ok(!L.vt && L.search === '' && L.selected === 'VAS Analytics' && !L.items.some((i) => /^vt_/.test(i)) && !/^vt_/.test(L.tab), 'picking VAS Analytics returns to VAS (its own page, no VT group)', J([L.search, L.tab]));
   await pa.evaluate(() => history.back());

@@ -20,7 +20,7 @@
 <script src="/xlsx.full.min.js" defer></script>
 <!-- VEHICLE TRACKING (spec 071): its own engine + intake, companion files that work from file:// and that
      tools/prepare-site.js inlines (data-inline) so the deployed page stays one file with one build id. -->
-<script src="vt-engine.js" data-inline></script><script src="vt-pages.js" data-inline></script><script src="vt-publish.js" data-inline></script><script src="vt-app.js" data-inline></script>
+<script src="vt-engine.js" data-inline></script><script src="vt-pages.js" data-inline></script><script src="vt-publish.js" data-inline></script><script src="vt-app.js" data-inline></script><script src="vt-charts.js" data-inline></script><script src="vt-dashboard.js" data-inline></script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -40,6 +40,11 @@
     --good:#158A4C; --warn:#B45309; --crit:#C42D2D;
     --good-bg:rgba(21,138,76,.10); --warn-bg:rgba(180,83,9,.11); --crit-bg:rgba(196,45,45,.09);
     --grid-line:rgba(15,30,54,.08);
+    /* VT REPORT SERIES (spec 072 §CH, task C2) — the four channel hues, in fixed order, for vt-charts.js. Validated
+       with the dataviz validator against this theme's #FFFFFF card surface: PASS lightness (L .43–.77) · PASS chroma
+       · PASS CVD (worst adjacent ΔE 25.6 deutan) · PASS normal-vision (29.1) · PASS contrast. These four ARE the
+       suite's own accent / courtesy / vt / nesting steps, named again so no chart ever writes a hex. */
+    --vtc1:#2563EB; --vtc2:#158A4C; --vtc3:#6D4AE0; --vtc4:#B45309;
     --card-bg:#FFFFFF;
     --line:#E3E9F3; --ink3:#71809B;   /* some templates read these with white-ish fallbacks — invisible on light unless defined */
     --shadow:0 1px 2px rgba(15,30,54,.05),0 4px 14px rgba(15,30,54,.05);
@@ -58,6 +63,11 @@
     --good:#34D399; --warn:#FBBF24; --crit:#FB7185;
     --good-bg:rgba(52,211,153,.12); --warn-bg:rgba(251,191,36,.12); --crit-bg:rgba(251,113,133,.13);
     --grid-line:rgba(148,182,255,.08);
+    /* VT REPORT SERIES, SELECTED FOR DARK — not a flip of the light four and not the suite's own dark tokens
+       (#4C9DFF / #2BD9B0 / #A78BFA / #F5B02E sit at L .69–.77 and FAIL the dark lightness band). These are darker
+       steps off the same ramps, validated against this theme's #0A1730 card surface: PASS lightness (L .48–.67)
+       · PASS chroma · PASS CVD (19.6 deutan) · PASS normal-vision (21.0) · PASS contrast. */
+    --vtc1:#3D86E8; --vtc2:#179C72; --vtc3:#8457E6; --vtc4:#B5790C;
     --card-bg:linear-gradient(180deg,rgba(148,182,255,.05),rgba(148,182,255,.02)),#0A1730;
     --line:rgba(255,255,255,.08); --ink3:#94a3b8;
     --shadow:0 6px 24px rgba(2,8,20,.45);
@@ -312,6 +322,40 @@
   .tip .r i{width:8px;height:8px;border-radius:3px;display:inline-block;margin-right:6px}
   .legend{display:flex;gap:15px;flex-wrap:wrap;margin-top:10px;font-size:12.3px;color:var(--ink2)}
   .legend i{width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:6px}
+  /* VT REPORT charts (spec 072 task C2) — vt-charts.js writes only tokens, so the look is this block's job.
+     prefers-reduced-motion: the ONE animation (.anim, the bars growing in) is switched off entirely below. */
+  .vtchart svg{display:block;width:100%;height:auto;overflow:visible}
+  .vtchart .anim{transform:scaleX(0);transform-origin:left;transform-box:fill-box;animation:vtcgrow .45s ease forwards}
+  @keyframes vtcgrow{to{transform:scaleX(1)}}
+  .vtchart .hit{cursor:crosshair}
+  .vt-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--ink2)}
+  .vt-legend i{width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:6px}
+  .vt-legend b{font-weight:750;color:var(--ink)}
+  .vtc-empty{padding:26px 10px;text-align:center;color:var(--muted)}
+  .vt-panel{margin-top:14px}
+  .vt-panel .cardhead h3{font-size:15px}
+  .vt-panel .why{color:var(--muted);font-size:11.5px;margin:8px 0 0;max-width:none}
+  .vt-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:12px}
+  .vt-kpi{background:var(--card-bg);border:1px solid var(--stroke);border-radius:var(--r);padding:13px 14px;box-shadow:var(--shadow)}
+  .vt-kpi .lab{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:750}
+  .vt-kpi .val{font-size:26px;font-weight:800;line-height:1.15;margin-top:4px;color:var(--ink)}
+  .vt-kpi .sub{font-size:11.5px;color:var(--ink2);margin-top:3px}
+  .vt-kpi .dlt{font-size:11.5px;font-weight:700;margin-top:5px;display:flex;align-items:center;gap:6px}
+  .vt-kpi .dlt.up{color:var(--good)} .vt-kpi .dlt.down{color:var(--crit)} .vt-kpi .dlt.flat{color:var(--muted)}
+  .vt-kpi .spk{margin-top:7px;opacity:.95}
+  .vt-chk{display:flex;flex-wrap:wrap;gap:10px}
+  .vt-chk .it{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--stroke);border-radius:var(--r-sm);padding:9px 11px;flex:1 1 280px;background:var(--glass2)}
+  .vt-chk .it .v{font-weight:800;font-size:11.5px;letter-spacing:.06em}
+  .vt-chk .ok .v{color:var(--good)} .vt-chk .check .v{color:var(--crit)}
+  .vt-chk .it svg{width:16px;height:16px;flex:0 0 16px;margin-top:1px}
+  .vt-ins{margin:0;padding-left:18px}
+  .vt-ins li{margin:6px 0;color:var(--ink2)}
+  .vt-ins li b{color:var(--ink)}
+  .vt-absent{color:var(--muted);font-style:normal}
+  @media (prefers-reduced-motion: reduce){
+    .vtchart .anim{animation:none!important;transform:none!important}
+    .chartbox .draw path.line,.chartbox .draw .fillarea,.chartbox .draw rect.bar{animation:none!important;stroke-dashoffset:0!important;opacity:1!important;transform:none!important}
+  }
   .ring{position:relative;display:grid;place-items:center}
   .ring .rv{position:absolute;text-align:center}
   .ring .rv b{font-size:19px;font-weight:800}
@@ -5496,6 +5540,7 @@ const I={
   x:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>',
   eye:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
   target:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>',
+  chart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16v-4M12 16V8M17 16v-6"/></svg>',
   scale:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M8 21h8M12 6l7 2M12 6 5 8"/><path d="M2 13a3 3 0 0 0 6 0L5 8ZM16 15a3 3 0 0 0 6 0l-3-7Z"/></svg>',
   chevL:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></svg>',
   chevR:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>',
@@ -6573,6 +6618,7 @@ const NAV=[
      app:'vt' (2026-11-24, owner): its own entry in the app switcher, not a group of this sidebar — vt-app.js shows this
      group only in VT mode (/pulse/?app=vt). It stays in NAV so tab grants and tools/audit-permissions.mjs see the ids. */
   {lab:'Vehicle Tracking',app:'vt',items:[
+    ['vt_report','VT Report',I.chart],
     ['vt_mtd','Month to Date',I.cal],
     ['vt_weekly','Weekly Reports',I.week],
     ['vt_daily','Daily Reports',I.day],
@@ -6754,6 +6800,10 @@ function filteredAgents(){
 /* ================= pages ================= */
 const PAGES={};
 ['mtd','weekly','daily'].forEach(v=>{ PAGES['vt_'+v]=()=>typeof VTPages!=='undefined'?VTPages.render(v):emptyState(); });   // spec 071 Phase D
+/* VT REPORT (spec 072 Phase C): the consolidated Vehicle Tracking dashboard. It paints VTEngine.dashboard() and
+   nothing else; the _wire_ hook is where the line chart's crosshair is attached after the real paint. */
+PAGES.vt_report=()=>typeof VTDash!=='undefined'?VTDash.render():emptyState();
+PAGES['_wire_vt_report']=()=>{ if(typeof VTDash!=='undefined') VTDash.wire(); };
 /* A HIDDEN TAB IS A CLOSED TAB (Nick, 2026-10-26: "remove the access to adjustments for ashton"). auth-gate only hides
    the nav item; the page itself still opened from a saved view (S.ui.tab is per person) or a go() call. A page this
    account is not granted (app_users.tabs.vas) never renders — they land on their first granted page instead. Before

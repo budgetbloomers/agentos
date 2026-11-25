@@ -29,7 +29,10 @@
 'use strict';
 
 var NAME = 'Vehicle Tracking';
-var VT_PAGES = ['vt_mtd', 'vt_weekly', 'vt_daily'];
+/* vt_report (spec 072 Phase C) is the consolidated VT Report dashboard and the FIRST item of the group (FR-001).
+   LANDING stays vt_mtd: /pulse/?app=vt has meant Month to Date since 071 and a deep link is how the Report is
+   reached (?app=vt&page=vt_report), so the address keeps its meaning. */
+var VT_PAGES = ['vt_report', 'vt_mtd', 'vt_weekly', 'vt_daily'];
 var SHARED = ['data', 'hubs'];                     // the same Upload Station and Apps page, in either app
 var ENTRY_IDS = VT_PAGES.concat(['data']);         // what makes the entry worth showing (the Apps page alone is not VT)
 var LANDING = 'vt_mtd';
@@ -50,7 +53,7 @@ function parse(search) {
 /** the address → {vt, page}: ?app=vt is VT mode; a page naming a VT page is VT mode too (a VAS deep link to it) */
 function intentOf(search) {
   var q = parse(search), p = String(q.page || '');
-  if (/^(mtd|weekly|daily)$/.test(p) && q.app === 'vt') p = 'vt_' + p;
+  if (/^(report|mtd|weekly|daily)$/.test(p) && q.app === 'vt') p = 'vt_' + p;
   if (!/^[a-z_]{1,32}$/.test(p)) p = '';
   return { vt: q.app === 'vt' || isVtPage(p), page: p || null };
 }

@@ -8,7 +8,8 @@
  *       no data-inline tag is left; every shell carries the build id build.txt names; no site/tracker/
  *   B2  a tagged file that is missing FAILS the build (exit ≠ 0, named), in a throwaway copy of the build tool
  *   B3  an inlined file's text can never close the script tag early (</script → <\/script)
- *   B4  the SOURCE page from file:// exposes window.VTEngine and window.VTStation; so does the BUILT page from file://
+ *   B4  the SOURCE page from file:// exposes window.VTEngine, VTStation, VTApp, VTCharts and VTDash, and has PAGES
+ *       .vt_report registered with its _wire_ hook; so does the BUILT page from file://
  *
  *   node nicks_code/diagnostics/verify-vt-build.mjs [--no-build]
  */
@@ -33,7 +34,7 @@ if (!process.argv.includes('--no-build')) {
 }
 const SRC = read(path.join(ROOT, 'nicks_code', 'index.html'));
 const OUT = read(path.join(ROOT, 'site', 'pulse', 'index.html'));
-for (const f of ['vt-engine.js', 'vt-pages.js', 'vt-publish.js', 'vt-app.js']) {   // vt-publish.js: Phase E (the digest publisher); vt-app.js: VT mode (2026-11-24)
+for (const f of ['vt-engine.js', 'vt-pages.js', 'vt-publish.js', 'vt-app.js', 'vt-charts.js', 'vt-dashboard.js']) {   // vt-publish.js: Phase E (the digest publisher); vt-app.js: VT mode (2026-11-24); vt-charts.js + vt-dashboard.js: the VT Report (spec 072 Phase C)
   ok(SRC.includes('<script src="' + f + '" data-inline></script>'), 'the source page loads ' + f + ' with a data-inline tag');
   const code = read(path.join(ROOT, 'nicks_code', f)).replace(/<\/script/gi, '<\\/script');
   ok(OUT.includes('/* inlined ' + f + ' (tools/prepare-site.js) */\n' + code + '\n</script>'), 'site/pulse/index.html carries ' + f + ' inlined, verbatim');
@@ -69,8 +70,10 @@ head('B4 · file://');
     for (const [label, file] of [['the source page (nicks_code/index.html)', path.join(ROOT, 'nicks_code', 'index.html')], ['the built page (site/pulse/index.html)', path.join(ROOT, 'site', 'pulse', 'index.html')]]) {
       const page = await browser.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message.slice(0, 120)));
       await page.goto(pathToFileURL(file).href, { waitUntil: 'domcontentloaded' });
-      const got = await page.waitForFunction(() => window.VTEngine && window.VTStation && window.VTApp && { v: window.VTEngine.version, k: typeof window.VTStation.ingest, d: window.VTEngine.detect(['Installation Status', 'Vehicle Reg Number', 'Box Number', 'Unit Type', 'Case Number', 'Created By'], 'Export') }, null, { timeout: 30000 }).then((h) => h.jsonValue()).catch(() => null);
+      const got = await page.waitForFunction(() => window.VTEngine && window.VTStation && window.VTApp && window.VTCharts && window.VTDash && { v: window.VTEngine.version, k: typeof window.VTStation.ingest, c: typeof window.VTCharts.donut, r: typeof window.VTDash.render, p: typeof PAGES.vt_report, w: typeof PAGES._wire_vt_report, d: window.VTEngine.detect(['Installation Status', 'Vehicle Reg Number', 'Box Number', 'Unit Type', 'Case Number', 'Created By'], 'Export') }, null, { timeout: 30000 }).then((h) => h.jsonValue()).catch(() => null);
       ok(got && got.k === 'function' && got.d === 'vtBiFitted', label + ' from file:// exposes window.VTEngine (' + (got && got.v) + '), window.VTStation and window.VTApp', JSON.stringify(got));
+      ok(got && got.c === 'function' && got.r === 'function', label + ' from file:// exposes window.VTCharts and window.VTDash (spec 072 Phase C)', JSON.stringify(got));
+      ok(got && got.p === 'function' && got.w === 'function', label + ': PAGES.vt_report and its _wire_ hook are registered', JSON.stringify(got));
       ok(!errs.some((e) => /VTEngine|VTStation|vt-engine|vt-pages/.test(e)), label + ': no VT page error', errs.join(' ; '));
       await page.close();
     }

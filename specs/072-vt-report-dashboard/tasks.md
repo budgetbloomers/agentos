@@ -130,22 +130,56 @@ rating file untouched. What Phase C needs to know:
 
 ## Phase C · The VT Report page and its charts · one builder (after B) — [P] with D1 only if D waits for C's file
 
-- [ ] **C1 · `nicks_code/vt-charts.js`** — the five forms of §CH as inline SVG, theme-token only, no hex: tall segmented bar, ranked hbars, meter list, meter-with-forecast-marker, grouped bars with a reference line, plus a thin segmented bar. 2 px segment gaps, 4 px rounded data-ends, 2 px lines, ≥ 8 px markers, hover tooltip on every mark, legend + direct labels. Unique ids off the existing `CHART_ID` pattern.
+- [x] **C1 · `nicks_code/vt-charts.js`** — the five forms of §CH as inline SVG, theme-token only, no hex: tall segmented bar, ranked hbars, meter list, meter-with-forecast-marker, grouped bars with a reference line, plus a thin segmented bar. 2 px segment gaps, 4 px rounded data-ends, 2 px lines, ≥ 8 px markers, hover tooltip on every mark, legend + direct labels. Unique ids off the existing `CHART_ID` pattern.
   - Acceptance: renders from `file://`; no network; no literal colour.
   - Files: 1 new.
-- [ ] **C2 · The `--vtc1…--vtc4` tokens + chart CSS in `nicks_code/index.html`**, defined in BOTH theme blocks with the validated values from §CH. Re-run the `dataviz` validator on both sets and paste the report into the deploy checklist.
+- [x] **C2 · The `--vtc1…--vtc4` tokens + chart CSS in `nicks_code/index.html`**, defined in BOTH theme blocks with the validated values from §CH. Re-run the `dataviz` validator on both sets and paste the report into the deploy checklist.
   - Acceptance: both modes PASS all six checks.
   - Files: 1.
-- [ ] **C3 · `nicks_code/vt-dashboard.js` — the shell.** `VTDash.render()`: head (cycle, view words, data-through, dialing day), the **view selector** (four options, FR-007/008) in one filter row above the panels, per-person state in `S.ui.vtReport`, the `ensure()` / loading / no-uploads / no-figures states borrowed from `VTPages`, and `repaint()`. The page holds **no arithmetic**.
+- [x] **C3 · `nicks_code/vt-dashboard.js` — the shell.** `VTDash.render()`: head (cycle, view words, data-through, dialing day), the **view selector** (four options, FR-007/008) in one filter row above the panels, per-person state in `S.ui.vtReport`, the `ensure()` / loading / no-uploads / no-figures states borrowed from `VTPages`, and `repaint()`. The page holds **no arithmetic**.
   - Files: 1 new.
-- [ ] **C4 · The mockup's panels** (table rows 1–13): 5 KPI cards with previous-cycle deltas reading "—" when absent (FR-019), Target Achieved as a ring, Performance Trend, Channel Performance, Campaign Breakdown, Cycle Performance (5 buckets), Sales vs budget, Forecast vs Actual, Detailed Breakdown, Key Insights. Every panel names its view and its target's source (FR-006, FR-034).
+- [x] **C4 · The mockup's panels** (table rows 1–13): 5 KPI cards with previous-cycle deltas reading "—" when absent (FR-019), Target Achieved as a ring, Performance Trend, Channel Performance, Campaign Breakdown, Cycle Performance (5 buckets), Sales vs budget, Forecast vs Actual, Detailed Breakdown, Key Insights. Every panel names its view and its target's source (FR-006, FR-034).
   - Files: 1.
-- [ ] **C5 · NAV + registration in `nicks_code/index.html`**: `vt_report` first in the Vehicle Tracking group; `PAGES.vt_report`; two new `<script src="vt-charts.js" data-inline>` / `vt-dashboard.js` tags.
+- [x] **C5 · NAV + registration in `nicks_code/index.html`**: `vt_report` first in the Vehicle Tracking group; `PAGES.vt_report`; two new `<script src="vt-charts.js" data-inline>` / `vt-dashboard.js` tags.
   - Verify: `verify-vt-build.mjs` (the companions ship inside the page), `verify-vt-app.mjs`.
   - Files: 1.
-- [ ] **C6 · `verify-vt-dashboard.mjs`** — real Chromium over the BUILT site, both themes, a fictional book served by the existing stub Worker: every panel present, the view selector repaints all of them, no console error, no empty card, no spinner, no customer field in the DOM, a legend and a label on every chart (SC-005, SC-006).
+- [x] **C6 · `verify-vt-dashboard.mjs`** — real Chromium over the BUILT site, both themes, a fictional book served by the existing stub Worker: every panel present, the view selector repaints all of them, no console error, no empty card, no spinner, no customer field in the DOM, a legend and a label on every chart (SC-005, SC-006).
   - Files: 1 new.
-- [ ] **C7 · Checkpoint.** The owner's mockup is on screen, in both themes, with real figures and the deltas reading "—".
+- [x] **C7 · Checkpoint.** The owner's mockup is on screen, in both themes, with real figures and the deltas reading "—".
+
+### Phase C build note (2026-11-25, Phase C builder)
+
+C1–C7 are done; `verify-vt-dashboard` is new and green (100), and every other VT suite plus the VAS baseline is
+green with counts only up. What Phase D needs to know:
+
+- **Channel Performance is a DONUT, not §CH's tall segmented bar.** The owner chose the ring for that one panel
+  (four slices read well); the plan's D7 preference survives as `VTCharts.segbar`, which the Detailed Breakdown's
+  outcome-mix column uses. Campaign Breakdown is ranked horizontal bars exactly as §CH/D7 says.
+- **`nicks_code/vt-dashboard.js` ends with the integrity panel.** E1 formally owns that panel; it is already built
+  (verdicts, icon + words, both sides printed, never blocking) because the page could not honestly ship without it.
+  E1 should extend rather than re-create. **Panel 19 (Where the sources disagree) and the .xlsx export are NOT built**
+  — `D.disagree` is on the model and nothing paints it yet.
+- **Two figures the model does not carry**, both worked around in words rather than computed in page code:
+  1. `weeks[]` has `sales` and `target` but no per-week attainment, so the Performance Trend table prints the two
+     side by side and has no Attainment column. If D wants one it belongs in `dashboard()`.
+  2. A frozen `kv:vt-digest-cycle-<prev>` carries only `floor.mtd` (the model's **in-play month-to-date** set), which
+     is a wider window than this page's cycle view, and carries no Target Achieved and no per-channel split. The page
+     renames those four counts, sends the rest as null (so their change reads the absent marker) and says on screen
+     which source answered and that the window differs. A `dash` block on the digest would close this properly — it
+     is deliberately out of scope here (plan §P).
+- **`VTDash.adopt(receipt, book, roster)` exists** and mirrors `VTPages.adopt`, but **nothing calls it**: the station
+  only hands over to `VTPages`. Wiring it is a one-line change in `vt-pages.js`, which Phase C may not write.
+- **The dashboard loads for itself** (receipts → book → roster → the frozen prev), because `VTPages` keeps its roster
+  private. Two pages therefore hold two copies of the same book. If that ever matters, the shared cache belongs in
+  `vt-pages.js` — D's file, not C's.
+- **`/pulse/?app=vt` still lands on Month to Date.** `vt_report` is first in the NAV group (FR-001) and reachable at
+  `?app=vt&page=vt_report` or the `?page=report` shorthand, but `VTApp.LANDING` was left alone so the address keeps
+  the meaning it has had since 071.
+- **`vt_report` is NOT yet in `tools/vt-grant-tabs.mjs` or `tools/audit-permissions.mjs`** — that is task E4. Until
+  then only `admin` and `vas:['*']` accounts can open it.
+- The palette validator was re-run for C2 and both modes PASS all six checks; the two reports are written into the
+  comments beside the `--vtc1…--vtc4` definitions in `nicks_code/index.html`. E5 should copy them into
+  `deploy-checklist.md`, which does not exist yet.
 
 ---
 
