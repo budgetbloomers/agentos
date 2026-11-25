@@ -280,6 +280,21 @@
     padding:9px 10px;border-bottom:1px solid var(--stroke);white-space:nowrap;cursor:pointer;user-select:none;
   }
   table.data th.l,table.data td.l{text-align:left}
+  /* VEHICLE TRACKING FIGURE TABLES (25 Nov 2026). These carry 17-25 figure columns - Month to date's Agents table
+     is 25 - and table.data forces every header onto ONE nowrap line at .09em letter-spacing, so "Cancellation
+     budget %" alone is ~150px. Measured on the live page at 1600px: Agents was 2 739px wide in a 1 280px wrapper,
+     1 459px (53%) of it unreachable without scrolling inside the table; at 1 280px it was 65%. Every column is a
+     real figure, so none is dropped: the HEADERS wrap instead, the cells tighten, and the first label column
+     stays put so a row keeps its name while the figures scroll. */
+  table.data.vt-table{font-size:12.3px}
+  table.data.vt-table th{white-space:normal;letter-spacing:.02em;padding:7px 7px;line-height:1.16;vertical-align:bottom;min-width:44px}
+  table.data.vt-table td{padding:6px 7px}
+  table.data.vt-table th.l,table.data.vt-table td.l{white-space:nowrap}
+  table.data.vt-table tbody td.l:first-child,table.data.vt-table thead th.l:first-child{position:sticky;left:0;z-index:3;background:var(--bg1)}
+  table.data.vt-table thead th.l:first-child{z-index:7}
+  table.data.vt-table tbody tr:hover td.l:first-child{background:color-mix(in srgb,var(--bg1) 85%,var(--accent))}
+  .card.vt-note{padding:12px 16px}
+  .card.vt-note .note{color:var(--ink2)}
   table.data th .dir{color:var(--accent);margin-left:3px}
   table.data td{padding:7px 10px;border-bottom:1px solid var(--grid-line);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
   /* table.data is nowrap by design — every other table on the site is numeric and must not wrap.
@@ -1862,7 +1877,11 @@ function __healthPoll(){
       .then(function(x){
         var alerts=[]; try{ var hj=JSON.parse(x||'{}'); alerts=hj.alerts||[]; if(Array.isArray(hj.cadence)) window.__cbxCadence=hj.cadence; }catch(e){}
         var el=document.getElementById('cbxHealth');
-        if(!alerts.length){ if(el) el.remove(); return; }
+        /* THE BANNER MUST NOT COVER THE PAGE (25 Nov 2026, the owner: "the format in VT reporting is all off").
+           It is position:fixed at bottom:0 and nothing reserved room for it, so the last ~65px of EVERY page in
+           every app sat underneath it - on the VT tables that hid whole rows of figures. Its height is not fixed
+           (the missing-day alert wraps to three lines), so the room is measured from the element itself. */
+        if(!alerts.length){ if(el) el.remove(); document.body.style.paddingBottom=''; return; }
         if(!el){ el=document.createElement('div'); el.id='cbxHealth'; document.body.appendChild(el); }
         /* Red is for critical only (2026-09-18, Nick: "stop this red banner"). Critical alerts
            sort first; a warning (a register a day short, a leader without a login) paints
@@ -1871,6 +1890,8 @@ function __healthPoll(){
         var crit=alerts[0].severity==='critical';
         el.setAttribute('style','position:fixed;bottom:0;left:0;right:0;z-index:2147483000;background:'+(crit?'#7f1d1d':'#78350f')+';color:'+(crit?'#fecaca':'#fde68a')+';border-top:1px solid '+(crit?'#ef4444':'#f59e0b')+';padding:9px 16px;text-align:center;font:600 12.5px system-ui,sans-serif');
         el.textContent=(crit?'\u26a0 ':'\u24d8 ')+alerts[0].message+(alerts.length>1?' (+'+(alerts.length-1)+' more)':'');
+        var reserve=function(){ document.body.style.paddingBottom=(el.offsetHeight+10)+'px'; };
+        reserve(); if(window.ResizeObserver&&!el.__ro){ el.__ro=new ResizeObserver(reserve); el.__ro.observe(el); }
       }).catch(function(){});
   }catch(e){}
 }
