@@ -261,8 +261,21 @@ function grouped(o) {
     }).join('');
     if (g.ref != null) out += '<line x1="' + f1(P.l + gi * gw + 10) + '" x2="' + f1(P.l + (gi + 1) * gw - 10) + '" y1="' + f1(ys(g.ref)) + '" y2="' + f1(ys(g.ref))
       + '" stroke="' + MARK + '" stroke-width="2" stroke-dasharray="5 3"><title>' + esc(g.label + ' ' + (o.refName || 'budget') + ' ' + fmt(g.ref)) + '</title></line>';
-    return out + txt(P.l + gi * gw + gw / 2, h - P.b + 16, g.label, { anchor: 'middle', size: 10.5, weight: 650, fill: INK2 })
-      + (g.ref == null ? '' : txt(P.l + gi * gw + gw / 2, h - P.b + 30, (o.refName || 'budget') + ' ' + fmt(g.ref), { anchor: 'middle', size: 9 }));
+    /* TWO THINGS THAT COLLIDED UNDER THE BARS (25 Nov 2026, the owner: "the format ... look at the gaps").
+       1. The rule's value was printed under EVERY group. Where one rule covers the whole chart - Scheduler pivots
+          draws the scope's own average against six schedulers - that was the same sentence six times, overlapping
+          its neighbours. It is now printed only where it CHANGES, so a per-bucket budget still labels every bucket
+          and a single shared average labels the first group alone; the legend names the dashed rule either way.
+       2. A group label wider than its slot ran into the next one ("devamani vanessa pillay" beside "luvo mawundu"
+          at ~70px per group). It is clipped to what the slot holds, with the full name on hover and in the
+          description line that screen readers read, so nothing is lost - only the overlap. */
+    var sameAsPrev = gi > 0 && groups[gi - 1].ref === g.ref;
+    var per = 10.5 * 0.55, room = Math.max(4, Math.floor((gw - 4) / per));
+    var lab = String(g.label == null ? '' : g.label);
+    var shown = lab.length > room ? lab.slice(0, Math.max(1, room - 1)).replace(/\s+$/, '') + '…' : lab;
+    return out + '<g><title>' + esc(lab) + '</title>'
+      + txt(P.l + gi * gw + gw / 2, h - P.b + 16, shown, { anchor: 'middle', size: 10.5, weight: 650, fill: INK2 }) + '</g>'
+      + (g.ref == null || sameAsPrev ? '' : txt(P.l + gi * gw + gw / 2, h - P.b + 30, (o.refName || 'budget') + ' ' + fmt(g.ref), { anchor: 'middle', size: 9 }));
   }).join('');
   var desc = groups.map(function (g) {
     return g.label + ': ' + (g.bars || []).map(function (b) { return b.name + ' ' + fmt(b.value); }).join(', ')

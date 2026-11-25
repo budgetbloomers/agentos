@@ -370,8 +370,16 @@
   /* CHARTS FIRST, FIGURES ONE CLICK AWAY (spec 072 Phase D, the owner's layout decision 2026-11-25). Two columns
      where there is room, one on a phone; a panel with a genuinely wide table takes the whole width. */
   .vt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(460px,100%),1fr));gap:14px;align-items:start;margin-top:14px}
-  .vt-grid>.vt-panel{margin-top:0}
-  .vt-grid>.vt-wide{grid-column:1/-1}
+  /* THE PANELS PACK, THEY DO NOT STRETCH (25 Nov 2026, the owner: "look at the gaps"). A plain grid row is as tall as
+   its tallest card, so a short panel beside a tall one left the rest of the row as raw background: measured on the
+   live page, 1 121px of holes across 15 panels at 1800px (Integrity checks 398px, Rollover follow-up 286px, Key
+   Insights 163px) and 942px at 1600px. Stretching the cards to fill the row only moves the hole INSIDE the card -
+   Rollover follow-up became a 1 000px card with 430px of content - so instead VTDash.masonry() measures each panel
+   and gives it a grid-row span over these 8px rows, and the next panel in that column rises into the space.
+   The class is added BY THAT CODE: if it never runs the grid stays exactly as it was, ragged but never clipped. */
+.vt-grid>.vt-panel{margin-top:0}
+  .vt-grid.vt-masonry{grid-auto-rows:8px}
+.vt-grid>.vt-wide{grid-column:1/-1}
   /* the fold is a native <details>: it works with no JavaScript and <summary> is focusable by the browser itself */
   .vt-fold{margin-top:10px;border-top:1px solid var(--stroke)}
   .vt-fold>summary{cursor:pointer;list-style:none;padding:8px 2px 2px;font-size:11.5px;font-weight:750;color:var(--ink2);display:block}

@@ -945,7 +945,36 @@ function render() {
     + '. The page chooses shapes and formats and computes nothing. GWP comes from the Schedulers Data sheet (' + esc(R().reports.gwp.source) + ') and is not the engine\'s BI fitted value; both are different measures and neither is adjusted to match the other.</p>';
 }
 /** after the real paint: the line chart's crosshair (the rest of the kit needs no JavaScript) */
-function wire() { var ch = CH(); return ch && ch.wire ? ch.wire(root.document) : 0; }
+/* THE PANELS PACK INSTEAD OF LEAVING HOLES (25 Nov 2026, the owner: "look at the gaps").
+   A grid row is as tall as its tallest card, so a short panel beside a tall one left the rest of the row as raw
+   background - measured on the live page, 1 121px of it across 15 panels at 1800px, 942px at 1600px. Stretching the
+   cards to fill the row only moves the hole INSIDE the card, so each panel is measured and given a span over the
+   grid's 8px rows: the next panel in that column then rises into the space, in the page's own order.
+   SAFE BY CONSTRUCTION: the 8px rows only exist while this code has added .vt-masonry, so if it never runs (an old
+   browser, a thrown error) the grid is exactly what it was - ragged, but never clipped. One column: nothing to do. */
+var MROW = 8, MGAP = 14, mObs = null;
+function masonry() {
+  var d = root.document, grid = d && d.querySelector('#view .vt-grid');
+  if (!grid || !root.getComputedStyle) return 0;
+  var kids = [].slice.call(grid.children);
+  if (!kids.length) return 0;
+  var one = root.getComputedStyle(grid).gridTemplateColumns.split(' ').length < 2;
+  grid.classList.remove('vt-masonry');
+  kids.forEach(function (c) { c.style.gridRowEnd = ''; });
+  if (one) return 0;                                  /* a phone: one column, nothing can leave a hole */
+  var hs = kids.map(function (c) { return c.getBoundingClientRect().height; });
+  grid.classList.add('vt-masonry');
+  kids.forEach(function (c, i) { c.style.gridRowEnd = 'span ' + Math.max(1, Math.ceil((hs[i] + MGAP) / (MROW + MGAP))); });
+  /* a panel that changes height on its own - a fold opening, a font landing - re-packs the column it sits in */
+  if (root.ResizeObserver) {
+    if (mObs) mObs.disconnect();
+    var t = null;
+    mObs = new root.ResizeObserver(function () { if (t) root.clearTimeout(t); t = root.setTimeout(function () { masonry(); }, 60); });
+    kids.forEach(function (c) { mObs.observe(c); });
+  }
+  return kids.length;
+}
+function wire() { var ch = CH(); var n = ch && ch.wire ? ch.wire(root.document) : 0; try { masonry(); } catch (e) {} return n; }
 
 /* ---------------------------------------------------------------- actions ---- */
 var SETTINGS = ['cycle', 'view', 'pivot', 'pdim', 'pfrom', 'pto', 'pchan', 'pcamp'];
@@ -961,9 +990,12 @@ function fold(id, open) {
   var u = ui(); u.figures = u.figures || {};
   if (open) u.figures[String(id)] = 1; else delete u.figures[String(id)];
   saveUi();
+  /* a fold changes the panel's height, so the column it sits in must re-pack NOW. The ResizeObserver in masonry()
+     would get there too, but only after its debounce - long enough for the panel below to sit over the one above. */
+  try { masonry(); } catch (e) {}
 }
 
-return { TAB: TAB, render: render, wire: wire, set: set, clear: clear, clearPersons: clearPersons, fold: fold, retry: retry, adopt: adopt,
+return { TAB: TAB, render: render, wire: wire, masonry: masonry, set: set, clear: clear, clearPersons: clearPersons, fold: fold, retry: retry, adopt: adopt,
   exportView: exportView, workbookFor: workbookFor, workbookFrom: workbookFrom, sheetSpecs: sheetSpecs, PREAMBLE: PREAMBLE, XFMT: XFMT,
   state: function () { return { status: C.status, error: C.error, ready: ready(), cycle: currentCycle().key, view: viewKey(),
     model: ready() ? model() : null, book: C.book, receipts: C.receipts, prev: C.prev, fallback: C.fallback }; },

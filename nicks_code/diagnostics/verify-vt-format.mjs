@@ -67,6 +67,36 @@ try {
       if (m.thWrap) ok(pg + ': VT headers wrap instead of forcing one long line', m.thWrap === 'normal', m.thWrap);
       if (m.labSticky) ok(pg + ': the first label column stays put while the figures scroll', m.labSticky === 'sticky', m.labSticky);
       if (pg === 'vt_mtd') ok(pg + ': the Cancelled explanation sits in a card like every other block', !m.strayNote && m.notes === 1, 'stray=' + m.strayNote + ' carded=' + m.notes);
+      /* THE PANELS PACK INSTEAD OF LEAVING HOLES. Packing cannot change a panel's own height, so a shorter grid is
+         strictly less whitespace. Measured both ways on the same page: live, ragged -> packed was 3 725 -> 3 418px
+         at 1800px and 4 486 -> 4 078px at 1600px. */
+      if (pg === 'vt_report') {
+        const pack = await page.evaluate(() => {
+          const grid = document.querySelector('#view .vt-grid');
+          if (!grid || !window.VTDash || !window.VTDash.masonry) return null;
+          const kids = [].slice.call(grid.children);
+          const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').length;
+          grid.classList.remove('vt-masonry'); kids.forEach((k) => { k.style.gridRowEnd = ''; });
+          const ragged = Math.round(grid.getBoundingClientRect().height);
+          window.VTDash.masonry();
+          return { cols, ragged, packed: Math.round(grid.getBoundingClientRect().height),
+            masonry: grid.classList.contains('vt-masonry') };
+        });
+        if (pack && pack.cols > 1) {
+          ok(pg + ': the panels pack, so the grid is shorter than a ragged one', pack.packed < pack.ragged,
+            'ragged ' + pack.ragged + 'px vs packed ' + pack.packed + 'px');
+          ok(pg + ': packing is opt-in — the 8px rows only exist once the code has added .vt-masonry', pack.masonry === true);
+        }
+        /* ONE rule, ONE label. The scope average was printed under every group and overlapped its neighbours. */
+        const reps = await page.evaluate(() => {
+          const svgs = [...document.querySelectorAll('#view .vt-grid svg')];
+          let worst = 0;
+          svgs.forEach((sv) => { const n = [...sv.querySelectorAll('text')].filter((t) => /scope average/i.test(t.textContent || '')).length;
+            if (n > worst) worst = n; });
+          return worst;
+        });
+        ok(pg + ': a shared reference rule is labelled once, not under every bar', reps <= 1, 'drawn ' + reps + ' times');
+      }
     }
     ok('no page errors at ' + W + 'px', errs.length === 0, [...new Set(errs)].join(' | '));
     await page.close();
