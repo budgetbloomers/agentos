@@ -357,6 +357,9 @@ async function ingest(name, buf, hash, expected, found, opts) {
         + (plan.merged.counts.cancelledDropped ? ' (' + num(plan.merged.counts.cancelledDropped) + ' cancelled: in neither file of the day)' : '') + ' · VAS money unchanged', '', 9000);
       root.__vtBook = plan.merged.book; root.__vtRoster = roster;
       if (root.VTPages && typeof root.VTPages.adopt === 'function') { try { root.VTPages.adopt(r, plan.merged.book, roster); } catch (e) { /* the pages re-read the book on their next open */ } }
+      /* the VT Report takes the same hand-over (spec 072 Phase C note → D5): an upload refreshes the dashboard
+         instead of leaving it on the book it read when it was opened */
+      if (root.VTDash && typeof root.VTDash.adopt === 'function') { try { root.VTDash.adopt(r, plan.merged.book, roster); } catch (e) { /* the report re-reads the book on its next open */ } }
       if (root.VTStation && typeof root.VTStation.afterCommit === 'function') { try { root.VTStation.afterCommit(r, plan.merged.book, roster); } catch (e) { /* the publish (Phase E) reports its own failures */ } }
       return true;
     }
@@ -593,7 +596,17 @@ function hrsTable(M, f) {
   var rows = tlsShown(M, f).map(function (t) { return mk(t.tl + ' (team)', t); });
   if (!f.tl) subKeys().filter(function (s) { return !f.sub || s === f.sub; }).forEach(function (s) { rows.push(mk(subLabel(s) + ' (sub-campaign)', M.subAgg[s], 'subtotal')); });
   if (!f.tl && !f.sub) rows.push(mk('Floor', M.floor, 'total'));
-  return { cols: cols, rows: rows, notes: [] };
+  /* THE FIFTH COLUMN (spec 072 task D3 / FR-034): 72+ now splits into "72+ in cycle" and "72+ out cycle". The budget
+     these shares are read against is `budgets[cycle].hrsShare` from Sales_Review_YTD 2026.xlsx, which carries ONE
+     72+ key (h72p, 5 %) and not two — so neither split column claims it, both read the absent marker, and this note
+     says why rather than halving a budget nobody wrote. Neither share is scored. */
+  var split = B.filter(function (b) { return b.k !== 'past' && bud[b.k] == null; }).map(function (b) { return b.label + ' h'; });
+  var notes = ['The share budget is <b>budgets[' + esc((M.budgets && M.budgets.cycle) || '') + '].hrsShare</b> (Sales_Review_YTD 2026.xlsx): '
+    + B.filter(function (b) { return b.k !== 'past' && bud[b.k] != null; }).map(function (b) { return '<b>' + esc(b.label) + ' h</b> ' + esc(fmtCell('p', bud[b.k])); }).join(', ') + '.'
+    + (split.length ? ' The rule book carries a single <b>72+</b> budget (' + esc(fmtCell('p', bud.h72p)) + ') and not one per split column, so '
+      + split.map(esc).join(' and ') + ' show ' + esc(R().reports.absent) + ' for their budget rather than a share nobody wrote.' : '')
+    + ' Neither share is scored (the agent rating reads Target Achievement and Fitment Rate only).'];
+  return { cols: cols, rows: rows, notes: notes };
 }
 /* every table a view shows, in order — the screen AND the export are drawn from this one list */
 function tables(view, M, f) {
@@ -614,8 +627,9 @@ function tables(view, M, f) {
       out.push(Object.assign(aggTable(M, 'Lead source', leads), { title: 'Lead sources', sheet: 'MTD lead sources',
         notes: ['Lead source is the Salesforce Source Partner. "Panimax - New Sales" counts as Referral when the seller is on the Referral team, otherwise Predictive; Sales Enablement keeps its own line.'] }));
     }
-    if (!f.lead) out.push(Object.assign(hrsTable(M, f), { title: 'Hrs Ahead — open Scheduled cases', sheet: 'MTD hrs ahead',
-      notes: ['Hours ahead = appointment day against ' + esc(longDay(M.period.hrsAsAt)) + ' (the day after the latest extract). Each share sits beside its scheduling budget; teams, sub-campaigns and the floor only.'] }));
+    if (!f.lead) { var ht = hrsTable(M, f);
+      out.push(Object.assign(ht, { title: 'Hrs Ahead — open Scheduled cases', sheet: 'MTD hrs ahead',
+        notes: ['Hours ahead = appointment day against ' + esc(longDay(M.period.hrsAsAt)) + ' (the day after the latest extract). Each share sits beside its scheduling budget; teams, sub-campaigns and the floor only.'].concat(ht.notes || []) })); }
   } else if (view === 'weekly') {
     M.weeks.map(function (w, i) { return { w: w, i: i }; }).filter(function (x) { return x.w.from <= M.period.asOf; }).reverse().forEach(function (x) {
       out.push(Object.assign(agentTable('weekly', M, f, x.i), { title: 'Week of ' + x.w.label, sub: x.w.from + ' → ' + (x.w.to < M.period.asOf ? x.w.to : M.period.asOf), sheet: 'Week ' + x.w.label }));

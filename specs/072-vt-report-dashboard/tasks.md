@@ -185,16 +185,54 @@ green with counts only up. What Phase D needs to know:
 
 ## Phase D · The rest of the workbook · one builder (after C)
 
-- [ ] **D1 · Engine aggregations** in `nicks_code/vt-engine.js`: per-scheduler pivots for the four scopes with percentages over each scheduler's own grand total, divide-by-zero safe (FR-045); the Agent / Referring Agent / Scheduler person dimension with date / channel / campaign filters (FR-047); upcoming scheduled fitments from the earliest date with per-date shares and a "Later dates" fold (FR-048); the Rollover Follow-up per channel with Open to Action and Open GWP (FR-049); Fitted GWP and total GWP in view (FR-044).
+- [x] **D1 · Engine aggregations** in `nicks_code/vt-engine.js`: per-scheduler pivots for the four scopes with percentages over each scheduler's own grand total, divide-by-zero safe (FR-045); the Agent / Referring Agent / Scheduler person dimension with date / channel / campaign filters (FR-047); upcoming scheduled fitments from the earliest date with per-date shares and a "Later dates" fold (FR-048); the Rollover Follow-up per channel with Open to Action and Open GWP (FR-049); Fitted GWP and total GWP in view (FR-044).
   - Acceptance: the oracle gains the scheduler figures (6 schedulers, the 62.3 %–84.9 % spread, the headcount-6 check) and the rollover figures (628 / 323 / 305).
   - Verify: `verify-vt-report-oracle`, `verify-vt-views`.
   - Files: 2.
-- [ ] **D2 · The panels** (table rows 14–18) in `nicks_code/vt-dashboard.js`: Fitted GWP tile, the four pivot tables with a scope switch stating "all data", the Agent & Scheduler Summary with its five controls and an active-filters line, Upcoming Scheduled Fitments, Rollover Follow-up. Every one says "needs the Schedulers Data upload" in words where that is the truth.
+- [x] **D2 · The panels** (table rows 14–18) in `nicks_code/vt-dashboard.js`: Fitted GWP tile, the four pivot tables with a scope switch stating "all data", the Agent & Scheduler Summary with its five controls and an active-filters line, Upcoming Scheduled Fitments, Rollover Follow-up. Every one says "needs the Schedulers Data upload" in words where that is the truth.
   - Files: 1.
-- [ ] **D3 · The MTD Hrs Ahead table's 5th column** in `nicks_code/vt-pages.js`, labelled against `budgets[cycle].hrsShare` and saying so (D3/FR-034).
+- [x] **D3 · The MTD Hrs Ahead table's 5th column** in `nicks_code/vt-pages.js`, labelled against `budgets[cycle].hrsShare` and saying so (D3/FR-034).
   - Verify: `verify-vt-pages.mjs`; the Phase A golden proves SC-004 — nothing else moved.
   - Files: 2.
-- [ ] **D4 · Checkpoint.** All 20 panels render; the scheduler spread is visible; the oracle covers every panel's headline figure.
+- [x] **D4 · Checkpoint.** All 20 panels render; the scheduler spread is visible; the oracle covers every panel's headline figure.
+
+---
+
+### Phase D build note (2026-11-25, Phase D builder)
+
+D1–D4 are done and every suite is green (`-rating` 58, `-vas-golden` 32, `-isolation` 27 all unchanged passes).
+What Phase E needs to know:
+
+- **THE PAGE FOLDS NOW (the owner's layout decision, taken 2026-11-25): charts first, each table behind a native
+  `<details class="vt-fold">`** whose summary reads "Show the figures — N …". It needs no JavaScript to open, the
+  `<summary>` is focusable and Enter-operable by the browser itself, and the table is **always in the DOM** — never
+  built on click — so the chart's `role="img"` alternative and the paired table both survive. The open/closed state
+  is per person in `S.ui.vtReport.figures` (saved by `saveUI()`, never a shared blob) and `VTDash.fold()` deliberately
+  does NOT repaint. The honest-state notices and the KPI row never fold. Panels now sit in `.vt-grid` (two columns at
+  desk width, one on a phone, `.vt-wide` for the two full-width panels). **E3's export must read the model, not the
+  DOM** — it already does; nothing about the fold changes a figure.
+- **Panel 19 (Where the sources disagree) is BUILT** — E2 should extend rather than re-create it. It paints
+  `D.disagree` (six counts, icon + words, the by-direction breakdown) and carries forward the 071 hand credits and
+  the 6.6 % relabels in the floor guide's own wording. Panel 20 (integrity) is still Phase C's and unchanged.
+- **One engine addition, deliberately minimal:** `VTEngine.dashboard().schedulerPivot(scope)` still returns the same
+  array, but now carries `all` (the scope's grand total — the floor average), `scope`, `label` and `words` as
+  properties ON that array, so every earlier caller (`.map`, `.filter`, `.reduce`) is unmoved. It exists because
+  **there is no per-scheduler target in any source** — the cycle budget carries a scheduler headcount and nothing
+  else — so the panel shows the figures and the scope average, named on screen as "not a target", and never invents
+  one. The rule book was NOT touched (no new keys, no version bump): the sentences live in the engine beside
+  `rollover.words`. Asserted in `verify-vt-report-oracle` (against each Pivot sheet's own G15/F15) and `verify-vt-views`.
+- **`VTDash.adopt` is wired** (`vt-pages.js`, beside `VTPages.adopt`), so an Upload Station commit refreshes the
+  report instead of leaving it on the book it opened with.
+- **D3 is a LABEL, not a budget.** `budgets[cycle].hrsShare` carries one `72+` key (`h72p`, 5 %) and not two, so the
+  MTD Hrs Ahead table's two split columns print the absent marker for their budget and the table's note says why,
+  naming the rule-book path. Splitting that 5 % would be a rule-book change nobody wrote — E5 should record it in
+  the floor guide beside the D5 note.
+- **Measured page height** (verify-vt-dashboard prints it every run): folded **5,619 px ≈ 6.2 screens** for all
+  sixteen panel blocks, **9,475 px ≈ 10.5 screens** with every table open; the mockup's Overview panels alone are
+  **2,688 px ≈ 3.0 screens** in two columns. The remaining height is the per-panel provenance notes, which stay
+  visible on purpose (FR-006/FR-034). Folding those too is the one lever left and is the owner's call.
+- Screenshots (synthetic data only): `nicks_code/diagnostics/scratch/vt/vt-report-folded.png` (the new default),
+  `vt-report-schedulers.png`, `vt-report-agents.png`, plus the light/dark pair Phase C already saved.
 
 ---
 

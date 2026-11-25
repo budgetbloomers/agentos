@@ -352,6 +352,25 @@
   .vt-ins li{margin:6px 0;color:var(--ink2)}
   .vt-ins li b{color:var(--ink)}
   .vt-absent{color:var(--muted);font-style:normal}
+  /* CHARTS FIRST, FIGURES ONE CLICK AWAY (spec 072 Phase D, the owner's layout decision 2026-11-25). Two columns
+     where there is room, one on a phone; a panel with a genuinely wide table takes the whole width. */
+  .vt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(460px,100%),1fr));gap:14px;align-items:start;margin-top:14px}
+  .vt-grid>.vt-panel{margin-top:0}
+  .vt-grid>.vt-wide{grid-column:1/-1}
+  /* the fold is a native <details>: it works with no JavaScript and <summary> is focusable by the browser itself */
+  .vt-fold{margin-top:10px;border-top:1px solid var(--stroke)}
+  .vt-fold>summary{cursor:pointer;list-style:none;padding:8px 2px 2px;font-size:11.5px;font-weight:750;color:var(--ink2);display:block}
+  .vt-fold>summary::-webkit-details-marker{display:none}
+  .vt-fold>summary::before{content:'▸ ';color:var(--muted);font-size:10px}
+  .vt-fold[open]>summary::before{content:'▾ '}
+  .vt-fold>summary:hover{color:var(--ink)}
+  .vt-fold>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-sm)}
+  .vt-mix{display:flex;flex-direction:column;gap:7px;margin-top:4px}
+  .vt-mix .r{display:flex;align-items:center;gap:10px;font-size:11.5px}
+  .vt-mix .r .l{flex:0 0 120px;color:var(--ink);font-weight:650}
+  .vt-mix .r .v{color:var(--ink2);font-weight:700}
+  .vt-fold .s-hide{display:none}
+  .vt-fold[open] .s-show{display:none} .vt-fold[open] .s-hide{display:inline}
   @media (prefers-reduced-motion: reduce){
     .vtchart .anim{animation:none!important;transform:none!important}
     .chartbox .draw path.line,.chartbox .draw .fillarea,.chartbox .draw rect.bar{animation:none!important;stroke-dashoffset:0!important;opacity:1!important;transform:none!important}

@@ -252,6 +252,15 @@ eq('two schedulers in the book, counted against the headcount budget', [M.schedu
 ok('every scheduler percentage is over that scheduler\'s own sales, and divide-by-zero safe',
   M.schedulers.rows.every(r => r.sales > 0 ? Math.abs(r.pct.fitted - r.fitted / r.sales) < 1e-12 : r.pct.fitted === null));
 eq('the four pivot scopes are all data, so the grand total is every record', E.VT_RULES.reports.schedulerPivots.scopes.map(s => Mall.schedulerPivot(s).reduce((t, r) => t + r.sales, 0)), [2, 3, 7, 13]);
+/* 072 D1: each pivot carries its own grand total — the scope average a scheduler row is read against, because NO
+   source carries a per-scheduler target. It is the engine's tally of the scope, never a sum made on the page. */
+eq('each pivot carries its scope grand total, which is the scope\'s own sales and fitted share',
+  E.VT_RULES.reports.schedulerPivots.scopes.map(s => { const p = Mall.schedulerPivot(s);
+    return [p.all.sales, p.all.sales === p.reduce((t, r) => t + r.sales, 0), p.all.pct.fitted === (p.all.sales ? p.all.fitted / p.all.sales : null)]; }),
+  [[2, true, true], [3, true, true], [7, true, true], [13, true, true]]);
+ok('the pivot says in words that there is no per-scheduler target anywhere, and that it is all data',
+  /no per-scheduler target in any source/.test(Mall.schedulerPivot('all').words) && /all data/.test(Mall.schedulerPivot('all').words),
+  Mall.schedulerPivot('all').words);
 eq('a scheduler name not on the Agent List is counted as typed and listed as unmatched, never guessed',
   (() => { const b = bookOf(ROWS); b.cases['9001'].schedulerName = 'Scheduler Not On The List'; b.cases['9001'].schedulerCb = null;
     const X = E.dashboard(b, [], { cycleKey: CYCLE, view: 'cycle', asOf: ASOF });

@@ -161,10 +161,25 @@ function adopt(receipt, book, roster) {
 
 /* ---------------------------------------------------------------- HTML helpers (PULSE's own classes) ---- */
 function panel(o) {
-  return '<div class="card mt vt-panel" data-panel="' + esc(o.id) + '"><div class="cardhead"><div><h3>' + esc(o.title) + '</h3>'
+  return '<div class="card mt vt-panel' + (o.wide ? ' vt-wide' : '') + '" data-panel="' + esc(o.id) + '"><div class="cardhead"><div><h3>' + esc(o.title) + '</h3>'
     + (o.sub ? '<div class="sub">' + esc(o.sub) + '</div>' : '') + '</div></div>'
-    + (o.body || '') + (o.notes || []).filter(Boolean).map(function (n) { return '<p class="why">' + n + '</p>'; }).join('') + '</div>';
+    + (o.body || '') + (o.figures ? foldHtml(o.id, o.figuresLabel, o.figures) : '')
+    + (o.notes || []).filter(Boolean).map(function (n) { return '<p class="why">' + n + '</p>'; }).join('') + '</div>';
 }
+/* CHARTS FIRST, THE FIGURES ONE CLICK AWAY (the owner's layout decision, 2026-11-25: "charts first, like the mockup,
+   with each table folded behind a show-the-figures toggle"). A native <details>: it opens and closes with NO
+   JavaScript, <summary> is keyboard-reachable and focusable by the browser itself, and it SAYS what it reveals and
+   how much of it. The table stays in the DOM — it is never built on click — so the chart's role="img" alternative and
+   the paired table both survive, and the suites still read it. The honest states at the top of the page never fold:
+   a warning is not detail. The open/closed state is PER PERSON, in S.ui.vtReport like every other view setting. */
+function foldHtml(id, label, html) {
+  var on = foldOpen(id), what = esc(label || 'the figures behind this panel');
+  return '<details class="vt-fold" data-fold="' + esc(id) + '"' + (on ? ' open' : '')
+    + ' ontoggle="VTDash.fold(\'' + jsq(id) + '\',this.open)">'
+    + '<summary><span class="s-show">Show the figures</span><span class="s-hide">Hide the figures</span> — ' + what + '</summary>'
+    + html + '</details>';
+}
+function foldOpen(id) { var f = ui().figures; return !!(f && f[id]); }
 function warn(title, sub, body, tone) {
   return '<div class="card mt vt-state" data-tone="' + (tone || 'warn') + '" style="border-left:3px solid var(' + (tone === 'crit' ? '--crit' : tone === 'info' ? '--accent' : '--amber') + ')">'
     + '<div class="cardhead"><div><h3>' + esc(title) + '</h3>' + (sub ? '<div class="sub">' + esc(sub) + '</div>' : '') + '</div></div>'
@@ -265,7 +280,7 @@ function kpisHtml(D) {
 function trendHtml(D) {
   var ch = CH(), labels = D.weeks.map(function (w) { return w.label; });
   var body = ch.line({
-    title: 'Sales by week against the per-week target', labels: labels, h: 260,
+    title: 'Sales by week against the per-week target', labels: labels, h: 176,
     series: [{ name: 'Sales', values: D.weeks.map(function (w) { return w.sales; }), color: ch.hue(0) },
       { name: 'Target', values: D.weeks.map(function (w) { return w.target; }), color: ch.hue(3), dashed: true }],
     flags: D.weeks.map(function (w) { return !!(w.preCycle || w.postCycle); }),
@@ -282,7 +297,8 @@ function trendHtml(D) {
         w.fittedOnly ? 'fitted only — fitted rollovers, not a real week' : w.preCycle ? 'before the cycle: no dialing days, so no target' : w.postCycle ? 'after the cycle end' : ''] };
   });
   return panel({ id: 'trend', title: 'Performance Trend', sub: 'sales by week against the per-week target · ' + D.viewLabel,
-    body: body + table([{ h: 'Week', l: 1 }, { h: 'Sales' }, { h: 'Fitted' }, { h: 'Scheduled' }, { h: 'Missed' }, { h: 'Cancelled' }, { h: 'Dialing days' }, { h: 'Target' }, { h: 'Note', l: 1 }], rows),
+    body: body, figuresLabel: D.weeks.length + ' week' + (D.weeks.length === 1 ? '' : 's') + ', with the dialing days and the target behind each one',
+    figures: table([{ h: 'Week', l: 1 }, { h: 'Sales' }, { h: 'Fitted' }, { h: 'Scheduled' }, { h: 'Missed' }, { h: 'Cancelled' }, { h: 'Dialing days' }, { h: 'Target' }, { h: 'Note', l: 1 }], rows),
     notes: [esc(D.weekWords), D.weeks.some(function (w) { return w.fittedOnly; })
       ? esc(R().views.rollover.preCycleWeeksAreFittedOnly) : ''] });
 }
@@ -302,7 +318,8 @@ function channelHtml(D) {
       t.salesBudget == null ? absent() : N(t.salesBudget), absent()] };
   });
   return panel({ id: 'channels', title: 'Channel Performance', sub: 'the view\'s sales split four ways · ' + D.viewLabel,
-    body: body + table([{ h: 'Channel', l: 1 }, { h: 'Sales' }, { h: 'Share' }, { h: 'Fitted' }, { h: 'Fitted %' }, { h: 'Sales budget' }, { h: 'Achievement' }], rows.concat(rolls)),
+    body: body, figuresLabel: D.channels.length + ' channels and the Panimax roll-up, with every budget and achievement',
+    figures: table([{ h: 'Channel', l: 1 }, { h: 'Sales' }, { h: 'Share' }, { h: 'Fitted' }, { h: 'Fitted %' }, { h: 'Sales budget' }, { h: 'Achievement' }], rows.concat(rolls)),
     notes: [esc(R().channels.dimension.charAt(0).toUpperCase() + R().channels.dimension.slice(1)) + '. A campaign the rule book does not map falls to Other and is named above the panels, never dropped.',
       D.campaignRollups.map(function (t) { return esc(t.words); }).join(' '),
       D.channels.filter(function (t) { return t.salesBudget == null; }).map(function (t) { return esc(t.label + ': ' + t.targetWords); }).join(' ')] });
@@ -324,7 +341,8 @@ function campaignHtml(D) {
       N(t.fitted), t.fitRate == null ? absent() : P(t.fitRate), N(t.scheduled), N(t.missed), N(t.cancelled)] };
   }));
   return panel({ id: 'campaigns', title: 'Campaign Breakdown', sub: 'sales by Campaign/Partner, with Panimax as a named roll-up · ' + D.viewLabel,
-    body: body + table([{ h: 'Campaign', l: 1 }, { h: 'Channel', l: 1 }, { h: 'Sales' }, { h: 'Share' }, { h: 'Fitted' }, { h: 'Fitted %' }, { h: 'Scheduled' }, { h: 'Missed' }, { h: 'Cancelled' }], tr),
+    body: body, figuresLabel: D.campaigns.length + ' campaign' + (D.campaigns.length === 1 ? '' : 's') + ', every outcome counted',
+    figures: table([{ h: 'Campaign', l: 1 }, { h: 'Channel', l: 1 }, { h: 'Sales' }, { h: 'Share' }, { h: 'Fitted' }, { h: 'Fitted %' }, { h: 'Scheduled' }, { h: 'Missed' }, { h: 'Cancelled' }], tr),
     notes: ['Ranked bars, not a ring: two of these campaigns are a couple of records and a ring would hide them. The roll-up is drawn hollow and labelled, and is never added into a total beside its own members.'] });
 }
 
@@ -340,7 +358,8 @@ function bucketsHtml(D) {
   });
   rows.push({ cls: 'subtotal', cells: ['Past due', N(D.bucketsPastDue), absent(), absent(), absent(), 'an appointment date already behind the as-at — outside the five buckets, which is why they still reconcile'] });
   return panel({ id: 'buckets', title: 'Cycle Performance', sub: 'five lead-time buckets · all bookings, whatever the view is set to',
-    body: body + table([{ h: 'Bucket', l: 1 }, { h: 'Open scheduled' }, { h: 'Share' }, { h: 'Target' }, { h: 'Attainment' }, { h: 'Note', l: 1 }], rows),
+    body: body, figuresLabel: 'the five buckets, their share, their target and past-due',
+    figures: table([{ h: 'Bucket', l: 1 }, { h: 'Open scheduled' }, { h: 'Share' }, { h: 'Target' }, { h: 'Attainment' }, { h: 'Note', l: 1 }], rows),
     notes: [esc(D.bucketWords),
       'The targets are the dashboard\'s own share of the channel\'s scheduled target (' + esc(R().dashboardHrsShare.cells.h24) + ' and the four cells beside it) — <b>not</b> the share the agent rating reads on the Month to Date page, which comes from a different workbook. ' + esc(R().dashboardHrsShare.notTheRatingShare),
       esc(R().dashboardHrsShare.structuralZero)] });
@@ -354,7 +373,7 @@ function budgetHtml(D) {
     notes: ['A budget is a rule-book value with its Sales Review cell; the page never invents one.'] });
   var body = ch.meter({ title: 'Sales against the cycle sales budget, with the straight-line forecast',
     label: 'Sales in view', value: D.counts.sales, target: D.budget.sales.total, targetLabel: D.budget.cells.sales,
-    marker: { value: D.forecast.sales, label: 'forecast' }, fmt: N, h: 128 });
+    marker: { value: D.forecast.sales, label: 'forecast' }, fmt: N, h: 112 });
   var rows = [
     { cells: ['Sales in view', N(D.counts.sales), N(D.budget.sales.total), P(D.budget.achievement), D.budget.cells.sales] },
     { cells: ['Forecast at this pace', D.forecast.sales == null ? absent() : fmt('d2', D.forecast.sales), N(D.budget.sales.total),
@@ -364,7 +383,8 @@ function budgetHtml(D) {
       D.forecast.fitmentsVsBudget == null ? absent() : P(D.forecast.fitmentsVsBudget), R().forecast.cells.formula] }
   ];
   return panel({ id: 'budget', title: 'Sales vs budget', sub: 'actual and the straight-line forecast on the cycle sales budget · ' + (D.budget.fallback ? 'budget from ' + monthOf(D.budget.cycle) : monthOf(D.budget.cycle)),
-    body: body + table([{ h: 'Measure', l: 1 }, { h: 'Actual' }, { h: 'Budget' }, { h: 'Of budget' }, { h: 'Workbook cell', l: 1 }], rows),
+    body: body, figuresLabel: 'sales and fitments, actual, forecast and budget, with the workbook cell',
+    figures: table([{ h: 'Measure', l: 1 }, { h: 'Actual' }, { h: 'Budget' }, { h: 'Of budget' }, { h: 'Workbook cell', l: 1 }], rows),
     notes: ['<b>There is no spend figure in any Vehicle Tracking source</b>, so this panel is sales against the sales budget — never a cost, never a margin, and nothing here is implied to be money spent.',
       esc(D.budget.words), esc(D.forecast.words), esc(D.dialingDays.words)] });
 }
@@ -380,10 +400,14 @@ function forecastHtml(D) {
         ref: kind === 'sales' ? t.salesBudget : t.fitmentBudget };
     });
   };
-  var body = '<div class="sub" style="margin:2px 0 4px">Sales</div>'
-    + ch.grouped({ title: 'Sales: actual and forecast against budget, by channel', groups: grp('sales'), names: ['Actual', 'Forecast'], refName: 'budget', fmt: function (v) { return fmt('d2', v); }, h: 230 })
-    + '<div class="sub" style="margin:12px 0 4px">Fitments</div>'
-    + ch.grouped({ title: 'Fitments: actual and forecast against budget, by channel', groups: grp('fitments'), names: ['Actual', 'Forecast'], refName: 'budget', fmt: function (v) { return fmt('d2', v); }, h: 230 });
+  /* two charts, side by side where there is room (this panel is full width): one axis each, never two scales on one
+     chart — sales and fitments are different measures and a dual axis is the one chart the dataviz rules forbid. */
+  var body = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:12px">'
+    + '<div><div class="sub" style="margin:2px 0 4px">Sales</div>'
+    + ch.grouped({ title: 'Sales: actual and forecast against budget, by channel', groups: grp('sales'), names: ['Actual', 'Forecast'], refName: 'budget', fmt: function (v) { return fmt('d2', v); }, h: 164 })
+    + '</div><div><div class="sub" style="margin:2px 0 4px">Fitments</div>'
+    + ch.grouped({ title: 'Fitments: actual and forecast against budget, by channel', groups: grp('fitments'), names: ['Actual', 'Forecast'], refName: 'budget', fmt: function (v) { return fmt('d2', v); }, h: 164 })
+    + '</div></div>';
   var rows = D.channels.map(function (t) {
     return { cells: [t.label, N(t.sales), t.forecastSales == null ? absent() : fmt('d2', t.forecastSales), t.salesBudget == null ? absent() : N(t.salesBudget),
       N(t.fitted), t.forecastFitments == null ? absent() : fmt('d2', t.forecastFitments), t.fitmentBudget == null ? absent() : N(t.fitmentBudget)] };
@@ -392,7 +416,8 @@ function forecastHtml(D) {
     D.budget ? N(D.budget.sales.total) : absent(), N(D.counts.fitted), D.forecast.fitments == null ? absent() : fmt('d2', D.forecast.fitments),
     D.budget ? N(D.budget.fitments.total) : absent()] });
   return panel({ id: 'forecast', title: 'Forecast vs Actual', sub: 'per channel, sales and fitments · ' + D.viewLabel,
-    body: body + table([{ h: 'Channel', l: 1 }, { h: 'Sales' }, { h: 'Forecast sales' }, { h: 'Sales budget' }, { h: 'Fitments' }, { h: 'Forecast fitments' }, { h: 'Fitments budget' }], rows),
+    body: body, wide: 1, figuresLabel: D.channels.length + ' channels, sales and fitments against their budgets',
+    figures: table([{ h: 'Channel', l: 1 }, { h: 'Sales' }, { h: 'Forecast sales' }, { h: 'Sales budget' }, { h: 'Fitments' }, { h: 'Forecast fitments' }, { h: 'Fitments budget' }], rows),
     notes: ['The forecast is a <b>' + esc(R().forecast.label) + '</b>: ' + esc(R().forecast.formula) + '. It is not applied to missed, cancelled, scheduled or the lead-time buckets.',
       esc(D.dialingDays.words)] });
 }
@@ -411,8 +436,14 @@ function breakdownHtml(D) {
   };
   var rows = D.breakdown.map(function (r) { return row(r); });
   rows.push(row(D.breakdownTotals, 'subtotal'));
-  return panel({ id: 'breakdown', title: 'Detailed Breakdown', sub: 'per channel, with the totals row · ' + D.viewLabel,
-    body: table([{ h: 'Channel', l: 1 }, { h: 'Sales' }, { h: 'Fitments' }, { h: 'Cancellations' }, { h: 'Missed' }, { h: 'Target' }, { h: 'Achievement' }, { h: 'Change', l: 1 }, { h: 'Outcome mix', l: 1 }], rows),
+  /* the outcome mix per channel, above the fold: the same four counts as shapes, each bar hoverable and every figure
+     spelled out in the table behind the toggle. A shape, not a second claim (the bar carries no numbers). */
+  var strip = '<div class="vt-mix">' + D.breakdown.concat([D.breakdownTotals]).map(function (r) {
+    return '<div class="r"><span class="l">' + esc(r.label) + '</span>' + mix(r).html + '<span class="v">' + esc(N(r.sales)) + ' sales</span></div>';
+  }).join('') + '</div>';
+  return panel({ id: 'breakdown', title: 'Detailed Breakdown', wide: 1, sub: 'per channel, with the totals row · ' + D.viewLabel,
+    body: strip, figuresLabel: N(D.breakdown.length) + ' channels and the total, with each one\'s target, achievement and change',
+    figures: table([{ h: 'Channel', l: 1 }, { h: 'Sales' }, { h: 'Fitments' }, { h: 'Cancellations' }, { h: 'Missed' }, { h: 'Target' }, { h: 'Achievement' }, { h: 'Change', l: 1 }, { h: 'Outcome mix', l: 1 }], rows),
     notes: ['Totals are the engine\'s own: ' + esc(D.breakdownTotals.words) + ' — never a mean of the rows on screen.',
       'Cancelled is <b>derived</b>: no upload carries a cancellation, so a Scheduled or Missed sale in neither file of a day with both files in counts as cancelled from that day, and a contract the BI file shows deactivated counts as cancelled too. A cancelled sale stays in Sales and is not fitted.',
       'The outcome-mix bar carries no numbers of its own — the row\'s cells are the figures.'] });
@@ -427,6 +458,174 @@ function insightsHtml(D) {
       return '<li data-insight="' + esc(i.id) + '">' + esc(i.text) + ' <span class="vt-absent">(' + esc(i.cell) + ')</span></li>';
     }).join('') + '</ul>',
     notes: ['Each sentence is a rule-book template filled from this page\'s own model and names the workbook cell it answers. A template whose figures are absent is omitted, never padded with a zero.'] });
+}
+
+/* ---------------------------------------------------------------- 14 · Fitted GWP (FR-044) ---- */
+function gwpHtml(D) {
+  var g = D.gwp;
+  if (!g.loaded) return panel({ id: 'gwp', title: 'Fitted GWP', sub: 'needs the Schedulers Data upload',
+    body: CH().empty(g.words), notes: ['GWP lives in one place only: ' + esc(g.source) + '. Nothing is painted here until that sheet lands, and no figure is guessed.'] });
+  var tile = function (k, lab, v, sub) {
+    return '<div class="vt-kpi" data-gwp="' + esc(k) + '"><div class="lab">' + esc(lab) + '</div><div class="val">' + esc(Rn(v)) + '</div>'
+      + '<div class="sub">' + esc(sub) + '</div></div>';
+  };
+  var body = '<div class="vt-kpis">'
+    + tile('fitted', 'Fitted GWP', g.fitted, 'the GWP of the sales that are fitted, in this view')
+    + tile('total', 'Total GWP in view', g.total, 'every sale in this view, fitted or not')
+    + tile('lost', 'GWP on cancelled and missed', g.lost, 'sold and not fitted — the leakage in rand')
+    + tile('open', 'Open GWP', g.open, 'still to be fitted or rebooked') + '</div>';
+  var rows = [
+    { cells: ['Fitted GWP', Rn(g.fitted), 'Σ GWP where the engine\'s status is fitted', 'Exco Summary K7'] },
+    { cells: ['Total GWP in view', Rn(g.total), 'Σ GWP over every sale in this view', 'Exco Summary K8'] },
+    { cells: ['GWP on cancelled and missed', Rn(g.lost), 'Σ GWP where the status is cancelled or missed', 'Exco Summary L18:L22'] },
+    { cells: ['Open GWP', Rn(g.open), 'Σ GWP still open to action', 'Exco Summary L18:L22'] }
+  ];
+  return panel({ id: 'gwp', title: 'Fitted GWP', sub: 'the Schedulers Data figure, in rand · ' + D.viewLabel,
+    body: body, figuresLabel: 'four measures, each with the workbook cell it answers',
+    figures: table([{ h: 'Measure', l: 1 }, { h: 'GWP' }, { h: 'What it is', l: 1 }, { h: 'Workbook source', l: 1 }], rows),
+    notes: [esc(g.words), 'GWP is hand-typed in the sheet and is a different measure from the engine\'s fitted <b>value</b> (the BI Charge Amount × VAT). Both are shown in the suite, each named; neither is adjusted to match the other.'] });
+}
+
+/* ---------------------------------------------------------------- 15 · the four scheduler pivots (FR-045/046) ---- */
+function pivotKey() { var u = ui(), ks = R().reports.schedulerPivots.scopes; return ks.indexOf(u.pivot) > -1 ? u.pivot : ks[ks.length - 1]; }
+function pivotsHtml(D) {
+  var ch = CH(), S = D.schedulers, scope = pivotKey();
+  var chips = R().reports.schedulerPivots.scopes.map(function (k) {
+    var lab = k === 'all' ? 'All campaigns' : R().channels.labels[k] || k;
+    return '<button class="chip' + (k === scope ? ' on' : '') + '" data-pivot="' + esc(k) + '" aria-pressed="' + (k === scope ? 'true' : 'false')
+      + '" onclick="VTDash.set(\'pivot\',\'' + jsq(k) + '\')">' + esc(lab) + '</button>';
+  }).join('');
+  var head = '<div class="filters vt-filters" style="margin-top:0">' + chips + '</div>';
+  if (!S.loaded) return panel({ id: 'pivots', title: 'Scheduler pivots', sub: 'needs the Schedulers Data upload',
+    body: head + ch.empty(S.words), notes: ['No daily export names the scheduler, so these four pivots paint nothing — never a zero — until the sheet lands.'] });
+  var rows = D.schedulerPivot(scope), avg = rows.all;
+  var body = head + ch.grouped({ title: 'Fitted share by scheduler, ' + rows.label + ', against the scope\'s own average',
+    groups: rows.map(function (r) { return { label: r.name, bars: [{ name: 'Fitted %', value: r.pct.fitted, color: ch.hue(0) }], ref: avg.pct.fitted }; }),
+    names: ['Fitted %'], refName: 'scope average', fmt: P, h: 176,
+    emptyWords: 'No scheduler carries a sale in ' + rows.label + ' yet' });
+  var row = function (r, cls) {
+    return { cls: cls || '', cells: [r.name + (r.matched ? '' : ' (not on the Agent List)'), r.cb || absent(), N(r.sales),
+      N(r.fitted), r.pct.fitted == null ? absent() : P(r.pct.fitted), N(r.scheduled), r.pct.scheduled == null ? absent() : P(r.pct.scheduled),
+      N(r.cancelled), r.pct.cancelled == null ? absent() : P(r.pct.cancelled), N(r.missed), r.pct.missed == null ? absent() : P(r.pct.missed)] };
+  };
+  var tr = rows.map(function (r) { return row(r); }); tr.push(row(avg, 'subtotal'));
+  return panel({ id: 'pivots', title: 'Scheduler pivots',
+    sub: rows.label + ' · all data, as the workbook\'s pivots are — not the view · ' + N(rows.length) + ' schedulers against a headcount budget of ' + N(S.headcountBudget),
+    body: body, figuresLabel: N(rows.length) + ' schedulers in ' + rows.label + ', four outcomes and four percentages each',
+    figures: table([{ h: 'Scheduler', l: 1 }, { h: 'CB', l: 1 }, { h: 'Sales' }, { h: 'Fitted' }, { h: 'Fitted %' }, { h: 'Scheduled' }, { h: 'Scheduled %' },
+      { h: 'Cancelled' }, { h: 'Cancelled %' }, { h: 'Missed' }, { h: 'Missed %' }], tr),
+    notes: [esc(rows.words), 'The dashed rule on every bar is the scope\'s own average (' + esc(avg.pct.fitted == null ? absent() : P(avg.pct.fitted))
+      + ' fitted over ' + esc(N(avg.sales)) + ' sales), <b>not a target</b>. The headcount budget (' + esc(S.headcountCell || absent())
+      + ') is the only scheduler figure any source budgets.', esc(S.words)] });
+}
+
+/* ---------------------------------------------------------------- 16 · Agent & Scheduler Summary (FR-047) ---- */
+function personDim() { var u = ui(), ds = R().reports.personDimensions.map(function (p) { return p.k; }); return ds.indexOf(u.pdim) > -1 ? u.pdim : 'scheduler'; }
+function personsHtml(D) {
+  var ch = CH(), u = ui(), dim = personDim();
+  var f = { from: u.pfrom || null, to: u.pto || null, channel: u.pchan || null, campaign: u.pcamp || null };
+  var opt = function (v, label, on) { return '<option value="' + esc(v) + '"' + (on ? ' selected' : '') + '>' + esc(label) + '</option>'; };
+  var head = '<div class="filters vt-filters" style="margin-top:0">'
+    + '<select aria-label="Person dimension" data-vtr="pdim" onchange="VTDash.set(\'pdim\',this.value)">'
+    + R().reports.personDimensions.map(function (p) { return opt(p.k, p.label, p.k === dim); }).join('') + '</select>'
+    + '<input type="date" aria-label="Sales dated from" data-vtr="pfrom" value="' + esc(f.from || '') + '" onchange="VTDash.set(\'pfrom\',this.value)">'
+    + '<input type="date" aria-label="Sales dated to" data-vtr="pto" value="' + esc(f.to || '') + '" onchange="VTDash.set(\'pto\',this.value)">'
+    + '<select aria-label="Channel" data-vtr="pchan" onchange="VTDash.set(\'pchan\',this.value)">' + opt('', 'All channels', !f.channel)
+    + R().channels.keys.map(function (k) { return opt(k, R().channels.labels[k], k === f.channel); }).join('') + '</select>'
+    + '<select aria-label="Campaign" data-vtr="pcamp" onchange="VTDash.set(\'pcamp\',this.value)">' + opt('', 'All campaigns', !f.campaign)
+    + D.campaigns.map(function (c) { return opt(c.name, c.name, c.name === f.campaign); }).join('') + '</select>'
+    + (f.from || f.to || f.channel || f.campaign ? '<button class="btn small" onclick="VTDash.clearPersons()">Clear filters</button>' : '') + '</div>';
+  var P2 = D.persons(dim, f), needs = dim !== 'agent' && !D.schedulers.loaded;
+  var says = '<p class="note" style="margin:0 0 8px;max-width:none"><b>' + esc(P2.label) + '</b> — ' + esc(P2.words) + '</p>';
+  if (needs) return panel({ id: 'persons', title: 'Agent & Scheduler Summary', wide: 1, sub: 'needs the Schedulers Data upload for this dimension',
+    body: head + says + ch.empty(D.schedulers.words), notes: ['The Agent dimension works off the daily exports alone; the scheduler and the referring agent exist only in the Schedulers Data sheet.'] });
+  /* ORDER AND LENGTH ONLY: the chart shows the busiest rows (a chart of 74 referrers reads as nothing), the table
+     below carries every row. Sorting and truncating a list is a display choice; no figure is computed here. */
+  var ranked = P2.rows.slice().sort(function (a, b) { return b.sales - a.sales || (a.name < b.name ? -1 : 1); });
+  var top = ranked.slice(0, 10);
+  var body = head + says + ch.hbars({ title: P2.label + ': sales, busiest first', fmt: N, pct: P, color: ch.hue(0),
+    rows: top.map(function (r) { return { label: r.name, value: r.sales, note: (r.pct.fitted == null ? absent() : P(r.pct.fitted)) + ' fitted' }; }),
+    emptyWords: 'No ' + P2.label.toLowerCase() + ' carries a sale under these filters' })
+    + (ranked.length > top.length ? '<p class="why" style="margin:6px 0 0">The bars are the ' + esc(N(top.length)) + ' busiest of '
+      + esc(N(ranked.length)) + ' — the figures below carry every one.</p>' : '');
+  var row = function (r, cls) {
+    return { cls: cls || '', cells: [r.name + (r.matched === false ? ' (not on the Agent List)' : ''), r.cb || absent(), N(r.sales),
+      N(r.fitted), r.pct.fitted == null ? absent() : P(r.pct.fitted), N(r.scheduled), N(r.cancelled), N(r.missed),
+      r.gwpFitted == null ? absent() : Rn(r.gwpFitted), r.gwpLost == null ? absent() : Rn(r.gwpLost)] };
+  };
+  var tr = ranked.map(function (r) { return row(r); }); tr.push(row(P2.all, 'subtotal'));
+  return panel({ id: 'persons', title: 'Agent & Scheduler Summary',
+    sub: P2.label + ' · ' + D.viewLabel + ' · ' + (f.from || f.to || f.channel || f.campaign ? 'filtered' : 'no filter set'),
+    body: body, figuresLabel: N(ranked.length) + ' ' + P2.label.toLowerCase() + ' rows and the total',
+    figures: table([{ h: P2.label, l: 1 }, { h: 'CB', l: 1 }, { h: 'Sales' }, { h: 'Fitted' }, { h: 'Fitted %' }, { h: 'Scheduled' }, { h: 'Cancelled' },
+      { h: 'Missed' }, { h: 'Fitted GWP' }, { h: 'GWP lost' }], tr),
+    notes: ['The dimension and the four filters are the workbook\'s own controls (Agent & Scheduler Summary C4 / C5 / E5 / H5 / K5), and the line above says which of them are active — the workbook\'s "active filter" message.',
+      'A person not on the Agent List is counted under the name as the source spells it and said to be unmatched, never dropped and never guessed.'] });
+}
+
+/* ---------------------------------------------------------------- 17 · Upcoming Scheduled Fitments (FR-048) ---- */
+function upcomingHtml(D) {
+  var ch = CH(), U = D.upcoming;
+  if (!U.from) return panel({ id: 'upcoming', title: 'Upcoming Scheduled Fitments', sub: 'no open scheduled case carries an appointment date',
+    body: ch.empty('No booking in the book carries a date to fit, so there is nothing ahead to list.'), notes: [esc(U.words)] });
+  var rows = U.dates.map(function (d) { return { label: longDay(d.d), value: d.count, share: d.share, note: P(d.share) + ' of the pipeline' }; });
+  var body = ch.hbars({ title: 'Bookings by the date they are due to fit, from ' + longDay(U.from), rows: rows, fmt: N, pct: P, color: ch.hue(2),
+    emptyWords: 'No booking falls inside the horizon' });
+  var tr = U.dates.map(function (d) { return { cells: [longDay(d.d), N(d.count), d.share == null ? absent() : P(d.share)] }; });
+  tr.push({ cls: 'subtotal', cells: [U.tail.label, N(U.tail.count), U.tail.share == null ? absent() : P(U.tail.share)] });
+  tr.push({ cls: 'total', cells: ['Scheduled pipeline', N(U.total), P(1)] });
+  return panel({ id: 'upcoming', title: 'Upcoming Scheduled Fitments', sub: 'from the earliest booking, ' + longDay(U.from) + ' · all bookings, whatever the view is set to',
+    body: body, figuresLabel: N(U.dates.length) + ' dates, the folded tail and the whole pipeline',
+    figures: table([{ h: 'Date to fit', l: 1 }, { h: 'Bookings' }, { h: 'Share of pipeline' }], tr),
+    notes: [esc(U.words), 'The dates run forward from the earliest booking for ' + esc(N(U.dates.length)) + ' days; everything past that is folded into <b>' + esc(U.tail.label) + '</b> so the share column still adds to the whole pipeline.'] });
+}
+
+/* ---------------------------------------------------------------- 18 · Rollover follow-up (FR-049) ---- */
+function rolloverHtml(D) {
+  var ch = CH(), RO = D.rollover;
+  if (!RO.totals.sales) return panel({ id: 'rollover', title: 'Rollover follow-up', sub: 'no sale is dated before this business month',
+    body: ch.empty('Every sale in the book is dated inside this business month, so there is no rollover position to work.'), notes: [esc(RO.words)] });
+  var body = ch.hbars({ title: 'Open to action per channel — the pre-cycle sales still to be fitted or rebooked',
+    rows: RO.rows.filter(function (r) { return r.sales > 0; }).map(function (r) {
+      return { label: r.label, value: r.open, note: 'of ' + N(r.sales) + ' rollover sales' + (r.gwpOpen == null ? '' : ', ' + Rn(r.gwpOpen) + ' open') };
+    }), fmt: N, color: ch.hue(1), emptyWords: 'No channel carries an open rollover' });
+  var row = function (r, cls) {
+    return { cls: cls || '', cells: [r.label, N(r.sales), N(r.fitted), r.fittedPct == null ? absent() : P(r.fittedPct), N(r.scheduled),
+      N(r.cancelled), N(r.missed), N(r.open), r.openPct == null ? absent() : P(r.openPct), r.gwpOpen == null ? absent() : Rn(r.gwpOpen)] };
+  };
+  var tr = RO.rows.map(function (r) { return row(r); }); tr.push(row(RO.totals, 'subtotal'));
+  return panel({ id: 'rollover', title: 'Rollover follow-up',
+    sub: N(RO.totals.open) + ' of ' + N(RO.totals.sales) + ' rollover sales are open to action · always the pre-cycle position, whatever the view is set to',
+    body: body, figuresLabel: 'four channels and the total, with open GWP',
+    figures: table([{ h: 'Channel', l: 1 }, { h: 'Rollover sales' }, { h: 'Fitted' }, { h: 'Fitted %' }, { h: 'Scheduled' }, { h: 'Cancelled to rebook' },
+      { h: 'Missed to rebook' }, { h: 'Open to action' }, { h: 'Open %' }, { h: 'Open GWP' }], tr),
+    notes: [esc(RO.words), D.gwp.loaded ? '' : 'Open GWP reads ' + esc(absent()) + ' until the Schedulers Data sheet lands: GWP comes from that sheet and from nothing else.'] });
+}
+
+/* ---------------------------------------------------------------- 19 · Where the sources disagree (FR-014/015) ---- */
+function disagreeHtml(D) {
+  var g = D.disagree, dirs = Object.keys(g.resultVsEngine.byDirection).sort();
+  var item = function (lab, v, words) {
+    return '<div class="it ' + (v ? 'check' : 'ok') + '" data-dis="' + esc(lab.toLowerCase().replace(/[^a-z]+/g, '-')) + '">'
+      + (v ? ICON_CHECK : ICON_OK) + '<div><div class="v">' + esc(v == null ? absent() : N(v)) + ' · ' + esc(lab) + '</div>'
+      + '<div class="sub">' + words + '</div></div></div>';
+  };
+  var items = [
+    item('Result disagrees with the status', g.resultVsEngine.total,
+      'The hand-typed <b>Result</b> column against the status the daily exports decided' + (g.resultVsEngine.share == null ? '' : ' — ' + esc(P(g.resultVsEngine.share)) + ' of the sales in view')
+      + '. ' + (dirs.length ? 'By direction: ' + dirs.map(function (k) { return '<b>' + esc(k) + '</b> ' + esc(N(g.resultVsEngine.byDirection[k])); }).join(', ') + '.' : 'Not one row disagrees.')),
+    item('Schedulers not matched to a CB', g.unmatchedSchedulers, 'Counted under the name the sheet types, listed above the panels, never guessed away.'),
+    item('Sellers not matched to a CB', g.unmatchedSellers, 'They count in every total; only the person row is missing until the Agent List carries them.'),
+    item('Campaigns not in the channel map', g.unmappedCampaigns, g.unmappedNames.length ? 'As the source spells them: <b>' + g.unmappedNames.map(esc).join('</b>, <b>') + '</b>. They count under Other.' : 'Every campaign in this view is mapped.'),
+    item('Sales with no sale date', g.noSaleDay, 'A case no source has dated yet: it is counted, and its date arrives with the next Schedulers Data sheet.'),
+    item('Sales with no GWP', g.gwpMissing, D.gwp.loaded ? 'A row the sheet leaves blank in column E. Nothing is filled in for it.' : 'GWP needs the Schedulers Data upload, so this is not yet countable and reads ' + esc(absent()) + '.')
+  ].join('');
+  return panel({ id: 'disagree', title: 'Where the sources disagree', sub: 'counts and shares, never a hidden adjustment · ' + D.viewLabel,
+    body: '<div class="vt-chk">' + items + '</div>',
+    notes: [esc(g.words),
+      '<b>Carried forward from spec 071</b> (the floor guide\'s own wording, not restarted here): ' + esc(g.carried.words)
+      + ' That is ' + esc(N(g.carried.handCredits)) + ' hand credits and about ' + esc(g.carried.leadSourceRelabelledShare) + ' of rows relabelled, measured by verify-vt-oracle.mjs.',
+      'Nothing in this panel changes a figure anywhere on the page. The Result column is read, compared and counted — never applied (the daily exports are the system of record for status).'] });
 }
 
 /* ---------------------------------------------------------------- the three integrity checks ---- */
@@ -464,9 +663,15 @@ function render() {
       + 'No Vehicle Tracking sale falls in this business month yet. Nothing is shown as a zero in its place.'
       + (prev ? '<p style="margin:12px 0 0"><button class="btn small" onclick="VTDash.set(\'cycle\',\'' + jsq(prev) + '\')">' + esc(monthOf(prev)) + ' (final)</button></p>' : '') + '</div></div>';
   }
+  /* TWO COLUMNS WHERE THERE IS ROOM, ONE ON A PHONE (the owner's layout decision): the panels sit in a grid that
+     folds to a single column under ~460 px, and a panel whose chart or table is genuinely wide takes the full width
+     (.vt-wide). The honest states and the KPI row stay above it, full width and never folded. */
   return headHtml(D) + controlsHtml(D) + statesHtml(D) + kpisHtml(D)
+    + '<div class="vt-grid">'
     + trendHtml(D) + channelHtml(D) + campaignHtml(D) + bucketsHtml(D)
-    + budgetHtml(D) + forecastHtml(D) + breakdownHtml(D) + insightsHtml(D) + integrityHtml(D)
+    + budgetHtml(D) + forecastHtml(D) + breakdownHtml(D) + insightsHtml(D)
+    + gwpHtml(D) + pivotsHtml(D) + personsHtml(D) + upcomingHtml(D) + rolloverHtml(D)
+    + disagreeHtml(D) + integrityHtml(D) + '</div>'
     + '<p class="why" style="margin:12px 0 0">Every figure on this page is a field of <b>VTEngine.dashboard()</b> over the Vehicle Tracking case book — rule book ' + esc(D.rulesVersion)
     + '. The page chooses shapes and formats and computes nothing. GWP comes from the Schedulers Data sheet (' + esc(R().reports.gwp.source) + ') and is not the engine\'s BI fitted value; both are different measures and neither is adjusted to match the other.</p>';
 }
@@ -474,13 +679,22 @@ function render() {
 function wire() { var ch = CH(); return ch && ch.wire ? ch.wire(root.document) : 0; }
 
 /* ---------------------------------------------------------------- actions ---- */
+var SETTINGS = ['cycle', 'view', 'pivot', 'pdim', 'pfrom', 'pto', 'pchan', 'pcamp'];
 function set(k, v) {
   var u = ui();
-  if (k === 'cycle' || k === 'view') { u[k] = v == null ? '' : String(v); C.memo = null; saveUi(); repaint(); }
+  if (SETTINGS.indexOf(k) > -1) { u[k] = v == null ? '' : String(v); C.memo = null; saveUi(); repaint(); }
 }
 function clear() { var u = ui(); u.view = ''; C.memo = null; saveUi(); repaint(); }
+function clearPersons() { var u = ui(); u.pfrom = ''; u.pto = ''; u.pchan = ''; u.pcamp = ''; saveUi(); repaint(); }
+/* the fold state alone: saved for this person, and NEVER a repaint — <details> has already opened or closed itself,
+   and re-rendering the page under the click would throw the reader's place away. */
+function fold(id, open) {
+  var u = ui(); u.figures = u.figures || {};
+  if (open) u.figures[String(id)] = 1; else delete u.figures[String(id)];
+  saveUi();
+}
 
-return { TAB: TAB, render: render, wire: wire, set: set, clear: clear, retry: retry, adopt: adopt,
+return { TAB: TAB, render: render, wire: wire, set: set, clear: clear, clearPersons: clearPersons, fold: fold, retry: retry, adopt: adopt,
   state: function () { return { status: C.status, error: C.error, ready: ready(), cycle: currentCycle().key, view: viewKey(),
     model: ready() ? model() : null, book: C.book, receipts: C.receipts, prev: C.prev, fallback: C.fallback }; },
   _reset: function () { C.book = null; C.bookFrom = null; C.bookId++; C.rosters = {}; C.fallback = {}; C.receipts = null; C.recErr = false;

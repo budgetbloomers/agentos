@@ -344,6 +344,11 @@ head('SC-001 · the four scheduler pivots (all data, % over each scheduler\'s ow
     bad.forEach(x => console.log(`    ${sid(x.name)} on ${scope}: workbook ${JSON.stringify(rows2[x.name])} got ${JSON.stringify([x.cancelled, x.missed, x.scheduled, x.fitted, x.sales])}`));
     eq(`pivot ${scope}: every scheduler's four counts and four percentages equal ${sheet}`, [got.length - bad.length, got.length], [6, 6]);
     eq(`pivot ${scope}: the grand total = ${sheet} G15`, got.reduce((s, x) => s + x.sales, 0), cell(sheet, 'G15'));
+    /* 072 D1: the pivot carries its OWN grand total (got.all) — the scope average the page reads every row against,
+       because no source carries a per-scheduler target. It must be the sheet's own total row, not a page sum. */
+    eq(`pivot ${scope}: the attached grand total row equals ${sheet} G15, and its fitted % is the scope average`,
+      [got.all.sales, got.all.fitted, Math.round(got.all.pct.fitted * 1e9)],
+      [cell(sheet, 'G15'), cell(sheet, 'F15'), Math.round((cell(sheet, 'F15') / cell(sheet, 'G15')) * 1e9)]);
   }
   console.log('    cycle-view fitted rates by scheduler: ' + Mall.schedulerPivot('all').map(x => sid(x.name)).join(', '));
   const cv = M.schedulers.rows.slice().sort((a, b) => a.name < b.name ? -1 : 1);

@@ -94,7 +94,9 @@ function buildFixture(withSchedulers) {
   });
   if (withSchedulers) {
     const lines = cases.map((c) => ({ cn: c.cn, sold: c.born, month: c.born >= '2026-10-26' ? 'Current' : 'Rollover', gwp: c.gwp,
-      campaign: c.partner, ref: 0, scheduler: c.scheduler, result: 'Fitted', appt: c.appt }));
+      /* a referring agent on every third row, 0 (NOT blank — F0-19) on the rest, so the Referring Agent dimension
+         has rows to paint and the "no referrer" case is still in the fixture */
+      campaign: c.partner, ref: c.cn % 3 === 0 ? 'Bravo Middle Tester' : 0, scheduler: c.scheduler, result: 'Fitted', appt: c.appt }));
     const parsed = ENG.parseSchedulers(schFile(lines));
     const m = ENG.merge(book, parsed, { extractOn: '2026-11-10', roster: ROSTER, aliases: {} }); book = m.book; book.rev = ++id;
     receipts.push({ id, sha256: String(id).padStart(64, '0'), kind: 'schedulers_data', file_name: 'Master November 2026 - VT Report.xlsx',
@@ -231,11 +233,13 @@ try {
   ok(sub.indexOf(D.dialingDays.words) > -1, 'the head names the dialing day of the cycle', sub);
 
   head('R3 · every mockup panel, in the mockup\'s order');
-  const WANT = ['kpis', 'trend', 'channels', 'campaigns', 'buckets', 'budget', 'forecast', 'breakdown', 'insights', 'integrity'];
+  const WANT = ['kpis', 'trend', 'channels', 'campaigns', 'buckets', 'budget', 'forecast', 'breakdown', 'insights',
+    'gwp', 'pivots', 'persons', 'upcoming', 'rollover', 'disagree', 'integrity'];
   const got = await panels();
   ok(JSON.stringify(got) === JSON.stringify(WANT), 'the panels are ' + WANT.join(' → '), got.join(' → '));
   const titles = await page.evaluate(() => [...document.querySelectorAll('#view .vt-panel h3')].map((h) => h.textContent));
-  for (const t of ['Performance Trend', 'Channel Performance', 'Campaign Breakdown', 'Cycle Performance', 'Sales vs budget', 'Forecast vs Actual', 'Detailed Breakdown', 'Key Insights', 'Integrity checks'])
+  for (const t of ['Performance Trend', 'Channel Performance', 'Campaign Breakdown', 'Cycle Performance', 'Sales vs budget', 'Forecast vs Actual', 'Detailed Breakdown', 'Key Insights',
+    'Fitted GWP', 'Scheduler pivots', 'Agent & Scheduler Summary', 'Upcoming Scheduled Fitments', 'Rollover follow-up', 'Where the sources disagree', 'Integrity checks'])
     ok(titles.includes(t), 'a panel titled "' + t + '"', titles.join(' | '));
   ok(!(await page.evaluate(() => [...document.querySelectorAll('#view .card')].some((c) => String(c.textContent || '').trim().length < 10))),
     'no card on the page is empty');
@@ -346,6 +350,164 @@ try {
       .filter((p) => !document.querySelector('#view [data-panel="' + p + '"] table')));
     ok(!tabled.length, 'every chart panel is paired with a table of the same figures (the required secondary encoding)', tabled.join()); }
 
+  head('R12 · charts first, each table behind a "show the figures" fold');
+  await reset(); await open('vt_report');
+  const FOLDED = ['trend', 'channels', 'campaigns', 'buckets', 'budget', 'forecast', 'breakdown', 'gwp', 'pivots', 'persons', 'upcoming', 'rollover'];
+  const openAll = () => page.evaluate(() => document.querySelectorAll('#view details.vt-fold').forEach((d) => { d.open = true; }));
+  const heightOf = () => page.evaluate(() => document.getElementById('view').scrollHeight);
+  /* one panel, with its figures open: scrolled into view and given a frame to settle FIRST, because PULSE's
+     .tablewrap carries content-visibility:auto and an element shot taken before the scroll lands shows the wrong box */
+  const shot = async (id, file) => {
+    await page.addStyleTag({ content: '.tablewrap{content-visibility:visible!important}' });
+    await page.evaluate((pid) => { const d = document.querySelector('#view [data-panel="' + pid + '"] details.vt-fold'); if (d) d.open = true; }, id);
+    const el = await page.$('#view [data-panel="' + id + '"]');
+    if (!el) return;
+    await el.scrollIntoViewIfNeeded();
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 30)))));
+    await el.screenshot({ path: path.join(SHOTS, file) });
+  };
+  {
+    const folds = await page.evaluate((ids) => ids.map((id) => {
+      const p = document.querySelector('#view [data-panel="' + id + '"]');
+      const d = p && p.querySelector('details.vt-fold');
+      const kids = p ? [...p.children] : [];
+      const di = kids.findIndex((c) => c.tagName === 'DETAILS');
+      const vi = kids.findIndex((c) => c.querySelector && (c.querySelector('.vtchart') || c.classList.contains('vtchart')
+        || c.classList.contains('vtc-empty') || c.classList.contains('vt-kpis') || c.classList.contains('vt-filters')));
+      return { id: id, panel: !!p, details: !!d, open: !!(d && d.open), table: !!(d && d.querySelector('table')),
+        rows: d ? d.querySelectorAll('tbody tr').length : 0, summary: d ? ((d.querySelector('summary') || {}).textContent || '') : '',
+        loose: !!(p && [...p.children].some((c) => c.classList && c.classList.contains('tablewrap'))),
+        chartFirst: (vi > -1 || kids.some((c) => c.classList && c.classList.contains('vt-mix'))) && di > -1
+          && (vi > -1 ? vi : kids.findIndex((c) => c.classList && c.classList.contains('vt-mix'))) < di };
+    }), FOLDED);
+    ok(folds.every((f) => f.panel && f.details), "every chart panel's table sits behind a <details> fold", folds.filter((f) => !f.details).map((f) => f.id).join());
+    ok(folds.every((f) => !f.open), 'the fold is CLOSED by default, so the page opens as charts', folds.filter((f) => f.open).map((f) => f.id).join());
+    ok(folds.every((f) => f.table && f.rows > 0), 'the table is IN THE DOM while folded, with all its rows — never built on click', folds.filter((f) => !f.rows).map((f) => f.id).join());
+    ok(folds.every((f) => N(f.summary).indexOf('Show the figures') === 0 && / . .+/.test(N(f.summary)) && N(f.summary).length > 34),
+      'the toggle says what it reveals and how much of it ("Show the figures — N campaigns")', folds.map((f) => N(f.summary)).join(' | ').slice(0, 220));
+    ok(folds.every((f) => !f.loose), 'no table is left loose beside the fold, so a reader and the suite see one set of figures', folds.filter((f) => f.loose).map((f) => f.id).join());
+    ok(folds.every((f) => f.chartFirst), 'the chart — or, where there is none, the panel’s own words — comes first in every folded panel', folds.filter((f) => !f.chartFirst).map((f) => f.id).join());
+    const hFolded = await heightOf();
+    const cols = await page.evaluate(() => { const g = document.querySelector('#view .vt-grid');
+      return g ? getComputedStyle(g).gridTemplateColumns.split(' ').length : 0; });
+    ok(cols === 2, 'the panels sit in two columns at 1360 px (one on a phone, by auto-fit and no media query)', cols);
+    /* the mockup's own panels — the KPI row through Key Insights — are the "Overview" the owner measured */
+    const over = await page.evaluate(() => { const a = document.querySelector('#view .vt-kpis').getBoundingClientRect();
+      const b = document.querySelector('#view [data-panel="insights"]').getBoundingClientRect(); return Math.round(b.bottom - a.top); });
+    console.log('    folded panel heights: ' + (await page.evaluate(() => [...document.querySelectorAll('#view [data-panel]')]
+      .map((p) => p.dataset.panel + ' ' + Math.round(p.getBoundingClientRect().height)).join(' · '))));
+    await openAll();
+    const hOpen = await heightOf();
+    ok(hFolded < hOpen * 0.75, 'folded, the page is far shorter than with every table open', hFolded + 'px vs ' + hOpen + 'px');
+    console.log('    page height: folded ' + hFolded + 'px (' + (hFolded / 900).toFixed(1) + ' screens of 900) · every table open '
+      + hOpen + 'px (' + (hOpen / 900).toFixed(1) + ' screens) · the Overview panels folded ' + over + 'px ('
+      + (over / 900).toFixed(1) + ' screens) in ' + cols + ' columns');
+  }
+  await reset(); await open('vt_report');
+  {
+    const focused = await page.evaluate(() => { const s = document.querySelector('#view [data-panel="channels"] details.vt-fold > summary');
+      s.focus(); return document.activeElement === s; });
+    ok(focused, 'the toggle takes keyboard focus by itself (a native <summary>, no tabindex of ours)');
+    await page.keyboard.press('Enter'); await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
+    const after = await page.evaluate(() => ({ open: document.querySelector('#view [data-panel="channels"] details.vt-fold').open,
+      saved: JSON.stringify((window.__mtd.state().ui.vtReport || {}).figures || {}) }));
+    ok(after.open, 'Enter opens it, so the figures are reachable from the keyboard alone');
+    ok(/"channels":\s*1/.test(after.saved), 'and the fold is remembered PER PERSON in S.ui.vtReport (the per-person view state), never a shared blob', after.saved);
+    await page.evaluate(() => renderPage()); await settle();
+    ok(await page.evaluate(() => document.querySelector('#view [data-panel="channels"] details.vt-fold').open), 'and it is still open after a repaint');
+    await open('vt_report', { figures: { trend: 1, buckets: 1 } });
+    const restored = await page.evaluate(() => ['trend', 'buckets', 'channels'].map((id) => document.querySelector('#view [data-panel="' + id + '"] details.vt-fold').open));
+    ok(JSON.stringify(restored) === JSON.stringify([true, true, false]), 'a person whose saved state has figures open gets them open on the next paint', JSON.stringify(restored));
+  }
+  await reset(); await open('vt_report');
+  ok(!(await page.evaluate(() => [...document.querySelectorAll('#view .vt-state')].some((c) => c.closest('details') || c.querySelector('details')))),
+    'the honest-state notices never fold: a warning is not detail (missing day, Schedulers Data, unmapped campaigns, unmatched people)');
+  ok(!(await page.evaluate(() => !!document.querySelector('#view .vt-kpis details, #view [data-panel="kpis"] details'))), 'and neither does the KPI row');
+
+  head('R13 · the rest of the workbook: panels 14–19');
+  await openAll();
+  {
+    const want = ['fitted', 'total', 'lost', 'open'];
+    const g = await page.evaluate(() => [...document.querySelectorAll('#view [data-gwp]')].map((t) => ({ k: t.dataset.gwp, v: t.querySelector('.val').textContent })));
+    ok(g.map((x) => x.k).join() === want.join(), 'Fitted GWP shows the four GWP measures (FR-044)', g.map((x) => x.k).join());
+    ok(want.every((k, i) => N(g[i].v) === N(F('r', D.gwp[k]))), 'each one is the engine’s own figure, in rand',
+      JSON.stringify(g.map((x) => N(x.v))) + ' vs ' + JSON.stringify(want.map((k) => N(F('r', D.gwp[k])))));
+  }
+  {
+    const chips = await page.evaluate(() => [...document.querySelectorAll('#view [data-panel="pivots"] [data-pivot]')].map((b) => b.dataset.pivot));
+    ok(chips.join() === R.reports.schedulerPivots.scopes.join(), 'the four pivot scopes are the rule book’s own (FR-045)', chips.join());
+    for (const sc of R.reports.schedulerPivots.scopes) {
+      await page.evaluate((x) => VTDash.set('pivot', x), sc); await settle(); await openAll();
+      const t = await tableOf('pivots'), rows = D.schedulerPivot(sc);
+      ok(t && rows.length > 0 && rows.every((r) => { const x = rowBy(t, r.name);
+        return x && at(t, x, 'Sales') === N(F('n', r.sales)) && at(t, x, 'Fitted %') === N(F('p', r.pct.fitted))
+          && at(t, x, 'Cancelled %') === N(r.pct.cancelled == null ? R.reports.absent : F('p', r.pct.cancelled)); }),
+        'pivot "' + sc + '" paints the engine’s own schedulers, counts and four percentages (' + rows.length + ' schedulers)',
+        t && JSON.stringify(t.rows.map((r) => r.slice(0, 5))).slice(0, 220));
+      const tot = t && rowBy(t, 'All schedulers');
+      ok(tot && at(t, tot, 'Sales') === N(F('n', rows.all.sales)) && at(t, tot, 'Fitted %') === N(F('p', rows.all.pct.fitted)),
+        'pivot "' + sc + '" prints the scope’s grand total — the average a row is read against', tot && JSON.stringify(tot));
+    }
+    const txt = await viewText();
+    ok(/no per-scheduler target in any source/.test(txt), 'the panel says there is NO per-scheduler target in any source, and never invents one');
+    ok(/not a target/.test(txt), 'the reference rule on the bars is named as the scope average, not a target');
+    ok(/all data/.test(txt), 'and the pivots say they are all data, not the view (FR-046)');
+  }
+  {
+    const dims = R.reports.personDimensions.map((p) => p.k);
+    const opt = await page.evaluate(() => [...document.querySelectorAll('#view select[data-vtr="pdim"] option')].map((o) => o.value));
+    ok(opt.join() === dims.join(), 'the person dimension offers Agent / Referring Agent / Scheduler (FR-047)', opt.join());
+    for (const d of dims) {
+      await page.evaluate((x) => VTDash.set('pdim', x), d); await settle(); await openAll();
+      const t = await tableOf('persons'), P2 = D.persons(d, {});
+      ok(t && N(t.head[0]) === P2.label, 'dimension "' + d + '" names its own column', t && N(t.head[0]));
+      ok(t && P2.rows.length > 0 && P2.rows.every((r) => { const x = rowBy(t, r.name); return x && at(t, x, 'Sales') === N(F('n', r.sales)); }),
+        'dimension "' + d + '" paints every person the model returned (' + P2.rows.length + ' rows)', t && t.rows.map((r) => N(r[0])).join().slice(0, 200));
+      ok(N(await viewText()).indexOf(P2.words) > -1, 'and says in words which dimension and which filters are active', P2.words);
+    }
+    await page.evaluate(() => { VTDash.set('pdim', 'scheduler'); VTDash.set('pchan', 'lead_gen'); }); await settle(); await openAll();
+    const t = await tableOf('persons'), P2 = D.persons('scheduler', { channel: 'lead_gen' });
+    ok(t && at(t, rowBy(t, 'All scheduler'), 'Sales') === N(F('n', P2.all.sales)) && P2.all.sales !== D.persons('scheduler', {}).all.sales,
+      'a channel filter reaches the figures: the total follows the filter, not the whole view', t && JSON.stringify(rowBy(t, 'All scheduler')));
+    ok(N(await viewText()).indexOf('Active filters: channel = lead_gen') > -1, 'and the active-filter line names it, as the workbook’s own message does');
+    await shot('persons', 'vt-report-agents.png');
+    await page.evaluate(() => VTDash.clearPersons()); await settle();
+    ok(N(await viewText()).indexOf('Active filters: none') > -1, 'Clear filters puts it back to none');
+  }
+  await openAll();
+  {
+    const t = await tableOf('upcoming'), U = D.upcoming;
+    ok(t && t.rows.length === U.dates.length + 2, 'Upcoming Scheduled Fitments: a row per date from the earliest booking, the folded tail and the pipeline total (FR-048)', t && t.rows.length);
+    ok(t && N(t.rows[0][1]) === N(F('n', U.dates[0].count)) && N(t.rows[0][2]) === N(F('p', U.dates[0].share)),
+      'the first row is the earliest booking date with the engine’s count and its share of the pipeline', t && JSON.stringify(t.rows[0]));
+    ok(t && !!rowBy(t, U.tail.label) && N(rowBy(t, U.tail.label)[1]) === N(F('n', U.tail.count)),
+      'the tail is "' + U.tail.label + '" and carries the rest', t && JSON.stringify(rowBy(t, U.tail.label)));
+    ok(/all bookings, including rollovers, whatever the view/.test(await viewText()), 'and the panel says it covers all bookings whatever the view is set to');
+  }
+  {
+    const t = await tableOf('rollover'), RO = D.rollover;
+    ok(t && RO.rows.every((r) => { const x = rowBy(t, r.label);
+      return x && at(t, x, 'Rollover sales') === N(F('n', r.sales)) && at(t, x, 'Open to action') === N(F('n', r.open)); }),
+      'Rollover follow-up lists every channel’s pre-cycle position with Open to Action = scheduled + cancelled + missed (FR-049)',
+      t && JSON.stringify(t.rows.map((r) => r.slice(0, 2))));
+    ok(t && at(t, rowBy(t, 'Total'), 'Open GWP') === N(RO.totals.gwpOpen == null ? R.reports.absent : F('r', RO.totals.gwpOpen)),
+      'and the open GWP, or the absent marker while the Schedulers Data sheet has not landed', t && JSON.stringify(rowBy(t, 'Total')));
+    ok(/always the pre-cycle position/.test(await viewText()), 'and says it is always the pre-cycle position');
+  }
+  {
+    const items = await page.evaluate(() => [...document.querySelectorAll('#view [data-panel="disagree"] [data-dis]')].map((x) => ({ k: x.dataset.dis, t: x.textContent, icon: !!x.querySelector('svg') })));
+    ok(items.length === 6 && items.every((x) => x.icon), 'Where the sources disagree: six counts, each with an icon and the words (FR-014)', items.map((x) => x.k).join());
+    const dg = D.disagree;
+    ok(N(items[0].t).indexOf(N(F('n', dg.resultVsEngine.total))) === 0, 'the Result-against-status count is the engine’s own', N(items[0].t).slice(0, 60));
+    ok(N(items[3].t).indexOf(N(F('n', dg.unmappedCampaigns))) === 0 && items[3].t.indexOf('Mystery Partner Co') > -1,
+      'the unmapped campaign is counted and named', N(items[3].t).slice(0, 80));
+    ok(/read, compared and counted/.test(await viewText()), 'and the panel says the Result column is counted, never applied');
+    ok((await viewText()).indexOf(dg.carried.words) > -1,
+      'the 071 hand credits and relabelled lead sources are carried forward in the floor guide’s own wording (FR-015)', dg.carried.words.slice(0, 60));
+  }
+  await shot('pivots', 'vt-report-schedulers.png');
+  await reset(); await open('vt_report');
+
   head('R10 · where the previous cycle came from');
   ok(/engine recomputation of that cycle from the same case book/.test(await viewText()), 'with no frozen digest the page says it recomputed the previous cycle itself', N(await viewText()).slice(0, 0));
   resetWorker({ frozen: FROZEN_PREV }); await reset(); await open('vt_report');
@@ -393,6 +555,9 @@ try {
   /* PULSE's .tablewrap carries content-visibility:auto, so a table far below the fold is NOT painted into a
      fullPage screenshot and the picture would show an empty box where the figures are. The override below is for
      the screenshot alone — the page itself keeps the optimisation. */
+  /* THE NEW DEFAULT, exactly as a reader meets it: charts first, every table folded (the owner's layout decision of
+     2026-11-25). This is the picture that answers "how tall is the page now". */
+  await page.screenshot({ path: path.join(SHOTS, 'vt-report-folded.png'), fullPage: true });
   const showAll = () => page.addStyleTag({ content: '.tablewrap{content-visibility:visible!important}' });
   await showAll();
   await page.screenshot({ path: path.join(SHOTS, 'vt-report-light.png'), fullPage: true });

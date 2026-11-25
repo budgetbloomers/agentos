@@ -1640,7 +1640,21 @@ function dashboard(book, roster, opts) {
   };
   var pivotScope = function (scope) {
     var all = facts, sl = scope === 'all' ? all : all.filter(function (f) { return f.channel === scope; });
-    return personRows(sl, sl, 'scheduler').filter(function (r) { return r.sales > 0; });
+    var rows = personRows(sl, sl, 'scheduler').filter(function (r) { return r.sales > 0; });
+    /* THE PIVOT'S GRAND TOTAL — the only thing a scheduler row can honestly be read against, because THERE IS NO
+       PER-SCHEDULER TARGET IN ANY SOURCE (spec 072 panel 15 / FR-045: the cycle budget carries a scheduler HEADCOUNT
+       and nothing else). The page shows the figures and this average and never invents a target. Attached as a
+       property of the returned array so every earlier caller — which reduces, maps or filters it — is unmoved. */
+    var t = tallySet(sl, sl);
+    t.name = 'All schedulers in this scope'; t.k = 'all'; t.cb = null; t.matched = true;
+    t.gwpLost = F.gwpLoaded ? sumGwp(sl, function (f) { return f.st === 'cancelled' || f.st === 'missed'; }) : null;
+    t.pct = { fitted: ratio(t.fitted, t.sales), scheduled: ratio(t.scheduled, t.sales), cancelled: ratio(t.cancelled, t.sales), missed: ratio(t.missed, t.sales) };
+    rows.all = t; rows.scope = scope;
+    rows.label = scope === 'all' ? 'All campaigns' : (CH.labels[scope] || scope);
+    rows.words = 'Every percentage is over that scheduler\'s own grand total, as the workbook\'s pivots are. The pivots are '
+      + 'all data, whatever the view is set to. There is no per-scheduler target in any source — the cycle '
+      + 'budget carries a scheduler headcount and nothing else — so the row above is the scope\'s own average and nothing here is a target.';
+    return rows;
   };
   var persons = function (dim, filters) {
     var fl = { from: null, to: null, channel: null, campaign: null }, gi = [opts.filters || {}, filters || {}];
