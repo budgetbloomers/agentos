@@ -295,7 +295,21 @@ async function ingest(name, buf, hash, expected, found, opts) {
   try {
     var rec = must(await call(env, 'GET', '/api/vt/uploads?limit=60'), 'Reading the VT receipts');
     var seen = (rec.uploads || []).filter(function (u) { return u.sha256 === hash && u.state === 'committed'; })[0];
-    if (seen) { toast('Skipped ' + name + ' — already uploaded' + (seen.file_name !== name ? ' (as "' + seen.file_name + '")' : '')); return true; }
+    /* A DUPLICATE IS THE COMMONEST "nothing happened" (25 Nov 2026, the owner: "I uploaded again nothing").
+       The fingerprint is the file's BYTES, so renaming yesterday's export to today's date changes nothing - it is
+       skipped, and a quiet toast that fades away reads as the station doing nothing at all. So say it in the banner,
+       name the copy already in the book and the day it was taken, and name the ONE fix: export the file again. */
+    if (seen) {
+      banner('"' + name + '" is byte-for-byte the file already in the book'
+        + (seen.file_name === name ? '' : ' (loaded as "' + seen.file_name + '")')
+        + ', taken on ' + String(seen.extract_on || '?')
+        + (seen.committed_at ? ' and loaded on ' + String(seen.committed_at).slice(0, 10) : '')
+        + '. Renaming a file does not make it a new one - the fingerprint is its contents, not its name. Export the day'
+        + String.fromCharCode(39) + 's file again from Salesforce and drop that one.');
+      toast('Skipped ' + name + ' — already uploaded' + (seen.file_name !== name ? ' (as "' + seen.file_name + '")' : '')
+        + '. Nothing changed: export a fresh file from Salesforce.', 'err', 20000);
+      return true;
+    }
     var XL = opts.XLSX || root.XLSX; if (!XL) return fail('The spreadsheet reader did not load. Refresh the page and drop the file again.');
     var aoa = workbookAoa(buf, XL)[found.sheet] || [], parsed = parseFor(kind, aoa);
     if (parsed.missing && parsed.missing.length) return fail('Missing required columns: ' + parsed.missing.join(', ') + '.');

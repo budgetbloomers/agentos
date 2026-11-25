@@ -157,6 +157,12 @@ try {
   W.log = [];
   const r3 = await drop('copy of BI Active Fitted 091126.xlsx', BI1);   // the name keeps "Fitted": with no slot, the NAME says which BI file it is
   ok(r3.toasts.some((t) => /already uploaded/.test(t)) && calls('/api/vt/upload/begin') === 0, '"already uploaded", nothing begun', r3.toasts.join(' | '));
+  /* 25 Nov 2026: a duplicate used to say so in a QUIET toast that faded, which reads as the station doing nothing.
+     It must now BANNER, name the copy in the book, and say that renaming a file does not make it a new one. */
+  ok(/byte-for-byte/.test(r3.banner) && /Export the day/.test(r3.banner),
+    'a duplicate BANNERS it and names the one fix (export the file again), never a toast that fades', r3.banner.slice(0, 160));
+  ok(/Renaming a file does not make it a new one/.test(r3.banner),
+    'and says plainly that the fingerprint is the contents, not the name', r3.banner.slice(0, 160));
 
   head('S4 · thin BI pull');
   await dismiss(); W.log = [];

@@ -12,7 +12,7 @@
  *   I4  PULSE rakeDetect refuses the two VT-only headers (and a BI header whose NAME says Fitted) in words; a BI header
  *       with no name is the VAS BI Active export (incident 2026-11-24: same columns), and a VAS BI header is BI_ACTIVE_CASES
  *   I5  Ops: detectSource never names a source for a VT file; the slot upload and the bulk upload both refuse it with
- *       "This is a Vehicle Tracking file. Load it in the VAS Upload Station" and store nothing; a VAS BI CSV is still
+ *       "This is a Vehicle Tracking file. Load it in PULSE under Vehicle Tracking → Upload Station" and store nothing; a VAS BI CSV is still
  *       BI_ACTIVE_CASES; Ops' signatures and its BI name hint are exactly the VT rule book's
  *   The BI header is SHARED with the VAS "BI Active" export (rule book vt-1.3): a BI file is VT by its slot or its name
  *   ("Fitted") — verify-vt-bi-two-files.mjs proves the incident case end to end.
@@ -36,7 +36,7 @@ let pass = 0, fail = 0;
 const ok = (c, m, d) => { if (c) { pass++; console.log('  ok   ' + m); } else { fail++; console.log('  FAIL ' + m + (d !== undefined ? ' — ' + String(d).slice(0, 300) : '')); } };
 const head = (t) => console.log('\n' + t);
 const API = 'https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
-const REFUSAL = 'This is a Vehicle Tracking file. Load it in the VAS Upload Station';
+const REFUSAL = 'This is a Vehicle Tracking file. Load it in PULSE under Vehicle Tracking → Upload Station';
 if (!process.argv.includes('--no-build')) spawnSync(process.execPath, [path.join(ROOT, 'tools', 'prepare-site.js')], { cwd: ROOT, encoding: 'utf8' });
 
 const SERVE = { '/pulse.html': 'nicks_code/index.html', '/vt-engine.js': 'nicks_code/vt-engine.js', '/vt-pages.js': 'nicks_code/vt-pages.js', '/vt-publish.js': 'nicks_code/vt-publish.js', '/vt-app.js': 'nicks_code/vt-app.js', '/xlsx.full.min.js': 'site/xlsx.full.min.js', '/ops.html': 'site/index.html' };

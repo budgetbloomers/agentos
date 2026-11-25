@@ -1733,10 +1733,14 @@ function loadMsg(srcKey,r){
    a BI Inactive export satisfies the BI Active required set, but each matches its
    own contract 100% and the other one only partially. A tie is treated as
    unrecognised and reported — routed by hand via its slot, never guessed. */
-/* VEHICLE TRACKING FILES BELONG TO THE VAS UPLOAD STATION (spec 071 US1-7, FR-004). BI Active Fitted carries every column
-   the BI_ACTIVE_CASES contract asks for: loaded here it would become VAS money. The signatures are the VT rule book's own
+/* VEHICLE TRACKING FILES BELONG TO THE VEHICLE TRACKING UPLOAD STATION (spec 071 US1-7, FR-004). BI Active Fitted carries
+   every column the BI_ACTIVE_CASES contract asks for: loaded here it would become VAS money.
+   WHERE THE SENTENCE SENDS THEM (corrected 2026-11-25): Vehicle Tracking became its OWN app on 2026-11-24 (the app picker,
+   spec 071 + the owner's "put it in a drop down"), so it has its own Upload Station and the old wording - "load it in the
+   VAS Upload Station" - sent the owner to the wrong screen. It cost a day: on 25 Nov both the Fitted file and the master
+   report were dropped HERE, were refused correctly, and nothing reached vt_uploads, so the VT Report stayed empty. The signatures are the VT rule book's own
    (specs/vt_engine_rules.json detection.*.requireHeaders — verify-vt-isolation fails if they drift); nothing is stored. */
-const VT_REFUSAL='This is a Vehicle Tracking file. Load it in the VAS Upload Station';
+const VT_REFUSAL='This is a Vehicle Tracking file. Load it in PULSE under Vehicle Tracking → Upload Station';
 const VT_SIGNATURES=[["installation status","vehicle reg number","box number","unit type","case number","created by"],["missedandscheduledfitment","fitment date","case number","created by"],["month","date","agent","case number","result"]];
 /* THE FIRST SIGNATURE (BI) IS SHARED BY TWO EXPORTS (incident 2026-11-24): the VAS "BI Active" file — this app's own
    BI_ACTIVE_CASES source, refused here all morning — and the Vehicle Tracking "BI Active Fitted" file have the same
