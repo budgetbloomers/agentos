@@ -163,7 +163,7 @@ try {
   await ops.close();
   { const OPS = fs.readFileSync(path.join(ROOT, 'Chatterbox_AgentOS_Analytics.html'), 'utf8');
     const m = /const VT_SIGNATURES=(\[[^\n]*\]);/.exec(OPS); let sig = null; try { sig = m && JSON.parse(m[1]); } catch (e) { sig = null; }
-    const D = E.VT_RULES.detection, want = [D.vtBiFitted.requireHeaders, D.vtSchedMissed.requireHeaders, D.vtOpeningBook.requireHeaders];
+    const D = E.VT_RULES.detection, want = [D.vtBiFitted.requireHeaders, D.vtSchedMissed.requireHeaders, D.vtSchedulers.requireHeaders]   /* spec 072 U-1: the retired key renamed; its five identifying headers are unchanged, so Ops is byte-identical */;
     ok(JSON.stringify(sig) === JSON.stringify(want), 'Ops\' VT_SIGNATURES are exactly the rule book\'s detection.*.requireHeaders', m && m[1]);
     ok(OPS.includes("const VT_REFUSAL='" + REFUSAL), 'Ops carries the spec US1-7 sentence');
     const hm = /const VT_BI_NAME_HINT="([^"]*)";/.exec(OPS);

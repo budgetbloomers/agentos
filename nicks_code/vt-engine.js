@@ -13,7 +13,7 @@
  * with a dated _changes[] entry; diagnostics/verify-vt-rules.mjs fails on drift and on any rule
  * literal written outside the @vt-rules block.
  *
- * Pipeline:  detect → parseBi / parseSm / parseOpeningBook (PII dropped here) → merge (case book +
+ * Pipeline:  detect → parseBi / parseSm / parseSchedulers (PII dropped here) → merge (case book +
  * events, FR-011..015) → model (MTD / weeks / days at agent, TL, sub-campaign, lead source, floor)
  * → rating (spec §6) → digest (plan §P).
  */
@@ -34,13 +34,14 @@ var VT_RULES = {
       "footerPattern": "^Applied filters:"
     },
     "vtSchedMissed": {"requireHeaders":["missedandscheduledfitment","fitment date","case number","created by"],"footerPattern":"^No filters applied"},
-    "vtOpeningBook": {"sheetName":"Schedulers Data","requireHeaders":["month","date","agent","case number","result"],"takeOnly":["case number","date"],"optional":true},
     "vtSchedulers": {
       "sheetName": "Schedulers Data",
-      "requireHeaders": ["month","date","agent","case number","result","gwp","scheduler","campaign/partner"],
+      "requireHeaders": ["month","date","agent","case number","result"],
+      "readColumns": ["date","agent","sale count","gwp","case number","campaign/partner","referring agent","scheduler","result","date scheduled"],
       "takeOnly": ["case number","date","gwp","campaign/partner","referring agent","scheduler","result","date scheduled"],
       "optional": false,
-      "reUploadable": true
+      "reUploadable": true,
+      "retiredName": "vtOpeningBook (spec 071) - the same sheet, which only took the sale date; the kind 'opening_book' stays legal on stored rows and old receipts"
     },
     "filenameDate": {"pattern":"(\\d{2})(\\d{2})(\\d{2})(?=\\D*\\.xlsx?$)","order":"ddmmyy","century":2000,"fallback":"todaySAST+warning"},
     "refuseIn": ["ops.detectSource","pulse.rakeDetect","relay.archiveUpload"]
@@ -62,7 +63,6 @@ var VT_RULES = {
     },
     "biOptional": ["contractStatus","deactivateOn"],
     "sm": {"caseNumber":"C","productType":"J","attempt":"L","bundle":"M","apptOn":"R","createdBy":"S","outcome":"U","sourcePartner":"A"},
-    "opening": {"caseNumber":"F","saleDate":"B"},
     "schedulers": {
       "byPosition": true,
       "saleDate": "B",
@@ -117,8 +117,8 @@ var VT_RULES = {
   "saleDay": {
     "basis": "first_seen",
     "basisPrecedence": ["schedulers_data","opening_book","first_seen"],
-    "schedulersData": "takes Schedulers Data col B for its cases and outranks both other bases (plan U-4; the merge branch is Phase B task B2)",
-    "openingBook": "takes RPT 'Schedulers Data'!B for its cases",
+    "schedulersData": "takes Schedulers Data col B for its cases and outranks both other bases (plan U-4)",
+    "openingBook": "RETIRED (spec 072 U-1): the 071 opening book took the same sheet's col B. Stored rows keep the basis, which still outranks first_seen",
     "openingWithoutDate": "null - in play, never counted as a sale on any day",
     "goLive": "unknown",
     "saleDateColumn": null
@@ -609,7 +609,7 @@ function detect(header, sheetName) {
   var D = R.detection;
   if (has(D.vtBiFitted.requireHeaders)) return 'vtBiFitted';
   if (has(D.vtSchedMissed.requireHeaders)) return 'vtSchedMissed';
-  if (has(D.vtOpeningBook.requireHeaders) && (!sheetName || norm(sheetName) === norm(D.vtOpeningBook.sheetName))) return 'vtOpeningBook';
+  if (has(D.vtSchedulers.requireHeaders) && (!sheetName || norm(sheetName) === norm(D.vtSchedulers.sheetName))) return 'vtSchedulers';
   return null;
 }
 /* THE BI HEADER IS SHARED (rule book vt-1.3, incident 2026-11-24): the VAS "BI Active" export and the Vehicle Tracking
@@ -691,19 +691,48 @@ function parseSm(aoa) {
   out.warnings = W.list;
   return out;
 }
-/* The optional opening book (FR-003, A6): the hand report's Schedulers Data. ONLY case → sale date
-   is taken; Result, GWP, Scheduler, agent and customer contact never leave this function. */
-function parseOpeningBook(aoa) {
-  var H = (aoa[0] || []).map(norm), b = byName(H, { caseNumber: 'case number', saleDate: 'date' });
-  var out = { kind: 'opening', rows: 0, skippedBlank: 0, skippedFooter: 0, missing: b.missing, cases: {}, warnings: [] };
-  if (b.missing.length) return out;
-  var W = makeWarn();
+/* SCHEDULERS DATA (spec 072 D1, U-1 — it replaces the 071 opening book, which took the sale date alone).
+   The master VT report's own sheet, read BY POSITION from columns.schedulers with every position checked
+   by name, like BI. It is the ONLY source of three facts the daily exports do not carry: the Scheduler (J),
+   the GWP (E) and the true sale Date (B). Col G is `Customer Contact` and every unlisted column — the Month,
+   the Hrs Ahead and Channel formulas, the three helper columns — is DISCARDED here: nothing but the ten listed
+   positions ever leaves this function. `Result` (K) is parsed for the disagreement count and NEVER applied. */
+var SCH_NAMES = { saleDate: 'date', agent: 'agent', saleCount: 'sale count', gwp: 'gwp', caseNumber: 'case number',
+  campaignRaw: 'campaign/partner', referringAgent: 'referring agent', scheduler: 'scheduler', result: 'result', apptOn: 'date scheduled' };
+function parseSchedulers(aoa) {
+  var C = R.columns.schedulers, H = (aoa[0] || []).map(norm), idx = {}, missing = [];
+  Object.keys(SCH_NAMES).forEach(function (f) { var i = colIndex(C[f]); idx[f] = i; if (H[i] !== SCH_NAMES[f]) missing.push(SCH_NAMES[f] + ' (column ' + C[f] + ')'); });
+  var out = { kind: 'schedulers_data', rows: 0, cases: {}, skippedBlank: 0, skippedFooter: 0, missing: missing, duplicates: [], warnings: [] };
+  if (missing.length) return out;
+  var W = makeWarn(), seen = {}, dup = {}, STV = R.status.values;
   for (var n = 1; n < aoa.length; n++) {
-    var r = aoa[n]; if (blankRow(r)) continue; out.rows++;
-    var cn = cnKey(r[b.idx.caseNumber]), d = dateCell(r[b.idx.saleDate], W.add, 'Date');
+    var r = aoa[n];
+    if (blankRow(r)) { out.skippedBlank++; continue; }
+    var cn = cnKey(r[idx.caseNumber]), d = dateCell(r[idx.saleDate], W.add, 'Date');
     if (!cn || !d) { out.skippedBlank++; continue; }
-    out.cases[cn] = { soldOn: minD(d, (out.cases[cn] || {}).soldOn) };
+    out.rows++;
+    if (seen[cn]) { dup[cn] = 1; continue; }
+    seen[cn] = 1;
+    var g = r[idx.gwp], res = strCell(r[idx.result]), ref = r[idx.referringAgent];
+    out.cases[cn] = {
+      soldOn: d,
+      gwp: g == null || g === '' || !isFinite(+g) ? null : round(+g, 2),
+      campaignRaw: strCell(r[idx.campaignRaw]),
+      /* F0-19: Referring Agent is the NUMBER 0, not blank, when there is no referrer */
+      referring: ref == null || ref === '' || ref === 0 || String(ref).trim() === '0' ? null : normSeller(ref) || null,
+      scheduler: normSeller(r[idx.scheduler]) || null,
+      agent: normSeller(r[idx.agent]) || null,
+      /* F0-20: a blank Date Scheduled reads as serial 0 — serialToISO answers null for it */
+      apptOn: dateCell(r[idx.apptOn], W.add, 'Date Scheduled'),
+      /* the hand-typed Result, in the engine's own vocabulary where it is one of the four, else as typed */
+      result: res ? (STV.indexOf(norm(res)) > -1 ? norm(res) : res) : null,
+      saleCount: r[idx.saleCount] == null ? null : +r[idx.saleCount] || 0
+    };
+    if (out.cases[cn].saleCount != null && out.cases[cn].saleCount !== 1) W.add('a row carries a Sale Count that is not 1: counted as one case (spec A2)');
   }
+  out.duplicates = sortedKeys(dup);
+  /* A2: one row, one case. A repeated case number makes the whole file unusable, so it is refused and named. */
+  if (out.duplicates.length) { out.cases = {}; W.add(out.duplicates.length + ' case number(s) appear more than once in this file: ' + out.duplicates.slice(0, 10).join(', ')); }
   out.warnings = W.list;
   return out;
 }
@@ -787,13 +816,23 @@ function emptyBook() { return { rev: 0, openedOn: null, openingBookOn: null, cas
 function better(a, b) { var P = R.status.sameExtractPrecedence; return P.indexOf(a) <= P.indexOf(b) ? a : b; }
 function saleDayOf(firstSeen, openedOn) { return firstSeen > openedOn ? { soldOn: firstSeen, soldBasis: R.saleDay.basis } : { soldOn: null, soldBasis: R.saleDay.goLive }; }
 function sameRow(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+/* one case row. The last six fields come from Schedulers Data alone (spec 072) and are null until it lands:
+   an absence is never a nought, so a case the sheet does not carry shows "—" for its scheduler and its GWP. */
+function newRow(cn, ext) {
+  return { caseNumber: cn, status: null, statusOn: null, soldOn: null, soldBasis: null, firstSeen: ext, lastSeen: ext,
+    apptOn: null, fittedOn: null, smAttempt: null, products: [], bundle: null, chargeEx: null, partnerRaw: null, leadSource: null,
+    sellerName: null, sellerCb: null, sellerMatch: null, cancelReason: null,
+    schedulerName: null, schedulerCb: null, gwpRpt: null, referringName: null, referringCb: null, campaignRpt: null, resultRpt: null };
+}
+/* WHICH SALE-DAY BASIS WINS (rule book saleDay.basisPrecedence, plan U-4): schedulers_data > opening_book >
+   first_seen. A daily file supplies first_seen, so it may only (re)compute the sale day while the row carries
+   no better basis — 'unknown' (the go-live book) is not in the list and is recomputed, exactly as before 072. */
+function basisHolds(basis) { return basis != null && R.saleDay.basisPrecedence.indexOf(basis) > -1 && basis !== R.saleDay.basis; }
 
 /* Apply one observed case to its row (FR-011..FR-016). `rel` is where this extract sits against the
    last extract that carried the case: 'new' | 'newer' | 'same' | 'older'. */
 function applyObs(prev, o, kind, ext, rel, ctx) {
-  var row = prev ? copy(prev) : { caseNumber: o.cn, status: null, statusOn: null, soldOn: null, soldBasis: null, firstSeen: ext, lastSeen: ext,
-    apptOn: null, fittedOn: null, smAttempt: null, products: [], bundle: null, chargeEx: null, partnerRaw: null, leadSource: null,
-    sellerName: null, sellerCb: null, sellerMatch: null, cancelReason: null };
+  var row = prev ? copy(prev) : newRow(o.cn, ext);
   if (row.cancelReason === undefined) row.cancelReason = null;
   var obsDeact = kind === 'bi' && !!o.deactivated;
   var obsStatus = obsDeact ? 'cancelled' : kind === 'bi' ? R.status.fromBi : o.status, wins = rel === 'new' || rel === 'newer' || rel === 'same';
@@ -809,7 +848,7 @@ function applyObs(prev, o, kind, ext, rel, ctx) {
   var team = row.sellerCb && ctx.subOfCode[row.sellerCb];
   row.leadSource = leadSourceOf(row.partnerRaw, team || null);
   row.firstSeen = minD(row.firstSeen, ext); row.lastSeen = maxD(row.lastSeen, ext);
-  if (row.soldBasis !== 'opening_book') { var sd = saleDayOf(row.firstSeen, ctx.openedOn); row.soldOn = sd.soldOn; row.soldBasis = sd.soldBasis; }
+  if (!basisHolds(row.soldBasis)) { var sd = saleDayOf(row.firstSeen, ctx.openedOn); row.soldOn = sd.soldOn; row.soldBasis = sd.soldBasis; }
   var event = null;
   if (next !== row.status || st.reason !== row.cancelReason) {
     var on = next === 'cancelled' && st.reason === 'deactivated' && row.status !== 'cancelled' ? deactDay(o.deactivatedOn, ext, row.statusOn) : ext;
@@ -836,6 +875,48 @@ function nextStatus(row, obs, obsDeact, kind, ext, rel) {
 /* the day a deactivation counts from: its own date, never before the case's last status day, never after the extract */
 function deactDay(d, ext, prevOn) { return maxD(minD(d || ext, ext), prevOn && prevOn <= ext ? prevOn : null); }
 
+/* BACK-BUILDING THE EARLIER CYCLES (owner decision, spec 072 Q5). The master sheet carries sale dates that reach
+   months behind the first daily upload, so loading it populates every business cycle those dates fall in — the
+   dashboard can then ask for an earlier cycle, and `prev` is a real comparison instead of "—". How far back: exactly
+   as far as the file's own earliest sale date, never further, and never a cycle invented out of nothing. The EARLIEST
+   cycle is PARTIAL by construction (the file starts mid-cycle), so it is labelled as such with its first sale date,
+   and the flag travels with it so the screen can say so rather than imply a whole month. */
+function cyclesOf(byCycle, firstSale) {
+  var keys = sortedKeys(byCycle);
+  return keys.map(function (k, i) {
+    var c = cycleByKey(k), partial = i === 0 && firstSale != null && firstSale > c.from;
+    return { key: k, from: c.from, to: c.to, cases: byCycle[k], partial: !!partial, firstSale: firstSale,
+      words: partial ? 'Partial: this file\'s earliest sale is ' + firstSale + ', so ' + k + ' holds only the part of the business month (' + c.from + ' to ' + c.to + ') the file reaches back to.'
+        : k + ' (' + c.from + ' to ' + c.to + ') is covered in full by this file.' };
+  });
+}
+/* the cycles a BOOK covers, newest first: the business months its sale days fall in (the back-built history). */
+function cyclesInBook(book) {
+  var byCycle = {}, firstSale = null;
+  sortedKeys((book && book.cases) || {}).forEach(function (cn) {
+    var d = book.cases[cn].soldOn; if (!d) return;
+    byCycle[cycleOf(d).key] = (byCycle[cycleOf(d).key] || 0) + 1; firstSale = minD(firstSale, d);
+  });
+  return cyclesOf(byCycle, firstSale);
+}
+/* the previous cycle as dashboard()'s `prev` argument, computed from the back-built book (plan §P: the frozen
+   kv:vt-digest-cycle-* is still preferred when one exists — the page passes whichever it has). Pure: no clock,
+   and no recursion (the inner call is asked without a prev of its own). */
+function prevCycleFor(book, roster, cycleKey, opts) {
+  opts = opts || {};
+  var cyc = cycleByKey(cycleKey), prevKey = cycleOf(addDays(cyc.from, -1)).key, cov = null;
+  cyclesInBook(book).forEach(function (c) { if (c.key === prevKey) cov = c; });
+  /* asked at TODAY'S as-at, not the old cycle's end: the book only knows each case's position NOW, which is also
+     what the owner's workbook shows for an earlier month. The view still selects on the SALE DATE of that cycle. */
+  var d = dashboard(book, roster, { cycleKey: prevKey, view: opts.view || R.views.default, asOf: opts.asOf, isDataOnlyDay: opts.isDataOnlyDay });
+  var ch = {}; d.channels.forEach(function (t) { ch[t.k] = { sales: t.sales, fitted: t.fitted }; });
+  /* an absence is not a nought (non-negotiable 6): a cycle the book does not reach carries NO counts, so every
+     change on the page reads the absent marker with the reason in words, never 0 and never a percentage of nothing. */
+  return { cycle: prevKey, present: !!cov, partial: !!(cov && cov.partial), words: cov ? cov.words : 'No sale in the book falls in ' + prevKey + ', so there is no previous cycle to compare with.',
+    counts: !cov ? null : { sales: d.counts.sales, fitted: d.counts.fitted, cancelled: d.counts.cancelled, missed: d.counts.missed,
+      achievement: d.budget ? d.budget.achievement : null, channels: ch } };
+}
+
 /* merge(book, parsed, {extractOn, roster, aliases}) → { book, cases (changed rows), events (new),
    counts, unmatched, warnings }. Pure and deterministic: the input book is never touched. */
 function merge(book, parsed, opts) {
@@ -847,17 +928,53 @@ function merge(book, parsed, opts) {
   var TO = { fitted: 'toFitted', missed: 'toMissed', scheduled: 'toScheduled', cancelled: 'toCancelled' }, cancel = null;
   var tallyEvent = function (e) { counts[TO[e.to]]++; if (e.to === 'cancelled') counts[e.reason === 'dropped' ? 'cancelledDropped' : 'cancelledDeactivated']++; else if (e.from === 'cancelled') counts.reappeared++; };
   var out = { rev: book.rev || 0, openedOn: book.openedOn || null, openingBookOn: book.openingBookOn || null, cases: cases, events: null };
-  var unmatched = {}, warnings = (parsed.warnings || []).slice();
+  var unmatched = {}, warnings = (parsed.warnings || []).slice(), sch = null;
   if (!ext) throw new Error('merge needs opts.extractOn');
-  if (kind === 'opening') {
+  if (kind === 'schedulers_data') {
+    /* SPEC 072 B2. The sheet supplies three facts nothing else carries — Scheduler (J), GWP (E) and the true sale
+       Date (B) — plus the referrer, the campaign it typed and its hand-typed Result. IT NEVER SETS A STATUS: the
+       daily exports and the engine's own rules (including derived cancellation) decide that, and a Result that
+       disagrees is COUNTED BY DIRECTION and shown, never applied (FR-012, rule book disagree.resultApplied=false). */
+    counts.redated = { from_schedulers_data: 0, from_opening_book: 0, from_first_seen: 0, from_unknown: 0, unchanged: 0 };
+    counts.schedulersSet = 0; counts.gwpSet = 0; counts.referrersSet = 0;
+    var uSch = {}, dir = {}, dtotal = 0, byCycle = {}, firstSale = null;
     sortedKeys(parsed.cases).forEach(function (cn) {
       counts.cases++;
-      var prev = cases[cn]; if (!prev) { counts.notInBook++; return; }
-      var row = copy(prev); row.soldOn = parsed.cases[cn].soldOn; row.soldBasis = 'opening_book';
+      var p = parsed.cases[cn], prev = cases[cn];
+      if (!prev) { counts.notInBook++; return; }                /* named, counted, never invented */
+      var row = copy(prev);
+      var was = row.soldBasis, same = row.soldOn === p.soldOn && was === 'schedulers_data';
+      row.soldOn = p.soldOn; row.soldBasis = 'schedulers_data';
+      counts.redated[same ? 'unchanged' : was === 'opening_book' ? 'from_opening_book' : was === 'schedulers_data' ? 'from_schedulers_data'
+        : was === R.saleDay.basis ? 'from_first_seen' : 'from_unknown']++;
+      if (p.scheduler) {
+        var who = resolveSeller(p.scheduler, (opts.roster || []).filter(function (r) { return !r.sub || r.sub === 'scheduling'; }), opts.aliases || {});
+        row.schedulerName = who.name; row.schedulerCb = who.code; counts.schedulersSet++;
+        if (!who.code) uSch[who.name] = (uSch[who.name] || 0) + 1;
+      }
+      if (p.gwp != null) { row.gwpRpt = p.gwp; counts.gwpSet++; }
+      if (p.referring) {
+        var rf = resolveSeller(p.referring, opts.roster, opts.aliases || {});
+        row.referringName = rf.name; row.referringCb = rf.code; counts.referrersSet++;
+      }
+      if (p.campaignRaw) row.campaignRpt = p.campaignRaw;
+      row.resultRpt = p.result || null;
+      if (p.result && R.status.values.indexOf(p.result) > -1 && row.status && p.result !== row.status) {
+        var k = p.result + ' -> ' + row.status; dir[k] = (dir[k] || 0) + 1; dtotal++;
+      }
+      var ck = cycleOf(row.soldOn).key;
+      byCycle[ck] = (byCycle[ck] || 0) + 1;
+      firstSale = minD(firstSale, row.soldOn);
       if (!sameRow(row, prev)) { cases[cn] = row; changed.push(row); }
     });
+    /* U-5 · the sheet's pre-upload sale dates are what opening_book_on has always meant, so it is set exactly as the
+       opening book set it (first value kept). trackFrom, the working-day count, every SPD and every Target
+       Achievement therefore read exactly as they would have with the opening book — nothing about the rating moves. */
     out.openingBookOn = out.openingBookOn || ext;
-    if (counts.notInBook) warnings.push(counts.notInBook + ' opening-book cases are not in the book yet: load the opening book after the first day\'s two files');
+    sch = { disagree: { total: dtotal, byDirection: dir }, cycles: cyclesOf(byCycle, firstSale),
+      unmatchedSchedulers: sortedKeys(uSch).map(function (n) { return { name: n, cases: uSch[n] }; }) };
+    if (counts.notInBook) warnings.push(counts.notInBook + ' case(s) in this file are not in the Vehicle Tracking book, so they were counted and left alone — the daily exports have not carried them yet.');
+    if (dtotal) warnings.push(dtotal + ' case(s) carry a Result that disagrees with the status the daily exports decided: counted and shown, never applied.');
   } else {
     if (!out.openedOn) out.openedOn = ext;
     var ctx = { roster: opts.roster || [], aliases: opts.aliases || {}, openedOn: out.openedOn, subOfCode: {} };
@@ -891,7 +1008,8 @@ function merge(book, parsed, opts) {
   counts.changed = changed.length;
   out.events = (book.events || []).concat(events);
   return { book: out, cases: changed, events: events, counts: counts, cancel: cancel,
-    unmatched: sortedKeys(unmatched).map(function (n) { return { name: n, cases: unmatched[n] }; }), warnings: warnings };
+    unmatched: sortedKeys(unmatched).map(function (n) { return { name: n, cases: unmatched[n] }; }), warnings: warnings,
+    disagree: sch ? sch.disagree : null, unmatchedSchedulers: sch ? sch.unmatchedSchedulers : null, cycles: sch ? sch.cycles : null };
 }
 /* R1 · WHEN A FILE MAY CANCEL (the derived-cancellation fix). An extract day is COMPLETE once a BI Active Fitted AND a
    Scheduled & Missed file of that date are committed; `receipts` are the committed vt_uploads rows the station read AFTER
@@ -919,7 +1037,10 @@ function dropCheck(kind, ext, receipts) {
 }
 /* Convert the vt_book() RPC value (plan DB-3, positional arrays) into a book. The last three columns (Phase C) carry
    what merge and model read back — without partnerRaw a re-read book re-folded every lead source to 'other'. */
-var BOOK_COLS = ['caseNumber', 'status', 'statusOn', 'soldOn', 'soldBasis', 'firstSeen', 'lastSeen', 'apptOn', 'fittedOn', 'products', 'chargeEx', 'leadSource', 'sellerName', 'sellerCb', 'sellerMatch', 'smAttempt', 'bundle', 'partnerRaw', 'cancelReason'];
+/* the last seven are Schedulers Data's own (spec 072 DB-3), APPENDED so every earlier position is unmoved:
+   a book read from a database that has not run migration-073 yet simply answers null for them. */
+var BOOK_COLS = ['caseNumber', 'status', 'statusOn', 'soldOn', 'soldBasis', 'firstSeen', 'lastSeen', 'apptOn', 'fittedOn', 'products', 'chargeEx', 'leadSource', 'sellerName', 'sellerCb', 'sellerMatch', 'smAttempt', 'bundle', 'partnerRaw', 'cancelReason',
+  'schedulerName', 'schedulerCb', 'gwpRpt', 'referringName', 'referringCb', 'campaignRpt', 'resultRpt'];
 var EVENT_COLS = ['caseNumber', 'onDate', 'from', 'to', 'apptOn', 'reason'];
 function bookFromRpc(v) {
   var b = emptyBook(); if (!v) return b;
@@ -936,7 +1057,11 @@ function guardUpload(kind, cases, lastCount, quietAck) {
   var share = kind === 'bi' ? G.thinBiShare : G.thinSmShare;
   if (cases >= share * lastCount) return { ok: true, reason: null };
   if (kind !== 'bi' && quietAck) return { ok: true, reason: 'Accepted as a genuine quiet day: ' + cases + ' cases against ' + lastCount + ' on the previous file.', quietDay: true };
-  return { ok: false, reason: 'Refused as a thin pull: ' + cases + ' cases against ' + lastCount + ' on the previous ' + (kind === 'bi' ? 'BI file of this business month' : 'Scheduled & Missed file') + '.' };
+  /* 'schedulers' (spec 072 U-6) rides the S&M share: the master sheet is the whole history, so its case count only
+     grows and a suddenly short file is a bad export, not a quiet day - but the acknowledgement still exists for the
+     uploader who knows better, exactly as for Scheduled & Missed. */
+  var WHICH = { bi: 'BI file of this business month', sm: 'Scheduled & Missed file', schedulers: 'Schedulers Data file' };
+  return { ok: false, reason: 'Refused as a thin pull: ' + cases + ' cases against ' + lastCount + ' on the previous ' + (WHICH[kind] || 'file of this kind') + '.' };
 }
 
 /* ---------------------------------------------------------------- budgets ---- */
@@ -1609,9 +1734,10 @@ function dashboard(book, roster, opts) {
 
 return {
   VT_RULES: VT_RULES, version: R.version, saHolidaysFor: saHolidaysFor, periods: periods, serialToISO: serialToISO, normCB: normCB,
-  detect: detect, isBiFittedName: isBiFittedName, extractDate: extractDate, parseBi: parseBi, parseSm: parseSm, parseOpeningBook: parseOpeningBook, parseRoster: parseRoster,
+  detect: detect, isBiFittedName: isBiFittedName, extractDate: extractDate, parseBi: parseBi, parseSm: parseSm, parseSchedulers: parseSchedulers, parseRoster: parseRoster,
   normSeller: normSeller, resolveSeller: resolveSeller, leadSourceOf: leadSourceOf, leadGroupOf: leadGroupOf, subOf: subOf,
-  emptyBook: emptyBook, merge: merge, bookFromRpc: bookFromRpc, guardUpload: guardUpload,
+  emptyBook: emptyBook, merge: merge, bookFromRpc: bookFromRpc, BOOK_COLS: BOOK_COLS, guardUpload: guardUpload,
+  cyclesInBook: cyclesInBook, prevCycleFor: prevCycleFor,
   rates: rates, model: model, dashboard: dashboard, cycleBudgetFor: cycleBudgetFor, channelOf: channelOf, rating: rating, bandOf: bandOf, digest: digest, emptyCyclePayload: emptyCyclePayload, uploadGaps: uploadGaps,
   budgetFor: budgetFor, spdBudget: spdBudget
 };

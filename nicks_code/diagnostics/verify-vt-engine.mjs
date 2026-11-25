@@ -62,14 +62,30 @@ const ROSTER = [
 ];
 const deepFreeze = o => { if (o && typeof o === 'object') { Object.freeze(o); Object.values(o).forEach(deepFreeze); } return o; };
 const merge = (book, kind, aoa, on, extra = {}) => {
-  const parsed = kind === 'bi' ? E.parseBi(aoa) : kind === 'sm' ? E.parseSm(aoa) : E.parseOpeningBook(aoa);
+  const parsed = kind === 'bi' ? E.parseBi(aoa) : kind === 'sm' ? E.parseSm(aoa) : E.parseSchedulers(aoa);
   return E.merge(book, parsed, Object.assign({ extractOn: on, roster: ROSTER, aliases: {} }, extra));
 };
+/* the Schedulers Data sheet of the master VT report (spec 072 D1): the header row as the owner's file
+   carries it, and a row builder that always fills the Customer Contact column so the PII test bites. */
+const SCH_HDR = ['Month', 'Date', 'Agent', 'Sale Count', 'GWP', 'Case Number', 'Customer Contact', 'Campaign/Partner', 'Referring Agent',
+  'Scheduler', 'Result', 'Hrs Ahead', 'Date Scheduled', null, 'Scheduled', 'Missed', 'Fitted', 'Channel'];
+const schRow = ({ cn, month = 'Current', sold = '2026-11-12', agent = 'Alpha Test', gwp = 99, campaign = 'Revx', ref = 0,
+  sched = 'Echo Foxtrot', result = 'Fitted', appt = null }) => {
+  const r = new Array(18).fill(null);
+  Object.assign(r, { 0: month, 1: S(sold), 2: agent, 3: 1, 4: gwp, 5: String(cn), 6: '0820000001', 7: campaign, 8: ref, 9: sched,
+    10: result, 11: '24', 12: appt ? S(appt) : 0, 14: 'Scheduled', 15: 'Missed', 16: 'Fitted', 17: 'Lead Gen' });
+  return r;
+};
+const schFile = (rows, blanks = 3) => [SCH_HDR, ...rows.map(schRow),
+  ...Array.from({ length: blanks }, () => new Array(18).fill(null).map((v, i) => (i === 11 || i === 17 ? '' : null)))];
 
 console.log('\n== detection ==');
 eq('BI Active Fitted header → vtBiFitted', E.detect(BI_HDR, 'Export'), 'vtBiFitted');
 eq('Scheduled & Missed header → vtSchedMissed', E.detect(SM_HDR, 'Export'), 'vtSchedMissed');
-eq('Schedulers Data header → vtOpeningBook', E.detect(['Month', 'Date', 'Agent', 'Sale Count', 'GWP', 'Case Number', 'Customer Contact', 'Campaign/Partner', 'Referring Agent', 'Scheduler', 'Result'], 'Schedulers Data'), 'vtOpeningBook');
+eq('Schedulers Data header → vtSchedulers (the retired "opening book" kind is gone — spec 072 U-1)', E.detect(SCH_HDR, 'Schedulers Data'), 'vtSchedulers');
+eq('…and the rule book no longer carries detection.vtOpeningBook', E.VT_RULES.detection.vtOpeningBook, undefined);
+eq('…the same columns under another sheet name are not a VT upload', E.detect(SCH_HDR, 'Sheet1'), null);
+eq('…and with no sheet name at all they are (the Rake and Ops refuse it by columns alone)', E.detect(SCH_HDR), 'vtSchedulers');
 { const VAS_BI = ['Account Number', 'Contract Status', 'Account Create Date', 'Owner', 'Created By', 'Contract Create Date', 'Contract Deactivate Date', 'Charge Amount', 'Product Bundle', 'Source Partner', 'Case Number'];
   eq('a VAS BI header is NEVER VT', E.detect(VAS_BI, 'Export'), null); }
 eq('a header missing one required VT column is not VT', E.detect(BI_HDR.filter(h => h !== 'Box Number'), 'Export'), null);
@@ -157,17 +173,106 @@ console.log('\n== sale day ==');
   eq('a case on the opening extract has no sale day (A6)', [c['90000051'].soldOn, c['90000051'].soldBasis], [null, 'unknown']);
   eq('…both files of the opening day', [c['90000052'].soldOn, c['90000052'].soldBasis], [null, 'unknown']);
   eq('a case first seen on a later extract is sold that day (first_seen)', [c['90000053'].soldOn, c['90000053'].soldBasis], ['2026-11-10', 'first_seen']);
-  const ob = [['Month', 'Date', 'Agent', 'Sale Count', 'GWP', 'Case Number', 'Customer Contact', 'Campaign/Partner', 'Referring Agent', 'Scheduler', 'Result'],
-    ['Rollover', S('2026-10-20'), 'Somebody', 1, 99, 90000051, '0820000001', 'Revx', null, 'Sched', 'Missed'],
-    ['Current', S('2026-11-02'), 'Somebody', 1, 99, 90000052, '0820000001', 'Revx', null, 'Sched', 'Fitted'],
-    ['Current', S('2026-11-03'), 'Somebody', 1, 99, 90000099, '0820000001', 'Revx', null, 'Sched', 'Cancelled']];
-  const p = E.parseOpeningBook(ob);
-  ok('the opening book keeps the sale date only (no Result, GWP, contact, agent)', !JSON.stringify(p).match(/Missed|Fitted|Cancelled|0820000001|Somebody|Sched/), JSON.stringify(p).slice(0, 200));
+  const p = E.parseSchedulers(schFile([
+    { cn: 90000051, month: 'Rollover', sold: '2026-10-20', result: 'Missed' },
+    { cn: 90000052, sold: '2026-11-02', result: 'Fitted' },
+    { cn: 90000099, sold: '2026-11-03', result: 'Cancelled' }]));
+  ok('Schedulers Data never carries a customer field out of the parser (col G is discarded)',
+    JSON.stringify(p).indexOf('0820000001') < 0, JSON.stringify(p).slice(0, 300));
   const r2 = E.merge(r.book, p, { extractOn: '2026-11-10', roster: ROSTER, aliases: {} });
-  eq('the opening book supplies the sale day (basis opening_book)', [r2.book.cases['90000051'].soldOn, r2.book.cases['90000051'].soldBasis], ['2026-10-20', 'opening_book']);
-  eq('…never changes a status', r2.book.cases['90000051'].status, 'scheduled');
-  eq('…counts the cases it could not place (not in the book)', r2.counts.notInBook, 1);
-  eq('…and it marks the book as dated (rating counts every working day)', r2.book.openingBookOn, '2026-11-10');
+  eq('Schedulers Data supplies the sale day (basis schedulers_data)', [r2.book.cases['90000051'].soldOn, r2.book.cases['90000051'].soldBasis], ['2026-10-20', 'schedulers_data']);
+  eq('…never changes a status, whatever its Result column says', r2.book.cases['90000051'].status, 'scheduled');
+  eq('…counts the cases it names that are not in the book (never invents one)', [r2.counts.notInBook, Object.keys(r2.book.cases).length], [1, 3]);
+  eq('…and it marks the book as dated, with the opening book\'s own semantics (U-5)', r2.book.openingBookOn, '2026-11-10');
+}
+
+console.log('\n== Schedulers Data: the parser (spec 072 B1) ==');
+{ const aoa = schFile([
+    { cn: 90000201, sold: '2026-11-12', gwp: 149, campaign: 'Referral Agent', ref: 'Bravo Middle Tester', sched: 'Echo Foxtrot', result: 'Fitted' },
+    { cn: 90000202, sold: '2026-11-13', gwp: 0, campaign: 'Predictive', ref: 0, sched: 'Golf Ann Hotel', result: 'Scheduled', appt: '2026-11-26' },
+    { cn: 90000203, month: 'Rollover', sold: '2026-10-02', gwp: 99, campaign: 'Black Birch Projects', result: 'Missed' }], 4);
+  const p = E.parseSchedulers(aoa);
+  eq('kind, cases, populated rows and the blank rows counted and skipped', [p.kind, Object.keys(p.cases).length, p.rows, p.skippedBlank], ['schedulers_data', 3, 3, 4]);
+  eq('no required column is missing', p.missing, []);
+  eq('it reads by position: sale date, GWP, campaign, scheduler, Result, appointment',
+    [p.cases['90000201'].soldOn, p.cases['90000201'].gwp, p.cases['90000201'].campaignRaw, p.cases['90000201'].scheduler, p.cases['90000201'].result, p.cases['90000202'].apptOn],
+    ['2026-11-12', 149, 'Referral Agent', 'echo foxtrot', 'fitted', '2026-11-26']);
+  eq('Referring Agent = 0 is no referrer, a name is one (F0-19)', [p.cases['90000202'].referring, p.cases['90000201'].referring], [null, 'bravo middle tester']);
+  eq('an appointment serial of 0 is no appointment, not 1899-12-29 (F0-20)', p.cases['90000201'].apptOn, null);
+  eq('GWP 0 is a real nought, never a missing value', p.cases['90000202'].gwp, 0);
+  ok('every unlisted column is discarded: no Hrs Ahead, no Channel, no helper column, no Month',
+    !/Hrs Ahead|Channel|Lead Gen|Rollover/.test(JSON.stringify(p)), JSON.stringify(p.cases['90000203']));
+  const dup = E.parseSchedulers(schFile([{ cn: 90000301 }, { cn: 90000302 }, { cn: 90000301 }]));
+  eq('a duplicate case number inside one file is refused, and the duplicates are named (A2)', [dup.duplicates, Object.keys(dup.cases).length], [['90000301'], 0]);
+  const short = E.parseSchedulers([SCH_HDR.map(h => (h === 'Scheduler' ? 'Who Booked It' : h)), schRow({ cn: 90000401 })]);
+  eq('a sheet whose columns moved is refused by name, never read by position anyway', short.missing, ['scheduler (column J)']);
+}
+
+console.log('\n== Schedulers Data: the merge (spec 072 B2) ==');
+{ let r = merge(b0, 'sm', smFile([{ cn: 90000501 }, { cn: 90000502, outcome: 'Missed Fitment' }]), '2026-11-09');
+  r = merge(r.book, 'bi', biFile([{ cn: 90000503 }]), '2026-11-10');
+  const before = E.model(r.book, ROSTER, { asOf: '2026-11-10' });
+  const p = E.parseSchedulers(schFile([
+    { cn: 90000501, month: 'Rollover', sold: '2026-09-15', gwp: 199, sched: 'Echo Foxtrot', result: 'Fitted' },     // disagrees: engine says scheduled
+    { cn: 90000502, sold: '2026-11-03', gwp: 149, sched: 'Echo Foxtrot', result: 'Missed' },                        // agrees
+    { cn: 90000503, sold: '2026-10-28', gwp: 0, sched: 'Nobody On The List', result: 'Fitted' },                    // agrees; scheduler unmatched
+    { cn: 90000599, sold: '2026-11-04', result: 'Fitted' }]));                                                      // not in the book
+  const m = E.merge(r.book, p, { extractOn: '2026-11-10', roster: ROSTER, aliases: {} });
+  const c = m.book.cases;
+  eq('it sets the sale date, the basis, the scheduler (resolved to a CB) and the GWP',
+    [c['90000501'].soldOn, c['90000501'].soldBasis, c['90000501'].schedulerCb, c['90000501'].schedulerName, c['90000501'].gwpRpt],
+    ['2026-09-15', 'schedulers_data', 'CB9104', 'echo foxtrot', 199]);
+  eq('…the campaign the report typed, and the Result it typed (kept for the disagreement count, never applied)',
+    [c['90000501'].campaignRpt, c['90000501'].resultRpt, c['90000501'].status], ['Revx', 'fitted', 'scheduled']);
+  eq('a scheduler not on the Agent List is kept as typed and named, never guessed',
+    [c['90000503'].schedulerName, c['90000503'].schedulerCb, m.unmatchedSchedulers], ['nobody on the list', null, [{ name: 'nobody on the list', cases: 1 }]]);
+  eq('the Result disagreements are counted BY DIRECTION', m.disagree, { total: 1, byDirection: { 'fitted -> scheduled': 1 } });
+  eq('the cases it re-dated are tallied by the basis they came from', m.counts.redated,
+    { from_schedulers_data: 0, from_opening_book: 0, from_first_seen: 1, from_unknown: 2, unchanged: 0 });
+  eq('…and so are the schedulers and the GWP it set', [m.counts.schedulersSet, m.counts.gwpSet, m.counts.notInBook], [3, 3, 1]);
+  eq('no status event is ever written by a Schedulers Data merge', m.events, []);
+  /* U-5 / risk 2: the rating's working-day window. `opening_book_on` keeps EXACTLY the meaning it has had since 071 —
+     "a sheet has supplied sale dates from before the first upload" — so the rule that reads it is untouched: a book that
+     already carries it does not move at all, and one that does not takes the cycle start, which is what the retired
+     opening book did on its own first load. Nothing about the rating's own code, drivers or budgets is involved. */
+  const after = E.model(m.book, ROSTER, { asOf: '2026-11-10' });
+  eq('a first dating takes the window to the cycle start, the retired opening book semantics unchanged (U-5)',
+    [before.trackFrom, after.trackFrom], ['2026-11-10', after.period.from]);
+  eq('opening_book_on is stamped once and keeps its first value', [r.book.openingBookOn, m.book.openingBookOn], [null, '2026-11-10']);
+  { const m2 = E.merge(m.book, p, { extractOn: '2026-11-12', roster: ROSTER, aliases: {} });
+    const after2 = E.model(m2.book, ROSTER, { asOf: '2026-11-10' });
+    eq('a SECOND Schedulers Data commit moves nothing: trackFrom, working days, SPD and the stamp are identical (risk 2)',
+      [after2.trackFrom, after2.workingDaysElapsed, after2.floor.mtd.spd, m2.book.openingBookOn],
+      [after.trackFrom, after.workingDaysElapsed, after.floor.mtd.spd, m.book.openingBookOn]); }
+  { /* and on a book already dated (every book once this file has landed), the first commit moves nothing either */
+    const dated = JSON.parse(JSON.stringify(r.book)); dated.openingBookOn = '2026-11-09';
+    const b4 = E.model(dated, ROSTER, { asOf: '2026-11-10' });
+    const m3 = E.merge(dated, p, { extractOn: '2026-11-10', roster: ROSTER, aliases: {} });
+    const a4 = E.model(m3.book, ROSTER, { asOf: '2026-11-10' });
+    eq('on an already-dated book nothing in the rating window moves at all',
+      [a4.trackFrom, a4.workingDaysElapsed, m3.book.openingBookOn], [b4.trackFrom, b4.workingDaysElapsed, '2026-11-09']); }
+  /* back-build: the file reaches into earlier business months, so every cycle it covers is populated */
+  eq('the merge reports every business cycle the file\'s sale dates reach', m.cycles.map(x => [x.key, x.cases]),
+    [['cycle-2026-09', 1], ['cycle-2026-11', 2]]);
+  eq('…the earliest cycle is labelled partial, with the first sale date in the book',
+    [m.cycles[0].partial, m.cycles[0].firstSale, /partial/i.test(m.cycles[0].words)], [true, '2026-09-15', true]);
+  { const prev = E.prevCycleFor(m.book, ROSTER, 'cycle-2026-11', { asOf: '2026-11-10' });
+    eq('a previous cycle the file does not reach says so, and its counts stay 0 — the page reads "—" (FR-019)',
+      [prev.cycle, prev.present, prev.counts], ['cycle-2026-10', false, null]);
+    const p9 = E.prevCycleFor(m.book, ROSTER, 'cycle-2026-10', { asOf: '2026-11-10' });
+    eq('…and the cycle the back-build DID populate is a real comparison, labelled partial',
+      [p9.cycle, p9.present, p9.partial, p9.counts.sales, p9.counts.fitted], ['cycle-2026-09', true, true, 1, 0]); }
+  const again = E.merge(m.book, p, { extractOn: '2026-11-11', roster: ROSTER, aliases: {} });
+  eq('re-uploading the same file changes nothing (idempotent, U-6)', [again.cases.length, again.counts.redated.unchanged], [0, 3]);
+  const sm2 = merge(m.book, 'sm', smFile([{ cn: 90000501, outcome: 'Missed Fitment' }]), '2026-11-11');
+  eq('a later daily file never takes the sale date back off the Schedulers Data basis (precedence U-4)',
+    [sm2.book.cases['90000501'].soldOn, sm2.book.cases['90000501'].soldBasis, sm2.book.cases['90000501'].gwpRpt],
+    ['2026-09-15', 'schedulers_data', 199]);
+  const rpc = E.bookFromRpc({ rev: 3, openedOn: '2026-11-09', openingBookOn: '2026-11-10',
+    cases: [E.BOOK_COLS.map(k => (c['90000501'][k] === undefined ? null : c['90000501'][k]))], events: [] });
+  eq('a book read back from the database carries the scheduler, the GWP, the referrer, the campaign and the Result',
+    [rpc.cases['90000501'].schedulerName, rpc.cases['90000501'].gwpRpt, rpc.cases['90000501'].campaignRpt, rpc.cases['90000501'].resultRpt],
+    ['echo foxtrot', 199, 'Revx', 'fitted']);
 }
 
 console.log('\n== pure, deterministic, idempotent ==');

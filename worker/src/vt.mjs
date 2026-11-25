@@ -9,6 +9,10 @@
  *   POST /api/vt/book   {p_from, p_also}     → vt_book(p_from, p_also)       the station's merge read (≤ 256 KB body ≈ 20k
  *                                                                             case numbers; the station chunks above ~15k)
  *   POST /api/vt/upload/begin                → vt_upload_begin(…, p_user)    a LIVE upload of the same bytes → 409 busy
+ *        (spec 072 B4: the kinds are 'bi_fitted', 'sched_missed' and 'schedulers_data' - the master VT report's own
+ *         sheet, which replaced the retired 'opening_book'. The Worker CARRIES the kind and never reads it: the body
+ *         IS the SQL function's arguments and migration-073's CHECK is the one place the legal kinds are written
+ *         down. So this module needed no change for the new upload: no new route, no new auth rule, no new cap.)
  *   POST /api/vt/upload/stage                → vt_upload_stage(…, p_user)    ≤ 512 KB per call, else 413
  *   POST /api/vt/upload/commit               → vt_upload_commit(…, p_user)   version_conflict → 409 (the station retries)
  *   POST /api/vt/upload/abandon              → vt_upload_abandon(…, p_user)
@@ -53,7 +57,9 @@ const REFUSALS = /^(stage_incomplete|not_staging|batch_too_large|unknown_upload|
 function refusal(step, status, text) {
   const msg = (() => { try { return String(JSON.parse(text).message || ''); } catch (e) { return String(text || ''); } })();
   if (/version_conflict/.test(msg)) return json({ error: 'version_conflict' }, 409);
-  if (/opening_book_before_first_day/.test(msg)) return json({ error: 'Load the opening book after the first day\'s two files (BI Active Fitted and Scheduled & Missed): it only dates cases already in the book.' }, 409);
+  /* spec 072 U-1: the same guard now covers the Schedulers Data file (kind 'schedulers_data'), which replaced the
+     retired opening book. The database keeps the error NAME so nothing has to learn a new code; only the words moved. */
+  if (/opening_book_before_first_day/.test(msg)) return json({ error: 'Load the Schedulers Data file after the first day\'s two files (BI Active Fitted and Scheduled & Missed): it only dates cases already in the book.' }, 409);
   const code = (REFUSALS.exec(msg) || [])[1];
   if (code) return json({ error: code, detail: msg.slice(0, 200) }, 409);
   const ck = /violates check constraint "(\w{1,80})"/.exec(msg);

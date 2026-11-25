@@ -224,7 +224,7 @@ try {
   await pu.click('#side [data-page="data"]');
   const slots = await (await pu.waitForFunction(() => { const v = [...document.querySelectorAll('#view .slot[data-vtslot]')]; return v.length ? v.map((c) => c.dataset.vtslot) : false; }, null, { timeout: 30000 })).jsonValue();
   L = await look(pu);
-  ok(L.vt && L.tab === 'data' && L.search === '?app=vt&page=data' && slots.join(',') === 'vtBiFitted,vtSchedMissed,vtOpeningBook', 'the Upload Station opens inside Vehicle Tracking, with the three VT slots', J([L.vt, L.search, slots]));
+  ok(L.vt && L.tab === 'data' && L.search === '?app=vt&page=data' && slots.join(',') === 'vtBiFitted,vtSchedMissed,vtSchedulers', 'the Upload Station opens inside Vehicle Tracking, with the three VT slots', J([L.vt, L.search, slots]));
   ok(await pu.evaluate(() => typeof window.VTStation.afterCommit === 'function' && !!window.VTPublish), 'the publish hook is wired in VT mode (VTStation.afterCommit → VTPublish)');
   await pu.close();
   const pr = await open('reader', '/pulse/?app=vt'); await pulse(pr); L = await look(pr);

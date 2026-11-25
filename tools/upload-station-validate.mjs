@@ -204,7 +204,8 @@ for (const sn of wbAgents.SheetNames) {
   }
 }
 /* ---------------- 1b. VEHICLE TRACKING files (spec 071, F2) ----------------
-   BI Active Fitted / Scheduled & Missed / the opening book are VALIDATED here, never mistaken for VAS sources: every .xlsx
+   BI Active Fitted / Scheduled & Missed / the master report's Schedulers Data sheet (spec 072, which replaced the
+   once-only opening-book slot) are VALIDATED here, never mistaken for VAS sources: every .xlsx
    the VAS checks do not claim is offered to the VT engine's own detection (tools/vt-validate.mjs). A VT file is never the
    VAS money source — NAMES.active only ever matches "Active.xlsx". The BI header is SHARED with the VAS "BI Active" export
    (incident 2026-11-24): vt-validate only takes a BI-columned file as Vehicle Tracking when its name says "Fitted". The Agent List's VT sheet has a Target column now: its

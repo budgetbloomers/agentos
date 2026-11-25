@@ -24,11 +24,18 @@ var API = 'https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
 var STAGE_ROWS = 1000;                 // rows per stage call (plan DB-3)
 var STAGE_BYTES = 480 * 1024;          // and under the Worker's 512 KB stage cap, with headroom
 var MAX_TRIES = 3;                     // FR-008: a conflict re-reads, re-merges and retries up to 3 times
-var DB_KIND = { vtBiFitted: 'bi_fitted', vtSchedMissed: 'sched_missed', vtOpeningBook: 'opening_book' };
-var LABEL = { vtBiFitted: 'VT · BI Active Fitted', vtSchedMissed: 'VT · Scheduled & Missed', vtOpeningBook: 'VT · Opening book (once)' };
-var REFUSE_OPENING_FIRST = 'Load the opening book after the first day\'s two files (BI Active Fitted and Scheduled & Missed). '
-  + 'It only adds sale dates to cases that are already in the book, so on an empty book it has nothing to date.';
+/* THE THREE VT SLOTS (spec 072 U-2). 'VT · Schedulers Data' REPLACED 'VT · Opening book (once)': the same sheet of the
+   same master report, now read for the three facts the daily exports do not carry (Scheduler, GWP, true sale date)
+   instead of the sale date alone, and re-uploadable instead of once-only. The old DB kind 'opening_book' is still legal
+   in the database and still names itself on the receipts already stored (KIND below) - nothing historical stops reading. */
+var DB_KIND = { vtBiFitted: 'bi_fitted', vtSchedMissed: 'sched_missed', vtSchedulers: 'schedulers_data' };
+var LABEL = { vtBiFitted: 'VT · BI Active Fitted', vtSchedMissed: 'VT · Scheduled & Missed', vtSchedulers: 'VT · Schedulers Data' };
+var REFUSE_DATING_FIRST = 'Load the Schedulers Data file after the first day\'s two files (BI Active Fitted and Scheduled & Missed). '
+  + 'It only adds the scheduler, the GWP and the sale date to cases that are already in the book, so on an empty book it has nothing to date.';
+/* the retired slot\'s name still answers, for anything that already asked for it */
+var REFUSE_OPENING_FIRST = REFUSE_DATING_FIRST;
 
+var GUARD_KIND = { vtBiFitted: 'bi', vtSchedMissed: 'sm', vtSchedulers: 'schedulers' };
 function E() { return root.VTEngine || (typeof require === 'function' ? require('./vt-engine.js') : null); }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function num(n) { return n == null ? '—' : Number(n).toLocaleString('en-ZA'); }
@@ -40,7 +47,13 @@ function caseRowToDb(r) {
   return { case_number: String(r.caseNumber), status: r.status, status_on: r.statusOn, sold_on: r.soldOn, sold_basis: r.soldBasis,
     first_seen: r.firstSeen, last_seen: r.lastSeen, appt_on: r.apptOn, fitted_on: r.fittedOn, sm_attempt: r.smAttempt,
     products: r.products || [], bundle: r.bundle, charge_ex: r.chargeEx, partner_raw: r.partnerRaw, lead_source: r.leadSource,
-    seller_name: r.sellerName, seller_cb: r.sellerCb, seller_match: r.sellerMatch, cancel_reason: r.cancelReason || null };
+    seller_name: r.sellerName, seller_cb: r.sellerCb, seller_match: r.sellerMatch, cancel_reason: r.cancelReason || null,
+    /* Schedulers Data's own seven (spec 072 DB-3). A BI or Scheduled & Missed row sends them as null and the SQL
+       coalesces, so a daily upload never blanks what the Schedulers Data upload set (plan risk 3). */
+    scheduler_name: r.schedulerName == null ? null : r.schedulerName, scheduler_cb: r.schedulerCb == null ? null : r.schedulerCb,
+    gwp_rpt: r.gwpRpt == null ? null : r.gwpRpt, referring_name: r.referringName == null ? null : r.referringName,
+    referring_cb: r.referringCb == null ? null : r.referringCb, campaign_rpt: r.campaignRpt == null ? null : r.campaignRpt,
+    result_rpt: r.resultRpt == null ? null : r.resultRpt };
 }
 function eventToDb(e) { return { case_number: String(e.caseNumber), on_date: e.onDate, from_status: e.from, to_status: e.to, appt_on: e.apptOn, reason: e.reason || null }; }
 /* rows → stage batches: ≤ STAGE_ROWS rows and ≤ STAGE_BYTES of JSON each; ord is the row's position in the upload */
@@ -107,8 +120,10 @@ function workbookAoa(buf, XLSX) {
   wb.SheetNames.forEach(function (n) { out[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null, blankrows: false }); });
   return out;
 }
-function parseFor(kind, aoa) { var eng = E(); return kind === 'vtBiFitted' ? eng.parseBi(aoa) : kind === 'vtSchedMissed' ? eng.parseSm(aoa) : eng.parseOpeningBook(aoa); }
-/* the case count the thin-pull guard compares with (FR-006): BI = the last BI of the same business month; S&M = the last S&M */
+function parseFor(kind, aoa) { var eng = E(); return kind === 'vtBiFitted' ? eng.parseBi(aoa) : kind === 'vtSchedMissed' ? eng.parseSm(aoa) : eng.parseSchedulers(aoa); }
+/* the case count the thin-pull guard compares with (FR-006): BI = the last BI of the same business month; S&M = the
+   last S&M; Schedulers Data = the last Schedulers Data file, whichever month it was loaded in (the sheet is the whole
+   history, so its case count only ever grows - a sudden short file is a bad export, spec 072 U-6). */
 function lastCountFor(kind, cycleKey, receipts) {
   var want = DB_KIND[kind], hit = (receipts || []).filter(function (u) { return u.state === 'committed' && u.kind === want && (kind !== 'vtBiFitted' || u.cycle_key === cycleKey); })
     .sort(function (a, b) { return String(b.extract_on).localeCompare(String(a.extract_on)) || (b.id - a.id); })[0];
@@ -131,8 +146,26 @@ function receiptLines(r) {
   var c = r.counts || {}, lines = [];
   lines.push(LABEL[r.kind] + ' · ' + r.fileName);
   lines.push('Extract date ' + r.extractOn + (r.assumed ? ' (assumed: the file name carries no ddmmyy date)' : ''));
-  if (r.kind === 'vtOpeningBook') lines.push(num(c.cases) + ' cases in the opening book · ' + num(c.changed) + ' sale dates applied · ' + num(c.notInBook) + ' not in the book yet');
-  else {
+  if (r.kind === 'vtSchedulers') {
+    /* WHAT THE FILE CHANGED, AND WHAT IT DID NOT (spec 072 B5). Every line is a count the merge returned. */
+    var rd = c.redated || {};
+    lines.push(num(c.cases) + ' cases read from the sheet' + (c.skippedBlank ? ' · ' + num(c.skippedBlank) + ' empty rows counted and skipped' : '')
+      + ' · ' + num(c.changed) + ' case rows changed');
+    lines.push('Sale dates re-stated: ' + num(c.changed === 0 ? 0 : (rd.from_first_seen || 0) + (rd.from_unknown || 0) + (rd.from_opening_book || 0))
+      + ' (from the upload day ' + num(rd.from_first_seen || 0) + ' · from go-live, undated ' + num(rd.from_unknown || 0)
+      + ' · from the retired opening book ' + num(rd.from_opening_book || 0) + ') · unchanged ' + num(rd.unchanged || 0));
+    lines.push('Schedulers set: ' + num(c.schedulersSet) + ' · GWP set: ' + num(c.gwpSet) + ' · referrers set: ' + num(c.referrersSet));
+    var ds = r.disagree || {}, byd = ds.byDirection || {};
+    lines.push('Where this sheet disagrees with the daily exports: ' + num(ds.total || 0) + ' case' + ((ds.total || 0) === 1 ? '' : 's')
+      + (Object.keys(byd).length ? ' (' + Object.keys(byd).sort().map(function (k) { return k + ': ' + num(byd[k]); }).join(' · ') + ')' : '')
+      + ' — counted and shown on the VT Report, never applied.');
+    lines.push('Business months this file reaches: ' + ((r.cycles || []).length ? (r.cycles || []).map(function (x) { return x.key + ' (' + num(x.cases) + (x.partial ? ', part of the month' : '') + ')'; }).join(' · ') : '—')
+      + '. Each one can now be read on the VT Report; the published copy of a closed month is refreshed by the republish tool, not from here.');
+    var us = r.unmatchedSchedulers || [];
+    lines.push('Schedulers not on the Agent List: ' + (us.length ? us.map(function (u) { return u.name + ' (' + u.cases + ')'; }).join(', ') + ' — counted under the name as typed, never guessed' : 'none'));
+    lines.push('Cases named here that are not in the book yet: ' + num(c.notInBook) + ' — counted, never invented.');
+    lines.push('NOT changed by this file: no status (Fitted / Scheduled / Missed / Cancelled stays as the daily exports decided), no VAS figure, no agent score.');
+  } else {
     lines.push((r.kind === 'vtBiFitted' ? 'VT lines ' + num(c.vtLines) + ' of ' + num(c.rows) + ' rows' : num(c.vtLines) + ' rows') + ' · cases ' + num(c.cases)
       + (c.skippedFooter || c.skippedBlank ? ' · skipped ' + num((c.skippedFooter || 0) + (c.skippedBlank || 0)) + ' footer/blank rows' : ''));
     lines.push('New ' + num(c['new']) + ' · to Fitted ' + num(c.toFitted) + ' · to Missed ' + num(c.toMissed) + ' · to Scheduled ' + num(c.toScheduled)
@@ -240,7 +273,7 @@ function showReceipt(r) {
 function slotsHtml() {
   var cards = [['vtBiFitted', 'The daily BI Active Fitted export. Only the Vehicle Tracking lines are kept (Unit Type BEAME, MXV or Matrix Vision); every VAS line and every customer field stays in this browser. It never touches VAS money.'],
     ['vtSchedMissed', 'The daily Scheduled & Missed export: open fitment bookings and missed appointments. Mobile numbers, registrations and chassis numbers are dropped before anything is sent.'],
-    ['vtOpeningBook', 'Optional, once: the Schedulers Data sheet of the hand-built VT report, for the sale dates of the cases already open at go-live. Load it after the first day\'s two files — it can only date cases that are already in the book.']];
+    ['vtSchedulers', 'The Schedulers Data sheet of the master VT report: the scheduler, the GWP and the true sale date for every case. Upload it whenever the master is updated — it may be re-uploaded as often as you like. It never changes a status: the daily exports decide those, and where the sheet disagrees the receipt says so. Load it after the first two daily files — it can only add to cases that are already in the book.']];
   return '<div class="card mt" id="vtStation"><div class="cardhead"><div><h3>Vehicle Tracking</h3><div class="sub">Vehicle Tracking files keep their own case book. They never change a VAS figure.</div></div></div>'
     + '<div class="slots vt-slots">' + cards.map(function (c) {
       return '<div class="slot vtslot" data-vtslot="' + c[0] + '" tabindex="0" role="button" aria-label="Upload ' + esc(LABEL[c[0]]) + '"'
@@ -266,12 +299,19 @@ async function ingest(name, buf, hash, expected, found, opts) {
     var XL = opts.XLSX || root.XLSX; if (!XL) return fail('The spreadsheet reader did not load. Refresh the page and drop the file again.');
     var aoa = workbookAoa(buf, XL)[found.sheet] || [], parsed = parseFor(kind, aoa);
     if (parsed.missing && parsed.missing.length) return fail('Missing required columns: ' + parsed.missing.join(', ') + '.');
+    /* spec A2: one row, one case. A repeated case number makes the whole file unusable, so nothing is sent and the
+       duplicates are named - the pattern publish_agent_list() uses for a duplicate CB inside one Agent List. */
+    if (parsed.duplicates && parsed.duplicates.length) return fail('This file carries ' + num(parsed.duplicates.length)
+      + ' case number' + (parsed.duplicates.length === 1 ? '' : 's') + ' more than once (' + parsed.duplicates.slice(0, 5).join(', ')
+      + (parsed.duplicates.length > 5 ? ', …' : '') + '). One row is one case, so nothing was sent. Fix the sheet and drop it again.');
     var ex = eng.extractDate(name, sastToday(opts.now)), cyc = eng.periods.cycleOf(ex.date), nCases = Object.keys(parsed.cases).length;
     var warnings = ex.assumed ? ['extract date assumed (' + ex.date + '): the file name carries no ddmmyy date'] : [];
-    if (kind !== 'vtOpeningBook') {
-      var g = eng.guardUpload(kind === 'vtBiFitted' ? 'bi' : 'sm', nCases, lastCountFor(kind, cyc.key, rec.uploads), opts.quietAck);
+    /* spec 072 U-6: no exemption any more - the Schedulers Data file takes the thin-pull guard like the daily files
+       (its case count only grows), with the same genuine-quiet-day acknowledgement button where one applies. */
+    {
+      var g = eng.guardUpload(GUARD_KIND[kind], nCases, lastCountFor(kind, cyc.key, rec.uploads), opts.quietAck);
       if (!g.ok) {
-        var again = kind === 'vtSchedMissed' && nCases > 0 ? '<button type="button" class="btn small" onclick="VTStation.retryQuiet()">This is a genuine quiet day — load it</button>' : '';
+        var again = kind !== 'vtBiFitted' && nCases > 0 ? '<button type="button" class="btn small" onclick="VTStation.retryQuiet()">This is a genuine quiet day — load it</button>' : '';
         if (again) root.__vtQuietRetry = function () { banner(null); return ingest(name, buf, hash, expected, found, Object.assign({}, opts, { quietAck: true })); };
         return fail(g.reason, again);
       }
@@ -286,10 +326,10 @@ async function ingest(name, buf, hash, expected, found, opts) {
     for (var attempt = 1; attempt <= MAX_TRIES; attempt++) {
       var book = await readBook(env, cyc.from, Object.keys(parsed.cases).map(Number));
       if (!book) continue;   // the book moved between two parts of the read: re-read (a conflict, FR-008)
-      if (kind === 'vtOpeningBook' && !book.openedOn) return fail(REFUSE_OPENING_FIRST);
+      if (kind === 'vtSchedulers' && !book.openedOn) return fail(REFUSE_DATING_FIRST);
       /* the receipts are read AFTER the book, every attempt (derived cancellation, R1): a file committed after the book read
          moves the revision, so this commit is refused and re-merged; one committed before it is in both reads */
-      var rcp = kind === 'vtOpeningBook' ? null : (must(await call(env, 'GET', '/api/vt/uploads?limit=60'), 'Reading the VT receipts').uploads || []);
+      var rcp = kind === 'vtSchedulers' ? null : (must(await call(env, 'GET', '/api/vt/uploads?limit=60'), 'Reading the VT receipts').uploads || []);
       var plan = planCommit(book, parsed, { extractOn: ex.date, roster: roster, warnings: warnings, quietAck: opts.quietAck, receipts: rcp });
       /* p_user is never sent (review fix 6): the Worker appends the session's own username to every write */
       var br = await call(env, 'POST', '/api/vt/upload/begin', { p_sha256: hash, p_kind: DB_KIND[kind], p_file_name: String(name).slice(0, 300), p_extract_on: ex.date, p_cycle_key: cyc.key });
@@ -310,7 +350,8 @@ async function ingest(name, buf, hash, expected, found, opts) {
       } catch (e) { await call(env, 'POST', '/api/vt/upload/abandon', { p_id: b.id }).catch(function () {}); throw e; }
       var r = { kind: kind, fileName: name, extractOn: ex.date, assumed: ex.assumed, counts: plan.merged.counts, unmatched: plan.merged.unmatched,
         warnings: plan.commit.p_warnings, rosterFallback: fallback, quietDay: !!opts.quietAck, rev: c.j.rev, attempts: attempt,
-        cancelNote: plan.merged.cancel ? plan.merged.cancel.note : null };
+        cancelNote: plan.merged.cancel ? plan.merged.cancel.note : null,
+        disagree: plan.merged.disagree, unmatchedSchedulers: plan.merged.unmatchedSchedulers, cycles: plan.merged.cycles };
       banner(null); showReceipt(r);
       toast(LABEL[kind] + ' loaded: ' + num(plan.merged.counts.cases) + ' cases, ' + num(plan.events.length) + ' status changes'
         + (plan.merged.counts.cancelledDropped ? ' (' + num(plan.merged.counts.cancelledDropped) + ' cancelled: in neither file of the day)' : '') + ' · VAS money unchanged', '', 9000);
@@ -326,7 +367,7 @@ async function ingest(name, buf, hash, expected, found, opts) {
 }
 function retryQuiet() { return root.__vtQuietRetry ? root.__vtQuietRetry() : null; }
 
-return { API: API, LABEL: LABEL, DB_KIND: DB_KIND, REFUSE_OPENING_FIRST: REFUSE_OPENING_FIRST,
+return { API: API, LABEL: LABEL, DB_KIND: DB_KIND, GUARD_KIND: GUARD_KIND, REFUSE_DATING_FIRST: REFUSE_DATING_FIRST, REFUSE_OPENING_FIRST: REFUSE_OPENING_FIRST,
   caseRowToDb: caseRowToDb, eventToDb: eventToDb, batches: batches, rosterFromRpc: rosterFromRpc, rosterFromPulse: rosterFromPulse,
   headerOf: headerOf, kindOfSheets: kindOfSheets, workbookAoa: workbookAoa, parseFor: parseFor, lastCountFor: lastCountFor, planCommit: planCommit,
   receiptLines: receiptLines, slotsHtml: slotsHtml, pick: pick, drop: drop, ingest: ingest, retryQuiet: retryQuiet, call: call, must: must, afterCommit: null,
@@ -356,6 +397,7 @@ var TAB = { mtd: 'vt_mtd', weekly: 'vt_weekly', daily: 'vt_daily' };
 var PORTAL_ROLES = ['agent', 'team_leader', 'campaign_manager'];   // unmatched sellers' names are for staff only (plan §P)
 var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 var DL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>';
+var GUARD_KIND = { vtBiFitted: 'bi', vtSchedMissed: 'sm', vtSchedulers: 'schedulers' };
 function E() { return root.VTEngine || (typeof require === 'function' ? require('./vt-engine.js') : null); }
 function R() { return E().VT_RULES; }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -728,7 +770,7 @@ function receiptsCardHtml() {
   }
   var rows = C.receipts.filter(function (u) { return u.state === 'committed'; }).slice(0, 10);
   if (!rows.length) return top + '<p class="note">' + (C.recErr ? 'The receipts could not be read.' : 'No Vehicle Tracking file has been uploaded yet.') + '</p></div>';
-  var KIND = { bi_fitted: 'BI Active Fitted', sched_missed: 'Scheduled & Missed', opening_book: 'Opening book' };
+  var KIND = { bi_fitted: 'BI Active Fitted', sched_missed: 'Scheduled & Missed', schedulers_data: 'Schedulers Data', opening_book: 'Opening book (retired)' };
   var H = ['Committed', 'Kind', 'File', 'Extract date', 'Cases', 'New', 'To Fitted', 'To Missed', 'To Scheduled', 'Unmatched sellers', 'Warnings'];
   return top + '<div class="tablewrap"><table class="data"><thead><tr>' + H.map(function (h, i) { return '<th class="' + (i < 4 ? 'l' : '') + '">' + h + '</th>'; }).join('') + '</tr></thead><tbody>'
     + rows.map(function (u) { var c = u.counts || {};

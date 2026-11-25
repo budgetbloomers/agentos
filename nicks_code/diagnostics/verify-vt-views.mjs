@@ -322,4 +322,48 @@ eq('the channel classifier is exported for the page\'s filters and folds the unk
   ['Revx', 'Referral Agent', 'Predictive', 'Mystery Co', null].map(c => E.channelOf(c, null)), ['lead_gen', 'referral', 'predictive', 'other', 'other']);
 eq('a campaign\'s case differs, the map still finds it', E.channelOf('  tracking empire ', null), 'lead_gen');
 
+head('B2 - a Schedulers Data commit over this book: status stands, the rating window does not move (risk 2)');
+{ /* the same book, dated by the daily files (basis first_seen) and already carrying openingBookOn */
+  const daily = bookOf(ROWS.map(r => Object.assign({}, r, { soldBasis: 'first_seen', gwpRpt: null, schedulerName: null, schedulerCb: null, resultRpt: null })));
+  const before = E.model(daily, [], { asOf: ASOF, cycleKey: CYCLE });
+  const beforeStatuses = Object.keys(daily.cases).sort().map(k => daily.cases[k].status);
+  const HDR = ['Month', 'Date', 'Agent', 'Sale Count', 'GWP', 'Case Number', 'Customer Contact', 'Campaign/Partner', 'Referring Agent',
+    'Scheduler', 'Result', 'Hrs Ahead', 'Date Scheduled', null, 'Scheduled', 'Missed', 'Fitted', 'Channel'];
+  const ser = (d) => Math.round(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)) / 864e5) + 25569;
+  /* every Result says Cancelled - the most hostile file possible: not one status may move */
+  const aoa = [HDR].concat(Object.keys(daily.cases).sort().map((k) => {
+    const r = new Array(18).fill(null), c = daily.cases[k];
+    r[0] = 'Current'; r[1] = ser(c.soldOn); r[2] = 'Some Agent'; r[3] = 1; r[4] = 149; r[5] = k; r[6] = '0820000001';
+    r[7] = c.campaignRpt || 'Revx'; r[8] = 0; r[9] = 'Scheduler CB9102'; r[10] = 'Cancelled'; r[12] = 0;
+    return r;
+  }));
+  const parsed = E.parseSchedulers(aoa);
+  const m = E.merge(daily, parsed, { extractOn: ASOF, roster: [], aliases: {} });
+  const after = E.model(m.book, [], { asOf: ASOF, cycleKey: CYCLE });
+  eq('not one status moved, whatever the Result column said', Object.keys(m.book.cases).sort().map(k => m.book.cases[k].status), beforeStatuses);
+  eq('and no status event was written', m.events, []);
+  eq('trackFrom, the working days elapsed and the floor SPD are identical before and after (U-5, risk 2)',
+    [after.trackFrom, after.workingDaysElapsed, after.floor.mtd.spd], [before.trackFrom, before.workingDaysElapsed, before.floor.mtd.spd]);
+  eq('every disagreement is counted by direction instead (the two already cancelled agree)', m.disagree.total, 11);
+  const dash = E.dashboard(m.book, [], { cycleKey: CYCLE, view: 'cycle', asOf: ASOF });
+  eq('the dashboard own counts are unmoved by the commit, and the disagreement panel now has figures',
+    [dash.counts.sales, dash.counts.fitted, dash.disagree.resultVsEngine.total > 0], [M.counts.sales, M.counts.fitted, true]);
+
+  head('B4 - back-build: the cycles the file covers, and a real previous cycle from the book');
+  const cov = E.cyclesInBook(m.book);
+  eq('every business cycle the sale dates reach is reported, oldest first', cov.map(c => [c.key, c.cases]), [['cycle-2026-10', 5], ['cycle-2026-11', 8]]);
+  eq('the earliest cycle is labelled partial, with the first sale date, in words',
+    [cov[0].partial, cov[0].firstSale, /Partial/.test(cov[0].words)], [true, '2026-09-28', true]);
+  ok('and a cycle the file covers in full says so', /in full/.test(cov[1].words), cov[1].words);
+  const prev = E.prevCycleFor(m.book, [], CYCLE, { asOf: ASOF });
+  eq('the previous cycle is computed from the back-built book: its own sales and fitments',
+    [prev.cycle, prev.present, prev.partial, prev.counts.sales, prev.counts.fitted], ['cycle-2026-10', true, true, 5, 2]);
+  const withPrev = E.dashboard(m.book, [], { cycleKey: CYCLE, view: 'cycle', asOf: ASOF, prev: prev });
+  ok('and dashboard({prev}) then paints a real delta instead of the absent marker',
+    withPrev.prevCycle.present === true && withPrev.kpis[0].delta && withPrev.kpis[0].delta.abs === withPrev.counts.sales - prev.counts.sales,
+    JSON.stringify(withPrev.kpis[0].delta));
+  ok('a book with nothing in the previous cycle still reads "no previous cycle on file"',
+    E.dashboard(book, [], { cycleKey: CYCLE, view: 'cycle', asOf: ASOF, prev: E.prevCycleFor(bookOf([ROWS[0]]), [], CYCLE, { asOf: ASOF }) }).prevCycle.present === false);
+}
+
 finish();

@@ -2696,7 +2696,7 @@ async function ingestText(name, text, expected, hash){
   if(expected){
     const SLOT_TYPES={bi:['bi'],calls:['calls'],attendance:['attendance'],inactive:['cancellations'],vici:['calls (ViciDial)','vici'],
       evals:['evals'],roster:['roster'],trackerDaily:['tracker','roster'],referrals:['referrals'],board:['board'],
-      vtBiFitted:['vt'],vtSchedMissed:['vt'],vtOpeningBook:['vt']};   // the three VT slots (spec 071): a VAS file dropped there is filed as VAS, with this heads-up
+      vtBiFitted:['vt'],vtSchedMissed:['vt'],vtSchedulers:['vt']};   // the three VT slots (spec 071; the third is Schedulers Data since 072): a VAS file dropped there is filed as VAS, with this heads-up
     const want=SLOT_TYPES[expected]||[expected];
     if(!ingested.some(r=>want.some(w=>r.type.startsWith(w))))
       toast('Heads up: "'+name+'" is actually '+ingested.map(r=>r.type).join(', ')+' — filed there instead');

@@ -33,7 +33,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
-import { biFile, smFile, openFile, xlsxBytes, PII } from './vt-fixtures.mjs';
+import { biFile, smFile, schFile, xlsxBytes, PII } from './vt-fixtures.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
 const require = createRequire(import.meta.url);
@@ -47,7 +47,8 @@ const API = 'https://chatterbox-agentos-api.chatterbox-agentos.workers.dev';
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 
 /* ---- the stub Worker: a case book kept the way migration-071 keeps it ---- */
-const COLS = ['case_number', 'status', 'status_on', 'sold_on', 'sold_basis', 'first_seen', 'last_seen', 'appt_on', 'fitted_on', 'products', 'charge_ex', 'lead_source', 'seller_name', 'seller_cb', 'seller_match', 'sm_attempt', 'bundle', 'partner_raw'];
+const COLS = ['case_number', 'status', 'status_on', 'sold_on', 'sold_basis', 'first_seen', 'last_seen', 'appt_on', 'fitted_on', 'products', 'charge_ex', 'lead_source', 'seller_name', 'seller_cb', 'seller_match', 'sm_attempt', 'bundle', 'partner_raw', 'cancel_reason',
+  /* spec 072 DB-3: appended, in VTEngine.BOOK_COLS order */ 'scheduler_name', 'scheduler_cb', 'gwp_rpt', 'referring_name', 'referring_cb', 'campaign_rpt', 'result_rpt'];
 const ROSTER_RPC = { as_of: '2026-11-02', rows: [
   { code: 'CB9101', name: 'Alpha Test', sf: 'Alpha Test', tl: 'Leader One', tl_code: 'CB9190', campaign_raw: 'Matrix Vehicle Tracking - Digital', tenure: 'Exp', target: 6.5, start_date: '2026-01-05' },
   { code: 'CB9102', name: 'Bravo Middle Tester', sf: null, tl: 'Leader Two', tl_code: 'CB9191', campaign_raw: 'Matrix Vehicle Tracking - Referral', tenure: 'Exp', target: 3, start_date: '2026-01-05' }] };
@@ -77,10 +78,11 @@ function answer(method, p, body) {
     if (body.p_base_rev !== W.rev) return J({ error: 'version_conflict' }, 409);
     const u = W.uploads.find((x) => x.id === body.p_id), s = W.stage[body.p_id];
     if (s.case.length !== body.p_cases || s.event.length !== body.p_events) return J({ error: 'stage_incomplete' }, 409);
-    if (u.kind === 'opening_book' && !W.openedOn) return J({ error: 'Load the opening book after the first day\'s two files' }, 409);
+    if ((u.kind === 'opening_book' || u.kind === 'schedulers_data') && !W.openedOn) return J({ error: 'Load the opening book after the first day\'s two files' }, 409);
     for (const c of s.case) W.cases[c.case_number] = { ...c };
     for (const e of s.event) if (!W.events.some((x) => x.case_number === e.case_number && x.on_date === e.on_date && x.to_status === e.to_status)) W.events.push(e);
-    W.rev++; if (u.kind !== 'opening_book') W.openedOn = W.openedOn || u.extract_on; else W.openingBookOn = W.openingBookOn || u.extract_on;
+    const dating = u.kind === 'opening_book' || u.kind === 'schedulers_data';   /* spec 072: both dating kinds stamp opening_book_on */
+    W.rev++; if (!dating) W.openedOn = W.openedOn || u.extract_on; else W.openingBookOn = W.openingBookOn || u.extract_on;
     Object.assign(u, { state: 'committed', counts: body.p_counts, unmatched: body.p_unmatched, warnings: body.p_warnings, quiet_day_ack: body.p_quiet_ack, rev_after: W.rev });
     return J({ rev: W.rev, cases: s.case.length, events: s.event.length });
   }
@@ -190,18 +192,43 @@ try {
   const r7 = await drop('BI Active Fitted 091126.xlsx', BI1);
   ok(/could not be reached, so nothing was saved/.test(r7.banner), 'a persistent banner says nothing was saved', r7.banner);
 
-  head('S8 · the opening book');
+  head('S8 · the Schedulers Data upload (spec 072 B5)');
   await dismiss(); resetWorker(); W.log = [];
-  const OB = xlsxBytes({ 'Team Split': [['Team Leader', 'Agent Name', 'Sales Force'], ['Leader One', 'Alpha Test', 'Alpha Test']], 'Schedulers Data': openFile([{ cn: 90000001, sold: '2026-11-03' }]) });
-  const r8 = await drop('November 2026 - VT Report.xlsx', OB);
-  ok(r8.banner.includes(ST.REFUSE_OPENING_FIRST.slice(0, 60)) && calls('/api/vt/upload/begin') === 0, 'on an empty book it is refused in plain words', r8.banner);
+  const SCHROWS = [{ cn: 90000001, sold: '2026-11-03', gwp: 149, scheduler: 'Echo Foxtrot', campaign: 'Referral Agent', result: 'Cancelled' },
+    { cn: 90000777, sold: '2026-09-15', gwp: 99, scheduler: 'Nobody On The List', result: 'Fitted' }];
+  const OB = xlsxBytes({ 'Team Split': [['Team Leader', 'Agent Name', 'Sales Force'], ['Leader One', 'Alpha Test', 'Alpha Test']], 'Schedulers Data': schFile(SCHROWS) });
+  const r8 = await drop('Master November 2026 - VT Report.xlsx', OB);
+  ok(r8.banner.includes(ST.REFUSE_DATING_FIRST.slice(0, 60)) && calls('/api/vt/upload/begin') === 0, 'on an empty book it is refused in plain words', r8.banner);
+  ok(ST.REFUSE_OPENING_FIRST === ST.REFUSE_DATING_FIRST, 'the retired slot name still answers (nothing that asked for it breaks)');
   ok(await page.evaluate(() => !(window.__mtd.state().roster || []).some((a) => a.code === 'CB9101')), 'its other sheets were not read as a VAS Agent List');
   await dismiss();
   await drop('BI Active Fitted 091126.xlsx', BI1);
-  const r8b = await drop('November 2026 - VT Report.xlsx', OB);
-  ok(W.cases['90000001'].sold_on === '2026-11-03' && W.cases['90000001'].sold_basis === 'opening_book' && W.openingBookOn, 'after the first day it applies the report\'s sale date, and only that', JSON.stringify(W.cases['90000001']));
-  ok(/1 cases in the opening book · 1 sale dates applied/.test(r8b.receipt), 'its receipt counts the sale dates applied', r8b.receipt);
-  ok(!W.log.map((x) => x.raw).join('\n').includes('0839999999') && !W.log.map((x) => x.raw).join('\n').includes('Scheduler Zed'), 'the customer contact and the scheduler never leave the browser');
+  const statusBefore = W.cases['90000001'].status;
+  const r8b = await drop('Master November 2026 - VT Report.xlsx', OB);
+  const c1 = W.cases['90000001'];
+  ok(c1.sold_on === '2026-11-03' && c1.sold_basis === 'schedulers_data' && W.openingBookOn, 'after the first day it applies the sheet sale date and stamps the book as dated', JSON.stringify(c1));
+  ok(c1.scheduler_name === 'echo foxtrot' && Number(c1.gwp_rpt) === 149 && c1.campaign_rpt === 'Referral Agent' && c1.result_rpt === 'cancelled',
+    'the scheduler, the GWP, the campaign and the typed Result are carried to the server', JSON.stringify(c1));
+  ok(c1.scheduler_cb === null, 'this stub Agent List carries no Scheduling row, so the CB stays null and the name travels as typed', String(c1.scheduler_cb));
+  ok(c1.status === statusBefore, 'the status did NOT move, though the sheet says Cancelled', c1.status + ' vs ' + statusBefore);
+  ok(/Sale dates re-stated: 1/.test(r8b.receipt) && /Schedulers set: 1/.test(r8b.receipt) && /GWP set: 1/.test(r8b.receipt),
+    'the receipt says in plain words what it changed: dates, schedulers, GWP', r8b.receipt);
+  ok(/disagrees with the daily exports: 1/.test(r8b.receipt) && /never applied/.test(r8b.receipt), 'and that the disagreement was counted, never applied', r8b.receipt);
+  ok(/not in the book yet: 1/.test(r8b.receipt) && /never invented/.test(r8b.receipt), 'and that the case it could not place was counted, never invented', r8b.receipt);
+  ok(/Business months this file reaches: cycle-2026-11/.test(r8b.receipt), 'and which business months the file reaches (the back-build)', r8b.receipt);
+  ok(/NOT changed by this file: no status/.test(r8b.receipt) && /no VAS figure/.test(r8b.receipt), 'and what it did NOT change', r8b.receipt);
+  ok(/Schedulers not on the Agent List: echo foxtrot \(1\)/.test(r8b.receipt) && /never guessed/.test(r8b.receipt),
+    'a scheduler the Agent List does not carry is named on the receipt with its case count, never guessed', r8b.receipt);
+  ok(!W.log.map((x) => x.raw).join('\n').includes('0839999999'), 'the customer contact never leaves the browser');
+  { /* re-uploadable (U-6): the same sheet with one more case lands again, and nothing else moves */
+    const OB2 = xlsxBytes({ 'Schedulers Data': schFile(SCHROWS.concat([{ cn: 90000002, sold: '2026-11-04', gwp: 199, scheduler: 'Echo Foxtrot' }])) });
+    const r8c = await drop('Master November 2026 - VT Report 251126.xlsx', OB2);
+    ok(!r8c.banner && /Sale dates re-stated: 1/.test(r8c.receipt) && /unchanged 1/.test(r8c.receipt), 'the same file again is accepted and says what was unchanged', r8c.banner || r8c.receipt);
+    const dup = xlsxBytes({ 'Schedulers Data': schFile(SCHROWS.concat([{ cn: 90000001, sold: '2026-11-05' }])) });
+    const before = calls('/api/vt/upload/begin');
+    const r8d = await drop('Master dup 251126.xlsx', dup);
+    ok(/more than once/.test(r8d.banner) && calls('/api/vt/upload/begin') === before, 'a duplicate case number inside one file is refused in words and nothing is sent (A2)', r8d.banner);
+    await dismiss(); }
 
   head('S9 · the roster (C7)');
   ok(!/read from this page/.test(r1.receipt), 'with /api/vt/roster answering, the receipt carries no fallback note');
@@ -229,7 +256,8 @@ try {
     return { vas: vas.map((c) => c.dataset.slot), vt: vt.map((c) => c.dataset.vtslot + ':' + c.querySelector('b').innerText) };
   }, null, { timeout: 30000 })).jsonValue();
   ok(slots.vas.join(',') === 'bi,attendance,evals,roster,inactive,vici,board,opencasesLM,closedcases,referrals', 'the ten VAS slot cards are unchanged, in order', slots.vas.join(','));
-  ok(slots.vt.join(' | ') === 'vtBiFitted:VT · BI Active Fitted | vtSchedMissed:VT · Scheduled & Missed | vtOpeningBook:VT · Opening book (once)', 'the three VT slots, in their own group', slots.vt.join(' | '));
+  ok(slots.vt.join(' | ') === 'vtBiFitted:VT · BI Active Fitted | vtSchedMissed:VT · Scheduled & Missed | vtSchedulers:VT · Schedulers Data', 'the three VT slots, in their own group, with Schedulers Data in place of the retired opening book', slots.vt.join(' | '));
+  ok(!/Opening book \(once\)/.test(await page.evaluate(() => document.getElementById('view').innerText)), 'the retired Opening book slot is gone from the station');
   await dismiss(); resetWorker();
   const r10 = await drop('BI Active Fitted 091126.xlsx', BI1, 'bi');
   ok(r10.toasts.some((t) => /is the Vehicle Tracking file \(BI Active Fitted\)/.test(t) && /Nothing was loaded into VAS/.test(t)) && W.rev === 0 && calls('/api/vt/upload/begin') === 0,

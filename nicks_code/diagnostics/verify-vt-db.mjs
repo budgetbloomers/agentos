@@ -40,7 +40,7 @@ import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { splitSql, strip } from './usage-028-harness.mjs';
-import { biFile, smFile, openFile, ROSTER } from './vt-fixtures.mjs';
+import { biFile, smFile, schFile, ROSTER } from './vt-fixtures.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
 const require = createRequire(import.meta.url);
@@ -51,10 +51,11 @@ const eq = (m, a, b) => ok(JSON.stringify(a) === JSON.stringify(b), m, 'expected
 const head = (t) => console.log('\n' + t);
 const done = () => { console.log(`\n==== ${pass} passed, ${fail} failed ====`); process.exit(fail ? 1 : 0); };
 
-const M71 = SQLF('migration-071-vt-facts.sql'), M72 = SQLF('migration-072-vt-roster-read.sql');
+const M71 = SQLF('migration-071-vt-facts.sql'), M72 = SQLF('migration-072-vt-roster-read.sql'), M73 = SQLF('migration-073-vt-schedulers.sql');
 ok(!!M71, 'supabase/migration-071-vt-facts.sql exists');
 ok(!!M72, 'supabase/migration-072-vt-roster-read.sql exists');
-if (!M71 || !M72) done();
+ok(!!M73, 'supabase/migration-073-vt-schedulers.sql exists (spec 072 B3)');
+if (!M71 || !M72 || !M73) done();
 const E = require(path.join(ROOT, 'nicks_code', 'vt-engine.js'));
 const ST = require(path.join(ROOT, 'nicks_code', 'vt-pages.js'));
 const { PGlite } = await import(pathToFileURL(path.join(HERE, 'node_modules', '@electric-sql', 'pglite', 'dist', 'index.js')).href);
@@ -68,7 +69,7 @@ for (const st of [...pick('migration-020-publish-agent-list.sql', /^create table
   ...pick('migration-014-agent-list-sync.sql', /^create or replace function norm_cb/i)]) await db.exec(st);
 /* as in production after migration-049: norm_cb is not PUBLIC-executable, service_role keeps it (072 relies on that) */
 await db.exec(`revoke execute on function norm_cb(text) from public; grant execute on function norm_cb(text) to service_role;`);
-for (const [f, text] of [['071', M71], ['072', M72]]) {
+for (const [f, text] of [['071', M71], ['072', M72], ['073', M73]]) {
   let bad = 0;
   for (const st of splitSql(text)) { try { await db.exec(st); } catch (e) { bad++; ok(false, 'migration-' + f + ' statement applies: ' + strip(st).slice(0, 80), e.message); } }
   ok(bad === 0, 'migration-' + f + ' applies statement by statement');
@@ -114,8 +115,8 @@ for (const r of ['anon', 'authenticated']) {
   ok(b && /permission denied/i.test(b), r + ': reading vt_cases is denied', b);
 }
 
-head('D3 · every function in 071/072 is revoked after it is (re)defined');
-for (const [f, text] of [['071', M71], ['072', M72]]) {
+head('D3 · every function in 071/072/073 is revoked after it is (re)defined');
+for (const [f, text] of [['071', M71], ['072', M72], ['073', M73]]) {
   const body = strip(text.replace(/\$\$[\s\S]*?\$\$/g, '$$$$'));
   const defs = [...body.matchAll(/create\s+or\s+replace\s+function\s+(\w+)\s*\(/gi)].map((m) => ({ fn: m[1].toLowerCase(), at: m.index }));
   ok(defs.length > 0, 'migration-' + f + ' defines functions', defs.length);
@@ -139,7 +140,7 @@ await db.exec('set role service_role');
 const begin = (sha, kind, name, on) => rpc('vt_upload_begin', [sha, kind, name, on, E.periods.cycleOf(on).key, 'tester']);
 const book = async (from = null, also = null) => E.bookFromRpc(await rpc('vt_book', [from, also]));
 async function upload(sha, kind, aoa, on, name, base) {
-  const parsed = kind === 'bi_fitted' ? E.parseBi(aoa) : kind === 'sched_missed' ? E.parseSm(aoa) : E.parseOpeningBook(aoa);
+  const parsed = kind === 'bi_fitted' ? E.parseBi(aoa) : kind === 'sched_missed' ? E.parseSm(aoa) : E.parseSchedulers(aoa);
   const bk = await book(null, null);
   const plan = ST.planCommit(bk, parsed, { extractOn: on, roster: ROSTER });
   const b = await begin(sha, kind, name, on);
@@ -154,9 +155,9 @@ const BI1 = biFile([{ cn: 90000001, partner: 'RevX' }, { cn: 90000002, unit: 'BE
 const SM1 = smFile([{ cn: 90000003, outcome: 'Scheduled Fitment', partner: 'Panimax - New Sales', seller: 'Bravo Middle Tester' }, { cn: 90000004, outcome: 'Missed Fitment', appt: '2026-11-08' },
   { cn: 90000001, outcome: 'Missed Fitment' }, { cn: 90000005, seller: 'Nobody On The List' }]);
 
-head('D8a · the opening book is refused on an empty book');
-const o0 = await err(() => upload(SHA(70), 'opening_book', openFile([{ cn: 90000003 }]), DAY1, 'Opening.xlsx'));
-ok(o0 && /opening_book_before_first_day/.test(o0), 'an opening book before the first day\'s files is refused', o0);
+head('D8a · a Schedulers Data file is refused on an empty book (it can only date cases already in the book)');
+const o0 = await err(() => upload(SHA(70), 'schedulers_data', schFile([{ cn: 90000003 }]), DAY1, 'Master November 2026 - VT Report.xlsx'));
+ok(o0 && /opening_book_before_first_day/.test(o0), 'a dating file before the first day files is refused (the 071 guard, widened to the new kind)', o0);
 eq('...and nothing was written', (await one('select count(*)::int n from vt_cases')).n, 0);
 
 head('D4 · begin → stage → commit, read back through the engine');
@@ -208,11 +209,39 @@ head('D6 · compare-and-set on the book revision');
   eq('the stage rows are gone after the commit', (await one('select count(*)::int n from vt_upload_stage where upload_id = $1', [b.id])).n, 0);
 }
 
-head('D8b · the opening book after the first day');
-const o1 = await upload(SHA(71), 'opening_book', openFile([{ cn: 90000003, sold: '2026-11-03' }, { cn: 90000099 }]), DAY2, 'November 2026 - VT Report.xlsx');
+head('D8b · Schedulers Data after the first day (migration-073: DB-1..DB-4, DB-6)');
+const SCH1 = [{ cn: 90000003, sold: '2026-11-03', gwp: 149, scheduler: 'Echo Foxtrot', campaign: 'Referral Agent', result: 'Scheduled' }];
+const o1 = await upload(SHA(71), 'schedulers_data', schFile(SCH1.concat([{ cn: 90000099 }])), DAY2, 'Master November 2026 - VT Report.xlsx');
 const b8 = await book();
-eq('it dates the case already in the book and stamps openingBookOn', [b8.cases['90000003'].soldOn, b8.cases['90000003'].soldBasis, b8.openingBookOn], ['2026-11-03', 'opening_book', DAY2]);
+eq('it dates the case already in the book and stamps openingBookOn (U-5: the same column, the same meaning)',
+  [b8.cases['90000003'].soldOn, b8.cases['90000003'].soldBasis, b8.openingBookOn], ['2026-11-03', 'schedulers_data', DAY2]);
 ok(o1.plan.merged.counts.notInBook === 1, 'a case not in the book is counted on the receipt, not invented');
+eq('the stored Schedulers Data columns come back through vt_book',
+  [b8.cases['90000003'].schedulerName, b8.cases['90000003'].schedulerCb, b8.cases['90000003'].gwpRpt, b8.cases['90000003'].campaignRpt, b8.cases['90000003'].resultRpt],
+  ['echo foxtrot', 'CB9104', 149, 'Referral Agent', 'scheduled']);
+eq('the new kind is on the receipt', (await one('select kind from vt_uploads where sha256 = $1', [SHA(71)])).kind, 'schedulers_data');
+ok(!(await err(() => db.query("insert into vt_uploads (sha256, kind, file_name, extract_on, cycle_key) values ($1, 'opening_book', 'historical.xlsx', '2026-11-10', 'cycle-2026-11')", [SHA(69)]))),
+  'a historical opening_book receipt still inserts (never edit an applied migration, DB-1)');
+{ const bad = await err(() => db.query("insert into vt_uploads (sha256, kind, file_name, extract_on, cycle_key) values ($1, 'nonsense', 'x.xlsx', '2026-11-10', 'cycle-2026-11')", [SHA(68)]));
+  ok(bad && /kind/.test(bad), 'a kind outside the four is still refused by the CHECK', bad);
+  const bb = await err(() => db.query("update vt_cases set sold_basis = 'guessed' where case_number = 90000003"));
+  ok(bb && /sold_basis/.test(bb), 'sold_basis outside the four values is refused by the CHECK (DB-2)', bb);
+  const bc = await err(() => db.query("update vt_cases set scheduler_cb = 'cb9104' where case_number = 90000003"));
+  ok(bc && /scheduler_cb/.test(bc), 'scheduler_cb must be CB<digits> (DB-3)', bc); }
+/* RISK 3 · an ordinary daily commit must NOT blank the new columns (DB-4 coalesce) */
+{ await upload(SHA(72), 'bi_fitted', biFile([{ cn: 90000003, inst: '2026-11-11' }]), '2026-11-11', 'BI Active Fitted 111126.xlsx');
+  const b9 = await book();
+  eq('a BI commit AFTER Schedulers Data preserves the scheduler, the GWP, the campaign, the Result and the sale basis (risk 3)',
+    [b9.cases['90000003'].schedulerName, b9.cases['90000003'].schedulerCb, b9.cases['90000003'].gwpRpt, b9.cases['90000003'].campaignRpt,
+      b9.cases['90000003'].resultRpt, b9.cases['90000003'].soldOn, b9.cases['90000003'].soldBasis],
+    ['echo foxtrot', 'CB9104', 149, 'Referral Agent', 'scheduled', '2026-11-03', 'schedulers_data']);
+  eq('and the BI file still did its own job (the case is fitted)', b9.cases['90000003'].status, 'fitted');
+  const raw = await one('select scheduler_name, scheduler_cb, gwp_rpt, referring_name, referring_cb, campaign_rpt, result_rpt from vt_cases where case_number = 90000003');
+  eq('the seven new columns are on vt_cases (DB-3)', Object.keys(raw).length, 7); }
+{ const u = await upload(SHA(73), 'schedulers_data', schFile(SCH1), '2026-11-12', 'Master November 2026 - VT Report.xlsx');
+  eq('re-uploading Schedulers Data is idempotent: nothing changes and the commit still answers (U-6)', [u.plan.cases.length, u.res.cases], [0, 0]);
+  const b10 = await book();
+  eq('and openingBookOn keeps its FIRST value, so the rating window never moves (U-5)', b10.openingBookOn, DAY2); }
 
 head('D9 · abandon');
 { const b = await begin(SHA(9), 'bi_fitted', 'abandoned.xlsx', DAY2);
@@ -228,18 +257,19 @@ head('D10 · checks');
 ok(/check|violat/i.test(await err(() => begin('nothex', 'bi_fitted', 'x.xlsx', DAY2)) || ''), 'a sha256 that is not 64 hex characters is refused');
 ok(/check|violat|invalid/i.test(await err(() => begin(SHA(11), 'vas_bi', 'x.xlsx', DAY2)) || ''), 'an unknown kind is refused');
 { const b = await begin(SHA(12), 'bi_fitted', 'checks.xlsx', DAY2);
+  const REV = (await one('select rev::int r from vt_book_rev')).r;   // the live revision: 072 adds commits above
   const bad = ST.caseRowToDb(b8.cases['90000001']);
   await rpc('vt_upload_stage', [b.id, 'case', 0, JSON.stringify([{ ...bad, status: 'lost' }])]);
-  const e1 = await err(() => rpc('vt_upload_commit', [b.id, 5, '{}', '[]', '[]', false, 1, 0]));
+  const e1 = await err(() => rpc('vt_upload_commit', [b.id, REV, '{}', '[]', '[]', false, 1, 0]));
   ok(e1 && /check|violat/i.test(e1), 'a status outside scheduled/missed/fitted/cancelled is refused at commit (whole commit)', e1);
   await rpc('vt_upload_abandon', [b.id]);
   const b2x = await begin(SHA(13), 'bi_fitted', 'checks2.xlsx', DAY2);
   await rpc('vt_upload_stage', [b2x.id, 'case', 0, JSON.stringify([{ ...bad, case_number: '1000000000000' }])]);
-  ok(/check|violat/i.test(await err(() => rpc('vt_upload_commit', [b2x.id, 5, '{}', '[]', '[]', false, 1, 0])) || ''), 'a case number above 999,999,999,999 is refused');
+  ok(/check|violat/i.test(await err(() => rpc('vt_upload_commit', [b2x.id, REV, '{}', '[]', '[]', false, 1, 0])) || ''), 'a case number above 999,999,999,999 is refused');
   const big = Array.from({ length: 1001 }, () => bad);
   ok(/batch_too_large/.test(await err(() => rpc('vt_upload_stage', [b2x.id, 'case', 0, JSON.stringify(big)])) || ''), 'a stage batch over 1,000 rows is refused');
-  await rpc('vt_upload_abandon', [b2x.id]); }
-eq('none of the refused commits moved the revision', (await one('select rev::int r from vt_book_rev')).r, 5);
+  await rpc('vt_upload_abandon', [b2x.id]);
+  eq('none of the refused commits moved the revision', (await one('select rev::int r from vt_book_rev')).r, REV); }
 
 head('D11 · vt_book(p_from, p_also) and its speed');
 await db.exec('reset role');

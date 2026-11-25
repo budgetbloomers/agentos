@@ -1,13 +1,15 @@
 /* VT VALIDATE — the Vehicle Tracking half of the Upload Station validator (spec 071, F2).
  *
  * tools/upload-station-validate.mjs validates a day's upload folder. Since spec 071 that folder can also hold the three
- * Vehicle Tracking files — "BI Active Fitted <ddmmyy>.xlsx", "Scheduled & Missed <ddmmyy>.xlsx" and, once, the opening
- * book (the "Schedulers Data" sheet of the hand-kept report). This module recognises them with the ENGINE's own detection
+ * Vehicle Tracking files — "BI Active Fitted <ddmmyy>.xlsx", "Scheduled & Missed <ddmmyy>.xlsx" and the master VT
+ * report, whose "Schedulers Data" sheet is the Schedulers Data upload (spec 072; it REPLACED the once-only "opening
+ * book" slot, which read the same sheet for the sale date alone — RETIRED below). This module recognises them with the
+ * ENGINE's own detection
  * (nicks_code/vt-engine.js — never a second copy of the signatures), parses them with the engine's parsers, and checks:
  *   · the signature (the columns the engine reads by position are where it reads them)
  *   · the extract date from the file name (a name without ddmmyy is dated "today" by the station, and flagged)
  *   · VT lines present, and the thin-pull share against an earlier file of the same kind in the folder (guardUpload)
- *   · both daily files present together; the opening book is flagged "load after the first day's two files"
+ *   · both daily files present together; the Schedulers Data file is flagged "load after the first day's two files"
  *   · the Agent List's VT sheet: each rated agent's Target equals the business month's Sales Review SPD budget for their
  *     sub-campaign and tenure (warn on mismatch — A1); a Scheduling agent's "-" is expected (not rated in v1)
  * Pure apart from the workbook objects it is handed. Findings are {sev, area, msg} like the validator's.
@@ -19,8 +21,11 @@ import { fileURLToPath } from 'url';
 const require = createRequire(import.meta.url);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const VT = require(path.join(HERE, '..', 'nicks_code', 'vt-engine.js'));
-const KIND = { vtBiFitted: 'BI Active Fitted', vtSchedMissed: 'Scheduled & Missed', vtOpeningBook: 'VT opening book' };
-const GUARD_KIND = { vtBiFitted: 'bi', vtSchedMissed: 'sm' };
+/* spec 072 U-1/U-3: the third file is the master report's Schedulers Data sheet. The retired 'VT opening book' slot
+   is named as retired wherever a stored receipt or an old habit still calls it that. */
+const KIND = { vtBiFitted: 'BI Active Fitted', vtSchedMissed: 'Scheduled & Missed', vtSchedulers: 'Schedulers Data' };
+const RETIRED = { opening_book: 'the VT opening book slot, retired by spec 072 - the same sheet is now the Schedulers Data upload' };
+const GUARD_KIND = { vtBiFitted: 'bi', vtSchedMissed: 'sm', vtSchedulers: 'schedulers' };
 
 /** Which sheet of a workbook is a VT file, if any: {kind, sheet, aoa} | null. `sheets` = {name: aoa}. */
 export function detectVtWorkbook(sheets) {
@@ -35,6 +40,9 @@ export function detectVtWorkbook(sheets) {
  * files: [{name, sheets:{sheetName: aoa}}]   agentList: {sheetName: aoa} | null   periodEnd: 'YYYY-MM-DD'
  * → {sources:[{name, kind, label, extractOn, assumed, rows, vtLines}], findings:[{sev, area, msg}], vtFiles:Set<name>}
  */
+/** The names a VT upload kind has answered to, for a receipt or a folder that still uses the old one (spec 072 U-3). */
+export function retiredSlotNote(dbKind) { return RETIRED[String(dbKind || '')] || null; }
+
 export function validateVtPackage({ files = [], agentList = null, periodEnd = null } = {}) {
   const findings = [], sources = [], vtFiles = new Set();
   const f = (sev, msg) => findings.push({ sev, area: 'VT', msg });
@@ -53,10 +61,13 @@ export function validateVtPackage({ files = [], agentList = null, periodEnd = nu
     const ex = VT.extractDate(file.name, periodEnd);
     const src = { name: file.name, kind: hit.kind, label, sheet: hit.sheet, extractOn: ex.date, assumed: ex.assumed, rows: 0, vtLines: 0, cases: 0 };
     if (ex.assumed) f('HIGH', `${file.name}: the file name carries no ddmmyy date, so the Upload Station would date it TODAY — rename it to the day it was pulled (e.g. "${label} 211126.xlsx").`);
-    if (hit.kind === 'vtOpeningBook') {
-      const p = VT.parseOpeningBook(hit.aoa);
-      src.cases = Object.keys((p && p.cases) || {}).length; src.rows = (p && p.rows) || 0;
-      f('MEDIUM', `${file.name}: the VT opening book (sale dates only) — load it ONCE, and only after the first day's BI Active Fitted and Scheduled & Missed files; the station refuses it on an empty book.`);
+    if (hit.kind === 'vtSchedulers') {
+      const p = VT.parseSchedulers(hit.aoa);
+      src.cases = Object.keys((p && p.cases) || {}).length; src.rows = (p && p.rows) || 0; src.skippedBlank = (p && p.skippedBlank) || 0;
+      if (p.missing && p.missing.length) f('CRITICAL', `${file.name}: looks like the Schedulers Data sheet but the engine cannot find ${p.missing.join(', ')} — the sheet's column layout changed; the station will refuse it.`);
+      else if (p.duplicates && p.duplicates.length) f('CRITICAL', `${file.name}: ${p.duplicates.length} case number(s) appear more than once (${p.duplicates.slice(0, 5).join(', ')}) — one row is one case, so the station refuses the whole file.`);
+      else f('MEDIUM', `${file.name}: the Schedulers Data sheet of the master VT report — ${src.cases} cases, ${src.skippedBlank} empty rows skipped. It supplies the scheduler, the GWP and the true sale date, may be re-uploaded as often as the master is updated, and NEVER changes a status (its Result column is counted as a disagreement, never applied). The station refuses it on an empty book: load it after the first day's two daily files.`);
+      (p.warnings || []).slice(0, 5).forEach((w) => f('MEDIUM', `${file.name}: ${typeof w === 'string' ? w : JSON.stringify(w)}`));
     } else {
       const p = hit.kind === 'vtBiFitted' ? VT.parseBi(hit.aoa) : VT.parseSm(hit.aoa);
       src.rows = p.rows || 0; src.vtLines = p.vtLines != null ? p.vtLines : (p.lines || 0); src.cases = Object.keys(p.cases || {}).length;

@@ -170,9 +170,10 @@ head('W5 · RPC refusals in words');
 { RPC_ANSWER.vt_upload_commit = { status: 400, body: { code: 'P0001', message: 'version_conflict: the book is at rev 8, this upload was merged on rev 7' } };
   const r = await call('POST', '/api/vt/upload/commit', '{"p_id":5,"p_base_rev":7}');
   ok(r.status === 409 && r.j.error === 'version_conflict', 'commit\'s version_conflict → 409 {error:"version_conflict"}', r.status + ' ' + r.t);
-  RPC_ANSWER.vt_upload_commit = { status: 400, body: { code: 'P0001', message: 'opening_book_before_first_day: load the opening book after the first day\'s two files' } };
+  RPC_ANSWER.vt_upload_commit = { status: 400, body: { code: 'P0001', message: 'opening_book_before_first_day: load the dating file after the first day\'s two files' } };
   const o = await call('POST', '/api/vt/upload/commit', '{"p_id":5}');
-  ok(o.status === 409 && /first day/.test(o.j.error), 'the opening book before the first day → 409, in words', o.t);
+  ok(o.status === 409 && /first day/.test(o.j.error), 'a dating file before the first day → 409, in words', o.t);
+  ok(/Schedulers Data/.test(o.j.error) && !/opening book/i.test(o.j.error), 'spec 072: those words name the Schedulers Data file, not the retired opening book', o.j.error);
   RPC_ANSWER.vt_upload_commit = { status: 500, body: { message: 'canceling statement due to statement timeout' } };
   const x = await call('POST', '/api/vt/upload/commit', '{"p_id":5}');
   ok(x.status === 502 && x.j.error === 'vt_commit_failed', 'any other failure → 502 with a short stable code naming the step', x.t);
@@ -192,6 +193,28 @@ head('W5 · RPC refusals in words');
   RPC_ANSWER.vt_upload_begin = { id: 6 };
   const nb = await call('POST', '/api/vt/upload/begin', '{"p_sha256":"' + 'a'.repeat(64) + '"}'); ok(nb.status === 200 && nb.j.id === 6, '...a normal begin still answers its value');
   delete RPC_ANSWER.vt_upload_begin; }
+
+head("W5b · spec 072 B4: the new kind rides the same three steps, with no new route and no new rule");
+{ const SHA = 'c'.repeat(64);
+  const steps = [];
+  RPC_ANSWER.vt_upload_begin = { id: 77 };
+  const b = await call('POST', '/api/vt/upload/begin', JSON.stringify({ p_sha256: SHA, p_kind: 'schedulers_data', p_file_name: 'Master November 2026 - VT Report.xlsx', p_extract_on: '2026-11-25', p_cycle_key: 'cycle-2026-11' }));
+  steps.push(b.status);
+  ok(b.status === 200 && b.rpcs.length === 1 && /vt_upload_begin/.test(b.rpcs[0].fn), 'begin with kind schedulers_data reaches vt_upload_begin, once', b.status + ' ' + JSON.stringify(b.rpcs.map((x) => x.fn)));
+  ok(/"p_kind":"schedulers_data"/.test(b.rpcs[0].body), 'the kind is carried through to SQL unchanged (the Worker never parses or whitelists it)', b.rpcs[0].body.slice(0, 120));
+  ok(/"p_user":"uploader"$|"p_user":"uploader"\}/.test(b.rpcs[0].body.replace(/\s/g, '')), 'and the session uploader is still appended as the body last key', b.rpcs[0].body.slice(-60));
+  delete RPC_ANSWER.vt_upload_begin;
+  const st = await call('POST', '/api/vt/upload/stage', JSON.stringify({ p_id: 77, p_kind: 'case', p_from_ord: 0, p_rows: [{ case_number: '90000001', scheduler_name: 'echo foxtrot', scheduler_cb: 'CB9104', gwp_rpt: 149, referring_name: null, referring_cb: null, campaign_rpt: 'Revx', result_rpt: 'fitted' }] }));
+  steps.push(st.status);
+  ok(st.status === 200 && /scheduler_name/.test(st.rpcs[0].body) && /gwp_rpt/.test(st.rpcs[0].body), 'the seven new case columns stage through untouched', st.status);
+  ok(!/Customer|0820000001|0839999999/.test(st.rpcs[0].body), 'and no customer field is anywhere in what the Worker carries', st.rpcs[0].body.slice(0, 200));
+  const cm = await call('POST', '/api/vt/upload/commit', JSON.stringify({ p_id: 77, p_base_rev: 7, p_counts: { cases: 3010 }, p_unmatched: [], p_warnings: [], p_quiet_ack: false, p_cases: 1, p_events: 0 }));
+  steps.push(cm.status);
+  ok(cm.status === 200 && /vt_upload_commit/.test(cm.rpcs[0].fn), 'commit answers the SQL value as before', cm.status);
+  ok(JSON.stringify(steps) === '[200,200,200]', 'begin, stage and commit all answer 200 for the new kind', JSON.stringify(steps));
+  const SRC = fs.readFileSync(path.join(ROOT, 'worker', 'src', 'vt.mjs'), 'utf8');
+  ok(!/schedulers_data/.test(SRC.replace(/\/\*[\s\S]*?\*\//g, '')), 'B4: the Worker needs no code for the new kind at all - only its comment names it', 'found an executable mention');
+  ok(/schedulers_data/.test(SRC), 'and the module header documents the kind for the next reader'); }
 
 head('W6 · receipts and roster');
 { const r = await call('GET', '/api/vt/uploads?limit=500');

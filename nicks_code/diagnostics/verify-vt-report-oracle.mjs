@@ -404,4 +404,61 @@ head('PII · no customer field is read or returned');
   eq('the Customer Contact column never reaches any dashboard output', leaks.length, 0);
   ok('…and the rule book names that column explicitly (F0-22)', /Customer Contact/i.test(E.VT_RULES.columns.discardAll)); }
 
+head('B1 / B6 (spec 072) - the REAL parser and the REAL intake over the owner workbook');
+{ /* everything above built the book by hand, to check the engine arithmetic against the workbook cells. This section
+     runs the production path instead: VTEngine.parseSchedulers over the same sheet, VTStation.planCommit into the
+     stage rows the Worker would carry, and the receipt the uploader would read. Nothing from the file is printed. */
+  const ST = require(path.join(REPO, 'nicks_code', 'vt-pages.js'));
+  const P = E.parseSchedulers(sd);
+  eq('the parser reads 3,010 cases and no more', Object.keys(P.cases).length, 3010);
+  eq('and counts the 16,950 empty rows it skipped, not 19,960 records (F0-1)', [P.rows, P.skippedBlank], [3010, 16950]);
+  eq('no required column is missing and no case number repeats (A2)', [P.missing, P.duplicates], [[], []]);
+  eq('every case it keeps has a sale date, a GWP, a scheduler and a campaign (F0-2)',
+    ['soldOn', 'gwp', 'scheduler', 'campaignRaw'].map((f) => Object.values(P.cases).filter((c) => c[f] == null).length), [0, 0, 0, 0]);
+  eq('Referring Agent = 0 is no referrer, so the referral count is real (F0-19)',
+    Object.values(P.cases).filter((c) => c.referring).length < 1000, true);
+  { const txt = JSON.stringify(P);
+    const colG = sd.slice(1, 400).map((r) => r && r[6]).filter((v) => v != null && v !== '').map(String);
+    ok('NOT ONE value of the Customer Contact column (col G) is anywhere in the parser output',
+      colG.length > 50 && !colG.some((v) => txt.indexOf(v) > -1), colG.length + ' sampled values');
+    ok('and the parser keeps no Month, Hrs Ahead or Channel column either', !/Rollover|Hrs Ahead|"Channel"/.test(txt)); }
+  /* the merge, over a book the daily exports have already opened */
+  const daily = E.emptyBook(); daily.openedOn = '2026-11-10'; daily.rev = 4;
+  Object.keys(book.cases).forEach((cn) => { const c = book.cases[cn];
+    daily.cases[cn] = Object.assign({}, c, { soldOn: '2026-11-10', soldBasis: 'first_seen', gwpRpt: null, schedulerName: null, schedulerCb: null,
+      referringName: null, referringCb: null, campaignRpt: null, resultRpt: null }); });
+  const beforeStatus = Object.keys(daily.cases).sort().map((k) => daily.cases[k].status).join(',');
+  const plan = ST.planCommit(daily, P, { extractOn: '2026-11-25', roster: [] });
+  const m = plan.merged;
+  eq('the merge re-dates every case in the book and never invents one', [m.counts.cases, m.counts.notInBook, m.cases.length], [3010, 0, 3010]);
+  eq('it sets a scheduler and a GWP on all 3,010', [m.counts.schedulersSet, m.counts.gwpSet], [3010, 3010]);
+  eq('not one status moved', Object.keys(m.book.cases).sort().map((k) => m.book.cases[k].status).join(','), beforeStatus);
+  eq('and not one status event was written', m.events.length, 0);
+  ok(m.disagree.total === 0, 'on this book the sheet Result agrees with every status, so the disagreement count is 0 (this suite built the book FROM that column)', JSON.stringify(m.disagree));
+  eq('the back-build reports every business month the sheet reaches, oldest first, the first one partial',
+    [m.cycles.map((c) => c.key), m.cycles[0].partial, m.cycles[0].firstSale],
+    [['cycle-2026-08', 'cycle-2026-09', 'cycle-2026-10', 'cycle-2026-11'], true, '2026-08-21']);
+  ok(/Partial/.test(m.cycles[0].words) && /2026-08-21/.test(m.cycles[0].words), 'and says so in words the receipt prints', m.cycles[0].words);
+  { const prev = E.prevCycleFor(m.book, [], CYCLE, { asOf: ASOF });
+    ok(prev.present && prev.counts.sales > 0, 'so cycle-2026-10 is a REAL previous cycle for the dashboard delta, not an absent marker', JSON.stringify([prev.cycle, prev.counts.sales]));
+    const withPrev = E.dashboard(m.book, [], { cycleKey: CYCLE, view: 'cycle', asOf: ASOF, prev: prev });
+    ok(withPrev.prevCycle.present && withPrev.kpis.every((k) => k.k === 'targetAch' || k.delta), 'and every KPI card then carries a change instead of a dash', JSON.stringify(withPrev.kpis.map((k) => [k.k, !!k.delta]))); }
+  /* B6: what the Worker would carry */
+  const batches = ST.batches(plan.cases);
+  eq('3,010 case rows go up in 4 stage calls, each at most 1,000 rows', [batches.length, Math.max.apply(null, batches.map((b) => b.rows.length)) <= 1000], [4, true]);
+  ok(batches.every((b) => JSON.stringify(b.rows).length < 480 * 1024), 'every stage call is under the Worker 512 KB cap',
+    Math.max.apply(null, batches.map((b) => JSON.stringify(b.rows).length)) + ' bytes');
+  { const raw = JSON.stringify(plan.cases);
+    const colG = sd.slice(1, 400).map((r) => r && r[6]).filter((v) => v != null && v !== '').map(String);
+    ok('and not one customer field is in what would be sent', !colG.some((v) => raw.indexOf(v) > -1)); }
+  const lines = ST.receiptLines({ kind: 'vtSchedulers', fileName: 'Master November 2026 - VT Report.xlsx', extractOn: '2026-11-25', assumed: false,
+    counts: m.counts, unmatched: m.unmatched, warnings: m.warnings, disagree: m.disagree, unmatchedSchedulers: m.unmatchedSchedulers, cycles: m.cycles });
+  const receipt = lines.join('\n');
+  ok(/3,010 cases read from the sheet/.test(receipt) && /16,950 empty rows counted and skipped/.test(receipt), 'the receipt counts what it read and what it skipped', receipt);
+  ok(/Sale dates re-stated: 3,010/.test(receipt) && /Schedulers set: 3,010/.test(receipt) && /GWP set: 3,010/.test(receipt), 'what it changed', receipt);
+  ok(/NOT changed by this file: no status/.test(receipt) && /no VAS figure/.test(receipt), 'and what it did NOT change', receipt);
+  ok(/Business months this file reaches: cycle-2026-08/.test(receipt), 'and the business months it reaches', receipt);
+  ok(!/undefined|NaN|\[object/.test(receipt), 'every line of the receipt reads as a sentence', receipt);
+}
+
 finish();

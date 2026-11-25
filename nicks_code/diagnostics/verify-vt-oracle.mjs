@@ -60,7 +60,7 @@ const ext = E.extractDate(FILES.bi, '2099-01-01');
 console.log('\n== intake: detection, extract date, receipts ==');
 eq('BI Active Fitted is detected as vtBiFitted (never VAS bi)', E.detect(biAoa[0], 'Export'), 'vtBiFitted');
 eq('Scheduled & Missed is detected as vtSchedMissed', E.detect(smAoa[0], 'Export'), 'vtSchedMissed');
-eq('the hand report\'s Schedulers Data is detected as vtOpeningBook', E.detect(rpt[0], 'Schedulers Data'), 'vtOpeningBook');
+eq('the hand report Schedulers Data sheet is detected as vtSchedulers (spec 072 retired the opening-book kind)', E.detect(rpt[0], 'Schedulers Data'), 'vtSchedulers');
 eq('the Agent List VT sheet is not a VT upload', E.detect(aoaOf(alWb, 'VT')[0], 'VT'), null);
 eq('extract date from "101126" = 10 Nov 2026', ext, { date: '2026-11-10', assumed: false });
 const pBi = E.parseBi(biAoa), pSm = E.parseSm(smAoa);
@@ -225,11 +225,12 @@ eq('weeks Mon–Sat clipped: five, from 26 Oct', M.weeks.map(w => w.from), ['202
 eq('report "Current" boundary = the cycle start (no Current row before 26 Oct, no Rollover on/after)',
   [...report.values()].filter(v => (v.month === 'Current') !== (E.serialToISO(v.date) >= M.period.from)).length, 0);
 doc('working days elapsed on the go-live book (opening extract 10 Nov, no opening book)', M.workingDaysElapsed, 'n/a',
-  'A6: a book opened by the 10 Nov files has no tracked working day yet; sale days need the opening book or later uploads');
+  'A6: a book opened by the 10 Nov files has no tracked working day yet; sale days need the Schedulers Data upload or later uploads');
 
-console.log('\n== with the optional opening book (FR-003): Current / Rollover and the dated views ==');
-{ const ob = E.parseOpeningBook(rpt);
-  ok('the opening book takes only case → sale date', Object.values(ob.cases).every(c => Object.keys(c).join() === 'soldOn'));
+console.log('\n== with the Schedulers Data upload (spec 072, which replaced the opening book): Current / Rollover and the dated views ==');
+{ const ob = E.parseSchedulers(rpt);
+  ok('it carries no customer field out of the parser', !/Customer Contact|customerContact/.test(JSON.stringify(ob)));
+  ok('every case it keeps carries a real sale date', Object.values(ob.cases).every(c => /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(c.soldOn))));
   const m3 = E.merge(book, ob, { extractOn: ext.date, roster, aliases: {} });
   eq('every reproducible case gets its sale day; the other report rows are counted, not stored', [m3.counts.notInBook, Object.keys(m3.book.cases).length], [report.size - repro.length, 1756]);
   const Mo = E.model(m3.book, roster, { asOf: ext.date });

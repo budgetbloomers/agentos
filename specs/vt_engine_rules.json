@@ -32,7 +32,10 @@
     { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "integrity", "from": null, "to": "3 checks", "why": "Sales Review K17 = IF(SUM(B43:E43)=F43,'OK','CHECK') and K18 = IF(C93+C99+C105+C111+C117=C87,'OK','CHECK'), plus a third the guide never mentions: Agent & Scheduler Summary E36 = IF(C39=$B$7,'Reconciles to total sales in view','Check: N sales in view have no scheduler name') (spec F0-23). All three read OK on the owner's real data: 1996+373+128+208 = 2705, and 130+68+26+0+149 = 373. They are engine VERDICTS, shown with an icon and the words, never colour alone, and a failing check never blocks the page (spec FR-050 to FR-054)." },
     { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "insights", "from": null, "to": "4 computed templates", "why": "Exco Summary B11-B14 are the workbook's own headline sentences, built by formula from the figures above them. They are reproduced as templates filled from the model so no insight on the page is ever hand-written, and each names the number and the cell it came from (spec FR-042, FR-043). A template whose data is absent is omitted, never padded." },
     { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "reports.schedulerPivots / personDimensions / gwp / upcomingFitments / rolloverFollowUp", "from": "schedulerPivots built false, why 'no upload names the scheduler'", "to": "built true, plus the four other report shapes", "why": "the reason it was false is gone: D1's Schedulers Data upload names the scheduler (col J). The four pivot sheets divide each outcome by that scheduler's own grand total via GETPIVOTDATA and are ALL DATA, every page field '(All)' — grand total 3,010, matching the full record count. The workbook's percentages are not consistently divide-by-zero guarded; ours are (spec FR-045). Six schedulers in the file, exactly the headcount budget of 6, with fitted rates from 62.3 % to 84.9 % — the widest actionable spread in the workbook (spec F0-17). Schedulers resolve to a CB through the existing chain against the Agent List's 'scheduling' sub-campaign, which teams.keys and teams.notRated already carry (spec F0-18)." },
-    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "saleDay.basisPrecedence / saleDay.schedulersData", "from": null, "to": "schedulers_data outranks opening_book and first_seen", "why": "plan U-4: on a Schedulers Data commit every case in the sheet takes col B as its sale date, and sold_basis records which source won so 'why did this case move months?' is a query and not an archaeology. A Schedulers Data commit sets book.openingBookOn with the opening book's EXACT semantics, so model()'s trackFrom, the working-day count and therefore every published SPD and target-achievement figure do not move (plan U-5, risk 2). The merge branch itself is Phase B task B2." }
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase A builder", "key": "saleDay.basisPrecedence / saleDay.schedulersData", "from": null, "to": "schedulers_data outranks opening_book and first_seen", "why": "plan U-4: on a Schedulers Data commit every case in the sheet takes col B as its sale date, and sold_basis records which source won so 'why did this case move months?' is a query and not an archaeology. A Schedulers Data commit sets book.openingBookOn with the opening book's EXACT semantics, so model()'s trackFrom, the working-day count and therefore every published SPD and target-achievement figure do not move (plan U-5, risk 2). The merge branch itself is Phase B task B2." },
+
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase B builder (owner decision D1, completing the migration Phase A left additive)", "key": "detection.vtOpeningBook", "from": "the 071 opening-book detection (sheetName Schedulers Data, five headers, takeOnly case number + date, optional)", "to": null, "why": "RETIRED. One sheet, one slot, one detection rule: detect() now answers vtSchedulers for it, parseOpeningBook is gone and 'Opening book (once)' has been removed from the Upload Station. The OLD NAME still answers wherever something already uses it: vt_uploads.kind 'opening_book' stays legal in the database (migration-073 ADDS 'schedulers_data' and never edits the applied 071 CHECK), sold_basis 'opening_book' stays legal and still outranks first_seen, the receipt reads 'Opening book (retired)', and tools/vt-validate.mjs names the slot as retired. detection.vtSchedulers.requireHeaders are the retired key's own five headers, so Ops' VT_SIGNATURES copy is byte-identical and nothing that was refused before stops being refused." },
+    { "date": "2026-11-25", "by": "Spec Kit 072 Phase B builder", "key": "columns.opening / detection.vtSchedulers.readColumns", "from": "columns.opening (caseNumber F, saleDate B)", "to": "readColumns: the ten positions parseSchedulers reads, each checked by name", "why": "columns.opening described a parser that no longer exists; columns.schedulers (072 A2) supersedes it and carries the same two positions. readColumns is what the parser requires BY NAME at its position, which is where a changed sheet layout is caught (the parseBi pattern) - detection stays the five headers that identify the sheet." }
   ],
 
   "detection": {
@@ -46,20 +49,16 @@
       "requireHeaders": ["missedandscheduledfitment", "fitment date", "case number", "created by"],
       "footerPattern": "^No filters applied"
     },
-    "vtOpeningBook": {
-      "sheetName": "Schedulers Data",
-      "requireHeaders": ["month", "date", "agent", "case number", "result"],
-      "takeOnly": ["case number", "date"],
-      "optional": true
-    },
     "vtSchedulers": {
       "sheetName": "Schedulers Data",
-      "requireHeaders": ["month", "date", "agent", "case number", "result", "gwp", "scheduler", "campaign/partner"],
+      "requireHeaders": ["month", "date", "agent", "case number", "result"],
+      "readColumns": ["date", "agent", "sale count", "gwp", "case number", "campaign/partner", "referring agent", "scheduler", "result", "date scheduled"],
       "takeOnly": ["case number", "date", "gwp", "campaign/partner", "referring agent", "scheduler", "result", "date scheduled"],
       "optional": false,
       "reUploadable": true,
+      "retiredName": "vtOpeningBook (spec 071) - the same sheet, which only took the sale date; the kind 'opening_book' stays legal on stored rows and old receipts",
       "_renamedFrom": "vtOpeningBook",
-      "_phase": "spec 072 task B1 switches detect() and the parser over to this key and retires vtOpeningBook; Phase A only records it. No VAS export carries a sheet named 'Schedulers Data', so unlike the BI file this detection needs no name hint and no slot tiebreak — its columns alone decide. 'result' is required as a header so a half-built sheet is refused, but its VALUE is never applied."
+      "_detection": "requireHeaders are the five that IDENTIFY the sheet - deliberately the retired key's own five, so Ops' VT_SIGNATURES list (a copy of these, guarded by verify-vt-isolation) is unmoved and no file that was refused before stops being refused. The ten columns the parser READS are checked by name at their position inside parseSchedulers (readColumns, the parseBi pattern), so a sheet whose layout moved is refused by name, never read by position anyway. No VAS export carries a sheet named 'Schedulers Data', so unlike the BI file this detection needs no name hint and no slot tiebreak. 'result' is required as a header so a half-built sheet is refused, but its VALUE is never applied."
     },
     "filenameDate": { "pattern": "(\\d{2})(\\d{2})(\\d{2})(?=\\D*\\.xlsx?$)", "order": "ddmmyy", "century": 2000, "fallback": "todaySAST+warning" },
     "refuseIn": ["ops.detectSource", "pulse.rakeDetect", "relay.archiveUpload"]
@@ -69,7 +68,6 @@
     "bi": { "byPosition": true, "caseNumber": "AS", "unitType": "Y", "bundle": "Z", "chargeEx": "X", "chargeCheck": "AD", "installedOn": "Q", "contractCreatedOn": "O", "createdBy": "L", "sourcePartner": "AP", "contractStatus": "B", "deactivateOn": "P" },
     "biOptional": ["contractStatus", "deactivateOn"],
     "sm": { "caseNumber": "C", "productType": "J", "attempt": "L", "bundle": "M", "apptOn": "R", "createdBy": "S", "outcome": "U", "sourcePartner": "A" },
-    "opening": { "caseNumber": "F", "saleDate": "B" },
     "schedulers": {
       "byPosition": true,
       "saleDate": "B",
@@ -121,8 +119,8 @@
   "saleDay": {
     "basis": "first_seen",
     "basisPrecedence": ["schedulers_data", "opening_book", "first_seen"],
-    "schedulersData": "takes Schedulers Data col B for its cases and outranks both other bases (plan U-4; the merge branch is Phase B task B2)",
-    "openingBook": "takes RPT 'Schedulers Data'!B for its cases",
+    "schedulersData": "takes Schedulers Data col B for its cases and outranks both other bases (plan U-4)",
+    "openingBook": "RETIRED (spec 072 U-1): the 071 opening book took the same sheet's col B. Stored rows keep the basis, which still outranks first_seen",
     "openingWithoutDate": "null - in play, never counted as a sale on any day",
     "goLive": "unknown",
     "saleDateColumn": null

@@ -79,23 +79,52 @@ A1-A7 are done and every suite is green. Three things the next phase needs to kn
 
 ## Phase B · Schedulers Data upload: parser, merge, migration, Worker, station · one builder (after A)
 
-- [ ] **B1 · `VTEngine.parseSchedulers(aoa)`** by position per `columns.schedulers`. Counts and skips the 16,950 empty rows; handles `Referring Agent = 0` (F0-19) and appointment serial 0 (F0-20); discards `Customer Contact` and every unlisted column; refuses a file with a duplicate case number, naming them (A2); returns `{kind:'schedulers_data', cases, rows, warnings, skippedBlank, missing}`.
+- [x] **B1 · `VTEngine.parseSchedulers(aoa)`** by position per `columns.schedulers`. Counts and skips the 16,950 empty rows; handles `Referring Agent = 0` (F0-19) and appointment serial 0 (F0-20); discards `Customer Contact` and every unlisted column; refuses a file with a duplicate case number, naming them (A2); returns `{kind:'schedulers_data', cases, rows, warnings, skippedBlank, missing}`.
   - Acceptance: 3,010 cases from the owner's file; no customer field in any output; `verify-vt-engine.mjs` section added.
   - Files: 2.
-- [ ] **B2 · `merge()` branch.** Sets `sold_on` + `sold_basis='schedulers_data'` (outranking `opening_book` / `first_seen`), `scheduler_cb` / `scheduler_name` via `resolveSeller` against the `scheduling` roster, `gwp_rpt`, `referring_cb`. **Never sets status.** Counts `Result` disagreements by direction into the returned `disagree`. Sets `book.openingBookOn` with the opening book's exact semantics (U-5). Returns a `redated` tally.
+- [x] **B2 · `merge()` branch.** Sets `sold_on` + `sold_basis='schedulers_data'` (outranking `opening_book` / `first_seen`), `scheduler_cb` / `scheduler_name` via `resolveSeller` against the `scheduling` roster, `gwp_rpt`, `referring_cb`. **Never sets status.** Counts `Result` disagreements by direction into the returned `disagree`. Sets `book.openingBookOn` with the opening book's exact semantics (U-5). Returns a `redated` tally.
   - Acceptance: `model().trackFrom` is identical before and after a Schedulers Data commit (risk 2); status never changes; `verify-vt-views.mjs` asserts both.
   - Files: 2.
-- [ ] **B3 · `supabase/migration-073-vt-schedulers.sql`** — DB-1…DB-4 and DB-6. **New file only**; never edit 071/072. `coalesce` semantics so an ordinary BI commit cannot blank the four new columns.
+- [x] **B3 · `supabase/migration-073-vt-schedulers.sql`** — DB-1…DB-4 and DB-6. **New file only**; never edit 071/072. `coalesce` semantics so an ordinary BI commit cannot blank the four new columns.
   - Verify: `node nicks_code/diagnostics/verify-vt-db.mjs` (extended) — 073 runs verbatim in PGlite; both CHECKs, four columns, grants, and the BI-after-Schedulers preservation case (risk 3).
   - **Do not apply it.** No `--apply`, no live Supabase write; Nick applies migrations.
   - Files: 2.
-- [ ] **B4 · `worker/src/vt.mjs`** — accept `kind='schedulers_data'` on begin/stage/commit. No new route, no new auth rule.
+- [x] **B4 · `worker/src/vt.mjs`** — accept `kind='schedulers_data'` on begin/stage/commit. No new route, no new auth rule.
   - Verify: `verify-vt-worker.mjs` (extended) against the stubbed PostgREST.
   - Files: 2.
-- [ ] **B5 · The slot swap in `nicks_code/vt-pages.js`.** `DB_KIND` / `LABEL` / `slotsHtml()`: three slots, *Opening book (once)* **removed**, `VT · Schedulers Data` in its place with the U-2 wording. Ingest branch: no thin-pull exemption, re-uploadable, receipt reports staged / skipped-blank / redated / disagreements / unmatched schedulers. Dropped on the wrong slot → refused in words naming the right one.
+- [x] **B5 · The slot swap in `nicks_code/vt-pages.js`.** `DB_KIND` / `LABEL` / `slotsHtml()`: three slots, *Opening book (once)* **removed**, `VT · Schedulers Data` in its place with the U-2 wording. Ingest branch: no thin-pull exemption, re-uploadable, receipt reports staged / skipped-blank / redated / disagreements / unmatched schedulers. Dropped on the wrong slot → refused in words naming the right one.
   - Verify: `verify-vt-station.mjs` + `verify-vt-station-fixes.mjs` (extended), `verify-vt-validate.mjs`, and `verify-vt-isolation.mjs` **unchanged** (a Schedulers Data drop leaves `vas-state` byte-identical).
   - Files: 3–4.
-- [ ] **B6 · Checkpoint.** The owner's workbook ingests end to end against the stub Worker: 3,010 staged in 4 calls, a receipt that reads in plain words, and the oracle still green.
+- [x] **B6 · Checkpoint.** The owner's workbook ingests end to end against the stub Worker: 3,010 staged in 4 calls, a receipt that reads in plain words, and the oracle still green.
+
+### Phase B build note (2026-11-25, Phase B builder)
+
+B1-B6 are done; every suite is green and `-rating` (58), `-vas-golden` (32) and `-isolation` (27) passed with the
+rating file untouched. What Phase C needs to know:
+
+- **The opening book is fully retired.** `detection.vtOpeningBook`, `columns.opening` and `parseOpeningBook()` are
+  GONE from both rule-book copies and the engine; `detect()` answers `vtSchedulers` for the sheet and `DB_KIND` /
+  `LABEL` / `slotsHtml()` carry three slots, the third `VT · Schedulers Data`. The OLD NAME still answers where
+  something already uses it: `vt_uploads.kind='opening_book'` and `sold_basis='opening_book'` stay legal (073 ADDS,
+  never edits 071), the receipt card reads "Opening book (retired)", `tools/vt-validate.mjs` has
+  `retiredSlotNote()`, and `VTStation.REFUSE_OPENING_FIRST` is still exported (it aliases `REFUSE_DATING_FIRST`).
+  `detection.vtSchedulers.requireHeaders` are deliberately the retired key's own five headers, so Ops'
+  `VT_SIGNATURES` copy is byte-identical and nothing that was refused before stops being refused; the ten columns the
+  parser READS are checked by name at their position inside `parseSchedulers` (`readColumns`).
+- **The book carries SEVEN new fields**, appended to `BOOK_COLS` (so every earlier position is unmoved):
+  `schedulerName`, `schedulerCb`, `gwpRpt`, `referringName`, `referringCb`, `campaignRpt`, `resultRpt`. The plan's
+  DB-3 named four; `dashboard()` (Phase A) reads all seven, so a book read back without them would paint the
+  scheduler pivots, the person dimension and the disagreement panel empty. They are null until the sheet lands, and
+  the page must read "needs the Schedulers Data upload", never 0.
+- **The back-build is in the ENGINE, not in a published key.** `VTEngine.cyclesInBook(book)` lists every business
+  cycle the book's sale dates reach (oldest first, the earliest flagged `partial` with `firstSale` and a sentence),
+  and `VTEngine.prevCycleFor(book, roster, cycleKey, {asOf})` returns a ready `prev` for `dashboard()` computed from
+  the book, with `counts: null` when the cycle is not reached (an absence is not a nought). **Phase C should pass
+  `prev` = the frozen `kv:vt-digest-cycle-<prev>` when one exists, else `prevCycleFor(...)`, and say which it used.**
+  Frozen history keys for CLOSED cycles are refused from a browser by the existing fence (`closed_cycle`), so
+  back-filling them stays the republish tool's job (spec A9, Phase E).
+- **migration-073 is NOT applied.** Nick applies it at deploy. Until he does, the seven columns do not exist and a
+  Schedulers Data commit would fail on the server; everything else keeps working exactly as today.
 
 ---
 

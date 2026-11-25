@@ -13,7 +13,7 @@
  */
 import fs from 'node:fs'; import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { biFile, smFile, openFile, vasBiFile } from './vt-fixtures.mjs';
+import { biFile, smFile, schFile, vasBiFile } from './vt-fixtures.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url)); const ROOT = path.resolve(HERE, '..', '..');
 const V = await import(pathToFileURL(path.join(ROOT, 'tools', 'vt-validate.mjs')).href);
 let pass = 0, fail = 0; const failures = [];
@@ -44,8 +44,15 @@ head('V1 · the files');
   ok('a BI file with a fifth of the earlier one\'s cases is a thin pull (HIGH, engine guard)', sev(r, 'HIGH', /BI Active Fitted 211126\.xlsx: Refused as a thin pull: 20 cases against 100/), JSON.stringify(r.findings)); }
 { const r = V.validateVtPackage({ periodEnd: '2026-11-21', files: [{ name: 'BI Active Fitted 211126.xlsx', sheets: { Export: biFile([], true) } }, { name: 'Scheduled & Missed 211126.xlsx', sheets: { S: smFile(lines(3)) } }] });
   ok('a BI file with no VT lines is HIGH', sev(r, 'HIGH', /no Vehicle Tracking lines/), JSON.stringify(r.findings)); }
-{ const r = V.validateVtPackage({ periodEnd: '2026-11-21', files: [{ name: 'November 2026 - VT Report.xlsx', sheets: { 'Schedulers Data': openFile(lines(4).map((x) => ({ ...x, sold: '2026-11-02' }))) } }] });
-  ok('the opening book is recognised and told to wait for the first day\'s two files', r.sources[0] && r.sources[0].kind === 'vtOpeningBook' && sev(r, 'MEDIUM', /only after the first day/), JSON.stringify(r)); }
+{ const r = V.validateVtPackage({ periodEnd: '2026-11-21', files: [{ name: 'November 2026 - VT Report.xlsx', sheets: { 'Schedulers Data': schFile(lines(4).map((x) => ({ ...x, sold: '2026-11-02' }))) } }] });
+  ok('the Schedulers Data sheet is recognised, with what it supplies and what it never changes',
+    r.sources[0] && r.sources[0].kind === 'vtSchedulers' && r.sources[0].cases === 4
+    && sev(r, 'MEDIUM', /supplies the scheduler, the GWP and the true sale date/)
+    && sev(r, 'MEDIUM', /NEVER changes a status/) && sev(r, 'MEDIUM', /after the first day/), JSON.stringify(r)); }
+{ const r = V.validateVtPackage({ periodEnd: '2026-11-21', files: [{ name: 'Master 211126.xlsx', sheets: { 'Schedulers Data': schFile(lines(3).concat([{ cn: 91000001 }])) } }] });
+  ok('a repeated case number in the sheet is CRITICAL, with the duplicates named (A2)', sev(r, 'CRITICAL', /appear more than once/) && sev(r, 'CRITICAL', /91000001/), JSON.stringify(r.findings)); }
+{ ok('the retired slot is named as retired for anything that still uses the old kind',
+    /retired by spec 072/.test(String(V.retiredSlotNote('opening_book'))) && V.retiredSlotNote('bi_fitted') === null, String(V.retiredSlotNote('opening_book'))); }
 { const r = V.validateVtPackage({ periodEnd: '2026-11-21', files: [{ name: 'BI Active Fitted 211126.xlsx', sheets: { E: biFile(lines(5)) } }, { name: 'BI Active Fitted 211126 (1).xlsx', sheets: { E: biFile(lines(5)) } }, { name: 'Scheduled & Missed 211126.xlsx', sheets: { S: smFile(lines(3)) } }] });
   ok('two BI files with the same extract date → MEDIUM', sev(r, 'MEDIUM', /same extract date 2026-11-21/), JSON.stringify(r.findings)); }
 

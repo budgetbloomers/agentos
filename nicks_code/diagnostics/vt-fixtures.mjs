@@ -21,7 +21,12 @@ export const BI_HDR = ['Account Number', 'Contract Status', 'Installation Status
 export const SM_HDR = ['Opportunity Source Partner', 'CaseID', 'Case Number', 'Account Name', 'Duplicates Flag', 'Count of Case Number', 'Mobile', 'Registration',
   'Vehicle Chassis', 'Product Type', 'Type', 'Status', 'Bundle Name', 'Subscriber Type', 'Internal Consultant', 'External Consultant', 'Fitment Partner',
   'Fitment Date', 'Created By', 'Last Modified By', 'MissedAndScheduledFitment'];
-export const OPEN_HDR = ['Month', 'Date', 'Agent', 'Sale Count', 'GWP', 'Case Number', 'Customer Contact', 'Campaign/Partner', 'Referring Agent', 'Scheduler', 'Result'];
+/* The master VT report's Schedulers Data sheet (spec 072): the header row as the owner's file carries it. It REPLACES
+   the 071 "opening book" fixture, which was the same sheet cut short at Result — OPEN_HDR / openFile stay as aliases so
+   the suites that only need "a VT report workbook" are untouched. */
+export const SCH_HDR = ['Month', 'Date', 'Agent', 'Sale Count', 'GWP', 'Case Number', 'Customer Contact', 'Campaign/Partner', 'Referring Agent',
+  'Scheduler', 'Result', 'Hrs Ahead', 'Date Scheduled', null, 'Scheduled', 'Missed', 'Fitted', 'Channel'];
+export const OPEN_HDR = SCH_HDR;
 export const PII = ['Customer Zed', '0820000001', 'ZZ 99 ZZ GP', 'CHASSISZZ001', 'BOXZZ01', 'ACCZZ001', 'CONZZ001', '0839999999'];
 
 export const serial = (iso) => Math.round(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 864e5) + 25569;   // ISO → Excel serial
@@ -38,12 +43,18 @@ export function smLine({ cn, outcome = 'Scheduled Fitment', appt = '2026-11-12',
     10: 'Installation', 11: attempt, 12: 'Bundle Q', 17: serial(appt), 18: seller, 20: outcome });
   return r;
 }
-export function openLine({ cn, sold = '2026-11-03' }) {
-  return ['November', serial(sold), 'Alpha Test', 1, 199, String(cn), '0839999999', 'RevX', null, 'Scheduler Zed', 'Fitted'];
+export function schLine({ cn, sold = '2026-11-03', month = 'Current', gwp = 199, campaign = 'RevX', ref = 0, scheduler = 'Echo Foxtrot', result = 'Fitted', appt = null }) {
+  const r = new Array(18).fill(null);
+  Object.assign(r, { 0: month, 1: serial(sold), 2: 'Alpha Test', 3: 1, 4: gwp, 5: String(cn), 6: '0839999999', 7: campaign, 8: ref, 9: scheduler,
+    10: result, 11: '24', 12: appt ? serial(appt) : 0, 14: 'Scheduled', 15: 'Missed', 16: 'Fitted', 17: 'Lead Gen' });
+  return r;
 }
+export const openLine = schLine;
 export const biFile = (lines, footer = true) => [BI_HDR, ...lines.map(biLine), ...(footer ? [['Applied filters:\nContract Status is Active']] : [])];
 export const smFile = (lines, footer = true) => [SM_HDR, ...lines.map(smLine), ...(footer ? [['No filters applied']] : [])];
-export const openFile = (lines) => [OPEN_HDR, ...lines.map(openLine)];
+export const schFile = (lines, blanks = 2) => [SCH_HDR, ...lines.map(schLine),
+  ...Array.from({ length: blanks }, () => new Array(18).fill(null).map((v, i) => (i === 11 || i === 17 ? '' : null)))];
+export const openFile = schFile;
 
 /* A VAS Power BI Active Cases export: the money source. Shares Account Number / Charge Amount / Contract Create Date with
    BI Active Fitted, carries none of the VT-only columns. */
