@@ -1731,7 +1731,7 @@ function dashboard(book, roster, opts) {
     insights.push({ id: t.id, template: t.text, cell: t.cell, v: v, text: fill(t.text, shown) });
   });
 
-  return {
+  var model = {
     view: vd.k, viewLabel: vd.label, viewWords: vd.words, viewRule: vd.dateRule,
     openOutcomesInCycleOnly: !!vd.openOutcomesInCycleOnly,
     period: { key: cyc.key, from: cyc.from, to: cyc.to, asOf: asOf, dataThrough: dataThrough, hrsAsAt: hAsAt },
@@ -1744,6 +1744,12 @@ function dashboard(book, roster, opts) {
     unmapped: unmapped, unmatched: { schedulers: schedulers.unmatched, sellers: Object.keys(uSel).sort() },
     rulesVersion: R.version
   };
+  /* SPEC 073: the workbook tabs (VTWorkbook) need the sale facts behind this model - the drill-down lists them, and the
+     per-channel lead time, the person rollover and per-campaign columns count them. They ride as NON-enumerable
+     properties, so JSON.stringify of a model (the digest, the export, every test that compares models) is unchanged. */
+  Object.defineProperty(model, 'facts', { value: facts, enumerable: false });
+  Object.defineProperty(model, 'inView', { value: { sales: sales, open: open }, enumerable: false });
+  return model;
 }
 
 return {
