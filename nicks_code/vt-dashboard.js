@@ -45,6 +45,7 @@ function E() { return root.VTEngine || (typeof require === 'function' ? require(
 function ST() { return root.VTStation || (typeof require === 'function' ? require('./vt-pages.js') : null); }
 function PG() { var s = ST(); return (root.VTPages) || (s && s.Pages) || null; }
 function CH() { return root.VTCharts || (typeof require === 'function' ? require('./vt-charts.js') : null); }
+function SH() { return root.VTSheets || (typeof require === 'function' ? require('./vt-sheets.js') : null); }
 function R() { return E().VT_RULES; }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function jsq(s) { return esc(String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")); }
@@ -165,6 +166,33 @@ function model() {
   D.prevFromEngine = src && src.prev ? null : prev;
   C.memo = { key: key, D: D };
   return D;
+}
+/* SPEC 073: the Sales Review's column C is ALWAYS the cycle view, whatever this page's View is set to, so its tab needs
+   the cycle-view model beside the one being painted. Its own memo, keyed like model()'s (the book id is in the key). */
+function modelFor(v) {
+  if (v === viewKey()) return model();
+  var cyc = currentCycle(), key = C.bookId + '|' + cyc.key + '|' + v;
+  if (C.memoAlt && C.memoAlt.key === key) return C.memoAlt.D;
+  var D = E().dashboard(C.book, C.rosters[cyc.key], { cycleKey: cyc.key, view: v, asOf: latestExtract() || undefined, isDataOnlyDay: DO() });
+  C.memoAlt = { key: key, D: D };
+  return D;
+}
+/* the workbook's tabs (spec 073): Dashboard first and unchanged, then the master report's own sheets */
+function sheetKey() { var u = ui(), T = SH(), ks = T ? T.TABS.map(function (t) { return t.k; }) : ['dashboard']; return ks.indexOf(u.sheet) > -1 ? u.sheet : 'dashboard'; }
+function tabsHtml() {
+  var T = SH(); if (!T) return '';
+  var on = sheetKey();
+  return '<div class="vt-tabs" role="tablist" aria-label="VT Report sheets">' + T.TABS.map(function (t) {
+    var sel = t.k === on;
+    return '<button type="button" role="tab" class="vt-tab' + (sel ? ' on' : '') + '" aria-selected="' + sel + '" data-vtsheet="' + esc(t.k) + '"'
+      + ' onclick="VTDash.set(\'sheet\',\'' + jsq(t.k) + '\')">' + esc(t.label) + '</button>';
+  }).join('') + '</div>';
+}
+function sheetCtx(D) {
+  var u = ui();
+  return { D: D, Dc: modelFor('cycle'), filters: personFilters(), drill: { type: u.dtype || 'agent', name: u.dname || null },
+    esc: esc, fmt: fmt, table: table, absent: absent, longDay: longDay, shortDay: shortDay, monthOf: monthOf,
+    pivotSpecs: function () { return pivotSpecs(D); } };
 }
 function adopt(receipt, book, roster) {
   var cyc = E().periods.cycleOf(receipt.extractOn);
@@ -844,9 +872,12 @@ function headerSpec(D) {
 
 /** every sheet of the workbook, in the owner's reading order. A panel with nothing honest to say is left out. */
 function sheetSpecs(D) {
+  var wbSheets = [];
+  try { wbSheets = SH() ? SH().specs(sheetCtx(D)) : []; } catch (e) { wbSheets = []; }
   return [headerSpec(D), kpiSpec(D), trendSpec(D), channelSpec(D), campaignSpec(D), bucketSpec(D), budgetSpec(D),
     forecastSpec(D), breakdownSpec(D), insightSpec(D), gwpSpec(D)]
     .concat(pivotSpecs(D), [personSpec(D), upcomingSpec(D), rolloverSpec(D), disagreeSpec(D), integritySpec(D)])
+    .concat(wbSheets)
     .filter(Boolean);
 }
 function exportCell(v) {
@@ -865,12 +896,22 @@ function workbookFrom(D) {
   if (!D) return null;
   var used = {}, prov = 'View: ' + D.viewLabel + ' · Business month: ' + monthOf(D.period.key) + ' · Figures to: ' + (D.dataThrough || absent());
   var sheets = sheetSpecs(D).map(function (sp) {
-    var width = sp.cols.length;
+    /* a workbook sheet (spec 073) stacks its tables the way the sheet does: title, header, rows, a blank row */
+    var blocks = sp.blocks || [{ title: null, cols: sp.cols, rows: sp.rows }];
+    var width = blocks.reduce(function (m, b) { return Math.max(m, b.cols.length); }, 1);
     var pad = function (a) { while (a.length < width) a.push(''); return a; };
-    var aoa = [pad(['VT Report — ' + sp.sheet]), pad([prov]), pad([])]
-      .concat([sp.cols.map(function (c) { return c.h; })])
-      .concat(sp.rows.map(function (r) { return sp.cols.map(function (c, i) { return exportCell(r.cells[i]); }); }));
-    return { name: sheetName(sp, used), panel: sp.panel, cols: sp.cols, aoa: aoa };
+    var aoa = [pad(['VT Report — ' + sp.sheet]), pad([prov]), pad([])], fmts = [];
+    blocks.forEach(function (b, bi) {
+      if (b.title) aoa.push(pad([b.title]));
+      aoa.push(pad(b.cols.map(function (c) { return c.h; })));
+      b.rows.forEach(function (r) {
+        var at = aoa.length;
+        aoa.push(pad(b.cols.map(function (c, i) { return exportCell(r.cells[i]); })));
+        b.cols.forEach(function (c, ci) { var v = r.cells[ci]; if (v && v.t && XFMT[v.t]) fmts.push({ r: at, c: ci, z: XFMT[v.t] }); });
+      });
+      if (sp.blocks && bi < blocks.length - 1) aoa.push(pad([]));
+    });
+    return { name: sheetName(sp, used), panel: sp.panel, cols: sp.cols || blocks[0].cols, aoa: aoa, fmts: fmts };
   });
   var name = ('VT Report - ' + D.viewLabel + ' - ' + monthOf(D.period.key) + ' to ' + shortDay(D.dataThrough))
     .replace(/[\\\/:*?"<>|]+/g, '-') + '.xlsx';
@@ -881,17 +922,15 @@ function exportView() {
   var X = root.XLSX, wb = workbookFor(), say = typeof root.toast === 'function' ? root.toast : function () {};
   if (!wb) { say('Nothing to export yet'); return null; }
   if (!X || !X.writeFile) { say('Spreadsheet library not loaded - refresh and retry'); return null; }
-  var book = X.utils.book_new(), specs = sheetSpecs(model());
-  wb.sheets.forEach(function (s, si) {
-    var ws = X.utils.aoa_to_sheet(s.aoa), sp = specs[si];
+  var book = X.utils.book_new();
+  wb.sheets.forEach(function (s) {
+    var ws = X.utils.aoa_to_sheet(s.aoa);
     /* THE NUMBER FORMAT TRAVELS WITH THE CELL, not with the column: one KPI column holds a count beside a
-       percentage, so a per-column format would print one of them wrongly. */
-    if (sp) sp.rows.forEach(function (r, ri) {
-      sp.cols.forEach(function (c, ci) {
-        var v = r.cells[ci], z = v && v.t ? XFMT[v.t] : null;
-        var a = X.utils.encode_cell({ r: PREAMBLE + 1 + ri, c: ci });
-        if (z && ws[a] && ws[a].t === 'n') ws[a].z = z;
-      });
+       percentage, so a per-column format would print one of them wrongly. workbookFrom() records each cell's format
+       at the row it actually landed on, so a sheet of stacked tables formats as truly as a single table. */
+    (s.fmts || []).forEach(function (f) {
+      var a = X.utils.encode_cell({ r: f.r, c: f.c });
+      if (ws[a] && ws[a].t === 'n') ws[a].z = f.z;
     });
     X.utils.book_append_sheet(book, ws, s.name);
   });
@@ -927,7 +966,7 @@ function render() {
        Create Date by a median of 4 days, Account Create Date runs back years for an existing customer), so this
        history can be dated only by the Schedulers Data sheet. */
     var undated = D.disagree && D.disagree.noSaleDay ? D.disagree.noSaleDay : 0;
-    return headHtml(null) + controlsHtml(null) + '<div class="card vt-empty"><div class="empty"><div class="big">No ' + esc(monthOf(currentCycle().key)) + ' figures yet</div>'
+    return headHtml(null) + controlsHtml(null) + tabsHtml() + '<div class="card vt-empty"><div class="empty"><div class="big">No ' + esc(monthOf(currentCycle().key)) + ' figures yet</div>'
       + 'No Vehicle Tracking sale falls in this business month yet. Nothing is shown as a zero in its place.'
       + (undated ? '<p style="margin:10px 0 0">' + esc(N(undated)) + ' case' + (undated === 1 ? '' : 's') + ' in the book carry no sale date: they were already open when Vehicle Tracking reporting started'
         + (C.book.openedOn ? ' on <b>' + esc(shortDay(C.book.openedOn)) + '</b>' : '') + ', so they sit outside every business month. No daily export carries the day a sale was made, so they cannot be dated from one. '
@@ -937,7 +976,10 @@ function render() {
   /* TWO COLUMNS WHERE THERE IS ROOM, ONE ON A PHONE (the owner's layout decision): the panels sit in a grid that
      folds to a single column under ~460 px, and a panel whose chart or table is genuinely wide takes the full width
      (.vt-wide). The honest states and the KPI row stay above it, full width and never folded. */
-  return headHtml(D) + controlsHtml(D) + statesHtml(D) + kpisHtml(D)
+  /* SPEC 073: a workbook tab paints the master report's own sheet from VTWorkbook; the Dashboard tab is unchanged. */
+  var tab = sheetKey();
+  if (tab !== 'dashboard' && SH()) return headHtml(D) + controlsHtml(D) + tabsHtml() + SH().render(tab, sheetCtx(D));
+  return headHtml(D) + controlsHtml(D) + tabsHtml() + statesHtml(D) + kpisHtml(D)
     + '<div class="vt-grid">'
     + trendHtml(D) + channelHtml(D) + campaignHtml(D) + bucketsHtml(D)
     + budgetHtml(D) + forecastHtml(D) + breakdownHtml(D) + insightsHtml(D)
@@ -979,10 +1021,14 @@ function masonry() {
 function wire() { var ch = CH(); var n = ch && ch.wire ? ch.wire(root.document) : 0; try { masonry(); } catch (e) {} return n; }
 
 /* ---------------------------------------------------------------- actions ---- */
-var SETTINGS = ['cycle', 'view', 'pivot', 'pdim', 'pfrom', 'pto', 'pchan', 'pcamp'];
+var SETTINGS = ['cycle', 'view', 'pivot', 'pdim', 'pfrom', 'pto', 'pchan', 'pcamp', 'sheet', 'dtype', 'dname'];
 function set(k, v) {
   var u = ui();
-  if (SETTINGS.indexOf(k) > -1) { u[k] = v == null ? '' : String(v); C.memo = null; saveUi(); repaint(); }
+  if (SETTINGS.indexOf(k) < 0) return;
+  u[k] = v == null ? '' : String(v);
+  if (k === 'dtype') u.dname = '';                     /* a different kind of person: start at the top of that list */
+  if (k !== 'sheet' && k !== 'dtype' && k !== 'dname') C.memo = null;
+  saveUi(); repaint();
 }
 function clear() { var u = ui(); u.view = ''; C.memo = null; saveUi(); repaint(); }
 function clearPersons() { var u = ui(); u.pfrom = ''; u.pto = ''; u.pchan = ''; u.pcamp = ''; saveUi(); repaint(); }
@@ -997,7 +1043,7 @@ function fold(id, open) {
   try { masonry(); } catch (e) {}
 }
 
-return { TAB: TAB, render: render, wire: wire, masonry: masonry, set: set, clear: clear, clearPersons: clearPersons, fold: fold, retry: retry, adopt: adopt,
+return { TAB: TAB, render: render, wire: wire, masonry: masonry, modelFor: modelFor, sheetKey: sheetKey, set: set, clear: clear, clearPersons: clearPersons, fold: fold, retry: retry, adopt: adopt,
   exportView: exportView, workbookFor: workbookFor, workbookFrom: workbookFrom, sheetSpecs: sheetSpecs, PREAMBLE: PREAMBLE, XFMT: XFMT,
   state: function () { return { status: C.status, error: C.error, ready: ready(), cycle: currentCycle().key, view: viewKey(),
     model: ready() ? model() : null, book: C.book, receipts: C.receipts, prev: C.prev, fallback: C.fallback }; },

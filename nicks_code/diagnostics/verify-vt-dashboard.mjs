@@ -573,7 +573,7 @@ try {
   {
     ok(!!(await page.evaluate(() => !!document.querySelector('#view #vtrExport'))), 'the filter row carries an Export .xlsx button');
     const wbIn = await page.evaluate(() => { const w = window.VTDash.workbookFor(); return { n: w.name, sheets: w.sheets.map((s) => s.name), view: w.view, cycle: w.cycle, pre: w.preamble }; });
-    ok(wbIn.sheets.length === 20, 'the workbook holds a sheet for every panel group (' + wbIn.sheets.length + ')', wbIn.sheets.join(', '));
+    ok(wbIn.sheets.length === 23, 'the workbook holds a sheet for every panel group, plus the three workbook sheets of spec 073 (' + wbIn.sheets.length + ')', wbIn.sheets.join(', '));
     ok(wbIn.cycle === CYCLE && wbIn.view === D.view && /^VT Report - /.test(wbIn.n), 'and names the cycle, the view and the report in the file name', wbIn.n + ' / ' + wbIn.cycle);
     /* every painted table against its own sheet, folded as a reader first meets the page and then fully open */
     const compare = (openFirst) => page.evaluate((openThem) => {

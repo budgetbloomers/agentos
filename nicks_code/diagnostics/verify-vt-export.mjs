@@ -90,7 +90,9 @@ eq('the sheets are the owner\'s reading order', wb.sheets.map((s) => s.name), [
   'About this export', 'Exco Summary', 'Performance Trend', 'Channel Performance', 'Campaign Breakdown',
   'Cycle Performance', 'Sales vs budget', 'Forecast vs Actual', 'Detailed Breakdown', 'Key Insights', 'Fitted GWP',
   'Pivot - Referral', 'Pivot - Predictive', 'Pivot - Lead Gen', 'Pivot - All campaigns',
-  'Agent & Scheduler Summary', 'Upcoming Fitments', 'Rollover Follow-up', 'Sources Disagree', 'Integrity Checks']);
+  'Agent & Scheduler Summary', 'Upcoming Fitments', 'Rollover Follow-up', 'Sources Disagree', 'Integrity Checks',
+  /* spec 073: the master report's own three sheets follow the dashboard's, each its tables stacked as on the sheet */
+  'Workbook - Exco Summary', 'Workbook - Agent & Scheduler', 'Workbook - Sales Review']);
 ok('every sheet name is inside Excel\'s 31 characters', wb.sheets.every((s) => s.name.length <= 31 && !/[:\\/?*[\]]/.test(s.name)),
   wb.sheets.map((s) => s.name + ':' + s.name.length).join(' | '));
 ok('no two sheets share a name', new Set(wb.sheets.map((s) => s.name)).size === wb.sheets.length);

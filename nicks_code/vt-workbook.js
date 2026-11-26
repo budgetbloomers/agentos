@@ -100,7 +100,12 @@ function groupNames(list, field) {
     g.n++; g.spellings[String(v).trim()] = (g.spellings[String(v).trim()] || 0) + 1;
   });
   Object.keys(by).forEach(function (k) {
-    var sp = by[k].spellings; by[k].name = Object.keys(sp).sort(function (a, b) { return sp[b] - sp[a] || (a < b ? -1 : 1); })[0];
+    var sp = by[k].spellings, cased = Object.keys(sp).filter(function (x) { return x !== x.toLowerCase(); });
+    /* a spelling with capitals wins; the live book keeps names folded to lower case, so with nothing better on file the
+       name is shown capitalised word by word ("naadia pillay" -> "Naadia Pillay"), the way the workbook shows it */
+    var pool = cased.length ? cased : Object.keys(sp);
+    var best = pool.sort(function (a, b) { return sp[b] - sp[a] || (a < b ? -1 : 1); })[0];
+    by[k].name = cased.length ? best : best.replace(/(^|[\s'-])([a-z])/g, function (m, p, ch) { return p + ch.toUpperCase(); });
   });
   return by;
 }
@@ -112,14 +117,7 @@ function exco(D) {
   var all = tally(S, O, ld);
 
   /* B6:K8 — the strip. "% of sales" is each outcome over the sales in view. */
-  var strip = [
-    { k: 'sales', label: 'Total sales in view', value: all.sales, pct: null, cell: 'Exco Summary B7' },
-    { k: 'fitted', label: 'Fitted', value: all.fitted, pct: all.fitRate, cell: 'Exco Summary C7' },
-    { k: 'scheduled', label: 'Scheduled (pipeline)', value: all.scheduled, pct: all.schedRate, cell: 'Exco Summary E7' },
-    { k: 'cancelled', label: 'Cancelled', value: all.cancelled, pct: all.canRate, cell: 'Exco Summary G7' },
-    { k: 'missed', label: 'Missed', value: all.missed, pct: all.missRate, cell: 'Exco Summary I7' },
-    { k: 'gwp', label: 'Fitted GWP', value: all.gwpFitted, pct: null, of: all.gwpTotal, money: true, cell: 'Exco Summary K7 / K8' }
-  ];
+  var strip = stripOf(all, 'Exco Summary');
 
   /* B17:L22 — Performance by Channel */
   var channels = chKeys().map(function (k) {
@@ -186,6 +184,17 @@ function exco(D) {
     channels: channels, channelTotal: chTotal, campaigns: campaigns, campaignTotal: chTotal,
     rollover: rollover, weeks: weeks, weekTotal: wTot, leadTime: leadTime, upcoming: up,
     notes: notesFor(D) };
+}
+/* the six tiles of B6:K8 (Exco Summary and Agent & Scheduler Summary carry the same strip) */
+function stripOf(all, sheet) {
+  return [
+    { k: 'sales', label: 'Total sales in view', value: all.sales, pct: null, cell: sheet + ' B7' },
+    { k: 'fitted', label: 'Fitted', value: all.fitted, pct: all.fitRate, cell: sheet + ' C7' },
+    { k: 'scheduled', label: 'Scheduled (pipeline)', value: all.scheduled, pct: all.schedRate, cell: sheet + ' E7' },
+    { k: 'cancelled', label: 'Cancelled', value: all.cancelled, pct: all.canRate, cell: sheet + ' G7' },
+    { k: 'missed', label: 'Missed', value: all.missed, pct: all.missRate, cell: sheet + ' I7' },
+    { k: 'gwp', label: 'Fitted GWP', value: all.gwpFitted, pct: null, of: all.gwpTotal, money: true, cell: sheet + ' K7 / K8' }
+  ];
 }
 /* the five lead-time buckets + Not captured + Total over one Scheduled set */
 function leadRows(sched, D, cellCol) {
@@ -265,7 +274,8 @@ function people(D, filters) {
     filters: filters || {}, campaigns: camps, summaries: tops,
     schedulerLead: { all: leadAll, rows: leadBy, cell: 'Agent & Scheduler Summary B51:I59',
       words: 'Every Scheduled booking, whatever the view and the dates; it follows the Channel and Campaign filters.' },
-    strip: exco(D).strip.map(function (s) { return Object.assign({}, s, { cell: s.cell.replace('Exco Summary', 'Agent & Scheduler Summary') }); }) };
+    /* B6:K8 — the same tiles as the Exco strip, but over THIS sheet's filters (B272: the filters "apply to the tiles") */
+    strip: stripOf(tally(S, O, ld), 'Agent & Scheduler Summary') };
 }
 /* Y17:AE… — one person's every sale in view, the workbook's seven columns. Never a customer field (a fact has none). */
 function drill(D, type, name, filters) {
