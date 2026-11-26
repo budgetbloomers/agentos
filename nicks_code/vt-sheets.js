@@ -36,6 +36,8 @@ var s = function (v) { return c('s', v); };
 /* a count where the workbook keeps a fraction (a 5 % budget of 2 066 is 103.3): two decimals only when it has them */
 var q = function (v) { return c(v != null && Math.round(v) !== v ? 'd2' : 'n', v); };
 var DASH = { t: 's', v: '-' };
+/* a name the live book keeps folded to lower case reads capitalised, as the workbook shows it; absent stays absent */
+function nm(v) { if (v == null || v === '') return v; var t = String(v); return t === t.toLowerCase() ? t.replace(/(^|[ '-])([a-z])/g, function (m, p1, c1) { return p1 + c1.toUpperCase(); }) : t; }
 
 /* ================================================================ sections, one source for page + export ==== */
 function excoSections(X) {
@@ -133,7 +135,7 @@ function drillSection(X) {
     cols: [{ h: 'Agent', l: 1 }, { h: 'Sale Date', l: 1 }, { h: 'Case Number', l: 1 }, { h: 'Cycle Tag', l: 1 }, { h: 'Referring Agent', l: 1 },
       { h: 'Scheduler', l: 1 }, { h: 'Campaign', l: 1 }, { h: 'Result', l: 1 }, { h: 'GWP' }],
     rows: M.rows.map(function (x) {
-      return { cells: [s(x.agent), s(X.longDay(x.soldOn)), s(x.caseNumber), s(x.cycleTag), s(x.referrer), s(x.scheduler), s(x.campaign),
+      return { cells: [s(nm(x.agent)), s(X.longDay(x.soldOn)), s(x.caseNumber), s(x.cycleTag), s(nm(x.referrer)), s(nm(x.scheduler)), s(x.campaign),
         s(res[x.result] || x.result), ld ? r(x.gwp) : s(null)] };
     }) };
 }

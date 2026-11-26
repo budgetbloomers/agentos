@@ -379,6 +379,20 @@
    The class is added BY THAT CODE: if it never runs the grid stays exactly as it was, ragged but never clipped. */
 .vt-grid>.vt-panel{margin-top:0}
   .vt-grid.vt-masonry{grid-auto-rows:8px}
+/* ALIGNED ROWS (26 Nov 2026, the owner: "everything is all over the place, please make it look neat"): the Dashboard is
+   a stack of rows; in a row the cards share their top AND bottom edge; wide charts sit full width between rows. */
+.vt-grid.vt-rows{display:block;margin-top:0}
+.vt-rows>.vt-panel{margin-top:14px}
+.vt-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:stretch;margin-top:14px}
+.vt-row-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.vt-row-1{grid-template-columns:minmax(0,1fr)}
+.vt-row>.vt-panel{margin-top:0;display:flex;flex-direction:column;min-width:0}
+.vt-row>.vt-panel>details.vt-fold{margin-top:auto}
+@media (max-width:1399px){.vt-row,.vt-row-3{grid-template-columns:repeat(2,minmax(0,1fr))}.vt-row-3>:nth-child(3){grid-column:1/-1}}
+@media (max-width:899px){.vt-row,.vt-row-2,.vt-row-3{grid-template-columns:minmax(0,1fr)}}
+.vt-kpi-note,.vt-foot{font-size:12px;margin:8px 0 0;max-width:none}
+/* a chart scales with its card; in a full-width card a ranked-bar chart blew up to 30px names. Keep it a reading size. */
+.vt-rows>.vt-panel .chartbox.vtc-hbars{max-width:900px}
 /* SPEC 073 - the workbook's tabs: Dashboard, Exco Summary, Agent & Scheduler Summary, Sales Review, Pivots */
 .vt-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 14px;border-bottom:1px solid var(--stroke);padding-bottom:8px}
 .vt-tab{border:1px solid var(--stroke);background:var(--glass);color:var(--ink2);border-radius:999px;padding:7px 14px;font:650 13px/1.1 inherit;cursor:pointer}
@@ -389,6 +403,9 @@ p.note.vt-sheet-sub{margin:0 0 10px;max-width:none}
 /* a workbook sheet shows its tables OPEN, the way Excel does: no 70vh inner scroll box (the owner: "like how it is in
    the excel dashboard"). Sideways scrolling, where a table is wide, stays. */
 .vt-sheet .tablewrap{max-height:none}
+/* the drill-down is the workbook's side panel: one person can carry 100+ sales, so its list scrolls in its own box
+   (header pinned) instead of stretching the whole sheet to 8 000 px */
+.vt-sheet[data-sheet-part="people-drill"] .tablewrap{max-height:460px}
 .vt-sheet-strip{margin-bottom:4px}
 .vt-sheet .cardhead{align-items:flex-start}
 .vt-cellref{font-size:11px;white-space:nowrap}

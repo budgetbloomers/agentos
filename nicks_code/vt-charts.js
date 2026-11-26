@@ -254,10 +254,13 @@ function grouped(o) {
   var all = [];
   groups.forEach(function (g) { (g.bars || []).forEach(function (b) { if (b.value != null) all.push(n(b.value)); }); if (g.ref != null) all.push(n(g.ref)); });
   if (!all.length) return empty(o.emptyWords || 'No figures in this view yet');
-  var max = Math.max.apply(null, all) * 1.15 || 1;
+  /* round ticks (26 Nov 2026): the axis read 2 502,40 / 1 251,20 — max x 1.15, halved. It now steps by a round number
+     and the top is the first step clear of the tallest bar (room left for the value label above it). */
+  var raw = Math.max.apply(null, all) || 1, step = niceStep(raw / 2, o.integer !== false);
+  var max = Math.ceil(raw * 1.12 / step) * step;
   var base = h - P.b, top = P.t, gw = (W - P.l - P.r) / groups.length;
   var ys = function (v) { return base - (base - top) * (pos(v) / max); };
-  var ticks = [0, 0.5, 1].map(function (t) { return max * t; });
+  var ticks = []; for (var tv = 0; tv <= max + step / 2; tv += step) ticks.push(tv);
   var grid = ticks.map(function (t) {
     return '<line x1="' + P.l + '" x2="' + (W - P.r) + '" y1="' + f1(ys(t)) + '" y2="' + f1(ys(t)) + '" stroke="' + GRID + '"/>'
       + txt(P.l - 8, ys(t) + 3.5, fmt(t), { anchor: 'end', size: 9.5 });

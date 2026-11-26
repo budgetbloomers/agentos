@@ -237,11 +237,12 @@ try {
   const sub = N(await page.evaluate(() => (document.querySelector('#view .vt-period') || {}).textContent || ''));
   ok(/Business month November 2026/.test(sub) && new RegExp(D.viewLabel.replace(/[()+]/g, '.')).test(sub), 'the head names the business month and the view', sub);
   ok(sub.indexOf('figures to ' + F('s', null)) < 0 && /figures to \d+ Nov 2026/.test(sub), 'the head names data-through', sub);
-  ok(sub.indexOf(D.dialingDays.words) > -1, 'the head names the dialing day of the cycle', sub);
+  ok(sub.indexOf('Dialing day ' + D.dialingDays.elapsed + ' of ' + D.dialingDays.total) > -1, 'the head names the dialing day of the cycle', sub);
 
   head('R3 · every mockup panel, in the mockup\'s order');
-  const WANT = ['kpis', 'trend', 'channels', 'campaigns', 'buckets', 'budget', 'forecast', 'breakdown', 'insights',
-    'gwp', 'pivots', 'persons', 'upcoming', 'rollover', 'disagree', 'integrity'];
+  /* 26 Nov 2026 ("make it look neat"): aligned rows of three, short cards paired with short and tall with tall */
+  const WANT = ['kpis', 'trend', 'channels', 'campaigns', 'buckets', 'budget', 'rollover', 'forecast', 'breakdown',
+    'gwp', 'pivots', 'insights', 'persons', 'upcoming', 'disagree', 'integrity'];
   const got = await panels();
   ok(JSON.stringify(got) === JSON.stringify(WANT), 'the panels are ' + WANT.join(' → '), got.join(' → '));
   const titles = await page.evaluate(() => [...document.querySelectorAll('#view .vt-panel h3')].map((h) => h.textContent));
@@ -395,9 +396,9 @@ try {
     ok(folds.every((f) => !f.loose), 'no table is left loose beside the fold, so a reader and the suite see one set of figures', folds.filter((f) => f.loose).map((f) => f.id).join());
     ok(folds.every((f) => f.chartFirst), 'the chart — or, where there is none, the panel’s own words — comes first in every folded panel', folds.filter((f) => !f.chartFirst).map((f) => f.id).join());
     const hFolded = await heightOf();
-    const cols = await page.evaluate(() => { const g = document.querySelector('#view .vt-grid');
+    const cols = await page.evaluate(() => { const g = document.querySelector('#view .vt-row');
       return g ? getComputedStyle(g).gridTemplateColumns.split(' ').length : 0; });
-    ok(cols === 2, 'the panels sit in two columns at 1360 px (one on a phone, by auto-fit and no media query)', cols);
+    ok(cols === 2, 'the panels sit in two columns at 1360 px (three from 1 400 px, one on a phone)', cols);
     /* the mockup's own panels — the KPI row through Key Insights — are the "Overview" the owner measured */
     const over = await page.evaluate(() => { const a = document.querySelector('#view .vt-kpis').getBoundingClientRect();
       const b = document.querySelector('#view [data-panel="insights"]').getBoundingClientRect(); return Math.round(b.bottom - a.top); });
